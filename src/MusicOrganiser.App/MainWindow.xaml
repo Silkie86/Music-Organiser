@@ -1,0 +1,72 @@
+<ui:FluentWindow x:Class="MusicOrganiser.App.MainWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                 xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+                 xmlns:views="clr-namespace:MusicOrganiser.App.Views"
+                 mc:Ignorable="d"
+                 d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
+                 Title="Music Organiser" Width="1400" Height="860" MinWidth="1000" MinHeight="600"
+                 WindowStartupLocation="CenterScreen"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica"
+                 WindowCornerPreference="Round">
+    <ui:FluentWindow.Resources>
+        <DataTemplate DataType="{x:Type vm:ProjectsViewModel}"><views:ProjectsView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:PluginsViewModel}"><views:PluginsView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SamplesViewModel}"><views:SamplesView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SettingsViewModel}"><views:SettingsView /></DataTemplate>
+    </ui:FluentWindow.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="180" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <ui:TitleBar Grid.ColumnSpan="2" Title="Music Organiser" />
+
+        <!-- Navigation -->
+        <ListBox Grid.Row="1" Margin="8,4,4,8" ItemsSource="{Binding Nav}" SelectedItem="{Binding SelectedNav}"
+                 Background="Transparent" BorderThickness="0">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Orientation="Horizontal" Margin="4,8">
+                        <TextBlock Text="{Binding Glyph}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                   FontSize="16" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <TextBlock Text="{Binding Title}" FontSize="14" VerticalAlignment="Center" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <ContentControl Grid.Row="1" Grid.Column="1" Margin="4,4,12,8" Content="{Binding SelectedNav.Page}" />
+
+        <!-- Status bar -->
+        <Border Grid.Row="2" Grid.ColumnSpan="2" Padding="16,6"
+                Background="{DynamicResource ControlFillColorDefaultBrush}">
+            <DockPanel LastChildFill="False">
+                <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Text="{Binding ScanStatus}"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <ProgressBar DockPanel.Dock="Left" Width="160" Height="4" Margin="12,0" VerticalAlignment="Center"
+                             Value="{Binding ScanPercent}" IsIndeterminate="False"
+                             Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisibility}}" />
+                <ui:Button DockPanel.Dock="Right" Content="Stop" Command="{Binding CancelScanCommand}" Margin="8,0,0,0"
+                           Visibility="{Binding IsScanning, Converter={StaticResource BoolToVisibility}}" />
+                <ui:Button DockPanel.Dock="Right" Content="Rescan everything" Command="{Binding FullRescanCommand}"
+                           Margin="8,0,0,0" ToolTip="Re-read every project, even unchanged ones"
+                           Visibility="{Binding IsScanning, Converter={StaticResource InverseBoolToVisibility}}" />
+                <ui:Button DockPanel.Dock="Right" Content="Scan for changes" Command="{Binding RescanCommand}"
+                           Appearance="Primary" Icon="{ui:SymbolIcon ArrowSync24}"
+                           Visibility="{Binding IsScanning, Converter={StaticResource InverseBoolToVisibility}}" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</ui:FluentWindow>

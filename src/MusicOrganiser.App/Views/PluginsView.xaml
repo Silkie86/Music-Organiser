@@ -1,0 +1,50 @@
+<UserControl x:Class="MusicOrganiser.App.Views.PluginsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:PluginsViewModel}">
+    <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="Plugins" FontSize="24" FontWeight="SemiBold" />
+        <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Margin="0,2,0,12"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <CheckBox DockPanel.Dock="Right" Content="Not installed only" IsChecked="{Binding OnlyMissing}" Margin="12,0,0,0" />
+            <ui:TextBox PlaceholderText="Search plugins or vendors…" Icon="{ui:SymbolIcon Search24}"
+                        Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+        </DockPanel>
+        <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Text="Double-click a plugin to see the projects that use it. 'Installed' compares against the plugin folders in Settings." />
+        <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
+                  IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="None">
+            <DataGrid.InputBindings>
+                <MouseBinding Gesture="LeftDoubleClick" Command="{Binding ShowProjectsCommand}" />
+            </DataGrid.InputBindings>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Plugin" Width="2*" Binding="{Binding Name}" />
+                <DataGridTextColumn Header="Vendor" Width="*" Binding="{Binding Vendor}" />
+                <DataGridTextColumn Header="Format" Width="80" Binding="{Binding Format}" />
+                <DataGridTextColumn Header="Projects" Width="80" Binding="{Binding Projects}" />
+                <DataGridTextColumn Header="Used in" Width="*" Binding="{Binding Daws}" />
+                <DataGridTemplateColumn Header="Installed" Width="140" SortMemberPath="Installed">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Yes" VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
+                                           Visibility="{Binding Installed, Converter={StaticResource BoolToVisibility}}" />
+                                <ui:Button Content="Search online" Padding="8,2"
+                                           Visibility="{Binding Installed, Converter={StaticResource InverseBoolToVisibility}}"
+                                           Command="{Binding DataContext.SearchOnlineCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           CommandParameter="{Binding}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</UserControl>

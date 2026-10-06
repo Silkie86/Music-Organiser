@@ -1,0 +1,86 @@
+<UserControl x:Class="MusicOrganiser.App.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:SettingsViewModel}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="900" HorizontalAlignment="Left" Margin="0,0,16,16">
+            <TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold" />
+
+            <TextBlock Text="Project folders" Style="{StaticResource SectionHeader}" />
+            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"
+                       Text="Folders to search for Bitwig (.bwproject), FL Studio (.flp) and Studio One (.song) projects. Subfolders are included; DAW autosave and backup folders are skipped." />
+            <ListBox ItemsSource="{Binding ProjectFolders}" SelectedItem="{Binding SelectedProjectFolder}" MinHeight="60" MaxHeight="180" />
+            <WrapPanel Margin="0,8,0,0">
+                <ui:Button Content="Add folder" Appearance="Primary" Icon="{ui:SymbolIcon FolderAdd24}"
+                           Command="{Binding AddProjectFolderCommand}" Margin="0,0,6,0" />
+                <ui:Button Content="Remove" Command="{Binding RemoveProjectFolderCommand}" />
+            </WrapPanel>
+
+            <TextBlock Text="Sample folders" Style="{StaticResource SectionHeader}" />
+            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"
+                       Text="Your sample libraries (Splice, packs, recordings). These are indexed so missing samples can be matched by name." />
+            <ListBox ItemsSource="{Binding SampleFolders}" SelectedItem="{Binding SelectedSampleFolder}" MinHeight="60" MaxHeight="180" />
+            <WrapPanel Margin="0,8,0,0">
+                <ui:Button Content="Add folder" Icon="{ui:SymbolIcon FolderAdd24}" Command="{Binding AddSampleFolderCommand}" Margin="0,0,6,0" />
+                <ui:Button Content="Remove" Command="{Binding RemoveSampleFolderCommand}" Margin="0,0,6,0" />
+                <ui:Button Content="Re-index samples" Command="{Binding IndexSamplesCommand}" Margin="0,0,12,0" />
+                <TextBlock Text="{Binding SampleIndexText}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            </WrapPanel>
+
+            <TextBlock Text="Plugin folders" Style="{StaticResource SectionHeader}" />
+            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"
+                       Text="Where your VST3, CLAP and VST2 plugins are installed. Used to tell which plugins in a project are missing on this PC, and to recognise plugin names inside Bitwig projects." />
+            <ListBox ItemsSource="{Binding PluginFolders}" SelectedItem="{Binding SelectedPluginFolder}" MinHeight="60" MaxHeight="180" />
+            <WrapPanel Margin="0,8,0,0">
+                <ui:Button Content="Add folder" Icon="{ui:SymbolIcon FolderAdd24}" Command="{Binding AddPluginFolderCommand}" Margin="0,0,6,0" />
+                <ui:Button Content="Remove" Command="{Binding RemovePluginFolderCommand}" />
+            </WrapPanel>
+
+            <TextBlock Text="Opening projects" Style="{StaticResource SectionHeader}" />
+            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"
+                       Text="By default projects open in whatever program Windows uses for that file type. Pick a program here to override it, e.g. if you have more than one version installed." />
+            <ItemsControl ItemsSource="{Binding Daws}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:DawSetting}">
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="200" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Extensions}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                            <ui:TextBox Grid.Column="1" Text="{Binding ExePath, Mode=OneWay}" IsReadOnly="True"
+                                        PlaceholderText="Windows default" />
+                            <ui:Button Grid.Column="2" Content="Choose…" Command="{Binding ChooseCommand}" Margin="6,0,0,0" />
+                            <ui:Button Grid.Column="3" Content="Reset" Command="{Binding ClearCommand}" Margin="6,0,0,0" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Text="Exports" Style="{StaticResource SectionHeader}" />
+            <DockPanel>
+                <ui:Button DockPanel.Dock="Right" Content="Choose…" Command="{Binding ChooseExportFolderCommand}" Margin="6,0,0,0" />
+                <ui:TextBox Text="{Binding ExportFolder, Mode=OneWay}" IsReadOnly="True"
+                            PlaceholderText="Documents\Music Organiser Exports" />
+            </DockPanel>
+
+            <TextBlock Text="Library" Style="{StaticResource SectionHeader}" />
+            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                <Run Text="Your tags, ratings and notes are stored locally in" />
+                <Run Text="{Binding LibraryLocation, Mode=OneWay}" />
+                <Run Text=". Nothing is uploaded; online search only opens your browser when you ask it to." />
+            </TextBlock>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

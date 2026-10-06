@@ -1,0 +1,85 @@
+<UserControl x:Class="MusicOrganiser.App.Views.SamplesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:SamplesViewModel}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="Samples" FontSize="24" FontWeight="SemiBold" />
+        <TextBlock Grid.Row="1" Text="{Binding Summary}" Margin="0,2,0,12"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        <DockPanel Grid.Row="2" Margin="0,0,0,8">
+            <CheckBox DockPanel.Dock="Right" Content="Missing only" IsChecked="{Binding OnlyMissing}" Margin="12,0,0,0" />
+            <ui:TextBox PlaceholderText="Search sample paths…" Icon="{ui:SymbolIcon Search24}"
+                        Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+        </DockPanel>
+        <DataGrid Grid.Row="3" ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
+                  IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="None">
+            <DataGrid.InputBindings>
+                <MouseBinding Gesture="LeftDoubleClick" Command="{Binding ShowProjectsCommand}" />
+            </DataGrid.InputBindings>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Sample" Width="*" Binding="{Binding Path}" />
+                <DataGridTextColumn Header="Projects" Width="80" Binding="{Binding Projects}" />
+                <DataGridTemplateColumn Header="Found" Width="90" SortMemberPath="Found">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <TextBlock Text="Yes" Foreground="{StaticResource OkBrush}"
+                                           Visibility="{Binding Found, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="Missing" Foreground="{StaticResource MissingBrush}"
+                                           Visibility="{Binding Found, Converter={StaticResource InverseBoolToVisibility}}" />
+                            </Grid>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Selected sample -->
+        <ui:Card Grid.Row="4" Margin="0,12,0,0" Padding="12"
+                 Visibility="{Binding Selected, Converter={StaticResource NullToVisibility}}">
+            <StackPanel>
+                <TextBlock Text="{Binding Selected.Path}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                <WrapPanel Margin="0,8,0,0">
+                    <ui:Button Content="Projects using it" Command="{Binding ShowProjectsCommand}" Margin="0,0,6,0" />
+                    <ui:Button Content="Find matches on my drives" Icon="{ui:SymbolIcon Search24}"
+                               Command="{Binding FindMatchesCommand}" Margin="0,0,6,0" />
+                    <ui:Button Content="Search online" Icon="{ui:SymbolIcon Globe24}" Command="{Binding SearchOnlineCommand}" />
+                </WrapPanel>
+                <TextBlock Text="{Binding MatchMessage}" Margin="0,8,0,0"
+                           Visibility="{Binding MatchMessage, Converter={StaticResource NullToVisibility}}" />
+                <ItemsControl ItemsSource="{Binding Matches}" MaxHeight="200">
+                    <ItemsControl.Template>
+                        <ControlTemplate TargetType="ItemsControl">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsPresenter /></ScrollViewer>
+                        </ControlTemplate>
+                    </ItemsControl.Template>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <DockPanel Margin="0,2">
+                                <ui:Button DockPanel.Dock="Right" Content="Show" Padding="8,2"
+                                           Command="{Binding DataContext.RevealMatchCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           CommandParameter="{Binding}" />
+                                <TextBlock DockPanel.Dock="Right" Margin="8,0" VerticalAlignment="Center"
+                                           Text="{Binding Score, StringFormat={}{0:P0}}" ToolTip="{Binding Reason}"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{Binding Candidate}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ui:Card>
+    </Grid>
+</UserControl>

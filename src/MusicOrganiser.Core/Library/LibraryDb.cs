@@ -1,0 +1,415 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Microsoft.Data.Sqlite;
+using MusicOrganiser.Core.Parsers;
+
+namespace MusicOrganiser.Core.Library;
+
+/// <summary>
+/// The local library: every scanned project, its plugins and samples, your tags
+/// and notes, plus indexes of installed plugins and of audio files in your
+/// sample folders (used to suggest replacements for missing ones).
+/// </summary>
+public sealed partial class LibraryDb : IDisposable
+{
+    const string Schema = """
+        PRAGMA journal_mode = WAL;
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS roots (path TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY,
+            path TEXT UNIQUE NOT NULL COLLATE NOCASE,
+            name TEXT NOT NULL, daw TEXT NOT NULL, folder TEXT, size INTEGER, mtime INTEGER,
+            tempo REAL, version TEXT, title TEXT, confidence INTEGER,
+            can_midi INTEGER DEFAULT 0, can_presets INTEGER DEFAULT 0,
+            info TEXT, error TEXT, file_missing INTEGER DEFAULT 0, hardware TEXT DEFAULT '',
+            status TEXT DEFAULT 'Idea', rating INTEGER DEFAULT 0, favourite INTEGER DEFAULT 0,
+            musical_key TEXT DEFAULT '', notes TEXT DEFAULT '', last_opened INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS plugins (
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            name TEXT, name_key TEXT, vendor TEXT, kind INTEGER, format TEXT, path TEXT, installed INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS samples (
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            path TEXT, found INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS tags (
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            tag TEXT, UNIQUE(project_id, tag)
+        );
+        CREATE TABLE IF NOT EXISTS installed_plugins (name TEXT, name_key TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS sample_index (path TEXT PRIMARY KEY COLLATE NOCASE, file_name TEXT COLLATE NOCASE, stem_key TEXT);
+        CREATE INDEX IF NOT EXISTS ix_plugins_project ON plugins(project_id);
+        CREATE INDEX IF NOT EXISTS ix_plugins_key ON plugins(name_key);
+        CREATE INDEX IF NOT EXISTS ix_samples_project ON samples(project_id);
+        CREATE INDEX IF NOT EXISTS ix_tags_tag ON tags(tag);
+        CREATE INDEX IF NOT EXISTS ix_sample_index_name ON sample_index(file_name);
+        """;
+
+    readonly SqliteConnection _conn;
+    readonly object _lock = new();
+
+    public string FilePath { get; }
+
+    public static string DefaultPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicOrganiser", "library.db");
+
+    public LibraryDb(string path)
+    {
+        FilePath = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        _conn = new SqliteConnection($"Data Source={path}");
+        _conn.Open();
+        Exec(Schema);
+    }
+
+    public void Dispose() => _conn.Dispose();
+
+    // ---- plumbing --------------------------------------------------------------
+
+    int Exec(string sql, params (string, object?)[] args)
+    {
+        lock (_lock)
+        {
+            using var cmd = Cmd(sql, args);
+            return cmd.ExecuteNonQuery();
+        }
+    }
+
+    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args)
+    {
+        var cmd = _conn.CreateCommand();
+        cmd.CommandText = sql;
+        foreach (var (n, v) in args) cmd.Parameters.AddWithValue(n, v ?? DBNull.Value);
+        return cmd;
+    }
+
+    List<T> Query<T>(string sql, Func<SqliteDataReader, T> map, params (string, object?)[] args)
+    {
+        lock (_lock)
+        {
+            using var cmd = Cmd(sql, args);
+            using var r = cmd.ExecuteReader();
+            var list = new List<T>();
+            while (r.Read()) list.Add(map(r));
+            return list;
+        }
+    }
+
+    static string Str(SqliteDataReader r, string col) => r[col] is string s ? s : "";
+    static long Long(SqliteDataReader r, string col) => r[col] is long l ? l : 0;
+
+    /// <summary>Lower-case letters and digits only, minus common suffixes, so "Serum (x64)" matches "Serum".</summary>
+    public static string NameKey(string name)
+    {
+        var n = name.ToLowerInvariant();
+        n = NameNoise().Replace(n, "");
+        return NonAlnum().Replace(n, "");
+    }
+
+    [GeneratedRegex(@"\((x64|x86|64[- ]?bit|32[- ]?bit|vst3?|clap|au|mono|stereo)\)|\b(x64|x86|vst3?|clap)\b")]
+    private static partial Regex NameNoise();
+
+    [GeneratedRegex("[^a-z0-9]")]
+    private static partial Regex NonAlnum();
+
+    // ---- settings & roots --------------------------------------------------------
+
+    public string? GetSetting(string key) =>
+        Query("SELECT value FROM settings WHERE key = $k", r => r["value"] as string, ("$k", key)).FirstOrDefault();
+
+    public void SetSetting(string key, string value) =>
+        Exec("INSERT INTO settings VALUES ($k, $v) ON CONFLICT(key) DO UPDATE SET value = excluded.value", ("$k", key), ("$v", value));
+
+    public IReadOnlyList<string> GetList(string key) =>
+        GetSetting(key) is { } json ? JsonSerializer.Deserialize<List<string>>(json) ?? [] : [];
+
+    public void SetList(string key, IEnumerable<string> values) => SetSetting(key, JsonSerializer.Serialize(values.ToList()));
+
+    public IReadOnlyList<string> Roots() => Query("SELECT path FROM roots ORDER BY path", r => (string)r["path"]);
+    public void AddRoot(string path) => Exec("INSERT OR IGNORE INTO roots VALUES ($p)", ("$p", path));
+    public void RemoveRoot(string path) => Exec("DELETE FROM roots WHERE path = $p", ("$p", path));
+
+    // ---- indexing ----------------------------------------------------------------
+
+    public Dictionary<string, (long Mtime, long Size)> KnownFiles() =>
+        Query("SELECT path, mtime, size FROM projects", r => (Path: (string)r["path"], Mtime: Long(r, "mtime"), Size: Long(r, "size")))
+            .ToDictionary(x => x.Path, x => (x.Mtime, x.Size), StringComparer.OrdinalIgnoreCase);
+
+    public sealed record IndexedFile(string Path, long Size, long Mtime, ProjectInfo? Info, string? Error,
+                                     IReadOnlyList<(string Path, bool Found)> Samples, IReadOnlyList<string> Hardware);
+
+    public void Upsert(IndexedFile f)
+    {
+        var installed = InstalledKeys();
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            var info = f.Info;
+            var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
+            using (var cmd = Cmd("""
+                INSERT INTO projects (path, name, daw, folder, size, mtime, tempo, version, title, confidence,
+                                      can_midi, can_presets, info, error, file_missing, hardware)
+                VALUES ($path, $name, $daw, $folder, $size, $mtime, $tempo, $version, $title, $conf,
+                        $midi, $presets, $info, $error, 0, $hw)
+                ON CONFLICT(path) DO UPDATE SET name=excluded.name, daw=excluded.daw, folder=excluded.folder,
+                    size=excluded.size, mtime=excluded.mtime, tempo=excluded.tempo, version=excluded.version,
+                    title=excluded.title, confidence=excluded.confidence, can_midi=excluded.can_midi,
+                    can_presets=excluded.can_presets, info=excluded.info, error=excluded.error, file_missing=0,
+                    hardware=excluded.hardware
+                """,
+                ("$path", f.Path), ("$name", Path.GetFileNameWithoutExtension(f.Path)),
+                ("$daw", info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown"), ("$folder", Path.GetDirectoryName(f.Path)),
+                ("$size", f.Size), ("$mtime", f.Mtime), ("$tempo", info?.Tempo), ("$version", info?.Version),
+                ("$title", info?.Title), ("$conf", (int)(info?.Confidence ?? Confidence.Catalogue)),
+                ("$midi", info?.CanExtractMidi == true ? 1 : 0), ("$presets", info?.CanExtractPresets == true ? 1 : 0),
+                ("$info", infoJson), ("$error", f.Error), ("$hw", string.Join(", ", f.Hardware))))
+            {
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+
+            long id;
+            using (var cmd = Cmd("SELECT id FROM projects WHERE path = $p", ("$p", f.Path)))
+            {
+                cmd.Transaction = tx;
+                id = (long)cmd.ExecuteScalar()!;
+            }
+            foreach (var sql in new[] { "DELETE FROM plugins WHERE project_id = $id", "DELETE FROM samples WHERE project_id = $id" })
+            {
+                using var cmd = Cmd(sql, ("$id", id));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            foreach (var p in info?.Plugins ?? [])
+            {
+                var key = NameKey(p.Name);
+                using var cmd = Cmd("INSERT INTO plugins VALUES ($id, $n, $k, $v, $kind, $f, $path, $inst)",
+                    ("$id", id), ("$n", p.Name), ("$k", key), ("$v", p.Vendor), ("$kind", (int)p.Kind),
+                    ("$f", p.Format), ("$path", p.Path), ("$inst", IsInstalled(p, key, installed) ? 1 : 0));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            foreach (var (path, found) in f.Samples)
+            {
+                using var cmd = Cmd("INSERT INTO samples VALUES ($id, $p, $f)", ("$id", id), ("$p", path), ("$f", found ? 1 : 0));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            foreach (var hw in f.Hardware)
+            {
+                using var cmd = Cmd("INSERT OR IGNORE INTO tags VALUES ($id, $t)", ("$id", id), ("$t", hw.ToLowerInvariant()));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    sealed record StoredInfo(List<string> Tracks, Dictionary<string, string> Details, List<string> Warnings);
+
+    static bool IsInstalled(PluginRef p, string key, HashSet<string> installed)
+    {
+        if (p.Format.Equals("Native", StringComparison.OrdinalIgnoreCase)) return true;
+        if (p.Path.Length > 0 && (File.Exists(p.Path) || Directory.Exists(p.Path))) return true;
+        if (installed.Count == 0) return true;   // no plugin scan yet: don't cry wolf
+        if (installed.Contains(key)) return true;
+        // Projects often store "Vendor Name" while the file is just "Name", or the reverse.
+        return installed.Any(k => k.Length >= 4 && (key.EndsWith(k) || k.EndsWith(key) && key.Length >= 4));
+    }
+
+    public void MarkMissingFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots)
+    {
+        var rows = Query("SELECT id, path FROM projects WHERE file_missing = 0", r => (Id: (long)r["id"], Path: (string)r["path"]));
+        foreach (var (id, path) in rows)
+            if (!present.Contains(path) && roots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
+                Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id));
+    }
+
+    public void RemoveProject(long id) => Exec("DELETE FROM projects WHERE id = $id", ("$id", id));
+
+    // ---- installed plugins & sample index ----------------------------------------------
+
+    public HashSet<string> InstalledKeys() =>
+        Query("SELECT name_key FROM installed_plugins", r => (string)r["name_key"]).ToHashSet();
+
+    public HashSet<string> InstalledNames() =>
+        Query("SELECT name FROM installed_plugins", r => (string)r["name"]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public void ReplaceInstalledPlugins(IEnumerable<string> names)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            using (var del = Cmd("DELETE FROM installed_plugins")) { del.Transaction = tx; del.ExecuteNonQuery(); }
+            foreach (var n in names)
+            {
+                using var cmd = Cmd("INSERT OR IGNORE INTO installed_plugins VALUES ($n, $k)", ("$n", n), ("$k", NameKey(n)));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        RefreshInstalledFlags();
+    }
+
+    /// <summary>Re-check every project plugin against the installed list.</summary>
+    public void RefreshInstalledFlags()
+    {
+        var installed = InstalledKeys();
+        var rows = Query("SELECT rowid, name, name_key, vendor, kind, format, path FROM plugins",
+            r => (RowId: (long)r["rowid"], Key: Str(r, "name_key"),
+                  Ref: new PluginRef(Str(r, "name"), Str(r, "vendor"), (PluginKind)Long(r, "kind"), Str(r, "format"), Str(r, "path"))));
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var row in rows)
+            {
+                using var cmd = Cmd("UPDATE plugins SET installed = $i WHERE rowid = $r",
+                    ("$i", IsInstalled(row.Ref, row.Key, installed) ? 1 : 0), ("$r", row.RowId));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    public void ReplaceSampleIndex(IEnumerable<string> files)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            using (var del = Cmd("DELETE FROM sample_index")) { del.Transaction = tx; del.ExecuteNonQuery(); }
+            foreach (var f in files)
+            {
+                using var cmd = Cmd("INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)",
+                    ("$p", f), ("$n", Path.GetFileName(f)), ("$k", NameKey(Path.GetFileNameWithoutExtension(f))));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    public int SampleIndexCount() => Query("SELECT COUNT(*) AS n FROM sample_index", r => (int)(long)r["n"]).First();
+
+    public IReadOnlyList<(string Path, string StemKey)> SampleIndex() =>
+        Query("SELECT path, stem_key FROM sample_index", r => ((string)r["path"], Str(r, "stem_key")));
+
+    public IReadOnlyList<string> SamplesNamed(string fileName) =>
+        Query("SELECT path FROM sample_index WHERE file_name = $n", r => (string)r["path"], ("$n", fileName));
+
+    // ---- queries -----------------------------------------------------------------
+
+    public IReadOnlyList<ProjectSummary> Projects() => Query("""
+        SELECT p.*,
+          (SELECT COUNT(*) FROM plugins WHERE project_id = p.id) AS plugin_count,
+          (SELECT COUNT(*) FROM plugins WHERE project_id = p.id AND installed = 0) AS missing_plugins,
+          (SELECT COUNT(*) FROM samples WHERE project_id = p.id) AS sample_count,
+          (SELECT COUNT(*) FROM samples WHERE project_id = p.id AND found = 0) AS missing_samples,
+          (SELECT group_concat(tag, char(31)) FROM tags WHERE project_id = p.id) AS tag_list,
+          (SELECT group_concat(name, char(31)) FROM plugins WHERE project_id = p.id) AS plugin_list
+        FROM projects p ORDER BY p.mtime DESC
+        """, MapSummary);
+
+    ProjectSummary MapSummary(SqliteDataReader r) => new()
+    {
+        Id = (long)r["id"], Path = (string)r["path"], Name = (string)r["name"], Daw = (string)r["daw"],
+        Folder = Str(r, "folder"), Size = Long(r, "size"),
+        Modified = DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime,
+        Tempo = r["tempo"] is double t ? t : null, Version = Str(r, "version"),
+        Confidence = (Confidence)Long(r, "confidence"), FileMissing = Long(r, "file_missing") == 1,
+        Error = r["error"] as string,
+        LastOpened = r["last_opened"] is long lo ? DateTimeOffset.FromUnixTimeSeconds(lo).LocalDateTime : null,
+        PluginCount = HasCol(r, "plugin_count") ? (int)Long(r, "plugin_count") : 0,
+        MissingPlugins = HasCol(r, "missing_plugins") ? (int)Long(r, "missing_plugins") : 0,
+        SampleCount = HasCol(r, "sample_count") ? (int)Long(r, "sample_count") : 0,
+        MissingSamples = HasCol(r, "missing_samples") ? (int)Long(r, "missing_samples") : 0,
+        Tags = HasCol(r, "tag_list") ? Split(Str(r, "tag_list")).Order().ToList() : [],
+        PluginNames = HasCol(r, "plugin_list") ? Split(Str(r, "plugin_list")) : [],
+        Hardware = Str(r, "hardware").Split(", ", StringSplitOptions.RemoveEmptyEntries),
+        Status = Str(r, "status") is { Length: > 0 } s ? s : "Idea",
+        Rating = (int)Long(r, "rating"), Favourite = Long(r, "favourite") == 1,
+        MusicalKey = Str(r, "musical_key"), Notes = Str(r, "notes"),
+    };
+
+    static bool HasCol(SqliteDataReader r, string name)
+    {
+        for (var i = 0; i < r.FieldCount; i++) if (r.GetName(i) == name) return true;
+        return false;
+    }
+
+    static List<string> Split(string s) => s.Length == 0 ? [] : s.Split('\u001f').ToList();
+
+    public ProjectDetail? Project(long id)
+    {
+        var summary = Projects().FirstOrDefault(p => p.Id == id);
+        if (summary is null) return null;
+        var row = Query("SELECT title, info, can_midi, can_presets FROM projects WHERE id = $id",
+            r => (Title: Str(r, "title"), Info: Str(r, "info"), Midi: Long(r, "can_midi") == 1, Presets: Long(r, "can_presets") == 1),
+            ("$id", id)).First();
+        StoredInfo? info = null;
+        try { info = JsonSerializer.Deserialize<StoredInfo>(row.Info); } catch (JsonException) { }
+        return new ProjectDetail
+        {
+            Summary = summary, Title = row.Title, CanExtractMidi = row.Midi, CanExtractPresets = row.Presets,
+            Tracks = info?.Tracks ?? [], Details = info?.Details ?? new(), Warnings = info?.Warnings ?? [],
+            Plugins = Query("SELECT * FROM plugins WHERE project_id = $id ORDER BY kind, name",
+                r => new ProjectPlugin(Str(r, "name"), Str(r, "vendor"), (PluginKind)Long(r, "kind"), Str(r, "format"),
+                                       Str(r, "path"), Long(r, "installed") == 1), ("$id", id)),
+            Samples = Query("SELECT path, found FROM samples WHERE project_id = $id ORDER BY found, path",
+                r => new ProjectSample(Str(r, "path"), Long(r, "found") == 1), ("$id", id)),
+        };
+    }
+
+    public void SaveOrganisation(ProjectSummary p) => Exec("""
+        UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
+        """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", p.Id));
+
+    public void SetTags(long id, IEnumerable<string> tags)
+    {
+        var clean = tags.Select(t => t.Trim().ToLowerInvariant()).Where(t => t.Length > 0).Distinct().ToList();
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            using (var del = Cmd("DELETE FROM tags WHERE project_id = $id", ("$id", id))) { del.Transaction = tx; del.ExecuteNonQuery(); }
+            foreach (var t in clean)
+            {
+                using var cmd = Cmd("INSERT INTO tags VALUES ($id, $t)", ("$id", id), ("$t", t));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    public void MarkOpened(long id) =>
+        Exec("UPDATE projects SET last_opened = $t WHERE id = $id", ("$t", DateTimeOffset.UtcNow.ToUnixTimeSeconds()), ("$id", id));
+
+    public IReadOnlyList<(string Tag, int Count)> AllTags() =>
+        Query("SELECT tag, COUNT(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag", r => ((string)r["tag"], (int)(long)r["n"]));
+
+    public IReadOnlyList<PluginUsage> PluginUsage() => Query("""
+        SELECT MIN(pl.name) AS name, MAX(pl.vendor) AS vendor, MAX(pl.format) AS format,
+               COUNT(DISTINCT pl.project_id) AS n, group_concat(DISTINCT p.daw) AS daws, MIN(pl.installed) AS installed
+        FROM plugins pl JOIN projects p ON p.id = pl.project_id
+        WHERE p.file_missing = 0
+        GROUP BY pl.name_key ORDER BY n DESC, name
+        """, r => new PluginUsage(Str(r, "name"), Str(r, "vendor"), Str(r, "format"), (int)Long(r, "n"), Str(r, "daws"), Long(r, "installed") == 1));
+
+    public IReadOnlyList<SampleUsage> SampleUsage() => Query("""
+        SELECT s.path, COUNT(DISTINCT s.project_id) AS n, MIN(s.found) AS found
+        FROM samples s JOIN projects p ON p.id = s.project_id
+        WHERE p.file_missing = 0
+        GROUP BY s.path COLLATE NOCASE ORDER BY found, n DESC, s.path LIMIT 20000
+        """, r => new SampleUsage(Str(r, "path"), (int)Long(r, "n"), Long(r, "found") == 1));
+
+    /// <summary>Projects using a plugin (by name) or a sample (by path).</summary>
+    public IReadOnlyList<long> ProjectsUsingPlugin(string name) =>
+        Query("SELECT DISTINCT project_id FROM plugins WHERE name_key = $k", r => (long)r["project_id"], ("$k", NameKey(name)));
+
+    public IReadOnlyList<long> ProjectsUsingSample(string path) =>
+        Query("SELECT DISTINCT project_id FROM samples WHERE path = $p COLLATE NOCASE", r => (long)r["project_id"], ("$p", path));
+}

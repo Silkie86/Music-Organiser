@@ -1,0 +1,120 @@
+<UserControl x:Class="MusicOrganiser.App.Views.ProjectsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+             xmlns:views="clr-namespace:MusicOrganiser.App.Views"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:ProjectsViewModel}">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="230" />
+            <ColumnDefinition Width="*" MinWidth="400" />
+            <ColumnDefinition Width="5" />
+            <ColumnDefinition Width="440" MinWidth="320" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Filters -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,12,0">
+            <StackPanel>
+                <ui:TextBox PlaceholderText="Search name, plugin, tag, notes…" Icon="{ui:SymbolIcon Search24}"
+                            Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" />
+
+                <TextBlock Text="DAW" Style="{StaticResource FilterLabel}" />
+                <ComboBox ItemsSource="{Binding DawFilters}" SelectedItem="{Binding DawFilter}" Margin="0,0,0,10" />
+                <TextBlock Text="Status" Style="{StaticResource FilterLabel}" />
+                <ComboBox ItemsSource="{Binding StatusFilters}" SelectedItem="{Binding StatusFilter}" Margin="0,0,0,10" />
+                <TextBlock Text="Tag" Style="{StaticResource FilterLabel}" />
+                <ComboBox ItemsSource="{Binding TagFilters}" SelectedItem="{Binding TagFilter}" Margin="0,0,0,10" />
+                <TextBlock Text="Elektron box (via Overbridge)" Style="{StaticResource FilterLabel}" />
+                <ComboBox ItemsSource="{Binding HardwareFilters}" SelectedItem="{Binding HardwareFilter}" Margin="0,0,0,10" />
+
+                <CheckBox Content="Favourites only" IsChecked="{Binding OnlyFavourites}" />
+                <CheckBox Content="Missing plugins or samples" IsChecked="{Binding OnlyMissing}" />
+                <CheckBox Content="Hide archived" IsChecked="{Binding HideArchived}" Margin="0,0,0,12" />
+
+                <TextBlock Text="Group by" Style="{StaticResource FilterLabel}" />
+                <ComboBox ItemsSource="{Binding Source={x:Static vm:ProjectsViewModel.GroupChoices}}"
+                          SelectedItem="{Binding GroupBy}" Margin="0,0,0,16" />
+
+                <ui:Button Content="Clear filters" Icon="{ui:SymbolIcon Dismiss24}" Command="{Binding ClearFiltersCommand}"
+                           HorizontalAlignment="Stretch" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Project list -->
+        <DockPanel Grid.Column="1">
+            <Border DockPanel.Dock="Top" Padding="12,8" Margin="0,0,0,8" CornerRadius="6"
+                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    Visibility="{Binding HasIdFilter, Converter={StaticResource BoolToVisibility}}">
+                <DockPanel>
+                    <ui:Button DockPanel.Dock="Right" Content="Show all" Command="{Binding ClearFiltersCommand}" />
+                    <TextBlock Text="{Binding IdFilterLabel}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                </DockPanel>
+            </Border>
+            <TextBlock DockPanel.Dock="Top" Text="{Binding CountText}" Margin="2,0,0,6"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+            <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}"
+                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
+                      HeadersVisibility="Column" GridLinesVisibility="None" CanUserReorderColumns="True"
+                      VirtualizingPanel.IsVirtualizingWhenGrouping="True" EnableRowVirtualization="True">
+                <DataGrid.InputBindings>
+                    <MouseBinding Gesture="LeftDoubleClick" Command="{Binding OpenSelectedCommand}" />
+                    <KeyBinding Key="Enter" Command="{Binding OpenSelectedCommand}" />
+                </DataGrid.InputBindings>
+                <DataGrid.GroupStyle>
+                    <GroupStyle>
+                        <GroupStyle.HeaderTemplate>
+                            <DataTemplate>
+                                <TextBlock Margin="8,12,0,4" FontWeight="SemiBold" FontSize="14">
+                                    <Run Text="{Binding Name, Mode=OneWay}" />
+                                    <Run Text="{Binding ItemCount, Mode=OneWay, StringFormat=' ({0})'}"
+                                         Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </TextBlock>
+                            </DataTemplate>
+                        </GroupStyle.HeaderTemplate>
+                    </GroupStyle>
+                </DataGrid.GroupStyle>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="★" Width="32" SortMemberPath="Favourite"
+                                        Binding="{Binding Favourite, Converter={StaticResource BoolToStar}}" />
+                    <DataGridTextColumn Header="Name" Width="2*" Binding="{Binding Name}" />
+                    <DataGridTextColumn Header="DAW" Width="110" Binding="{Binding Daw}" />
+                    <DataGridTextColumn Header="Status" Width="100" Binding="{Binding Status}" />
+                    <DataGridTextColumn Header="Rating" Width="80" SortMemberPath="Rating"
+                                        Binding="{Binding Rating, Converter={StaticResource Stars}}" />
+                    <DataGridTextColumn Header="BPM" Width="60" SortMemberPath="Tempo" Binding="{Binding TempoText}" />
+                    <DataGridTextColumn Header="Key" Width="55" Binding="{Binding MusicalKey}" />
+                    <DataGridTextColumn Header="Modified" Width="120" Binding="{Binding Modified, StringFormat='d MMM yyyy'}" />
+                    <DataGridTextColumn Header="Plugins" Width="65" Binding="{Binding PluginCount}" />
+                    <DataGridTemplateColumn Header="Missing" Width="140" SortMemberPath="HasMissing">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Foreground="{StaticResource MissingBrush}" VerticalAlignment="Center"
+                                           Text="{Binding MissingText}" ToolTip="Missing plugins / missing samples" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
+
+        <GridSplitter Grid.Column="2" Width="5" HorizontalAlignment="Stretch" Background="Transparent" />
+
+        <!-- Selected project -->
+        <ContentControl Grid.Column="3" Content="{Binding Detail}">
+            <ContentControl.ContentTemplate>
+                <DataTemplate DataType="{x:Type vm:ProjectDetailViewModel}">
+                    <views:ProjectDetailView />
+                </DataTemplate>
+            </ContentControl.ContentTemplate>
+        </ContentControl>
+        <TextBlock Grid.Column="3" Text="Select a project to see its plugins, samples and notes."
+                   HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="24"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Visibility="{Binding Detail, Converter={StaticResource NullToCollapsedInverse}}" />
+    </Grid>
+</UserControl>
