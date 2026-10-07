@@ -40,6 +40,7 @@ public sealed partial class LibraryDb : IDisposable
             tag TEXT, UNIQUE(project_id, tag)
         );
         CREATE TABLE IF NOT EXISTS installed_plugins (name TEXT, name_key TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS installed_plugin_files (path TEXT PRIMARY KEY COLLATE NOCASE, name TEXT, format TEXT);
         CREATE TABLE IF NOT EXISTS sample_index (path TEXT PRIMARY KEY COLLATE NOCASE, file_name TEXT COLLATE NOCASE, stem_key TEXT);
         CREATE INDEX IF NOT EXISTS ix_plugins_project ON plugins(project_id);
         CREATE INDEX IF NOT EXISTS ix_plugins_key ON plugins(name_key);
@@ -276,6 +277,28 @@ public sealed partial class LibraryDb : IDisposable
         }
     }
 
+    /// <summary>Every plugin file found by the last plugin scan, with its format (VST2, VST3, CLAP).</summary>
+    public IReadOnlyList<InstalledPlugin> InstalledPluginFiles() =>
+        Query("SELECT name, format, path FROM installed_plugin_files ORDER BY name",
+              r => new InstalledPlugin(Str(r, "name"), Str(r, "format"), Str(r, "path")));
+
+    public void ReplaceInstalledPluginFiles(IEnumerable<InstalledPlugin> files)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            using (var del = Cmd("DELETE FROM installed_plugin_files")) { del.Transaction = tx; del.ExecuteNonQuery(); }
+            foreach (var f in files)
+            {
+                using var cmd = Cmd("INSERT OR IGNORE INTO installed_plugin_files VALUES ($p, $n, $f)",
+                    ("$p", f.Path), ("$n", f.Name), ("$f", f.Format));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
     public void ReplaceSampleIndex(IEnumerable<string> files)
     {
         lock (_lock)
@@ -405,6 +428,13 @@ public sealed partial class LibraryDb : IDisposable
         WHERE p.file_missing = 0
         GROUP BY s.path COLLATE NOCASE ORDER BY found, n DESC, s.path LIMIT 20000
         """, r => new SampleUsage(Str(r, "path"), (int)Long(r, "n"), Long(r, "found") == 1));
+
+    /// <summary>Every plugin in every project that's still on disk, one row per project and plugin.</summary>
+    public IReadOnlyList<(long ProjectId, ProjectPlugin Plugin)> PluginRows() => Query(
+        "SELECT pl.* FROM plugins pl JOIN projects p ON p.id = pl.project_id WHERE p.file_missing = 0",
+        r => ((long)r["project_id"],
+              new ProjectPlugin(Str(r, "name"), Str(r, "vendor"), (PluginKind)Long(r, "kind"), Str(r, "format"),
+                                Str(r, "path"), Long(r, "installed") == 1)));
 
     /// <summary>Projects using a plugin (by name) or a sample (by path).</summary>
     public IReadOnlyList<long> ProjectsUsingPlugin(string name) =>

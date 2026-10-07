@@ -111,7 +111,10 @@ public sealed class Scanner(LibraryDb db)
     public int ScanInstalledPlugins()
     {
         var folders = db.GetList(PluginFoldersKey) is { Count: > 0 } custom ? custom : PluginCatalog.DefaultFolders().ToList();
-        var names = PluginCatalog.Scan(folders);
+        var files = PluginCatalog.ScanFiles(folders);
+        var names = new HashSet<string>(PluginCatalog.AlwaysKnown, StringComparer.OrdinalIgnoreCase);
+        names.UnionWith(files.Select(f => f.Name));
+        db.ReplaceInstalledPluginFiles(files);
         db.ReplaceInstalledPlugins(names);
         return names.Count;
     }

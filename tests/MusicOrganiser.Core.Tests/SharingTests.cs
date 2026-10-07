@@ -1,0 +1,476 @@
+using System.IO.Compression;
+using System.Text;
+using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Sharing;
+using Xunit;
+
+namespace MusicOrganiser.Core.Tests;
+
+/// <summary>
+/// A project saved on a Mac in FL Studio 25, laid out like real ones: Diva and Arcade as
+/// Audio Units (kind 10, no path, AU codes in the class id), a Duck AU effect (kind 9),
+/// Serum as a Mac VST2, Pro-Q 4 as a Mac VST3, a native Fruity Limiter and two samples.
+/// </summary>
+static class MacProject
+{
+    static byte[] AuId(string manufacturer, string type, string subtype)
+    {
+        static byte[] Le(string code) => Encoding.ASCII.GetBytes(new string(code.Reverse().ToArray()));
+        return [.. Le(manufacturer), .. Le(type), .. Le(subtype), 0, 0, 0, 0];
+    }
+
+    /// <summary>FL's AU state: u32 0, u64 length, then the AU's binary property list.</summary>
+    public static byte[] AuState(string marker = "x")
+    {
+        var plist = Encoding.ASCII.GetBytes("bplist00" + marker);
+        return [0, 0, 0, 0, .. BitConverter.GetBytes((ulong)plist.Length), .. plist];
+    }
+
+    public static string Write(string dir, string name = "Odd Todd")
+    {
+        var b = new Fixtures.FlpBuilder()
+            .Ascii(199, "25.1.5.4642")
+            .Dword(156, 140_000)
+            .Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Pad")
+            .Data(213, Fixtures.WrapperBlob("Diva", "", "", AuState("diva"), version: 12, kind: 10,
+                                            classId: AuId("UHfX", "aumu", "DiVa")))
+            .Word(64, 1).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Keys")
+            .Data(213, Fixtures.WrapperBlob("Arcade", "", "", AuState(), version: 12, kind: 10,
+                                            classId: AuId("Outp", "aumu", "ARCD")))
+            .Word(64, 2).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Lead")
+            .Data(213, Fixtures.WrapperBlob("Serum", "/Library/Audio/Plug-Ins/VST/Serum.vst", "Xfer Records",
+                                            Fixtures.FlVst2State([1]), version: 12, kind: 4, fourCc: "XfsX"))
+            .Word(64, 3).Byte(21, 0)
+            .Text(203, "Kick").Text(196, "/Users/jay/Splice/Kick 01.wav")
+            .Word(64, 4).Byte(21, 0)
+            .Text(203, "Hat").Text(196, "/Users/jay/Splice/Hat 03.wav")
+            .Data(236, [0, 0, 0, 0])
+            .Text(201, "Fruity Limiter").Data(213, [5]).Word(98, 0)
+            .Text(201, "Fruity Wrapper")
+            .Data(213, Fixtures.WrapperBlob("Duck", "", "", AuState(), version: 12, kind: 9,
+                                            classId: AuId("DvMc", "aumf", "DUCK")))
+            .Word(98, 1)
+            .Text(201, "Fruity Wrapper")
+            .Data(213, Fixtures.WrapperBlob("FabFilter Pro-Q 4", "/Library/Audio/Plug-Ins/VST3/FabFilter Pro-Q 4.vst3",
+                                            "FabFilter", Fixtures.FlVst3State([1], [2]), version: 12, kind: 7,
+                                            classId: new byte[16]))
+            .Word(98, 2);
+        var path = Path.Combine(dir, name + ".flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>A Windows PC with Diva and Arcade as VST3, Serum as VST2 and VST3, no Duck, no Pro-Q 4.</summary>
+    public static PluginInventory WindowsPc() => PluginInventory.Parse("This PC", """
+        C:\Program Files\Common Files\VST3\u-he\Diva(x64).vst3
+        C:\Program Files\Common Files\VST3\Output\Arcade.vst3
+        C:\Program Files\VstPlugins\Xfer\Serum_x64.dll
+        C:\Program Files\Common Files\VST3\Xfer\Serum.vst3
+        """);
+
+    /// <summary>The friend's Mac, as the Terminal command lists it.</summary>
+    public static PluginInventory FriendsMac() => PluginInventory.Parse("Jay", """
+        /Library/Audio/Plug-Ins/Components/Diva.component
+        /Library/Audio/Plug-Ins/Components/Arcade.component
+        /Library/Audio/Plug-Ins/Components/Duck.component
+        /Library/Audio/Plug-Ins/VST/Serum.vst
+        /Library/Audio/Plug-Ins/VST3/FabFilter/FabFilter Pro-Q 4.vst3
+        """);
+}
+
+public class FlStudioMacProjectTests
+{
+    readonly string _path = MacProject.Write(Fixtures.TempDir());
+
+    [Fact]
+    public void RecognisesAudioUnitsByTheirKind()
+    {
+        var plugins = new FlStudioReader().Read(_path).Plugins.ToDictionary(p => p.Name);
+        Assert.Equal(("AU", "u-he", PluginKind.Instrument), (plugins["Diva"].Format, plugins["Diva"].Vendor, plugins["Diva"].Kind));
+        Assert.Equal(("AU", "Output"), (plugins["Arcade"].Format, plugins["Arcade"].Vendor));
+        Assert.Equal(("AU", "Devious Machines", PluginKind.Effect), (plugins["Duck"].Format, plugins["Duck"].Vendor, plugins["Duck"].Kind));
+        Assert.Equal("VST2", plugins["Serum"].Format);
+        Assert.Equal(("VST3", PluginKind.Effect), (plugins["FabFilter Pro-Q 4"].Format, plugins["FabFilter Pro-Q 4"].Kind));
+    }
+
+    [Fact]
+    public void ExportsAudioUnitStatesAsAupresets()
+    {
+        var presets = new FlStudioReader().ExtractPresets(_path).ToDictionary(p => p.Plugin);
+        Assert.Equal(".aupreset", presets["Diva"].Extension);
+        Assert.Equal("bplist00diva", Encoding.ASCII.GetString(presets["Diva"].Data));
+        Assert.Equal(".vstpreset", presets["FabFilter Pro-Q 4"].Extension);
+    }
+
+    [Fact]
+    public void KeepsTheSamePluginInTwoFormats()
+    {
+        var info = new ProjectInfo { Daw = "FL Studio" };
+        info.Plugins.Add(new PluginRef("Diva", "u-he", PluginKind.Instrument, "AU"));
+        info.Plugins.Add(new PluginRef("Diva", "u-he", PluginKind.Instrument, "VST3"));
+        info.Plugins.Add(new PluginRef("diva", "u-he", PluginKind.Instrument, "VST3"));
+        Assert.Equal(["AU", "VST3"], info.Dedupe().Plugins.Select(p => p.Format));
+    }
+}
+
+public class PluginInventoryTests
+{
+    [Fact]
+    public void ReadsTheMacTerminalListing()
+    {
+        var inv = PluginInventory.Parse("Jay", """
+            /Library/Audio/Plug-Ins/Components/Diva.component
+            /Library/Audio/Plug-Ins/VST3/Diva.vst3
+            /Library/Audio/Plug-Ins/VST3/Diva.vst3/Contents/MacOS/Diva
+            /Users/jay/Library/Audio/Plug-Ins/CLAP/Surge XT.clap
+            /Library/Audio/Plug-Ins/VST/Serum.vst
+            """);
+        Assert.Equal([("Diva", "AU"), ("Diva", "VST3"), ("Serum", "VST2"), ("Surge XT", "CLAP")],
+                     inv.Plugins.Select(p => (p.Name, p.Format)).OrderBy(x => x.Name).ThenBy(x => x.Format));
+    }
+
+    [Fact]
+    public void ReadsFolderListingsAndHandWrittenLists()
+    {
+        var inv = PluginInventory.Parse("Jay", """
+            /Library/Audio/Plug-Ins/Components:
+            Kontakt 7
+            # a comment
+            Serum (AU)
+            Pro-Q 4: VST3, AU
+            Vital	CLAP
+            Massive X
+            """);
+        var got = inv.Plugins.Select(p => (p.Name, p.Format)).ToHashSet();
+        Assert.Contains(("Kontakt 7", "AU"), got);
+        Assert.Contains(("Serum", "AU"), got);
+        Assert.Contains(("Pro-Q 4", "VST3"), got);
+        Assert.Contains(("Pro-Q 4", "AU"), got);
+        Assert.Contains(("Vital", "CLAP"), got);
+        Assert.Contains(("Massive X", "AU"), got);   // still under the Components heading
+    }
+
+    [Fact]
+    public void WritesAListItReadsBack()
+    {
+        var pc = MacProject.WindowsPc();
+        var again = PluginInventory.Parse("This PC", pc.ToText());
+        Assert.Equal(pc.Plugins.Select(p => (p.Name, p.Format)), again.Plugins.Select(p => (p.Name, p.Format)));
+    }
+
+    [Theory]
+    [InlineData("Serum", "Xfer Records", "VST2", Availability.Same)]       // Serum_x64.dll
+    [InlineData("Diva", "u-he", "VST3", Availability.Same)]                // Diva(x64).vst3
+    [InlineData("u-he Diva", "u-he", "VST3", Availability.Same)]
+    [InlineData("Diva", "u-he", "AU", Availability.OtherFormat)]
+    [InlineData("Duck", "", "AU", Availability.None)]
+    [InlineData("Verb", "", "VST3", Availability.None)]
+    public void MatchesNamesAcrossComputers(string name, string vendor, string format, Availability expected)
+    {
+        var pc = PluginInventory.Parse("This PC", """
+            C:\Program Files\VstPlugins\Xfer\Serum_x64.dll
+            C:\Program Files\Common Files\VST3\u-he\Diva(x64).vst3
+            C:\Program Files\Common Files\VST3\ValhallaVintageVerb.vst3
+            """);
+        Assert.Equal(expected, pc.Check(name, vendor, format, out _));
+    }
+
+    [Fact]
+    public void MatchesAVendorPrefixedFileName()
+    {
+        var pc = PluginInventory.Parse("This PC", @"C:\Program Files\Common Files\VST3\FabFilter Pro-Q 3.vst3");
+        Assert.Equal(Availability.Same, pc.Check("Pro-Q 3", "FabFilter", "VST3", out _));
+    }
+}
+
+public class ShareCheckTests
+{
+    readonly string _dir = Fixtures.TempDir();
+
+    [Fact]
+    public void FlagsAudioUnitsAndMissingPluginsOnThisPc()
+    {
+        var r = ShareCheck.Run(MacProject.Write(_dir), MacProject.WindowsPc());
+        var p = r.Plugins.ToDictionary(c => c.Name);
+
+        Assert.Equal(ShareStatus.WontLoad, p["Diva"].Here);
+        Assert.Equal(["VST3"], p["Diva"].HereHas);
+        Assert.Equal(ShareStatus.WontLoad, p["Duck"].Here);
+        Assert.Empty(p["Duck"].HereHas);
+        Assert.Equal(ShareStatus.Ok, p["Serum"].Here);
+        Assert.Equal(ShareStatus.Missing, p["FabFilter Pro-Q 4"].Here);
+        Assert.Equal(["Fruity Limiter"], r.NativePlugins);
+        Assert.Null(p["Diva"].Friend);
+
+        Assert.Equal("Mac", r.SavedOn);
+        Assert.Equal(Readiness.Blocked, r.Readiness);
+        Assert.StartsWith("4 plugins won't load on this PC and 2 samples are missing", r.Headline);
+        Assert.Contains(r.Actions, a => a.Contains("Audio Units") && a.Contains("You already have Arcade and Diva"));
+        Assert.Contains(r.Actions, a => a.StartsWith("Not installed on this PC: FabFilter Pro-Q 4"));
+        Assert.Contains(r.Actions, a => a.Contains("plugin list to check their side"));
+    }
+
+    [Fact]
+    public void ChecksTheFriendsSideFromTheirList()
+    {
+        // Sending Jay a Windows project: Pro-Q 3 isn't on Jay's list, Serum is (same VST2), Diva only as AU and VST3.
+        var info = new Fixtures.FlpBuilder()
+            .Ascii(199, "25.1.0.4868")
+            .Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper")
+            .Data(213, Fixtures.WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Xfer\Serum_x64.dll", "Xfer Records", [1], 12, 4))
+            .Word(64, 1).Byte(21, 2)
+            .Text(201, "Fruity Wrapper")
+            .Data(213, Fixtures.WrapperBlob("Diva(x64)", @"C:\Program Files\VstPlugins\Diva(x64).dll", "u-he", [1], 12, 4))
+            .Data(236, [0, 0, 0, 0])
+            .Text(201, "Fruity Wrapper")
+            .Data(213, Fixtures.WrapperBlob("FabFilter Pro-Q 3", @"C:\Program Files\Common Files\VST3\FabFilter Pro-Q 3.vst3", "FabFilter", [1], 12, 7))
+            .Build();
+        var path = Path.Combine(_dir, "Mine.flp");
+        File.WriteAllBytes(path, info);
+        var pc = PluginInventory.Parse("This PC", """
+            C:\Program Files\VstPlugins\Xfer\Serum_x64.dll
+            C:\Program Files\VstPlugins\Diva(x64).dll
+            C:\Program Files\Common Files\VST3\FabFilter Pro-Q 3.vst3
+            """);
+        var friend = PluginInventory.Parse("Jay", """
+            /Library/Audio/Plug-Ins/VST/Serum.vst
+            /Library/Audio/Plug-Ins/Components/Diva.component
+            /Library/Audio/Plug-Ins/VST3/Diva.vst3
+            """);
+
+        var r = ShareCheck.Run(path, pc, friend);
+        var p = r.Plugins.ToDictionary(c => c.Name);
+        Assert.All(r.Plugins, c => Assert.Equal(ShareStatus.Ok, c.Here));
+        Assert.Equal(ShareStatus.Ok, p["Serum"].Friend);
+        Assert.Equal(ShareStatus.WrongFormat, p["Diva(x64)"].Friend);
+        Assert.Equal(["AU", "VST3"], p["Diva(x64)"].FriendHas);
+        Assert.Equal(ShareStatus.Missing, p["FabFilter Pro-Q 3"].Friend);
+        Assert.Equal("Windows", r.SavedOn);
+        Assert.Equal("2 plugins won't load for Jay.", r.Headline);
+        Assert.Contains(r.Actions, a => a.StartsWith("Jay can't load FabFilter Pro-Q 3 and Diva(x64). Before sending, render those channels"));
+
+        var message = ShareCheck.MessageForFriend(r);
+        Assert.StartsWith("Hey Jay, heads up about Mine", message);
+        Assert.Contains("- FabFilter Pro-Q 3 (VST3): I'll render it to audio", message);
+    }
+
+    [Fact]
+    public void IsReadyWhenEverythingLoadsOnBothSides()
+    {
+        var path = Path.Combine(_dir, "Simple.flp");
+        File.WriteAllBytes(path, new Fixtures.FlpBuilder()
+            .Ascii(199, "25.1.0.4868").Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper")
+            .Data(213, Fixtures.WrapperBlob("Serum", @"C:\Program Files\Common Files\VST3\Serum.vst3", "Xfer Records", [1], 12, 8))
+            .Build());
+        var r = ShareCheck.Run(path, MacProject.WindowsPc(), MacProject.FriendsMac().Plugins.Append(
+            new InstalledPlugin("Serum", "VST3")) is var list ? new PluginInventory("Jay", list) : null);
+        Assert.Equal(Readiness.Ready, r.Readiness);
+        Assert.Equal("Ready to share: everything loads on both computers.", r.Headline);
+        Assert.Equal("", ShareCheck.MessageForFriend(r));
+    }
+
+    [Fact]
+    public void AsksTheFriendToSwapAudioUnits()
+    {
+        var r = ShareCheck.Run(MacProject.Write(_dir), MacProject.WindowsPc(), MacProject.FriendsMac());
+        var message = ShareCheck.MessageForFriend(r);
+        Assert.StartsWith("Hey Jay, I checked Odd Todd and a few plugins don't load on my side:", message);
+        Assert.Contains("- Diva (AU): it's the Audio Unit and Windows can't run those. I have the VST3, could you switch to that?", message);
+        Assert.Contains("- Duck (AU): it's the Audio Unit and Windows can't run those, and I don't have another version.", message);
+        Assert.Contains("These samples didn't come through: Kick 01.wav and Hat 03.wav.", message);
+        // Jay has everything his own project uses, so nothing for him to worry about.
+        Assert.DoesNotContain("might not have", message);
+    }
+
+    [Fact]
+    public void ChecksAZipFromAFriend()
+    {
+        var project = MacProject.Write(_dir);
+        var zipPath = Path.Combine(_dir, "Odd Todd.zip");
+        using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+        {
+            zip.CreateEntryFromFile(project, "Odd Todd.flp");
+            zip.CreateEntry("Kick 01.wav").Open().Dispose();
+            zip.CreateEntry("__MACOSX/._Odd Todd.flp").Open().Dispose();
+        }
+        var r = ShareCheck.Run(zipPath, MacProject.WindowsPc(), MacProject.FriendsMac());
+        Assert.Equal(("Odd Todd", "Odd Todd.flp"), (r.ProjectName, r.FileInZip));
+        Assert.Equal(140.0, r.Tempo);
+        var samples = r.Samples.ToDictionary(s => s.FileName);
+        Assert.Equal((true, "In the zip"), (samples["Kick 01.wav"].Found, samples["Kick 01.wav"].Where));
+        Assert.False(samples["Hat 03.wav"].Found);
+    }
+
+    [Fact]
+    public void RejectsAZipWithoutAProject()
+    {
+        var zipPath = Path.Combine(_dir, "loops.zip");
+        using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create)) zip.CreateEntry("loop.wav").Open().Dispose();
+        Assert.Throws<InvalidDataException>(() => ShareCheck.Run(zipPath, MacProject.WindowsPc()));
+    }
+
+    [Fact]
+    public void WritesAReadmeIntoTheZip()
+    {
+        var project = MacProject.Write(_dir);
+        var zipPath = Path.Combine(_dir, "share.zip");
+        using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create)) zip.CreateEntryFromFile(project, "Odd Todd.flp");
+
+        var r = ShareCheck.Run(zipPath, MacProject.WindowsPc());
+        var readme = ShareCheck.Readme(r, new DateTime(2026, 10, 7));
+        Assert.Contains("FL Studio 25.1.5.4642, 140 BPM, last saved on Mac", readme);
+        Assert.Contains("  Diva (u-he), AU   << Mac only (Audio Unit)", readme);
+        Assert.Contains("  FabFilter Pro-Q 4 (FabFilter), VST3", readme);
+        Assert.Contains("BUILT INTO FL STUDIO (open on Mac and Windows)", readme);
+        Assert.Contains("SAMPLES: 2, 2 missing", readme);
+
+        ShareCheck.AddReadmeToZip(zipPath, readme);
+        ShareCheck.AddReadmeToZip(zipPath, "second version");
+        using var check = ZipFile.OpenRead(zipPath);
+        var entry = Assert.Single(check.Entries, e => e.FullName == ShareCheck.ReadmeName);
+        using var text = new StreamReader(entry.Open());
+        Assert.Equal("second version", text.ReadToEnd());
+        Assert.Contains(check.Entries, e => e.FullName == "Odd Todd.flp");
+    }
+}
+
+public class PluginImpactTests : IDisposable
+{
+    readonly string _root = Fixtures.TempDir();
+    readonly LibraryDb _db;
+
+    public PluginImpactTests()
+    {
+        _db = new LibraryDb(Path.Combine(_root, "library.db"));
+        _db.AddRoot(_root);
+        Fixtures.FlStudioProject(_root);           // Serum (VST2 .dll), Pro-Q 3 (VST2)
+        Fixtures.FlStudio25Project(_root);         // Serum (VST2), Arcade (VST3)
+        Fixtures.StudioOneSong(_root);             // Diva (VST3), Pro-C 2, Mai Tai (native)
+        _db.ReplaceInstalledPluginFiles(
+        [
+            new("Serum_x64", "VST2", @"C:\Program Files\VstPlugins\Serum_x64.dll"),
+            new("Serum", "VST3", @"C:\Program Files\Common Files\VST3\Serum.vst3"),
+            new("Arcade", "VST3", @"C:\Program Files\Common Files\VST3\Arcade.vst3"),
+            new("Sylenth1", "VST2", @"C:\Program Files\VstPlugins\Sylenth1.dll"),
+        ]);
+        new Scanner(_db).ScanProjects();
+    }
+
+    public void Dispose() => _db.Dispose();
+
+    [Fact]
+    public void ListsTheProjectsThatWouldBreak()
+    {
+        var p = _db.Projects().First(x => x.Name == "Night Drive");
+        p.Status = "Released";
+        _db.SaveOrganisation(p);
+
+        var impact = PluginImpact.Of(_db, [("Serum", "Xfer Records")]);
+        Assert.Equal(["Night Drive", "Shuffle"], impact.Projects.Select(x => x.Project.Name));   // released first
+        Assert.Equal("Uninstalling Serum would affect 2 projects, including 1 released.", impact.Headline);
+        var copies = impact.Copies.ToDictionary(c => c.File.Format);
+        Assert.Equal((2, false), (copies["VST2"].Projects, copies["VST2"].Unused));
+        Assert.True(copies["VST3"].Unused);
+        Assert.Contains("No project uses the VST3 copy", impact.Detail);
+    }
+
+    [Fact]
+    public void AddsUpSeveralPlugins()
+    {
+        var impact = PluginImpact.Of(_db, [("Serum", ""), ("Diva", "u-he")]);
+        Assert.Equal(3, impact.Projects.Count);
+        Assert.StartsWith("Uninstalling these 2 plugins would affect 3 projects", impact.Headline);
+    }
+
+    [Fact]
+    public void SaysWhenNothingUsesAPlugin()
+    {
+        var impact = PluginImpact.Of(_db, [("Sylenth1", "")]);
+        Assert.Empty(impact.Projects);
+        Assert.Equal("No project in your library uses Sylenth1. Uninstalling won't break anything here.", impact.Headline);
+    }
+
+    [Fact]
+    public void FindsInstalledPluginsNothingUses()
+    {
+        var unused = PluginImpact.Unused(_db).ToDictionary(u => u.Name);
+        Assert.Equal("Not used by any project", unused["Sylenth1"].UsageText);
+        // Serum: projects only use the VST2, so the VST3 copy is spare.
+        var serum = unused.Values.Single(u => PluginKey.Of(u.Name) == "serum");
+        Assert.Equal(["VST3"], serum.Copies.Select(c => c.Format));
+        Assert.Equal("Projects only use the VST2", serum.UsageText);
+        Assert.DoesNotContain("Arcade", unused.Keys);
+    }
+
+    [Fact]
+    public void ScanRecordsEachPluginFileAndFormat()
+    {
+        var folder = Path.Combine(_root, "plugins");
+        Directory.CreateDirectory(Path.Combine(folder, "Vital.vst3", "Contents", "x86_64-win"));
+        File.WriteAllBytes(Path.Combine(folder, "Vital.vst3", "Contents", "x86_64-win", "Vital.vst3"), [0]);
+        File.WriteAllBytes(Path.Combine(folder, "Surge XT.clap"), [0]);
+        File.WriteAllBytes(Path.Combine(folder, "Sylenth1.dll"), [0]);
+        _db.SetList(Scanner.PluginFoldersKey, [folder]);
+
+        new Scanner(_db).ScanInstalledPlugins();
+        Assert.Equal([("Surge XT", "CLAP"), ("Sylenth1", "VST2"), ("Vital", "VST3")],
+                     _db.InstalledPluginFiles().Select(f => (f.Name, f.Format)));
+        Assert.Contains("Vital", _db.InstalledNames());
+    }
+
+    [Fact]
+    public void KeepsCollaboratorsPluginLists()
+    {
+        Collaborators.Upsert(_db, "Jay", MacProject.FriendsMac());
+        Collaborators.Upsert(_db, "jay", PluginInventory.Parse("jay", "Serum (AU)"));
+        Collaborators.Upsert(_db, "Ana", PluginInventory.Parse("Ana", "Vital\tCLAP"));
+        var people = Collaborators.Load(_db);
+        Assert.Equal(["Ana", "jay"], people.Select(p => p.Name));
+        Assert.Equal(Availability.Same, people[1].Inventory.Check("Serum", "", "AU", out _));
+        Collaborators.Remove(_db, "Ana");
+        Assert.Single(Collaborators.Load(_db));
+    }
+}
+
+public class MacProjectImpactTests : IDisposable
+{
+    readonly string _root = Fixtures.TempDir();
+    readonly LibraryDb _db;
+
+    public MacProjectImpactTests()
+    {
+        _db = new LibraryDb(Path.Combine(_root, "library.db"));
+        _db.AddRoot(_root);
+        MacProject.Write(_root);                   // Diva as an AU
+        Fixtures.StudioOneSong(_root);             // Diva as a VST3
+        _db.ReplaceInstalledPluginFiles(MacProject.WindowsPc().Plugins);
+        new Scanner(_db).ScanProjects();
+    }
+
+    public void Dispose() => _db.Dispose();
+
+    [Fact]
+    public void LeavesOutProjectsThatOnlyUseTheMacVersion()
+    {
+        var impact = PluginImpact.Of(_db, [("Diva", "u-he")]);
+        Assert.Equal(["Sunday Song"], impact.Projects.Select(p => p.Project.Name));
+        Assert.Equal(1, impact.MacOnlyProjects);
+        Assert.Contains("1 more project uses the Mac (AU) version", impact.Detail);
+    }
+
+    [Fact]
+    public void SaysWhenOnlyMacProjectsUseAPlugin()
+    {
+        var impact = PluginImpact.Of(_db, [("Arcade", "Output")]);
+        Assert.Empty(impact.Projects);
+        Assert.StartsWith("1 project uses the Mac (AU) version", impact.Detail);
+        var arcade = Assert.Single(PluginImpact.Unused(_db), u => u.Name == "Arcade");
+        Assert.Equal("Projects only use the AU (Mac)", arcade.UsageText);
+    }
+}

@@ -33,7 +33,11 @@ public sealed class FlStudioReader : IProjectReader
     // Fruity Wrapper (VST host) state: u32 version (8, 10, 12 in FL 25), then records of (u32 id, u64 size, data).
     const int VstKind = 50, VstFourCc = 51, VstClassId = 52;
     const int VstState = 53, VstName = 54, VstPath = 55, VstVendor = 56;
-    const byte KindVst3 = 8;
+
+    // First byte of the wrapper's kind record (50), checked against real projects from FL 20 to 25:
+    // 0/4 VST2 effect/instrument, 7/8 VST3, 9/10 Audio Unit (Mac only; no path, and the
+    // class id record holds the AU's manufacturer, type and subtype codes).
+    const byte KindVst2Fx = 0, KindVst2 = 4, KindVst3Fx = 7, KindVst3 = 8, KindAuFx = 9, KindAu = 10;
 
     const int ChannelTypeInstrument = 2;
 
@@ -141,6 +145,43 @@ public sealed class FlStudioReader : IProjectReader
     static string WrapperText(Dictionary<int, byte[]> f, int id) =>
         f.TryGetValue(id, out var b) ? Encoding.UTF8.GetString(b).TrimEnd('\0') : "";
 
+    static int WrapperKind(Dictionary<int, byte[]> f) => f.TryGetValue(VstKind, out var k) && k.Length > 0 ? k[0] : -1;
+
+    static bool IsAu(Dictionary<int, byte[]> f) => WrapperKind(f) is KindAu or KindAuFx;
+
+    /// <summary>VST2, VST3, CLAP or AU: from the plugin's file when FL stored one, otherwise from the kind record.</summary>
+    static string WrapperFormat(Dictionary<int, byte[]> f)
+    {
+        if (TextScan.PluginFormatFromPath(WrapperText(f, VstPath)) is { Length: > 0 } fmt) return fmt;
+        return WrapperKind(f) switch
+        {
+            KindVst2 or KindVst2Fx => "VST2",
+            KindVst3 or KindVst3Fx => "VST3",
+            KindAu or KindAuFx => "AU",
+            _ => "VST",
+        };
+    }
+
+    static PluginKind? WrapperRole(Dictionary<int, byte[]> f) => WrapperKind(f) switch
+    {
+        KindVst2 or KindVst3 or KindAu => PluginKind.Instrument,
+        KindVst2Fx or KindVst3Fx or KindAuFx => PluginKind.Effect,
+        _ => null,
+    };
+
+    /// <summary>
+    /// An Audio Unit's manufacturer code, e.g. "XfHU" for u-he. FL stores the AU's
+    /// component description (manufacturer, type, subtype) as little-endian four-character codes.
+    /// </summary>
+    internal static string AuManufacturer(Dictionary<int, byte[]> f)
+    {
+        if (!f.TryGetValue(VstClassId, out var cid) || cid.Length < 12) return "";
+        Span<byte> code = stackalloc byte[4];
+        cid.AsSpan(0, 4).CopyTo(code);
+        code.Reverse();
+        return Encoding.ASCII.GetString(code);
+    }
+
     public ProjectInfo Read(string path)
     {
         var flp = Load(path);
@@ -198,11 +239,13 @@ public sealed class FlStudioReader : IProjectReader
                     if (name.Length > 0 || vpath.Length > 0)
                     {
                         var isInst = !inMixer && channel is not null && channelTypes.GetValueOrDefault(channel.Value) == ChannelTypeInstrument;
+                        var vendor = WrapperText(f, VstVendor);
+                        if (vendor.Length == 0 && IsAu(f)) vendor = AuVendors.Name(AuManufacturer(f));
                         info.Plugins.Add(new PluginRef(
                             name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath),
-                            WrapperText(f, VstVendor),
-                            isInst ? PluginKind.Instrument : PluginKind.Effect,
-                            TextScan.PluginFormatFromPath(vpath) is { Length: > 0 } fmt ? fmt : "VST",
+                            vendor,
+                            WrapperRole(f) ?? (isInst ? PluginKind.Instrument : PluginKind.Effect),
+                            WrapperFormat(f),
                             vpath));
                     }
                     pendingInternal = "";
@@ -248,7 +291,16 @@ public sealed class FlStudioReader : IProjectReader
     /// </summary>
     static PresetBlob WrapperPreset(Dictionary<int, byte[]> f, byte[] state, string name, string plugin)
     {
-        var isVst3 = (f.TryGetValue(VstKind, out var k) && k.Length > 0 && k[0] == KindVst3) ||
+        // Audio Unit: u32 0, u64 length, then the AU's own property list, which is what an .aupreset holds.
+        if (IsAu(f))
+        {
+            if (state.Length > 12 && BinaryPrimitives.ReadUInt64LittleEndian(state.AsSpan(4)) is var len &&
+                len <= (ulong)(state.Length - 12) && state.AsSpan(12).StartsWith("bplist"u8))
+                return new PresetBlob(name, plugin, ".aupreset", state.AsSpan(12, (int)len).ToArray());
+            return new PresetBlob(name, plugin, ".austate", state);
+        }
+
+        var isVst3 = WrapperKind(f) is KindVst3 or KindVst3Fx ||
                      WrapperText(f, VstPath).EndsWith(".vst3", StringComparison.OrdinalIgnoreCase);
         if (isVst3)
         {

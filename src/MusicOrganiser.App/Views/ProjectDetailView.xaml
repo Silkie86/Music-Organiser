@@ -41,6 +41,9 @@
                 <ui:Button Content="Export presets" Icon="{ui:SymbolIcon Options24}"
                            Command="{Binding ExportPresetsCommand}" Margin="0,0,6,6"
                            IsEnabled="{Binding CanExtractPresets}" />
+                <ui:Button Content="Check before sharing" Icon="{ui:SymbolIcon Share24}"
+                           Command="{Binding CheckSharingCommand}" Margin="0,0,6,6"
+                           ToolTip="See what will and won't load on a friend's computer" />
             </WrapPanel>
             <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Margin="0,4,0,0"
                        Visibility="{Binding Message, Converter={StaticResource NullToVisibility}}" />
@@ -125,6 +128,10 @@
                                         <TextBlock Text="not installed" Margin="8,0,0,0" FontSize="12" VerticalAlignment="Center"
                                                    Foreground="{StaticResource MissingBrush}"
                                                    Visibility="{Binding Installed, Converter={StaticResource InverseBoolToVisibility}}" />
+                                        <TextBlock Text="Mac only (Audio Unit)" Margin="8,0,0,0" FontSize="12" VerticalAlignment="Center"
+                                                   Foreground="{StaticResource MissingBrush}"
+                                                   ToolTip="Saved on a Mac with the AU version, which can't load on Windows. Share Check says what to do."
+                                                   Visibility="{Binding IsAu, Converter={StaticResource BoolToVisibility}}" />
                                         <TextBlock Text="{Binding Elektron, StringFormat='Elektron · {0}'}" Margin="8,0,0,0"
                                                    FontSize="12" VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
                                                    Visibility="{Binding Elektron, Converter={StaticResource NullToVisibility}}" />

@@ -17,6 +17,7 @@
         <DataTemplate DataType="{x:Type vm:ProjectsViewModel}"><views:ProjectsView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:PluginsViewModel}"><views:PluginsView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:SamplesViewModel}"><views:SamplesView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ShareCheckViewModel}"><views:ShareCheckView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:SettingsViewModel}"><views:SettingsView /></DataTemplate>
     </ui:FluentWindow.Resources>
 

@@ -14,6 +14,7 @@ public sealed partial class MainViewModel : ObservableObject
     public ProjectsViewModel Projects { get; }
     public PluginsViewModel Plugins { get; }
     public SamplesViewModel Samples { get; }
+    public ShareCheckViewModel ShareCheck { get; }
     public SettingsViewModel Settings { get; }
 
     public IReadOnlyList<NavItem> Nav { get; }
@@ -30,23 +31,32 @@ public sealed partial class MainViewModel : ObservableObject
         Projects = new ProjectsViewModel(db, this);
         Plugins = new PluginsViewModel(db, this);
         Samples = new SamplesViewModel(db, this);
+        ShareCheck = new ShareCheckViewModel(db);
         Settings = new SettingsViewModel(db, this);
         Nav =
         [
             new("Projects", "", Projects),
             new("Plugins", "", Plugins),
             new("Samples", "", Samples),
+            new("Share Check", "", ShareCheck),
             new("Settings", "", Settings),
         ];
         _selectedNav = Nav[0];
         Projects.Reload();
 
         // First run: send people to Settings to add their project folders.
-        if (_db.Roots().Count == 0) SelectedNav = Nav[3];
+        if (_db.Roots().Count == 0) SelectedNav = Nav.First(n => n.Page == Settings);
         else _ = ScanAsync(false);
     }
 
     public void ShowProjects() => SelectedNav = Nav[0];
+
+    /// <summary>Opens Share Check on a project, e.g. from the project's page.</summary>
+    public async Task CheckSharing(string path)
+    {
+        SelectedNav = Nav.First(n => n.Page == ShareCheck);
+        await ShareCheck.Open(path);
+    }
 
     public void RefreshAll()
     {

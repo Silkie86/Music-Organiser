@@ -7,44 +7,133 @@
              xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:PluginsViewModel}">
-    <DockPanel>
-        <TextBlock DockPanel.Dock="Top" Text="Plugins" FontSize="24" FontWeight="SemiBold" />
-        <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Margin="0,2,0,12"
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-            <CheckBox DockPanel.Dock="Right" Content="Not installed only" IsChecked="{Binding OnlyMissing}" Margin="12,0,0,0" />
-            <ui:TextBox PlaceholderText="Search plugins or vendors…" Icon="{ui:SymbolIcon Search24}"
-                        Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <DockPanel>
+            <TextBlock DockPanel.Dock="Top" Text="Plugins" FontSize="24" FontWeight="SemiBold" />
+            <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Margin="0,2,0,12"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                <ComboBox DockPanel.Dock="Right" Width="260" Margin="12,0,0,0"
+                          ItemsSource="{Binding Source={x:Static vm:PluginsViewModel.ShowChoices}}"
+                          SelectedItem="{Binding Show}" />
+                <ui:TextBox PlaceholderText="Search plugins or vendors…" Icon="{ui:SymbolIcon Search24}"
+                            Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+            </DockPanel>
+            <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="{Binding Hint}" />
+
+            <Grid>
+                <DataGrid x:Name="UsedGrid" ItemsSource="{Binding View}" SelectedItem="{Binding Selected}"
+                          AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended"
+                          HeadersVisibility="Column" GridLinesVisibility="None" SelectionChanged="OnSelectionChanged"
+                          Visibility="{Binding ShowingUnused, Converter={StaticResource InverseBoolToVisibility}}">
+                    <DataGrid.InputBindings>
+                        <MouseBinding Gesture="LeftDoubleClick" Command="{Binding ShowProjectsCommand}" />
+                    </DataGrid.InputBindings>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Plugin" Width="2*" Binding="{Binding Name}" />
+                        <DataGridTextColumn Header="Vendor" Width="*" Binding="{Binding Vendor}" />
+                        <DataGridTextColumn Header="Format" Width="80" Binding="{Binding Format}" />
+                        <DataGridTextColumn Header="Projects" Width="80" Binding="{Binding Projects}" />
+                        <DataGridTextColumn Header="Used in" Width="*" Binding="{Binding Daws}" />
+                        <DataGridTemplateColumn Header="Installed" Width="140" SortMemberPath="Installed">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Yes" VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
+                                                   Visibility="{Binding Installed, Converter={StaticResource BoolToVisibility}}" />
+                                        <ui:Button Content="Search online" Padding="8,2"
+                                                   Visibility="{Binding Installed, Converter={StaticResource InverseBoolToVisibility}}"
+                                                   Command="{Binding DataContext.SearchOnlineCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                   CommandParameter="{Binding}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+
+                <DataGrid x:Name="UnusedGrid" ItemsSource="{Binding UnusedView}" AutoGenerateColumns="False" IsReadOnly="True"
+                          SelectionMode="Extended" HeadersVisibility="Column" GridLinesVisibility="None"
+                          SelectionChanged="OnSelectionChanged"
+                          Visibility="{Binding ShowingUnused, Converter={StaticResource BoolToVisibility}}">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Plugin" Width="1.5*" Binding="{Binding Name}" />
+                        <DataGridTextColumn Header="Format" Width="90" Binding="{Binding FormatsText}" />
+                        <DataGridTextColumn Header="Projects" Width="1.2*" Binding="{Binding UsageText}" />
+                        <DataGridTextColumn Header="Where" Width="2*" Binding="{Binding Location}" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
         </DockPanel>
-        <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Text="Double-click a plugin to see the projects that use it. 'Installed' compares against the plugin folders in Settings." />
-        <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
-                  IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="None">
-            <DataGrid.InputBindings>
-                <MouseBinding Gesture="LeftDoubleClick" Command="{Binding ShowProjectsCommand}" />
-            </DataGrid.InputBindings>
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="Plugin" Width="2*" Binding="{Binding Name}" />
-                <DataGridTextColumn Header="Vendor" Width="*" Binding="{Binding Vendor}" />
-                <DataGridTextColumn Header="Format" Width="80" Binding="{Binding Format}" />
-                <DataGridTextColumn Header="Projects" Width="80" Binding="{Binding Projects}" />
-                <DataGridTextColumn Header="Used in" Width="*" Binding="{Binding Daws}" />
-                <DataGridTemplateColumn Header="Installed" Width="140" SortMemberPath="Installed">
-                    <DataGridTemplateColumn.CellTemplate>
+
+        <!-- What breaks if these go -->
+        <ui:Card Grid.Column="1" Width="400" Margin="12,0,0,0" Padding="14" VerticalAlignment="Stretch"
+                 VerticalContentAlignment="Stretch"
+                 Visibility="{Binding HasImpact, Converter={StaticResource BoolToVisibility}}">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="If you uninstall" FontSize="12"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <TextBlock DockPanel.Dock="Top" Text="{Binding Impact.Headline}" FontSize="15" FontWeight="SemiBold"
+                           TextWrapping="Wrap" Margin="0,2,0,6" />
+                <TextBlock DockPanel.Dock="Top" Text="{Binding Impact.Detail}" FontSize="12" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,10" />
+
+                <TextBlock DockPanel.Dock="Top" Text="Installed copies" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Impact.Copies}" Margin="0,0,0,10">
+                    <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="Yes" VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
-                                           Visibility="{Binding Installed, Converter={StaticResource BoolToVisibility}}" />
-                                <ui:Button Content="Search online" Padding="8,2"
-                                           Visibility="{Binding Installed, Converter={StaticResource InverseBoolToVisibility}}"
-                                           Command="{Binding DataContext.SearchOnlineCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                            <DockPanel Margin="0,2">
+                                <ui:Button DockPanel.Dock="Right" Content="Show" Padding="8,2" Margin="6,0,0,0"
+                                           Command="{Binding DataContext.RevealCopyCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                            CommandParameter="{Binding}" />
+                                <StackPanel>
+                                    <TextBlock FontSize="12">
+                                        <Run Text="{Binding File.Format, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text="·" />
+                                        <Run Text="{Binding UsageText, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding File.Path}" FontSize="11" TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding File.Path}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </DockPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <ui:Button DockPanel.Dock="Bottom" Content="Show these projects in the library" Margin="0,10,0,0"
+                           HorizontalAlignment="Stretch" Command="{Binding ShowImpactProjectsCommand}"
+                           Visibility="{Binding Impact.Projects.Count, Converter={StaticResource NonZeroToVisibility}}" />
+                <ListBox ItemsSource="{Binding Impact.Projects}" Background="Transparent" BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="0,2">
+                                <StackPanel.InputBindings>
+                                    <MouseBinding Gesture="LeftDoubleClick"
+                                                  Command="{Binding DataContext.OpenImpactProjectCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                  CommandParameter="{Binding}" />
+                                </StackPanel.InputBindings>
+                                <TextBlock Text="{Binding Project.Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis">
+                                    <Run Text="{Binding Project.Status, Mode=OneWay}" />
+                                    <Run Text="·" />
+                                    <Run Text="{Binding Project.Daw, Mode=OneWay}" />
+                                    <Run Text="·" />
+                                    <Run Text="{Binding FormatsText, Mode=OneWay}" />
+                                    <Run Text="·" />
+                                    <Run Text="{Binding Project.Modified, Mode=OneWay, StringFormat='d MMM yyyy'}" />
+                                </TextBlock>
                             </StackPanel>
                         </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-            </DataGrid.Columns>
-        </DataGrid>
-    </DockPanel>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </ui:Card>
+    </Grid>
 </UserControl>

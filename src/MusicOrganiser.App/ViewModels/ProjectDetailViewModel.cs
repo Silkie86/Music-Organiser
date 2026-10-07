@@ -116,6 +116,9 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     }
 
     [RelayCommand]
+    Task CheckSharing() => _main.CheckSharing(Item.Path);
+
+    [RelayCommand]
     void ShowProjectsUsingPlugin(PluginRow? row)
     {
         if (row is null) return;
@@ -143,6 +146,8 @@ public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p) : Observabl
         _ => "",
     };
     public bool Installed => p.Installed;
+    /// <summary>Audio Units only load on a Mac, so these come from a project saved on one.</summary>
+    public bool IsAu => p.Format == "AU";
     public string? Elektron => PluginCatalog.ElektronDevice(p.Name);
 
     public ObservableCollection<MatchRow> Matches { get; } = new();

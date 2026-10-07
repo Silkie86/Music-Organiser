@@ -1,0 +1,195 @@
+<UserControl x:Class="MusicOrganiser.App.Views.ShareCheckView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+             xmlns:conv="clr-namespace:MusicOrganiser.App.Converters"
+             mc:Ignorable="d" AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver"
+             d:DataContext="{d:DesignInstance Type=vm:ShareCheckViewModel}">
+    <UserControl.Resources>
+        <conv:ShareStatusToBrush x:Key="StatusBrush" />
+        <conv:FriendText x:Key="FriendText" />
+    </UserControl.Resources>
+
+    <Grid Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Share Check" FontSize="24" FontWeight="SemiBold" />
+            <TextBlock Margin="0,2,0,12" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       Text="Check a project before you send it, or a zip you've been sent: what won't open on this PC, what won't open for your friend, and what to do about it." />
+        </StackPanel>
+
+        <!-- Who you share with -->
+        <ui:Card Grid.Row="1" Padding="12" Margin="0,0,0,10">
+            <StackPanel>
+                <DockPanel Visibility="{Binding HasPeople, Converter={StaticResource BoolToVisibility}}" Margin="0,0,0,8">
+                    <TextBlock Text="Sharing with" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <ComboBox ItemsSource="{Binding People}" SelectedItem="{Binding SelectedPerson}" DisplayMemberPath="Name"
+                              MinWidth="160" Margin="0,0,10,0" />
+                    <ui:Button DockPanel.Dock="Right" Content="Forget" Padding="8,2" Command="{Binding RemovePersonCommand}"
+                               ToolTip="Remove this friend's plugin list" />
+                    <TextBlock Text="{Binding PersonSummary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                </DockPanel>
+                <WrapPanel>
+                    <ui:TextBox PlaceholderText="Friend's name" Width="170" Margin="0,0,6,6"
+                                Text="{Binding NewPersonName, UpdateSourceTrigger=PropertyChanged}"
+                                ToolTip="Type a name to add a new friend; leave empty to update the selected one" />
+                    <ui:Button Content="Load their plugin list…" Icon="{ui:SymbolIcon PersonAdd24}"
+                               Command="{Binding LoadListFromFileCommand}" Margin="0,0,6,6" />
+                    <ui:Button Content="Paste their list" Icon="{ui:SymbolIcon ClipboardPaste24}"
+                               Command="{Binding PasteListCommand}" Margin="0,0,6,6"
+                               ToolTip="Use a plugin list they sent you as text (copy it first)" />
+                    <ui:Button Content="How do they get their list?" Appearance="Transparent"
+                               Command="{Binding ToggleHowToCommand}" Margin="0,0,6,6" />
+                    <ui:Button Content="Save my plugin list…" Icon="{ui:SymbolIcon Save24}"
+                               Command="{Binding ExportMyListCommand}" Margin="0,0,6,6"
+                               ToolTip="A text file of the plugins on this PC, to send to your friend" />
+                </WrapPanel>
+
+                <StackPanel Visibility="{Binding ShowHowTo, Converter={StaticResource BoolToVisibility}}" Margin="0,6,0,0">
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,6"
+                               Text="On a Mac: your friend opens Terminal (in Applications › Utilities), pastes this line and presses Return. A file called my-plugins.txt appears on their Desktop, listing every AU, VST, VST3 and CLAP plugin they have. They send you that file (or paste its text into your chat)." />
+                    <DockPanel Margin="0,0,0,8">
+                        <ui:Button DockPanel.Dock="Right" Content="Copy" Margin="6,0,0,0" Command="{Binding CopyMacCommandCommand}" />
+                        <TextBox Text="{Binding MacCommand, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+                                 TextWrapping="Wrap" />
+                    </DockPanel>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Text="On Windows: the same in PowerShell. Or, if they have Music Organiser too, Save my plugin list." />
+                    <DockPanel>
+                        <ui:Button DockPanel.Dock="Right" Content="Copy" Margin="6,0,0,0" Command="{Binding CopyWindowsCommandCommand}" />
+                        <TextBox Text="{Binding WindowsCommand, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" FontSize="12"
+                                 TextWrapping="Wrap" />
+                    </DockPanel>
+                </StackPanel>
+            </StackPanel>
+        </ui:Card>
+
+        <!-- Pick what to check -->
+        <StackPanel Grid.Row="2" Margin="0,0,0,8">
+            <WrapPanel>
+                <ui:Button Content="Check a project or zip…" Appearance="Primary" Icon="{ui:SymbolIcon DocumentSearch24}"
+                           Command="{Binding BrowseCommand}" Margin="0,0,6,6" />
+                <ui:Button Content="Check again" Icon="{ui:SymbolIcon ArrowSync24}" Command="{Binding RecheckCommand}"
+                           Margin="0,0,6,6" Visibility="{Binding HasReport, Converter={StaticResource BoolToVisibility}}" />
+                <ui:Button Content="Show in folder" Icon="{ui:SymbolIcon FolderOpen24}" Command="{Binding RevealCommand}"
+                           Margin="0,0,6,6" Visibility="{Binding HasReport, Converter={StaticResource BoolToVisibility}}" />
+                <TextBlock Text="…or drop a project or zip anywhere here." VerticalAlignment="Center" Margin="6,0,0,6"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            </WrapPanel>
+            <TextBlock Text="Checking…" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+            <TextBlock Text="{Binding Error}" TextWrapping="Wrap" Foreground="{StaticResource MissingBrush}"
+                       Visibility="{Binding Error, Converter={StaticResource NullToVisibility}}" />
+            <TextBlock Text="{Binding Message}" TextWrapping="Wrap"
+                       Visibility="{Binding Message, Converter={StaticResource NullToVisibility}}" />
+        </StackPanel>
+
+        <!-- The verdict and what to do -->
+        <Border Grid.Row="3" Padding="14,10" Margin="0,0,0,8" CornerRadius="6" BorderThickness="4,0,0,0"
+                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                BorderBrush="{Binding Report.Readiness, Converter={StaticResource StatusBrush}}"
+                Visibility="{Binding HasReport, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel>
+                <TextBlock Text="{Binding Report.ProjectName}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding Report.Headline}" FontSize="15" Margin="0,2,0,2" TextWrapping="Wrap"
+                           Foreground="{Binding Report.Readiness, Converter={StaticResource StatusBrush}}" />
+                <TextBlock Text="{Binding Facts}" FontSize="12" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <ItemsControl ItemsSource="{Binding Report.Actions}" Margin="0,8,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <BulletDecorator Margin="0,2">
+                                <BulletDecorator.Bullet>
+                                    <TextBlock Text="•" Margin="0,0,8,0" />
+                                </BulletDecorator.Bullet>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                            </BulletDecorator>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <WrapPanel Margin="0,10,0,0">
+                    <ui:Button Content="Copy a message for your friend" Icon="{ui:SymbolIcon Chat24}"
+                               Command="{Binding CopyMessageCommand}" IsEnabled="{Binding HasMessage}" Margin="0,0,6,0"
+                               ToolTip="{Binding MessageText}" />
+                    <ui:Button Content="Save share readme…" Icon="{ui:SymbolIcon DocumentText24}"
+                               Command="{Binding SaveReadmeCommand}" Margin="0,0,6,0"
+                               ToolTip="A text file listing what this project needs, to send with it" />
+                    <ui:Button Content="Add readme to a zip…" Icon="{ui:SymbolIcon FolderZip24}"
+                               Command="{Binding AddReadmeToZipCommand}" Margin="0,0,6,0"
+                               ToolTip="Put SHARE-README.txt inside the zip you're sending (e.g. FL's zipped loop package)" />
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Every plugin, then missing samples -->
+        <DockPanel Grid.Row="4" Visibility="{Binding HasReport, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                <TextBlock Text="{Binding NativeText}" TextWrapping="Wrap" FontSize="12"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Visibility="{Binding NativeText, Converter={StaticResource NullToVisibility}}" />
+                <StackPanel Visibility="{Binding HasMissingSamples, Converter={StaticResource BoolToVisibility}}" Margin="0,8,0,0">
+                    <TextBlock Text="Missing samples" FontWeight="SemiBold" Margin="0,0,0,4" />
+                    <ItemsControl ItemsSource="{Binding MissingSamples}" MaxHeight="140">
+                        <ItemsControl.Template>
+                            <ControlTemplate TargetType="ItemsControl">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsPresenter /></ScrollViewer>
+                            </ControlTemplate>
+                        </ItemsControl.Template>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Path}" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}"
+                                           Foreground="{StaticResource MissingBrush}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </StackPanel>
+
+            <DataGrid ItemsSource="{Binding Plugins}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
+                      HeadersVisibility="Column" GridLinesVisibility="None">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Plugin" Width="1.4*" Binding="{Binding Name}" />
+                    <DataGridTextColumn Header="Vendor" Width="*" Binding="{Binding Vendor}" />
+                    <DataGridTextColumn Header="Format" Width="70" Binding="{Binding Format}" />
+                    <DataGridTextColumn Header="Type" Width="90" Binding="{Binding Kind}" />
+                    <DataGridTemplateColumn Header="On this PC" Width="2*" SortMemberPath="Here">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding HereText}" TextWrapping="Wrap" VerticalAlignment="Center"
+                                           Foreground="{Binding Here, Converter={StaticResource StatusBrush}}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Their computer" Width="1.6*" SortMemberPath="Friend">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding FriendText, Converter={StaticResource FriendText}}" TextWrapping="Wrap"
+                                           VerticalAlignment="Center"
+                                           Foreground="{Binding Friend, Converter={StaticResource StatusBrush}}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Width="120">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <ui:Button Content="Search online" Padding="8,2"
+                                           Command="{Binding DataContext.SearchOnlineCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           CommandParameter="{Binding}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
+    </Grid>
+</UserControl>
