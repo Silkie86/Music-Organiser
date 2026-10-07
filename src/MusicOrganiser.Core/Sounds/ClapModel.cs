@@ -12,14 +12,14 @@ namespace MusicOrganiser.Core.Sounds;
 /// search by description ("dusty vinyl snare"), zero-shot sound types, and
 /// sound-alike search that hears timbre the way people describe it.
 ///
-/// The model is an optional download (Hugging Face "Xenova/larger_clap_music",
-/// ONNX export of laion/larger_clap_music). Expected folder layout:
+/// The model is an optional download (Hugging Face "Xenova/larger_clap_music_and_speech",
+/// an ONNX export of LAION's larger_clap_music_and_speech; about 205 MB quantised). Expected folder layout:
 /// <c>audio_model.onnx</c>, <c>text_model.onnx</c>, <c>tokenizer.json</c> and
 /// optionally <c>preprocessor_config.json</c>.
 /// </summary>
 public sealed class ClapModel : IDisposable
 {
-    public const string HuggingFaceRepo = "Xenova/larger_clap_music";
+    public const string HuggingFaceRepo = "Xenova/larger_clap_music_and_speech";
 
     /// <summary>Files to fetch: (path in the repo, local name).</summary>
     public static readonly (string Remote, string Local)[] Files =
@@ -32,6 +32,42 @@ public sealed class ClapModel : IDisposable
 
     public static string DefaultFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicOrganiser", "models", "clap");
+
+    /// <summary>
+    /// Downloads the model files from Hugging Face into <paramref name="folder"/>. Each file
+    /// goes to a .part file first, so an interrupted download never looks installed.
+    /// </summary>
+    public static async Task DownloadAsync(IProgress<(string File, long Done, long? Total)>? progress = null,
+                                           string? folder = null, CancellationToken ct = default)
+    {
+        folder ??= DefaultFolder;
+        Directory.CreateDirectory(folder);
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+        foreach (var (remote, local) in Files)
+        {
+            var target = Path.Combine(folder, local);
+            if (File.Exists(target)) continue;
+            var url = $"https://huggingface.co/{HuggingFaceRepo}/resolve/main/{remote}";
+            using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+            resp.EnsureSuccessStatusCode();
+            var total = resp.Content.Headers.ContentLength;
+            var part = target + ".part";
+            await using (var src = await resp.Content.ReadAsStreamAsync(ct))
+            await using (var dst = File.Create(part))
+            {
+                var buf = new byte[1 << 16];
+                long done = 0;
+                int n;
+                while ((n = await src.ReadAsync(buf, ct)) > 0)
+                {
+                    await dst.WriteAsync(buf.AsMemory(0, n), ct);
+                    done += n;
+                    progress?.Report((local, done, total));
+                }
+            }
+            File.Move(part, target, overwrite: true);
+        }
+    }
 
     public static bool IsInstalled(string? folder = null)
     {

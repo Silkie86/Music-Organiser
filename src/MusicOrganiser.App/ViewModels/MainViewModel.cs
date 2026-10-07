@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Sounds;
 
 namespace MusicOrganiser.App.ViewModels;
 
@@ -14,6 +15,7 @@ public sealed partial class MainViewModel : ObservableObject
     public ProjectsViewModel Projects { get; }
     public PluginsViewModel Plugins { get; }
     public SamplesViewModel Samples { get; }
+    public SoundsViewModel Sounds { get; }
     public SettingsViewModel Settings { get; }
 
     public IReadOnlyList<NavItem> Nav { get; }
@@ -23,7 +25,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] string _scanStatus = "";
     [ObservableProperty] double _scanPercent;
 
-    public MainViewModel(LibraryDb db)
+    public MainViewModel(LibraryDb db, SoundOrganiser sounds)
     {
         _db = db;
         _scanner = new Scanner(db);
@@ -31,8 +33,10 @@ public sealed partial class MainViewModel : ObservableObject
         Plugins = new PluginsViewModel(db, this);
         Samples = new SamplesViewModel(db, this);
         Settings = new SettingsViewModel(db, this);
+        Sounds = new SoundsViewModel(db, sounds, this);
         Nav =
         [
+            new("Sound Lab", "\uE8D6", Sounds),
             new("Projects", "", Projects),
             new("Plugins", "", Plugins),
             new("Samples", "", Samples),
@@ -42,17 +46,18 @@ public sealed partial class MainViewModel : ObservableObject
         Projects.Reload();
 
         // First run: send people to Settings to add their project folders.
-        if (_db.Roots().Count == 0) SelectedNav = Nav[3];
+        if (_db.Roots().Count == 0 && _db.GetList(Scanner.SampleFoldersKey).Count == 0) SelectedNav = Nav[^1];
         else _ = ScanAsync(false);
     }
 
-    public void ShowProjects() => SelectedNav = Nav[0];
+    public void ShowProjects() => SelectedNav = Nav.First(n => n.Page == Projects);
 
     public void RefreshAll()
     {
         Projects.Reload();
         Plugins.Reload();
         Samples.Reload();
+        Sounds.Reload();
     }
 
     [RelayCommand]
