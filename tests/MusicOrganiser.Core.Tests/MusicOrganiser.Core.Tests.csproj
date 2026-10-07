@@ -26,4 +26,8 @@
     <ProjectReference Include="..\..\src\MusicOrganiser.Core\MusicOrganiser.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Data\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
