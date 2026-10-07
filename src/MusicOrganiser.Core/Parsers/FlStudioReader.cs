@@ -30,8 +30,10 @@ public sealed class FlStudioReader : IProjectReader
     const int EvPatternNotes = Data + 16;       // 224: 24-byte note records
     const int EvInsertFlags = Data + 28;        // 236: starts each mixer insert
 
-    // Fruity Wrapper (VST host) state: u32 kind (8 or 10), then records of (u32 id, u64 size, data).
+    // Fruity Wrapper (VST host) state: u32 version (8, 10, 12 in FL 25), then records of (u32 id, u64 size, data).
+    const int VstKind = 50, VstFourCc = 51, VstClassId = 52;
     const int VstState = 53, VstName = 54, VstPath = 55, VstVendor = 56;
+    const byte KindVst3 = 8;
 
     const int ChannelTypeInstrument = 2;
 
@@ -121,8 +123,8 @@ public sealed class FlStudioReader : IProjectReader
     {
         var fields = new Dictionary<int, byte[]>();
         if (blob.Length < 4) return fields;
-        var kind = BinaryPrimitives.ReadUInt32LittleEndian(blob);
-        if (kind != 8 && kind != 10) return fields;
+        var version = BinaryPrimitives.ReadUInt32LittleEndian(blob);
+        if (version is 0 or > 64) return fields;
         var pos = 4;
         while (pos + 12 <= blob.Length)
         {
@@ -170,7 +172,7 @@ public sealed class FlStudioReader : IProjectReader
                 case EvChannelType when channel is not null: channelTypes[channel.Value] = (int)e.Int; break;
                 case EvPatternNew: patterns++; break;
                 case EvMixerSlot or EvInsertFlags: inMixer = true; break;
-                case EvSamplePath: info.Samples.Add(flp.Str(e)); break;
+                case EvSamplePath: info.Samples.Add(ResolveSamplePath(flp.Str(e), path)); break;
                 case EvPatternNotes: notes += e.Payload.Length / 24; break;
                 case EvPluginName or EvChannelNameOld when channel is not null && !inMixer:
                     channelNames.TryAdd(channel.Value, flp.Str(e));
@@ -214,6 +216,80 @@ public sealed class FlStudioReader : IProjectReader
         info.Details["Patterns"] = patterns.ToString();
         info.Details["Notes"] = notes.ToString();
         return info.Dedupe();
+    }
+
+    /// <summary>
+    /// FL writes paths under its user data folder as %FLStudioUserData%\..., which is the
+    /// folder that holds the Projects folder. Resolve it from where this project lives
+    /// (e.g. I:\FL Studio Data\FL Studio\Projects\Song.flp → I:\FL Studio Data\FL Studio).
+    /// </summary>
+    internal static string ResolveSamplePath(string sample, string projectPath)
+    {
+        const string UserData = "%FLStudioUserData%";
+        if (!sample.StartsWith(UserData, StringComparison.OrdinalIgnoreCase)) return sample;
+        var rest = sample[UserData.Length..].TrimStart('\\', '/');
+        var firstDir = rest.Split('\\', '/')[0];
+        for (var dir = Path.GetDirectoryName(Path.GetFullPath(projectPath)); !string.IsNullOrEmpty(dir); dir = Path.GetDirectoryName(dir))
+        {
+            if (rest.Contains('\\') || rest.Contains('/'))
+            {
+                if (Directory.Exists(Path.Combine(dir, firstDir)))
+                    return Path.Combine(dir, rest.Replace('\\', Path.DirectorySeparatorChar));
+            }
+            else if (File.Exists(Path.Combine(dir, rest)))
+                return Path.Combine(dir, rest);
+        }
+        return sample;
+    }
+
+    /// <summary>
+    /// A Fruity Wrapper plugin state as a file the plugin can load: .fxp for VST2
+    /// (with the plugin's own id), .vstpreset for VST3, raw bytes if the layout is unfamiliar.
+    /// </summary>
+    static PresetBlob WrapperPreset(Dictionary<int, byte[]> f, byte[] state, string name, string plugin)
+    {
+        var isVst3 = (f.TryGetValue(VstKind, out var k) && k.Length > 0 && k[0] == KindVst3) ||
+                     WrapperText(f, VstPath).EndsWith(".vst3", StringComparison.OrdinalIgnoreCase);
+        if (isVst3)
+        {
+            if (f.TryGetValue(VstClassId, out var cid) && cid.Length == 16 && Vst3State(state) is var (comp, cont))
+                return new PresetBlob(name, plugin, ".vstpreset", VstPreset.Build(cid, comp, cont));
+            return new PresetBlob(name, plugin, ".vst3state", state);
+        }
+
+        // VST2: FL puts a 21-byte header in front of the plugin's chunk:
+        // i32 -9, u8 flags, i32 -2, u32 chunk length, 8 zero bytes.
+        var chunk = state;
+        if (state.Length >= 21 && BinaryPrimitives.ReadInt32LittleEndian(state) == -9)
+        {
+            var len = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9));
+            if (21 + (long)len <= state.Length) chunk = state.AsSpan(21, (int)len).ToArray();
+        }
+        var id = f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4
+            ? BinaryPrimitives.ReadInt32LittleEndian(cc)
+            : 0;
+        return new PresetBlob(name, plugin, ".fxp", Fxp.WrapChunk(chunk, plugin, id));
+    }
+
+    /// <summary>
+    /// FL's VST3 state: u32 version, then records of (u32 id, u64 size, data):
+    /// 3 is the component (processor) state and 2 the controller state.
+    /// </summary>
+    static (byte[] Component, byte[] Controller)? Vst3State(byte[] state)
+    {
+        byte[]? comp = null, cont = null;
+        var pos = 4;
+        while (pos + 12 <= state.Length)
+        {
+            var id = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(pos));
+            var size = BinaryPrimitives.ReadUInt64LittleEndian(state.AsSpan(pos + 4));
+            pos += 12;
+            if (size > (ulong)(state.Length - pos)) return null;
+            if (id == 3) comp = state.AsSpan(pos, (int)size).ToArray();
+            else if (id == 2) cont = state.AsSpan(pos, (int)size).ToArray();
+            pos += (int)size;
+        }
+        return comp is null ? null : (comp, cont ?? []);
     }
 
     /// <summary>One clip per pattern, one track per channel with notes in it.</summary>
@@ -288,9 +364,9 @@ public sealed class FlStudioReader : IProjectReader
                     {
                         var f = WrapperFields(e.Payload.Span);
                         var plugin = WrapperText(f, VstName);
+                        var name = currentName.Length > 0 ? currentName : plugin;
                         if (f.TryGetValue(VstState, out var state) && state.Length > 0)
-                            presets.Add(new PresetBlob(currentName.Length > 0 ? currentName : plugin, plugin, ".fxp",
-                                                       Fxp.WrapChunk(state, plugin)));
+                            presets.Add(WrapperPreset(f, state, name, plugin));
                     }
                     else if (pendingInternal.Length > 0)
                     {
@@ -309,11 +385,10 @@ public sealed class FlStudioReader : IProjectReader
 public static class Fxp
 {
     /// <summary>
-    /// Wraps a VST chunk in an 'FPCh' (opaque chunk) .fxp header. The plugin's
-    /// four-character id isn't stored where we can read it reliably, so it is
-    /// left as zero; most plugins load it from their own preset menu regardless.
+    /// Wraps a VST chunk in an 'FPCh' (opaque chunk) .fxp header. Pass the plugin's
+    /// four-character id when known so hosts can match the preset to the plugin.
     /// </summary>
-    public static byte[] WrapChunk(byte[] chunk, string programName)
+    public static byte[] WrapChunk(byte[] chunk, string programName, int pluginId = 0)
     {
         using var ms = new MemoryStream();
         void I32(int v) { Span<byte> b = stackalloc byte[4]; BinaryPrimitives.WriteInt32BigEndian(b, v); ms.Write(b); }
@@ -324,12 +399,63 @@ public static class Fxp
         I32(bodyLen);
         ms.Write("FPCh"u8);
         I32(1);      // format version
-        I32(0);      // plugin id (unknown)
+        I32(pluginId);
         I32(1);      // plugin version
         I32(1);      // number of programs
         ms.Write(name);
         I32(chunk.Length);
         ms.Write(chunk);
+        return ms.ToArray();
+    }
+}
+
+/// <summary>Builds VST3 .vstpreset files from a plugin's saved state.</summary>
+public static class VstPreset
+{
+    /// <summary>
+    /// The class id as a .vstpreset writes it: 32 hex digits in Windows GUID order,
+    /// i.e. the first three groups byte-swapped from their in-memory form.
+    /// </summary>
+    public static string ClassIdString(ReadOnlySpan<byte> tuid)
+    {
+        Span<byte> b = stackalloc byte[16];
+        tuid.CopyTo(b);
+        b[..4].Reverse();
+        b[4..6].Reverse();
+        b[6..8].Reverse();
+        return Convert.ToHexString(b);
+    }
+
+    /// <summary>
+    /// "VST3", version 1, class id, offset of the chunk list; then the component
+    /// state ("Comp") and controller state ("Cont"); then the chunk list.
+    /// </summary>
+    public static byte[] Build(ReadOnlySpan<byte> classId, byte[] component, byte[] controller)
+    {
+        using var ms = new MemoryStream();
+        var b = new byte[8];
+        void I32(int v) { BinaryPrimitives.WriteInt32LittleEndian(b, v); ms.Write(b, 0, 4); }
+        void I64(long v) { BinaryPrimitives.WriteInt64LittleEndian(b, v); ms.Write(b, 0, 8); }
+
+        const int HeaderSize = 4 + 4 + 32 + 8;
+        var chunks = new List<(string Id, long Offset, long Size)> { ("Comp", HeaderSize, component.Length) };
+        if (controller.Length > 0) chunks.Add(("Cont", HeaderSize + component.Length, controller.Length));
+        var listOffset = HeaderSize + component.Length + controller.Length;
+
+        ms.Write("VST3"u8);
+        I32(1);
+        ms.Write(Encoding.ASCII.GetBytes(ClassIdString(classId)));
+        I64(listOffset);
+        ms.Write(component);
+        ms.Write(controller);
+        ms.Write("List"u8);
+        I32(chunks.Count);
+        foreach (var (id, offset, size) in chunks)
+        {
+            ms.Write(Encoding.ASCII.GetBytes(id));
+            I64(offset);
+            I64(size);
+        }
         return ms.ToArray();
     }
 }

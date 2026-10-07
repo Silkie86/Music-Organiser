@@ -43,11 +43,11 @@ WAV and AIFF are decoded by the app; MP3, FLAC, M4A and OGG go through Windows M
 
 | DAW | Plugins | Samples | MIDI export | Preset export |
 |---|---|---|---|---|
-| FL Studio (.flp) | Yes, with vendor and instrument/effect | Yes | Yes, per pattern | VST states as .fxp, FL plugin states raw |
+| FL Studio (.flp) | Yes, with vendor and instrument/effect | Yes | Yes, per pattern | VST2 as .fxp, VST3 as .vstpreset, FL plugin states raw |
 | Studio One / Fender Studio Pro (.song) | Yes | Yes | Experimental | Yes, the stored .vstpreset/.fxp files |
-| Bitwig (.bwproject) | Best effort* | Best effort* | No | No |
+| Bitwig (.bwproject) | Yes, with vendor and format* | Yes | Yes, per clip* | Yes, the stored .vstpreset/.fxb files |
 
-\* Bitwig's project format is closed. The app finds plugins and samples by scanning readable text inside the file and recognising names of plugins installed on your PC, plus audio in the project's `samples` and `recordings` folders. Export MIDI from Bitwig itself.
+\* Bitwig's format isn't documented. The app decodes it with its own reader (`BitwigFormat.cs`), mapped from projects saved by Bitwig 5.1 to 6.1, and checks that each file decodes exactly to the end. If a project can't be decoded (for example a future Bitwig version), it falls back to scanning readable text for plugin and sample names, and says so on the project.
 
 ## Running it
 
