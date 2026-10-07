@@ -51,7 +51,7 @@ WAV and AIFF are decoded by the app; MP3, FLAC, M4A and OGG go through Windows M
 
 ## Running it
 
-You need **Visual Studio 2022** (the free Community edition) with the **.NET desktop development** workload.
+You need **Visual Studio 2026** (the free Community edition) with the **.NET desktop development** workload.
 
 1. Open `MusicOrganiser.sln`.
 2. Make sure `MusicOrganiser.App` is the startup project (right-click → *Set as Startup Project*).
