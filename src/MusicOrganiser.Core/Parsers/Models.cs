@@ -49,6 +49,8 @@ public sealed class ProjectInfo
     public List<PluginRef> Plugins { get; } = new();
     public List<string> Samples { get; } = new();
     public List<string> Tracks { get; } = new();
+    /// <summary>External instruments the project talks to (e.g. Bitwig's HW Instrument devices).</summary>
+    public List<string> Hardware { get; } = new();
     public Dictionary<string, string> Details { get; } = new();
     public List<string> Warnings { get; } = new();
     public bool CanExtractMidi { get; set; }

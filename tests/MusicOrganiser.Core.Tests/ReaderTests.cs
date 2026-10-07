@@ -27,7 +27,7 @@ public class FlStudioTests
         var plugins = new FlStudioReader().Read(_path).Plugins.ToDictionary(p => p.Name);
         Assert.Equal(PluginKind.Instrument, plugins["Serum"].Kind);
         Assert.Equal("Xfer Records", plugins["Serum"].Vendor);
-        Assert.Equal("VST3", plugins["Serum"].Format);
+        Assert.Equal("VST2", plugins["Serum"].Format);
         Assert.Equal(PluginKind.Instrument, plugins["3x Osc"].Kind);
         Assert.Equal(PluginKind.Effect, plugins["Fruity Limiter"].Kind);
         Assert.Equal(PluginKind.Effect, plugins["Pro-Q 3"].Kind);
@@ -116,15 +116,126 @@ public class StudioOneTests
     }
 }
 
+public class FlStudio25Tests
+{
+    readonly string _path = Fixtures.FlStudio25Project(Fixtures.TempDir());
+
+    [Fact]
+    public void FindsVstPluginsInNewerWrapperStates()
+    {
+        var plugins = new FlStudioReader().Read(_path).Plugins.ToDictionary(p => p.Name);
+        Assert.Equal(("Xfer Records", "VST2", PluginKind.Instrument), (plugins["Serum"].Vendor, plugins["Serum"].Format, plugins["Serum"].Kind));
+        Assert.Equal(("Output", "VST3"), (plugins["Arcade"].Vendor, plugins["Arcade"].Format));
+    }
+
+    [Fact]
+    public void ResolvesTheUserDataFolderFromTheProjectsLocation()
+    {
+        var sample = Assert.Single(new FlStudioReader().Read(_path).Samples);
+        Assert.Equal(Path.Combine(Path.GetDirectoryName(_path)!, "Snare 01.wav"), sample);
+        Assert.True(File.Exists(sample));
+    }
+
+    [Fact]
+    public void ExportsVst2AsFxpWithThePluginId()
+    {
+        var serum = new FlStudioReader().ExtractPresets(_path).Single(p => p.Plugin == "Serum");
+        Assert.Equal(".fxp", serum.Extension);
+        Assert.Equal("XfsX", Encoding.ASCII.GetString(serum.Data, 16, 4));   // fxID, big-endian
+        Assert.Equal([1, 2, 3], serum.Data[^3..]);                             // FL's header removed
+        Assert.Equal(3, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(serum.Data.AsSpan(56)));
+    }
+
+    [Fact]
+    public void ExportsVst3AsVstPreset()
+    {
+        var arcade = new FlStudioReader().ExtractPresets(_path).Single(p => p.Plugin == "Arcade");
+        Assert.Equal(".vstpreset", arcade.Extension);
+        var d = arcade.Data;
+        Assert.Equal("VST3", Encoding.ASCII.GetString(d, 0, 4));
+        // The same class id Bitwig writes for Arcade.
+        Assert.Equal("56535441524344617263616465000000", Encoding.ASCII.GetString(d, 8, 32));
+        Assert.Equal([7, 7, 7], d[48..51]);
+        Assert.Equal([8], d[51..52]);
+        var list = (int)System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(d.AsSpan(40));
+        Assert.Equal("List", Encoding.ASCII.GetString(d, list, 4));
+        Assert.Equal(2, BitConverter.ToInt32(d, list + 4));
+        Assert.Equal("Comp", Encoding.ASCII.GetString(d, list + 8, 4));
+    }
+}
+
 public class BitwigTests
 {
     readonly string _path = Fixtures.BitwigProject(Fixtures.TempDir());
 
     [Fact]
-    public void FindsDevicesPluginsAndSamplesHeuristically()
+    public void DecodesTheWholeFile()
     {
-        var reader = new BitwigReader();
-        var info = reader.Read(_path);
+        var doc = BitwigFormat.Decode(File.ReadAllBytes(_path));
+        Assert.Null(doc.BodyError);
+        Assert.Equal("5.2.4", doc.MetaString("application_version_name"));
+        Assert.Contains(doc.Objects, o => o.Str(0x133b) == "Delay » Feedback");   // UTF-16 string
+    }
+
+    [Fact]
+    public void ReadsTempoVersionPluginsAndHardware()
+    {
+        var info = new BitwigReader().Read(_path);
+        Assert.Equal(Confidence.Partial, info.Confidence);
+        Assert.Empty(info.Warnings);
+        Assert.Equal("5.2.4", info.Version);
+        Assert.Equal(128.5, info.Tempo);
+        var plugins = info.Plugins.ToDictionary(p => p.Name);
+        Assert.Equal(("Spectrasonics", "VST3", PluginKind.Instrument), (plugins["Keyscape"].Vendor, plugins["Keyscape"].Format, plugins["Keyscape"].Kind));
+        Assert.EndsWith("Keyscape.vst3", plugins["Keyscape"].Path);
+        Assert.Equal(PluginKind.Effect, plugins["FabFilter Pro-L 2"].Kind);
+        Assert.Equal(("Bitwig", "Native"), (plugins["Delay+"].Vendor, plugins["Delay+"].Format));
+        Assert.Equal("Elektron Analog Rytm MKII", info.Details["Hardware I/O"]);
+        Assert.True(info.CanExtractMidi);
+        Assert.True(info.CanExtractPresets);
+    }
+
+    [Fact]
+    public void UsesBitwigsDisplayNamesForTracks()
+    {
+        Assert.Equal(["Keys Display", "FX 1"], new BitwigReader().Read(_path).Tracks);
+    }
+
+    [Fact]
+    public void FindsSamples()
+    {
+        var samples = new BitwigReader().Read(_path).Samples;
+        Assert.Contains(@"D:\Splice\Snare 808.wav", samples);
+        Assert.Contains(samples, s => s.EndsWith("Kick 01.wav"));
+        Assert.Contains(samples, s => s.EndsWith("Pad.multisample"));
+        Assert.Contains(samples, s => s.EndsWith("Recorded Bass.wav"));
+    }
+
+    [Fact]
+    public void ExtractsNoteClips()
+    {
+        var clip = Assert.Single(new BitwigReader().ExtractMidi(_path));
+        Assert.Equal("Keys Display 1", clip.Name);
+        Assert.Equal(960, clip.Ppq);
+        Assert.Equal(
+            [new NoteEvent(0, 960, 60, 64), new NoteEvent(1440, 480, 60, 127), new NoteEvent(1920, 960, 64, 102)],
+            clip.Track("Keys Display"));
+    }
+
+    [Fact]
+    public void ExtractsPluginStatesNamedByTrack()
+    {
+        var presets = new BitwigReader().ExtractPresets(_path).ToDictionary(p => p.Plugin);
+        Assert.Equal(("Keys Display - Keyscape", ".vstpreset"), (presets["Keyscape"].Name, presets["Keyscape"].Extension));
+        Assert.Equal("VST3 keys state", Encoding.ASCII.GetString(presets["Keyscape"].Data));
+        Assert.Equal("Master - FabFilter Pro-L 2", presets["FabFilter Pro-L 2"].Name);
+    }
+
+    [Fact]
+    public void FallsBackToTextScanWhenTheFileCantBeDecoded()
+    {
+        var path = Fixtures.BitwigUndecodable(Fixtures.TempDir());
+        var info = new BitwigReader().Read(path);
         Assert.Equal(Confidence.Heuristic, info.Confidence);
         Assert.Equal("5.2.4", info.Version);
         var names = info.Plugins.Select(p => p.Name).ToHashSet();
@@ -136,13 +247,21 @@ public class BitwigTests
         Assert.Contains(@"D:\Splice\Snare 808.wav", info.Samples);   // from the compressed section
         Assert.Contains(info.Samples, s => s.EndsWith("Recorded Bass.wav"));
         Assert.False(info.CanExtractMidi);
+        Assert.Empty(new BitwigReader().ExtractMidi(path));
+
+        var known = new BitwigReader { KnownPlugins = new HashSet<string>(["Serum"], StringComparer.OrdinalIgnoreCase) };
+        Assert.Contains(known.Read(path).Plugins, p => p.Name == "Serum");
     }
 
     [Fact]
-    public void RecognisesInstalledPluginNames()
+    public void SurvivesTruncatedFiles()
     {
-        var reader = new BitwigReader { KnownPlugins = new HashSet<string>(["Serum"], StringComparer.OrdinalIgnoreCase) };
-        Assert.Contains(reader.Read(_path).Plugins, p => p.Name == "Serum");
+        var bytes = File.ReadAllBytes(_path);
+        var p = Path.Combine(Fixtures.TempDir(), "cut.bwproject");
+        File.WriteAllBytes(p, bytes[..(bytes.Length / 2)]);
+        var info = new BitwigReader().Read(p);
+        Assert.Equal(Confidence.Heuristic, info.Confidence);
+        Assert.Equal("5.2.4", info.Version);
     }
 }
 

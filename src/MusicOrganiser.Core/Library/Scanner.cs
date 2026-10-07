@@ -67,8 +67,9 @@ public sealed class Scanner(LibraryDb db)
         {
             var info = Readers.For(path)!.Read(path);
             var samples = info.Samples.Select(s => (s, SampleFound(s, path))).ToList();
-            var hardware = info.Plugins.Select(p => PluginCatalog.ElektronDevice(p.Name))
-                                       .OfType<string>().Distinct().Order().ToList();
+            var hardware = info.Plugins.Select(p => p.Name).Concat(info.Hardware)
+                               .Select(PluginCatalog.ElektronDevice)
+                               .OfType<string>().Distinct().Order().ToList();
             return new(path, fi.Length, mtime, info, null, samples, hardware);
         }
         catch (Exception e)   // one unreadable file must never stop a scan
