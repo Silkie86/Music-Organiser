@@ -1,0 +1,283 @@
+using System.Runtime.InteropServices;
+using System.Text.Json;
+using Microsoft.Data.Sqlite;
+
+namespace MusicOrganiser.Core.Sounds;
+
+/// <summary>One sample in your sound library, as listed on screen.</summary>
+public sealed class Sound
+{
+    public long Id { get; init; }
+    public required string Path { get; init; }
+    public string Name => System.IO.Path.GetFileNameWithoutExtension(Path);
+    public string Folder => System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(Path) ?? "") ?? "";
+    public string? Error { get; init; }
+    public SoundAnalysis? Analysis { get; init; }
+
+    /// <summary>The type shown: your own label, else the file name's, else what the classifier learned.</summary>
+    public string Type { get; set; } = SoundTypes.Unknown;
+    /// <summary>"you", "name", "learned" or "model".</summary>
+    public string TypeSource { get; set; } = "";
+    public double TypeConfidence { get; set; }
+    /// <summary>Your own label, when you've set one. These are the strongest training examples.</summary>
+    public string? UserType { get; set; }
+    public string? NameType { get; init; }
+
+    public List<string> Tags { get; set; } = [];
+    public bool Favourite { get; set; }
+    public int Rating { get; set; }
+    public int Plays { get; set; }
+
+    /// <summary>Number of your projects that use this sample (from the project library).</summary>
+    public int UsedIn { get; set; }
+
+    public double Seconds => Analysis?.Seconds ?? 0;
+    public bool IsLoop => Analysis?.IsLoop ?? false;
+    public double? Bpm => Analysis?.Bpm;
+    public string Key => Analysis?.KeyName ?? "";
+    public string RootNote => Analysis?.RootNoteName ?? "";
+    public string Chord => Analysis?.Chord ?? "";
+    public string Character => Analysis is null ? "" : string.Join(", ", Analysis.Character);
+}
+
+/// <summary>
+/// The sound library database (sounds.db, next to the project library): analysis
+/// results, neural embeddings, your labels and tags, and the trained models.
+/// Kept apart from the project library so each can evolve on its own.
+/// </summary>
+public sealed class SoundLibrary : IDisposable
+{
+    const string Schema = """
+        PRAGMA journal_mode = WAL;
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS sounds (
+            id INTEGER PRIMARY KEY,
+            path TEXT UNIQUE NOT NULL COLLATE NOCASE,
+            size INTEGER, mtime INTEGER, error TEXT,
+            analysis TEXT, features BLOB, clap BLOB,
+            name_type TEXT, user_type TEXT, type TEXT, type_source TEXT, type_conf REAL,
+            favourite INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, plays INTEGER DEFAULT 0, last_played INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS sound_tags (
+            sound_id INTEGER REFERENCES sounds(id) ON DELETE CASCADE,
+            tag TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'you',
+            UNIQUE(sound_id, tag)
+        );
+        CREATE INDEX IF NOT EXISTS ix_sound_tags_tag ON sound_tags(tag);
+        """;
+
+    readonly SqliteConnection _conn;
+    readonly object _lock = new();
+
+    public string FilePath { get; }
+
+    public static string DefaultPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicOrganiser", "sounds.db");
+
+    public SoundLibrary(string path)
+    {
+        FilePath = path;
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        _conn = new SqliteConnection($"Data Source={path}");
+        _conn.Open();
+        Exec(Schema);
+    }
+
+    public void Dispose() => _conn.Dispose();
+
+    // ---- plumbing ----------------------------------------------------------------
+
+    int Exec(string sql, params (string, object?)[] args)
+    {
+        lock (_lock)
+        {
+            using var cmd = Cmd(sql, args);
+            return cmd.ExecuteNonQuery();
+        }
+    }
+
+    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args)
+    {
+        var cmd = _conn.CreateCommand();
+        cmd.CommandText = sql;
+        foreach (var (n, v) in args) cmd.Parameters.AddWithValue(n, v ?? DBNull.Value);
+        return cmd;
+    }
+
+    List<T> Query<T>(string sql, Func<SqliteDataReader, T> map, params (string, object?)[] args)
+    {
+        lock (_lock)
+        {
+            using var cmd = Cmd(sql, args);
+            using var r = cmd.ExecuteReader();
+            var list = new List<T>();
+            while (r.Read()) list.Add(map(r));
+            return list;
+        }
+    }
+
+    static string? StrOrNull(SqliteDataReader r, string col) => r[col] as string;
+    static long Long(SqliteDataReader r, string col) => r[col] is long l ? l : 0;
+
+    public static byte[]? ToBlob(float[]? v) => v is null ? null : MemoryMarshal.AsBytes(v.AsSpan()).ToArray();
+
+    public static float[]? FromBlob(object? o) => o is byte[] b && b.Length % 4 == 0 ? MemoryMarshal.Cast<byte, float>(b).ToArray() : null;
+
+    // ---- settings ----------------------------------------------------------------
+
+    public string? GetSetting(string key) =>
+        Query("SELECT value FROM settings WHERE key = $k", r => StrOrNull(r, "value"), ("$k", key)).FirstOrDefault();
+
+    public void SetSetting(string key, string? value)
+    {
+        if (value is null) Exec("DELETE FROM settings WHERE key = $k", ("$k", key));
+        else Exec("INSERT INTO settings VALUES ($k, $v) ON CONFLICT(key) DO UPDATE SET value = excluded.value", ("$k", key), ("$v", value));
+    }
+
+    // ---- scanning ----------------------------------------------------------------
+
+    public Dictionary<string, (long Mtime, long Size, bool HasClap)> KnownFiles() =>
+        Query("SELECT path, mtime, size, clap IS NOT NULL AS has_clap FROM sounds",
+              r => ((string)r["path"], Long(r, "mtime"), Long(r, "size"), Long(r, "has_clap") == 1))
+            .ToDictionary(t => t.Item1, t => (t.Item2, t.Item3, t.Item4), StringComparer.OrdinalIgnoreCase);
+
+    public sealed record Analysed(string Path, long Size, long Mtime, SoundAnalysis? Analysis, string? Error, float[]? Clap, string? NameType);
+
+    public void Save(IEnumerable<Analysed> batch)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var a in batch)
+            {
+                using var cmd = Cmd("""
+                    INSERT INTO sounds (path, size, mtime, error, analysis, features, clap, name_type, type, type_source, type_conf)
+                    VALUES ($p, $s, $m, $e, $a, $f, $c, $n, COALESCE($n, 'Unknown'), CASE WHEN $n IS NULL THEN '' ELSE 'name' END, 1)
+                    ON CONFLICT(path) DO UPDATE SET
+                        size = excluded.size, mtime = excluded.mtime, error = excluded.error, analysis = excluded.analysis,
+                        features = excluded.features, clap = COALESCE(excluded.clap, sounds.clap), name_type = excluded.name_type
+                    """,
+                    ("$p", a.Path), ("$s", a.Size), ("$m", a.Mtime), ("$e", a.Error),
+                    ("$a", a.Analysis is null ? null : JsonSerializer.Serialize(a.Analysis)),
+                    ("$f", ToBlob(a.Analysis?.Features)), ("$c", ToBlob(a.Clap)), ("$n", a.NameType));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    public void SetClap(long id, float[] v) => Exec("UPDATE sounds SET clap = $c WHERE id = $id", ("$c", ToBlob(v)), ("$id", id));
+
+    /// <summary>Forgets samples that are no longer in your sample folders.</summary>
+    public int RemoveMissing(IReadOnlySet<string> present)
+    {
+        var gone = Query("SELECT id, path FROM sounds", r => ((long)r["id"], (string)r["path"]))
+            .Where(t => !present.Contains(t.Item2)).Select(t => t.Item1).ToList();
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var id in gone)
+            {
+                using var cmd = Cmd("DELETE FROM sounds WHERE id = $id", ("$id", id));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        return gone.Count;
+    }
+
+    // ---- reading -----------------------------------------------------------------
+
+    public int Count() => Query("SELECT COUNT(*) AS n FROM sounds", r => (int)(long)r["n"]).First();
+
+    public int CountWithClap() => Query("SELECT COUNT(*) AS n FROM sounds WHERE clap IS NOT NULL", r => (int)(long)r["n"]).First();
+
+    public List<Sound> All()
+    {
+        var tags = Query("SELECT sound_id, tag FROM sound_tags ORDER BY tag", r => ((long)r["sound_id"], (string)r["tag"]))
+            .GroupBy(t => t.Item1).ToDictionary(g => g.Key, g => g.Select(t => t.Item2).ToList());
+        return Query("""
+            SELECT id, path, error, analysis, name_type, user_type, type, type_source, type_conf, favourite, rating, plays
+            FROM sounds ORDER BY path
+            """, r =>
+        {
+            var id = (long)r["id"];
+            SoundAnalysis? analysis = null;
+            if (StrOrNull(r, "analysis") is { } json)
+                try { analysis = JsonSerializer.Deserialize<SoundAnalysis>(json); } catch (JsonException) { }
+            return new Sound
+            {
+                Id = id, Path = (string)r["path"], Error = StrOrNull(r, "error"), Analysis = analysis,
+                NameType = StrOrNull(r, "name_type"), UserType = StrOrNull(r, "user_type"),
+                Type = StrOrNull(r, "type") ?? SoundTypes.Unknown, TypeSource = StrOrNull(r, "type_source") ?? "",
+                TypeConfidence = r["type_conf"] is double d ? d : 0,
+                Favourite = Long(r, "favourite") == 1, Rating = (int)Long(r, "rating"), Plays = (int)Long(r, "plays"),
+                Tags = tags.GetValueOrDefault(id) ?? [],
+            };
+        });
+    }
+
+    /// <summary>Vectors for every sound in a space: "features" (always) or "clap" (when the model has run).</summary>
+    public Dictionary<long, float[]> Vectors(string space)
+    {
+        var col = space == "clap" ? "clap" : "features";
+        return Query($"SELECT id, {col} AS v FROM sounds WHERE {col} IS NOT NULL", r => ((long)r["id"], FromBlob(r["v"])))
+            .Where(t => t.Item2 is { Length: > 0 }).ToDictionary(t => t.Item1, t => t.Item2!);
+    }
+
+    // ---- your organisation ---------------------------------------------------------
+
+    public void SetUserType(long id, string? type) =>
+        Exec("""
+            UPDATE sounds SET user_type = $t,
+                type = COALESCE($t, name_type, 'Unknown'),
+                type_source = CASE WHEN $t IS NOT NULL THEN 'you' WHEN name_type IS NOT NULL THEN 'name' ELSE '' END,
+                type_conf = 1
+            WHERE id = $id
+            """, ("$t", type), ("$id", id));
+
+    /// <summary>Stores the shown type for many sounds at once (after the classifier runs).</summary>
+    public void SetTypes(IEnumerable<(long Id, string Type, string Source, double Confidence)> types)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var (id, type, source, conf) in types)
+            {
+                using var cmd = Cmd("UPDATE sounds SET type = $t, type_source = $s, type_conf = $c WHERE id = $id",
+                    ("$t", type), ("$s", source), ("$c", conf), ("$id", id));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    public void SetFavourite(long id, bool fav) => Exec("UPDATE sounds SET favourite = $f WHERE id = $id", ("$f", fav ? 1 : 0), ("$id", id));
+    public void SetRating(long id, int rating) => Exec("UPDATE sounds SET rating = $r WHERE id = $id", ("$r", rating), ("$id", id));
+
+    public void MarkPlayed(long id) =>
+        Exec("UPDATE sounds SET plays = plays + 1, last_played = $t WHERE id = $id", ("$t", DateTimeOffset.UtcNow.ToUnixTimeSeconds()), ("$id", id));
+
+    public void AddTag(long id, string tag, string source = "you") =>
+        Exec("""
+            INSERT INTO sound_tags VALUES ($id, $t, $s)
+            ON CONFLICT(sound_id, tag) DO UPDATE SET source = CASE WHEN excluded.source = 'you' THEN 'you' ELSE sound_tags.source END
+            """, ("$id", id), ("$t", tag.Trim()), ("$s", source));
+
+    public void RemoveTag(long id, string tag) => Exec("DELETE FROM sound_tags WHERE sound_id = $id AND tag = $t", ("$id", id), ("$t", tag));
+
+    /// <summary>Removes tags the model suggested, so a retrain starts clean. Your own tags stay.</summary>
+    public void ClearLearnedTags(string tag) => Exec("DELETE FROM sound_tags WHERE tag = $t AND source = 'learned'", ("$t", tag));
+
+    public IReadOnlyList<(string Tag, int Yours, int Learned)> TagCounts() => Query("""
+        SELECT tag, SUM(source = 'you') AS yours, SUM(source = 'learned') AS learned
+        FROM sound_tags GROUP BY tag ORDER BY yours DESC, tag
+        """, r => ((string)r["tag"], (int)Long(r, "yours"), (int)Long(r, "learned")));
+
+    public IReadOnlyList<long> SoundsTagged(string tag, string source = "you") =>
+        Query("SELECT sound_id FROM sound_tags WHERE tag = $t AND source = $s", r => (long)r["sound_id"], ("$t", tag), ("$s", source));
+}
