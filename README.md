@@ -27,7 +27,7 @@ A Windows desktop app that keeps track of all your music projects across Bitwig 
 
 ## Running it
 
-You need **Visual Studio 2022** (the free Community edition) with the **.NET desktop development** workload.
+You need **Visual Studio 2026** (the free Community edition) with the **.NET desktop development** workload.
 
 1. Open `MusicOrganiser.sln`.
 2. Make sure `MusicOrganiser.App` is the startup project (right-click → *Set as Startup Project*).
