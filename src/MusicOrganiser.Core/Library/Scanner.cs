@@ -14,6 +14,12 @@ public sealed class Scanner(LibraryDb db)
     static readonly HashSet<string> AutosaveDirs = new(StringComparer.OrdinalIgnoreCase)
         { "auto-backups", "backup", "backups", "history", "autosave", "autosaves" };
 
+    // FL Studio's own backup copies, should they end up outside its Backup folder:
+    // "Song (autosave).flp" and "Song (overwritten at 2213h05).flp".
+    static bool IsAutosaveFile(string name) =>
+        name.Contains(" (autosave)", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains(" (overwritten at ", StringComparison.OrdinalIgnoreCase);
+
     static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase)
         { "$RECYCLE.BIN", "System Volume Information", "__MACOSX", "node_modules" };
 
@@ -32,7 +38,10 @@ public sealed class Scanner(LibraryDb db)
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
 
             foreach (var f in files)
-                if (Readers.For(f) is not null && !Path.GetFileName(f).StartsWith("._")) yield return f;
+            {
+                var name = Path.GetFileName(f);
+                if (Readers.For(f) is not null && !name.StartsWith("._") && !IsAutosaveFile(name)) yield return f;
+            }
             foreach (var d in dirs)
             {
                 var name = Path.GetFileName(d);
@@ -103,7 +112,7 @@ public sealed class Scanner(LibraryDb db)
             }
             catch (IOException) { }
         }
-        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots);
+        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsAutosaveFile(Path.GetFileName(f)));
         progress?.Report(new("Done", files.Count, files.Count, ""));
     }
 

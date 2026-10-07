@@ -10,10 +10,10 @@
              d:DataContext="{d:DesignInstance Type=vm:ProjectsViewModel}">
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="230" />
+            <ColumnDefinition Width="210" />
             <ColumnDefinition Width="*" MinWidth="400" />
             <ColumnDefinition Width="5" />
-            <ColumnDefinition Width="440" MinWidth="320" />
+            <ColumnDefinition Width="380" MinWidth="300" />
         </Grid.ColumnDefinitions>
 
         <!-- Filters -->
@@ -60,7 +60,9 @@
             <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}"
                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
                       HeadersVisibility="Column" GridLinesVisibility="None" CanUserReorderColumns="True"
-                      VirtualizingPanel.IsVirtualizingWhenGrouping="True" EnableRowVirtualization="True">
+                      EnableRowVirtualization="True" ScrollViewer.CanContentScroll="True"
+                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                      VirtualizingPanel.IsVirtualizingWhenGrouping="True">
                 <DataGrid.InputBindings>
                     <MouseBinding Gesture="LeftDoubleClick" Command="{Binding OpenSelectedCommand}" />
                     <KeyBinding Key="Enter" Command="{Binding OpenSelectedCommand}" />
@@ -79,18 +81,18 @@
                     </GroupStyle>
                 </DataGrid.GroupStyle>
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="★" Width="32" SortMemberPath="Favourite"
+                    <DataGridTextColumn Header="★" Width="30" SortMemberPath="Favourite"
                                         Binding="{Binding Favourite, Converter={StaticResource BoolToStar}}" />
-                    <DataGridTextColumn Header="Name" Width="2*" Binding="{Binding Name}" />
-                    <DataGridTextColumn Header="DAW" Width="110" Binding="{Binding Daw}" />
-                    <DataGridTextColumn Header="Status" Width="100" Binding="{Binding Status}" />
-                    <DataGridTextColumn Header="Rating" Width="80" SortMemberPath="Rating"
+                    <DataGridTextColumn Header="Name" Width="*" MinWidth="180" Binding="{Binding Name}" />
+                    <DataGridTextColumn Header="DAW" Width="85" Binding="{Binding Daw}" />
+                    <DataGridTextColumn Header="Status" Width="80" Binding="{Binding Status}" />
+                    <DataGridTextColumn Header="Rating" Width="72" SortMemberPath="Rating"
                                         Binding="{Binding Rating, Converter={StaticResource Stars}}" />
-                    <DataGridTextColumn Header="BPM" Width="60" SortMemberPath="Tempo" Binding="{Binding TempoText}" />
-                    <DataGridTextColumn Header="Key" Width="55" Binding="{Binding MusicalKey}" />
-                    <DataGridTextColumn Header="Modified" Width="120" Binding="{Binding Modified, StringFormat='d MMM yyyy'}" />
-                    <DataGridTextColumn Header="Plugins" Width="65" Binding="{Binding PluginCount}" />
-                    <DataGridTemplateColumn Header="Missing" Width="140" SortMemberPath="HasMissing">
+                    <DataGridTextColumn Header="BPM" Width="48" SortMemberPath="Tempo" Binding="{Binding TempoText}" />
+                    <DataGridTextColumn Header="Key" Width="48" Binding="{Binding MusicalKey}" />
+                    <DataGridTextColumn Header="Modified" Width="92" Binding="{Binding Modified, StringFormat='d MMM yyyy'}" />
+                    <DataGridTextColumn Header="Plugins" Width="58" Binding="{Binding PluginCount}" />
+                    <DataGridTemplateColumn Header="Missing" Width="110" SortMemberPath="HasMissing">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Foreground="{StaticResource MissingBrush}" VerticalAlignment="Center"
@@ -105,7 +107,9 @@
         <GridSplitter Grid.Column="2" Width="5" HorizontalAlignment="Stretch" Background="Transparent" />
 
         <!-- Selected project -->
-        <ContentControl Grid.Column="3" Content="{Binding Detail}">
+        <!-- Hidden while nothing is selected: an explicit ContentTemplate still renders for null content. -->
+        <ContentControl Grid.Column="3" Content="{Binding Detail}"
+                        Visibility="{Binding Detail, Converter={StaticResource NullToVisibility}}">
             <ContentControl.ContentTemplate>
                 <DataTemplate DataType="{x:Type vm:ProjectDetailViewModel}">
                     <views:ProjectDetailView />

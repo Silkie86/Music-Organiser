@@ -18,6 +18,8 @@ public class LibraryTests : IDisposable
         // Autosaves must be skipped.
         Directory.CreateDirectory(Path.Combine(_root, "Loop Idea", "auto-backups"));
         Fixtures.FlStudioProject(Path.Combine(_root, "Loop Idea", "auto-backups"), "old copy");
+        Fixtures.FlStudioProject(Path.Combine(_root, "Loop Idea"), "Night Drive (autosave)");
+        Fixtures.FlStudioProject(Path.Combine(_root, "Loop Idea"), "Night Drive (overwritten at 2213h05)");
         _db = new LibraryDb(Path.Combine(_root, "library.db"));
         _db.AddRoot(_root);
     }
@@ -31,6 +33,18 @@ public class LibraryTests : IDisposable
         var projects = _db.Projects();
         Assert.Equal(["Bitwig Studio", "FL Studio", "Studio One"], projects.Select(p => p.Daw).Order());
         Assert.All(projects, p => Assert.Null(p.Error));
+    }
+
+    [Fact]
+    public void DropsFilesThatNoLongerCountAsProjects()
+    {
+        // A library scanned before FL autosave copies were skipped still lists one.
+        var autosave = Path.Combine(_root, "Loop Idea", "Night Drive (autosave).flp");
+        _db.Upsert(Scanner.Analyse(autosave));
+
+        new Scanner(_db).ScanProjects();
+        Assert.DoesNotContain(_db.Projects(), p => p.Path == autosave);
+        Assert.All(_db.Projects(), p => Assert.False(p.FileMissing));
     }
 
     [Fact]
