@@ -221,12 +221,19 @@ public sealed partial class LibraryDb : IDisposable
         return installed.Any(k => k.Length >= 4 && (key.EndsWith(k) || k.EndsWith(key) && key.Length >= 4));
     }
 
-    public void MarkMissingFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots)
+    /// <summary>
+    /// Flags projects under your folders that the scan didn't find. Ones the scan now leaves out on
+    /// purpose (<paramref name="ignored"/>, such as autosave copies) are dropped from the library instead.
+    /// </summary>
+    public void MarkMissingFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored = null)
     {
         var rows = Query("SELECT id, path FROM projects WHERE file_missing = 0", r => (Id: (long)r["id"], Path: (string)r["path"]));
         foreach (var (id, path) in rows)
-            if (!present.Contains(path) && roots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
-                Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id));
+        {
+            if (present.Contains(path) || !roots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase))) continue;
+            if (ignored?.Invoke(path) == true) RemoveProject(id);
+            else Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id));
+        }
     }
 
     public void RemoveProject(long id) => Exec("DELETE FROM projects WHERE id = $id", ("$id", id));
@@ -326,7 +333,9 @@ public sealed partial class LibraryDb : IDisposable
 
     // ---- queries -----------------------------------------------------------------
 
-    public IReadOnlyList<ProjectSummary> Projects() => Query("""
+    public IReadOnlyList<ProjectSummary> Projects() => Summaries("");
+
+    IReadOnlyList<ProjectSummary> Summaries(string where, params (string, object?)[] args) => Query($"""
         SELECT p.*,
           (SELECT COUNT(*) FROM plugins WHERE project_id = p.id) AS plugin_count,
           (SELECT COUNT(*) FROM plugins WHERE project_id = p.id AND installed = 0) AS missing_plugins,
@@ -334,8 +343,8 @@ public sealed partial class LibraryDb : IDisposable
           (SELECT COUNT(*) FROM samples WHERE project_id = p.id AND found = 0) AS missing_samples,
           (SELECT group_concat(tag, char(31)) FROM tags WHERE project_id = p.id) AS tag_list,
           (SELECT group_concat(name, char(31)) FROM plugins WHERE project_id = p.id) AS plugin_list
-        FROM projects p ORDER BY p.mtime DESC
-        """, MapSummary);
+        FROM projects p {where} ORDER BY p.mtime DESC
+        """, MapSummary, args);
 
     ProjectSummary MapSummary(SqliteDataReader r) => new()
     {
@@ -368,7 +377,7 @@ public sealed partial class LibraryDb : IDisposable
 
     public ProjectDetail? Project(long id)
     {
-        var summary = Projects().FirstOrDefault(p => p.Id == id);
+        var summary = Summaries("WHERE p.id = $id", ("$id", id)).FirstOrDefault();
         if (summary is null) return null;
         var row = Query("SELECT title, info, can_midi, can_presets FROM projects WHERE id = $id",
             r => (Title: Str(r, "title"), Info: Str(r, "info"), Midi: Long(r, "can_midi") == 1, Presets: Long(r, "can_presets") == 1),

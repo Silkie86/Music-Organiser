@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Sounds;
 
 namespace MusicOrganiser.App.ViewModels;
 
@@ -14,6 +15,7 @@ public sealed partial class MainViewModel : ObservableObject
     public ProjectsViewModel Projects { get; }
     public PluginsViewModel Plugins { get; }
     public SamplesViewModel Samples { get; }
+    public SoundsViewModel Sounds { get; }
     public ShareCheckViewModel ShareCheck { get; }
     public SettingsViewModel Settings { get; }
 
@@ -24,7 +26,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] string _scanStatus = "";
     [ObservableProperty] double _scanPercent;
 
-    public MainViewModel(LibraryDb db)
+    public MainViewModel(LibraryDb db, SoundOrganiser sounds)
     {
         _db = db;
         _scanner = new Scanner(db);
@@ -33,8 +35,10 @@ public sealed partial class MainViewModel : ObservableObject
         Samples = new SamplesViewModel(db, this);
         ShareCheck = new ShareCheckViewModel(db);
         Settings = new SettingsViewModel(db, this);
+        Sounds = new SoundsViewModel(db, sounds, this);
         Nav =
         [
+            new("Sound Lab", "\uE8D6", Sounds),
             new("Projects", "", Projects),
             new("Plugins", "", Plugins),
             new("Samples", "", Samples),
@@ -45,11 +49,11 @@ public sealed partial class MainViewModel : ObservableObject
         Projects.Reload();
 
         // First run: send people to Settings to add their project folders.
-        if (_db.Roots().Count == 0) SelectedNav = Nav.First(n => n.Page == Settings);
+        if (_db.Roots().Count == 0 && _db.GetList(Scanner.SampleFoldersKey).Count == 0) SelectedNav = Nav.First(n => n.Page == Settings);
         else _ = ScanAsync(false);
     }
 
-    public void ShowProjects() => SelectedNav = Nav[0];
+    public void ShowProjects() => SelectedNav = Nav.First(n => n.Page == Projects);
 
     /// <summary>Opens Share Check on a project, e.g. from the project's page.</summary>
     public async Task CheckSharing(string path)
@@ -63,6 +67,7 @@ public sealed partial class MainViewModel : ObservableObject
         Projects.Reload();
         Plugins.Reload();
         Samples.Reload();
+        Sounds.Reload();
     }
 
     [RelayCommand]

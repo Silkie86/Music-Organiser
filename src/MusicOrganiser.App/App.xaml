@@ -20,6 +20,9 @@
             <conv:ZeroToVisibility x:Key="NonZeroToVisibility" />
             <conv:Stars x:Key="Stars" />
             <conv:FileSize x:Key="FileSize" />
+            <conv:WaveformGeometry x:Key="WaveformGeometry" />
+            <conv:Seconds x:Key="Seconds" />
+            <conv:IndexToBool x:Key="IndexToBool" />
 
             <Style x:Key="FilterLabel" TargetType="TextBlock">
                 <Setter Property="Margin" Value="2,0,0,4" />

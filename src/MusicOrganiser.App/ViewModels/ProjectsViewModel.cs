@@ -14,7 +14,7 @@ public sealed partial class ProjectsViewModel : ObservableObject
     readonly LibraryDb _db;
     readonly MainViewModel _main;
 
-    public ObservableCollection<ProjectItem> Items { get; } = new();
+    public BulkCollection<ProjectItem> Items { get; } = new();
     public ICollectionView View { get; }
 
     public static IReadOnlyList<string> StatusChoices => Statuses.All;
@@ -58,11 +58,7 @@ public sealed partial class ProjectsViewModel : ObservableObject
     public void Reload()
     {
         var selectedId = Selected?.Id;
-        using (View.DeferRefresh())
-        {
-            Items.Clear();
-            foreach (var p in _db.Projects()) Items.Add(new ProjectItem(_db, p));
-        }
+        Items.ReplaceAll(_db.Projects().Select(p => new ProjectItem(_db, p)));
 
         Refill(DawFilters, Items.Select(i => i.Daw), DawFilter, v => DawFilter = v);
         Refill(StatusFilters, Statuses.All, StatusFilter, v => StatusFilter = v);
@@ -98,8 +94,10 @@ public sealed partial class ProjectsViewModel : ObservableObject
     {
         View.Refresh();
         var shown = View.Cast<object>().Count();
-        CountText = shown == Items.Count ? $"{Items.Count} projects" : $"{shown} of {Items.Count} projects";
+        CountText = shown == Items.Count ? Count(Items.Count) : $"{shown:N0} of {Count(Items.Count)}";
     }
+
+    static string Count(int n) => n == 1 ? "1 project" : $"{n:N0} projects";
 
     partial void OnSearchTextChanged(string value) => ApplyFilter();
     partial void OnDawFilterChanged(string value) => ApplyFilter();

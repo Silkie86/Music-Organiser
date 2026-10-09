@@ -8,6 +8,13 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Spotify Basic Pitch note-detection model (Apache 2.0), copied next to the app as Models\basic-pitch.onnx. -->
+    <None Include="Sounds\Models\basic-pitch.onnx" Link="Models\basic-pitch.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Sounds\Models\NOTICE-basic-pitch.txt" Link="Models\NOTICE-basic-pitch.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
