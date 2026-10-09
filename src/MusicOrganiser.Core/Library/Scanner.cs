@@ -10,6 +10,13 @@ public sealed class Scanner(LibraryDb db)
     public const string PluginFoldersKey = "plugin_folders";
     public const string SampleFoldersKey = "sample_folders";
 
+    /// <summary>
+    /// Bump when a reader starts storing different data, so existing libraries re-read every
+    /// project once instead of keeping what the older reader found. 2: FL Studio Audio Units.
+    /// </summary>
+    public const string IndexVersion = "2";
+    const string IndexVersionKey = "index_version";
+
     // DAW autosave folders: Bitwig "auto-backups", FL Studio "Backup", Studio One "History".
     static readonly HashSet<string> AutosaveDirs = new(StringComparer.OrdinalIgnoreCase)
         { "auto-backups", "backup", "backups", "history", "autosave", "autosaves" };
@@ -85,6 +92,7 @@ public sealed class Scanner(LibraryDb db)
             ? names.Union(PluginCatalog.AlwaysKnown, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase)
             : PluginCatalog.AlwaysKnown;
 
+        full |= db.GetSetting(IndexVersionKey) != IndexVersion;
         var roots = db.Roots().Where(Directory.Exists).ToList();
         progress?.Report(new("Finding projects", 0, 0, ""));
         var files = roots.SelectMany(FindProjects).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -104,6 +112,7 @@ public sealed class Scanner(LibraryDb db)
             catch (IOException) { }
         }
         db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots);
+        db.SetSetting(IndexVersionKey, IndexVersion);
         progress?.Report(new("Done", files.Count, files.Count, ""));
     }
 

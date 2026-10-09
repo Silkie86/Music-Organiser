@@ -54,16 +54,25 @@ public static class PluginImpact
 
     static int Rank(string status) => Array.IndexOf(StatusOrder, status) is var i and >= 0 ? i : StatusOrder.Length;
 
-    static string FormatOf(ProjectPlugin p) => PluginKey.NormaliseFormat(p.Format) is { Length: > 0 } f ? f : "";
+    static string FormatOf(ProjectPlugin p) => PluginKey.ProjectFormat(p.Format);
+
+    /// <summary>
+    /// Every name a project's plugin answers to: its own name (with and without vendor) and the
+    /// file it was loaded from, which for Waves is the WaveShell that hosts it.
+    /// </summary>
+    static IEnumerable<string> Keys(ProjectPlugin p)
+    {
+        foreach (var k in PluginKey.Candidates(p.Name, p.Vendor)) yield return k;
+        if (TextScan.IsPluginPath(p.Path) && PluginKey.Of(TextScan.PluginNameFromPath(p.Path)) is { Length: > 0 } fileKey)
+            yield return fileKey;
+    }
 
     /// <summary>Projects using any of the plugins, and the installed copies of them.</summary>
     public static UninstallImpact Of(LibraryDb db, IReadOnlyList<(string Name, string Vendor)> plugins)
     {
         if (plugins.Count == 0) return new UninstallImpact();
         var wanted = plugins.SelectMany(p => PluginKey.Candidates(p.Name, p.Vendor)).ToHashSet(StringComparer.Ordinal);
-        bool Matches(string name, string vendor) => PluginKey.Candidates(name, vendor).Any(wanted.Contains);
-
-        var all = db.PluginRows().Where(r => FormatOf(r.Plugin) != "Native" && Matches(r.Plugin.Name, r.Plugin.Vendor)).ToList();
+        var all = db.PluginRows().Where(r => FormatOf(r.Plugin) != "Native" && Keys(r.Plugin).Any(wanted.Contains)).ToList();
         // Audio Units never load on Windows, so uninstalling the Windows plugin changes nothing for them.
         var rows = all.Where(r => FormatOf(r.Plugin) != "AU").ToList();
         var macOnly = all.Select(r => r.ProjectId).Distinct().Count() - rows.Select(r => r.ProjectId).Distinct().Count();
@@ -82,10 +91,14 @@ public static class PluginImpact
             .Where(f => wanted.Contains(PluginKey.Of(f.Name)))
             .Select(f =>
             {
+                // Only this copy's own plugin counts, even when several plugins are selected.
+                var key = PluginKey.Of(f.Name);
                 var format = PluginKey.NormaliseFormat(f.Format);
-                var same = rows.Where(r => FormatOf(r.Plugin) == format).Select(r => r.ProjectId).Distinct().Count();
-                var unknown = rows.Where(r => FormatOf(r.Plugin).Length == 0).Select(r => r.ProjectId).Distinct().Count();
-                return new InstalledCopy(f, same, unknown);
+                var mine = rows.Where(r => Keys(r.Plugin).Contains(key)).ToList();
+                var same = mine.Where(r => FormatOf(r.Plugin) == format).Select(r => r.ProjectId).ToHashSet();
+                var unknown = mine.Where(r => FormatOf(r.Plugin).Length == 0 && !same.Contains(r.ProjectId))
+                                  .Select(r => r.ProjectId).Distinct().Count();
+                return new InstalledCopy(f, same.Count, unknown);
             })
             .OrderBy(c => c.File.Format).ThenBy(c => c.File.Path)
             .ToList();
@@ -143,7 +156,7 @@ public static class PluginImpact
         {
             var format = FormatOf(p);
             if (format == "Native") continue;
-            foreach (var key in PluginKey.Candidates(p.Name, p.Vendor))
+            foreach (var key in Keys(p))
             {
                 if (!used.TryGetValue(key, out var set)) used[key] = set = new();
                 set.Add(format);

@@ -55,7 +55,10 @@ public sealed class ShareReport
     public IReadOnlyList<string> Actions { get; init; } = [];
     public Readiness Readiness { get; init; }
     public string Headline { get; init; } = "";
-    public bool PluginListMissing { get; init; }
+    /// <summary>This PC's plugins haven't been scanned, so "on this PC" is unknown.</summary>
+    public bool NotScanned { get; init; }
+    /// <summary>Your own project, checked before sending it (rather than one you've been sent).</summary>
+    public bool Outgoing { get; init; }
 
     public IEnumerable<SampleCheck> MissingSamples => Samples.Where(s => !s.Found);
 }
@@ -69,17 +72,18 @@ public static partial class ShareCheck
 {
     const string Friend = "your friend";
 
-    public static ShareReport Run(string path, PluginInventory here, PluginInventory? friend = null)
+    /// <param name="outgoing">True for your own project before you send it, false for one you've been sent.</param>
+    public static ShareReport Run(string path, PluginInventory here, PluginInventory? friend = null, bool outgoing = false)
     {
         if (Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase))
-            return RunZip(path, here, friend);
+            return RunZip(path, here, friend, outgoing);
         var reader = Readers.For(path) ?? throw new InvalidDataException("This isn't a project file Music Organiser can read.");
         var info = reader.Read(path);
         var samples = info.Samples.Select(s => CheckSample(s, path, null)).ToList();
-        return Build(path, Path.GetFileNameWithoutExtension(path), null, [], info, samples, here, friend);
+        return Build(path, Path.GetFileNameWithoutExtension(path), null, [], info, samples, here, friend, outgoing);
     }
 
-    static ShareReport RunZip(string zipPath, PluginInventory here, PluginInventory? friend)
+    static ShareReport RunZip(string zipPath, PluginInventory here, PluginInventory? friend, bool outgoing)
     {
         using var zip = ZipFile.OpenRead(zipPath);
         var projects = zip.Entries
@@ -98,14 +102,15 @@ public static partial class ShareCheck
         Directory.CreateDirectory(temp);
         try
         {
-            var file = Path.Combine(temp, Path.GetFileName(entry.Name));
+            // A fixed name: Mac file names can hold characters Windows doesn't allow.
+            var file = Path.Combine(temp, "project" + Path.GetExtension(entry.Name));
             entry.ExtractToFile(file);
             var info = Readers.For(file)!.Read(file);
             var inZip = zip.Entries.Where(e => e.Name.Length > 0)
                                    .Select(e => e.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var samples = info.Samples.Select(s => CheckSample(s, zipPath, inZip)).ToList();
             return Build(zipPath, Path.GetFileNameWithoutExtension(entry.Name), entry.FullName,
-                         projects.Where(p => p != entry).Select(p => p.FullName).ToList(), info, samples, here, friend);
+                         projects.Where(p => p != entry).Select(p => p.FullName).ToList(), info, samples, here, friend, outgoing);
         }
         finally
         {
@@ -116,14 +121,30 @@ public static partial class ShareCheck
     static SampleCheck CheckSample(string sample, string projectPath, HashSet<string>? inZip)
     {
         var name = sample.Split('\\', '/')[^1];
-        if (sample.StartsWith('%')) return new(sample, name, true, "DAW's own content");
         if (inZip is not null && inZip.Contains(name)) return new(sample, name, true, "In the zip");
+        // FL's factory content is on every computer with FL. Anything else under a %...% folder
+        // (e.g. %FLStudioUserData%) is the sender's own sample, which has to travel with the project.
+        if (sample.StartsWith("%FLStudioFactoryData%", StringComparison.OrdinalIgnoreCase))
+            return new(sample, name, true, "Comes with FL Studio");
+        if (sample.StartsWith('%'))
+            return NextToProject(name, projectPath) ? new(sample, name, true, "On this PC") : new(sample, name, false, "Missing");
         if (Scanner.SampleFound(sample, projectPath)) return new(sample, name, true, "On this PC");
         return new(sample, name, false, "Missing");
     }
 
+    static bool NextToProject(string fileName, string projectPath)
+    {
+        var dir = Path.GetDirectoryName(projectPath) ?? "";
+        try
+        {
+            return new[] { "", "samples", "recordings", "Media", "Audio" }.Any(sub => File.Exists(Path.Combine(dir, sub, fileName)));
+        }
+        catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException) { return false; }
+    }
+
     static ShareReport Build(string source, string projectName, string? fileInZip, IReadOnlyList<string> others,
-                             ProjectInfo info, List<SampleCheck> samples, PluginInventory here, PluginInventory? friend)
+                             ProjectInfo info, List<SampleCheck> samples, PluginInventory here, PluginInventory? friend,
+                             bool outgoing)
     {
         var who = friend?.Owner is { Length: > 0 } o ? o : Friend;
         var native = info.Plugins.Where(IsNative).Select(p => p.Name).Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList();
@@ -144,12 +165,19 @@ public static partial class ShareCheck
         return new ShareReport
         {
             SourcePath = source, ProjectName = projectName, FileInZip = fileInZip, OtherProjectsInZip = others,
-            Daw = info.Daw, DawVersion = info.Version, Tempo = info.Tempo, SavedOn = SavedOn(info),
+            Daw = info.Daw, DawVersion = VersionWithoutDaw(info), Tempo = info.Tempo, SavedOn = SavedOn(info),
             FriendName = friend?.Owner, Plugins = checks, NativePlugins = native, Samples = samples,
-            Actions = actions, Readiness = readiness, Headline = Headline(checks, samples, readiness, who, friend is not null),
-            PluginListMissing = here.IsEmpty,
+            Actions = actions, Readiness = readiness,
+            Headline = Headline(checks, samples, readiness, who, friend is not null, here.IsEmpty),
+            NotScanned = here.IsEmpty, Outgoing = outgoing,
         };
     }
+
+    /// <summary>"Studio One/6.5.2" → "6.5.2", so it reads well after the DAW's name.</summary>
+    static string VersionWithoutDaw(ProjectInfo info) =>
+        info.Version.StartsWith(info.Daw, StringComparison.OrdinalIgnoreCase)
+            ? info.Version[info.Daw.Length..].TrimStart('/', ' ', '-')
+            : info.Version;
 
     static bool IsNative(PluginRef p) => p.Format.Equals("Native", StringComparison.OrdinalIgnoreCase);
 
@@ -165,62 +193,54 @@ public static partial class ShareCheck
 
     static PluginCheck CheckPlugin(PluginRef p, PluginInventory here, PluginInventory? friend, string who)
     {
-        var format = PluginKey.NormaliseFormat(p.Format) is { Length: > 0 } f ? f : p.Format;
+        var format = PluginKey.ProjectFormat(p.Format);
         var (hs, ht, hh) = OnThisPc(p, format, here);
         var (fs, ft, fh) = friend is null ? (null, "", []) : OnFriends(p, format, friend, who);
-        return new PluginCheck(p.Name, p.Vendor, p.Kind, format, hs, ht, hh, fs, ft, fh);
+        return new PluginCheck(p.Name, p.Vendor, p.Kind, format.Length > 0 ? format : p.Format, hs, ht, hh, fs, ft, fh);
     }
 
     static (ShareStatus, string, IReadOnlyList<string>) OnThisPc(PluginRef p, string format, PluginInventory here)
     {
-        var (s, t) = OnThisPc(p, format, here, out var others);
-        return (s, t, others);
+        var availability = here.Check(p.Name, p.Vendor, format, out var others);
+        if (format == "AU")
+        {
+            var text = others.Count > 0 ? $"Mac only (Audio Unit). You have the {string.Join(" and ", others)}."
+                     : here.IsEmpty ? "Mac only (Audio Unit). Scan your plugins to see if you have another version."
+                     : "Mac only (Audio Unit), and you don't have another version.";
+            return (ShareStatus.WontLoad, text, others);
+        }
+        if (IsWavesShell(p))
+            return (ShareStatus.Note, "Waves plugins load through their WaveShell: you both need the same Waves version.", others);
+        if (p.Path.Length > 0 && !p.Path.StartsWith('/') && (File.Exists(p.Path) || Directory.Exists(p.Path)))
+            return (ShareStatus.Ok, "Installed", others);
+        if (here.IsEmpty) return (ShareStatus.Unknown, "Not checked: scan your plugins first", others);
+        return availability switch
+        {
+            Availability.Same => (ShareStatus.Ok, "Installed", others),
+            Availability.NameOnly => (ShareStatus.Unknown, "Installed, format unknown", others),
+            Availability.OtherFormat => (ShareStatus.WrongFormat, $"You have the {string.Join(" and ", others)}, but the project used the {format}", others),
+            _ => (ShareStatus.Missing, "Not installed on this PC", others),
+        };
     }
 
     static (ShareStatus?, string, IReadOnlyList<string>) OnFriends(PluginRef p, string format, PluginInventory friend, string who)
     {
-        var (s, t) = OnFriends(p, format, friend, who, out var others);
-        return (s, t, others);
-    }
-
-    static (ShareStatus, string) OnThisPc(PluginRef p, string format, PluginInventory here, out IReadOnlyList<string> others)
-    {
-        var availability = here.Check(p.Name, p.Vendor, format, out others);
-        if (format == "AU")
-            return (ShareStatus.WontLoad, others.Count > 0
-                ? $"Mac only (Audio Unit). You have the {string.Join(" and ", others)}."
-                : "Mac only (Audio Unit), and you don't have another version.");
-        if (IsWavesShell(p.Name))
-            return (ShareStatus.Note, "Waves plugins load through their WaveShell: you both need the same Waves version.");
-        if (p.Path.Length > 0 && !p.Path.StartsWith('/') && (File.Exists(p.Path) || Directory.Exists(p.Path)))
-            return (ShareStatus.Ok, "Installed");
-        if (here.IsEmpty) return (ShareStatus.Unknown, "Not checked: scan your plugins first");
+        if (friend.IsEmpty) return (ShareStatus.Unknown, "Their list is empty", []);
+        var availability = friend.Check(p.Name, p.Vendor, format, out var others);
+        if (IsWavesShell(p)) return (ShareStatus.Note, "Check you both have the same Waves version", others);
         return availability switch
         {
-            Availability.Same => (ShareStatus.Ok, "Installed"),
-            Availability.NameOnly => (ShareStatus.Unknown, "Installed, format unknown"),
-            Availability.OtherFormat => (ShareStatus.WrongFormat, $"You have the {string.Join(" and ", others)}, but the project used the {format}"),
-            _ => (ShareStatus.Missing, "Not installed on this PC"),
+            Availability.Same => (ShareStatus.Ok, "They have it", others),
+            Availability.NameOnly => (ShareStatus.Unknown, "On their list, format unknown", others),
+            Availability.OtherFormat => (ShareStatus.WrongFormat, $"They have the {string.Join(" and ", others)}, not the {format}", others),
+            _ => (ShareStatus.Missing, $"Not on {who}'s list", others),
         };
     }
 
-    static (ShareStatus?, string) OnFriends(PluginRef p, string format, PluginInventory friend, string who,
-                                            out IReadOnlyList<string> others)
-    {
-        others = [];
-        if (friend.IsEmpty) return (ShareStatus.Unknown, "Their list is empty");
-        var availability = friend.Check(p.Name, p.Vendor, format, out others);
-        if (IsWavesShell(p.Name)) return (ShareStatus.Note, "Check you both have the same Waves version");
-        return availability switch
-        {
-            Availability.Same => (ShareStatus.Ok, "They have it"),
-            Availability.NameOnly => (ShareStatus.Unknown, "On their list, format unknown"),
-            Availability.OtherFormat => (ShareStatus.WrongFormat, $"They have the {string.Join(" and ", others)}, not the {format}"),
-            _ => (ShareStatus.Missing, $"Not on {who}'s list"),
-        };
-    }
-
-    static bool IsWavesShell(string name) => name.StartsWith("WaveShell", StringComparison.OrdinalIgnoreCase);
+    /// <summary>Waves plugins live inside a version-numbered WaveShell; FL stores either the shell or the plugin with the shell's path.</summary>
+    static bool IsWavesShell(PluginRef p) =>
+        p.Name.StartsWith("WaveShell", StringComparison.OrdinalIgnoreCase) ||
+        TextScan.PluginNameFromPath(p.Path).StartsWith("WaveShell", StringComparison.OrdinalIgnoreCase);
 
     static string Names(IEnumerable<PluginCheck> plugins) =>
         JoinWithAnd(plugins.Select(p => p.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
@@ -244,7 +264,7 @@ public static partial class ShareCheck
             var swappable = au.Where(c => c.HereHas.Count > 0).ToList();
             var line = $"Ask {who} to use the VST3 (or VST2) versions instead of these Audio Units, which can't load on Windows: {Names(au)}.";
             if (swappable.Count > 0) line += $" You already have {Names(swappable)} in another format.";
-            var stuck = au.Except(swappable).ToList();
+            var stuck = noScan ? [] : au.Except(swappable).ToList();
             if (stuck.Count > 0) line += $" For {Names(stuck)}, ask them to render {Plural(stuck.Count, "that channel", "those channels")} to audio.";
             actions.Add(line);
         }
@@ -287,7 +307,8 @@ public static partial class ShareCheck
 
     static string Cap(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
 
-    static string Headline(List<PluginCheck> checks, List<SampleCheck> samples, Readiness readiness, string who, bool haveFriend)
+    static string Headline(List<PluginCheck> checks, List<SampleCheck> samples, Readiness readiness, string who, bool haveFriend,
+                           bool noScan)
     {
         if (readiness == Readiness.Blocked)
         {
@@ -301,9 +322,10 @@ public static partial class ShareCheck
             return Cap(JoinWithAnd(parts)) + ".";
         }
         if (readiness == Readiness.Ready) return "Ready to share: everything loads on both computers.";
-        return haveFriend
-            ? "Probably fine, but a few things are worth checking."
-            : $"Everything loads on this PC. Add {who}'s plugin list to check their side.";
+        if (noScan && checks.Count > 0) return "This PC hasn't been checked yet: scan your plugins (Scan for changes) first.";
+        return !haveFriend && checks.All(c => c.Here is ShareStatus.Ok or ShareStatus.Note)
+            ? $"Everything loads on this PC. Add {who}'s plugin list to check their side."
+            : "Probably fine, but a few things are worth checking.";
     }
 
     /// <summary>Where the project was last saved, judging by the plugin and sample paths it stores.</summary>
@@ -335,6 +357,8 @@ public static partial class ShareCheck
         var blockedHere = r.Plugins.Where(c => IsBlocking(c.Here)).ToList();
         var blockedThere = r.Plugins.Where(BlocksFriendOnly).ToList();
 
+        // Your own project: what doesn't load here is yours to sort out, not something to ask them for.
+        if (r.Outgoing) blockedHere.Clear();
         if (blockedHere.Count > 0)
         {
             sb.AppendLine($"Hey{(name.Length > 0 ? " " + name : "")}, I checked {r.ProjectName} and {Plural(blockedHere.Count, "one plugin doesn't", "a few plugins don't")} load on my side:");
@@ -345,6 +369,7 @@ public static partial class ShareCheck
                 {
                     ShareStatus.WontLoad when c.HereHas.Count > 0 =>
                         $"it's the Audio Unit and Windows can't run those. I have the {mine}, could you switch to that?",
+                    ShareStatus.WontLoad when r.NotScanned => "it's the Audio Unit and Windows can't run those. Could you switch to the VST3 version?",
                     ShareStatus.WontLoad => "it's the Audio Unit and Windows can't run those, and I don't have another version. Could you render it to audio?",
                     ShareStatus.WrongFormat => $"I only have the {mine}. Could you switch to that one?",
                     _ => "I don't have it. Could you render it to audio?",
@@ -359,7 +384,7 @@ public static partial class ShareCheck
                 : "And from your plugin list you might not have:");
             foreach (var c in blockedThere) sb.AppendLine($"- {c.Name} ({c.Format}): I'll render it to audio before I send it.");
         }
-        var lost = r.MissingSamples.ToList();
+        var lost = r.Outgoing ? [] : r.MissingSamples.ToList();
         if (lost.Count > 0)
         {
             if (sb.Length == 0) sb.AppendLine($"Hey{(name.Length > 0 ? " " + name : "")}, about {r.ProjectName}:");
@@ -408,7 +433,7 @@ public static partial class ShareCheck
         sb.AppendLine();
         if (r.Plugins.Any(p => p.IsAu))
         {
-            sb.AppendLine("Audio Units only work on a Mac. On Windows, FL Studio opens these channels empty.");
+            sb.AppendLine("Audio Units only work on a Mac: on Windows these channels open empty.");
             sb.AppendLine("Use the VST3 version of a plugin when you share a project between Mac and Windows.");
         }
         return sb.ToString().TrimEnd() + Environment.NewLine;

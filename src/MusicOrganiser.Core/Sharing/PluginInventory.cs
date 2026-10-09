@@ -51,8 +51,12 @@ public static class PluginKey
         };
     }
 
-    /// <summary>Formats where the project's saved settings can't tell us which one was used.</summary>
-    public static bool IsKnownFormat(string format) => NormaliseFormat(format) is { Length: > 0 } f && f != "Native";
+    /// <summary>
+    /// A format as a project stored it. Readers write a bare "VST" when they couldn't tell
+    /// VST2 from VST3, so unlike in a person's list it means "unknown" here.
+    /// </summary>
+    public static string ProjectFormat(string format) =>
+        format.Trim().Equals("VST", StringComparison.OrdinalIgnoreCase) ? "" : NormaliseFormat(format);
 }
 
 /// <summary>How a list of plugins answers "do you have this one?".</summary>
@@ -129,10 +133,10 @@ public sealed partial class PluginInventory
 
     /// <summary>The same for a friend on Windows, in PowerShell.</summary>
     public const string WindowsListCommand =
-        "Get-ChildItem \"$env:CommonProgramFiles\\VST3\",\"$env:CommonProgramFiles\\CLAP\",\"$env:ProgramFiles\\VstPlugins\"," +
-        "\"$env:ProgramFiles\\Steinberg\\VstPlugins\" -Recurse -Include *.vst3,*.clap,*.dll -ErrorAction SilentlyContinue | " +
-        "Where-Object { $_.FullName -notmatch '\\.vst3\\\\' } | Select-Object -ExpandProperty FullName | " +
-        "Out-File \"$env:USERPROFILE\\Desktop\\my-plugins.txt\"";
+        "Get-ChildItem \"$env:CommonProgramFiles\\VST3\",\"$env:CommonProgramFiles\\CLAP\",\"$env:CommonProgramFiles\\VST2\"," +
+        "\"$env:ProgramFiles\\VstPlugins\",\"$env:ProgramFiles\\Steinberg\\VstPlugins\" -Recurse -Include *.vst3,*.clap,*.dll " +
+        "-ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\.vst3\\\\' } | " +
+        "Select-Object -ExpandProperty FullName | Out-File (Join-Path ([Environment]::GetFolderPath('Desktop')) 'my-plugins.txt')";
 
     /// <summary>
     /// Reads a plugin list in any of the shapes people send: plugin file paths (from the
@@ -143,17 +147,45 @@ public sealed partial class PluginInventory
     {
         var plugins = new List<InstalledPlugin>();
         var folderFormat = "";
+        var inBundle = false;
         foreach (var raw in text.Split('\n'))
         {
             var line = raw.Trim().Trim('\uFEFF', '\0').Trim();
-            if (line.Length == 0 || line.StartsWith('#')) continue;
+            if (line.Length == 0 || line.StartsWith('#') || Boilerplate().IsMatch(line)) continue;
 
-            // "ls" prints a header per folder: "/Library/Audio/Plug-Ins/Components:".
-            if (line.EndsWith(':') && (line.Contains('/') || line.Contains('\\')))
+            // Folder headers set the format for bare names below them:
+            // "ls" prints "/Library/Audio/Plug-Ins/Components:", "dir" prints "Directory of C:\...\VST3".
+            // Recursive listings also show folders inside plugin bundles, which hold no other plugins.
+            string? folder = line.StartsWith("Directory of ", StringComparison.OrdinalIgnoreCase) ? line["Directory of ".Length..]
+                : line.EndsWith(':') && (line.Contains('/') || line.Contains('\\')) ? line.TrimEnd(':')
+                : null;
+            if (folder is not null)
             {
-                folderFormat = PluginKey.NormaliseFormat(line.TrimEnd(':').TrimEnd('/', '\\').Split('/', '\\')[^1]);
+                folderFormat = FolderFormat(folder);
+                inBundle = InsideBundle().IsMatch(folder.TrimEnd('/', '\\') + "/");
                 continue;
             }
+            if (inBundle) continue;
+
+            // "ls -l" and "dir" rows: just the name at the end. Those rows also list sub-folders
+            // and other files, so only plugin files count.
+            var listed = false;
+            if (LongListing().Match(line) is { Success: true } row)
+            {
+                line = row.Groups["name"].Value.Trim();
+                listed = true;
+            }
+
+            // Plain "ls" prints several names per line, in columns ("ls -F" adds a slash to bundles).
+            var cells = Columns().Split(line).Select(c => c.Trim().TrimEnd('/', '\\')).Where(c => c.Length > 0).ToList();
+            if (cells.Count > 1 && cells.All(TextScan.IsPluginPath))
+            {
+                foreach (var cell in cells.Where(c => !InsideBundle().IsMatch(c)))
+                    plugins.Add(new(TextScan.PluginNameFromPath(cell), TextScan.PluginFormatFromPath(cell), cell));
+                continue;
+            }
+            line = line.TrimEnd('/', '\\');
+            if (line.Length == 0 || line is "." or "..") continue;
             // Anything inside a plugin bundle (e.g. Contents/x86_64-win/Serum.vst3) isn't another plugin.
             if (InsideBundle().IsMatch(line)) continue;
 
@@ -163,6 +195,7 @@ public sealed partial class PluginInventory
                 if (name.Length > 0) plugins.Add(new(name, TextScan.PluginFormatFromPath(line), line));
                 continue;
             }
+            if (listed) continue;
             if (line.Contains('\t'))
             {
                 var parts = line.Split('\t');
@@ -180,6 +213,9 @@ public sealed partial class PluginInventory
         return new PluginInventory(owner, plugins);
     }
 
+    static string FolderFormat(string folder) =>
+        PluginKey.NormaliseFormat(folder.Trim().TrimEnd('/', '\\').Split('/', '\\')[^1]);
+
     /// <summary>One plugin per line as "Name<tab>Format", which <see cref="Parse"/> reads back.</summary>
     public string ToText()
     {
@@ -192,6 +228,19 @@ public sealed partial class PluginInventory
 
     [GeneratedRegex(@"\.(vst3|vst|component|clap)[\\/]", RegexOptions.IgnoreCase)]
     private static partial Regex InsideBundle();
+
+    [GeneratedRegex(@"^(total \d+$|total files listed|volume in drive|volume serial number|\d+ file\(s\)|\d+ dir\(s\))", RegexOptions.IgnoreCase)]
+    private static partial Regex Boilerplate();
+
+    // "drwxr-xr-x@ 3 root wheel 96 12 Jan 2024 Diva.component" (ls -l), or
+    // "07/10/2026  14:02    <DIR>          Diva.vst3" (dir).
+    [GeneratedRegex(@"^(?:[dl-][rwxsStT@+.-]{9,11}\s+\d+\s+\S+\s+\S+\s+\d+\s+(?:\w{3}\s+\d{1,2}|\d{1,2}\s+\w{3})\s+(?:\d{1,2}:\d{2}|\d{4})" +
+                    @"|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}\s+\d{1,2}:\d{2}(?:\s*[AP]M)?\s+(?:<DIR>|<JUNCTION>|[\d,.]+))\s+(?<name>.+)$",
+                    RegexOptions.IgnoreCase)]
+    private static partial Regex LongListing();
+
+    [GeneratedRegex(@"\t+| {2,}")]
+    private static partial Regex Columns();
 
     [GeneratedRegex(@"^(?<name>.+?)\s*(?:\(|:|\s-\s)\s*(?<formats>(?:VST3|VST2|VST|AU|CLAP|AAX|Audio ?Unit)(?:\s*[,/]\s*(?:VST3|VST2|VST|AU|CLAP|AAX|Audio ?Unit))*)\s*\)?$",
                     RegexOptions.IgnoreCase)]

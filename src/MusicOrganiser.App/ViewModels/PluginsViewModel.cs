@@ -77,7 +77,9 @@ public sealed partial class PluginsViewModel : ObservableObject
     partial void OnShowChanged(string value)
     {
         View?.Refresh();
+        ++_impactVersion;   // the newly shown list sends its own selection
         Impact = null;
+        IsWorking = false;
         OnPropertyChanged(nameof(ShowingUnused));
         OnPropertyChanged(nameof(Hint));
     }

@@ -115,6 +115,16 @@ public class FlStudioMacProjectTests
         info.Plugins.Add(new PluginRef("diva", "u-he", PluginKind.Instrument, "VST3"));
         Assert.Equal(["AU", "VST3"], info.Dedupe().Plugins.Select(p => p.Format));
     }
+
+    [Fact]
+    public void DropsACopyWithoutAFormatWhenTheSamePluginHasOne()
+    {
+        var info = new ProjectInfo { Daw = "FL Studio" };
+        info.Plugins.Add(new PluginRef("Serum", "Xfer Records", PluginKind.Instrument, ""));
+        info.Plugins.Add(new PluginRef("Serum", "Xfer Records", PluginKind.Instrument, "VST3"));
+        info.Plugins.Add(new PluginRef("Vital", "", PluginKind.Instrument, ""));
+        Assert.Equal([("Serum", "VST3"), ("Vital", "")], info.Dedupe().Plugins.Select(p => (p.Name, p.Format)));
+    }
 }
 
 public class PluginInventoryTests
@@ -152,6 +162,42 @@ public class PluginInventoryTests
         Assert.Contains(("Pro-Q 4", "AU"), got);
         Assert.Contains(("Vital", "CLAP"), got);
         Assert.Contains(("Massive X", "AU"), got);   // still under the Components heading
+    }
+
+    [Fact]
+    public void ReadsLsAndDirOutput()
+    {
+        var inv = PluginInventory.Parse("Jay", """
+            /Library/Audio/Plug-Ins/Components:
+            total 0
+            drwxr-xr-x@ 3 root  wheel  96 12 Jan  2024 Diva.component
+            drwxr-xr-x  3 jay   staff  96 Mar  4 10:15 Kontakt 7.component/
+            -rw-r--r--  1 jay   staff  12 Mar  4 10:15 .DS_Store
+
+            /Library/Audio/Plug-Ins/VST3:
+            Arcade.vst3/	FabFilter Pro-Q 4.vst3/
+            Serum.vst3      Vital.vst3
+
+            /Library/Audio/Plug-Ins/VST3/Serum.vst3/Contents:
+            Info.plist	MacOS
+
+             Volume in drive C has no label.
+             Volume Serial Number is 1234-ABCD
+
+             Directory of C:\Program Files\Common Files\VST3
+
+            07/10/2026  14:02    <DIR>          .
+            07/10/2026  14:02    <DIR>          ..
+            07/10/2026  14:02    <DIR>          u-he
+            07/10/2026  14:02    <DIR>          Surge XT.vst3
+            07/10/2026  14:02             2,048 readme.txt
+                           1 File(s)          2,048 bytes
+                           4 Dir(s)  100,000,000 bytes free
+            """);
+        Assert.Equal(
+            [("Arcade", "VST3"), ("Diva", "AU"), ("FabFilter Pro-Q 4", "VST3"), ("Kontakt 7", "AU"),
+             ("Serum", "VST3"), ("Surge XT", "VST3"), ("Vital", "VST3")],
+            inv.Plugins.Select(p => (p.Name, p.Format)).OrderBy(x => x.Name));
     }
 
     [Fact]
@@ -308,6 +354,55 @@ public class ShareCheckTests
     }
 
     [Fact]
+    public void SamplesFromTheSendersUserFolderMustBeInTheZip()
+    {
+        var project = Path.Combine(_dir, "Loops.flp");
+        File.WriteAllBytes(project, new Fixtures.FlpBuilder()
+            .Ascii(199, "25.1.0.4868")
+            .Word(64, 0).Byte(21, 0).Text(196, @"%FLStudioFactoryData%\Data\Patches\Packs\Drums\Kicks\FPC_Kick_001.wav")
+            .Word(64, 1).Byte(21, 0).Text(196, @"%FLStudioUserData%\Audio\Recorded\Vox take 3.wav")
+            .Build());
+        var zipPath = Path.Combine(_dir, "Loops.zip");
+        using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create)) zip.CreateEntryFromFile(project, "Loops.flp");
+
+        var samples = ShareCheck.Run(zipPath, MacProject.WindowsPc()).Samples.ToDictionary(s => s.FileName);
+        Assert.Equal((true, "Comes with FL Studio"), (samples["FPC_Kick_001.wav"].Found, samples["FPC_Kick_001.wav"].Where));
+        Assert.Equal((false, "Missing"), (samples["Vox take 3.wav"].Found, samples["Vox take 3.wav"].Where));
+    }
+
+    [Fact]
+    public void AsksToScanFirstWhenThisPcHasNoPluginList()
+    {
+        var notScanned = new PluginInventory("This PC", []);
+        var path = Path.Combine(_dir, "Simple.flp");
+        File.WriteAllBytes(path, new Fixtures.FlpBuilder()
+            .Ascii(199, "25.1.0.4868").Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper")
+            .Data(213, Fixtures.WrapperBlob("Serum", @"C:\Program Files\Common Files\VST3\Serum.vst3", "Xfer Records", [1], 12, 8))
+            .Build());
+        var r = ShareCheck.Run(path, notScanned);
+        Assert.True(r.NotScanned);
+        Assert.Equal(ShareStatus.Unknown, Assert.Single(r.Plugins).Here);
+        Assert.Equal("This PC hasn't been checked yet: scan your plugins (Scan for changes) first.", r.Headline);
+        Assert.StartsWith("Scan your plugins", r.Actions[0]);
+
+        // Audio Units never load on Windows, scanned or not, so those still count.
+        var mac = ShareCheck.Run(MacProject.Write(_dir), notScanned);
+        Assert.Equal(ShareStatus.WontLoad, mac.Plugins.Single(c => c.Name == "Diva").Here);
+        Assert.StartsWith("3 plugins won't load on this PC", mac.Headline);
+        Assert.StartsWith("Scan your plugins", mac.Actions[0]);
+    }
+
+    [Fact]
+    public void DoesNotAskTheFriendToFixYourOwnProject()
+    {
+        // Checking your own project before sending it: what's missing here is yours to sort out.
+        var r = ShareCheck.Run(MacProject.Write(_dir), MacProject.WindowsPc(), MacProject.FriendsMac(), outgoing: true);
+        Assert.True(r.Outgoing);
+        Assert.Equal("", ShareCheck.MessageForFriend(r));
+    }
+
+    [Fact]
     public void RejectsAZipWithoutAProject()
     {
         var zipPath = Path.Combine(_dir, "loops.zip");
@@ -389,6 +484,16 @@ public class PluginImpactTests : IDisposable
     }
 
     [Fact]
+    public void CountsEachCopyOnlyForItsOwnPlugin()
+    {
+        var copies = PluginImpact.Of(_db, [("Serum", ""), ("Arcade", "Output")]).Copies
+                                 .ToDictionary(c => (PluginKey.Of(c.File.Name), c.File.Format));
+        Assert.Equal(2, copies[("serum", "VST2")].Projects);
+        Assert.True(copies[("serum", "VST3")].Unused);
+        Assert.Equal(1, copies[("arcade", "VST3")].Projects);
+    }
+
+    [Fact]
     public void SaysWhenNothingUsesAPlugin()
     {
         var impact = PluginImpact.Of(_db, [("Sylenth1", "")]);
@@ -425,6 +530,20 @@ public class PluginImpactTests : IDisposable
     }
 
     [Fact]
+    public void ReReadsEveryProjectAfterAnUpdate()
+    {
+        // A library indexed by an older version: its plugin rows are out of date.
+        var night = _db.KnownFiles().Keys.Single(f => f.EndsWith("Night Drive.flp"));
+        var stale = Scanner.Analyse(night);
+        _db.Upsert(stale with { Info = null, Error = "old reader" });
+        _db.SetSetting("index_version", "1");
+
+        new Scanner(_db).ScanProjects();
+        Assert.Contains(_db.PluginRows(), r => r.ProjectId == _db.Projects().Single(p => p.Name == "Night Drive").Id);
+        Assert.Equal(Scanner.IndexVersion, _db.GetSetting("index_version"));
+    }
+
+    [Fact]
     public void KeepsCollaboratorsPluginLists()
     {
         Collaborators.Upsert(_db, "Jay", MacProject.FriendsMac());
@@ -435,6 +554,39 @@ public class PluginImpactTests : IDisposable
         Assert.Equal(Availability.Same, people[1].Inventory.Check("Serum", "", "AU", out _));
         Collaborators.Remove(_db, "Ana");
         Assert.Single(Collaborators.Load(_db));
+    }
+}
+
+public class WavesImpactTests : IDisposable
+{
+    readonly string _root = Fixtures.TempDir();
+    readonly LibraryDb _db;
+
+    public WavesImpactTests()
+    {
+        _db = new LibraryDb(Path.Combine(_root, "library.db"));
+        _db.AddRoot(_root);
+        const string shell = @"C:\Program Files\Common Files\VST3\WaveShell1-VST3 14.12_x64.vst3";
+        File.WriteAllBytes(Path.Combine(_root, "Waves Mix.flp"), new Fixtures.FlpBuilder()
+            .Ascii(199, "25.1.0.4868")
+            .Data(236, [0, 0, 0, 0])
+            .Text(201, "Fruity Wrapper")
+            .Data(213, Fixtures.WrapperBlob("SSLChannel Stereo", shell, "Waves", [1], 12, 7))
+            .Word(98, 0)
+            .Build());
+        _db.ReplaceInstalledPluginFiles([new("WaveShell1-VST3 14.12_x64", "VST3", shell)]);
+        new Scanner(_db).ScanProjects();
+    }
+
+    public void Dispose() => _db.Dispose();
+
+    [Fact]
+    public void CountsWavesPluginsAgainstTheirWaveShell()
+    {
+        var impact = PluginImpact.Of(_db, [("WaveShell1-VST3 14.12_x64", "")]);
+        Assert.Equal(["Waves Mix"], impact.Projects.Select(p => p.Project.Name));
+        Assert.Equal(1, Assert.Single(impact.Copies).Projects);
+        Assert.DoesNotContain(PluginImpact.Unused(_db), u => u.Name.StartsWith("WaveShell"));
     }
 }
 

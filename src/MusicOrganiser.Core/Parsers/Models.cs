@@ -59,9 +59,12 @@ public sealed class ProjectInfo
     public ProjectInfo Dedupe()
     {
         // The same plugin in two formats stays twice: an AU and a VST3 of one synth load differently.
+        // A copy with no format is dropped when the same plugin also turned up with one.
+        var named = Plugins.Where(p => !string.IsNullOrWhiteSpace(p.Name)).ToList();
+        var withFormat = named.Where(p => p.Format.Length > 0).Select(p => (p.Name.ToLowerInvariant(), p.Kind)).ToHashSet();
         var seen = new HashSet<(string, PluginKind, string)>();
-        var plugins = Plugins.Where(p => !string.IsNullOrWhiteSpace(p.Name) &&
-                                         seen.Add((p.Name.ToLowerInvariant(), p.Kind, p.Format.ToUpperInvariant()))).ToList();
+        var plugins = named.Where(p => (p.Format.Length > 0 || !withFormat.Contains((p.Name.ToLowerInvariant(), p.Kind))) &&
+                                       seen.Add((p.Name.ToLowerInvariant(), p.Kind, p.Format.ToUpperInvariant()))).ToList();
         Plugins.Clear();
         Plugins.AddRange(plugins);
         var samples = Samples.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();

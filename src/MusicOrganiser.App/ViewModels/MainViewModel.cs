@@ -55,7 +55,7 @@ public sealed partial class MainViewModel : ObservableObject
     public async Task CheckSharing(string path)
     {
         SelectedNav = Nav.First(n => n.Page == ShareCheck);
-        await ShareCheck.Open(path);
+        await ShareCheck.Open(path, outgoing: true);
     }
 
     public void RefreshAll()
@@ -112,6 +112,7 @@ public sealed partial class MainViewModel : ObservableObject
             IsScanning = false;
             ScanPercent = 0;
             RefreshAll();
+            if (plugins) _ = ShareCheck.Refresh();   // its "this PC" column depends on the plugin scan
         }
     }
 }

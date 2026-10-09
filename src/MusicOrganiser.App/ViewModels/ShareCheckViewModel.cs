@@ -18,6 +18,8 @@ namespace MusicOrganiser.App.ViewModels;
 public sealed partial class ShareCheckViewModel : ObservableObject
 {
     readonly LibraryDb _db;
+    int _checkVersion;
+    (string Path, bool Outgoing)? _checking;
 
     public ObservableCollection<Collaborator> People { get; } = new();
 
@@ -89,29 +91,51 @@ public sealed partial class ShareCheckViewModel : ObservableObject
         OnPropertyChanged(nameof(FriendName));
         OnPropertyChanged(nameof(FriendHeader));
         OnPropertyChanged(nameof(PersonSummary));
-        if (Report is { } r) _ = Open(r.SourcePath);
+        // Re-check what's showing (or still being checked) against the new friend's list.
+        _ = Refresh();
     }
 
     // ---- checking ----------------------------------------------------------------------
 
-    /// <summary>Checks a project file or a zip (called from the Projects page, a drop, or Browse).</summary>
-    public async Task Open(string path)
+    /// <summary>
+    /// Checks a project file or a zip. <paramref name="outgoing"/> is true for your own project
+    /// before sending it (from its page), false for a file you've been sent (Browse or drop).
+    /// </summary>
+    public async Task Open(string path, bool outgoing = false)
     {
+        var version = ++_checkVersion;
+        _checking = (path, outgoing);
         Error = "";
         Message = "";
         IsBusy = true;
+        ShareReport? result = null;
+        string error = "";
         try
         {
             var friend = SelectedPerson?.Inventory;
             var here = PluginInventory.ThisPc(_db);
-            Report = await Task.Run(() => ShareCheck.Run(path, here, friend));
+            result = await Task.Run(() => ShareCheck.Run(path, here, friend, outgoing));
         }
         catch (Exception e)   // a file we can't read must not take the app down
         {
-            Report = null;
-            Error = $"Couldn't check {Path.GetFileName(path)}: {e.Message}";
+            error = $"Couldn't check {Path.GetFileName(path)}: {e.Message}";
         }
-        finally { IsBusy = false; }
+        if (version != _checkVersion) return;   // a newer check started meanwhile; it owns the screen
+        _checking = null;
+        Report = result;
+        Error = error;
+        IsBusy = false;
+    }
+
+    /// <summary>
+    /// Checks again whatever is on screen (or still being checked), e.g. after a plugin scan or
+    /// when another friend is picked.
+    /// </summary>
+    public Task Refresh()
+    {
+        (string Path, bool Outgoing)? current = _checking;
+        if (current is null && Report is { } r) current = (r.SourcePath, r.Outgoing);
+        return current is { } c ? Open(c.Path, c.Outgoing) : Task.CompletedTask;
     }
 
     [RelayCommand]
@@ -127,10 +151,7 @@ public sealed partial class ShareCheckViewModel : ObservableObject
     }
 
     [RelayCommand]
-    async Task Recheck()
-    {
-        if (Report is { } r) await Open(r.SourcePath);
-    }
+    Task Recheck() => Refresh();
 
     [RelayCommand]
     void Reveal()
