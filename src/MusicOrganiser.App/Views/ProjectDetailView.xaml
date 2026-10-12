@@ -8,32 +8,70 @@
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:ProjectDetailViewModel}">
     <UserControl.Resources>
+        <!-- A list row that lights up under the mouse; its buttons stay quiet until then. -->
+        <Style x:Key="ListRow" TargetType="Border">
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="Margin" Value="-10,0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="RowActions" TargetType="StackPanel">
+            <Setter Property="Orientation" Value="Horizontal" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Opacity" Value="0.45" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Border}}" Value="True">
+                    <Setter Property="Opacity" Value="1" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="RowButton" TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+            <Setter Property="Padding" Value="9,3" />
+            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        <Style x:Key="Panel" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="14,12" />
+        </Style>
+
         <DataTemplate x:Key="MatchTemplate" DataType="{x:Type vm:MatchRow}">
-            <DockPanel Margin="16,2,0,2">
-                <ui:Button DockPanel.Dock="Right" Content="Use this" Margin="4,0,0,0" Padding="8,2"
+            <DockPanel Margin="12,3,0,3">
+                <ui:Button DockPanel.Dock="Right" Content="Use this" Style="{StaticResource RowButton}" Appearance="Primary"
                            Command="{Binding RecoverCommand}"
                            Visibility="{Binding CanRecover, Converter={StaticResource BoolToVisibility}}"
                            ToolTip="Copy this file into the project folder under the name the project expects" />
-                <ui:Button DockPanel.Dock="Right" Content="Show" Padding="8,2" Command="{Binding RevealCommand}"
+                <ui:Button DockPanel.Dock="Right" Content="Show" Style="{StaticResource RowButton}" Command="{Binding RevealCommand}"
                            Visibility="{Binding CanRecover, Converter={StaticResource BoolToVisibility}}" />
-                <TextBlock DockPanel.Dock="Right" Text="{Binding ScoreText}" Margin="8,0" VerticalAlignment="Center"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" ToolTip="{Binding Reason}" />
+                <TextBlock DockPanel.Dock="Right" Text="{Binding ScoreText}" Margin="8,0" VerticalAlignment="Center" FontSize="12"
+                           Foreground="{StaticResource AccentBrush}" ToolTip="{Binding Reason}" />
                 <TextBlock Text="{Binding Candidate}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                           ToolTip="{Binding Candidate}" FontSize="12" />
+                           ToolTip="{Binding Candidate}" FontSize="12" Foreground="{StaticResource MutedBrush}" />
             </DockPanel>
         </DataTemplate>
     </UserControl.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="8,0,8,16">
-            <!-- Header and actions -->
+        <StackPanel Margin="20,18,20,20">
+            <!-- Header -->
             <TextBlock Text="{Binding Item.Name}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
-            <TextBlock Text="{Binding Item.Daw}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" />
-            <TextBlock Text="{Binding SavesText}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0"
-                       TextWrapping="Wrap" Visibility="{Binding HasOlderSaves, Converter={StaticResource BoolToVisibility}}" />
-            <Border Height="12" />
+            <WrapPanel Margin="0,8,0,0">
+                <Border Style="{StaticResource Pill}" Margin="0,0,8,0"
+                        Background="{Binding Item.Daw, Converter={StaticResource DawBrush}, ConverterParameter=Soft}">
+                    <TextBlock Text="{Binding Item.Daw}" Style="{StaticResource PillText}"
+                               Foreground="{Binding Item.Daw, Converter={StaticResource DawBrush}}" />
+                </Border>
+                <TextBlock Text="{Binding SavesText}" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"
+                           TextWrapping="Wrap" Visibility="{Binding HasOlderSaves, Converter={StaticResource BoolToVisibility}}" />
+            </WrapPanel>
 
-            <WrapPanel>
+            <WrapPanel Margin="0,16,0,0">
                 <ui:Button Content="Open in DAW" Appearance="Primary" Icon="{ui:SymbolIcon Play24}"
                            Command="{Binding OpenInDawCommand}" Margin="0,0,6,6" />
                 <ui:Button Content="Show in folder" Icon="{ui:SymbolIcon FolderOpen24}"
@@ -46,14 +84,29 @@
                            IsEnabled="{Binding CanExtractPresets}"
                            ToolTip="See the plugin settings saved in this project and export them as presets" />
             </WrapPanel>
-            <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Margin="0,4,0,0"
-                       Visibility="{Binding Message, Converter={StaticResource NullToVisibility}}" />
+            <Border Margin="0,6,0,0" Padding="12,8" CornerRadius="8" Background="{StaticResource AccentFaintBrush}"
+                    Visibility="{Binding Message, Converter={StaticResource NullToVisibility}}">
+                <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12" />
+            </Border>
+
+            <!-- Warnings about what could be read -->
+            <Border Margin="0,12,0,0" Padding="12,10" CornerRadius="8" Background="#1FF2B33D"
+                    Visibility="{Binding HasWarnings, Converter={StaticResource BoolToVisibility}}">
+                <ItemsControl ItemsSource="{Binding Warnings}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12" Margin="0,2"
+                                       Foreground="{StaticResource WarningBrush}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
 
             <!-- Your organisation -->
-            <ui:Card Margin="0,12,0,0" Padding="12">
+            <Border Style="{StaticResource Panel}" Margin="0,16,0,0">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="76" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
@@ -61,12 +114,12 @@
                         <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Text="Status" VerticalAlignment="Center" Margin="0,0,12,6" />
-                    <ComboBox Grid.Column="1" Margin="0,0,0,6" ItemsSource="{Binding Source={x:Static vm:ProjectsViewModel.StatusChoices}}"
+                    <TextBlock Text="Status" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
+                    <ComboBox Grid.Column="1" Margin="0,0,0,8" ItemsSource="{Binding Source={x:Static vm:ProjectsViewModel.StatusChoices}}"
                               SelectedItem="{Binding Item.Status}" />
 
-                    <TextBlock Grid.Row="1" Text="Rating" VerticalAlignment="Center" Margin="0,0,12,6" />
-                    <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,0,0,6"
+                    <TextBlock Grid.Row="1" Text="Rating" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
+                    <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,0,0,8"
                               ItemsSource="{Binding Source={x:Static vm:ProjectsViewModel.RatingChoices}}"
                               SelectedItem="{Binding Item.Rating}">
                         <ComboBox.ItemTemplate>
@@ -76,174 +129,181 @@
                         </ComboBox.ItemTemplate>
                     </ComboBox>
 
-                    <TextBlock Grid.Row="2" Text="Key" VerticalAlignment="Center" Margin="0,0,12,6" />
-                    <ui:TextBox Grid.Row="2" Grid.Column="1" Margin="0,0,0,6" PlaceholderText="e.g. F minor"
+                    <TextBlock Grid.Row="2" Text="Key" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
+                    <ui:TextBox Grid.Row="2" Grid.Column="1" Margin="0,0,0,8" PlaceholderText="e.g. F minor"
                                 Text="{Binding Item.MusicalKey, UpdateSourceTrigger=LostFocus}" />
 
-                    <TextBlock Grid.Row="3" Text="Tags" VerticalAlignment="Center" Margin="0,0,12,6" />
-                    <ui:TextBox Grid.Row="3" Grid.Column="1" Margin="0,0,0,6" PlaceholderText="techno, live set, collab"
+                    <TextBlock Grid.Row="3" Text="Tags" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
+                    <ui:TextBox Grid.Row="3" Grid.Column="1" Margin="0,0,0,8" PlaceholderText="techno, live set, collab"
                                 Text="{Binding Item.TagsText, UpdateSourceTrigger=LostFocus}" />
 
-                    <TextBlock Grid.Row="4" Text="Favourite" VerticalAlignment="Center" Margin="0,0,12,6" />
-                    <ui:ToggleSwitch Grid.Row="4" Grid.Column="1" Margin="0,0,0,6" IsChecked="{Binding Item.Favourite}" />
+                    <TextBlock Grid.Row="4" Text="Favourite" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
+                    <ui:ToggleSwitch Grid.Row="4" Grid.Column="1" Margin="0,0,0,8" IsChecked="{Binding Item.Favourite}" />
 
-                    <TextBlock Grid.Row="5" Text="Notes" VerticalAlignment="Top" Margin="0,8,12,0" />
+                    <TextBlock Grid.Row="5" Text="Notes" VerticalAlignment="Top" Margin="0,8,8,0" Foreground="{StaticResource MutedBrush}" />
                     <ui:TextBox Grid.Row="5" Grid.Column="1" MinHeight="70" AcceptsReturn="True" TextWrapping="Wrap"
                                 PlaceholderText="Ideas, to-dos, what this needs next…"
                                 Text="{Binding Item.Notes, UpdateSourceTrigger=LostFocus}" />
                 </Grid>
-            </ui:Card>
-
-            <!-- Warnings about what could be read -->
-            <Border Margin="0,12,0,0" Padding="10" CornerRadius="6" BorderThickness="1"
-                    BorderBrush="{StaticResource WarningBrush}"
-                    Visibility="{Binding HasWarnings, Converter={StaticResource BoolToVisibility}}">
-                <ItemsControl ItemsSource="{Binding Warnings}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12" Margin="0,2" />
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
             </Border>
 
             <!-- Plugins -->
-            <TextBlock Text="{Binding PluginHeader}" Style="{StaticResource SectionHeader}" />
+            <TextBlock Text="{Binding PluginHeader}" Style="{StaticResource SectionHeader}" Margin="0,24,0,6" />
             <ItemsControl ItemsSource="{Binding VisiblePlugins}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:PluginRow}">
-                        <StackPanel Margin="0,0,0,6">
-                            <DockPanel>
-                                <ui:Button DockPanel.Dock="Right" Content="Projects" Padding="8,2" Margin="4,0,0,0"
-                                           ToolTip="Show every project that uses this plugin"
-                                           Command="{Binding DataContext.ShowProjectsUsingPluginCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                           CommandParameter="{Binding}" />
-                                <ui:Button DockPanel.Dock="Right" Content="Preset" Padding="8,2" Margin="4,0,0,0"
-                                           ToolTip="Export this plugin's settings from the project as a preset"
-                                           Visibility="{Binding DataContext.CanExtractPresets, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibility}}"
-                                           Command="{Binding DataContext.ExportPluginPresetCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                           CommandParameter="{Binding}" />
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
-                                            Visibility="{Binding Installed, Converter={StaticResource InverseBoolToVisibility}}">
-                                    <ui:Button Content="Find similar" Padding="8,2" Margin="4,0,0,0" Command="{Binding FindSimilarCommand}" />
-                                    <ui:Button Content="Search online" Padding="8,2" Margin="4,0,0,0" Command="{Binding SearchOnlineCommand}" />
-                                </StackPanel>
-                                <StackPanel>
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                        <TextBlock Text="not installed" Margin="8,0,0,0" FontSize="12" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource MissingBrush}"
-                                                   Visibility="{Binding Installed, Converter={StaticResource InverseBoolToVisibility}}" />
-                                        <TextBlock Text="{Binding Elektron, StringFormat='Elektron · {0}'}" Margin="8,0,0,0"
-                                                   FontSize="12" VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
-                                                   Visibility="{Binding Elektron, Converter={StaticResource NullToVisibility}}" />
+                        <Border Style="{StaticResource ListRow}">
+                            <StackPanel>
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Right" Style="{StaticResource RowActions}">
+                                        <StackPanel Orientation="Horizontal"
+                                                    Visibility="{Binding Installed, Converter={StaticResource InverseBoolToVisibility}}">
+                                            <ui:Button Content="Find similar" Style="{StaticResource RowButton}" Command="{Binding FindSimilarCommand}" />
+                                            <ui:Button Content="Search online" Style="{StaticResource RowButton}" Command="{Binding SearchOnlineCommand}" />
+                                        </StackPanel>
+                                        <ui:Button Content="Preset" Style="{StaticResource RowButton}"
+                                                   ToolTip="Export this plugin's settings from the project as a preset"
+                                                   Visibility="{Binding DataContext.CanExtractPresets, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibility}}"
+                                                   Command="{Binding DataContext.ExportPluginPresetCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                   CommandParameter="{Binding}" />
+                                        <ui:Button Content="Projects" Style="{StaticResource RowButton}"
+                                                   ToolTip="Show every project that uses this plugin"
+                                                   Command="{Binding DataContext.ShowProjectsUsingPluginCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                   CommandParameter="{Binding}" />
                                     </StackPanel>
-                                    <TextBlock Text="{Binding OtherVersion, StringFormat='You have {0} installed'}" FontSize="12"
-                                               Foreground="{StaticResource OkBrush}" TextWrapping="Wrap"
-                                               ToolTip="A different version of this plugin. The project won't load it by itself; swap it in."
-                                               Visibility="{Binding OtherVersion, Converter={StaticResource NullToVisibility}}" />
-                                    <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
-                                        <Run Text="{Binding KindText, Mode=OneWay}" />
-                                        <Run Text="{Binding Format, Mode=OneWay}" />
-                                        <Run Text="{Binding Vendor, Mode=OneWay}" />
-                                    </TextBlock>
-                                </StackPanel>
-                            </DockPanel>
-                            <TextBlock Text="{Binding MatchMessage}" FontSize="12" Margin="16,2,0,0"
-                                       Visibility="{Binding MatchMessage, Converter={StaticResource NullToVisibility}}" />
-                            <ItemsControl ItemsSource="{Binding Matches}" ItemTemplate="{StaticResource MatchTemplate}" />
-                        </StackPanel>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <WrapPanel>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Margin="0,0,8,0" />
+                                            <Border Style="{StaticResource Pill}" Background="{StaticResource MissingSoftBrush}" Margin="0,0,6,0"
+                                                    Visibility="{Binding Installed, Converter={StaticResource InverseBoolToVisibility}}">
+                                                <TextBlock Text="Not installed" Style="{StaticResource PillText}" Foreground="{StaticResource MissingBrush}" />
+                                            </Border>
+                                            <Border Style="{StaticResource Pill}" Background="{StaticResource OkSoftBrush}"
+                                                    Visibility="{Binding Elektron, Converter={StaticResource NullToVisibility}}">
+                                                <TextBlock Text="{Binding Elektron, StringFormat='Elektron · {0}'}" Style="{StaticResource PillText}"
+                                                           Foreground="{StaticResource OkBrush}" />
+                                            </Border>
+                                        </WrapPanel>
+                                        <TextBlock FontSize="12" Foreground="{StaticResource FaintBrush}" Margin="0,2,0,0">
+                                            <Run Text="{Binding KindText, Mode=OneWay}" />
+                                            <Run Text="{Binding Format, Mode=OneWay}" />
+                                            <Run Text="{Binding Vendor, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding OtherVersion, StringFormat='You have {0} installed'}" FontSize="12"
+                                                   Foreground="{StaticResource OkBrush}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   ToolTip="A different version of this plugin. The project won't load it by itself; swap it in."
+                                                   Visibility="{Binding OtherVersion, Converter={StaticResource NullToVisibility}}" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <TextBlock Text="{Binding MatchMessage}" FontSize="12" Margin="12,4,0,0" Foreground="{StaticResource MutedBrush}"
+                                           Visibility="{Binding MatchMessage, Converter={StaticResource NullToVisibility}}" />
+                                <ItemsControl ItemsSource="{Binding Matches}" ItemTemplate="{StaticResource MatchTemplate}" />
+                            </StackPanel>
+                        </Border>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
-
-            <ui:Button Content="{Binding SilentToggleText}" Padding="8,2" Margin="0,2,0,0" HorizontalAlignment="Left"
+            <ui:Button Content="{Binding SilentToggleText}" Appearance="Transparent" Padding="8,4" Margin="-8,4,0,0"
+                       HorizontalAlignment="Left" FontSize="12" Foreground="{StaticResource AccentBrush}"
                        Command="{Binding ToggleSilentCommand}"
                        ToolTip="Synths on channels that play no notes in the song"
                        Visibility="{Binding SilentCount, Converter={StaticResource NonZeroToVisibility}}" />
 
             <!-- Samples -->
-            <TextBlock Text="{Binding SampleHeader}" Style="{StaticResource SectionHeader}" />
+            <TextBlock Text="{Binding SampleHeader}" Style="{StaticResource SectionHeader}" Margin="0,24,0,6" />
             <ItemsControl ItemsSource="{Binding Samples}" VirtualizingPanel.IsVirtualizing="True">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:SampleRow}">
-                        <StackPanel Margin="0,0,0,6">
-                            <DockPanel>
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
-                                            Visibility="{Binding Found, Converter={StaticResource InverseBoolToVisibility}}">
-                                    <ui:Button Content="Find matches" Padding="8,2" Margin="4,0,0,0" Command="{Binding FindMatchesCommand}" />
-                                    <ui:Button Content="Search online" Padding="8,2" Margin="4,0,0,0" Command="{Binding SearchOnlineCommand}" />
-                                </StackPanel>
-                                <ui:Button DockPanel.Dock="Right" Content="Show" Padding="8,2" Margin="4,0,0,0"
-                                           Command="{Binding RevealCommand}"
-                                           Visibility="{Binding Found, Converter={StaticResource BoolToVisibility}}" />
-                                <StackPanel>
-                                    <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding Path}" FontSize="11" TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding Path}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <TextBlock Text="Can't be found" FontSize="12" Foreground="{StaticResource MissingBrush}"
-                                               Visibility="{Binding Found, Converter={StaticResource InverseBoolToVisibility}}" />
-                                </StackPanel>
-                            </DockPanel>
-                            <TextBlock Text="{Binding MatchMessage}" FontSize="12" Margin="16,2,0,0" TextWrapping="Wrap"
-                                       Visibility="{Binding MatchMessage, Converter={StaticResource NullToVisibility}}" />
-                            <ItemsControl ItemsSource="{Binding Matches}" ItemTemplate="{StaticResource MatchTemplate}" />
-                        </StackPanel>
+                        <Border Style="{StaticResource ListRow}">
+                            <StackPanel>
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Right" Style="{StaticResource RowActions}">
+                                        <StackPanel Orientation="Horizontal"
+                                                    Visibility="{Binding Found, Converter={StaticResource InverseBoolToVisibility}}">
+                                            <ui:Button Content="Find matches" Style="{StaticResource RowButton}" Command="{Binding FindMatchesCommand}" />
+                                            <ui:Button Content="Search online" Style="{StaticResource RowButton}" Command="{Binding SearchOnlineCommand}" />
+                                        </StackPanel>
+                                        <ui:Button Content="Show" Style="{StaticResource RowButton}" Command="{Binding RevealCommand}"
+                                                   Visibility="{Binding Found, Converter={StaticResource BoolToVisibility}}" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <WrapPanel>
+                                            <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                            <Border Style="{StaticResource Pill}" Background="{StaticResource MissingSoftBrush}"
+                                                    Visibility="{Binding Found, Converter={StaticResource InverseBoolToVisibility}}">
+                                                <TextBlock Text="Can't be found" Style="{StaticResource PillText}" Foreground="{StaticResource MissingBrush}" />
+                                            </Border>
+                                        </WrapPanel>
+                                        <TextBlock Text="{Binding Path}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
+                                                   ToolTip="{Binding Path}" Foreground="{StaticResource FaintBrush}" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <TextBlock Text="{Binding MatchMessage}" FontSize="12" Margin="12,4,0,0" TextWrapping="Wrap"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           Visibility="{Binding MatchMessage, Converter={StaticResource NullToVisibility}}" />
+                                <ItemsControl ItemsSource="{Binding Matches}" ItemTemplate="{StaticResource MatchTemplate}" />
+                            </StackPanel>
+                        </Border>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <!-- Tracks and facts -->
-            <TextBlock Text="Tracks / channels" Style="{StaticResource SectionHeader}" />
+            <!-- Tracks -->
+            <TextBlock Text="Tracks and channels" Style="{StaticResource SectionHeader}" Margin="0,24,0,8" />
             <ItemsControl ItemsSource="{Binding Tracks}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border Margin="0,0,6,6" Padding="8,3" CornerRadius="10"
-                                Background="{DynamicResource ControlFillColorDefaultBrush}">
+                        <Border Margin="0,0,6,6" Padding="10,3" CornerRadius="11" Background="{StaticResource SurfaceRaisedBrush}">
                             <TextBlock Text="{Binding}" FontSize="12" />
                         </Border>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <TextBlock Text="Details" Style="{StaticResource SectionHeader}" />
-            <ItemsControl ItemsSource="{Binding Facts}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Grid Margin="0,2">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="150" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="{Binding Key}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" />
-                        </Grid>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+            <!-- Details -->
+            <TextBlock Text="Details" Style="{StaticResource SectionHeader}" Margin="0,20,0,8" />
+            <Border Style="{StaticResource Panel}">
+                <ItemsControl ItemsSource="{Binding Facts}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,3">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Key}" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+                                <TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" FontSize="12" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
 
             <!-- Older numbered saves of this song (Song_2, Song_3 …), newest first -->
             <StackPanel Visibility="{Binding HasOlderSaves, Converter={StaticResource BoolToVisibility}}">
-                <TextBlock Text="{Binding OlderSavesHeader}" Style="{StaticResource SectionHeader}" />
+                <TextBlock Text="{Binding OlderSavesHeader}" Style="{StaticResource SectionHeader}" Margin="0,24,0,6" />
                 <ItemsControl ItemsSource="{Binding OlderSaves}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <DockPanel Margin="0,1">
-                                <ui:Button DockPanel.Dock="Right" Content="Show" Padding="8,2" Margin="4,0,0,0"
-                                           Command="{Binding DataContext.RevealSaveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                           CommandParameter="{Binding}" />
-                                <ui:Button DockPanel.Dock="Right" Content="Open" Padding="8,2"
-                                           Command="{Binding DataContext.OpenSaveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                           CommandParameter="{Binding}" />
-                                <TextBlock DockPanel.Dock="Right" Text="{Binding Modified, StringFormat='d MMM yyyy'}" Margin="8,0"
-                                           VerticalAlignment="Center" FontSize="12"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                                           ToolTip="{Binding Path}" />
-                            </DockPanel>
+                            <Border Style="{StaticResource ListRow}" Padding="10,4">
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Right" Style="{StaticResource RowActions}">
+                                        <ui:Button Content="Open" Style="{StaticResource RowButton}"
+                                                   Command="{Binding DataContext.OpenSaveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                   CommandParameter="{Binding}" />
+                                        <ui:Button Content="Show" Style="{StaticResource RowButton}"
+                                                   Command="{Binding DataContext.RevealSaveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                   CommandParameter="{Binding}" />
+                                    </StackPanel>
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Modified, StringFormat='d MMM yyyy'}" Margin="8,0"
+                                               VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource FaintBrush}" />
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                               ToolTip="{Binding Path}" />
+                                </DockPanel>
+                            </Border>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>

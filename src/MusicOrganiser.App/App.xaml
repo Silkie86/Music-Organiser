@@ -23,21 +23,261 @@
             <conv:WaveformGeometry x:Key="WaveformGeometry" />
             <conv:Seconds x:Key="Seconds" />
             <conv:IndexToBool x:Key="IndexToBool" />
+            <conv:DawBrush x:Key="DawBrush" />
 
-            <Style x:Key="FilterLabel" TargetType="TextBlock">
-                <Setter Property="Margin" Value="2,0,0,4" />
-                <Setter Property="FontSize" Value="12" />
-                <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+            <!-- ===== Palette: a dark studio look with one violet accent ===== -->
+            <Color x:Key="AccentColor">#FF8B7CF6</Color>
+            <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF101114" />
+            <SolidColorBrush x:Key="SidebarBrush" Color="#FF15161A" />
+            <SolidColorBrush x:Key="SurfaceBrush" Color="#FF1A1B20" />
+            <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="#FF212228" />
+            <SolidColorBrush x:Key="HoverBrush" Color="#FF24252C" />
+            <SolidColorBrush x:Key="StrokeBrush" Color="#FF2A2C33" />
+            <SolidColorBrush x:Key="TextBrush" Color="#FFECEDF0" />
+            <SolidColorBrush x:Key="MutedBrush" Color="#FF9A9DA7" />
+            <SolidColorBrush x:Key="FaintBrush" Color="#FF676A74" />
+            <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+            <SolidColorBrush x:Key="AccentSoftBrush" Color="#338B7CF6" />
+            <SolidColorBrush x:Key="AccentFaintBrush" Color="#1A8B7CF6" />
+
+            <SolidColorBrush x:Key="WarningBrush" Color="#FFF2B33D" />
+            <SolidColorBrush x:Key="MissingBrush" Color="#FFF0616D" />
+            <SolidColorBrush x:Key="MissingSoftBrush" Color="#26F0616D" />
+            <SolidColorBrush x:Key="OkBrush" Color="#FF4ACB8B" />
+            <SolidColorBrush x:Key="OkSoftBrush" Color="#264ACB8B" />
+
+            <!-- ===== Text ===== -->
+            <Style x:Key="PageTitle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="26" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            </Style>
+            <Style x:Key="PageSubtitle" TargetType="TextBlock">
+                <Setter Property="Margin" Value="0,2,0,0" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
             <Style x:Key="SectionHeader" TargetType="TextBlock">
-                <Setter Property="Margin" Value="0,16,0,8" />
-                <Setter Property="FontSize" Value="16" />
+                <Setter Property="Margin" Value="0,18,0,8" />
+                <Setter Property="FontSize" Value="15" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            </Style>
+            <!-- Small caps label above a group of controls, e.g. "DAW" over a filter. -->
+            <Style x:Key="FilterLabel" TargetType="TextBlock">
+                <Setter Property="Margin" Value="2,0,0,6" />
+                <Setter Property="FontSize" Value="11" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Foreground" Value="{StaticResource FaintBrush}" />
+            </Style>
+            <Style x:Key="Muted" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+
+            <!-- ===== Surfaces ===== -->
+            <Style x:Key="Card" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="10" />
+                <Setter Property="Padding" Value="16" />
+            </Style>
+            <!-- A small rounded label: DAW, status, "2 plugins missing". -->
+            <Style x:Key="Pill" TargetType="Border">
+                <Setter Property="CornerRadius" Value="9" />
+                <Setter Property="Padding" Value="8,1,8,2" />
+                <Setter Property="HorizontalAlignment" Value="Left" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            </Style>
+            <Style x:Key="PillText" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="11.5" />
                 <Setter Property="FontWeight" Value="SemiBold" />
             </Style>
 
-            <SolidColorBrush x:Key="WarningBrush" Color="#FFE0A030" />
-            <SolidColorBrush x:Key="MissingBrush" Color="#FFE05A5A" />
-            <SolidColorBrush x:Key="OkBrush" Color="#FF5AC77A" />
+            <!-- ===== Tables ===== -->
+            <Style x:Key="ColumnHeader" TargetType="DataGridColumnHeader">
+                <Setter Property="Foreground" Value="{StaticResource FaintBrush}" />
+                <Setter Property="FontSize" Value="11.5" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="DataGridColumnHeader">
+                            <Grid>
+                                <Border Background="Transparent" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,0,0,1"
+                                        Padding="10,0,6,8">
+                                    <DockPanel>
+                                        <Path x:Name="SortArrow" DockPanel.Dock="Right" Width="8" Height="5" Margin="4,0,0,0"
+                                              Stretch="Fill" Fill="{StaticResource MutedBrush}" Visibility="Collapsed"
+                                              VerticalAlignment="Center" Data="M0,0 L1,1 L2,0 Z" />
+                                        <ContentPresenter VerticalAlignment="Bottom" RecognizesAccessKey="True" />
+                                    </DockPanel>
+                                </Border>
+                                <Thumb x:Name="PART_RightHeaderGripper" HorizontalAlignment="Right" Width="6" Cursor="SizeWE" Opacity="0" />
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="SortDirection" Value="Ascending">
+                                    <Setter TargetName="SortArrow" Property="Visibility" Value="Visible" />
+                                    <Setter TargetName="SortArrow" Property="Data" Value="M0,1 L1,0 L2,1 Z" />
+                                </Trigger>
+                                <Trigger Property="SortDirection" Value="Descending">
+                                    <Setter TargetName="SortArrow" Property="Visibility" Value="Visible" />
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="Row" TargetType="DataGridRow">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                <Setter Property="MinHeight" Value="34" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="DataGridRow">
+                            <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="6" Margin="0,1">
+                                <SelectiveScrollingGrid>
+                                    <SelectiveScrollingGrid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </SelectiveScrollingGrid.ColumnDefinitions>
+                                    <SelectiveScrollingGrid.RowDefinitions>
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </SelectiveScrollingGrid.RowDefinitions>
+                                    <DataGridCellsPresenter Grid.Column="1" ItemsPanel="{TemplateBinding ItemsPanel}"
+                                                            SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                                    <DataGridDetailsPresenter Grid.Row="1" Grid.Column="1"
+                                                              SelectiveScrollingGrid.SelectiveScrollingOrientation="Vertical"
+                                                              Visibility="{TemplateBinding DetailsVisibility}" />
+                                    <DataGridRowHeader Grid.RowSpan="2" SelectiveScrollingGrid.SelectiveScrollingOrientation="Vertical"
+                                                       Visibility="Collapsed" />
+                                </SelectiveScrollingGrid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bg" Property="Background" Value="{StaticResource HoverBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="Bg" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="Cell" TargetType="DataGridCell">
+                <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridRow}}" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="DataGridCell">
+                            <Border Background="Transparent" Padding="10,0,6,0">
+                                <ContentPresenter VerticalAlignment="Center" />
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            </Style>
+            <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="RowBackground" Value="Transparent" />
+                <Setter Property="AlternatingRowBackground" Value="Transparent" />
+                <Setter Property="GridLinesVisibility" Value="None" />
+                <Setter Property="HeadersVisibility" Value="Column" />
+                <Setter Property="ColumnHeaderHeight" Value="34" />
+                <Setter Property="ColumnHeaderStyle" Value="{StaticResource ColumnHeader}" />
+                <Setter Property="RowStyle" Value="{StaticResource Row}" />
+                <Setter Property="CellStyle" Value="{StaticResource Cell}" />
+                <Setter Property="FontSize" Value="13" />
+            </Style>
+
+            <!-- ===== Tabs: plain labels with an accent underline on the open one ===== -->
+            <Style TargetType="TabItem">
+                <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                <Setter Property="FontSize" Value="14" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TabItem">
+                            <Grid Margin="0,0,24,0" Background="Transparent" Cursor="Hand">
+                                <ContentPresenter ContentSource="Header" Margin="0,6,0,10" HorizontalAlignment="Center"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                                <Border x:Name="Underline" Height="3" CornerRadius="1.5" VerticalAlignment="Bottom"
+                                        Background="{StaticResource AccentBrush}" Visibility="Hidden" />
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="Underline" Property="Visibility" Value="Visible" />
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style TargetType="TabControl">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="TabControl">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Top" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,0,0,1">
+                                    <TabPanel IsItemsHost="True" />
+                                </Border>
+                                <ContentPresenter ContentSource="SelectedContent" Margin="0,16,0,0" />
+                            </DockPanel>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- ===== Sidebar navigation ===== -->
+            <Style x:Key="NavItem" TargetType="ListBoxItem">
+                <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                <Setter Property="Margin" Value="0,1" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListBoxItem">
+                            <Border x:Name="Bg" CornerRadius="8" Background="Transparent" Padding="12,9">
+                                <Grid>
+                                    <Border x:Name="Bar" Width="3" Height="16" CornerRadius="1.5" HorizontalAlignment="Left"
+                                            Margin="-12,0,0,0" Background="{StaticResource AccentBrush}" Visibility="Hidden" />
+                                    <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" />
+                                </Grid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bg" Property="Background" Value="{StaticResource HoverBrush}" />
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="Bg" Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+                                    <Setter TargetName="Bar" Property="Visibility" Value="Visible" />
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- Filter lists (e.g. sound types): the same quiet selection as the sidebar. -->
+            <Style x:Key="QuietListItem" TargetType="ListBoxItem" BasedOn="{StaticResource NavItem}">
+                <Setter Property="Margin" Value="0" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

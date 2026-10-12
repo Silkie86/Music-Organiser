@@ -36,8 +36,8 @@ public sealed partial class MainViewModel : ObservableObject
         Sounds = new SoundsViewModel(db, sounds, this);
         Nav =
         [
-            new("Sound Lab", "\uE8D6", Sounds),
             new("Projects", "", Projects),
+            new("Sound Lab", "\uE8D6", Sounds),
             new("Plugins", "", Plugins),
             new("Samples", "", Samples),
             new("Settings", "", Settings),

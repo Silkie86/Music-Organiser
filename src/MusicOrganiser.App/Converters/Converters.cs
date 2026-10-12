@@ -109,3 +109,32 @@ public sealed class IndexToBool : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         value is true && int.TryParse(parameter as string, out var p) ? p : Binding.DoNothing;
 }
+
+/// <summary>
+/// Each DAW's colour for its label: Bitwig orange, FL Studio green, Studio One blue.
+/// ConverterParameter "Soft" gives a faint version for the label's background.
+/// </summary>
+public sealed class DawBrush : IValueConverter
+{
+    static readonly Dictionary<string, System.Windows.Media.Color> Colours = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Bitwig Studio"] = System.Windows.Media.Color.FromRgb(0xFF, 0x8A, 0x4C),
+        ["FL Studio"] = System.Windows.Media.Color.FromRgb(0x9C, 0xD0, 0x6A),
+        ["Studio One"] = System.Windows.Media.Color.FromRgb(0x5A, 0xAE, 0xFF),
+    };
+    static readonly Dictionary<(string, bool), System.Windows.Media.SolidColorBrush> Cache = new();
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        var daw = value as string ?? "";
+        var soft = parameter as string == "Soft";
+        if (Cache.TryGetValue((daw, soft), out var cached)) return cached;
+        var c = Colours.TryGetValue(daw, out var found) ? found : System.Windows.Media.Color.FromRgb(0x9A, 0x9D, 0xA7);
+        if (soft) c.A = 0x26;
+        var brush = new System.Windows.Media.SolidColorBrush(c);
+        brush.Freeze();
+        return Cache[(daw, soft)] = brush;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
+}
