@@ -28,7 +28,10 @@
         <StackPanel Margin="8,0,8,16">
             <!-- Header and actions -->
             <TextBlock Text="{Binding Item.Name}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
-            <TextBlock Text="{Binding Item.Daw}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,12" />
+            <TextBlock Text="{Binding Item.Daw}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" />
+            <TextBlock Text="{Binding SavesText}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0"
+                       TextWrapping="Wrap" Visibility="{Binding HasOlderSaves, Converter={StaticResource BoolToVisibility}}" />
+            <Border Height="12" />
 
             <WrapPanel>
                 <ui:Button Content="Open in DAW" Appearance="Primary" Icon="{ui:SymbolIcon Play24}"
@@ -213,6 +216,30 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
+
+            <!-- Older numbered saves of this song (Song_2, Song_3 …), newest first -->
+            <StackPanel Visibility="{Binding HasOlderSaves, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="{Binding OlderSavesHeader}" Style="{StaticResource SectionHeader}" />
+                <ItemsControl ItemsSource="{Binding OlderSaves}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <DockPanel Margin="0,1">
+                                <ui:Button DockPanel.Dock="Right" Content="Show" Padding="8,2" Margin="4,0,0,0"
+                                           Command="{Binding DataContext.RevealSaveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           CommandParameter="{Binding}" />
+                                <ui:Button DockPanel.Dock="Right" Content="Open" Padding="8,2"
+                                           Command="{Binding DataContext.OpenSaveCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           CommandParameter="{Binding}" />
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding Modified, StringFormat='d MMM yyyy'}" Margin="8,0"
+                                           VerticalAlignment="Center" FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                           ToolTip="{Binding Path}" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

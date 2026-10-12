@@ -9,12 +9,15 @@ public sealed partial class ProjectItem : ObservableObject
 {
     readonly LibraryDb _db;
     readonly ProjectSummary _p;
+    readonly string? _song;
     bool _loading = true;
 
-    public ProjectItem(LibraryDb db, ProjectSummary p)
+    public ProjectItem(LibraryDb db, ProjectSummary p, string? song = null, IReadOnlyList<ProjectSummary>? olderSaves = null)
     {
         _db = db;
         _p = p;
+        _song = song;
+        OlderSaves = olderSaves ?? [];
         _status = p.Status;
         _rating = p.Rating;
         _favourite = p.Favourite;
@@ -26,7 +29,12 @@ public sealed partial class ProjectItem : ObservableObject
 
     public ProjectSummary Summary => _p;
     public long Id => _p.Id;
-    public string Name => _p.Name;
+    /// <summary>The song name; numbered saves (Song_2, Song_3 …) share one row named after the song.</summary>
+    public string Name => _song ?? _p.Name;
+    /// <summary>The newest save's file name, e.g. "Didums_77".</summary>
+    public string FileName => _p.Name;
+    public IReadOnlyList<ProjectSummary> OlderSaves { get; }
+    public int SaveCount => OlderSaves.Count + 1;
     public string Path => _p.Path;
     public string Daw => _p.Daw;
     public string Folder => _p.Folder;
@@ -96,6 +104,7 @@ public sealed partial class ProjectItem : ObservableObject
     /// <summary>Everything the search box matches against.</summary>
     public bool Matches(string text) =>
         Name.Contains(text, StringComparison.OrdinalIgnoreCase) ||
+        FileName.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         Folder.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         Notes.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         MusicalKey.Equals(text, StringComparison.OrdinalIgnoreCase) ||

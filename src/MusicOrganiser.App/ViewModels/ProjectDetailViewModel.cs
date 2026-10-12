@@ -27,6 +27,10 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public IReadOnlyList<KeyValuePair<string, string>> Facts { get; }
     public IReadOnlyList<string> Warnings => Detail?.Warnings ?? [];
     public bool HasWarnings => Warnings.Count > 0;
+    public IReadOnlyList<ProjectSummary> OlderSaves => Item.OlderSaves;
+    public bool HasOlderSaves => Item.OlderSaves.Count > 0;
+    public string SavesText => HasOlderSaves ? $"Newest of {Item.SaveCount} saves: {Item.FileName}" : "";
+    public string OlderSavesHeader => $"Older saves ({Item.OlderSaves.Count})";
     public bool CanExtractMidi => Detail?.CanExtractMidi == true && !Item.FileMissing;
     public bool CanExtractPresets => Detail?.CanExtractPresets == true && !Item.FileMissing;
     public string MidiNote => Item.Daw == "Studio One" ? "Experimental for Studio One" : "";
@@ -64,19 +68,34 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Music Organiser Exports");
 
     [RelayCommand]
-    void OpenInDaw()
+    void OpenInDaw() => Open(Item.Id, Item.Path, Item.Daw);
+
+    /// <summary>Open one of the song's older numbered saves.</summary>
+    [RelayCommand]
+    void OpenSave(ProjectSummary? save)
     {
-        if (!File.Exists(Item.Path))
+        if (save is not null) Open(save.Id, save.Path, save.Daw);
+    }
+
+    [RelayCommand]
+    void RevealSave(ProjectSummary? save)
+    {
+        if (save is not null) Shell.Reveal(save.Path);
+    }
+
+    void Open(long id, string path, string daw)
+    {
+        if (!File.Exists(path))
         {
             Message = "This project file isn't where it used to be. Rescan to update the library.";
             return;
         }
-        if (_db.GetSetting(DawExeKey(Item.Daw)) is { Length: > 0 } exe && File.Exists(exe))
-            Shell.OpenWith(Item.Path, exe);
+        if (_db.GetSetting(DawExeKey(daw)) is { Length: > 0 } exe && File.Exists(exe))
+            Shell.OpenWith(path, exe);
         else
-            Shell.Open(Item.Path);
-        _db.MarkOpened(Item.Id);
-        Message = $"Opening in {Item.Daw}…";
+            Shell.Open(path);
+        _db.MarkOpened(id);
+        Message = $"Opening {Path.GetFileNameWithoutExtension(path)} in {daw}…";
     }
 
     [RelayCommand]

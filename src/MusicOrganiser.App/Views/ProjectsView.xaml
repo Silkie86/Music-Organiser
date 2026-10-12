@@ -33,7 +33,9 @@
 
                 <CheckBox Content="Favourites only" IsChecked="{Binding OnlyFavourites}" />
                 <CheckBox Content="Missing plugins or samples" IsChecked="{Binding OnlyMissing}" />
-                <CheckBox Content="Hide archived" IsChecked="{Binding HideArchived}" Margin="0,0,0,12" />
+                <CheckBox Content="Hide archived" IsChecked="{Binding HideArchived}" />
+                <CheckBox Content="One row per song" IsChecked="{Binding GroupSaves}" Margin="0,0,0,12"
+                          ToolTip="Show numbered saves (Song_2, Song_3 …) as one song, opening the newest" />
 
                 <TextBlock Text="Group by" Style="{StaticResource FilterLabel}" />
                 <ComboBox ItemsSource="{Binding Source={x:Static vm:ProjectsViewModel.GroupChoices}}"
@@ -92,6 +94,7 @@
                     <DataGridTextColumn Header="Key" Width="48" Binding="{Binding MusicalKey}" />
                     <DataGridTextColumn Header="Modified" Width="92" Binding="{Binding Modified, StringFormat='d MMM yyyy'}" />
                     <DataGridTextColumn Header="Plugins" Width="58" Binding="{Binding PluginCount}" />
+                    <DataGridTextColumn Header="Saves" Width="52" Binding="{Binding SaveCount}" />
                     <DataGridTemplateColumn Header="Missing" Width="110" SortMemberPath="HasMissing">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
