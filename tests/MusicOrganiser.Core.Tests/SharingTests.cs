@@ -467,20 +467,20 @@ public class PluginImpactTests : IDisposable
         _db.SaveOrganisation(p);
 
         var impact = PluginImpact.Of(_db, [("Serum", "Xfer Records")]);
-        Assert.Equal(["Night Drive", "Shuffle"], impact.Projects.Select(x => x.Project.Name));   // released first
-        Assert.Equal("Uninstalling Serum would affect 2 projects, including 1 released.", impact.Headline);
+        Assert.Equal(["Night Drive", "Shuffle"], impact.Songs.Select(x => x.Song));   // released first
+        Assert.Equal("Uninstalling Serum would affect 2 songs, including 1 released.", impact.Headline);
         var copies = impact.Copies.ToDictionary(c => c.File.Format);
-        Assert.Equal((2, false), (copies["VST2"].Projects, copies["VST2"].Unused));
+        Assert.Equal((2, false), (copies["VST2"].Songs, copies["VST2"].Unused));
         Assert.True(copies["VST3"].Unused);
-        Assert.Contains("No project uses the VST3 copy", impact.Detail);
+        Assert.Contains("No song uses the VST3 copy", impact.Detail);
     }
 
     [Fact]
     public void AddsUpSeveralPlugins()
     {
         var impact = PluginImpact.Of(_db, [("Serum", ""), ("Diva", "u-he")]);
-        Assert.Equal(3, impact.Projects.Count);
-        Assert.StartsWith("Uninstalling these 2 plugins would affect 3 projects", impact.Headline);
+        Assert.Equal(3, impact.Songs.Count);
+        Assert.StartsWith("Uninstalling these 2 plugins would affect 3 songs", impact.Headline);
     }
 
     [Fact]
@@ -488,16 +488,39 @@ public class PluginImpactTests : IDisposable
     {
         var copies = PluginImpact.Of(_db, [("Serum", ""), ("Arcade", "Output")]).Copies
                                  .ToDictionary(c => (PluginKey.Of(c.File.Name), c.File.Format));
-        Assert.Equal(2, copies[("serum", "VST2")].Projects);
+        Assert.Equal(2, copies[("serum", "VST2")].Songs);
         Assert.True(copies[("serum", "VST3")].Unused);
-        Assert.Equal(1, copies[("arcade", "VST3")].Projects);
+        Assert.Equal(1, copies[("arcade", "VST3")].Songs);
+    }
+
+    [Fact]
+    public void CountsASongOnceWhateverSavesUseThePlugin()
+    {
+        var first = _db.Projects().First(x => x.Name == "Night Drive");
+        first.Status = "Released";
+        _db.SaveOrganisation(first);
+        // Two later saves: _2 still uses Serum, _3 (the latest) swapped it for a native synth.
+        Fixtures.FlStudioProject(_root, "Night Drive_2");
+        File.WriteAllBytes(Path.Combine(_root, "Night Drive_3.flp"), new Fixtures.FlpBuilder()
+            .Ascii(199, "21.2.3.4004").Word(64, 0).Byte(21, 2)
+            .Text(201, "3x Osc").Text(203, "Lead").Data(213, [9])
+            .Build());
+        new Scanner(_db).ScanProjects();
+
+        var impact = PluginImpact.Of(_db, [("Serum", "Xfer Records")]);
+        Assert.Equal(["Night Drive", "Shuffle"], impact.Songs.Select(x => x.Song));
+        var night = impact.Songs[0];
+        Assert.Equal(("Night Drive_3", 3, 2, false), (night.Latest.Name, night.Saves, night.SaveIds.Count, night.InLatest));
+        Assert.Equal("only 2 older saves", night.SavesText);
+        Assert.Equal("Uninstalling Serum would affect 2 songs (3 saves), including 1 released.", impact.Headline);
+        Assert.Equal(2, impact.Copies.Single(c => c.File.Format == "VST2").Songs);
     }
 
     [Fact]
     public void SaysWhenNothingUsesAPlugin()
     {
         var impact = PluginImpact.Of(_db, [("Sylenth1", "")]);
-        Assert.Empty(impact.Projects);
+        Assert.Empty(impact.Songs);
         Assert.Equal("No project in your library uses Sylenth1. Uninstalling won't break anything here.", impact.Headline);
     }
 
@@ -584,8 +607,8 @@ public class WavesImpactTests : IDisposable
     public void CountsWavesPluginsAgainstTheirWaveShell()
     {
         var impact = PluginImpact.Of(_db, [("WaveShell1-VST3 14.12_x64", "")]);
-        Assert.Equal(["Waves Mix"], impact.Projects.Select(p => p.Project.Name));
-        Assert.Equal(1, Assert.Single(impact.Copies).Projects);
+        Assert.Equal(["Waves Mix"], impact.Songs.Select(s => s.Song));
+        Assert.Equal(1, Assert.Single(impact.Copies).Songs);
         Assert.DoesNotContain(PluginImpact.Unused(_db), u => u.Name.StartsWith("WaveShell"));
     }
 }
@@ -611,17 +634,17 @@ public class MacProjectImpactTests : IDisposable
     public void LeavesOutProjectsThatOnlyUseTheMacVersion()
     {
         var impact = PluginImpact.Of(_db, [("Diva", "u-he")]);
-        Assert.Equal(["Sunday Song"], impact.Projects.Select(p => p.Project.Name));
-        Assert.Equal(1, impact.MacOnlyProjects);
-        Assert.Contains("1 more project uses the Mac (AU) version", impact.Detail);
+        Assert.Equal(["Sunday Song"], impact.Songs.Select(s => s.Song));
+        Assert.Equal(1, impact.MacOnlySongs);
+        Assert.Contains("1 more song uses the Mac (AU) version", impact.Detail);
     }
 
     [Fact]
     public void SaysWhenOnlyMacProjectsUseAPlugin()
     {
         var impact = PluginImpact.Of(_db, [("Arcade", "Output")]);
-        Assert.Empty(impact.Projects);
-        Assert.StartsWith("1 project uses the Mac (AU) version", impact.Detail);
+        Assert.Empty(impact.Songs);
+        Assert.StartsWith("1 song uses the Mac (AU) version", impact.Detail);
         var arcade = Assert.Single(PluginImpact.Unused(_db), u => u.Name == "Arcade");
         Assert.Equal("Projects only use the AU (Mac)", arcade.UsageText);
     }

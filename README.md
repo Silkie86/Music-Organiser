@@ -14,7 +14,7 @@ A Windows desktop app that keeps track of all your music projects across Bitwig 
 - **Exports MIDI** (one .mid per pattern or part) and **plugin presets** (where the format allows).
 - **Opens projects** in their DAW, or shows them in Explorer.
 - **Organise however you like**: status (Idea → Released), rating, favourite, musical key, tags and notes. Filter, search and group by DAW, status, folder, month, year, Elektron box or rating.
-- **What breaks if I uninstall?** Pick one or more plugins on the Plugins screen to see which projects use them (released and favourite songs first), which installed copy (VST2, VST3, CLAP) each project actually loads, and which copies nothing uses. A third list shows installed plugins no project uses at all.
+- **What breaks if I uninstall?** Pick one or more plugins on the Plugins screen to see which songs use them (released and favourite songs first, counting older numbered saves too), which installed copy (VST2, VST3, CLAP) each project actually loads, and which copies nothing uses. A third list shows installed plugins no project uses at all.
 
 ## Share Check (collaborating across Mac and Windows)
 

@@ -106,29 +106,23 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
-                <ui:Button DockPanel.Dock="Bottom" Content="Show these projects in the library" Margin="0,10,0,0"
+                <ui:Button DockPanel.Dock="Bottom" Content="Show these songs in the library" Margin="0,10,0,0"
                            HorizontalAlignment="Stretch" Command="{Binding ShowImpactProjectsCommand}"
-                           Visibility="{Binding Impact.Projects.Count, Converter={StaticResource NonZeroToVisibility}}" />
-                <ListBox ItemsSource="{Binding Impact.Projects}" Background="Transparent" BorderThickness="0"
+                           Visibility="{Binding Impact.Songs.Count, Converter={StaticResource NonZeroToVisibility}}" />
+                <ListBox ItemsSource="{Binding Impact.Songs}" Background="Transparent" BorderThickness="0"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Margin="0,2">
                                 <StackPanel.InputBindings>
                                     <MouseBinding Gesture="LeftDoubleClick"
-                                                  Command="{Binding DataContext.OpenImpactProjectCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                  Command="{Binding DataContext.OpenImpactSongCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                   CommandParameter="{Binding}" />
                                 </StackPanel.InputBindings>
-                                <TextBlock Text="{Binding Project.Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis">
-                                    <Run Text="{Binding Project.Status, Mode=OneWay}" />
-                                    <Run Text="·" />
-                                    <Run Text="{Binding Project.Daw, Mode=OneWay}" />
-                                    <Run Text="·" />
-                                    <Run Text="{Binding FormatsText, Mode=OneWay}" />
-                                    <Run Text="·" />
-                                    <Run Text="{Binding Project.Modified, Mode=OneWay, StringFormat='d MMM yyyy'}" />
-                                </TextBlock>
+                                <TextBlock Text="{Binding Song}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding Latest.Path}" />
+                                <TextBlock Text="{Binding DetailText}" FontSize="12" TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
                         </DataTemplate>
                     </ListBox.ItemTemplate>

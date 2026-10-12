@@ -3,24 +3,41 @@ using MusicOrganiser.Core.Sharing;
 
 namespace MusicOrganiser.Core.Library;
 
-/// <summary>A project that uses a plugin you're thinking of uninstalling.</summary>
-public sealed record ImpactProject(ProjectSummary Project, IReadOnlyList<string> Plugins, IReadOnlyList<string> Formats)
+/// <summary>
+/// A song (all its numbered saves, see <see cref="SongVersions"/>) with saves that use a plugin
+/// you're thinking of uninstalling. Uninstalling breaks the older saves too, so any save counts.
+/// </summary>
+public sealed record ImpactSong(string Song, ProjectSummary Latest, int Saves, IReadOnlyList<long> SaveIds,
+                                IReadOnlyList<string> Plugins, IReadOnlyList<string> Formats)
 {
+    public bool InLatest => SaveIds.Contains(Latest.Id);
     public string FormatsText => string.Join(", ", Formats);
     public string PluginsText => string.Join(", ", Plugins);
+
+    /// <summary>"" for a song saved once, else e.g. "all 3 saves", "12 of 77 saves", "only 2 older saves".</summary>
+    public string SavesText =>
+        Saves <= 1 ? ""
+        : SaveIds.Count >= Saves ? $"all {Saves} saves"
+        : InLatest ? $"{SaveIds.Count} of {Saves} saves"
+        : SaveIds.Count == 1 ? "only an older save" : $"only {SaveIds.Count} older saves";
+
+    public string DetailText => string.Join(" · ", new[]
+    {
+        Latest.Status, Latest.Daw, FormatsText, SavesText, Latest.Modified.ToString("d MMM yyyy"),
+    }.Where(t => t.Length > 0));
 }
 
-/// <summary>One installed file of the plugin, and how many projects saved with its format.</summary>
-public sealed record InstalledCopy(InstalledPlugin File, int Projects, int UnknownFormat)
+/// <summary>One installed file of the plugin, and how many songs saved with its format.</summary>
+public sealed record InstalledCopy(InstalledPlugin File, int Songs, int UnknownFormat)
 {
-    public bool Unused => Projects == 0 && UnknownFormat == 0;
+    public bool Unused => Songs == 0 && UnknownFormat == 0;
 
-    public string UsageText => (Projects, UnknownFormat) switch
+    public string UsageText => (Songs, UnknownFormat) switch
     {
-        (0, 0) => "No project uses this one",
-        (_, 0) => $"Used by {Projects} project{(Projects == 1 ? "" : "s")}",
-        (0, _) => $"Maybe used by {UnknownFormat} project{(UnknownFormat == 1 ? "" : "s")} (format not saved)",
-        _ => $"Used by {Projects}, maybe {UnknownFormat} more",
+        (0, 0) => "No song uses this one",
+        (_, 0) => $"Used by {Songs} song{(Songs == 1 ? "" : "s")}",
+        (0, _) => $"Maybe used by {UnknownFormat} song{(UnknownFormat == 1 ? "" : "s")} (format not saved)",
+        _ => $"Used by {Songs}, maybe {UnknownFormat} more",
     };
 }
 
@@ -28,10 +45,10 @@ public sealed record InstalledCopy(InstalledPlugin File, int Projects, int Unkno
 public sealed class UninstallImpact
 {
     public IReadOnlyList<string> PluginNames { get; init; } = [];
-    public IReadOnlyList<ImpactProject> Projects { get; init; } = [];
+    public IReadOnlyList<ImpactSong> Songs { get; init; } = [];
     public IReadOnlyList<InstalledCopy> Copies { get; init; } = [];
-    /// <summary>Projects that use only the Mac (AU) version: they don't load these plugins on this PC anyway.</summary>
-    public int MacOnlyProjects { get; init; }
+    /// <summary>Songs that use only the Mac (AU) version: they don't load these plugins on this PC anyway.</summary>
+    public int MacOnlySongs { get; init; }
     public string Headline { get; init; } = "";
     public string Detail { get; init; } = "";
 }
@@ -67,24 +84,36 @@ public static class PluginImpact
             yield return fileKey;
     }
 
-    /// <summary>Projects using any of the plugins, and the installed copies of them.</summary>
+    /// <summary>Songs using any of the plugins, and the installed copies of them.</summary>
     public static UninstallImpact Of(LibraryDb db, IReadOnlyList<(string Name, string Vendor)> plugins)
     {
         if (plugins.Count == 0) return new UninstallImpact();
         var wanted = plugins.SelectMany(p => PluginKey.Candidates(p.Name, p.Vendor)).ToHashSet(StringComparer.Ordinal);
-        var all = db.PluginRows().Where(r => FormatOf(r.Plugin) != "Native" && Keys(r.Plugin).Any(wanted.Contains)).ToList();
+
+        // Every save belongs to a song; a song is known by its latest save.
+        var songs = SongVersions.Group(db.Projects());
+        var songOf = new Dictionary<long, SongGroup>();
+        foreach (var g in songs)
+            foreach (var save in g.Older.Prepend(g.Latest)) songOf[save.Id] = g;
+        long SongId(long projectId) => songOf[projectId].Latest.Id;
+
+        var all = db.PluginRows().Where(r => songOf.ContainsKey(r.ProjectId) && FormatOf(r.Plugin) != "Native" &&
+                                             Keys(r.Plugin).Any(wanted.Contains)).ToList();
         // Audio Units never load on Windows, so uninstalling the Windows plugin changes nothing for them.
         var rows = all.Where(r => FormatOf(r.Plugin) != "AU").ToList();
-        var macOnly = all.Select(r => r.ProjectId).Distinct().Count() - rows.Select(r => r.ProjectId).Distinct().Count();
-        var summaries = db.Projects().ToDictionary(p => p.Id);
-        var projects = rows.GroupBy(r => r.ProjectId)
-            .Where(g => summaries.ContainsKey(g.Key))
-            .Select(g => new ImpactProject(summaries[g.Key],
-                g.Select(r => r.Plugin.Name).Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList(),
-                g.Select(r => FormatOf(r.Plugin) is { Length: > 0 } f ? f : "format not saved").Distinct().Order().ToList()))
-            .OrderBy(p => Rank(p.Project.Status))
-            .ThenByDescending(p => p.Project.Favourite)
-            .ThenByDescending(p => p.Project.Modified)
+        var macOnly = all.Select(r => SongId(r.ProjectId)).Distinct().Count() - rows.Select(r => SongId(r.ProjectId)).Distinct().Count();
+        var affected = rows.GroupBy(r => SongId(r.ProjectId))
+            .Select(g =>
+            {
+                var song = songOf[g.Key];
+                return new ImpactSong(song.Song, song.Latest, song.Older.Count + 1,
+                    g.Select(r => r.ProjectId).Distinct().ToList(),
+                    g.Select(r => r.Plugin.Name).Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList(),
+                    g.Select(r => FormatOf(r.Plugin) is { Length: > 0 } f ? f : "format not saved").Distinct().Order().ToList());
+            })
+            .OrderBy(s => Rank(s.Latest.Status))
+            .ThenByDescending(s => s.Latest.Favourite)
+            .ThenByDescending(s => s.Latest.Modified)
             .ToList();
 
         var copies = db.InstalledPluginFiles()
@@ -95,9 +124,9 @@ public static class PluginImpact
                 var key = PluginKey.Of(f.Name);
                 var format = PluginKey.NormaliseFormat(f.Format);
                 var mine = rows.Where(r => Keys(r.Plugin).Contains(key)).ToList();
-                var same = mine.Where(r => FormatOf(r.Plugin) == format).Select(r => r.ProjectId).ToHashSet();
-                var unknown = mine.Where(r => FormatOf(r.Plugin).Length == 0 && !same.Contains(r.ProjectId))
-                                  .Select(r => r.ProjectId).Distinct().Count();
+                var same = mine.Where(r => FormatOf(r.Plugin) == format).Select(r => SongId(r.ProjectId)).ToHashSet();
+                var unknown = mine.Where(r => FormatOf(r.Plugin).Length == 0).Select(r => SongId(r.ProjectId))
+                                  .Where(id => !same.Contains(id)).Distinct().Count();
                 return new InstalledCopy(f, same.Count, unknown);
             })
             .OrderBy(c => c.File.Format).ThenBy(c => c.File.Path)
@@ -107,39 +136,42 @@ public static class PluginImpact
         var label = names.Count == 1 ? names[0] : $"these {names.Count} plugins";
         return new UninstallImpact
         {
-            PluginNames = names, Projects = projects, Copies = copies, MacOnlyProjects = macOnly,
-            Headline = Headline(label, projects),
-            Detail = Detail(projects, copies, macOnly),
+            PluginNames = names, Songs = affected, Copies = copies, MacOnlySongs = macOnly,
+            Headline = Headline(label, affected),
+            Detail = Detail(affected, copies, macOnly),
         };
     }
 
-    static string Headline(string label, IReadOnlyList<ImpactProject> projects)
+    static string Headline(string label, IReadOnlyList<ImpactSong> songs)
     {
-        if (projects.Count == 0)
+        if (songs.Count == 0)
             return $"No project in your library uses {label}. Uninstalling won't break anything here.";
         var parts = new List<string>();
         foreach (var status in new[] { "Released", "Finished" })
-            if (projects.Count(p => p.Project.Status == status) is var n and > 0) parts.Add($"{n} {status.ToLowerInvariant()}");
-        if (projects.Count(p => p.Project.Favourite) is var fav and > 0) parts.Add($"{fav} favourite{(fav == 1 ? "" : "s")}");
+            if (songs.Count(s => s.Latest.Status == status) is var n and > 0) parts.Add($"{n} {status.ToLowerInvariant()}");
+        if (songs.Count(s => s.Latest.Favourite) is var fav and > 0) parts.Add($"{fav} favourite{(fav == 1 ? "" : "s")}");
         var including = parts.Count > 0 ? $", including {string.Join(" and ", parts)}" : "";
-        return $"Uninstalling {label} would affect {projects.Count} project{(projects.Count == 1 ? "" : "s")}{including}.";
+        var saves = songs.Sum(s => s.SaveIds.Count);
+        var savesText = saves > songs.Count ? $" ({saves:N0} saves)" : "";
+        return $"Uninstalling {label} would affect {songs.Count:N0} song{(songs.Count == 1 ? "" : "s")}{savesText}{including}.";
     }
 
-    static string Detail(IReadOnlyList<ImpactProject> projects, IReadOnlyList<InstalledCopy> copies, int macOnly)
+    static string Detail(IReadOnlyList<ImpactSong> songs, IReadOnlyList<InstalledCopy> copies, int macOnly)
     {
         var lines = new List<string>();
         if (macOnly > 0)
-            lines.Add($"{macOnly}{(projects.Count > 0 ? " more" : "")} project{(macOnly == 1 ? " uses" : "s use")} " +
+            lines.Add($"{macOnly}{(songs.Count > 0 ? " more" : "")} song{(macOnly == 1 ? " uses" : "s use")} " +
                       "the Mac (AU) version, which doesn't load on this PC anyway.");
-        var byFormat = projects.SelectMany(p => p.Formats.Select(f => (f, p))).GroupBy(x => x.f)
-                               .Select(g => $"the {g.Key} in {g.Count()}").ToList();
-        if (projects.Count > 0 && byFormat.Count > 1) lines.Add($"Your projects use {string.Join(", ", byFormat)}.");
+        var byFormat = songs.SelectMany(s => s.Formats.Select(f => (f, s))).GroupBy(x => x.f)
+                            .Select(g => $"the {g.Key} in {g.Count()}").ToList();
+        if (songs.Count > 0 && byFormat.Count > 1) lines.Add($"Your songs use {string.Join(", ", byFormat)}.");
         var spare = copies.Where(c => c.Unused).ToList();
         if (spare.Count > 0 && spare.Count < copies.Count)
-            lines.Add($"No project uses the {string.Join(" or ", spare.Select(c => c.File.Format).Distinct())} copy, " +
+            lines.Add($"No song uses the {string.Join(" or ", spare.Select(c => c.File.Format).Distinct())} copy, " +
                       "so removing just that one breaks nothing here.");
-        if (projects.Count > 0)
-            lines.Add("To keep a song's sound without the plugin, render those tracks to audio before uninstalling.");
+        if (songs.Count > 0)
+            lines.Add("Older saves of a song count too. To keep a song's sound without the plugin, " +
+                      "render those tracks to audio before uninstalling.");
         lines.Add("Only projects in your library folders are counted.");
         return string.Join(" ", lines);
     }

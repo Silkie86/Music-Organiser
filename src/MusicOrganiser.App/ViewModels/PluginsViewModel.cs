@@ -132,15 +132,15 @@ public sealed partial class PluginsViewModel : ObservableObject
     [RelayCommand]
     void ShowImpactProjects()
     {
-        if (Impact is not { Projects.Count: > 0 } i) return;
+        if (Impact is not { Songs.Count: > 0 } i) return;
         var label = i.PluginNames.Count == 1 ? i.PluginNames[0] : $"{i.PluginNames.Count} plugins";
-        _main.Projects.ShowOnly(i.Projects.Select(p => p.Project.Id), $"Projects using {label}");
+        _main.Projects.ShowOnly(i.Songs.SelectMany(s => s.SaveIds), $"Projects using {label}");
     }
 
     [RelayCommand]
-    void OpenImpactProject(ImpactProject? p)
+    void OpenImpactSong(ImpactSong? s)
     {
-        if (p is not null) _main.Projects.ShowOnly([p.Project.Id], p.Project.Name);
+        if (s is not null) _main.Projects.ShowOnly(s.SaveIds.Append(s.Latest.Id), s.Song);
     }
 
     [RelayCommand]
