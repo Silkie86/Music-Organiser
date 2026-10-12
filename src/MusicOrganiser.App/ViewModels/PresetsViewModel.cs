@@ -20,10 +20,16 @@ public sealed partial class PresetsViewModel : ObservableObject
     [ObservableProperty] bool _hasNative;
     /// <summary>Only some projects say which plugins are synths and which are effects.</summary>
     [ObservableProperty] bool _hasKinds;
-    [ObservableProperty] bool _thirdParty = true;
-    [ObservableProperty] bool _native = true;
-    [ObservableProperty] bool _synths = true;
-    [ObservableProperty] bool _effects = true;
+    /// <summary>Who made the plugin: 0 any, 1 third-party, 2 FL Studio.</summary>
+    [ObservableProperty] int _maker;
+    /// <summary>What it is: 0 any, 1 synths, 2 effects.</summary>
+    [ObservableProperty] int _type;
+    [ObservableProperty] string _allMakersText = "All";
+    [ObservableProperty] string _thirdPartyText = "Third-party";
+    [ObservableProperty] string _nativeText = "FL Studio";
+    [ObservableProperty] string _allTypesText = "All";
+    [ObservableProperty] string _synthsText = "Synths";
+    [ObservableProperty] string _effectsText = "Effects";
     [ObservableProperty] IReadOnlyList<PresetRow> _presets = [];
     [ObservableProperty] bool _hasPresets;
     [ObservableProperty] string _summary = "Reading plugin states…";
@@ -50,18 +56,35 @@ public sealed partial class PresetsViewModel : ObservableObject
         catch (Exception e) { Summary = $"Couldn't read the plugin states: {e.Message}"; }
     }
 
-    partial void OnThirdPartyChanged(bool value) => Apply();
-    partial void OnNativeChanged(bool value) => Apply();
-    partial void OnSynthsChanged(bool value) => Apply();
-    partial void OnEffectsChanged(bool value) => Apply();
+    partial void OnMakerChanged(int value) => Apply();
+    partial void OnTypeChanged(int value) => Apply();
+
+    static PresetFilter Filter(int maker, int type) =>
+        new(ThirdParty: maker != 2, Native: maker != 1, Synths: type != 2, Effects: type != 1);
+
+    int Count(int maker, int type)
+    {
+        var f = Filter(maker, type);
+        return _all.Count(r => f.Matches(r.Blob));
+    }
 
     void Apply()
     {
-        var filter = new PresetFilter(ThirdParty, Native, Synths, Effects);
+        // Each choice shows how many presets it would give with the other choice as it is.
+        AllMakersText = $"All ({Count(0, Type)})";
+        ThirdPartyText = $"Third-party ({Count(1, Type)})";
+        NativeText = $"FL Studio ({Count(2, Type)})";
+        AllTypesText = $"All ({Count(Maker, 0)})";
+        SynthsText = $"Synths ({Count(Maker, 1)})";
+        EffectsText = $"Effects ({Count(Maker, 2)})";
+
+        var filter = Filter(Maker, Type);
         Presets = _all.Where(r => filter.Matches(r.Blob)).ToList();
         HasPresets = Presets.Count > 0;
         Summary = _all.Count == 0
             ? "No plugin states saved in this project."
+            : Presets.Count == 0
+                ? "None of this project's plugin states match those choices."
             : Presets.Count == _all.Count
                 ? $"{_all.Count} plugin state{(_all.Count == 1 ? "" : "s")}"
                 : $"Showing {Presets.Count} of {_all.Count} plugin states";

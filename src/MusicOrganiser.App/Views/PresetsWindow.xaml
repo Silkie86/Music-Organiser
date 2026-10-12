@@ -24,15 +24,27 @@
         </DockPanel>
 
         <WrapPanel DockPanel.Dock="Top" Margin="16,4,16,0">
-            <StackPanel Orientation="Horizontal" Margin="0,0,24,6"
+            <StackPanel Orientation="Horizontal" Margin="0,0,32,6"
                         Visibility="{Binding HasNative, Converter={StaticResource BoolToVisibility}}">
-                <CheckBox Content="Third-party plugins" IsChecked="{Binding ThirdParty}" Margin="0,0,12,0" />
-                <CheckBox Content="FL Studio plugins" IsChecked="{Binding Native}" />
+                <TextBlock Text="Plugins" VerticalAlignment="Center" Margin="0,0,12,0"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <RadioButton GroupName="Maker" Content="{Binding AllMakersText}" MinWidth="0" Margin="0,0,8,0"
+                             IsChecked="{Binding Maker, Converter={StaticResource IndexToBool}, ConverterParameter=0}" />
+                <RadioButton GroupName="Maker" Content="{Binding ThirdPartyText}" MinWidth="0" Margin="0,0,8,0"
+                             IsChecked="{Binding Maker, Converter={StaticResource IndexToBool}, ConverterParameter=1}" />
+                <RadioButton GroupName="Maker" Content="{Binding NativeText}" MinWidth="0"
+                             IsChecked="{Binding Maker, Converter={StaticResource IndexToBool}, ConverterParameter=2}" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,6"
                         Visibility="{Binding HasKinds, Converter={StaticResource BoolToVisibility}}">
-                <CheckBox Content="Synths" IsChecked="{Binding Synths}" Margin="0,0,12,0" />
-                <CheckBox Content="Effects" IsChecked="{Binding Effects}" />
+                <TextBlock Text="Type" VerticalAlignment="Center" Margin="0,0,12,0"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <RadioButton GroupName="Type" Content="{Binding AllTypesText}" MinWidth="0" Margin="0,0,8,0"
+                             IsChecked="{Binding Type, Converter={StaticResource IndexToBool}, ConverterParameter=0}" />
+                <RadioButton GroupName="Type" Content="{Binding SynthsText}" MinWidth="0" Margin="0,0,8,0"
+                             IsChecked="{Binding Type, Converter={StaticResource IndexToBool}, ConverterParameter=1}" />
+                <RadioButton GroupName="Type" Content="{Binding EffectsText}" MinWidth="0"
+                             IsChecked="{Binding Type, Converter={StaticResource IndexToBool}, ConverterParameter=2}" />
             </StackPanel>
         </WrapPanel>
 
