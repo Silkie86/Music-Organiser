@@ -84,13 +84,15 @@ public sealed partial class MainViewModel : ObservableObject
         {
             await Task.Run(() =>
             {
+                // Sample folders are indexed alongside the projects; the projects need the plugin list first.
+                var sampling = samples ? Task.Run(() => _scanner.ScanSampleFolders(null, ct)) : Task.CompletedTask;
                 if (plugins)
                 {
                     ((IProgress<ScanProgress>)progress).Report(new("Checking installed plugins", 0, 0, ""));
                     _scanner.ScanInstalledPlugins();
                 }
-                if (samples) _scanner.ScanSampleFolders(progress, ct);
                 _scanner.ScanProjects(progress, full, ct);
+                sampling.GetAwaiter().GetResult();
             }, ct);
             ScanStatus = $"Library up to date · {DateTime.Now:HH:mm}";
         }

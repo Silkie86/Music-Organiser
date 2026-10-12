@@ -43,7 +43,9 @@ public sealed class SoundClassifier
         var classes = data.Select(e => e.Label).Distinct().Order().ToArray();
         if (classes.Length < 2) throw new InvalidOperationException("Need at least two kinds of sound to learn the difference");
 
+        // The held-out check and the real model are trained at the same time.
         double? accuracy = null;
+        var fitting = Task.Run(() => Fit(data, classes, space, options));
         if (data.Count >= 40)
         {
             var test = data.Where((_, i) => i % 5 == 0).ToList();
@@ -54,7 +56,7 @@ public sealed class SoundClassifier
                 accuracy = Math.Round(test.Count(e => probe.Predict(e.X)[0].Label == e.Label) / (double)test.Count, 3);
             }
         }
-        var model = Fit(data, classes, space, options);
+        var model = fitting.GetAwaiter().GetResult();
         return new SoundClassifier
         {
             Classes = model.Classes, Mean = model.Mean, Scale = model.Scale, W = model.W, B = model.B,

@@ -534,8 +534,10 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     async Task Shuffle()
     {
         var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, 30, Adventure, 0, IncludeRarelyUsed ? 1 : 0);
-        Suggestions = await Task.Run(() => Core.Sounds.Rediscover.Suggest(parent.Org, o));
-        Folders = await Task.Run(() => Core.Sounds.Rediscover.Folders(parent.Org).Take(40).ToList());
+        var suggesting = Task.Run(() => Core.Sounds.Rediscover.Suggest(parent.Org, o));
+        var folders = Task.Run(() => Core.Sounds.Rediscover.Folders(parent.Org).Take(40).ToList());
+        Suggestions = await suggesting;
+        Folders = await folders;
         var used = parent.Org.Sounds.Count(s => s.UsedIn > 0);
         Intro = used == 0
             ? "None of your sounds show up in scanned projects yet, so these are a varied pick. Star favourites or scan your projects to teach it your taste."
