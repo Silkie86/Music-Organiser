@@ -1,4 +1,5 @@
 using System.IO;
+using MusicOrganiser.Core;
 using MusicOrganiser.Core.Sounds;
 using NAudio.Wave;
 
@@ -26,7 +27,15 @@ public sealed class AudioPlayer : IDisposable
             // A little more buffering than the minimum, so a busy disk or CPU can't starve playback.
             _out = new WaveOutEvent { DesiredLatency = 150, NumberOfBuffers = 3 };
             _out.Init(_reader);
-            _out.PlaybackStopped += (_, _) => { Playing = null; Stopped?.Invoke(); };
+            var output = _out;
+            output.PlaybackStopped += (_, _) =>
+            {
+                if (!ReferenceEquals(_out, output)) return;   // an older sound, already replaced by this one
+                Playing = null;
+                Parallelism.AudioPlaying = false;
+                Stopped?.Invoke();
+            };
+            Parallelism.AudioPlaying = true;
             _out.Play();
             Playing = path;
         }
@@ -61,6 +70,7 @@ public sealed class AudioPlayer : IDisposable
         _out = null;
         _reader = null;
         Playing = null;
+        Parallelism.AudioPlaying = false;
     }
 
     public void Dispose() => Stop();

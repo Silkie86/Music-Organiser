@@ -10,12 +10,16 @@ public static class Parallelism
     public static ParallelOptions Options(CancellationToken ct = default) =>
         new() { CancellationToken = ct, MaxDegreeOfParallelism = Cores };
 
+    /// <summary>Set while a sound is playing; background work then steps aside for it.</summary>
+    public static volatile bool AudioPlaying;
+
     /// <summary>
-    /// Runs one piece of background work below normal priority, so sound playback and the
-    /// window always get the CPU first while every core is busy scanning.
+    /// Runs one piece of background work. While a sound is playing it runs below normal
+    /// priority, so playback gets the CPU first; otherwise it runs at full speed.
     /// </summary>
     public static T Background<T>(Func<T> work)
     {
+        if (!AudioPlaying) return work();
         var thread = Thread.CurrentThread;
         var before = thread.Priority;
         thread.Priority = ThreadPriority.BelowNormal;
