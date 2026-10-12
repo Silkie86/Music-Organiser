@@ -35,6 +35,7 @@ public sealed partial class ProjectsViewModel : ObservableObject
     [ObservableProperty] bool _onlyFavourites;
     [ObservableProperty] bool _onlyMissing;
     [ObservableProperty] bool _hideArchived = true;
+    [ObservableProperty] bool _groupSaves = true;
     [ObservableProperty] string _groupBy = "No grouping";
     [ObservableProperty] string _countText = "";
 
@@ -58,14 +59,18 @@ public sealed partial class ProjectsViewModel : ObservableObject
     public void Reload()
     {
         var selectedId = Selected?.Id;
-        Items.ReplaceAll(_db.Projects().Select(p => new ProjectItem(_db, p)));
+        var projects = _db.Projects();
+        _saveCount = projects.Count;
+        Items.ReplaceAll(GroupSaves
+            ? SongVersions.Group(projects).Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older))
+            : projects.Select(p => new ProjectItem(_db, p)));
 
         Refill(DawFilters, Items.Select(i => i.Daw), DawFilter, v => DawFilter = v);
         Refill(StatusFilters, Statuses.All, StatusFilter, v => StatusFilter = v);
         Refill(TagFilters, _db.AllTags().Select(t => t.Tag), TagFilter, v => TagFilter = v);
         Refill(HardwareFilters, Items.SelectMany(i => i.Hardware), HardwareFilter, v => HardwareFilter = v);
 
-        Selected = Items.FirstOrDefault(i => i.Id == selectedId);
+        Selected = Items.FirstOrDefault(i => i.Id == selectedId || i.OlderSaves.Any(o => o.Id == selectedId));
         ApplyFilter();
     }
 
@@ -79,7 +84,7 @@ public sealed partial class ProjectsViewModel : ObservableObject
 
     bool Filter(ProjectItem p)
     {
-        if (_idFilter is not null && !_idFilter.Contains(p.Id)) return false;
+        if (_idFilter is not null && !_idFilter.Contains(p.Id) && !p.OlderSaves.Any(o => _idFilter.Contains(o.Id))) return false;
         if (DawFilter != Any && p.Daw != DawFilter) return false;
         if (StatusFilter != Any && p.Status != StatusFilter) return false;
         if (StatusFilter == Any && HideArchived && p.Status == "Archived") return false;
@@ -94,10 +99,16 @@ public sealed partial class ProjectsViewModel : ObservableObject
     {
         View.Refresh();
         var shown = View.Cast<object>().Count();
-        CountText = shown == Items.Count ? Count(Items.Count) : $"{shown:N0} of {Count(Items.Count)}";
+        var noun = GroupSaves ? "song" : "project";
+        CountText = (shown == Items.Count ? Count(Items.Count, noun) : $"{shown:N0} of {Count(Items.Count, noun)}") +
+                    (GroupSaves && _saveCount > Items.Count ? $" ({_saveCount:N0} saves)" : "");
     }
 
-    static string Count(int n) => n == 1 ? "1 project" : $"{n:N0} projects";
+    int _saveCount;
+
+    static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
+
+    partial void OnGroupSavesChanged(bool value) => Reload();
 
     partial void OnSearchTextChanged(string value) => ApplyFilter();
     partial void OnDawFilterChanged(string value) => ApplyFilter();

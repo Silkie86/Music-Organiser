@@ -46,6 +46,7 @@ public sealed partial class LibraryDb : IDisposable
         CREATE INDEX IF NOT EXISTS ix_samples_project ON samples(project_id);
         CREATE INDEX IF NOT EXISTS ix_tags_tag ON tags(tag);
         CREATE INDEX IF NOT EXISTS ix_sample_index_name ON sample_index(file_name);
+        CREATE INDEX IF NOT EXISTS ix_projects_folder ON projects(folder);
         """;
 
     readonly SqliteConnection _conn;
@@ -148,6 +149,12 @@ public sealed partial class LibraryDb : IDisposable
         {
             using var tx = _conn.BeginTransaction();
             var info = f.Info;
+            bool isNew;
+            using (var cmd = Cmd("SELECT COUNT(*) FROM projects WHERE path = $p", ("$p", f.Path)))
+            {
+                cmd.Transaction = tx;
+                isNew = (long)cmd.ExecuteScalar()! == 0;
+            }
             var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
             using (var cmd = Cmd("""
                 INSERT INTO projects (path, name, daw, folder, size, mtime, tempo, version, title, confidence,
@@ -204,7 +211,63 @@ public sealed partial class LibraryDb : IDisposable
                 cmd.Transaction = tx;
                 cmd.ExecuteNonQuery();
             }
+            if (isNew) InheritFromEarlierSave(tx, id, f.Path);
             tx.Commit();
+        }
+    }
+
+    /// <summary>
+    /// A new numbered save (Song_12 next to Song_11) takes over the status, rating, notes and
+    /// tags you gave the song, so they stay with it as it moves on.
+    /// </summary>
+    void InheritFromEarlierSave(SqliteTransaction tx, long id, string path)
+    {
+        var name = Path.GetFileNameWithoutExtension(path);
+        var (song, number) = SongVersions.Split(name);
+        var folder = Path.GetDirectoryName(path);
+        long? from = null;
+        string hardware = "";
+        var best = int.MinValue;
+        using (var cmd = Cmd("SELECT id, name, daw, hardware FROM projects WHERE folder = $f AND id != $id",
+                             ("$f", folder), ("$id", id)))
+        {
+            cmd.Transaction = tx;
+            using var r = cmd.ExecuteReader();
+            var daw = Readers.For(path)?.Daw;
+            while (r.Read())
+            {
+                var (s, n) = SongVersions.Split((string)r["name"]);
+                if (!s.Equals(song, StringComparison.OrdinalIgnoreCase) || n >= number || n <= best) continue;
+                if (daw is not null && !daw.Equals(Str(r, "daw"), StringComparison.Ordinal)) continue;
+                best = n;
+                from = (long)r["id"];
+                hardware = Str(r, "hardware");
+            }
+        }
+        if (from is null) return;
+
+        var autoTags = hardware.Split(", ", StringSplitOptions.RemoveEmptyEntries).Select(h => h.ToLowerInvariant()).ToHashSet();
+        using (var cmd = Cmd("""
+            UPDATE projects SET (status, rating, favourite, musical_key, notes) =
+                (SELECT status, rating, favourite, musical_key, notes FROM projects WHERE id = $from)
+            WHERE id = $id
+            """, ("$id", id), ("$from", from)))
+        {
+            cmd.Transaction = tx;
+            cmd.ExecuteNonQuery();
+        }
+        var tags = new List<string>();
+        using (var cmd = Cmd("SELECT tag FROM tags WHERE project_id = $from", ("$from", from)))
+        {
+            cmd.Transaction = tx;
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) tags.Add((string)r["tag"]);
+        }
+        foreach (var t in tags.Where(t => !autoTags.Contains(t)))
+        {
+            using var cmd = Cmd("INSERT OR IGNORE INTO tags VALUES ($id, $t)", ("$id", id), ("$t", t));
+            cmd.Transaction = tx;
+            cmd.ExecuteNonQuery();
         }
     }
 

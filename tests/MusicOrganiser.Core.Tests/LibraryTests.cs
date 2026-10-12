@@ -65,6 +65,48 @@ public class LibraryTests : IDisposable
         Assert.Equal(["dark", "techno"], again.Tags);
     }
 
+    [Theory]
+    [InlineData("Didums_70", "Didums", 70)]
+    [InlineData("Didums", "Didums", 1)]
+    [InlineData("Beauty bitch (orch)_9", "Beauty bitch (orch)", 9)]
+    [InlineData("a_2_3", "a_2", 3)]
+    [InlineData("130", "130", 1)]
+    [InlineData("_5", "_5", 1)]
+    public void SplitsNumberedSaves(string name, string song, int number) =>
+        Assert.Equal((song, number), SongVersions.Split(name));
+
+    [Fact]
+    public void GroupsNumberedSavesUnderTheNewest()
+    {
+        ProjectSummary P(string name, string folder = @"C:\dub", int day = 1) =>
+            new() { Name = name, Path = $@"{folder}\{name}.flp", Daw = "FL Studio", Folder = folder, Modified = new DateTime(2020, 1, day) };
+        var groups = SongVersions.Group([P("Didums", day: 9), P("Didums_10", day: 2), P("Didums_2", day: 3),
+                                         P("Night Drive"), P("Didums_3", @"C:\other")]);
+        Assert.Equal(3, groups.Count);
+        var didums = groups.Single(g => g.Song == "Didums" && g.Latest.Folder == @"C:\dub");
+        Assert.Equal("Didums_10", didums.Latest.Name);
+        Assert.Equal(["Didums_2", "Didums"], didums.Older.Select(o => o.Name));
+    }
+
+    [Fact]
+    public void NewSaveKeepsTheSongsRatingTagsAndNotes()
+    {
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        var p = _db.Projects().Single(x => x.Name == "Night Drive");
+        p.Status = "Mixing";
+        p.Rating = 4;
+        p.Notes = "needs a better drop";
+        _db.SaveOrganisation(p);
+        _db.SetTags(p.Id, ["dub"]);
+
+        Fixtures.FlStudioProject(_root, "Night Drive_2");
+        scanner.ScanProjects();
+        var next = _db.Projects().Single(x => x.Name == "Night Drive_2");
+        Assert.Equal(("Mixing", 4, "needs a better drop"), (next.Status, next.Rating, next.Notes));
+        Assert.Equal(["dub"], next.Tags);
+    }
+
     [Fact]
     public void TagsElektronBoxesFromOverbridgePlugins()
     {
