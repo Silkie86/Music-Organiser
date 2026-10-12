@@ -89,6 +89,7 @@ public class FlStudioTests
         Assert.Equal(".flstate", presets[1].Extension);
         Assert.Equal([(PluginKind.Instrument, false), (PluginKind.Instrument, true), (PluginKind.Effect, true), (PluginKind.Effect, false)],
                      presets.Select(p => (p.Kind, p.Native)));
+        Assert.Equal(["", "", "Master", "Master"], presets.Select(p => p.Where));
     }
 
     [Fact]

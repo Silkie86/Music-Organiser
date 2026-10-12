@@ -43,6 +43,8 @@ public sealed record PresetBlob(string Name, string Plugin, string Extension, by
     public PluginKind Kind { get; init; }
     /// <summary>One of the DAW's own plugins (an FL Studio plugin) rather than a third-party VST.</summary>
     public bool Native { get; init; }
+    /// <summary>Where it sits when that tells copies apart, e.g. "Insert 3 · Vocals" or "Master".</summary>
+    public string Where { get; init; } = "";
 }
 
 public sealed class ProjectInfo

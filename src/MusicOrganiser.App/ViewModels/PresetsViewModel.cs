@@ -34,6 +34,8 @@ public sealed partial class PresetsViewModel : ObservableObject
     [ObservableProperty] bool _hasPresets;
     [ObservableProperty] string _summary = "Reading plugin states…";
     [ObservableProperty] string _message = "";
+    /// <summary>One line on where each kind of file in the list can be loaded.</summary>
+    [ObservableProperty] string _formatNote = "";
 
     public PresetsViewModel(IProjectReader reader, string path, string title, string exportRoot)
     {
@@ -51,6 +53,9 @@ public sealed partial class PresetsViewModel : ObservableObject
             _all = presets.Select(p => new PresetRow(p, this)).ToList();
             HasNative = presets.Any(p => p.Native);
             HasKinds = presets.Any(p => p.Kind != PluginKind.Unknown);
+            FormatNote = string.Join("  ·  ", presets.Select(p => p.Extension.ToLowerInvariant()).Distinct()
+                .Select(ext => (ext, hint: LoadHint(ext))).Where(x => x.hint.Length > 0)
+                .Select(x => $"{x.ext}: {x.hint}"));
             Apply();
         }
         catch (Exception e) { Summary = $"Couldn't read the plugin states: {e.Message}"; }
@@ -118,10 +123,10 @@ public sealed partial class PresetsViewModel : ObservableObject
     /// <summary>Where each kind of file can be loaded.</summary>
     public static string LoadHint(string extension) => extension.ToLowerInvariant() switch
     {
-        ".fxp" or ".fxb" => "Load into the VST2 version of the plugin",
-        ".vstpreset" => "Load into the VST3 version of the plugin",
-        ".flstate" => "FL Studio's own format: only FL Studio can load it",
-        ".vst3state" => "Raw VST3 state: most DAWs can't load it directly",
+        ".fxp" or ".fxb" => "load into the VST2 version of the plugin",
+        ".vstpreset" => "load into the VST3 version of the plugin",
+        ".flstate" => "only FL Studio can load these",
+        ".vst3state" => "raw VST3 state, most DAWs can't load it directly",
         _ => "",
     };
 }
@@ -133,6 +138,7 @@ public sealed partial class PresetRow(PresetBlob blob, PresetsViewModel owner) :
     public string Plugin => blob.Plugin.Length > 0 && blob.Plugin != blob.Name ? blob.Plugin : "";
     public string Details => string.Join(" · ", new[]
     {
+        blob.Where,
         blob.Kind switch { PluginKind.Instrument => "Synth", PluginKind.Effect or PluginKind.NoteEffect => "Effect", _ => "" },
         blob.Native ? "FL Studio plugin" : "",
         blob.Extension.TrimStart('.'),

@@ -28,7 +28,8 @@ public sealed class FlStudioReader : IProjectReader
     const int EvPluginName = Text + 11, EvGenre = Text + 14, EvArtists = Text + 15;
     const int EvPluginState = Data + 5;         // 213: plugin state; VST metadata for the Fruity Wrapper
     const int EvPatternNotes = Data + 16;       // 224: 24-byte note records
-    const int EvInsertFlags = Data + 28;        // 236: starts each mixer insert
+    const int EvInsertFlags = Data + 28;        // 236: starts each mixer insert (0 is the master)
+    const int EvInsertName = Text + 12;         // 204: an insert's name, after its slots
 
     // Fruity Wrapper (VST host) state: u32 version (8, 10, 12 in FL 25), then records of (u32 id, u64 size, data).
     const int VstKind = 50, VstFourCc = 51, VstClassId = 52;
@@ -542,13 +543,18 @@ public sealed class FlStudioReader : IProjectReader
         var channelHasPlugin = false;
         var pendingInternal = "";
         var currentName = "";
+        var insert = -1;
+        var insertNames = new Dictionary<int, string>();
+        var presetInsert = new Dictionary<int, int>();   // preset index → mixer insert
         foreach (var e in flp.Events)
         {
             switch (e.Id)
             {
                 case EvChannelNew: channel = (int)e.Int; inMixer = false; channelHasPlugin = false; break;
                 case EvChannelType when channel is not null: channelTypes[channel.Value] = (int)e.Int; break;
-                case EvMixerSlot or EvInsertFlags: inMixer = true; break;
+                case EvInsertFlags: inMixer = true; insert++; break;
+                case EvInsertName when insert >= 0: insertNames[insert] = flp.Str(e); break;
+                case EvMixerSlot: inMixer = true; break;
                 case EvPluginInternal:
                     pendingInternal = flp.Str(e);
                     currentName = "";
@@ -559,6 +565,7 @@ public sealed class FlStudioReader : IProjectReader
                 case EvPluginState when e.Payload.Length > 0:
                     var onChannel = !inMixer && channel is not null &&
                                     channelTypes.GetValueOrDefault(channel.Value) == ChannelTypeInstrument;
+                    if (inMixer && insert >= 0) presetInsert[presets.Count] = insert;
                     if (pendingInternal.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase))
                     {
                         var f = WrapperFields(e.Payload.Span);
@@ -582,6 +589,13 @@ public sealed class FlStudioReader : IProjectReader
                     pendingInternal = "";
                     break;
             }
+        }
+        foreach (var (i, ins) in presetInsert)
+        {
+            if (i >= presets.Count) continue;
+            var where = ins == 0 ? "Master" : $"Insert {ins}";
+            if (insertNames.GetValueOrDefault(ins) is { Length: > 0 } n) where += $" · {n}";
+            presets[i] = presets[i] with { Where = where };
         }
         return presets;
     }

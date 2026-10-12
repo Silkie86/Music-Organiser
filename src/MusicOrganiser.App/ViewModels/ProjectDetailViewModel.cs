@@ -184,8 +184,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             }
             var hint = PresetsViewModel.LoadHint(Path.GetExtension(result.Files[0]));
             Message = result.Files.Count == 1
-                ? $"Exported {result.Files[0]}." + (hint.Length > 0 ? $" {hint}." : "")
-                : $"Exported {result.Files.Count} presets for {row.Name}." + (hint.Length > 0 ? $" {hint}." : "");
+                ? $"Exported {result.Files[0]}." + (hint.Length > 0 ? $" In Bitwig, {hint}." : "")
+                : $"Exported {result.Files.Count} presets for {row.Name}." + (hint.Length > 0 ? $" In Bitwig, {hint}." : "");
             if (result.Files.Count == 1) Shell.Reveal(Path.Combine(result.Folder, result.Files[0]));
             else Shell.Open(result.Folder);
         }

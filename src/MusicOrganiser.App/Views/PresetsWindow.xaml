@@ -23,6 +23,9 @@
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
         </DockPanel>
 
+        <TextBlock DockPanel.Dock="Bottom" Text="{Binding FormatNote}" Margin="16,8,16,0" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Visibility="{Binding FormatNote, Converter={StaticResource NullToVisibility}}" />
         <WrapPanel DockPanel.Dock="Top" Margin="16,4,16,0">
             <StackPanel Orientation="Horizontal" Margin="0,0,32,6"
                         Visibility="{Binding HasNative, Converter={StaticResource BoolToVisibility}}">
@@ -55,7 +58,7 @@
             <ItemsControl ItemsSource="{Binding Presets}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:PresetRow}">
-                        <DockPanel Margin="0,0,8,8">
+                        <DockPanel Margin="0,0,8,8" ToolTip="{Binding LoadHint}">
                             <ui:Button DockPanel.Dock="Right" Content="Export" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Command="{Binding ExportCommand}" ToolTip="Save just this preset" />
                             <StackPanel>
@@ -67,9 +70,6 @@
                                 </StackPanel>
                                 <TextBlock Text="{Binding Details}" FontSize="12"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Text="{Binding LoadHint}" FontSize="12" TextWrapping="Wrap"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                           Visibility="{Binding LoadHint, Converter={StaticResource NullToVisibility}}" />
                             </StackPanel>
                         </DockPanel>
                     </DataTemplate>

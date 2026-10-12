@@ -55,7 +55,9 @@ public static class Exporter
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in presets)
         {
-            var label = TextScan.SafeFileName(p.Plugin.Length > 0 && p.Plugin != p.Name ? $"{p.Plugin} - {p.Name}" : p.Name);
+            var label = p.Plugin.Length > 0 && p.Plugin != p.Name ? $"{p.Plugin} - {p.Name}" : p.Name;
+            if (p.Where.Length > 0) label += $" ({p.Where.Replace(" · ", " ")})";
+            label = TextScan.SafeFileName(label);
             var name = label + p.Extension;
             for (var n = 2; !used.Add(name); n++) name = $"{label} {n}{p.Extension}";
             File.WriteAllBytes(Path.Combine(dir, name), p.Data);
