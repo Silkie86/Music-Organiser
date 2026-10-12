@@ -436,8 +436,17 @@
                         <TextBlock Text="An open neural network from LAION trained on music and sound with descriptions. It lets you search by describing a sound, matches a kit to a vibe, and makes sound-alikes and type guesses sharper. It runs on this PC."
                                    Style="{StaticResource Muted}" />
                         <TextBlock Text="{Binding ClapStatus}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                        <StackPanel Margin="0,8,0,0" Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="{Binding DownloadText}" TextWrapping="Wrap" />
+                            <ProgressBar Height="6" Margin="0,6,0,0" Maximum="100" Value="{Binding DownloadPercent}"
+                                         IsIndeterminate="{Binding DownloadSizeUnknown}" />
+                            <ui:Button Content="Stop" Command="{Binding CancelCommand}" Margin="0,8,0,0" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding ModelMessage}" Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold"
+                                   Visibility="{Binding ModelMessage, Converter={StaticResource NullToVisibility}}" />
                         <WrapPanel Margin="0,8,0,0">
                             <ui:Button Content="Download model" Icon="{ui:SymbolIcon ArrowDownload24}" Command="{Binding DownloadModelCommand}" Margin="0,0,6,0"
+                                       IsEnabled="{Binding CanStartDownload}"
                                        Visibility="{Binding ClapInstalled, Converter={StaticResource InverseBoolToVisibility}}" />
                             <ui:Button Content="Deep listen" Icon="{ui:SymbolIcon BrainCircuit24}" Command="{Binding DeepListenCommand}"
                                        Visibility="{Binding ClapInstalled, Converter={StaticResource BoolToVisibility}}" />

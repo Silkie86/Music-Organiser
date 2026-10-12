@@ -36,6 +36,7 @@ public sealed class ClapModel : IDisposable
     /// <summary>
     /// Downloads the model files from Hugging Face into <paramref name="folder"/>. Each file
     /// goes to a .part file first, so an interrupted download never looks installed.
+    /// Progress is reported when each file starts and then about every half a megabyte.
     /// </summary>
     public static async Task DownloadAsync(IProgress<(string File, long Done, long? Total)>? progress = null,
                                            string? folder = null, CancellationToken ct = default)
@@ -51,19 +52,21 @@ public sealed class ClapModel : IDisposable
             using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
             resp.EnsureSuccessStatusCode();
             var total = resp.Content.Headers.ContentLength;
+            progress?.Report((local, 0, total));
             var part = target + ".part";
             await using (var src = await resp.Content.ReadAsStreamAsync(ct))
             await using (var dst = File.Create(part))
             {
                 var buf = new byte[1 << 16];
-                long done = 0;
+                long done = 0, reported = 0;
                 int n;
                 while ((n = await src.ReadAsync(buf, ct)) > 0)
                 {
                     await dst.WriteAsync(buf.AsMemory(0, n), ct);
                     done += n;
-                    progress?.Report((local, done, total));
+                    if (done - reported >= 1 << 19) progress?.Report((local, reported = done, total));
                 }
+                progress?.Report((local, done, total));
             }
             File.Move(part, target, overwrite: true);
         }
