@@ -118,7 +118,7 @@ public sealed class Scanner(LibraryDb db)
         var analysed = todo.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
             .Select(f =>
             {
-                try { return Analyse(f); }
+                try { return Parallelism.Background(() => Analyse(f)); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }   // deleted or locked since it was found
             });
         var batch = new List<LibraryDb.IndexedFile>();

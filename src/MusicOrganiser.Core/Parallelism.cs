@@ -11,6 +11,21 @@ public static class Parallelism
         new() { CancellationToken = ct, MaxDegreeOfParallelism = Cores };
 
     /// <summary>
+    /// Runs one piece of background work below normal priority, so sound playback and the
+    /// window always get the CPU first while every core is busy scanning.
+    /// </summary>
+    public static T Background<T>(Func<T> work)
+    {
+        var thread = Thread.CurrentThread;
+        var before = thread.Priority;
+        thread.Priority = ThreadPriority.BelowNormal;
+        try { return work(); }
+        finally { thread.Priority = before; }
+    }
+
+    public static void Background(Action work) => Background(() => { work(); return 0; });
+
+    /// <summary>
     /// Walks folder trees with every core at once, a level at a time, and returns the files
     /// <paramref name="keepFile"/> accepts, sorted by path. <paramref name="skipDir"/> gets a
     /// folder's name and its parent's name. <paramref name="progress"/> hears how many files
@@ -25,7 +40,7 @@ public static class Parallelism
         while (level.Count > 0)
         {
             var next = new ConcurrentBag<string>();
-            Parallel.ForEach(level, Options(ct), dir =>
+            Parallel.ForEach(level, Options(ct), dir => Background(() =>
             {
                 string[] files, dirs;
                 try
@@ -40,7 +55,7 @@ public static class Parallelism
                 foreach (var d in dirs)
                     if (!skipDir(Path.GetFileName(d), parent)) next.Add(d);
                 if (Interlocked.Increment(ref folders) % 200 == 0) progress?.Invoke(found.Count, dir);
-            });
+            }));
             level = [.. next];
         }
         return found.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();

@@ -1,3 +1,4 @@
+using System.IO;
 using MusicOrganiser.Core.Sounds;
 using NAudio.Wave;
 
@@ -18,11 +19,12 @@ public sealed class AudioPlayer : IDisposable
         Stop();
         try
         {
-            _reader = path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".aif", StringComparison.OrdinalIgnoreCase) ||
-                      path.EndsWith(".aiff", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
+            _reader = Preload(path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".aif", StringComparison.OrdinalIgnoreCase) ||
+                              path.EndsWith(".aiff", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
                 ? new AudioFileReader(path)
-                : new MediaFoundationReader(path);
-            _out = new WaveOutEvent { DesiredLatency = 80 };
+                : new MediaFoundationReader(path));
+            // A little more buffering than the minimum, so a busy disk or CPU can't starve playback.
+            _out = new WaveOutEvent { DesiredLatency = 150, NumberOfBuffers = 3 };
             _out.Init(_reader);
             _out.PlaybackStopped += (_, _) => { Playing = null; Stopped?.Invoke(); };
             _out.Play();
@@ -32,6 +34,22 @@ public sealed class AudioPlayer : IDisposable
         {
             Stop();
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Decodes a sample fully into memory before it plays, so playback never waits on a disk
+    /// that a scan is busy reading. Long files (over three minutes) still stream.
+    /// </summary>
+    static WaveStream Preload(WaveStream reader)
+    {
+        if (reader.TotalTime > TimeSpan.FromMinutes(3)) return reader;
+        using (reader)
+        {
+            var memory = new MemoryStream();
+            reader.CopyTo(memory);
+            memory.Position = 0;
+            return new RawSourceWaveStream(memory, reader.WaveFormat);
         }
     }
 

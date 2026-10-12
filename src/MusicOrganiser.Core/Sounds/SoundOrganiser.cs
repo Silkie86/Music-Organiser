@@ -165,7 +165,7 @@ public sealed class SoundOrganiser : IDisposable
             SoundLibrary.Analysed result;
             try
             {
-                var analysis = SoundAnalyzer.Analyse(t.Path);
+                var analysis = Parallelism.Background(() => SoundAnalyzer.Analyse(t.Path));
                 result = new(t.Path, t.Size, t.Mtime, analysis, null, null, SoundTypes.FromPath(t.Path));
             }
             catch (Exception e)   // one unreadable file must never stop a scan
@@ -201,8 +201,7 @@ public sealed class SoundOrganiser : IDisposable
         {
             try
             {
-                var audio = AudioFile.Read(s.Path, 30);
-                Library.SetClap(s.Id, clap.EmbedAudio(audio));
+                Parallelism.Background(() => Library.SetClap(s.Id, clap.EmbedAudio(AudioFile.Read(s.Path, 30))));
             }
             catch (Exception) { }   // unreadable now; it'll be retried next time
             var n = Interlocked.Increment(ref done);
@@ -247,7 +246,7 @@ public sealed class SoundOrganiser : IDisposable
         var zeroShot = space == "clap" ? TypePrompts() : null;
         var updates = _sounds.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).Select(s =>
         {
-            var (type, source, conf) = ResolveType(s, model, zeroShot, space);
+            var (type, source, conf) = Parallelism.Background(() => ResolveType(s, model, zeroShot, space));
             s.Type = type;
             s.TypeSource = source;
             s.TypeConfidence = conf;
