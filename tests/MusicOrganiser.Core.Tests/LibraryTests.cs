@@ -65,6 +65,50 @@ public class LibraryTests : IDisposable
         Assert.Equal(["dark", "techno"], again.Tags);
     }
 
+    [Fact]
+    public void SkipsDemoTemplateAndTutorialFolders()
+    {
+        foreach (var dir in new[] { "Cool stuff", "Templates", "Tutorial", "Demo songs", Path.Combine("Data", "Patches", "Packs") })
+        {
+            Directory.CreateDirectory(Path.Combine(_root, "FL 12 Projects", dir));
+            Fixtures.FlStudioProject(Path.Combine(_root, "FL 12 Projects", dir), "factory");
+        }
+        // A library scanned before these were skipped still lists one; the rescan drops it.
+        var demo = Path.Combine(_root, "FL 12 Projects", "Cool stuff", "factory.flp");
+        _db.Upsert(Scanner.Analyse(demo));
+
+        new Scanner(_db).ScanProjects();
+        Assert.DoesNotContain(_db.Projects(), p => p.Name == "factory");
+        Assert.Equal(3, _db.Projects().Count);
+    }
+
+    [Theory]
+    [InlineData("Fruity Balance", "", @"C:\Program Files\FL Studio 10\Plugins\VST\Fruity Balance.dll", true)]
+    [InlineData("Pitcher", "", "", true)]
+    [InlineData("IL Harmor", "", "", true)]
+    [InlineData("Serum", "Xfer Records", @"C:\VST\Serum.dll", false)]
+    public void KnowsWhatComesWithFlStudio(string name, string vendor, string path, bool bundled) =>
+        Assert.Equal(bundled, PluginCatalog.IsFlStudioBundled(name, vendor, path));
+
+    [Theory]
+    [InlineData("LFOTool", "LFOTool_x64")]
+    [InlineData("Omnisphere (Automap)", "Omnisphere")]
+    [InlineData("SaurusX64", "Saurus")]
+    [InlineData("chipsounds VST_x64", "chipsounds")]
+    public void MatchesPluginNameVariants(string inProject, string installed) =>
+        Assert.Equal(LibraryDb.NameKey(installed), LibraryDb.NameKey(inProject));
+
+    [Theory]
+    [InlineData("Ozone 8", "Ozone 12")]
+    [InlineData("Battery 3", "Battery 4")]
+    [InlineData("Mini V", "Mini V4")]
+    [InlineData("Toraverb", "Toraverb2")]
+    [InlineData("M1", null)]
+    [InlineData("Kore2", null)]
+    public void NamesTheVersionYouHave(string missing, string? expected) =>
+        Assert.Equal(expected, PluginCatalog.OtherVersionInstalled(missing,
+            ["Ozone 11", "Ozone 12", "Ozone 12 Imager", "Battery 4", "Mini V3", "Mini V4", "Toraverb2", "M12-Filter"]));
+
     [Theory]
     [InlineData("Didums_70", "Didums", 70)]
     [InlineData("Didums", "Didums", 1)]

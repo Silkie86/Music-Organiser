@@ -45,7 +45,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         _main = main;
         Item = item;
         Detail = db.Project(item.Id);
-        Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p)).ToList() ?? [];
+        var installed = db.InstalledNames();
+        Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p, installed)).ToList() ?? [];
         Samples = Detail?.Samples.Select(s => new SampleRow(db, s, item, this)).ToList() ?? [];
 
         var facts = new List<KeyValuePair<string, string>>
@@ -149,7 +150,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     }
 }
 
-public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p) : ObservableObject
+public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p, IReadOnlySet<string> installed) : ObservableObject
 {
     public string Name => p.Name;
     public string Vendor => p.Vendor;
@@ -162,6 +163,8 @@ public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p) : Observabl
         _ => "",
     };
     public bool Installed => p.Installed;
+    /// <summary>Another version you do have, e.g. "Ozone 12" for a project that used Ozone 8.</summary>
+    public string? OtherVersion { get; } = p.Installed ? null : PluginCatalog.OtherVersionInstalled(p.Name, installed);
     public string? Elektron => PluginCatalog.ElektronDevice(p.Name);
 
     public ObservableCollection<MatchRow> Matches { get; } = new();

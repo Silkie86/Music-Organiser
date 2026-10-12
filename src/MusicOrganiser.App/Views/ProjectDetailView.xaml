@@ -132,6 +132,10 @@
                                                    FontSize="12" VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
                                                    Visibility="{Binding Elektron, Converter={StaticResource NullToVisibility}}" />
                                     </StackPanel>
+                                    <TextBlock Text="{Binding OtherVersion, StringFormat='You have {0} installed'}" FontSize="12"
+                                               Foreground="{StaticResource OkBrush}" TextWrapping="Wrap"
+                                               ToolTip="A different version of this plugin. The project won't load it by itself; swap it in."
+                                               Visibility="{Binding OtherVersion, Converter={StaticResource NullToVisibility}}" />
                                     <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
                                         <Run Text="{Binding KindText, Mode=OneWay}" />
                                         <Run Text="{Binding Format, Mode=OneWay}" />

@@ -4,7 +4,7 @@ A Windows desktop app that keeps track of all your music projects across Bitwig 
 
 ## What it does
 
-- **Finds your projects** in the folders you choose (DAW autosave and backup folders are skipped).
+- **Finds your projects** in the folders you choose (DAW autosave and backup folders, and the demo, tutorial and template folders that come with the DAW, are skipped).
 - **Shows what each project uses**: plugins (instruments, effects, note FX) and samples.
 - **Flags what's missing**: plugins that aren't installed on this PC, and samples that can't be found.
   - *Find matches* searches your sample folders for the same file name or similar names, and can copy a match into the project folder so the DAW finds it.
