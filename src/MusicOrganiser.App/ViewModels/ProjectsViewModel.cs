@@ -76,10 +76,10 @@ public sealed partial class ProjectsViewModel : ObservableObject
 
     static void Refill(ObservableCollection<string> target, IEnumerable<string> values, string current, Action<string> reset)
     {
-        target.Clear();
+        target.Clear();   // the ComboBox clears its selection and writes that back, so always restore it
         target.Add(Any);
         foreach (var v in values.Distinct(StringComparer.OrdinalIgnoreCase).Order()) target.Add(v);
-        if (!target.Contains(current)) reset(Any);
+        reset(current is not null && target.Contains(current) ? current : Any);
     }
 
     bool Filter(ProjectItem p)

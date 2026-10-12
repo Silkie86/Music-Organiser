@@ -629,8 +629,8 @@ public sealed partial class KitSlotItem(KitSlot slot) : ObservableObject
 {
     public KitSlot Slot => slot;
     public string Name => slot.Name;
-    public string SoundName => slot.Sound?.Name ?? "—";
-    public string Detail => slot.Sound is { } s ? $"{s.Type} · {s.Folder}" + (s.UsedIn > 0 ? $" · used in {s.UsedIn}" : " · unused") : "";
+    public string SoundName => slot.Sound?.Name ?? "Empty pad";
+    public string Detail => slot.Sound is { } s ? $"{s.Type} · {s.Folder}" + (s.UsedIn > 0 ? $" · used in {s.UsedIn}" : " · unused") : "Roll a kit to fill it";
 
     public bool Locked
     {

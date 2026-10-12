@@ -55,7 +55,7 @@
             <TabItem Header="Library">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="220" />
+                        <ColumnDefinition Width="250" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="380" />
                     </Grid.ColumnDefinitions>
@@ -77,11 +77,16 @@
                             <ComboBox ItemsSource="{x:Static vm:SoundsViewModel.KeyChoices}" SelectedItem="{Binding KeyFilter}" />
                             <CheckBox Content="Include keys that mix well" IsChecked="{Binding CompatibleKeys}" Margin="0,4,0,0" />
                             <TextBlock Text="BPM" Style="{StaticResource FilterLabel}" Margin="2,16,0,6" />
-                            <StackPanel Orientation="Horizontal">
-                                <ui:TextBox Width="84" PlaceholderText="from" Text="{Binding BpmFrom, UpdateSourceTrigger=PropertyChanged}" />
-                                <TextBlock Text="–" Margin="6,0" VerticalAlignment="Center" />
-                                <ui:TextBox Width="84" PlaceholderText="to" Text="{Binding BpmTo, UpdateSourceTrigger=PropertyChanged}" />
-                            </StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <ui:TextBox PlaceholderText="from" Text="{Binding BpmFrom, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Column="1" Text="–" Margin="6,0" VerticalAlignment="Center" Foreground="{StaticResource FaintBrush}" />
+                                <ui:TextBox Grid.Column="2" PlaceholderText="to" Text="{Binding BpmTo, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
                             <CheckBox Content="Never used in a project" IsChecked="{Binding OnlyUnused}" Margin="0,12,0,0" />
                             <CheckBox Content="Favourites" IsChecked="{Binding OnlyFavourites}" />
                             <TextBlock Text="TAG" Style="{StaticResource FilterLabel}" Margin="2,16,0,6" />
@@ -129,7 +134,7 @@
                                 </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="Type" Width="100" Binding="{Binding Type}" />
                                 <DataGridTextColumn Header="Key" Width="55" Binding="{Binding Key}" />
-                                <DataGridTextColumn Header="BPM" Width="55" Binding="{Binding Bpm}" />
+                                <DataGridTextColumn Header="BPM" Width="58" Binding="{Binding Bpm, StringFormat={}{0:0.#}}" />
                                 <DataGridTextColumn Header="Note" Width="55" Binding="{Binding RootNote}" />
                                 <DataGridTextColumn Header="Length" Width="60" Binding="{Binding Seconds, Converter={StaticResource Seconds}}" SortMemberPath="Seconds" />
                                 <DataGridTemplateColumn Header="Character" Width="*" SortMemberPath="Character">
