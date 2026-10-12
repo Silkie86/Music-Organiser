@@ -38,8 +38,8 @@ public sealed partial class MainViewModel : ObservableObject
         Sounds = new SoundsViewModel(db, sounds, this);
         Nav =
         [
-            new("Sound Lab", "\uE8D6", Sounds),
             new("Projects", "", Projects),
+            new("Sound Lab", "\uE8D6", Sounds),
             new("Plugins", "", Plugins),
             new("Samples", "", Samples),
             new("Share Check", "", ShareCheck),
@@ -94,13 +94,15 @@ public sealed partial class MainViewModel : ObservableObject
         {
             await Task.Run(() =>
             {
+                // Sample folders are indexed alongside the projects; the projects need the plugin list first.
+                var sampling = samples ? Task.Run(() => _scanner.ScanSampleFolders(null, ct)) : Task.CompletedTask;
                 if (plugins)
                 {
                     ((IProgress<ScanProgress>)progress).Report(new("Checking installed plugins", 0, 0, ""));
                     _scanner.ScanInstalledPlugins();
                 }
-                if (samples) _scanner.ScanSampleFolders(progress, ct);
                 _scanner.ScanProjects(progress, full, ct);
+                sampling.GetAwaiter().GetResult();
             }, ct);
             ScanStatus = $"Library up to date · {DateTime.Now:HH:mm}";
         }

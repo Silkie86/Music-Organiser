@@ -87,6 +87,32 @@ public class FlStudioTests
         Assert.Equal("FPCh", Encoding.ASCII.GetString(serum.Data, 8, 4));
         Assert.Equal([1, 2, 3, 4], serum.Data[^4..]);
         Assert.Equal(".flstate", presets[1].Extension);
+        Assert.Equal([(PluginKind.Instrument, false), (PluginKind.Instrument, true), (PluginKind.Effect, true), (PluginKind.Effect, false)],
+                     presets.Select(p => (p.Kind, p.Native)));
+        Assert.Equal(["", "", "Master", "Master"], presets.Select(p => p.Where));
+    }
+
+    [Fact]
+    public void FiltersPresetsByMakerAndKind()
+    {
+        var presets = new FlStudioReader().ExtractPresets(_path);
+        string[] Names(PresetFilter f) => presets.Where(f.Matches).Select(p => p.Name).ToArray();
+        Assert.Equal(["Lead", "Pro-Q 3"], Names(new PresetFilter(Native: false)));
+        Assert.Equal(["Bass", "Fruity Limiter"], Names(new PresetFilter(ThirdParty: false)));
+        Assert.Equal(["Lead"], Names(new PresetFilter(Native: false, Effects: false)));
+        Assert.Equal(["Fruity Limiter", "Pro-Q 3"], Names(new PresetFilter(Synths: false)));
+    }
+
+    [Fact]
+    public void KnowsWhichPluginsPlayNotes()
+    {
+        var players = MidiChannel.Players(new FlStudioReader().ExtractChannels(_path));
+        Assert.Contains("serum", players);
+        Assert.Contains("3x Osc", players);
+        Assert.DoesNotContain("Pro-Q 3", players);
+        // A slicer channel shows its sample but still counts its plugin as playing.
+        var chops = new MidiChannel("Chops", "Loop.wav", 96, [new NoteEvent(0, 96, 60, 100)], "Slicex");
+        Assert.Contains("Slicex", MidiChannel.Players([chops]));
     }
 
     [Fact]
@@ -167,6 +193,21 @@ public class FlStudio25Tests
         Assert.Equal("XfsX", Encoding.ASCII.GetString(serum.Data, 16, 4));   // fxID, big-endian
         Assert.Equal([1, 2, 3], serum.Data[^3..]);                             // FL's header removed
         Assert.Equal(3, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(serum.Data.AsSpan(56)));
+    }
+
+    [Fact]
+    public void ExportsParameterPluginsAsParameterPresets()
+    {
+        var predator = new FlStudioReader().ExtractPresets(_path).Single(p => p.Plugin == "Predator 2");
+        var d = predator.Data;
+        Assert.Equal(".fxp", predator.Extension);
+        Assert.Equal("FxCk", Encoding.ASCII.GetString(d, 8, 4));
+        Assert.Equal("Prd2", Encoding.ASCII.GetString(d, 16, 4));
+        Assert.Equal(3, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(d.AsSpan(24)));
+        Assert.Equal("arp- sine beat", Encoding.ASCII.GetString(d, 28, 28).TrimEnd('\0'));
+        Assert.Equal(d.Length - 8, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(d.AsSpan(4)));
+        Assert.Equal([0.25f, 1f, 0.5f], Enumerable.Range(0, 3)
+            .Select(i => System.Buffers.Binary.BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(56 + 4 * i))));
     }
 
     [Fact]

@@ -7,80 +7,131 @@
              xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:SettingsViewModel}">
+    <UserControl.Resources>
+        <Style x:Key="CardTitle" TargetType="TextBlock" BasedOn="{StaticResource SectionHeader}">
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+        <Style x:Key="CardIntro" TargetType="TextBlock" BasedOn="{StaticResource Muted}">
+            <Setter Property="Margin" Value="0,0,0,12" />
+            <Setter Property="FontSize" Value="12.5" />
+        </Style>
+        <Style x:Key="SettingsCard" TargetType="Border" BasedOn="{StaticResource Card}">
+            <Setter Property="Margin" Value="0,0,0,14" />
+            <Setter Property="Padding" Value="20,18" />
+        </Style>
+        <Style x:Key="FolderList" TargetType="ListBox" BasedOn="{StaticResource {x:Type ListBox}}">
+            <Setter Property="MinHeight" Value="44" />
+            <Setter Property="MaxHeight" Value="190" />
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+    </UserControl.Resources>
+
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="900" HorizontalAlignment="Left" Margin="0,0,16,16">
-            <TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold" />
+        <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,0,16,16">
+            <TextBlock Text="Settings" Style="{StaticResource PageTitle}" />
+            <TextBlock Text="Where your projects, samples and plugins live, and how projects open."
+                       Style="{StaticResource PageSubtitle}" Margin="0,2,0,20" />
 
-            <TextBlock Text="Project folders" Style="{StaticResource SectionHeader}" />
-            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"
-                       Text="Folders to search for Bitwig (.bwproject), FL Studio (.flp) and Studio One (.song) projects. Subfolders are included. DAW autosave and backup folders are skipped, and so are the demo songs, tutorials and templates that came with the DAW (folders named Cool stuff, Demo songs, Product demos, Templates or Tutorial)." />
-            <ListBox ItemsSource="{Binding ProjectFolders}" SelectedItem="{Binding SelectedProjectFolder}" MinHeight="60" MaxHeight="180" />
-            <WrapPanel Margin="0,8,0,0">
-                <ui:Button Content="Add folder" Appearance="Primary" Icon="{ui:SymbolIcon FolderAdd24}"
-                           Command="{Binding AddProjectFolderCommand}" Margin="0,0,6,0" />
-                <ui:Button Content="Remove" Command="{Binding RemoveProjectFolderCommand}" />
-            </WrapPanel>
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel>
+                    <TextBlock Text="Project folders" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource CardIntro}"
+                               Text="Folders to search for Bitwig (.bwproject), FL Studio (.flp) and Studio One (.song) projects. Subfolders are included. DAW autosave and backup folders are skipped, and so are the demo songs, tutorials and templates that came with the DAW (folders named Cool stuff, Demo songs, Product demos, Templates or Tutorial)." />
+                    <ListBox ItemsSource="{Binding ProjectFolders}" SelectedItem="{Binding SelectedProjectFolder}" Style="{StaticResource FolderList}" />
+                    <WrapPanel Margin="0,10,0,0">
+                        <ui:Button Content="Add folder" Appearance="Primary" Icon="{ui:SymbolIcon FolderAdd24}"
+                                   Command="{Binding AddProjectFolderCommand}" Margin="0,0,6,0" />
+                        <ui:Button Content="Remove" Command="{Binding RemoveProjectFolderCommand}" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
 
-            <TextBlock Text="Sample folders" Style="{StaticResource SectionHeader}" />
-            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"
-                       Text="Your sample libraries (Splice, packs, recordings). These are indexed so missing samples can be matched by name." />
-            <ListBox ItemsSource="{Binding SampleFolders}" SelectedItem="{Binding SelectedSampleFolder}" MinHeight="60" MaxHeight="180" />
-            <WrapPanel Margin="0,8,0,0">
-                <ui:Button Content="Add folder" Icon="{ui:SymbolIcon FolderAdd24}" Command="{Binding AddSampleFolderCommand}" Margin="0,0,6,0" />
-                <ui:Button Content="Remove" Command="{Binding RemoveSampleFolderCommand}" Margin="0,0,6,0" />
-                <ui:Button Content="Re-index samples" Command="{Binding IndexSamplesCommand}" Margin="0,0,12,0" />
-                <TextBlock Text="{Binding SampleIndexText}" VerticalAlignment="Center"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-            </WrapPanel>
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel>
+                    <TextBlock Text="Sample folders" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource CardIntro}"
+                               Text="Your sample libraries (Splice, packs, recordings). These are indexed so missing samples can be matched by name, and they're what the Sound Lab browses." />
+                    <ListBox ItemsSource="{Binding SampleFolders}" SelectedItem="{Binding SelectedSampleFolder}" Style="{StaticResource FolderList}" />
+                    <WrapPanel Margin="0,10,0,0">
+                        <ui:Button Content="Add folder" Icon="{ui:SymbolIcon FolderAdd24}" Command="{Binding AddSampleFolderCommand}" Margin="0,0,6,0" />
+                        <ui:Button Content="Remove" Command="{Binding RemoveSampleFolderCommand}" Margin="0,0,6,0" />
+                        <ui:Button Content="Re-index samples" Icon="{ui:SymbolIcon ArrowSync24}" Command="{Binding IndexSamplesCommand}" Margin="0,0,12,0" />
+                        <TextBlock Text="{Binding SampleIndexText}" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
 
-            <TextBlock Text="Plugin folders" Style="{StaticResource SectionHeader}" />
-            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"
-                       Text="Where your VST3, CLAP and VST2 plugins are installed. Used to tell which plugins in a project are missing on this PC, and to recognise plugin names inside Bitwig projects." />
-            <ListBox ItemsSource="{Binding PluginFolders}" SelectedItem="{Binding SelectedPluginFolder}" MinHeight="60" MaxHeight="180" />
-            <WrapPanel Margin="0,8,0,0">
-                <ui:Button Content="Add folder" Icon="{ui:SymbolIcon FolderAdd24}" Command="{Binding AddPluginFolderCommand}" Margin="0,0,6,0" />
-                <ui:Button Content="Remove" Command="{Binding RemovePluginFolderCommand}" />
-            </WrapPanel>
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel>
+                    <TextBlock Text="Plugin folders" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource CardIntro}"
+                               Text="Where your VST3, CLAP and VST2 plugins are installed. Used to tell which plugins in a project are missing on this PC, and to recognise plugin names inside Bitwig projects." />
+                    <ListBox ItemsSource="{Binding PluginFolders}" SelectedItem="{Binding SelectedPluginFolder}" Style="{StaticResource FolderList}" />
+                    <WrapPanel Margin="0,10,0,0">
+                        <ui:Button Content="Add folder" Icon="{ui:SymbolIcon FolderAdd24}" Command="{Binding AddPluginFolderCommand}" Margin="0,0,6,0" />
+                        <ui:Button Content="Remove" Command="{Binding RemovePluginFolderCommand}" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
 
-            <TextBlock Text="Opening projects" Style="{StaticResource SectionHeader}" />
-            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"
-                       Text="By default projects open in whatever program Windows uses for that file type. Pick a program here to override it, e.g. if you have more than one version installed." />
-            <ItemsControl ItemsSource="{Binding Daws}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate DataType="{x:Type vm:DawSetting}">
-                        <Grid Margin="0,0,0,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="200" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel VerticalAlignment="Center">
-                                <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
-                                <TextBlock Text="{Binding Extensions}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
-                            <ui:TextBox Grid.Column="1" Text="{Binding ExePath, Mode=OneWay}" IsReadOnly="True"
-                                        PlaceholderText="Windows default" />
-                            <ui:Button Grid.Column="2" Content="Choose…" Command="{Binding ChooseCommand}" Margin="6,0,0,0" />
-                            <ui:Button Grid.Column="3" Content="Reset" Command="{Binding ClearCommand}" Margin="6,0,0,0" />
-                        </Grid>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel>
+                    <TextBlock Text="Opening projects" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource CardIntro}"
+                               Text="By default projects open in whatever program Windows uses for that file type. Pick a program here to override it, e.g. if you have more than one version installed." />
+                    <ItemsControl ItemsSource="{Binding Daws}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:DawSetting}">
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="180" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                                        <Ellipse Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center"
+                                                 Fill="{Binding Daw, Converter={StaticResource DawBrush}}" />
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Extensions}" FontSize="12" Foreground="{StaticResource FaintBrush}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <ui:TextBox Grid.Column="1" Text="{Binding ExePath, Mode=OneWay}" IsReadOnly="True"
+                                                PlaceholderText="Windows default" />
+                                    <ui:Button Grid.Column="2" Content="Choose…" Command="{Binding ChooseCommand}" Margin="6,0,0,0" />
+                                    <ui:Button Grid.Column="3" Content="Reset" Appearance="Transparent" Command="{Binding ClearCommand}" Margin="6,0,0,0" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
 
-            <TextBlock Text="Exports" Style="{StaticResource SectionHeader}" />
-            <DockPanel>
-                <ui:Button DockPanel.Dock="Right" Content="Choose…" Command="{Binding ChooseExportFolderCommand}" Margin="6,0,0,0" />
-                <ui:TextBox Text="{Binding ExportFolder, Mode=OneWay}" IsReadOnly="True"
-                            PlaceholderText="Documents\Music Organiser Exports" />
-            </DockPanel>
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel>
+                    <TextBlock Text="Exports" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource CardIntro}" Text="Where MIDI, presets and kits are saved. Each project gets its own folder inside." />
+                    <DockPanel>
+                        <ui:Button DockPanel.Dock="Right" Content="Choose…" Command="{Binding ChooseExportFolderCommand}" Margin="6,0,0,0" />
+                        <ui:TextBox Text="{Binding ExportFolder, Mode=OneWay}" IsReadOnly="True"
+                                    PlaceholderText="Documents\Music Organiser Exports" />
+                    </DockPanel>
+                </StackPanel>
+            </Border>
 
-            <TextBlock Text="Library" Style="{StaticResource SectionHeader}" />
-            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
-                <Run Text="Your tags, ratings and notes are stored locally in" />
-                <Run Text="{Binding LibraryLocation, Mode=OneWay}" />
-                <Run Text=". Nothing is uploaded; online search only opens your browser when you ask it to." />
-            </TextBlock>
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel>
+                    <TextBlock Text="Your library" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource Muted}" FontSize="12.5">
+                        <Run Text="Your tags, ratings and notes are stored on this PC in" />
+                        <Run Text="{Binding LibraryLocation, Mode=OneWay}" Foreground="{StaticResource TextBrush}" />
+                        <Run Text=". Nothing is uploaded; online search only opens your browser when you ask it to." />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

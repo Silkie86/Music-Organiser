@@ -15,40 +15,49 @@
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <TextBlock Text="Samples" FontSize="24" FontWeight="SemiBold" />
-        <TextBlock Grid.Row="1" Text="{Binding Summary}" Margin="0,2,0,12"
-                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-        <DockPanel Grid.Row="2" Margin="0,0,0,8">
-            <CheckBox DockPanel.Dock="Right" Content="Missing only" IsChecked="{Binding OnlyMissing}" Margin="12,0,0,0" />
-            <ui:TextBox PlaceholderText="Search sample paths…" Icon="{ui:SymbolIcon Search24}"
-                        Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+        <DockPanel Margin="0,0,0,18">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <CheckBox Content="Missing only" IsChecked="{Binding OnlyMissing}" Margin="0,0,12,0" />
+                <ui:TextBox Width="360" PlaceholderText="Search sample paths…" Icon="{ui:SymbolIcon Search24}"
+                            Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Text="Samples" Style="{StaticResource PageTitle}" />
+                <TextBlock Text="{Binding Summary}" Style="{StaticResource PageSubtitle}" />
+            </StackPanel>
         </DockPanel>
-        <DataGrid Grid.Row="3" ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
-                  IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="None">
+        <Border Grid.Row="1" Grid.RowSpan="3" Style="{StaticResource Card}" Padding="8,10,8,8">
+        <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
+                  IsReadOnly="True" SelectionMode="Single">
             <DataGrid.InputBindings>
                 <MouseBinding Gesture="LeftDoubleClick" Command="{Binding ShowProjectsCommand}" />
             </DataGrid.InputBindings>
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Sample" Width="*" Binding="{Binding Path}" />
-                <DataGridTextColumn Header="Projects" Width="80" Binding="{Binding Projects}" />
-                <DataGridTemplateColumn Header="Found" Width="90" SortMemberPath="Found">
+                <DataGridTemplateColumn Header="Sample" Width="*" SortMemberPath="Path">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <Grid>
-                                <TextBlock Text="Yes" Foreground="{StaticResource OkBrush}"
-                                           Visibility="{Binding Found, Converter={StaticResource BoolToVisibility}}" />
-                                <TextBlock Text="Missing" Foreground="{StaticResource MissingBrush}"
-                                           Visibility="{Binding Found, Converter={StaticResource InverseBoolToVisibility}}" />
-                            </Grid>
+                            <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Projects" Width="80" Binding="{Binding Projects}" />
+                <DataGridTemplateColumn Header="Status" Width="110" SortMemberPath="Found">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource Pill}" Background="{StaticResource MissingSoftBrush}"
+                                    Visibility="{Binding Found, Converter={StaticResource InverseBoolToVisibility}}">
+                                <TextBlock Text="Missing" Style="{StaticResource PillText}" Foreground="{StaticResource MissingBrush}" />
+                            </Border>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
             </DataGrid.Columns>
         </DataGrid>
+        </Border>
 
         <!-- Selected sample -->
-        <ui:Card Grid.Row="4" Margin="0,12,0,0" Padding="12"
-                 Visibility="{Binding Selected, Converter={StaticResource NullToVisibility}}">
+        <Border Grid.Row="4" Style="{StaticResource Card}" Margin="0,12,0,0"
+                Visibility="{Binding Selected, Converter={StaticResource NullToVisibility}}">
             <StackPanel>
                 <TextBlock Text="{Binding Selected.Path}" TextWrapping="Wrap" FontWeight="SemiBold" />
                 <WrapPanel Margin="0,8,0,0">
@@ -80,6 +89,6 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </StackPanel>
-        </ui:Card>
+        </Border>
     </Grid>
 </UserControl>

@@ -53,29 +53,13 @@ public sealed class Scanner(LibraryDb db)
         return false;
     }
 
-    public static IEnumerable<string> FindProjects(string root)
-    {
-        var stack = new Stack<string>([root]);
-        while (stack.Count > 0)
+    /// <summary>Every project file under these folders, found with all cores at once and sorted by path.</summary>
+    public static List<string> FindProjects(IEnumerable<string> roots, CancellationToken ct = default) =>
+        Parallelism.FindFiles(roots, f =>
         {
-            var dir = stack.Pop();
-            string[] files, dirs;
-            try
-            {
-                files = Directory.GetFiles(dir);
-                dirs = Directory.GetDirectories(dir);
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
-
-            foreach (var f in files)
-            {
-                var name = Path.GetFileName(f);
-                if (Readers.For(f) is not null && !name.StartsWith("._") && !IsAutosaveFile(name)) yield return f;
-            }
-            foreach (var d in dirs)
-                if (!SkipDir(Path.GetFileName(d), Path.GetFileName(dir.TrimEnd('\\', '/')))) stack.Push(d);
-        }
-    }
+            var name = Path.GetFileName(f);
+            return Readers.For(f) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
+        }, SkipDir, ct: ct);
 
     public static bool SampleFound(string sample, string projectPath)
     {
@@ -123,22 +107,44 @@ public sealed class Scanner(LibraryDb db)
         full |= db.GetSetting(IndexVersionKey) != IndexVersion;
         var roots = db.Roots().Where(Directory.Exists).ToList();
         progress?.Report(new("Finding projects", 0, 0, ""));
-        var files = roots.SelectMany(FindProjects).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var files = FindProjects(roots, ct);
         var known = db.KnownFiles();
-        for (var i = 0; i < files.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var f = files[i];
-            progress?.Report(new("Reading projects", i, files.Count, f));
-            try
+        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
+            .Where(f =>
             {
-                var fi = new FileInfo(f);
-                var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                if (full || !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length)
-                    db.Upsert(Analyse(f));
+                try
+                {
+                    var fi = new FileInfo(f);
+                    var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+                    return full || !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+            }).ToList();
+
+        // Read the projects on every core; save them here, in path order, a batch at a time,
+        // so a new numbered save always finds the earlier ones it takes its status from.
+        var analysed = todo.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
+            .Select(f =>
+            {
+                try { return Analyse(f); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }   // deleted or locked since it was found
+            });
+        var batch = new List<LibraryDb.IndexedFile>();
+        var done = 0;
+        var lastReport = Environment.TickCount64;
+        foreach (var a in analysed)
+        {
+            done++;
+            if (a is not null) batch.Add(a);
+            if (batch.Count >= 50 || Environment.TickCount64 - lastReport > 250)
+            {
+                db.UpsertMany(batch);
+                batch.Clear();
+                progress?.Report(new("Reading projects", done, todo.Count, a?.Path ?? ""));
+                lastReport = Environment.TickCount64;
             }
-            catch (IOException) { }
         }
+        db.UpsertMany(batch);
         db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
         db.SetSetting(IndexVersionKey, IndexVersion);
         progress?.Report(new("Done", files.Count, files.Count, ""));
@@ -159,24 +165,8 @@ public sealed class Scanner(LibraryDb db)
     /// <summary>Index audio files in your sample folders, so missing samples can be matched.</summary>
     public int ScanSampleFolders(IProgress<ScanProgress>? progress = null, CancellationToken ct = default)
     {
-        var files = new List<string>();
-        foreach (var root in db.GetList(SampleFoldersKey).Where(Directory.Exists))
-        {
-            var stack = new Stack<string>([root]);
-            while (stack.Count > 0)
-            {
-                ct.ThrowIfCancellationRequested();
-                var dir = stack.Pop();
-                try
-                {
-                    files.AddRange(Directory.GetFiles(dir).Where(TextScan.IsAudioPath));
-                    foreach (var d in Directory.GetDirectories(dir))
-                        if (!Path.GetFileName(d).StartsWith('.')) stack.Push(d);
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-                if (files.Count % 2000 == 0) progress?.Report(new("Indexing samples", files.Count, 0, dir));
-            }
-        }
+        var files = Parallelism.FindFiles(db.GetList(SampleFoldersKey), TextScan.IsAudioPath, (name, _) => name.StartsWith('.'),
+            (n, dir) => progress?.Report(new("Indexing samples", n, 0, dir)), ct);
         db.ReplaceSampleIndex(files);
         return files.Count;
     }

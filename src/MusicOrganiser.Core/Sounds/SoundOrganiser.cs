@@ -128,48 +128,29 @@ public sealed class SoundOrganiser : IDisposable
 
     // ---- scanning ----------------------------------------------------------------------
 
-    public static IEnumerable<string> FindAudio(IEnumerable<string> folders, CancellationToken ct = default)
-    {
-        foreach (var root in folders.Where(Directory.Exists))
-        {
-            var stack = new Stack<string>([root]);
-            while (stack.Count > 0)
-            {
-                ct.ThrowIfCancellationRequested();
-                var dir = stack.Pop();
-                string[] files, dirs;
-                try
-                {
-                    files = Directory.GetFiles(dir);
-                    dirs = Directory.GetDirectories(dir);
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
-                foreach (var f in files)
-                    if (AudioFile.CanRead(f) && !System.IO.Path.GetFileName(f).StartsWith("._")) yield return f;
-                foreach (var d in dirs)
-                    if (!System.IO.Path.GetFileName(d).StartsWith('.') && !System.IO.Path.GetFileName(d).Equals("__MACOSX", StringComparison.OrdinalIgnoreCase))
-                        stack.Push(d);
-            }
-        }
-    }
+    public static List<string> FindAudio(IEnumerable<string> folders, CancellationToken ct = default) =>
+        Parallelism.FindFiles(folders,
+            f => AudioFile.CanRead(f) && !System.IO.Path.GetFileName(f).StartsWith("._"),
+            (name, _) => name.StartsWith('.') || name.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase), ct: ct);
 
     /// <summary>Analyses new and changed sounds in your sample folders. Fast: signal analysis only.</summary>
     public int Scan(IReadOnlyList<string> folders, IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
     {
         progress?.Report(new("Finding sounds", 0, 0));
-        var files = FindAudio(folders, ct).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var files = FindAudio(folders, ct);
         var known = Library.KnownFiles();
-        var todo = new List<(string Path, long Size, long Mtime)>();
-        foreach (var f in files)
-        {
-            try
+        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
+            .Select(f =>
             {
-                var fi = new FileInfo(f);
-                var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                if (!known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length) todo.Add((f, fi.Length, mtime));
-            }
-            catch (IOException) { }
-        }
+                try
+                {
+                    var fi = new FileInfo(f);
+                    var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+                    return !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length ? (f, fi.Length, mtime) : default;
+                }
+                catch (IOException) { return default; }
+            })
+            .Where(t => t.f is not null).Select(t => (Path: t.f, Size: t.Length, Mtime: t.mtime)).ToList();
 
         var done = 0;
         var pending = new ConcurrentQueue<SoundLibrary.Analysed>();
@@ -179,7 +160,7 @@ public sealed class SoundOrganiser : IDisposable
             while (pending.TryDequeue(out var a)) batch.Add(a);
             if (batch.Count > 0) Library.Save(batch);
         }
-        Parallel.ForEach(todo, new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) }, t =>
+        Parallel.ForEach(todo, Parallelism.Options(ct), t =>
         {
             SoundLibrary.Analysed result;
             try
@@ -215,7 +196,8 @@ public sealed class SoundOrganiser : IDisposable
         var clap = Clap ?? throw new InvalidOperationException("The sound-understanding model isn't installed yet");
         var missing = _sounds.Where(s => s.Analysis is not null && (_clapIndex is null || !_clapIndex.Contains(s.Id))).ToList();
         var done = 0;
-        Parallel.ForEach(missing, new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2) }, s =>
+        // Every core reads and prepares audio; the model runs several sounds at once (see ClapModel).
+        Parallel.ForEach(missing, Parallelism.Options(ct), s =>
         {
             try
             {
@@ -263,15 +245,14 @@ public sealed class SoundOrganiser : IDisposable
         else Library.SetSetting(TypeModelKey, null);
 
         var zeroShot = space == "clap" ? TypePrompts() : null;
-        var updates = new List<(long, string, string, double)>();
-        foreach (var s in _sounds)
+        var updates = _sounds.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).Select(s =>
         {
             var (type, source, conf) = ResolveType(s, model, zeroShot, space);
             s.Type = type;
             s.TypeSource = source;
             s.TypeConfidence = conf;
-            updates.Add((s.Id, type, source, conf));
-        }
+            return (s.Id, type, source, conf);
+        }).ToList();
         Library.SetTypes(updates);
         TrainTags();
         return model;
@@ -311,13 +292,12 @@ public sealed class SoundOrganiser : IDisposable
     public IReadOnlyList<(Sound Sound, string Thinks, double P)> Disagreements(int max = 100)
     {
         if (TypeModel is not { } model) return [];
-        var list = new List<(Sound, string, double)>();
-        foreach (var s in _sounds)
-        {
-            if (s.UserType is not null || s.NameType is null || RawVector(s, model.Space) is not { } v) continue;
-            if (model.Predict(v) is [var top, ..] && top.Label != s.NameType && top.P >= 0.7) list.Add((s, top.Label, Math.Round(top.P, 2)));
-        }
-        return list.OrderByDescending(t => t.Item3).Take(max).ToList();
+        return _sounds.AsParallel().WithDegreeOfParallelism(Parallelism.Cores)
+            .Where(s => s.UserType is null && s.NameType is not null && RawVector(s, model.Space) is not null)
+            .Select(s => (Sound: s, Top: model.Predict(RawVector(s, model.Space)!) is [var top, ..] ? top : default))
+            .Where(t => t.Top.Label is not null && t.Top.Label != t.Sound.NameType && t.Top.P >= 0.7)
+            .Select(t => (t.Sound, t.Top.Label, Math.Round(t.Top.P, 2)))
+            .OrderByDescending(t => t.Item3).ThenBy(t => t.Sound.Id).Take(max).ToList();
     }
 
     public void SetUserType(Sound s, string? type)
@@ -348,9 +328,9 @@ public sealed class SoundOrganiser : IDisposable
             // Untagged sounds aren't truly "not" the tag, so split them in two: train against
             // one half, suggest within the other, then swap. No sound is judged by a model that
             // was told it's a negative.
-            var suggested = new List<(Sound S, double P)>();
-            double? accuracy = null;
-            for (var fold = 0; fold < 2; fold++)
+            // The two halves are independent, so they train and score at the same time.
+            var folds = new (List<(Sound S, double P)> Suggested, double? Accuracy)[2];
+            Parallel.For(0, 2, fold =>
             {
                 var negPool = unlabelled.Where((_, i) => i % 2 != fold).ToList();
                 var toScore = unlabelled.Where((_, i) => i % 2 == fold).ToList();
@@ -358,11 +338,12 @@ public sealed class SoundOrganiser : IDisposable
                 var examples = positives.Select(p => new TrainingExample(RawVector(p, space)!, "yes", 1f))
                     .Concat(negatives.Select(n => new TrainingExample(RawVector(n, space)!, "no", 1f))).ToList();
                 var model = SoundClassifier.Train(examples, space, new SoundClassifier.Options(Epochs: 60));
-                accuracy ??= model.HeldOutAccuracy;
-                suggested.AddRange(toScore
+                folds[fold] = (toScore.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores)
                     .Select(s => (s, P: model.Predict(RawVector(s, space)!).First(p => p.Label == "yes").P))
-                    .Where(t => t.P >= 0.85));
-            }
+                    .Where(t => t.P >= 0.85).ToList(), model.HeldOutAccuracy);
+            });
+            var suggested = folds[0].Suggested.Concat(folds[1].Suggested).ToList();
+            var accuracy = folds[0].Accuracy ?? folds[1].Accuracy;
             suggested = suggested.OrderByDescending(t => t.P).Take(300).ToList();
             foreach (var (s, _) in suggested)
             {

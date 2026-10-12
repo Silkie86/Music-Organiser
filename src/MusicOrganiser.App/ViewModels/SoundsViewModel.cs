@@ -36,6 +36,16 @@ public sealed partial class SoundsViewModel : ObservableObject
     [ObservableProperty] string _summary = "";
     [ObservableProperty] bool _isBusy;
     [ObservableProperty] string _busyText = "";
+    /// <summary>The model download, shown next to its button on the Teach tab.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartDownload))]
+    bool _isDownloading;
+    public bool CanStartDownload => !IsDownloading;
+    [ObservableProperty] string _downloadText = "";
+    [ObservableProperty] double _downloadPercent;
+    /// <summary>Before the first file's size arrives the bar just shows activity.</summary>
+    [ObservableProperty] bool _downloadSizeUnknown;
+    [ObservableProperty] string _modelMessage = "";
     [ObservableProperty] double _busyPercent;
     [ObservableProperty] string _message = "";
 
@@ -109,6 +119,8 @@ public sealed partial class SoundsViewModel : ObservableObject
         var withClap = Org.Library.CountWithClap();
         ClapStatus = !ClapInstalled
             ? "Not installed. Download it once (about 205 MB) to search by describing a sound, and for sharper sound-alikes and type guesses. It runs on this PC; nothing is uploaded."
+            : Items.Count == 0
+                ? $"Installed in {ClapModel.DefaultFolder}. Scan your sample folders, then Deep listen."
             : withClap >= Items.Count && Items.Count > 0
                 ? $"Installed. Every sound has been deep-listened ({withClap:N0})."
                 : $"Installed. {withClap:N0} of {Items.Count:N0} sounds deep-listened so far; run Deep listen to do the rest.";
@@ -409,26 +421,38 @@ public sealed partial class SoundsViewModel : ObservableObject
     [RelayCommand]
     async Task DownloadModel()
     {
-        if (IsBusy) return;
-        IsBusy = true;
+        if (IsBusy)
+        {
+            ModelMessage = $"Wait for {BusyText.ToLowerInvariant()} to finish (or press Stop), then download the model.";
+            return;
+        }
+        IsBusy = IsDownloading = true;
+        ModelMessage = "";
+        DownloadText = BusyText = "Connecting to Hugging Face…";
+        DownloadSizeUnknown = true;
+        DownloadPercent = BusyPercent = 0;
         _cts = new CancellationTokenSource();
         try
         {
             var progress = new Progress<(string File, long Done, long? Total)>(p =>
             {
-                BusyText = $"Downloading {p.File}: {p.Done / 1048576.0:N0} MB" + (p.Total is { } t ? $" of {t / 1048576.0:N0} MB" : "");
-                BusyPercent = p.Total is > 0 ? 100.0 * p.Done / p.Total.Value : 0;
+                var index = Array.FindIndex(ClapModel.Files, f => f.Local == p.File) + 1;
+                var size = $"{p.Done / 1048576.0:N1} MB" + (p.Total is { } t ? $" of {t / 1048576.0:N1} MB" : "");
+                DownloadText = $"Downloading file {index} of {ClapModel.Files.Length} ({p.File}): {size}";
+                BusyText = $"Downloading model: {size}";
+                DownloadSizeUnknown = p.Total is not > 0;
+                DownloadPercent = BusyPercent = p.Total is > 0 ? 100.0 * p.Done / p.Total.Value : 0;
             });
             await ClapModel.DownloadAsync(progress, ct: _cts.Token);
             Org.ResetClap();
-            Message = "Model installed. Run Deep listen to let it hear your library.";
+            ModelMessage = "Downloaded and installed. Press Deep listen to let it hear your library.";
         }
-        catch (OperationCanceledException) { Message = "Download stopped; it'll resume from the next unfinished file."; }
-        catch (Exception e) { Message = $"Download failed: {e.Message}"; }
+        catch (OperationCanceledException) { ModelMessage = "Download stopped. Press Download model to carry on from the file it was on."; }
+        catch (Exception e) { ModelMessage = $"Download failed: {e.Message}. Check the internet connection and try again."; }
         finally
         {
-            IsBusy = false;
-            BusyPercent = 0;
+            IsBusy = IsDownloading = false;
+            BusyPercent = DownloadPercent = 0;
             UpdateModelInfo();
         }
     }
@@ -510,8 +534,10 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     async Task Shuffle()
     {
         var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, 30, Adventure, 0, IncludeRarelyUsed ? 1 : 0);
-        Suggestions = await Task.Run(() => Core.Sounds.Rediscover.Suggest(parent.Org, o));
-        Folders = await Task.Run(() => Core.Sounds.Rediscover.Folders(parent.Org).Take(40).ToList());
+        var suggesting = Task.Run(() => Core.Sounds.Rediscover.Suggest(parent.Org, o));
+        var folders = Task.Run(() => Core.Sounds.Rediscover.Folders(parent.Org).Take(40).ToList());
+        Suggestions = await suggesting;
+        Folders = await folders;
         var used = parent.Org.Sounds.Count(s => s.UsedIn > 0);
         Intro = used == 0
             ? "None of your sounds show up in scanned projects yet, so these are a varied pick. Star favourites or scan your projects to teach it your taste."
@@ -603,8 +629,8 @@ public sealed partial class KitSlotItem(KitSlot slot) : ObservableObject
 {
     public KitSlot Slot => slot;
     public string Name => slot.Name;
-    public string SoundName => slot.Sound?.Name ?? "—";
-    public string Detail => slot.Sound is { } s ? $"{s.Type} · {s.Folder}" + (s.UsedIn > 0 ? $" · used in {s.UsedIn}" : " · unused") : "";
+    public string SoundName => slot.Sound?.Name ?? "Empty pad";
+    public string Detail => slot.Sound is { } s ? $"{s.Type} · {s.Folder}" + (s.UsedIn > 0 ? $" · used in {s.UsedIn}" : " · unused") : "Roll a kit to fill it";
 
     public bool Locked
     {

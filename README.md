@@ -11,7 +11,7 @@ A Windows desktop app that keeps track of all your music projects across Bitwig 
   - *Find similar* lists installed plugins with close names (e.g. a newer version).
   - *Search online* opens a web search for the plugin or sample.
 - **Spots your Elektron boxes** (Analog Rytm MKII, Digitakt II, Syntakt) in a project through their Overbridge plugins.
-- **Shows and exports MIDI** per channel or track (FL Studio patterns placed as in the playlist), with what plays each one and a mini piano roll, plus **plugin presets** (where the format allows).
+- **Shows and exports MIDI** per channel or track (FL Studio patterns placed as in the playlist), with what plays each one and a mini piano roll, plus **plugin presets** (where the format allows): all at once, filtered to third-party or FL plugins and synths or effects, or one plugin at a time. Synths that play no notes in an FL song are tucked away in the plugin list.
 - **Opens projects** in their DAW, or shows them in Explorer.
 - **Organise however you like**: status (Idea → Released), rating, favourite, musical key, tags and notes. Filter, search and group by DAW, status, folder, month, year, Elektron box or rating.
 - **What breaks if I uninstall?** Pick one or more plugins on the Plugins screen to see which songs use them (released and favourite songs first, counting older numbered saves too), which installed copy (VST2, VST3, CLAP) each project actually loads, and which copies nothing uses. A third list shows installed plugins no project uses at all.
@@ -54,7 +54,7 @@ WAV and AIFF are decoded by the app; MP3, FLAC, M4A and OGG go through Windows M
 
 | DAW | Plugins | Samples | MIDI export | Preset export |
 |---|---|---|---|---|
-| FL Studio (.flp) | Yes, with vendor and instrument/effect | Yes | Yes, per channel, placed as in the playlist (FL 9 and later; older files pattern by pattern) | VST2 as .fxp, VST3 as .vstpreset, FL plugin states raw |
+| FL Studio (.flp) | Yes, with vendor and instrument/effect | Yes | Yes, per channel, placed as in the playlist (FL 9 and later; older files pattern by pattern) | VST2 as .fxp (chunk or parameter presets: load into the VST2 version of the plugin), VST3 as .vstpreset, FL plugin states raw (FL only) |
 | Studio One / Fender Studio Pro (.song) | Yes | Yes | Experimental | Yes, the stored .vstpreset/.fxp files |
 | Bitwig (.bwproject) | Yes, with vendor and format* | Yes | Yes, per track (clips one after another)* | Yes, the stored .vstpreset/.fxb files |
 

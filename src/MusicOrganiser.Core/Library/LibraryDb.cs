@@ -143,78 +143,87 @@ public sealed partial class LibraryDb : IDisposable
     public sealed record IndexedFile(string Path, long Size, long Mtime, ProjectInfo? Info, string? Error,
                                      IReadOnlyList<(string Path, bool Found)> Samples, IReadOnlyList<string> Hardware);
 
-    public void Upsert(IndexedFile f)
+    public void Upsert(IndexedFile f) => UpsertMany([f]);
+
+    /// <summary>Saves several scanned projects in one transaction.</summary>
+    public void UpsertMany(IReadOnlyCollection<IndexedFile> files)
     {
+        if (files.Count == 0) return;
         var installed = InstalledKeys();
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
-            var info = f.Info;
-            bool isNew;
-            using (var cmd = Cmd("SELECT COUNT(*) FROM projects WHERE path = $p", ("$p", f.Path)))
-            {
-                cmd.Transaction = tx;
-                isNew = (long)cmd.ExecuteScalar()! == 0;
-            }
-            var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
-            using (var cmd = Cmd("""
-                INSERT INTO projects (path, name, daw, folder, size, mtime, tempo, version, title, confidence,
-                                      can_midi, can_presets, info, error, file_missing, hardware)
-                VALUES ($path, $name, $daw, $folder, $size, $mtime, $tempo, $version, $title, $conf,
-                        $midi, $presets, $info, $error, 0, $hw)
-                ON CONFLICT(path) DO UPDATE SET name=excluded.name, daw=excluded.daw, folder=excluded.folder,
-                    size=excluded.size, mtime=excluded.mtime, tempo=excluded.tempo, version=excluded.version,
-                    title=excluded.title, confidence=excluded.confidence, can_midi=excluded.can_midi,
-                    can_presets=excluded.can_presets, info=excluded.info, error=excluded.error, file_missing=0,
-                    hardware=excluded.hardware
-                """,
-                ("$path", f.Path), ("$name", Path.GetFileNameWithoutExtension(f.Path)),
-                ("$daw", info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown"), ("$folder", Path.GetDirectoryName(f.Path)),
-                ("$size", f.Size), ("$mtime", f.Mtime), ("$tempo", info?.Tempo), ("$version", info?.Version),
-                ("$title", info?.Title), ("$conf", (int)(info?.Confidence ?? Confidence.Catalogue)),
-                ("$midi", info?.CanExtractMidi == true ? 1 : 0), ("$presets", info?.CanExtractPresets == true ? 1 : 0),
-                ("$info", infoJson), ("$error", f.Error), ("$hw", string.Join(", ", f.Hardware))))
-            {
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-
-            long id;
-            using (var cmd = Cmd("SELECT id FROM projects WHERE path = $p", ("$p", f.Path)))
-            {
-                cmd.Transaction = tx;
-                id = (long)cmd.ExecuteScalar()!;
-            }
-            foreach (var sql in new[] { "DELETE FROM plugins WHERE project_id = $id", "DELETE FROM samples WHERE project_id = $id" })
-            {
-                using var cmd = Cmd(sql, ("$id", id));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            foreach (var p in info?.Plugins ?? [])
-            {
-                var key = NameKey(p.Name);
-                using var cmd = Cmd("INSERT INTO plugins VALUES ($id, $n, $k, $v, $kind, $f, $path, $inst)",
-                    ("$id", id), ("$n", p.Name), ("$k", key), ("$v", p.Vendor), ("$kind", (int)p.Kind),
-                    ("$f", p.Format), ("$path", p.Path), ("$inst", IsInstalled(p, key, installed) ? 1 : 0));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            foreach (var (path, found) in f.Samples)
-            {
-                using var cmd = Cmd("INSERT INTO samples VALUES ($id, $p, $f)", ("$id", id), ("$p", path), ("$f", found ? 1 : 0));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            foreach (var hw in f.Hardware)
-            {
-                using var cmd = Cmd("INSERT OR IGNORE INTO tags VALUES ($id, $t)", ("$id", id), ("$t", hw.ToLowerInvariant()));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            if (isNew) InheritFromEarlierSave(tx, id, f.Path);
+            foreach (var f in files) Upsert(tx, f, installed);
             tx.Commit();
         }
+    }
+
+    void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed)
+    {
+        var info = f.Info;
+        bool isNew;
+        using (var cmd = Cmd("SELECT COUNT(*) FROM projects WHERE path = $p", ("$p", f.Path)))
+        {
+            cmd.Transaction = tx;
+            isNew = (long)cmd.ExecuteScalar()! == 0;
+        }
+        var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
+        using (var cmd = Cmd("""
+            INSERT INTO projects (path, name, daw, folder, size, mtime, tempo, version, title, confidence,
+                                  can_midi, can_presets, info, error, file_missing, hardware)
+            VALUES ($path, $name, $daw, $folder, $size, $mtime, $tempo, $version, $title, $conf,
+                    $midi, $presets, $info, $error, 0, $hw)
+            ON CONFLICT(path) DO UPDATE SET name=excluded.name, daw=excluded.daw, folder=excluded.folder,
+                size=excluded.size, mtime=excluded.mtime, tempo=excluded.tempo, version=excluded.version,
+                title=excluded.title, confidence=excluded.confidence, can_midi=excluded.can_midi,
+                can_presets=excluded.can_presets, info=excluded.info, error=excluded.error, file_missing=0,
+                hardware=excluded.hardware
+            """,
+            ("$path", f.Path), ("$name", Path.GetFileNameWithoutExtension(f.Path)),
+            ("$daw", info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown"), ("$folder", Path.GetDirectoryName(f.Path)),
+            ("$size", f.Size), ("$mtime", f.Mtime), ("$tempo", info?.Tempo), ("$version", info?.Version),
+            ("$title", info?.Title), ("$conf", (int)(info?.Confidence ?? Confidence.Catalogue)),
+            ("$midi", info?.CanExtractMidi == true ? 1 : 0), ("$presets", info?.CanExtractPresets == true ? 1 : 0),
+            ("$info", infoJson), ("$error", f.Error), ("$hw", string.Join(", ", f.Hardware))))
+        {
+            cmd.Transaction = tx;
+            cmd.ExecuteNonQuery();
+        }
+
+        long id;
+        using (var cmd = Cmd("SELECT id FROM projects WHERE path = $p", ("$p", f.Path)))
+        {
+            cmd.Transaction = tx;
+            id = (long)cmd.ExecuteScalar()!;
+        }
+        foreach (var sql in new[] { "DELETE FROM plugins WHERE project_id = $id", "DELETE FROM samples WHERE project_id = $id" })
+        {
+            using var cmd = Cmd(sql, ("$id", id));
+            cmd.Transaction = tx;
+            cmd.ExecuteNonQuery();
+        }
+        foreach (var p in info?.Plugins ?? [])
+        {
+            var key = NameKey(p.Name);
+            using var cmd = Cmd("INSERT INTO plugins VALUES ($id, $n, $k, $v, $kind, $f, $path, $inst)",
+                ("$id", id), ("$n", p.Name), ("$k", key), ("$v", p.Vendor), ("$kind", (int)p.Kind),
+                ("$f", p.Format), ("$path", p.Path), ("$inst", IsInstalled(p, key, installed) ? 1 : 0));
+            cmd.Transaction = tx;
+            cmd.ExecuteNonQuery();
+        }
+        foreach (var (path, found) in f.Samples)
+        {
+            using var cmd = Cmd("INSERT INTO samples VALUES ($id, $p, $f)", ("$id", id), ("$p", path), ("$f", found ? 1 : 0));
+            cmd.Transaction = tx;
+            cmd.ExecuteNonQuery();
+        }
+        foreach (var hw in f.Hardware)
+        {
+            using var cmd = Cmd("INSERT OR IGNORE INTO tags VALUES ($id, $t)", ("$id", id), ("$t", hw.ToLowerInvariant()));
+            cmd.Transaction = tx;
+            cmd.ExecuteNonQuery();
+        }
+        if (isNew) InheritFromEarlierSave(tx, id, f.Path);
     }
 
     /// <summary>

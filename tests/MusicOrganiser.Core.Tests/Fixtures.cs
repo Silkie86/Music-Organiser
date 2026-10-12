@@ -147,6 +147,27 @@ public static class Fixtures
         return b;
     }
 
+    /// <summary>
+    /// FL's VST2 state for a plugin without chunks: the 21-byte header (chunk length 0,
+    /// flags without 0x08), the parameter count and values, then u32 1 and the program name.
+    /// </summary>
+    public static byte[] FlVst2ParamState(float[] values, string program)
+    {
+        using var ms = new MemoryStream();
+        var header = new byte[21];
+        BinaryPrimitives.WriteInt32LittleEndian(header, -9);
+        header[4] = 0x05;
+        BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(5), -2);
+        ms.Write(header);
+        ms.Write(BitConverter.GetBytes((uint)values.Length));
+        foreach (var v in values) ms.Write(BitConverter.GetBytes(v));
+        ms.Write(BitConverter.GetBytes(1u));
+        var name = new byte[24];
+        Encoding.ASCII.GetBytes(program).CopyTo(name, 0);
+        ms.Write(name);
+        return ms.ToArray();
+    }
+
     /// <summary>FL's VST3 state: version 1, then records 1 (settings), 3 (component), 2 (controller).</summary>
     public static byte[] FlVst3State(byte[] component, byte[] controller)
     {
@@ -186,7 +207,11 @@ public static class Fixtures
             .Word(64, 2).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Keys")
             .Data(213, WrapperBlob("Arcade", @"C:\Program Files\Common Files\VST3\Arcade.vst3", "Output",
-                                   FlVst3State([7, 7, 7], [8]), version: 12, kind: 8, classId: arcadeId));
+                                   FlVst3State([7, 7, 7], [8]), version: 12, kind: 8, classId: arcadeId))
+            .Word(64, 3).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Arp")
+            .Data(213, WrapperBlob("Predator 2", @"C:\VstPlugins\Predator2.dll", "Rob Papen",
+                                   FlVst2ParamState([0.25f, 1f, 0.5f], "arp- sine beat"), version: 12, kind: 0, fourCc: "2drP"));
         var path = Path.Combine(projects, "Shuffle.flp");
         File.WriteAllBytes(path, b.Build());
         return path;

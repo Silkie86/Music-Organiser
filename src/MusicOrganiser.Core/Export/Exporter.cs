@@ -41,16 +41,25 @@ public static class Exporter
         return file;
     }
 
-    public static ExportResult Presets(IProjectReader reader, string project, string exportRoot)
+    public static ExportResult Presets(IProjectReader reader, string project, string exportRoot) =>
+        Presets(reader.ExtractPresets(project), project, exportRoot);
+
+    /// <summary>
+    /// Writes presets as "Plugin - Name.ext". Exporting again overwrites the same files,
+    /// so exporting one plugin after another builds up a single folder without duplicates.
+    /// </summary>
+    public static ExportResult Presets(IEnumerable<PresetBlob> presets, string project, string exportRoot)
     {
-        var presets = reader.ExtractPresets(project);
         var dir = OutDir(exportRoot, project, "Presets");
         var files = new List<string>();
-        for (var i = 0; i < presets.Count; i++)
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in presets)
         {
-            var p = presets[i];
             var label = p.Plugin.Length > 0 && p.Plugin != p.Name ? $"{p.Plugin} - {p.Name}" : p.Name;
-            var name = $"{i + 1:00} {TextScan.SafeFileName(label)}{p.Extension}";
+            if (p.Where.Length > 0) label += $" ({p.Where.Replace(" · ", " ")})";
+            label = TextScan.SafeFileName(label);
+            var name = label + p.Extension;
+            for (var n = 2; !used.Add(name); n++) name = $"{label} {n}{p.Extension}";
             File.WriteAllBytes(Path.Combine(dir, name), p.Data);
             files.Add(name);
         }

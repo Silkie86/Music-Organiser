@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -36,6 +37,7 @@ public sealed class ClapModel : IDisposable
     /// <summary>
     /// Downloads the model files from Hugging Face into <paramref name="folder"/>. Each file
     /// goes to a .part file first, so an interrupted download never looks installed.
+    /// Progress is reported when each file starts and then about every half a megabyte.
     /// </summary>
     public static async Task DownloadAsync(IProgress<(string File, long Done, long? Total)>? progress = null,
                                            string? folder = null, CancellationToken ct = default)
@@ -51,19 +53,21 @@ public sealed class ClapModel : IDisposable
             using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
             resp.EnsureSuccessStatusCode();
             var total = resp.Content.Headers.ContentLength;
+            progress?.Report((local, 0, total));
             var part = target + ".part";
             await using (var src = await resp.Content.ReadAsStreamAsync(ct))
             await using (var dst = File.Create(part))
             {
                 var buf = new byte[1 << 16];
-                long done = 0;
+                long done = 0, reported = 0;
                 int n;
                 while ((n = await src.ReadAsync(buf, ct)) > 0)
                 {
                     await dst.WriteAsync(buf.AsMemory(0, n), ct);
                     done += n;
-                    progress?.Report((local, done, total));
+                    if (done - reported >= 1 << 19) progress?.Report((local, reported = done, total));
                 }
+                progress?.Report((local, done, total));
             }
             File.Move(part, target, overwrite: true);
         }
@@ -76,7 +80,14 @@ public sealed class ClapModel : IDisposable
                File.Exists(Path.Combine(folder, "tokenizer.json"));
     }
 
-    readonly InferenceSession _audio;
+    // Several copies of the audio model run side by side, each on its own share of the
+    // cores, so deep listening keeps every core busy. Copies are made as they're needed.
+    static readonly int AudioCopies = Math.Max(1, Parallelism.Cores / 4);
+    readonly string _audioPath;
+    readonly SessionOptions _audioOptions;
+    readonly ConcurrentBag<InferenceSession> _audioPool = [];
+    readonly SemaphoreSlim _audioSlots = new(AudioCopies, AudioCopies);
+    readonly List<InferenceSession> _audioAll = [];
     readonly InferenceSession _text;
     readonly BpeTokenizer _tokenizer;
     readonly ClapFeatureExtractor _extractor;
@@ -90,24 +101,40 @@ public sealed class ClapModel : IDisposable
     public ClapModel(string? folder = null)
     {
         folder ??= DefaultFolder;
-        var opts = new SessionOptions { GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL };
-        _audio = new InferenceSession(Path.Combine(folder, "audio_model.onnx"), opts);
-        _text = new InferenceSession(Path.Combine(folder, "text_model.onnx"), opts);
+        _audioPath = Path.Combine(folder, "audio_model.onnx");
+        _audioOptions = new SessionOptions
+        {
+            GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+            IntraOpNumThreads = Math.Max(1, Parallelism.Cores / AudioCopies),
+        };
+        var audio = NewAudioSession();
+        _audioPool.Add(audio);
+        using var textOptions = new SessionOptions { GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL };
+        _text = new InferenceSession(Path.Combine(folder, "text_model.onnx"), textOptions);
         _tokenizer = BpeTokenizer.Load(Path.Combine(folder, "tokenizer.json"));
         var cfgPath = Path.Combine(folder, "preprocessor_config.json");
         _extractor = File.Exists(cfgPath) ? ClapFeatureExtractor.FromConfig(File.ReadAllText(cfgPath)) : new ClapFeatureExtractor();
 
-        _audioInput = _audio.InputMetadata.Keys.FirstOrDefault(k => k.Contains("input_features")) ?? _audio.InputMetadata.Keys.First();
-        _wantsIsLonger = _audio.InputMetadata.ContainsKey("is_longer");
-        var dims = _audio.InputMetadata[_audioInput].Dimensions;
+        _audioInput = audio.InputMetadata.Keys.FirstOrDefault(k => k.Contains("input_features")) ?? audio.InputMetadata.Keys.First();
+        _wantsIsLonger = audio.InputMetadata.ContainsKey("is_longer");
+        var dims = audio.InputMetadata[_audioInput].Dimensions;
         _channels = dims.Length == 4 && dims[1] > 0 ? dims[1] : _extractor.Fusion ? 4 : 1;
-        _audioOutput = _audio.OutputMetadata.Keys.FirstOrDefault(k => k.Contains("audio_embeds")) ?? _audio.OutputMetadata.Keys.First();
+        _audioOutput = audio.OutputMetadata.Keys.FirstOrDefault(k => k.Contains("audio_embeds")) ?? audio.OutputMetadata.Keys.First();
         _textOutput = _text.OutputMetadata.Keys.FirstOrDefault(k => k.Contains("text_embeds")) ?? _text.OutputMetadata.Keys.First();
+    }
+
+    InferenceSession NewAudioSession()
+    {
+        var session = new InferenceSession(_audioPath, _audioOptions);
+        lock (_audioAll) _audioAll.Add(session);
+        return session;
     }
 
     public void Dispose()
     {
-        _audio.Dispose();
+        lock (_audioAll) foreach (var a in _audioAll) a.Dispose();
+        _audioOptions.Dispose();
+        _audioSlots.Dispose();
         _text.Dispose();
     }
 
@@ -124,11 +151,19 @@ public sealed class ClapModel : IDisposable
                 for (var m = 0; m < mels; m++) t[0, c, f, m] = channels[c][f][m];
         var inputs = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor(_audioInput, t) };
         if (_wantsIsLonger) inputs.Add(NamedOnnxValue.CreateFromTensor("is_longer", new DenseTensor<bool>(new[] { longer }, [1, 1])));
-        lock (_lock)
+        _audioSlots.Wait();
+        try
         {
-            using var res = _audio.Run(inputs, [_audioOutput]);
-            return Normalise(res.First().AsEnumerable<float>().ToArray());
+            // A free copy, or a new one: there are never more copies than slots.
+            if (!_audioPool.TryTake(out var session)) session = NewAudioSession();
+            try
+            {
+                using var res = session.Run(inputs, [_audioOutput]);
+                return Normalise(res.First().AsEnumerable<float>().ToArray());
+            }
+            finally { _audioPool.Add(session); }
         }
+        finally { _audioSlots.Release(); }
     }
 
     /// <summary>Unit-length embedding for a description such as "punchy acoustic kick".</summary>

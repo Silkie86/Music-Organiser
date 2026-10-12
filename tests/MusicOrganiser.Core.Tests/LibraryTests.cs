@@ -36,6 +36,30 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void ScansManyProjectsAcrossCoresInOneGo()
+    {
+        // Enough projects to fill several save batches, spread over nested folders.
+        var expected = new List<string>();
+        for (var i = 0; i < 120; i++)
+        {
+            var dir = Path.Combine(_root, "Bulk", $"Folder {i % 7}", $"Deeper {i % 3}");
+            Directory.CreateDirectory(dir);
+            Fixtures.FlStudioProject(dir, $"Idea {i:000}");
+            expected.Add(Path.Combine(dir, $"Idea {i:000}.flp"));
+        }
+
+        var found = Scanner.FindProjects([_root]);
+        Assert.Equal(found.Order(StringComparer.OrdinalIgnoreCase), found);
+        Assert.Subset(found.ToHashSet(), expected.ToHashSet());
+        Assert.DoesNotContain(found, f => f.Contains("auto-backups") || f.Contains("(autosave)"));
+
+        new Scanner(_db).ScanProjects();
+        var paths = _db.Projects().Select(p => p.Path).ToHashSet();
+        Assert.Subset(paths, expected.ToHashSet());
+        Assert.Equal(found.Count, paths.Count);
+    }
+
+    [Fact]
     public void DropsFilesThatNoLongerCountAsProjects()
     {
         // A library scanned before FL autosave copies were skipped still lists one.
@@ -220,6 +244,6 @@ public class LibraryTests : IDisposable
         Assert.Equal(["01 Lead (Serum).mid", "02 Kick (Kick 01.wav).mid", "03 Bass (3x Osc).mid"], midi.Files);
         Assert.True(File.Exists(Path.Combine(midi.Folder, "01 Lead (Serum).mid")));
         var presets = Exporter.Presets(Readers.FlStudio, flp, outRoot);
-        Assert.Contains("01 Serum - Lead.fxp", presets.Files);
+        Assert.Contains("Serum - Lead.fxp", presets.Files);
     }
 }
