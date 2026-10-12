@@ -33,7 +33,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public string OlderSavesHeader => $"Older saves ({Item.OlderSaves.Count})";
     public bool CanExtractMidi => Detail?.CanExtractMidi == true && !Item.FileMissing;
     public bool CanExtractPresets => Detail?.CanExtractPresets == true && !Item.FileMissing;
-    public string MidiNote => Item.Daw == "Studio One" ? "Experimental for Studio One" : "";
+    public string MidiNote => "See each channel's notes and what plays them, and export them as MIDI" +
+                              (Item.Daw == "Studio One" ? " (experimental for Studio One)" : "");
     public string PluginHeader => $"Plugins ({Plugins.Count}{(Item.MissingPlugins > 0 ? $", {Item.MissingPlugins} missing" : "")})";
     public string SampleHeader => $"Samples ({Samples.Count}{(Item.MissingSamples > 0 ? $", {Item.MissingSamples} missing" : "")})";
 
@@ -45,7 +46,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         _main = main;
         Item = item;
         Detail = db.Project(item.Id);
-        Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p)).ToList() ?? [];
+        var installed = db.InstalledNames();
+        Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p, installed)).ToList() ?? [];
         Samples = Detail?.Samples.Select(s => new SampleRow(db, s, item, this)).ToList() ?? [];
 
         var facts = new List<KeyValuePair<string, string>>
@@ -104,19 +106,16 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     [RelayCommand]
     void CopyPath() => Clipboard.SetText(Item.Path);
 
+    /// <summary>Opens the MIDI popup: each channel's notes, what plays them, and export.</summary>
     [RelayCommand]
-    async Task ExportMidi()
+    void ShowMidi()
     {
-        var reader = Readers.For(Item.Path);
-        if (reader is null) return;
-        Message = "Exporting MIDI…";
-        try
+        if (Readers.For(Item.Path) is not { } reader) return;
+        var window = new Views.MidiWindow(new MidiPreviewViewModel(reader, Item.Path, Item.Name, ExportRoot, Item.Tempo))
         {
-            var result = await Task.Run(() => Exporter.Midi(reader, Item.Path, ExportRoot, Item.Tempo));
-            Message = result.Files.Count == 0 ? "No notes found to export." : $"Exported {result.Files.Count} MIDI files.";
-            if (result.Files.Count > 0) Shell.Open(result.Folder);
-        }
-        catch (Exception e) { Message = $"MIDI export failed: {e.Message}"; }
+            Owner = Application.Current.MainWindow,
+        };
+        window.Show();
     }
 
     [RelayCommand]
@@ -152,7 +151,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     }
 }
 
-public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p) : ObservableObject
+public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p, IReadOnlySet<string> installed) : ObservableObject
 {
     public string Name => p.Name;
     public string Vendor => p.Vendor;
@@ -167,6 +166,8 @@ public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p) : Observabl
     public bool Installed => p.Installed;
     /// <summary>Audio Units only load on a Mac, so these come from a project saved on one.</summary>
     public bool IsAu => p.Format == "AU";
+    /// <summary>Another version you do have, e.g. "Ozone 12" for a project that used Ozone 8.</summary>
+    public string? OtherVersion { get; } = p.Installed ? null : PluginCatalog.OtherVersionInstalled(p.Name, installed);
     public string? Elektron => PluginCatalog.ElektronDevice(p.Name);
 
     public ObservableCollection<MatchRow> Matches { get; } = new();

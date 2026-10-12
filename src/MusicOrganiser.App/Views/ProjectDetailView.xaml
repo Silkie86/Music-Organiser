@@ -38,8 +38,8 @@
                            Command="{Binding OpenInDawCommand}" Margin="0,0,6,6" />
                 <ui:Button Content="Show in folder" Icon="{ui:SymbolIcon FolderOpen24}"
                            Command="{Binding RevealCommand}" Margin="0,0,6,6" />
-                <ui:Button Content="Export MIDI" Icon="{ui:SymbolIcon MusicNote224}"
-                           Command="{Binding ExportMidiCommand}" Margin="0,0,6,6"
+                <ui:Button Content="MIDI" Icon="{ui:SymbolIcon MusicNote224}"
+                           Command="{Binding ShowMidiCommand}" Margin="0,0,6,6"
                            IsEnabled="{Binding CanExtractMidi}" ToolTip="{Binding MidiNote}" />
                 <ui:Button Content="Export presets" Icon="{ui:SymbolIcon Options24}"
                            Command="{Binding ExportPresetsCommand}" Margin="0,0,6,6"
@@ -139,6 +139,10 @@
                                                    FontSize="12" VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
                                                    Visibility="{Binding Elektron, Converter={StaticResource NullToVisibility}}" />
                                     </StackPanel>
+                                    <TextBlock Text="{Binding OtherVersion, StringFormat='You have {0} installed'}" FontSize="12"
+                                               Foreground="{StaticResource OkBrush}" TextWrapping="Wrap"
+                                               ToolTip="A different version of this plugin. The project won't load it by itself; swap it in."
+                                               Visibility="{Binding OtherVersion, Converter={StaticResource NullToVisibility}}" />
                                     <TextBlock FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
                                         <Run Text="{Binding KindText, Mode=OneWay}" />
                                         <Run Text="{Binding Format, Mode=OneWay}" />

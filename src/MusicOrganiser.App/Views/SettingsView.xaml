@@ -13,7 +13,7 @@
 
             <TextBlock Text="Project folders" Style="{StaticResource SectionHeader}" />
             <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"
-                       Text="Folders to search for Bitwig (.bwproject), FL Studio (.flp) and Studio One (.song) projects. Subfolders are included; DAW autosave and backup folders are skipped." />
+                       Text="Folders to search for Bitwig (.bwproject), FL Studio (.flp) and Studio One (.song) projects. Subfolders are included. DAW autosave and backup folders are skipped, and so are the demo songs, tutorials and templates that came with the DAW (folders named Cool stuff, Demo songs, Product demos, Templates or Tutorial)." />
             <ListBox ItemsSource="{Binding ProjectFolders}" SelectedItem="{Binding SelectedProjectFolder}" MinHeight="60" MaxHeight="180" />
             <WrapPanel Margin="0,8,0,0">
                 <ui:Button Content="Add folder" Appearance="Primary" Icon="{ui:SymbolIcon FolderAdd24}"

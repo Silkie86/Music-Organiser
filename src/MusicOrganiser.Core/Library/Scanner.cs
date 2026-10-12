@@ -30,6 +30,29 @@ public sealed class Scanner(LibraryDb db)
     static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase)
         { "$RECYCLE.BIN", "System Volume Information", "__MACOSX", "node_modules" };
 
+    // Demo songs, tutorials and templates that came with the DAW rather than your own projects.
+    // Old FL Studio installs keep demos in "Cool stuff" and loop packs in Data\Patches.
+    static readonly HashSet<string> FactoryDirs = new(StringComparer.OrdinalIgnoreCase)
+        { "Cool stuff", "Demo songs", "Product demos", "Templates", "Template", "Tutorial", "Tutorials" };
+
+    static bool SkipDir(string name, string parent) =>
+        name.StartsWith('.') || SkipDirs.Contains(name) || AutosaveDirs.Contains(name) || FactoryDirs.Contains(name) ||
+        name.Equals("Patches", StringComparison.OrdinalIgnoreCase) && parent.Equals("Data", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Whether the scan leaves this file out: an autosave copy, or inside a skipped folder under its root.</summary>
+    public static bool IsIgnored(string path, IEnumerable<string> roots)
+    {
+        if (IsAutosaveFile(Path.GetFileName(path))) return true;
+        var root = roots.FirstOrDefault(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase));
+        if (root is null) return false;
+        var dir = Path.GetDirectoryName(path) ?? "";
+        var dirs = (dir.Length > root.Length ? dir[root.Length..] : "")
+            .Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < dirs.Length; i++)
+            if (SkipDir(dirs[i], i > 0 ? dirs[i - 1] : Path.GetFileName(root.TrimEnd('\\', '/')))) return true;
+        return false;
+    }
+
     public static IEnumerable<string> FindProjects(string root)
     {
         var stack = new Stack<string>([root]);
@@ -50,11 +73,7 @@ public sealed class Scanner(LibraryDb db)
                 if (Readers.For(f) is not null && !name.StartsWith("._") && !IsAutosaveFile(name)) yield return f;
             }
             foreach (var d in dirs)
-            {
-                var name = Path.GetFileName(d);
-                if (name.StartsWith('.') || SkipDirs.Contains(name) || AutosaveDirs.Contains(name)) continue;
-                stack.Push(d);
-            }
+                if (!SkipDir(Path.GetFileName(d), Path.GetFileName(dir.TrimEnd('\\', '/')))) stack.Push(d);
         }
     }
 
@@ -120,7 +139,7 @@ public sealed class Scanner(LibraryDb db)
             }
             catch (IOException) { }
         }
-        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsAutosaveFile(Path.GetFileName(f)));
+        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
         db.SetSetting(IndexVersionKey, IndexVersion);
         progress?.Report(new("Done", files.Count, files.Count, ""));
     }

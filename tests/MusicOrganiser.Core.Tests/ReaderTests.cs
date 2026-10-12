@@ -54,6 +54,29 @@ public class FlStudioTests
     }
 
     [Fact]
+    public void ExtractsEachChannelWithWhatPlaysIt()
+    {
+        // No playlist: patterns one after another, each rounded up to a bar (4 × 96 ticks).
+        var channels = new FlStudioReader().ExtractChannels(_path);
+        Assert.Equal(["Lead (Serum)", "Kick (Kick 01.wav)", "Bass (3x Osc)"], channels.Select(c => c.Label));
+        Assert.Equal([0L, 96L], channels[0].Notes.Select(n => n.Start));
+        Assert.Equal(384, channels[2].Notes.Single().Start);
+        Assert.Equal("Drums", channels[1].Kind);
+    }
+
+    [Fact]
+    public void PlacesPatternsWhereThePlaylistPutsThem()
+    {
+        // Drop at the start; then the second half of Intro from tick 768.
+        var path = Fixtures.FlStudioProject(Fixtures.TempDir(), "Arranged",
+            [.. Fixtures.PlaylistItem(0, 2, 384), .. Fixtures.PlaylistItem(768, 1, 192, offset: 96)]);
+        var channels = new FlStudioReader().ExtractChannels(path).ToDictionary(c => c.Name);
+        Assert.Equal(0, channels["Bass"].Notes.Single().Start);
+        Assert.Equal(new NoteEvent(768, 96, 64, 127), channels["Lead"].Notes.Single());
+        Assert.False(channels.ContainsKey("Kick"));   // its note sits before the offset
+    }
+
+    [Fact]
     public void ExtractsPluginStates()
     {
         var presets = new FlStudioReader().ExtractPresets(_path);

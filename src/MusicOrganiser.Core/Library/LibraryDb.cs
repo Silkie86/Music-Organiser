@@ -111,7 +111,7 @@ public sealed partial class LibraryDb : IDisposable
         return NonAlnum().Replace(n, "");
     }
 
-    [GeneratedRegex(@"\((x64|x86|64[- ]?bit|32[- ]?bit|vst3?|clap|au|mono|stereo)\)|\b(x64|x86|vst3?|clap)\b")]
+    [GeneratedRegex(@"\((x64|x86|64[- ]?bit|32[- ]?bit|vst3?|clap|au|mono|stereo|automap)\)|\b(x64|x86|vst3?|clap)\b|\bvst_(x64|x86)\b|_(x64|x86|64)\b|(?<=[a-z])x64\b")]
     private static partial Regex NameNoise();
 
     [GeneratedRegex("[^a-z0-9]")]
@@ -278,8 +278,10 @@ public sealed partial class LibraryDb : IDisposable
     {
         if (p.Format.Equals("Native", StringComparison.OrdinalIgnoreCase)) return true;
         if (p.Path.Length > 0 && (File.Exists(p.Path) || Directory.Exists(p.Path))) return true;
+        if (PluginCatalog.IsFlStudioBundled(p.Name, p.Vendor, p.Path)) return true;
         if (installed.Count == 0) return true;   // no plugin scan yet: don't cry wolf
         if (installed.Contains(key)) return true;
+        if (PluginCatalog.IsWaves(p.Name, p.Path) && installed.Any(k => k.StartsWith("waveshell"))) return true;
         // Projects often store "Vendor Name" while the file is just "Name", or the reverse.
         return installed.Any(k => k.Length >= 4 && (key.EndsWith(k) || k.EndsWith(key) && key.Length >= 4));
     }
@@ -331,7 +333,7 @@ public sealed partial class LibraryDb : IDisposable
     {
         var installed = InstalledKeys();
         var rows = Query("SELECT rowid, name, name_key, vendor, kind, format, path FROM plugins",
-            r => (RowId: (long)r["rowid"], Key: Str(r, "name_key"),
+            r => (RowId: (long)r["rowid"], Key: NameKey(Str(r, "name")),
                   Ref: new PluginRef(Str(r, "name"), Str(r, "vendor"), (PluginKind)Long(r, "kind"), Str(r, "format"), Str(r, "path"))));
         lock (_lock)
         {
