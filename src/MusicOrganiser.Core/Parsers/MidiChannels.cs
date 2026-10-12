@@ -2,9 +2,10 @@ namespace MusicOrganiser.Core.Parsers;
 
 /// <summary>
 /// One channel's (FL Studio) or track's (Bitwig, Studio One) notes across the whole song,
-/// with what plays them. Positions are song ticks at <see cref="Ppq"/>.
+/// with what plays them. Positions are song ticks at <see cref="Ppq"/>. <see cref="Source"/> is what to
+/// show (the sample, for a channel that has one); <see cref="Plugin"/> the plugin on the channel, if any.
 /// </summary>
-public sealed record MidiChannel(string Name, string Source, int Ppq, IReadOnlyList<NoteEvent> Notes)
+public sealed record MidiChannel(string Name, string Source, int Ppq, IReadOnlyList<NoteEvent> Notes, string Plugin = "")
 {
     public int Lowest => Notes.Count == 0 ? 0 : Notes.Min(n => n.Key);
     public int Highest => Notes.Count == 0 ? 0 : Notes.Max(n => n.Key);
@@ -75,6 +76,12 @@ public sealed record MidiChannel(string Name, string Source, int Ppq, IReadOnlyL
         }
         return order.Select(t => new MidiChannel(t, "", ppq, byTrack[t].Notes.OrderBy(n => n.Start).ThenBy(n => n.Key).ToList())).ToList();
     }
+
+    /// <summary>What plays notes in the song: the plugin (or sample) behind each channel with notes.</summary>
+    public static IReadOnlySet<string> Players(IEnumerable<MidiChannel> channels) =>
+        channels.Where(c => c.Notes.Count > 0)
+                .SelectMany(c => new[] { c.Plugin, c.Source }).Where(s => s.Length > 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>As a MIDI clip with a single track, ready for <c>MidiWriter</c>.</summary>
     public MidiClip ToClip()

@@ -257,18 +257,42 @@ public sealed class FlStudioReader : IProjectReader
             return new PresetBlob(name, plugin, ".vst3state", state);
         }
 
-        // VST2: FL puts a 21-byte header in front of the plugin's chunk:
-        // i32 -9, u8 flags, i32 -2, u32 chunk length, 8 zero bytes.
+        // VST2: FL puts a 21-byte header in front of the plugin's state:
+        // i32 -9, u8 flags (0x08 = the plugin saves a chunk), i32 -2, u32 chunk length, 8 zero bytes.
+        var id = f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4
+            ? BinaryPrimitives.ReadInt32LittleEndian(cc)
+            : 0;
         var chunk = state;
         if (state.Length >= 21 && BinaryPrimitives.ReadInt32LittleEndian(state) == -9)
         {
             var len = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9));
+            if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state) is var (values, program))
+                return new PresetBlob(name, plugin, ".fxp", Fxp.WrapParams(values, program.Length > 0 ? program : plugin, id));
             if (21 + (long)len <= state.Length) chunk = state.AsSpan(21, (int)len).ToArray();
         }
-        var id = f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4
-            ? BinaryPrimitives.ReadInt32LittleEndian(cc)
-            : 0;
         return new PresetBlob(name, plugin, ".fxp", Fxp.WrapChunk(chunk, plugin, id));
+    }
+
+    /// <summary>
+    /// Plugins that don't save a chunk (Predator, older FabFilter) have their parameters after
+    /// FL's header instead: u32 count, the values as floats, then u32 1 and the program name.
+    /// </summary>
+    static (float[] Values, string Program)? ParamState(byte[] state)
+    {
+        if (state.Length < 25) return null;
+        var n = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(21));
+        if (n == 0 || 25 + 4L * n > state.Length) return null;
+        var values = new float[n];
+        for (var i = 0; i < n; i++) values[i] = BinaryPrimitives.ReadSingleLittleEndian(state.AsSpan(25 + 4 * i));
+        var program = "";
+        var at = 25 + 4 * (int)n;
+        if (at + 4 < state.Length && BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(at)) == 1)
+        {
+            var text = state.AsSpan(at + 4, Math.Min(28, state.Length - at - 4));
+            var end = text.IndexOf((byte)0);
+            program = Encoding.Latin1.GetString(end < 0 ? text : text[..end]).Trim();
+        }
+        return (values, program);
     }
 
     /// <summary>
@@ -377,6 +401,7 @@ public sealed class FlStudioReader : IProjectReader
         var flp = Load(path);
         var names = new Dictionary<int, string>();
         var sources = new Dictionary<int, string>();
+        var plugins = new Dictionary<int, string>();
         var order = new List<int>();
         var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
         ReadOnlyMemory<byte>? playlist = null;
@@ -403,13 +428,20 @@ public sealed class FlStudioReader : IProjectReader
                     channelHasPlugin = true;
                     if (!inMixer && channel is not null && pendingInternal.Length > 0 &&
                         !pendingInternal.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase))
+                    {
                         sources.TryAdd(channel.Value, pendingInternal);
+                        plugins.TryAdd(channel.Value, pendingInternal);
+                    }
                     break;
                 case EvPluginState when !inMixer && channel is not null &&
                                         pendingInternal.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase):
                     var f = WrapperFields(e.Payload.Span);
                     var vst = WrapperText(f, VstName) is { Length: > 0 } n ? n : TextScan.PluginNameFromPath(WrapperText(f, VstPath));
-                    if (vst.Length > 0) sources.TryAdd(channel.Value, vst);
+                    if (vst.Length > 0)
+                    {
+                        sources.TryAdd(channel.Value, vst);
+                        plugins.TryAdd(channel.Value, vst);
+                    }
                     pendingInternal = "";
                     break;
                 case EvSamplePath when channel is not null && !inMixer:
@@ -462,7 +494,8 @@ public sealed class FlStudioReader : IProjectReader
 
         return order.Union(notes.Keys).Where(notes.ContainsKey)
             .Select(ch => new MidiChannel(names.GetValueOrDefault(ch, $"Channel {ch + 1}"), sources.GetValueOrDefault(ch, ""), flp.Ppq,
-                                          notes[ch].OrderBy(n => n.Start).ThenBy(n => n.Key).ToList()))
+                                          notes[ch].OrderBy(n => n.Start).ThenBy(n => n.Key).ToList(),
+                                          plugins.GetValueOrDefault(ch, "")))
             .ToList();
     }
 
@@ -495,34 +528,56 @@ public sealed class FlStudioReader : IProjectReader
     }
 
     /// <summary>
-    /// Plugin states. VST states are wrapped as .fxp chunk presets; native FL
-    /// plugin states are saved raw (.flstate) since they aren't complete .fst files.
+    /// Plugin states. VST states become .fxp or .vstpreset files the plugin can load; native
+    /// FL plugin states are saved raw (.flstate) since they aren't complete .fst files.
+    /// Each knows whether it's a generator (on a channel) or an effect (in the mixer).
     /// </summary>
     public IReadOnlyList<PresetBlob> ExtractPresets(string path)
     {
         var flp = Load(path);
         var presets = new List<PresetBlob>();
+        var channelTypes = new Dictionary<int, int>();
+        int? channel = null;
+        var inMixer = false;
+        var channelHasPlugin = false;
         var pendingInternal = "";
         var currentName = "";
         foreach (var e in flp.Events)
         {
             switch (e.Id)
             {
-                case EvPluginInternal: pendingInternal = flp.Str(e); currentName = ""; break;
+                case EvChannelNew: channel = (int)e.Int; inMixer = false; channelHasPlugin = false; break;
+                case EvChannelType when channel is not null: channelTypes[channel.Value] = (int)e.Int; break;
+                case EvMixerSlot or EvInsertFlags: inMixer = true; break;
+                case EvPluginInternal:
+                    pendingInternal = flp.Str(e);
+                    currentName = "";
+                    if (channelHasPlugin) inMixer = true;
+                    channelHasPlugin = true;
+                    break;
                 case EvPluginName: currentName = flp.Str(e); break;
                 case EvPluginState when e.Payload.Length > 0:
+                    var onChannel = !inMixer && channel is not null &&
+                                    channelTypes.GetValueOrDefault(channel.Value) == ChannelTypeInstrument;
                     if (pendingInternal.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase))
                     {
                         var f = WrapperFields(e.Payload.Span);
-                        var plugin = WrapperText(f, VstName);
+                        var plugin = WrapperText(f, VstName) is { Length: > 0 } n ? n : TextScan.PluginNameFromPath(WrapperText(f, VstPath));
                         var name = currentName.Length > 0 ? currentName : plugin;
                         if (f.TryGetValue(VstState, out var state) && state.Length > 0)
-                            presets.Add(WrapperPreset(f, state, name, plugin));
+                            presets.Add(WrapperPreset(f, state, name, plugin) with
+                            {
+                                Kind = onChannel ? PluginKind.Instrument : PluginKind.Effect,
+                            });
                     }
                     else if (pendingInternal.Length > 0)
                     {
                         presets.Add(new PresetBlob(currentName.Length > 0 ? currentName : pendingInternal,
-                                                   pendingInternal, ".flstate", e.Payload.ToArray()));
+                                                   pendingInternal, ".flstate", e.Payload.ToArray())
+                        {
+                            Kind = onChannel || NativeGenerators.Contains(pendingInternal) ? PluginKind.Instrument : PluginKind.Effect,
+                            Native = true,
+                        });
                     }
                     pendingInternal = "";
                     break;
@@ -543,8 +598,7 @@ public static class Fxp
     {
         using var ms = new MemoryStream();
         void I32(int v) { Span<byte> b = stackalloc byte[4]; BinaryPrimitives.WriteInt32BigEndian(b, v); ms.Write(b); }
-        var name = new byte[28];
-        Encoding.ASCII.GetBytes(programName.Length > 27 ? programName[..27] : programName).CopyTo(name, 0);
+        var name = ProgramName(programName);
         var bodyLen = 4 + 16 + 28 + 4 + chunk.Length;
         ms.Write("CcnK"u8);
         I32(bodyLen);
@@ -557,6 +611,38 @@ public static class Fxp
         I32(chunk.Length);
         ms.Write(chunk);
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// An 'FxCk' (parameter list) .fxp, for plugins that save their parameters rather than a chunk.
+    /// The values are written big-endian, as the format wants.
+    /// </summary>
+    public static byte[] WrapParams(IReadOnlyList<float> values, string programName, int pluginId = 0)
+    {
+        using var ms = new MemoryStream();
+        void I32(int v) { Span<byte> b = stackalloc byte[4]; BinaryPrimitives.WriteInt32BigEndian(b, v); ms.Write(b); }
+        ms.Write("CcnK"u8);
+        I32(4 + 16 + 28 + 4 * values.Count);
+        ms.Write("FxCk"u8);
+        I32(1);      // format version
+        I32(pluginId);
+        I32(1);      // plugin version
+        I32(values.Count);
+        ms.Write(ProgramName(programName));
+        Span<byte> f = stackalloc byte[4];
+        foreach (var v in values)
+        {
+            BinaryPrimitives.WriteSingleBigEndian(f, v);
+            ms.Write(f);
+        }
+        return ms.ToArray();
+    }
+
+    static byte[] ProgramName(string programName)
+    {
+        var name = new byte[28];
+        Encoding.ASCII.GetBytes(programName.Length > 27 ? programName[..27] : programName).CopyTo(name, 0);
+        return name;
     }
 }
 

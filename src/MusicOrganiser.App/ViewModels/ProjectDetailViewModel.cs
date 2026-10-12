@@ -22,6 +22,11 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public ProjectItem Item { get; }
     public ProjectDetail? Detail { get; }
     public IReadOnlyList<PluginRow> Plugins { get; }
+    /// <summary>The plugin list as shown: synths that play no notes in the song are hidden until asked for.</summary>
+    [ObservableProperty] IReadOnlyList<PluginRow> _visiblePlugins = [];
+    [ObservableProperty] bool _showSilent;
+    [ObservableProperty] int _silentCount;
+    public string SilentToggleText => ShowSilent ? "Hide unused synths" : $"Show {SilentCount} unused synth{(SilentCount == 1 ? "" : "s")}";
     public IReadOnlyList<SampleRow> Samples { get; }
     public IReadOnlyList<string> Tracks => Detail?.Tracks ?? [];
     public IReadOnlyList<KeyValuePair<string, string>> Facts { get; }
@@ -48,6 +53,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         Detail = db.Project(item.Id);
         var installed = db.InstalledNames();
         Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p, installed)).ToList() ?? [];
+        VisiblePlugins = Plugins;
         Samples = Detail?.Samples.Select(s => new SampleRow(db, s, item, this)).ToList() ?? [];
 
         var facts = new List<KeyValuePair<string, string>>
@@ -63,7 +69,37 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         foreach (var d in Detail?.Details ?? new Dictionary<string, string>()) facts.Add(d);
         if (item.Error is { } err) facts.Add(new("Couldn't read", err));
         Facts = facts;
+        if (item.Daw == "FL Studio" && CanExtractMidi) _ = FindSilentSynthsAsync();
     }
+
+    /// <summary>
+    /// FL projects often keep synths on channels that never play. Any instrument whose
+    /// channel has no notes in the song is tucked away behind a toggle.
+    /// </summary>
+    async Task FindSilentSynthsAsync()
+    {
+        if (Readers.For(Item.Path) is not { } reader) return;
+        try
+        {
+            var players = await Task.Run(() => MidiChannel.Players(reader.ExtractChannels(Item.Path)));
+            if (players.Count == 0) return;
+            foreach (var p in Plugins) p.Silent = p.IsInstrument && !players.Contains(p.Name);
+            SilentCount = Plugins.Count(p => p.Silent);
+            ApplyPluginFilter();
+        }
+        catch (Exception) { /* the list just stays complete */ }
+    }
+
+    partial void OnShowSilentChanged(bool value) => ApplyPluginFilter();
+
+    void ApplyPluginFilter()
+    {
+        VisiblePlugins = ShowSilent ? Plugins : Plugins.Where(p => !p.Silent).ToList();
+        OnPropertyChanged(nameof(SilentToggleText));
+    }
+
+    [RelayCommand]
+    void ToggleSilent() => ShowSilent = !ShowSilent;
 
     string ExportRoot => _db.GetSetting(ExportFolderKey) is { Length: > 0 } f
         ? f
@@ -118,17 +154,40 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         window.Show();
     }
 
+    /// <summary>Opens the presets popup: every plugin state, with filters, ready to export.</summary>
     [RelayCommand]
-    async Task ExportPresets()
+    void ShowPresets()
     {
-        var reader = Readers.For(Item.Path);
-        if (reader is null) return;
-        Message = "Exporting presets…";
+        if (Readers.For(Item.Path) is not { } reader) return;
+        var window = new Views.PresetsWindow(new PresetsViewModel(reader, Item.Path, Item.Name, ExportRoot))
+        {
+            Owner = Application.Current.MainWindow,
+        };
+        window.Show();
+    }
+
+    /// <summary>Exports the saved state of one plugin (every instance of it) from this project.</summary>
+    [RelayCommand]
+    async Task ExportPluginPreset(PluginRow? row)
+    {
+        if (row is null || Readers.For(Item.Path) is not { } reader) return;
+        Message = $"Exporting {row.Name}…";
         try
         {
-            var result = await Task.Run(() => Exporter.Presets(reader, Item.Path, ExportRoot));
-            Message = result.Files.Count == 0 ? "No plugin states found to export." : $"Exported {result.Files.Count} presets.";
-            if (result.Files.Count > 0) Shell.Open(result.Folder);
+            var path = Item.Path;
+            var result = await Task.Run(() => Exporter.Presets(
+                reader.ExtractPresets(path).Where(p => p.Plugin.Equals(row.Name, StringComparison.OrdinalIgnoreCase)), path, ExportRoot));
+            if (result.Files.Count == 0)
+            {
+                Message = $"This project has no saved state for {row.Name}.";
+                return;
+            }
+            var hint = PresetsViewModel.LoadHint(Path.GetExtension(result.Files[0]));
+            Message = result.Files.Count == 1
+                ? $"Exported {result.Files[0]}." + (hint.Length > 0 ? $" {hint}." : "")
+                : $"Exported {result.Files.Count} presets for {row.Name}." + (hint.Length > 0 ? $" {hint}." : "");
+            if (result.Files.Count == 1) Shell.Reveal(Path.Combine(result.Folder, result.Files[0]));
+            else Shell.Open(result.Folder);
         }
         catch (Exception e) { Message = $"Preset export failed: {e.Message}"; }
     }
@@ -161,6 +220,9 @@ public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p, IReadOnlySe
         _ => "",
     };
     public bool Installed => p.Installed;
+    public bool IsInstrument => p.Kind == PluginKind.Instrument;
+    /// <summary>A synth whose channel plays no notes in the song.</summary>
+    [ObservableProperty] bool _silent;
     /// <summary>Another version you do have, e.g. "Ozone 12" for a project that used Ozone 8.</summary>
     public string? OtherVersion { get; } = p.Installed ? null : PluginCatalog.OtherVersionInstalled(p.Name, installed);
     public string? Elektron => PluginCatalog.ElektronDevice(p.Name);

@@ -41,9 +41,10 @@
                 <ui:Button Content="MIDI" Icon="{ui:SymbolIcon MusicNote224}"
                            Command="{Binding ShowMidiCommand}" Margin="0,0,6,6"
                            IsEnabled="{Binding CanExtractMidi}" ToolTip="{Binding MidiNote}" />
-                <ui:Button Content="Export presets" Icon="{ui:SymbolIcon Options24}"
-                           Command="{Binding ExportPresetsCommand}" Margin="0,0,6,6"
-                           IsEnabled="{Binding CanExtractPresets}" />
+                <ui:Button Content="Presets" Icon="{ui:SymbolIcon Options24}"
+                           Command="{Binding ShowPresetsCommand}" Margin="0,0,6,6"
+                           IsEnabled="{Binding CanExtractPresets}"
+                           ToolTip="See the plugin settings saved in this project and export them as presets" />
             </WrapPanel>
             <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Margin="0,4,0,0"
                        Visibility="{Binding Message, Converter={StaticResource NullToVisibility}}" />
@@ -108,7 +109,7 @@
 
             <!-- Plugins -->
             <TextBlock Text="{Binding PluginHeader}" Style="{StaticResource SectionHeader}" />
-            <ItemsControl ItemsSource="{Binding Plugins}">
+            <ItemsControl ItemsSource="{Binding VisiblePlugins}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:PluginRow}">
                         <StackPanel Margin="0,0,0,6">
@@ -116,6 +117,11 @@
                                 <ui:Button DockPanel.Dock="Right" Content="Projects" Padding="8,2" Margin="4,0,0,0"
                                            ToolTip="Show every project that uses this plugin"
                                            Command="{Binding DataContext.ShowProjectsUsingPluginCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           CommandParameter="{Binding}" />
+                                <ui:Button DockPanel.Dock="Right" Content="Preset" Padding="8,2" Margin="4,0,0,0"
+                                           ToolTip="Export this plugin's settings from the project as a preset"
+                                           Visibility="{Binding DataContext.CanExtractPresets, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource BoolToVisibility}}"
+                                           Command="{Binding DataContext.ExportPluginPresetCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                            CommandParameter="{Binding}" />
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
                                             Visibility="{Binding Installed, Converter={StaticResource InverseBoolToVisibility}}">
@@ -150,6 +156,11 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
+
+            <ui:Button Content="{Binding SilentToggleText}" Padding="8,2" Margin="0,2,0,0" HorizontalAlignment="Left"
+                       Command="{Binding ToggleSilentCommand}"
+                       ToolTip="Synths on channels that play no notes in the song"
+                       Visibility="{Binding SilentCount, Converter={StaticResource NonZeroToVisibility}}" />
 
             <!-- Samples -->
             <TextBlock Text="{Binding SampleHeader}" Style="{StaticResource SectionHeader}" />

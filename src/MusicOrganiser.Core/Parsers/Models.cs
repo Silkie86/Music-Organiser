@@ -37,7 +37,13 @@ public sealed class MidiClip
     }
 }
 
-public sealed record PresetBlob(string Name, string Plugin, string Extension, byte[] Data);
+public sealed record PresetBlob(string Name, string Plugin, string Extension, byte[] Data)
+{
+    /// <summary>Instrument or effect, where the project says (FL Studio).</summary>
+    public PluginKind Kind { get; init; }
+    /// <summary>One of the DAW's own plugins (an FL Studio plugin) rather than a third-party VST.</summary>
+    public bool Native { get; init; }
+}
 
 public sealed class ProjectInfo
 {

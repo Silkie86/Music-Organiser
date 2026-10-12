@@ -220,6 +220,6 @@ public class LibraryTests : IDisposable
         Assert.Equal(["01 Lead (Serum).mid", "02 Kick (Kick 01.wav).mid", "03 Bass (3x Osc).mid"], midi.Files);
         Assert.True(File.Exists(Path.Combine(midi.Folder, "01 Lead (Serum).mid")));
         var presets = Exporter.Presets(Readers.FlStudio, flp, outRoot);
-        Assert.Contains("01 Serum - Lead.fxp", presets.Files);
+        Assert.Contains("Serum - Lead.fxp", presets.Files);
     }
 }
