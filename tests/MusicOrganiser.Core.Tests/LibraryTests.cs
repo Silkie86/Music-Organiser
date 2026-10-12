@@ -217,8 +217,8 @@ public class LibraryTests : IDisposable
         var flp = Path.Combine(_root, "Night Drive.flp");
         var outRoot = Path.Combine(_root, "exports");
         var midi = Exporter.Midi(Readers.FlStudio, flp, outRoot, 128);
-        Assert.Equal(["01 Intro.mid", "02 Drop.mid"], midi.Files);
-        Assert.True(File.Exists(Path.Combine(midi.Folder, "01 Intro.mid")));
+        Assert.Equal(["01 Lead (Serum).mid", "02 Kick (Kick 01.wav).mid", "03 Bass (3x Osc).mid"], midi.Files);
+        Assert.True(File.Exists(Path.Combine(midi.Folder, "01 Lead (Serum).mid")));
         var presets = Exporter.Presets(Readers.FlStudio, flp, outRoot);
         Assert.Contains("01 Serum - Lead.fxp", presets.Files);
     }

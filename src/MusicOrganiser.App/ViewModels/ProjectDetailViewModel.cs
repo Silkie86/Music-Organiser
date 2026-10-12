@@ -33,7 +33,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public string OlderSavesHeader => $"Older saves ({Item.OlderSaves.Count})";
     public bool CanExtractMidi => Detail?.CanExtractMidi == true && !Item.FileMissing;
     public bool CanExtractPresets => Detail?.CanExtractPresets == true && !Item.FileMissing;
-    public string MidiNote => Item.Daw == "Studio One" ? "Experimental for Studio One" : "";
+    public string MidiNote => "See each channel's notes and what plays them, and export them as MIDI" +
+                              (Item.Daw == "Studio One" ? " (experimental for Studio One)" : "");
     public string PluginHeader => $"Plugins ({Plugins.Count}{(Item.MissingPlugins > 0 ? $", {Item.MissingPlugins} missing" : "")})";
     public string SampleHeader => $"Samples ({Samples.Count}{(Item.MissingSamples > 0 ? $", {Item.MissingSamples} missing" : "")})";
 
@@ -105,19 +106,16 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     [RelayCommand]
     void CopyPath() => Clipboard.SetText(Item.Path);
 
+    /// <summary>Opens the MIDI popup: each channel's notes, what plays them, and export.</summary>
     [RelayCommand]
-    async Task ExportMidi()
+    void ShowMidi()
     {
-        var reader = Readers.For(Item.Path);
-        if (reader is null) return;
-        Message = "Exporting MIDI…";
-        try
+        if (Readers.For(Item.Path) is not { } reader) return;
+        var window = new Views.MidiWindow(new MidiPreviewViewModel(reader, Item.Path, Item.Name, ExportRoot, Item.Tempo))
         {
-            var result = await Task.Run(() => Exporter.Midi(reader, Item.Path, ExportRoot, Item.Tempo));
-            Message = result.Files.Count == 0 ? "No notes found to export." : $"Exported {result.Files.Count} MIDI files.";
-            if (result.Files.Count > 0) Shell.Open(result.Folder);
-        }
-        catch (Exception e) { Message = $"MIDI export failed: {e.Message}"; }
+            Owner = Application.Current.MainWindow,
+        };
+        window.Show();
     }
 
     [RelayCommand]

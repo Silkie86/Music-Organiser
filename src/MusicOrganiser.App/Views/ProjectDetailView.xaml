@@ -38,8 +38,8 @@
                            Command="{Binding OpenInDawCommand}" Margin="0,0,6,6" />
                 <ui:Button Content="Show in folder" Icon="{ui:SymbolIcon FolderOpen24}"
                            Command="{Binding RevealCommand}" Margin="0,0,6,6" />
-                <ui:Button Content="Export MIDI" Icon="{ui:SymbolIcon MusicNote224}"
-                           Command="{Binding ExportMidiCommand}" Margin="0,0,6,6"
+                <ui:Button Content="MIDI" Icon="{ui:SymbolIcon MusicNote224}"
+                           Command="{Binding ShowMidiCommand}" Margin="0,0,6,6"
                            IsEnabled="{Binding CanExtractMidi}" ToolTip="{Binding MidiNote}" />
                 <ui:Button Content="Export presets" Icon="{ui:SymbolIcon Options24}"
                            Command="{Binding ExportPresetsCommand}" Margin="0,0,6,6"

@@ -79,6 +79,19 @@ public static class Fixtures
         return ms.ToArray();
     }
 
+    /// <summary>An FL 20 playlist item (32 bytes) placing a pattern; offset -1 = from its start.</summary>
+    public static byte[] PlaylistItem(uint pos, ushort pattern, uint length, int offset = -1)
+    {
+        var b = new byte[32];
+        BinaryPrimitives.WriteUInt32LittleEndian(b, pos);
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(4), 20480);
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(6), (ushort)(20480 + pattern));
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(8), length);
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(24), offset);
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(28), -1);
+        return b;
+    }
+
     public static byte[] Note(uint pos, ushort channel, uint length, ushort key, byte velocity)
     {
         var b = new byte[24];
@@ -94,7 +107,7 @@ public static class Fixtures
     /// Three channels (Serum VST on "Lead", a sampler "Kick", native 3x Osc "Bass"),
     /// two patterns with notes, and a mixer with Fruity Limiter and a Pro-Q 3 VST.
     /// </summary>
-    public static string FlStudioProject(string dir, string name = "Night Drive")
+    public static string FlStudioProject(string dir, string name = "Night Drive", byte[]? playlist = null)
     {
         var b = new FlpBuilder()
             .Ascii(199, "21.2.3.4004")
@@ -116,6 +129,7 @@ public static class Fixtures
             .Text(201, "Fruity Wrapper")
             .Data(213, WrapperBlob("Pro-Q 3", @"C:\VstPlugins\FabFilter Pro-Q 3.dll", "FabFilter", [7, 7]))
             .Word(98, 1);
+        if (playlist is not null) b.Data(233, playlist);
         var path = Path.Combine(dir, name + ".flp");
         File.WriteAllBytes(path, b.Build());
         return path;

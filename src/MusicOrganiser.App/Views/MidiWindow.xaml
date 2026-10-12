@@ -1,0 +1,58 @@
+<ui:FluentWindow x:Class="MusicOrganiser.App.Views.MidiWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                 xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+                 xmlns:views="clr-namespace:MusicOrganiser.App.Views"
+                 mc:Ignorable="d"
+                 d:DataContext="{d:DesignInstance Type=vm:MidiPreviewViewModel}"
+                 Title="{Binding Title, StringFormat='MIDI in {0}'}" Width="760" Height="620" MinWidth="520" MinHeight="360"
+                 WindowStartupLocation="CenterOwner"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica"
+                 WindowCornerPreference="Round">
+    <DockPanel>
+        <ui:TitleBar DockPanel.Dock="Top" Title="{Binding Title, StringFormat='MIDI in {0}'}" />
+
+        <DockPanel DockPanel.Dock="Bottom" Margin="16,8,16,16">
+            <ui:Button DockPanel.Dock="Right" Content="Export all channels" Appearance="Primary"
+                       Icon="{ui:SymbolIcon ArrowExportLtr24}" Command="{Binding ExportAllCommand}"
+                       IsEnabled="{Binding HasChannels}" />
+            <TextBlock Text="{Binding Message}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        </DockPanel>
+
+        <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Margin="16,4,16,8"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="16,0,8,0">
+            <ItemsControl ItemsSource="{Binding Channels}" VirtualizingPanel.IsVirtualizing="True">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:MidiChannelRow}">
+                        <Grid Margin="0,0,8,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="200" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding Name}" />
+                                <TextBlock Text="{Binding Source}" FontSize="12" TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding Source}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           Visibility="{Binding Source, Converter={StaticResource NullToVisibility}}" />
+                                <TextBlock Text="{Binding Details}" FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                            <views:NoteRoll Grid.Column="1" Height="48" Channel="{Binding Channel}" SongEnd="{Binding SongEnd}" />
+                            <ui:Button Grid.Column="2" Content="Export" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Command="{Binding ExportCommand}" ToolTip="Save just this channel as a MIDI file" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </DockPanel>
+</ui:FluentWindow>

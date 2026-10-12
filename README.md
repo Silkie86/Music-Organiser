@@ -11,7 +11,7 @@ A Windows desktop app that keeps track of all your music projects across Bitwig 
   - *Find similar* lists installed plugins with close names (e.g. a newer version).
   - *Search online* opens a web search for the plugin or sample.
 - **Spots your Elektron boxes** (Analog Rytm MKII, Digitakt II, Syntakt) in a project through their Overbridge plugins.
-- **Exports MIDI** (one .mid per pattern or part) and **plugin presets** (where the format allows).
+- **Shows and exports MIDI** per channel or track (FL Studio patterns placed as in the playlist), with what plays each one and a mini piano roll, plus **plugin presets** (where the format allows).
 - **Opens projects** in their DAW, or shows them in Explorer.
 - **Organise however you like**: status (Idea → Released), rating, favourite, musical key, tags and notes. Filter, search and group by DAW, status, folder, month, year, Elektron box or rating.
 
@@ -43,9 +43,9 @@ WAV and AIFF are decoded by the app; MP3, FLAC, M4A and OGG go through Windows M
 
 | DAW | Plugins | Samples | MIDI export | Preset export |
 |---|---|---|---|---|
-| FL Studio (.flp) | Yes, with vendor and instrument/effect | Yes | Yes, per pattern | VST2 as .fxp, VST3 as .vstpreset, FL plugin states raw |
+| FL Studio (.flp) | Yes, with vendor and instrument/effect | Yes | Yes, per channel, placed as in the playlist (FL 9 and later; older files pattern by pattern) | VST2 as .fxp, VST3 as .vstpreset, FL plugin states raw |
 | Studio One / Fender Studio Pro (.song) | Yes | Yes | Experimental | Yes, the stored .vstpreset/.fxp files |
-| Bitwig (.bwproject) | Yes, with vendor and format* | Yes | Yes, per clip* | Yes, the stored .vstpreset/.fxb files |
+| Bitwig (.bwproject) | Yes, with vendor and format* | Yes | Yes, per track (clips one after another)* | Yes, the stored .vstpreset/.fxb files |
 
 \* Bitwig's format isn't documented. The app decodes it with its own reader (`BitwigFormat.cs`), mapped from projects saved by Bitwig 5.1 to 6.1, and checks that each file decodes exactly to the end. If a project can't be decoded (for example a future Bitwig version), it falls back to scanning readable text for plugin and sample names, and says so on the project.
 

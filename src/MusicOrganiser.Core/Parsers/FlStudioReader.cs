@@ -316,18 +316,7 @@ public sealed class FlStudioReader : IProjectReader
                 case EvPatternNotes when pattern is not null:
                     if (!patternNotes.TryGetValue(pattern.Value, out var list))
                         patternNotes[pattern.Value] = list = new();
-                    var s = e.Payload.Span;
-                    for (var off = 0; off + 24 <= s.Length; off += 24)
-                    {
-                        var r = s.Slice(off, 24);
-                        var pos = BinaryPrimitives.ReadUInt32LittleEndian(r);
-                        var chan = BinaryPrimitives.ReadUInt16LittleEndian(r[6..]);
-                        var len = BinaryPrimitives.ReadUInt32LittleEndian(r[8..]);
-                        var key = BinaryPrimitives.ReadUInt16LittleEndian(r[12..]);
-                        // FL velocity is 0-128 (100 default); MIDI wants 1-127.
-                        var vel = Math.Clamp((int)Math.Round(r[21] * 127 / 128.0), 1, 127);
-                        list.Add((chan, new NoteEvent(pos, Math.Max(1, len), key & 0x7F, vel)));
-                    }
+                    list.AddRange(DecodeNotes(e.Payload.Span, null));
                     break;
             }
         }
@@ -341,6 +330,168 @@ public sealed class FlStudioReader : IProjectReader
             if (clip.Tracks.Count > 0) clips.Add(clip);
         }
         return clips;
+    }
+
+    /// <summary>
+    /// Pattern note records: u32 position, u16 flags, u16 channel, u32 length, u16 key, ...
+    /// FL 7 onwards uses 24 bytes with velocity at 21; older versions 20 bytes with velocity at 17.
+    /// When the channels are known, the record size whose channel numbers all exist wins.
+    /// </summary>
+    static List<(int Channel, NoteEvent Note)> DecodeNotes(ReadOnlySpan<byte> s, IReadOnlySet<int>? channels)
+    {
+        var size = 24;
+        if (s.Length % 24 != 0 || channels is not null && !AllChannelsKnown(s, 24, channels))
+            if (s.Length % 20 == 0 && (channels is null || AllChannelsKnown(s, 20, channels))) size = 20;
+        var velocityAt = size - 3;
+        var notes = new List<(int, NoteEvent)>(s.Length / size);
+        for (var off = 0; off + size <= s.Length; off += size)
+        {
+            var r = s.Slice(off, size);
+            // FL velocity is 0-128 (100 default); MIDI wants 1-127.
+            var vel = Math.Clamp((int)Math.Round(r[velocityAt] * 127 / 128.0), 1, 127);
+            notes.Add((BinaryPrimitives.ReadUInt16LittleEndian(r[6..]), new NoteEvent(
+                BinaryPrimitives.ReadUInt32LittleEndian(r),
+                Math.Max(1, BinaryPrimitives.ReadUInt32LittleEndian(r[8..])),
+                BinaryPrimitives.ReadUInt16LittleEndian(r[12..]) & 0x7F, vel)));
+        }
+        return notes;
+    }
+
+    static bool AllChannelsKnown(ReadOnlySpan<byte> s, int size, IReadOnlySet<int> channels)
+    {
+        for (var off = 0; off + size <= s.Length; off += size)
+            if (!channels.Contains(BinaryPrimitives.ReadUInt16LittleEndian(s[(off + 6)..]))) return false;
+        return true;
+    }
+
+    const int EvPlaylist = Data + 25;           // 233: playlist items (arrangement)
+    const int PatternBase = 20480;              // playlist item index above this = pattern (index - base)
+
+    /// <summary>
+    /// Each channel's notes across the song. Patterns are placed where the playlist puts them
+    /// (the first arrangement); a song with nothing in the playlist gets its patterns one after
+    /// another, in pattern order.
+    /// </summary>
+    public IReadOnlyList<MidiChannel> ExtractChannels(string path)
+    {
+        var flp = Load(path);
+        var names = new Dictionary<int, string>();
+        var sources = new Dictionary<int, string>();
+        var order = new List<int>();
+        var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
+        ReadOnlyMemory<byte>? playlist = null;
+        int? channel = null, pattern = null;
+        var inMixer = false;
+        var channelHasPlugin = false;
+        var pendingInternal = "";
+
+        foreach (var e in flp.Events)
+        {
+            switch (e.Id)
+            {
+                case EvChannelNew:
+                    channel = (int)e.Int; inMixer = false; channelHasPlugin = false;
+                    if (!order.Contains(channel.Value)) order.Add(channel.Value);
+                    break;
+                case EvMixerSlot or EvInsertFlags: inMixer = true; break;
+                case EvPluginName or EvChannelNameOld when channel is not null && !inMixer:
+                    names.TryAdd(channel.Value, flp.Str(e));
+                    break;
+                case EvPluginInternal:
+                    pendingInternal = flp.Str(e);
+                    if (channelHasPlugin) inMixer = true;
+                    channelHasPlugin = true;
+                    if (!inMixer && channel is not null && pendingInternal.Length > 0 &&
+                        !pendingInternal.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase))
+                        sources.TryAdd(channel.Value, pendingInternal);
+                    break;
+                case EvPluginState when !inMixer && channel is not null &&
+                                        pendingInternal.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase):
+                    var f = WrapperFields(e.Payload.Span);
+                    var vst = WrapperText(f, VstName) is { Length: > 0 } n ? n : TextScan.PluginNameFromPath(WrapperText(f, VstPath));
+                    if (vst.Length > 0) sources.TryAdd(channel.Value, vst);
+                    pendingInternal = "";
+                    break;
+                case EvSamplePath when channel is not null && !inMixer:
+                    var sample = flp.Str(e);
+                    if (sample.Length > 0) sources[channel.Value] = sample.Split('\\', '/')[^1];
+                    break;
+                case EvPatternNew: pattern = (int)e.Int; break;
+                case EvPatternNotes when pattern is not null: rawNotes.Add((pattern.Value, e.Payload)); break;
+                case EvPlaylist when playlist is null: playlist = e.Payload; break;
+            }
+        }
+
+        var patterns = new SortedDictionary<int, List<(int Channel, NoteEvent Note)>>();
+        var known = order.ToHashSet();
+        foreach (var (pat, data) in rawNotes)
+        {
+            if (!patterns.TryGetValue(pat, out var list)) patterns[pat] = list = new();
+            list.AddRange(DecodeNotes(data.Span, known));
+        }
+
+        var notes = new Dictionary<int, List<NoteEvent>>();
+        void Place(int pat, long at, long from, long length)
+        {
+            if (!patterns.TryGetValue(pat, out var pn)) return;
+            foreach (var (ch, n) in pn)
+            {
+                if (n.Start < from || n.Start >= from + length) continue;
+                if (!notes.TryGetValue(ch, out var cn)) notes[ch] = cn = new();
+                cn.Add(n with { Start = at + n.Start - from, Length = Math.Min(n.Length, from + length - n.Start) });
+            }
+        }
+
+        var items = playlist is { } pl ? PatternItems(pl.Span) : [];
+        if (items.Count > 0)
+            foreach (var (pat, at, length, from) in items) Place(pat, at, from, length);
+        else
+        {
+            // Pattern mode: one pattern after another, each rounded up to whole bars.
+            var bar = 4L * flp.Ppq;
+            long at = 0;
+            foreach (var (pat, pn) in patterns)
+            {
+                if (pn.Count == 0) continue;
+                var end = pn.Max(x => x.Note.Start + x.Note.Length);
+                var length = Math.Max(bar, (end + bar - 1) / bar * bar);
+                Place(pat, at, 0, length);
+                at += length;
+            }
+        }
+
+        return order.Union(notes.Keys).Where(notes.ContainsKey)
+            .Select(ch => new MidiChannel(names.GetValueOrDefault(ch, $"Channel {ch + 1}"), sources.GetValueOrDefault(ch, ""), flp.Ppq,
+                                          notes[ch].OrderBy(n => n.Start).ThenBy(n => n.Key).ToList()))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Pattern clips in the playlist: (pattern, position, length, offset into the pattern).
+    /// FL 9 onwards writes 32-byte items (60 from FL 21): u32 position, u16 pattern base (20480),
+    /// u16 item index, u32 length, ..., i32 start offset at 24 (-1 = none). Older layouts aren't read.
+    /// </summary>
+    static List<(int Pattern, long At, long Length, long From)> PatternItems(ReadOnlySpan<byte> d)
+    {
+        var items = new List<(int, long, long, long)>();
+        foreach (var size in new[] { 60, 32 })
+        {
+            if (d.Length == 0 || d.Length % size != 0) continue;
+            var ok = true;
+            for (var off = 0; off + size <= d.Length && ok; off += size)
+                ok = BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 4)..]) == PatternBase;
+            if (!ok) continue;
+            for (var off = 0; off + size <= d.Length; off += size)
+            {
+                var index = BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 6)..]);
+                if (index <= PatternBase) continue;   // audio or automation clip
+                var from = BinaryPrimitives.ReadInt32LittleEndian(d[(off + 24)..]);
+                items.Add((index - PatternBase, BinaryPrimitives.ReadUInt32LittleEndian(d[off..]),
+                           BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), Math.Max(0, from)));
+            }
+            break;
+        }
+        return items;
     }
 
     /// <summary>

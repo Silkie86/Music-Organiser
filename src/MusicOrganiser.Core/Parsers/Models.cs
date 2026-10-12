@@ -77,5 +77,7 @@ public interface IProjectReader
     IReadOnlyList<string> Extensions { get; }
     ProjectInfo Read(string path);
     IReadOnlyList<MidiClip> ExtractMidi(string path) => Array.Empty<MidiClip>();
+    /// <summary>Each channel or track's notes across the song, with what plays them.</summary>
+    IReadOnlyList<MidiChannel> ExtractChannels(string path) => MidiChannel.FromClips(ExtractMidi(path));
     IReadOnlyList<PresetBlob> ExtractPresets(string path) => Array.Empty<PresetBlob>();
 }
