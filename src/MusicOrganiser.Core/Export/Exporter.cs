@@ -47,8 +47,11 @@ public static class Exporter
     /// <summary>
     /// Writes presets as "Plugin - Name.ext". Exporting again overwrites the same files,
     /// so exporting one plugin after another builds up a single folder without duplicates.
+    /// With <paramref name="bitwig"/> templates, a plugin that has one also gets a Bitwig
+    /// preset (.bwpreset) next to its plugin preset.
     /// </summary>
-    public static ExportResult Presets(IEnumerable<PresetBlob> presets, string project, string exportRoot)
+    public static ExportResult Presets(IEnumerable<PresetBlob> presets, string project, string exportRoot,
+                                       IReadOnlyDictionary<string, BitwigPreset.Template>? bitwig = null)
     {
         var dir = OutDir(exportRoot, project, "Presets");
         var files = new List<string>();
@@ -62,6 +65,16 @@ public static class Exporter
             for (var n = 2; !used.Add(name); n++) name = $"{label} {n}{p.Extension}";
             File.WriteAllBytes(Path.Combine(dir, name), p.Data);
             files.Add(name);
+            if (bitwig is not null && BitwigPreset.For(p, bitwig) is { } template)
+            {
+                try
+                {
+                    var bw = Path.GetFileNameWithoutExtension(name) + ".bwpreset";
+                    File.WriteAllBytes(Path.Combine(dir, bw), BitwigPreset.Build(template, p, p.Name));
+                    files.Add(bw);
+                }
+                catch (InvalidDataException) { }   // the plugin preset above is still there
+            }
         }
         return new ExportResult(dir, files);
     }

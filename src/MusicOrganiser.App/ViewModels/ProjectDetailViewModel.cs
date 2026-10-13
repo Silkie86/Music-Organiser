@@ -175,18 +175,20 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         try
         {
             var path = Item.Path;
-            var result = await Task.Run(() => Exporter.Presets(
-                reader.ExtractPresets(path).Where(p => p.Plugin.Equals(row.Name, StringComparison.OrdinalIgnoreCase)), path, ExportRoot));
+            var (result, blobs, templates) = await Task.Run(() =>
+            {
+                var b = reader.ExtractPresets(path).Where(p => p.Plugin.Equals(row.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+                var t = PresetsViewModel.BitwigTemplates();
+                return (Exporter.Presets(b, path, ExportRoot, t), b, t);
+            });
             if (result.Files.Count == 0)
             {
                 Message = $"This project has no saved state for {row.Name}.";
                 return;
             }
-            var hint = PresetsViewModel.LoadHint(Path.GetExtension(result.Files[0]));
-            Message = result.Files.Count == 1
-                ? $"Exported {result.Files[0]}." + (hint.Length > 0 ? $" In Bitwig, {hint}." : "")
-                : $"Exported {result.Files.Count} presets for {row.Name}." + (hint.Length > 0 ? $" In Bitwig, {hint}." : "");
-            if (result.Files.Count == 1) Shell.Reveal(Path.Combine(result.Folder, result.Files[0]));
+            Message = PresetsViewModel.ExportSummary(result, blobs, templates);
+            var best = result.Files.FirstOrDefault(f => f.EndsWith(".bwpreset", StringComparison.OrdinalIgnoreCase)) ?? result.Files[0];
+            if (result.Files.Count <= 2) Shell.Reveal(Path.Combine(result.Folder, best));
             else Shell.Open(result.Folder);
         }
         catch (Exception e) { Message = $"Preset export failed: {e.Message}"; }

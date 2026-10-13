@@ -102,8 +102,12 @@ public sealed partial class PresetsViewModel : ObservableObject
         try
         {
             var blobs = Presets.Select(r => r.Blob).ToList();
-            var result = await Task.Run(() => Exporter.Presets(blobs, _path, _exportRoot));
-            Message = $"Exported {result.Files.Count} preset{(result.Files.Count == 1 ? "" : "s")}.";
+            var (result, templates) = await Task.Run(() =>
+            {
+                var t = BitwigTemplates();
+                return (Exporter.Presets(blobs, _path, _exportRoot, t), t);
+            });
+            Message = ExportSummary(result, blobs, templates);
             Shell.Open(result.Folder);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Export failed: {e.Message}"; }
@@ -113,16 +117,44 @@ public sealed partial class PresetsViewModel : ObservableObject
     {
         try
         {
-            var result = Exporter.Presets([row.Blob], _path, _exportRoot);
-            Message = $"Exported {result.Files[0]}";
+            var templates = BitwigTemplates();
+            var result = Exporter.Presets([row.Blob], _path, _exportRoot, templates);
+            Message = ExportSummary(result, [row.Blob], templates);
             Shell.Reveal(Path.Combine(result.Folder, result.Files[0]));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Export failed: {e.Message}"; }
     }
 
+    /// <summary>
+    /// Presets you saved in Bitwig (in Documents\Bitwig Studio), used as templates for .bwpreset
+    /// files. Read fresh for each export, so a preset saved a minute ago counts.
+    /// </summary>
+    public static IReadOnlyDictionary<string, BitwigPreset.Template> BitwigTemplates()
+    {
+        try { return BitwigPreset.FindTemplates(BitwigPreset.DefaultFolders()); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return new Dictionary<string, BitwigPreset.Template>(); }
+    }
+
+    /// <summary>What an export wrote, and which plugins could also get Bitwig presets after one save in Bitwig.</summary>
+    public static string ExportSummary(ExportResult result, IReadOnlyCollection<PresetBlob> blobs, IReadOnlyDictionary<string, BitwigPreset.Template> templates)
+    {
+        var bitwig = result.Files.Count(f => f.EndsWith(".bwpreset", StringComparison.OrdinalIgnoreCase));
+        var plain = result.Files.Count - bitwig;
+        var text = plain == 1 && bitwig == 0 ? $"Exported {result.Files[0]}." : $"Exported {plain} preset{(plain == 1 ? "" : "s")}";
+        if (bitwig > 0) text += $", {(bitwig == plain ? "all" : bitwig.ToString())} also as Bitwig presets (.bwpreset) that load in Bitwig with their settings.";
+        else if (!text.EndsWith('.')) text += ".";
+        var without = blobs.Where(b => BitwigPreset.StateFormat(b.Extension).Length > 0 && BitwigPreset.For(b, templates) is null)
+                           .Select(b => b.Plugin).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (without.Count > 0)
+            text += $" For a Bitwig preset of {string.Join(", ", without.Take(3))}{(without.Count > 3 ? $" and {without.Count - 3} more" : "")}, " +
+                    "save any preset of that plugin once in Bitwig, then export again.";
+        return text;
+    }
+
     /// <summary>Where each kind of file can be loaded.</summary>
     public static string LoadHint(string extension) => extension.ToLowerInvariant() switch
     {
+        ".bwpreset" => "open it from Bitwig's browser or drag it onto a track",
         ".fxp" or ".fxb" => "load into the VST2 version of the plugin",
         ".vstpreset" => "load into the VST3 version of the plugin",
         ".flstate" => "only FL Studio can load these",
