@@ -8,7 +8,7 @@ using MusicOrganiser.Core.Library;
 namespace MusicOrganiser.App.ViewModels;
 
 /// <summary>Every sample referenced by your projects, with missing ones first.</summary>
-public sealed partial class SamplesViewModel : ObservableObject
+public sealed partial class SamplesViewModel : ObservableObject, IFileDragSource
 {
     readonly LibraryDb _db;
     readonly MainViewModel _main;
@@ -27,6 +27,17 @@ public sealed partial class SamplesViewModel : ObservableObject
         _db = db;
         _main = main;
         Reload();
+    }
+
+    /// <summary>Samples that are where the project expects them, or a match found on your drives.</summary>
+    public DragPayload? MakeDrag(IReadOnlyList<object> items)
+    {
+        var files = items.Select(i => i switch { SampleUsage s => s.Path, Match m => m.Candidate, _ => "" })
+                         .Where(System.IO.File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (files.Count == 0) return null;
+        return new DragPayload(files,
+            files.Select(f => new DragCard(System.IO.Path.GetFileName(f), System.IO.Path.GetDirectoryName(f) ?? "", Glyphs.Audio)).ToList(),
+            files.Count == 1 ? "1 sample" : $"{files.Count} samples");
     }
 
     public void Reload()

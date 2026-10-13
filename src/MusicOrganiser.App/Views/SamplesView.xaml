@@ -5,6 +5,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
              xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+             xmlns:views="clr-namespace:MusicOrganiser.App.Views"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:SamplesViewModel}">
     <Grid>
@@ -28,7 +29,7 @@
         </DockPanel>
         <Border Grid.Row="1" Grid.RowSpan="3" Style="{StaticResource Card}" Padding="8,10,8,8">
         <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
-                  IsReadOnly="True" SelectionMode="Single">
+                  IsReadOnly="True" SelectionMode="Extended" views:FileDrag.Source="{Binding}">
             <DataGrid.InputBindings>
                 <MouseBinding Gesture="LeftDoubleClick" Command="{Binding ShowProjectsCommand}" />
             </DataGrid.InputBindings>
@@ -68,7 +69,7 @@
                 </WrapPanel>
                 <TextBlock Text="{Binding MatchMessage}" Margin="0,8,0,0"
                            Visibility="{Binding MatchMessage, Converter={StaticResource NullToVisibility}}" />
-                <ItemsControl ItemsSource="{Binding Matches}" MaxHeight="200">
+                <ItemsControl ItemsSource="{Binding Matches}" MaxHeight="200" views:FileDrag.Source="{Binding}">
                     <ItemsControl.Template>
                         <ControlTemplate TargetType="ItemsControl">
                             <ScrollViewer VerticalScrollBarVisibility="Auto"><ItemsPresenter /></ScrollViewer>

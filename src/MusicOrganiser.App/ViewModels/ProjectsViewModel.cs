@@ -8,7 +8,7 @@ using MusicOrganiser.Core.Library;
 namespace MusicOrganiser.App.ViewModels;
 
 /// <summary>The main library screen: filters, grouping, the list, and the selected project.</summary>
-public sealed partial class ProjectsViewModel : ObservableObject
+public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSource
 {
     public const string Any = "Any";
     readonly LibraryDb _db;
@@ -162,4 +162,14 @@ public sealed partial class ProjectsViewModel : ObservableObject
 
     [RelayCommand]
     void OpenSelected() => Detail?.OpenInDawCommand.Execute(null);
+
+    /// <summary>The project files themselves, e.g. into Explorer or a DAW that imports them.</summary>
+    public DragPayload? MakeDrag(IReadOnlyList<object> items)
+    {
+        var projects = items.OfType<ProjectItem>().Where(p => System.IO.File.Exists(p.Path)).ToList();
+        if (projects.Count == 0) return null;
+        return new DragPayload(projects.Select(p => p.Path).ToList(),
+            projects.Select(p => new DragCard(p.Name, string.Join(" · ", new[] { p.Daw, p.TempoText.Length > 0 ? $"{p.TempoText} BPM" : "" }.Where(x => x.Length > 0)), Glyphs.Project)).ToList(),
+            projects.Count == 1 ? "1 project" : $"{projects.Count} projects");
+    }
 }

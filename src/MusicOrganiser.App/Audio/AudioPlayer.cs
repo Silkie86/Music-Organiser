@@ -15,17 +15,66 @@ public sealed class AudioPlayer : IDisposable
 
     public string? Playing { get; private set; }
 
-    public void Play(string path)
+    /// <summary>Where playback is, in seconds, or null when nothing is playing.</summary>
+    public double? Position
+    {
+        get
+        {
+            try { return Playing is not null && _reader is { } r ? r.CurrentTime.TotalSeconds : null; }
+            catch (ObjectDisposedException) { return null; }
+        }
+    }
+
+    /// <summary>Jumps to a point in the sound that's playing.</summary>
+    public void Seek(double seconds)
+    {
+        if (_reader is { } r) MoveTo(r, seconds);
+    }
+
+    /// <summary>Moves to a time, on a whole sample frame so the audio stays in step.</summary>
+    static void MoveTo(WaveStream r, double seconds)
+    {
+        var align = Math.Max(1, r.WaveFormat.BlockAlign);
+        var bytes = (long)(Math.Clamp(seconds, 0, r.TotalTime.TotalSeconds) * r.WaveFormat.AverageBytesPerSecond);
+        r.Position = Math.Min(bytes - bytes % align, Math.Max(0, r.Length - align));
+    }
+
+    public void Play(string path, double startSeconds = 0)
     {
         Stop();
+        WaveStream reader;
         try
         {
-            _reader = Preload(path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".aif", StringComparison.OrdinalIgnoreCase) ||
-                              path.EndsWith(".aiff", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
+            reader = Preload(path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".aif", StringComparison.OrdinalIgnoreCase) ||
+                             path.EndsWith(".aiff", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
                 ? new AudioFileReader(path)
                 : new MediaFoundationReader(path));
+        }
+        catch (Exception)
+        {
+            Stop();
+            throw;
+        }
+        Start(reader, path, startSeconds);
+    }
+
+    /// <summary>Plays audio made in memory (a MIDI preview), named by <paramref name="key"/> so <see cref="Playing"/> can tell it apart.</summary>
+    public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0)
+    {
+        Stop();
+        var bytes = new byte[mono.Length * sizeof(float)];
+        Buffer.BlockCopy(mono, 0, bytes, 0, bytes.Length);
+        Start(new RawSourceWaveStream(new MemoryStream(bytes), WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1)), key, startSeconds);
+    }
+
+    void Start(WaveStream reader, string key, double startSeconds)
+    {
+        try
+        {
+            _reader = reader;
             // A little more buffering than the minimum, so a busy disk or CPU can't starve playback.
             _out = new WaveOutEvent { DesiredLatency = 150, NumberOfBuffers = 3 };
+            if (startSeconds > 0) MoveTo(_reader, startSeconds);
             _out.Init(_reader);
             var output = _out;
             output.PlaybackStopped += (_, _) =>
@@ -37,7 +86,7 @@ public sealed class AudioPlayer : IDisposable
             };
             Parallelism.AudioPlaying = true;
             _out.Play();
-            Playing = path;
+            Playing = key;
         }
         catch (Exception)
         {

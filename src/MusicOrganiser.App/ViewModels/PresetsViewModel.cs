@@ -8,7 +8,7 @@ using MusicOrganiser.Core.Parsers;
 namespace MusicOrganiser.App.ViewModels;
 
 /// <summary>The presets popup: every plugin state in the project, filtered, ready to export.</summary>
-public sealed partial class PresetsViewModel : ObservableObject
+public sealed partial class PresetsViewModel : ObservableObject, IFileDragSource
 {
     readonly IProjectReader _reader;
     readonly string _path;
@@ -123,6 +123,26 @@ public sealed partial class PresetsViewModel : ObservableObject
             Shell.Reveal(Path.Combine(result.Folder, result.Files[0]));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Export failed: {e.Message}"; }
+    }
+
+    /// <summary>
+    /// Dragged presets, exported as they leave: the Bitwig preset where there is one (drop it on a
+    /// track and the plugin loads with its settings), else the plugin's own preset file.
+    /// </summary>
+    public DragPayload? MakeDrag(IReadOnlyList<object> items)
+    {
+        var rows = items.OfType<PresetRow>().ToList();
+        if (rows.Count == 0) return null;
+        var templates = BitwigTemplates();
+        var result = Exporter.Presets(rows.Select(r => r.Blob).ToList(), _path, _exportRoot, templates);
+        var files = result.Files.Select(f => Path.Combine(result.Folder, f)).ToList();
+        var bitwig = files.Where(f => f.EndsWith(".bwpreset", StringComparison.OrdinalIgnoreCase))
+                          .Select(Path.GetFileNameWithoutExtension).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Each preset once: its .bwpreset when it got one, otherwise the plugin preset.
+        var chosen = files.Where(f => f.EndsWith(".bwpreset", StringComparison.OrdinalIgnoreCase) ||
+                                      !bitwig.Contains(Path.GetFileNameWithoutExtension(f))).ToList();
+        var cards = rows.Select(r => new DragCard(r.Name, r.Plugin.Length > 0 ? r.Plugin : r.Details, Glyphs.Preset)).ToList();
+        return new DragPayload(chosen, cards, rows.Count == 1 ? "1 preset" : $"{rows.Count} presets");
     }
 
     /// <summary>

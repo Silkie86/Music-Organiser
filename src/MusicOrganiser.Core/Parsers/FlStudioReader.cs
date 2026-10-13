@@ -403,6 +403,7 @@ public sealed partial class FlStudioReader : IProjectReader
         var names = new Dictionary<int, string>();
         var sources = new Dictionary<int, string>();
         var plugins = new Dictionary<int, string>();
+        var samples = new Dictionary<int, string>();
         var order = new List<int>();
         var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
         ReadOnlyMemory<byte>? playlist = null;
@@ -447,7 +448,11 @@ public sealed partial class FlStudioReader : IProjectReader
                     break;
                 case EvSamplePath when channel is not null && !inMixer:
                     var sample = flp.Str(e);
-                    if (sample.Length > 0) sources[channel.Value] = sample.Split('\\', '/')[^1];
+                    if (sample.Length > 0)
+                    {
+                        sources[channel.Value] = sample.Split('\\', '/')[^1];
+                        samples[channel.Value] = ResolveSamplePath(sample, path);
+                    }
                     break;
                 case EvPatternNew: pattern = (int)e.Int; break;
                 case EvPatternNotes when pattern is not null: rawNotes.Add((pattern.Value, e.Payload)); break;
@@ -460,7 +465,7 @@ public sealed partial class FlStudioReader : IProjectReader
         return order.Union(notes.Keys).Where(notes.ContainsKey)
             .Select(ch => new MidiChannel(names.GetValueOrDefault(ch, $"Channel {ch + 1}"), sources.GetValueOrDefault(ch, ""), flp.Ppq,
                                           notes[ch].OrderBy(n => n.Start).ThenBy(n => n.Key).ToList(),
-                                          plugins.GetValueOrDefault(ch, "")))
+                                          plugins.GetValueOrDefault(ch, ""), samples.GetValueOrDefault(ch, "")))
             .ToList();
     }
 

@@ -10,5 +10,6 @@ public partial class MidiWindow : FluentWindow
         InitializeComponent();
         DataContext = vm;
         Loaded += async (_, _) => await vm.LoadAsync();
+        Closed += (_, _) => vm.Dispose();
     }
 }

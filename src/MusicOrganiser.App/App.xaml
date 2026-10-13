@@ -278,6 +278,58 @@
             <Style x:Key="QuietListItem" TargetType="ListBoxItem" BasedOn="{StaticResource NavItem}">
                 <Setter Property="Margin" Value="0" />
             </Style>
+
+            <!-- Rows you can select several of and drag out (MIDI channels, sounds): a grip shows on hover. -->
+            <Style x:Key="DragRow" TargetType="ListBoxItem">
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                <Setter Property="Margin" Value="0,0,0,4" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListBoxItem">
+                            <Border x:Name="Bg" CornerRadius="8" Background="Transparent" BorderThickness="1"
+                                    BorderBrush="Transparent" Padding="4,6,8,6">
+                                <DockPanel>
+                                    <TextBlock x:Name="Grip" DockPanel.Dock="Left" Text="&#xE76F;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                               FontSize="12" Width="16" VerticalAlignment="Center" TextAlignment="Center"
+                                               Foreground="{StaticResource FaintBrush}" Opacity="0" Cursor="SizeAll"
+                                               ToolTip="Drag into your DAW" />
+                                    <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                                </DockPanel>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bg" Property="Background" Value="{StaticResource HoverBrush}" />
+                                    <Setter TargetName="Grip" Property="Opacity" Value="1" />
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="Bg" Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+                                    <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource AccentSoftBrush}" />
+                                    <Setter TargetName="Grip" Property="Opacity" Value="1" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- A handle you drag to carry a whole list at once. -->
+            <Style x:Key="DragChip" TargetType="Border">
+                <Setter Property="CornerRadius" Value="14" />
+                <Setter Property="Padding" Value="10,5,12,6" />
+                <Setter Property="Margin" Value="0,0,8,0" />
+                <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="Cursor" Value="SizeAll" />
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                        <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

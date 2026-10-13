@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Windows.Data;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -17,11 +18,12 @@ namespace MusicOrganiser.App.ViewModels;
 /// The Sound Lab: your sample library analysed and learned. Browse and search,
 /// rediscover sounds you don't use, build random kits, and teach it your labels.
 /// </summary>
-public sealed partial class SoundsViewModel : ObservableObject
+public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 {
     readonly LibraryDb _db;
     readonly MainViewModel _main;
     readonly AudioPlayer _player = new();
+    readonly DispatcherTimer _clock = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(30) };
     CancellationTokenSource? _cts;
 
     public SoundOrganiser Org { get; }
@@ -72,6 +74,10 @@ public sealed partial class SoundsViewModel : ObservableObject
     [ObservableProperty] string _selectedTypeLabel = "";
     [ObservableProperty] string _newTag = "";
     [ObservableProperty] string _keyDetail = "";
+    /// <summary>Where the selected sound is playing, in seconds, or -1 when it isn't.</summary>
+    [ObservableProperty] double _playPosition = -1;
+    /// <summary>Seconds the selected sound's waveform covers (the analysis reads the first minute).</summary>
+    public double WaveSeconds => Selected is { } s ? Math.Min(s.Seconds, AudioFile.MaxSeconds) : 0;
 
     // Teaching & models
     [ObservableProperty] string _modelSummary = "";
@@ -89,6 +95,7 @@ public sealed partial class SoundsViewModel : ObservableObject
         Org = org;
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
+        _clock.Tick += (_, _) => FollowPlayback();
         Reload();
         if (SampleFolders.Count > 0) _ = ScanAsync();
     }
@@ -237,10 +244,38 @@ public sealed partial class SoundsViewModel : ObservableObject
         View?.Refresh();
     }
 
+    // ---- dragging into a DAW -------------------------------------------------------
+
+    /// <summary>Whatever a row stands for: a sound, a sound-alike, a suggestion, a kit pad.</summary>
+    static Sound? SoundOf(object item) => item switch
+    {
+        Sound s => s,
+        SimilarSound s => s.Sound,
+        Suggestion s => s.Sound,
+        KitSlotItem k => k.Slot.Sound,
+        Disagreement d => d.Sound,
+        _ => null,
+    };
+
+    internal static DragCard Card(Sound s) => new(s.Name,
+        string.Join(" · ", new[] { s.Type, s.Key, s.Bpm is { } b ? $"{b:0.#} BPM" : "", $"{s.Seconds:0.0}s" }.Where(x => x.Length > 0)),
+        Glyphs.Audio);
+
+    /// <summary>The original files, so the DAW gets the sound exactly as it is on disk.</summary>
+    public DragPayload? MakeDrag(IReadOnlyList<object> items)
+    {
+        var sounds = items.Select(SoundOf).OfType<Sound>().Where(s => File.Exists(s.Path)).DistinctBy(s => s.Path).ToList();
+        if (sounds.Count == 0) return null;
+        return new DragPayload(sounds.Select(s => s.Path).ToList(), sounds.Select(Card).ToList(),
+            sounds.Count == 1 ? "1 sound" : $"{sounds.Count} sounds");
+    }
+
     // ---- selected sound -------------------------------------------------------------
 
     partial void OnSelectedChanged(Sound? value)
     {
+        OnPropertyChanged(nameof(WaveSeconds));
+        FollowPlayback();
         Notes = [];
         NoteChords = [];
         NotesMessage = "";
@@ -267,16 +302,49 @@ public sealed partial class SoundsViewModel : ObservableObject
         if (s is null) return;
         try
         {
-            if (_player.Playing == s.Path) { _player.Stop(); return; }
-            _player.Play(s.Path);
-            Org.Library.MarkPlayed(s.Id);
-            s.Plays++;
+            if (_player.Playing == s.Path) { _player.Stop(); FollowPlayback(); return; }
+            Start(s, 0);
         }
         catch (Exception e) { Message = $"Can't play {s.Name}: {e.Message}"; }
     }
 
+    void Start(Sound s, double from)
+    {
+        _player.Play(s.Path, from);
+        Org.Library.MarkPlayed(s.Id);
+        s.Plays++;
+        FollowPlayback();
+        _clock.Start();
+    }
+
+    /// <summary>A click on the waveform: jump there if it's playing, otherwise play from there.</summary>
     [RelayCommand]
-    void StopPlaying() => _player.Stop();
+    void Seek(double seconds)
+    {
+        if (Selected is not { } s) return;
+        try
+        {
+            if (_player.Playing == s.Path) _player.Seek(seconds);
+            else Start(s, seconds);
+            FollowPlayback();
+        }
+        catch (Exception e) { Message = $"Can't play {s.Name}: {e.Message}"; }
+    }
+
+    /// <summary>Moves the waveform's playhead along with the sound; stops the clock once nothing plays.</summary>
+    void FollowPlayback()
+    {
+        var playing = _player.Playing is not null;
+        PlayPosition = playing && Selected is { } s && _player.Playing == s.Path && _player.Position is { } p ? p : -1;
+        if (!playing) _clock.Stop();
+    }
+
+    [RelayCommand]
+    void StopPlaying()
+    {
+        _player.Stop();
+        FollowPlayback();
+    }
 
     [RelayCommand]
     void Reveal(Sound? s)
@@ -546,7 +614,7 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
 }
 
 /// <summary>Random kits from your library.</summary>
-public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObject
+public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObject, IFileDragSource
 {
     public SoundsViewModel Parent => parent;
 
@@ -612,16 +680,38 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
     [RelayCommand]
     void Export()
     {
-        var slots = Slots.Select(s => s.Slot).Where(s => s.Sound is not null).ToList();
-        if (slots.Count == 0) { Status = "Roll a kit first."; return; }
         try
         {
-            var folder = KitBuilder.Export(slots, Path.Combine(parent.ExportFolder(), "Kits"),
-                $"Kit {DateTime.Now:yyyy-MM-dd HHmm} #{Seed}", new KitBuilder.ExportOptions(ElektronReady, Mono, Normalise));
+            if (ExportKit() is not { } folder) return;
             Status = $"Exported to {folder}";
             Shell.Open(folder);
         }
         catch (Exception e) { Status = $"Export failed: {e.Message}"; }
+    }
+
+    string? ExportKit()
+    {
+        var slots = Slots.Select(s => s.Slot).Where(s => s.Sound is not null).ToList();
+        if (slots.Count == 0) { Status = "Roll a kit first."; return null; }
+        return KitBuilder.Export(slots, Path.Combine(parent.ExportFolder(), "Kits"),
+            $"Kit {DateTime.Now:yyyy-MM-dd HHmm} #{Seed}", new KitBuilder.ExportOptions(ElektronReady, Mono, Normalise));
+    }
+
+    /// <summary>
+    /// The "Drag kit" handle: the kit's pads, exported with the chosen options, in pad order.
+    /// Single pads dragged from the list carry their original sound instead.
+    /// </summary>
+    public DragPayload? MakeDrag(IReadOnlyList<object> items)
+    {
+        if (items.Count > 0 && items.All(i => i is KitSlotItem) && items.Count < Slots.Count)
+            return parent.MakeDrag(items);
+        if (ExportKit() is not { } folder) return null;
+        var files = Directory.GetFiles(folder).Where(f => !f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.OrdinalIgnoreCase).ToList();
+        var pads = Slots.Where(s => s.Slot.Sound is not null).ToList();
+        var cards = pads.Select(p => new DragCard(p.Name, p.SoundName, Glyphs.Kit)).ToList();
+        Status = $"Exported to {folder}";
+        return new DragPayload(files, cards, $"Kit of {files.Count} pads", Numbered: true);
     }
 }
 

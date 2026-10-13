@@ -84,6 +84,7 @@
 
                 <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}"
                           AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" CanUserReorderColumns="True"
+                          views:FileDrag.Source="{Binding}"
                           EnableRowVirtualization="True" ScrollViewer.CanContentScroll="True"
                           VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                           VirtualizingPanel.IsVirtualizingWhenGrouping="True">

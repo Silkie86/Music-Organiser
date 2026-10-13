@@ -5,6 +5,7 @@
                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+                 xmlns:views="clr-namespace:MusicOrganiser.App.Views"
                  mc:Ignorable="d"
                  d:DataContext="{d:DesignInstance Type=vm:PresetsViewModel}"
                  Title="{Binding Title, StringFormat='Presets in {0}'}" Width="680" Height="600" MinWidth="480" MinHeight="360"
@@ -54,11 +55,13 @@
         <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Margin="16,4,16,8"
                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
 
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="16,0,8,0">
-            <ItemsControl ItemsSource="{Binding Presets}">
-                <ItemsControl.ItemTemplate>
+        <ListBox ItemsSource="{Binding Presets}" SelectionMode="Extended" Margin="12,0,8,0"
+                 Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource DragRow}"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.ScrollUnit="Pixel"
+                 views:FileDrag.Source="{Binding}">
+                <ListBox.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:PresetRow}">
-                        <DockPanel Margin="0,0,8,8" ToolTip="{Binding LoadHint}">
+                        <DockPanel ToolTip="{Binding LoadHint}">
                             <ui:Button DockPanel.Dock="Right" Content="Export" Margin="8,0,0,0" VerticalAlignment="Center"
                                        Command="{Binding ExportCommand}" ToolTip="Save just this preset" />
                             <StackPanel>
@@ -73,8 +76,7 @@
                             </StackPanel>
                         </DockPanel>
                     </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
+                </ListBox.ItemTemplate>
+        </ListBox>
     </DockPanel>
 </ui:FluentWindow>
