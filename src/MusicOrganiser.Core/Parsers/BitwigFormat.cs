@@ -22,12 +22,14 @@ namespace MusicOrganiser.Core.Parsers;
 /// Strings are a u32 length then UTF-8; when the top bit of the length is set, the
 /// remaining bits count UTF-16BE characters.
 /// </summary>
-public static class BitwigFormat
+public static partial class BitwigFormat
 {
     public sealed class BwObject
     {
         public required int Class { get; init; }
         public List<(int Id, object? Value)> Fields { get; } = new();
+        /// <summary>Each field's type byte, in step with <see cref="Fields"/>, so the object can be written back.</summary>
+        public List<byte> Types { get; } = new();
         public BwObject? Parent { get; internal set; }
         public int ParentField { get; internal set; }
         /// <summary>Every object in the document, for resolving references.</summary>
@@ -52,6 +54,20 @@ public static class BitwigFormat
         }
 
         public bool Has(int id) => Fields.Any(f => f.Id == id);
+
+        /// <summary>Changes a field's value, keeping its type; a new field is added at the end with the type given or implied.</summary>
+        public void Set(int id, object? value, byte? type = null)
+        {
+            var i = Fields.FindIndex(f => f.Id == id);
+            if (i >= 0)
+            {
+                Fields[i] = (id, value);
+                if (type is { } t && i < Types.Count) Types[i] = t;
+                return;
+            }
+            Fields.Add((id, value));
+            if (Types.Count == Fields.Count - 1) Types.Add(type ?? Writer.TypeOf(value));
+        }
         public string Str(int id) => this[id] as string ?? "";
         public double? Num(int id) => this[id] switch
         {
@@ -79,6 +95,10 @@ public static class BitwigFormat
     {
         public required byte[] Raw { get; init; }
         public Dictionary<string, object?> Meta { get; } = new(StringComparer.Ordinal);
+        /// <summary>Each metadata value's type byte, in the order the keys were read.</summary>
+        public List<(string Key, byte Type)> MetaTypes { get; } = new();
+        /// <summary>Where the metadata ends: the body follows, sometimes after padding.</summary>
+        public int MetaEnd { get; set; }
         public BwObject? Root { get; set; }
         public List<BwObject> Objects { get; } = new();
         public int BodyOffset { get; init; }
@@ -177,7 +197,9 @@ public static class BitwigFormat
                 var key = Str(ref p);
                 var type = d[p++];
                 doc.Meta[key] = Value(ref p, type);
+                doc.MetaTypes.Add((key, type));
             }
+            doc.MetaEnd = p;
         }
 
         public BwObject? ReadObject(ref int p)
@@ -197,6 +219,7 @@ public static class BitwigFormat
                 var type = d[p++];
                 var v = Value(ref p, type);
                 o.Fields.Add((fid, v));
+                o.Types.Add(type);
                 Adopt(o, fid, v);
             }
             _depth--;
