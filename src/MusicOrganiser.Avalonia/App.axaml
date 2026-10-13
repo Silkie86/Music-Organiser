@@ -1,0 +1,89 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:MusicOrganiser.Avalonia"
+             x:Class="MusicOrganiser.Avalonia.App"
+             RequestedThemeVariant="Dark">
+    <Application.Resources>
+        <!-- Palette: the same dark studio look with one violet accent as the Windows app. -->
+        <Color x:Key="AccentColor">#FF8B7CF6</Color>
+        <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF101114" />
+        <SolidColorBrush x:Key="SidebarBrush" Color="#FF15161A" />
+        <SolidColorBrush x:Key="SurfaceBrush" Color="#FF1A1B20" />
+        <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="#FF212228" />
+        <SolidColorBrush x:Key="StrokeBrush" Color="#FF2A2C33" />
+        <SolidColorBrush x:Key="TextBrush" Color="#FFECEDF0" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#FF9A9DA7" />
+        <SolidColorBrush x:Key="FaintBrush" Color="#FF676A74" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#FF8B7CF6" />
+        <SolidColorBrush x:Key="AccentFaintBrush" Color="#1A8B7CF6" />
+        <SolidColorBrush x:Key="WarningBrush" Color="#FFF2B33D" />
+        <SolidColorBrush x:Key="MissingBrush" Color="#FFF0616D" />
+        <SolidColorBrush x:Key="MissingSoftBrush" Color="#26F0616D" />
+
+        <local:DawBrush x:Key="DawBrush" />
+        <local:BoolToStar x:Key="BoolToStar" />
+        <local:Stars x:Key="Stars" />
+        <local:NonZero x:Key="NonZero" />
+        <local:ItemsViewSource x:Key="ItemsViewSource" />
+        <local:RatingText x:Key="RatingText" />
+        <SolidColorBrush x:Key="OkBrush" Color="#FF4ACB8B" />
+        <SolidColorBrush x:Key="OkSoftBrush" Color="#264ACB8B" />
+        <SolidColorBrush x:Key="HoverBrush" Color="#FF24252C" />
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+
+        <Style Selector="TextBlock.pageTitle">
+            <Setter Property="FontSize" Value="26" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="TextBlock.pageSubtitle">
+            <Setter Property="Margin" Value="0,2,0,0" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="TextBlock.sectionHeader">
+            <Setter Property="Margin" Value="0,0,0,4" />
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <!-- Small caps label above a group of controls, e.g. "DAW" over a filter. -->
+        <Style Selector="TextBlock.filterLabel">
+            <Setter Property="Margin" Value="2,0,0,6" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource FaintBrush}" />
+        </Style>
+        <Style Selector="TextBlock.muted">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="16" />
+        </Style>
+        <!-- A small rounded label: DAW, status, "2 plugins missing". -->
+        <Style Selector="Border.pill">
+            <Setter Property="CornerRadius" Value="9" />
+            <Setter Property="Padding" Value="8,1,8,2" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+        </Style>
+        <Style Selector="TextBlock.pillText">
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+        </Style>
+    </Application.Styles>
+</Application>

@@ -42,12 +42,12 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     void UpdateSampleIndexText() => SampleIndexText = $"{_db.SampleIndexCount():N0} audio files indexed";
 
-    static string? PickFolder(string title) => Ui.Current.PickFolder(title);
+    static Task<string?> PickFolder(string title) => Ui.Current.PickFolder(title);
 
     [RelayCommand]
     async Task AddProjectFolder()
     {
-        if (PickFolder("Choose a folder with music projects") is not { } f || ProjectFolders.Contains(f)) return;
+        if (await PickFolder("Choose a folder with music projects") is not { } f || ProjectFolders.Contains(f)) return;
         _db.AddRoot(f);
         ProjectFolders.Add(f);
         await _main.ScanAsync(false);
@@ -64,7 +64,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     async Task AddSampleFolder()
     {
-        if (PickFolder("Choose a sample library folder") is not { } f || SampleFolders.Contains(f)) return;
+        if (await PickFolder("Choose a sample library folder") is not { } f || SampleFolders.Contains(f)) return;
         SampleFolders.Add(f);
         _db.SetList(Scanner.SampleFoldersKey, SampleFolders);
         await IndexSamples();
@@ -88,7 +88,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     async Task AddPluginFolder()
     {
-        if (PickFolder("Choose a plugin folder (VST3, CLAP or VST2)") is not { } f || PluginFolders.Contains(f)) return;
+        if (await PickFolder("Choose a plugin folder (VST3, CLAP or VST2)") is not { } f || PluginFolders.Contains(f)) return;
         PluginFolders.Add(f);
         _db.SetList(Scanner.PluginFoldersKey, PluginFolders);
         await _main.ScanAsync(false);
@@ -103,24 +103,24 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     /// <summary>Asks for the Bitwig project FL Studio projects are converted with, and remembers it.</summary>
-    public static string? PickBitwigTemplate(LibraryDb db)
+    public static async Task<string?> PickBitwigTemplate(LibraryDb db)
     {
-        if (Ui.Current.PickFile("Choose the Bitwig template (Sampler track, VST3 synth with Note Transpose and a clip, VST2 synth)",
+        if (await Ui.Current.PickFile("Choose the Bitwig template (Sampler track, VST3 synth with Note Transpose and a clip, VST2 synth)",
                 "Bitwig projects", "bwproject") is not { } file) return null;
         db.SetSetting(ProjectDetailViewModel.BitwigTemplateKey, file);
         return file;
     }
 
     [RelayCommand]
-    void ChooseBitwigTemplate()
+    async Task ChooseBitwigTemplate()
     {
-        if (PickBitwigTemplate(_db) is { } f) BitwigTemplate = f;
+        if (await PickBitwigTemplate(_db) is { } f) BitwigTemplate = f;
     }
 
     [RelayCommand]
-    void ChooseExportFolder()
+    async Task ChooseExportFolder()
     {
-        if (PickFolder("Where should exported MIDI and presets go?") is not { } f) return;
+        if (await PickFolder("Where should exported MIDI and presets go?") is not { } f) return;
         ExportFolder = f;
         _db.SetSetting(ProjectDetailViewModel.ExportFolderKey, f);
     }
@@ -143,9 +143,9 @@ public sealed partial class DawSetting : ObservableObject
     }
 
     [RelayCommand]
-    void Choose()
+    async Task Choose()
     {
-        if (Ui.Current.PickProgram($"Choose the {Daw} program") is not { } program) return;
+        if (await Ui.Current.PickProgram($"Choose the {Daw} program") is not { } program) return;
         ExePath = program;
         _db.SetSetting(ProjectDetailViewModel.DawExeKey(Daw), ExePath);
     }

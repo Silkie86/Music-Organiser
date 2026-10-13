@@ -411,10 +411,10 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     [RelayCommand]
-    void ExportMidi()
+    async Task ExportMidi()
     {
         if (Selected is not { } s || Notes.Count == 0) return;
-        if (Ui.Current.PickSaveFile(s.Name + ".mid", "MIDI file", "mid", ExportFolder()) is not { } file) return;
+        if (await Ui.Current.PickSaveFile(s.Name + ".mid", "MIDI file", "mid", ExportFolder()) is not { } file) return;
         var bpm = s.Bpm ?? 120;
         File.WriteAllBytes(file, MidiWriter.Write(NoteTranscriber.ToMidi(s.Name, Notes, bpm), bpm));
         Message = $"Saved {Path.GetFileName(file)}";
@@ -424,7 +424,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         var f = _db.GetSetting(ProjectDetailViewModel.ExportFolderKey);
         if (!string.IsNullOrEmpty(f) && Directory.Exists(f)) return f;
-        var d = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Music Organiser Exports");
+        var d = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments, Environment.SpecialFolderOption.Create), "Music Organiser Exports");
         Directory.CreateDirectory(d);
         return d;
     }

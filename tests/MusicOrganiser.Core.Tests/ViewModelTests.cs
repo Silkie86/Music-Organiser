@@ -61,11 +61,11 @@ public class ViewModelTests : IDisposable
         public IItemsView CreateView(IList items) => new ListView(items);
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
         public IAudioPlayer CreateAudioPlayer() => new Silence();
-        public string? PickFolder(string title) => null;
-        public string? PickFile(string title, string filterName, string extension) => null;
-        public string? PickProgram(string title) => null;
-        public string? PickSaveFile(string fileName, string filterName, string extension, string? initialFolder) => null;
-        public bool Confirm(string message, string title) => false;
+        public Task<string?> PickFolder(string title) => Task.FromResult<string?>(null);
+        public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult<string?>(null);
+        public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);
+        public Task<string?> PickSaveFile(string fileName, string filterName, string extension, string? initialFolder) => Task.FromResult<string?>(null);
+        public Task<bool> Confirm(string message, string title) => Task.FromResult(false);
         public void CopyText(string text) { }
         public void ShowMidi(MidiPreviewViewModel vm) { }
         public void ShowPresets(PresetsViewModel vm) { }

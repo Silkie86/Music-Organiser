@@ -55,7 +55,7 @@ public sealed partial class LibraryDb : IDisposable
     public string FilePath { get; }
 
     public static string DefaultPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicOrganiser", "library.db");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "library.db");
 
     public LibraryDb(string path)
     {

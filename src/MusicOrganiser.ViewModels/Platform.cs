@@ -6,6 +6,7 @@ namespace MusicOrganiser.ViewModels;
 /// <summary>
 /// What the screens need from the UI framework: lists that filter and sort, timers, sound, dialogs and popups.
 /// The Windows app (WPF) and the Mac/Linux app (Avalonia) each supply their own, set once at startup.
+/// Dialogs are async because Avalonia's are.
 /// </summary>
 public interface IPlatformUi
 {
@@ -17,18 +18,18 @@ public interface IPlatformUi
 
     IAudioPlayer CreateAudioPlayer();
 
-    string? PickFolder(string title);
+    Task<string?> PickFolder(string title);
 
     /// <summary>Asks for an existing file; <paramref name="extension"/> is without the dot, e.g. "bwproject".</summary>
-    string? PickFile(string title, string filterName, string extension);
+    Task<string?> PickFile(string title, string filterName, string extension);
 
     /// <summary>Asks for a DAW program: an .exe on Windows, an .app on a Mac.</summary>
-    string? PickProgram(string title);
+    Task<string?> PickProgram(string title);
 
     /// <summary>Asks where to save a file; <paramref name="extension"/> is without the dot, e.g. "mid".</summary>
-    string? PickSaveFile(string fileName, string filterName, string extension, string? initialFolder);
+    Task<string?> PickSaveFile(string fileName, string filterName, string extension, string? initialFolder);
 
-    bool Confirm(string message, string title);
+    Task<bool> Confirm(string message, string title);
 
     void CopyText(string text);
 

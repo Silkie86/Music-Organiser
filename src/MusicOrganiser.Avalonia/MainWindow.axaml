@@ -1,0 +1,73 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:MusicOrganiser.ViewModels"
+        xmlns:views="using:MusicOrganiser.Avalonia.Views"
+        x:Class="MusicOrganiser.Avalonia.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="Music Organiser" Width="1440" Height="900" MinWidth="1080" MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource AppBackgroundBrush}">
+    <Window.DataTemplates>
+        <DataTemplate DataType="vm:ProjectsViewModel"><views:ProjectsView /></DataTemplate>
+        <DataTemplate DataType="vm:SettingsViewModel"><views:SettingsView /></DataTemplate>
+        <!-- Screens not moved over from the Windows app yet. -->
+        <DataTemplate DataType="vm:SoundsViewModel"><views:NotPortedView PageName="Sound Lab" /></DataTemplate>
+        <DataTemplate DataType="vm:PluginsViewModel"><views:NotPortedView PageName="Plugins" /></DataTemplate>
+        <DataTemplate DataType="vm:SamplesViewModel"><views:NotPortedView PageName="Samples" /></DataTemplate>
+    </Window.DataTemplates>
+
+    <Grid ColumnDefinitions="232,*">
+        <!-- Sidebar -->
+        <Border Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,0,1,0">
+            <DockPanel Margin="14,20,14,16">
+                <!-- Brand -->
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,0,0,22">
+                    <Border Width="30" Height="30" CornerRadius="8">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                <GradientStop Color="#FFA394FF" Offset="0" />
+                                <GradientStop Color="#FF6B5BE6" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <TextBlock Text="♪" FontSize="16" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Music Organiser" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                        <TextBlock Text="Bitwig · FL Studio · Studio One" FontSize="11" Foreground="{StaticResource FaintBrush}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Library status and scanning -->
+                <Border DockPanel.Dock="Bottom" Classes="card" Padding="12">
+                    <StackPanel>
+                        <TextBlock Text="LIBRARY" Classes="filterLabel" Margin="0,0,0,4" />
+                        <TextBlock Text="{Binding ScanStatus}" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" />
+                        <ProgressBar Height="4" Margin="0,8,0,0" Value="{Binding ScanPercent}" IsVisible="{Binding IsScanning}" />
+                        <Button Content="Stop" Command="{Binding CancelScanCommand}" Margin="0,10,0,0" HorizontalAlignment="Stretch"
+                                IsVisible="{Binding IsScanning}" />
+                        <StackPanel IsVisible="{Binding !IsScanning}">
+                            <Button Content="Scan for changes" Command="{Binding RescanCommand}" Margin="0,10,0,0"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    ToolTip.Tip="Look for new and changed projects in your folders" />
+                            <Button Content="Rescan everything" Command="{Binding FullRescanCommand}" Margin="0,4,0,0"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" FontSize="12"
+                                    Background="Transparent" Foreground="{StaticResource FaintBrush}"
+                                    ToolTip.Tip="Re-read every project, even unchanged ones" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <ListBox ItemsSource="{Binding Nav}" SelectedItem="{Binding SelectedNav}" Background="Transparent">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:NavItem">
+                            <TextBlock Text="{Binding Title}" FontSize="14" VerticalAlignment="Center" />
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <!-- Page -->
+        <ContentControl Grid.Column="1" Margin="28,24,28,20" Content="{Binding SelectedNav.Page}" />
+    </Grid>
+</Window>

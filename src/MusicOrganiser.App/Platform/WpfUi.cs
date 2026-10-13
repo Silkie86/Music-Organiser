@@ -18,29 +18,29 @@ public sealed class WpfUi : IPlatformUi
 
     public IAudioPlayer CreateAudioPlayer() => new AudioPlayer();
 
-    public string? PickFolder(string title)
+    public Task<string?> PickFolder(string title)
     {
         var dialog = new OpenFolderDialog { Title = title, Multiselect = false };
-        return dialog.ShowDialog() == true ? dialog.FolderName : null;
+        return Task.FromResult(dialog.ShowDialog() == true ? dialog.FolderName : null);
     }
 
-    public string? PickFile(string title, string filterName, string extension)
+    public Task<string?> PickFile(string title, string filterName, string extension)
     {
         var dialog = new OpenFileDialog { Title = title, Filter = $"{filterName} (*.{extension})|*.{extension}" };
-        return dialog.ShowDialog() == true ? dialog.FileName : null;
+        return Task.FromResult(dialog.ShowDialog() == true ? dialog.FileName : null);
     }
 
-    public string? PickProgram(string title) => PickFile(title, "Programs", "exe");
+    public Task<string?> PickProgram(string title) => PickFile(title, "Programs", "exe");
 
-    public string? PickSaveFile(string fileName, string filterName, string extension, string? initialFolder)
+    public Task<string?> PickSaveFile(string fileName, string filterName, string extension, string? initialFolder)
     {
         var dialog = new SaveFileDialog { FileName = fileName, Filter = $"{filterName} (*.{extension})|*.{extension}" };
         if (initialFolder is not null) dialog.InitialDirectory = initialFolder;
-        return dialog.ShowDialog() == true ? dialog.FileName : null;
+        return Task.FromResult(dialog.ShowDialog() == true ? dialog.FileName : null);
     }
 
-    public bool Confirm(string message, string title) =>
-        MessageBox.Show(message, title, MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK;
+    public Task<bool> Confirm(string message, string title) =>
+        Task.FromResult(MessageBox.Show(message, title, MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK);
 
     public void CopyText(string text) => Clipboard.SetText(text);
 

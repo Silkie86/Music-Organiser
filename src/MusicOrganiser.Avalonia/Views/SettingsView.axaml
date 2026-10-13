@@ -1,0 +1,137 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             x:Class="MusicOrganiser.Avalonia.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+    <UserControl.Styles>
+        <Style Selector="TextBlock.cardIntro">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+            <Setter Property="FontSize" Value="12.5" />
+        </Style>
+        <Style Selector="Border.settingsCard">
+            <Setter Property="Margin" Value="0,0,0,14" />
+            <Setter Property="Padding" Value="20,18" />
+        </Style>
+        <Style Selector="ListBox.folders">
+            <Setter Property="MinHeight" Value="44" />
+            <Setter Property="MaxHeight" Value="190" />
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+        <Style Selector="WrapPanel.buttons > Button">
+            <Setter Property="Margin" Value="0,0,6,0" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,0,16,16">
+            <TextBlock Text="Settings" Classes="pageTitle" />
+            <TextBlock Text="Where your projects, samples and plugins live, and how projects open."
+                       Classes="pageSubtitle" Margin="0,2,0,20" />
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
+                    <TextBlock Text="Project folders" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro"
+                               Text="Folders to search for Bitwig (.bwproject), FL Studio (.flp) and Studio One (.song) projects. Subfolders are included. DAW autosave and backup folders are skipped, and so are the demo songs, tutorials and templates that came with the DAW (folders named Cool stuff, Demo songs, Product demos, Templates or Tutorial)." />
+                    <ListBox ItemsSource="{Binding ProjectFolders}" SelectedItem="{Binding SelectedProjectFolder}" Classes="folders" />
+                    <WrapPanel Classes="buttons" Margin="0,10,0,0">
+                        <Button Content="Add folder" Classes="accent" Command="{Binding AddProjectFolderCommand}" />
+                        <Button Content="Remove" Command="{Binding RemoveProjectFolderCommand}" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
+                    <TextBlock Text="Sample folders" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro"
+                               Text="Your sample libraries (Splice, packs, recordings). These are indexed so missing samples can be matched by name, and they're what the Sound Lab browses." />
+                    <ListBox ItemsSource="{Binding SampleFolders}" SelectedItem="{Binding SelectedSampleFolder}" Classes="folders" />
+                    <WrapPanel Classes="buttons" Margin="0,10,0,0">
+                        <Button Content="Add folder" Command="{Binding AddSampleFolderCommand}" />
+                        <Button Content="Remove" Command="{Binding RemoveSampleFolderCommand}" />
+                        <Button Content="Re-index samples" Command="{Binding IndexSamplesCommand}" Margin="0,0,12,0" />
+                        <TextBlock Text="{Binding SampleIndexText}" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
+                    <TextBlock Text="Plugin folders" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro"
+                               Text="Where your VST3, CLAP, VST2 and (on a Mac) Audio Unit plugins are installed. Used to tell which plugins in a project are missing on this computer, and to recognise plugin names inside Bitwig projects." />
+                    <ListBox ItemsSource="{Binding PluginFolders}" SelectedItem="{Binding SelectedPluginFolder}" Classes="folders" />
+                    <WrapPanel Classes="buttons" Margin="0,10,0,0">
+                        <Button Content="Add folder" Command="{Binding AddPluginFolderCommand}" />
+                        <Button Content="Remove" Command="{Binding RemovePluginFolderCommand}" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
+                    <TextBlock Text="Opening projects" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro"
+                               Text="By default projects open in whatever program your computer uses for that file type. Pick a program here to override it, e.g. if you have more than one version installed." />
+                    <ItemsControl ItemsSource="{Binding Daws}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:DawSetting">
+                                <Grid Margin="0,0,0,10" ColumnDefinitions="180,*,Auto,Auto">
+                                    <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                                        <Ellipse Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center"
+                                                 Fill="{Binding Daw, Converter={StaticResource DawBrush}}" />
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Extensions}" FontSize="12" Foreground="{StaticResource FaintBrush}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <TextBox Grid.Column="1" Text="{Binding ExePath, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Default program" />
+                                    <Button Grid.Column="2" Content="Choose…" Command="{Binding ChooseCommand}" Margin="6,0,0,0" />
+                                    <Button Grid.Column="3" Content="Reset" Background="Transparent" Command="{Binding ClearCommand}" Margin="6,0,0,0" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
+                    <TextBlock Text="Exports" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro" Text="Where MIDI, presets and kits are saved. Each project gets its own folder inside." />
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Choose…" Command="{Binding ChooseExportFolderCommand}" Margin="6,0,0,0" />
+                        <TextBox Text="{Binding ExportFolder, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Documents/Music Organiser Exports" />
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
+                    <TextBlock Text="FL Studio to Bitwig" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro"
+                               Text="Open in Bitwig builds each converted song from a project you saved in Bitwig: one with a Sampler track, a VST3 synth with a Note Transpose before it and a clip of notes, and a VST2 synth. Its tracks are copied and filled in, and its own tracks are left out." />
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Choose…" Command="{Binding ChooseBitwigTemplateCommand}" Margin="6,0,0,0" />
+                        <TextBox Text="{Binding BitwigTemplate, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Asked for the first time you convert" />
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
+                    <TextBlock Text="Your library" Classes="sectionHeader" />
+                    <TextBlock Classes="muted" FontSize="12.5">
+                        <Run Text="Your tags, ratings and notes are stored on this computer in" />
+                        <Run Text="{Binding LibraryLocation, Mode=OneWay}" Foreground="{StaticResource TextBrush}" />
+                        <Run Text=". Nothing is uploaded; online search only opens your browser when you ask it to." />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

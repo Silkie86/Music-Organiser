@@ -73,7 +73,7 @@ public sealed class SoundLibrary : IDisposable
     public string FilePath { get; }
 
     public static string DefaultPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicOrganiser", "sounds.db");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "sounds.db");
 
     public SoundLibrary(string path)
     {

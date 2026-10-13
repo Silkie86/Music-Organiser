@@ -104,7 +104,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
 
     string ExportRoot => _db.GetSetting(ExportFolderKey) is { Length: > 0 } f
         ? f
-        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Music Organiser Exports");
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments, Environment.SpecialFolderOption.Create), "Music Organiser Exports");
 
     [RelayCommand]
     void OpenInDaw() => Open(Item.Id, Item.Path, Item.Daw);
@@ -163,7 +163,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         var template = _db.GetSetting(BitwigTemplateKey);
         if (template is not { Length: > 0 } || !File.Exists(template))
         {
-            template = SettingsViewModel.PickBitwigTemplate(_db);
+            template = await SettingsViewModel.PickBitwigTemplate(_db);
             if (template is null)
             {
                 Message = "Converting needs a Bitwig template: a project saved in Bitwig with a Sampler track, a VST3 synth " +
@@ -331,7 +331,7 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
     /// Copies a found file into the project's folder under the name the project expects,
     /// which is where the DAWs look first when a sample has moved.
     /// </summary>
-    public void Recover(string candidate)
+    public async Task Recover(string candidate)
     {
         var target = System.IO.Path.Combine(project.Folder, FileName);
         if (File.Exists(target))
@@ -339,7 +339,7 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
             MatchMessage = "A file with that name is already in the project folder.";
             return;
         }
-        if (!Ui.Current.Confirm($"Copy\n{candidate}\n\ninto the project folder as\n{FileName}?", "Recover sample")) return;
+        if (!await Ui.Current.Confirm($"Copy\n{candidate}\n\ninto the project folder as\n{FileName}?", "Recover sample")) return;
         File.Copy(candidate, target);
         MatchMessage = "Copied. Your DAW will find it next time the project opens.";
         owner.Reindex();
@@ -360,5 +360,5 @@ public sealed partial class MatchRow(Match m, SampleRow? sample) : ObservableObj
     }
 
     [RelayCommand]
-    void Recover() => sample?.Recover(m.Candidate);
+    Task Recover() => sample?.Recover(m.Candidate) ?? Task.CompletedTask;
 }
