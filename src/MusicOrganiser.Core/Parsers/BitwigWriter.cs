@@ -12,8 +12,9 @@ public static partial class BitwigFormat
     /// <summary>
     /// Writes a decoded document back out: header, metadata, the object tree from
     /// <see cref="Document.Root"/>, then the zip (the original one unless <paramref name="zip"/> is given).
-    /// References are renumbered in the order objects are written, so objects can be added,
-    /// removed or copied; an untouched document comes back byte for byte.
+    /// Like Bitwig, an object is written in full where it's first reached and referenced after
+    /// that, wherever the decode found it; references are numbered in that order. So objects can
+    /// be added, removed or copied, and an untouched document comes back byte for byte.
     /// </summary>
     public static byte[] Encode(Document doc, byte[]? zip = null)
     {
@@ -38,7 +39,7 @@ public static partial class BitwigFormat
         var body = new MemoryStream();
         w.Out = body;
         w.Number(doc.Root);
-        w.Object(doc.Root);
+        w.Inline(doc.Root);
 
         var originalZip = Convert.ToInt64(header[20..36], 16);
         zip ??= originalZip > 0 ? doc.Raw[doc.ZipOffset..] : [];
@@ -53,6 +54,105 @@ public static partial class BitwigFormat
         file.Write(zip);
         return file.ToArray();
     }
+
+    /// <summary>
+    /// A copy of <paramref name="original"/> and everything inside it, for adding another track
+    /// or device like it. Objects inside it that are also referenced from elsewhere (Bitwig
+    /// defines the master track inside the first track that routes to it) aren't copied: the
+    /// copy links to them. References inside the copy point at the copied objects. Instance
+    /// ids (field 0xf) get fresh values, and other fields holding the same ids follow them.
+    /// </summary>
+    public static BwObject Clone(Document doc, BwObject original)
+    {
+        // Who refers to what, across the whole document.
+        var referrers = new Dictionary<BwObject, List<BwObject>>(ReferenceEqualityComparer.Instance);
+        var seen = new HashSet<BwObject>(ReferenceEqualityComparer.Instance);
+        void Walk(BwObject o)
+        {
+            if (!seen.Add(o)) return;
+            foreach (var (_, v) in o.Fields)
+                foreach (var x in Values(v))
+                {
+                    if (x is BwRef or BwLink && o.Resolve(x) is { } t)
+                    {
+                        if (!referrers.TryGetValue(t, out var list)) referrers[t] = list = new();
+                        list.Add(o);
+                    }
+                    if (o.Resolve(x) is { } next) Walk(next);
+                }
+        }
+        if (doc.Root is not null) Walk(doc.Root);
+
+        // What the copy owns: objects written inside the original, unless something outside refers to them.
+        var inside = new HashSet<BwObject>(ReferenceEqualityComparer.Instance);
+        void Collect(BwObject o)
+        {
+            inside.Add(o);
+            foreach (var (_, v) in o.Fields)
+                foreach (var x in Values(v))
+                    if (x is BwObject child) Collect(child);
+        }
+        Collect(original);
+        bool Shared(BwObject o) => o != original && referrers.TryGetValue(o, out var from) && from.Any(r => !inside.Contains(r));
+        var owned = new HashSet<BwObject>(ReferenceEqualityComparer.Instance);
+        void Own(BwObject o)
+        {
+            if (Shared(o)) return;
+            owned.Add(o);
+            foreach (var (_, v) in o.Fields)
+                foreach (var x in Values(v))
+                    if (x is BwObject child) Own(child);
+        }
+        Own(original);
+
+        var ids = new Dictionary<Guid, Guid>();
+        foreach (var o in owned)
+            if (o[0xf] is Guid g) ids.TryAdd(g, Guid.NewGuid());
+
+        var copies = new Dictionary<BwObject, BwObject>(ReferenceEqualityComparer.Instance);
+        BwObject Copy(BwObject o)
+        {
+            if (copies.TryGetValue(o, out var done)) return done;
+            var c = new BwObject { Class = o.Class, Table = o.Table };
+            copies[o] = c;
+            for (var i = 0; i < o.Fields.Count; i++)
+            {
+                var (id, v) = o.Fields[i];
+                c.Fields.Add((id, Map(v)));
+                if (i < o.Types.Count) c.Types.Add(o.Types[i]);
+            }
+            return c;
+        }
+        object? Item(object? x)
+        {
+            if (x is null) return null;
+            if (x is BwObject child) return owned.Contains(child) ? Copy(child) : new BwLink(child);
+            if (x is BwRef or BwLink && original.Resolve(x) is { } t)
+                return new BwLink(owned.Contains(t) ? Copy(t) : t);
+            return x;
+        }
+        object? Map(object? v) => v switch
+        {
+            BwObject or BwRef or BwLink => Item(v),
+            List<object?> list => list.Select(Item).ToList(),
+            Dictionary<string, object?> map => map.ToDictionary(kv => kv.Key, kv => Item(kv.Value), StringComparer.Ordinal),
+            KeyValuePair<object?, string> named => new KeyValuePair<object?, string>(Item(named.Key), named.Value),
+            Guid g => ids.GetValueOrDefault(g, g),
+            int[] a => a.ToArray(),
+            float[] a => a.ToArray(),
+            List<string> l => l.ToList(),
+            _ => v,
+        };
+        return Copy(original);
+    }
+
+    static IEnumerable<object?> Values(object? v) => v switch
+    {
+        List<object?> list => list,
+        Dictionary<string, object?> map => map.Values,
+        KeyValuePair<object?, string> named => [named.Key],
+        _ => [v],
+    };
 
     sealed class Writer(Document doc)
     {
@@ -80,40 +180,52 @@ public static partial class BitwigFormat
 
         BwObject Target(object r) => r switch
         {
+            BwObject o => o,
             BwLink l => l.Target,
             BwRef x when x.Index >= 1 && x.Index <= doc.Objects.Count => doc.Objects[x.Index - 1],
             _ => throw new InvalidDataException($"reference to an object that isn't there: {r}"),
         };
 
-        int NumberOf(object r) => _numbers.TryGetValue(Target(r), out var n)
-            ? n : throw new InvalidDataException("reference to an object that isn't written");
+        int _written;
 
-        /// <summary>Numbers every object written inline, in the order they'll be written (objects are numbered as created).</summary>
+        /// <summary>A reference's number; the object must already have been written.</summary>
+        int WrittenNumberOf(object r) => _numbers.TryGetValue(Target(r), out var n) && n <= _written
+            ? n : throw new InvalidDataException("reference to an object that isn't written before it");
+
+        /// <summary>
+        /// Numbers every object in the order it will be written: in full where it's first reached
+        /// through an object slot, by reference after that.
+        /// </summary>
         public void Number(BwObject o)
         {
-            if (!_numbers.TryAdd(o, _numbers.Count + 1)) throw new InvalidDataException("the same object is written twice");
-            foreach (var (_, v) in o.Fields)
-                foreach (var child in Children(v))
-                    Number(child);
+            _numbers[o] = _numbers.Count + 1;
+            for (var i = 0; i < o.Fields.Count; i++)
+                foreach (var slot in Slots(TypeAt(o, i), o.Fields[i].Value))
+                    if (slot is not null && !_numbers.ContainsKey(Target(slot))) Number(Target(slot));
         }
 
-        static IEnumerable<BwObject> Children(object? v) => v switch
+        static byte TypeAt(BwObject o, int i) => i < o.Types.Count ? o.Types[i] : TypeOf(o.Fields[i].Value);
+
+        /// <summary>The object slots in a value, in the order they're written. A bare reference (0x0b) isn't a slot.</summary>
+        static IEnumerable<object?> Slots(byte type, object? v) => type switch
         {
-            BwObject o => [o],
-            List<object?> list => list.OfType<BwObject>(),
-            Dictionary<string, object?> map => map.Values.OfType<BwObject>(),
-            KeyValuePair<object?, string> { Key: BwObject o } => [o],
+            0x09 => [v],
+            0x12 => (List<object?>)v!,
+            0x14 => ((Dictionary<string, object?>)v!).Values,
+            0x1a => [((KeyValuePair<object?, string>)v!).Key],
             _ => [],
         };
 
-        public void Object(BwObject o)
+        public void Inline(BwObject o)
         {
+            _written++;
+            if (_numbers.GetValueOrDefault(o) != _written) throw new InvalidDataException("objects written out of order");
             U32(o.Class);
             for (var i = 0; i < o.Fields.Count; i++)
             {
                 var (id, v) = o.Fields[i];
                 U32(id);
-                var type = i < o.Types.Count ? o.Types[i] : TypeOf(v);
+                var type = TypeAt(o, i);
                 Out.WriteByte(type);
                 Value(type, v);
             }
@@ -122,13 +234,14 @@ public static partial class BitwigFormat
 
         void Slot(object? v)
         {
-            switch (v)
+            if (v is null) { U32(0); return; }
+            var target = Target(v);
+            if (_numbers.TryGetValue(target, out var n) && n <= _written)
             {
-                case null: U32(0); break;
-                case BwRef or BwLink: U32(1); U32(NumberOf(v)); break;
-                case BwObject o: Object(o); break;
-                default: throw new InvalidDataException($"not an object: {v.GetType().Name}");
+                U32(1);
+                U32(n);
             }
+            else Inline(target);
         }
 
         /// <summary>The type byte for a value added in code without one.</summary>
@@ -162,7 +275,7 @@ public static partial class BitwigFormat
                 case 0x08: Str((string)v!); break;
                 case 0x09: Slot(v); break;
                 case 0x0a: break;
-                case 0x0b: U32(NumberOf(v!)); break;
+                case 0x0b: U32(WrittenNumberOf(v!)); break;
                 case 0x0d:
                     var blob = v switch { BwBlob x => doc.Raw.AsSpan(x.Offset, x.Length), byte[] bytes => bytes, _ => [] };
                     U32(blob.Length);

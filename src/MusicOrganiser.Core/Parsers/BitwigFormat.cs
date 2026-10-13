@@ -39,6 +39,7 @@ public static partial class BitwigFormat
         public BwObject? Resolve(object? v) => v switch
         {
             BwObject o => o,
+            BwLink l => l.Target,
             BwRef r when Table is not null && r.Index >= 1 && r.Index <= Table.Count => Table[r.Index - 1],
             _ => null,
         };

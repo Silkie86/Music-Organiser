@@ -48,4 +48,49 @@ public class BitwigWriterTests
         var backGroup = back.Root!.Obj(0x4dd)!;
         Assert.Same(backGroup.List(0x4df).Single(), backGroup.Obj(0x4e0));
     }
+
+    [Fact]
+    public void ACopiedTrackSharesTheMasterItRoutesToAndGetsItsOwnIds()
+    {
+        var doc = BitwigFormat.Decode(File.ReadAllBytes(Fixtures.BitwigProject(Fixtures.TempDir())));
+        var group = doc.Root!.Obj(0x4dd)!;
+        var tracks = (List<object?>)group[0x4de]!;
+        var first = (BitwigFormat.BwObject)tracks[0]!;
+        var copy = BitwigFormat.Clone(doc, first);
+        copy.Set(0x15b, "Copy");
+        tracks.Add(copy);
+
+        var back = BitwigFormat.Decode(BitwigFormat.Encode(doc));
+        Assert.Null(back.BodyError);
+        var backGroup = back.Root!.Obj(0x4dd)!;
+        var (a, b) = (backGroup.List(0x4de).First(), backGroup.List(0x4de).Last());
+        Assert.Equal("Copy", b.Str(0x15b));
+        Assert.Equal(["Keyscape", "Delay+"], b.List(0x4ba).Select(d => d.Str(0x9a)));
+        Assert.NotEqual(a[0xf], b[0xf]);
+        Assert.NotSame(a.List(0x4ba).First(), b.List(0x4ba).First());
+
+        // The master is written once, inside the first track, and both tracks point at it.
+        var master = backGroup.Obj(0x4e0)!;
+        Assert.Same(master, a.Obj(0x2bb0));
+        Assert.Same(master, b.Obj(0x2bb0));
+        Assert.Single(back.Objects, o => o.List(0x4ba).Any(d => d.Str(0x9a) == "FabFilter Pro-L 2"));
+    }
+
+    [Fact]
+    public void AnObjectIsWrittenWhereItsFirstReached()
+    {
+        var doc = BitwigFormat.Decode(File.ReadAllBytes(Fixtures.BitwigProject(Fixtures.TempDir())));
+        var group = doc.Root!.Obj(0x4dd)!;
+        var tracks = (List<object?>)group[0x4de]!;
+        var first = (BitwigFormat.BwObject)tracks[0]!;
+        var master = first.Obj(0x2bb0)!;
+        // Drop the first track, which is where the master was written: it moves to the project's master slot.
+        tracks.RemoveAt(0);
+
+        var back = BitwigFormat.Decode(BitwigFormat.Encode(doc));
+        Assert.Null(back.BodyError);
+        Assert.Equal("FabFilter Pro-L 2", back.Root!.Obj(0x4dd)!.Obj(0x4e0)!.List(0x4ba).Single().Str(0x9a));
+        Assert.Empty(back.Root.Obj(0x4dd)!.List(0x4de));
+        Assert.NotNull(master);
+    }
 }
