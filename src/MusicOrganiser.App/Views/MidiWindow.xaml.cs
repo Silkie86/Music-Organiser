@@ -1,4 +1,4 @@
-using MusicOrganiser.App.ViewModels;
+using MusicOrganiser.ViewModels;
 using Wpf.Ui.Controls;
 
 namespace MusicOrganiser.App.Views;

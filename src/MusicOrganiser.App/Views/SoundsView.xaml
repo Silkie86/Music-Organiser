@@ -4,7 +4,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-             xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+             xmlns:vm="clr-namespace:MusicOrganiser.ViewModels;assembly=MusicOrganiser.ViewModels"
              xmlns:views="clr-namespace:MusicOrganiser.App.Views"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:SoundsViewModel}">

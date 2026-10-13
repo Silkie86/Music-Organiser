@@ -2,7 +2,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>
 /// An ObservableCollection whose whole contents can be swapped with one change notification.

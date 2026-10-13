@@ -1,11 +1,10 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Microsoft.Win32;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>Where your projects, samples and plugins live, and how projects are opened.</summary>
 public sealed partial class SettingsViewModel : ObservableObject
@@ -43,11 +42,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     void UpdateSampleIndexText() => SampleIndexText = $"{_db.SampleIndexCount():N0} audio files indexed";
 
-    static string? PickFolder(string title)
-    {
-        var dialog = new OpenFolderDialog { Title = title, Multiselect = false };
-        return dialog.ShowDialog() == true ? dialog.FolderName : null;
-    }
+    static string? PickFolder(string title) => Ui.Current.PickFolder(title);
 
     [RelayCommand]
     async Task AddProjectFolder()
@@ -110,14 +105,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>Asks for the Bitwig project FL Studio projects are converted with, and remembers it.</summary>
     public static string? PickBitwigTemplate(LibraryDb db)
     {
-        var dialog = new OpenFileDialog
-        {
-            Title = "Choose the Bitwig template (Sampler track, VST3 synth with Note Transpose and a clip, VST2 synth)",
-            Filter = "Bitwig projects (*.bwproject)|*.bwproject",
-        };
-        if (dialog.ShowDialog() != true) return null;
-        db.SetSetting(ProjectDetailViewModel.BitwigTemplateKey, dialog.FileName);
-        return dialog.FileName;
+        if (Ui.Current.PickFile("Choose the Bitwig template (Sampler track, VST3 synth with Note Transpose and a clip, VST2 synth)",
+                "Bitwig projects", "bwproject") is not { } file) return null;
+        db.SetSetting(ProjectDetailViewModel.BitwigTemplateKey, file);
+        return file;
     }
 
     [RelayCommand]
@@ -154,9 +145,8 @@ public sealed partial class DawSetting : ObservableObject
     [RelayCommand]
     void Choose()
     {
-        var dialog = new OpenFileDialog { Title = $"Choose the {Daw} program", Filter = "Programs (*.exe)|*.exe" };
-        if (dialog.ShowDialog() != true) return;
-        ExePath = dialog.FileName;
+        if (Ui.Current.PickProgram($"Choose the {Daw} program") is not { } program) return;
+        ExePath = program;
         _db.SetSetting(ProjectDetailViewModel.DawExeKey(Daw), ExePath);
     }
 

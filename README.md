@@ -65,7 +65,8 @@ Hot Reload works for most changes while the app is running.
 
 - `src/MusicOrganiser.Core` – file readers, MIDI writer, library database (SQLite), scanner, match finder. No UI.
 - `src/MusicOrganiser.Core/Sounds` – the Sound Lab engine: audio decoding, DSP and analysis, key/chord theory, Basic Pitch and CLAP (ONNX), the classifier, rediscovery and kits.
-- `src/MusicOrganiser.App` – the WPF app (MVVM with CommunityToolkit.Mvvm, Fluent styling with WPF-UI).
+- `src/MusicOrganiser.ViewModels` – the screens' logic (MVVM with CommunityToolkit.Mvvm), with no UI framework in it. Anything it needs from the UI (lists that filter and sort, dialogs, timers, sound, popups) goes through `IPlatformUi` in `Platform.cs`, so the Windows app and a future Mac/Linux (Avalonia) app share it.
+- `src/MusicOrganiser.App` – the Windows (WPF) app: XAML views, Fluent styling with WPF-UI, NAudio playback, and `Platform/WpfUi.cs`.
 - `tests/MusicOrganiser.Core.Tests` – xUnit tests using small generated project files. Run with `dotnet test`.
 
 Your library lives in `%LOCALAPPDATA%\MusicOrganiser\library.db`.

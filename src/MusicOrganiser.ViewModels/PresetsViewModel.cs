@@ -5,7 +5,7 @@ using MusicOrganiser.Core;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Parsers;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>The presets popup: every plugin state in the project, filtered, ready to export.</summary>
 public sealed partial class PresetsViewModel : ObservableObject, IFileDragSource

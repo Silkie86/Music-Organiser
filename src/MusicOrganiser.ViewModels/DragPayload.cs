@@ -1,4 +1,4 @@
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>One thing shown in the drag preview: a track, a sound, a preset…</summary>
 /// <param name="Glyph">A Segoe Fluent Icons character.</param>

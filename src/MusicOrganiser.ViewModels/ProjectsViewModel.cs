@@ -1,11 +1,10 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core.Library;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>The main library screen: filters, grouping, the list, and the selected project.</summary>
 public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSource
@@ -15,7 +14,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     readonly MainViewModel _main;
 
     public BulkCollection<ProjectItem> Items { get; } = new();
-    public ICollectionView View { get; }
+    public IItemsView View { get; }
 
     public static IReadOnlyList<string> StatusChoices => Statuses.All;
     public static IReadOnlyList<int> RatingChoices { get; } = [0, 1, 2, 3, 4, 5];
@@ -51,9 +50,9 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     {
         _db = db;
         _main = main;
-        View = CollectionViewSource.GetDefaultView(Items);
+        View = Ui.Current.CreateView(Items);
         View.Filter = o => o is ProjectItem p && Filter(p);
-        View.SortDescriptions.Add(new SortDescription(nameof(ProjectItem.Modified), ListSortDirection.Descending));
+        View.SortBy(nameof(ProjectItem.Modified), ListSortDirection.Descending);
     }
 
     public void Reload()
@@ -98,7 +97,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     void ApplyFilter()
     {
         View.Refresh();
-        var shown = View.Cast<object>().Count();
+        var shown = View.Count;
         var noun = GroupSaves ? "song" : "project";
         CountText = (shown == Items.Count ? Count(Items.Count, noun) : $"{shown:N0} of {Count(Items.Count, noun)}") +
                     (GroupSaves && _saveCount > Items.Count ? $" ({_saveCount:N0} saves)" : "");
@@ -121,7 +120,6 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
 
     partial void OnGroupByChanged(string value)
     {
-        View.GroupDescriptions.Clear();
         var prop = value switch
         {
             "DAW" => nameof(ProjectItem.Daw),
@@ -133,7 +131,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
             "Rating" => nameof(ProjectItem.Rating),
             _ => null,
         };
-        if (prop is not null) View.GroupDescriptions.Add(new PropertyGroupDescription(prop));
+        View.GroupBy(prop);
     }
 
     partial void OnSelectedChanged(ProjectItem? value) =>

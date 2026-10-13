@@ -1,7 +1,8 @@
 using System.Windows;
 using System.Windows.Threading;
-using MusicOrganiser.App.ViewModels;
+using MusicOrganiser.ViewModels;
 using MusicOrganiser.App.Audio;
+using MusicOrganiser.App.Platform;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Sounds;
 
@@ -17,6 +18,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
         DispatcherUnhandledException += OnUnhandled;
+        Ui.Current = new WpfUi();
         _db = new LibraryDb(LibraryDb.DefaultPath);
         AudioPlayer.RegisterDecoders();
         _soundDb = new SoundLibrary(SoundLibrary.DefaultPath);

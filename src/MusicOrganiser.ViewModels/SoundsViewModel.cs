@@ -1,18 +1,14 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
-using System.Windows.Data;
-using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Microsoft.Win32;
-using MusicOrganiser.App.Audio;
 using MusicOrganiser.Core;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Sounds;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>
 /// The Sound Lab: your sample library analysed and learned. Browse and search,
@@ -22,8 +18,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 {
     readonly LibraryDb _db;
     readonly MainViewModel _main;
-    readonly AudioPlayer _player = new();
-    readonly DispatcherTimer _clock = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(30) };
+    readonly IAudioPlayer _player = Ui.Current.CreateAudioPlayer();
+    readonly IUiTimer _clock;
     CancellationTokenSource? _cts;
 
     public SoundOrganiser Org { get; }
@@ -34,7 +30,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. MusicTheory.NoteNames.Select(n => n), .. MusicTheory.NoteNames.Select(n => n + "m")];
 
     [ObservableProperty] IReadOnlyList<Sound> _items = [];
-    [ObservableProperty] ICollectionView? _view;
+    [ObservableProperty] IItemsView? _view;
     [ObservableProperty] string _summary = "";
     [ObservableProperty] bool _isBusy;
     [ObservableProperty] string _busyText = "";
@@ -95,7 +91,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Org = org;
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
-        _clock.Tick += (_, _) => FollowPlayback();
+        _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), FollowPlayback);
         Reload();
         if (SampleFolders.Count > 0) _ = ScanAsync();
     }
@@ -107,7 +103,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         var usage = _db.SampleUsage().Select(u => (u.Path, u.Projects)).ToList();
         Org.ApplyUsage(usage);
         Items = Org.Sounds;
-        View = CollectionViewSource.GetDefaultView(Items);
+        View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
         View.Filter = o => o is Sound s && Matches(s);
         ApplySort();
         TypeCounts = [new TypeCount("All sounds", Items.Count), .. Items.GroupBy(s => s.Type).OrderByDescending(g => g.Count()).Select(g => new TypeCount(g.Key, g.Count()))];
@@ -170,8 +166,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     void ApplySort()
     {
-        if (View is not ListCollectionView lcv) return;
-        lcv.CustomSort = _describeScores is { } scores
+        if (View is null) return;
+        View.CustomSort = _describeScores is { } scores
             ? Comparer<object>.Create((a, b) => scores.GetValueOrDefault(((Sound)b).Id).CompareTo(scores.GetValueOrDefault(((Sound)a).Id)))
             : null;
     }
@@ -418,11 +414,10 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void ExportMidi()
     {
         if (Selected is not { } s || Notes.Count == 0) return;
-        var dialog = new SaveFileDialog { FileName = s.Name + ".mid", Filter = "MIDI file (*.mid)|*.mid", InitialDirectory = ExportFolder() };
-        if (dialog.ShowDialog() != true) return;
+        if (Ui.Current.PickSaveFile(s.Name + ".mid", "MIDI file", "mid", ExportFolder()) is not { } file) return;
         var bpm = s.Bpm ?? 120;
-        File.WriteAllBytes(dialog.FileName, MidiWriter.Write(NoteTranscriber.ToMidi(s.Name, Notes, bpm), bpm));
-        Message = $"Saved {Path.GetFileName(dialog.FileName)}";
+        File.WriteAllBytes(file, MidiWriter.Write(NoteTranscriber.ToMidi(s.Name, Notes, bpm), bpm));
+        Message = $"Saved {Path.GetFileName(file)}";
     }
 
     internal string ExportFolder()

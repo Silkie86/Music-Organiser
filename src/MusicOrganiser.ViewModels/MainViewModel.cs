@@ -3,7 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Sounds;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>The window: which screen is showing, and background scans.</summary>
 public sealed partial class MainViewModel : ObservableObject

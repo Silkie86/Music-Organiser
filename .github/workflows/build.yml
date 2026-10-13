@@ -15,8 +15,8 @@ jobs:
       - run: dotnet build MusicOrganiser.sln -c Release
       - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release --no-build
 
-  # The app is Windows-only for now, but Core (readers, writers, library, Sound Lab) must keep
-  # building and passing its tests on macOS and Linux so a cross-platform UI can sit on top later.
+  # The app is Windows-only for now, but Core (readers, writers, library, Sound Lab) and the shared
+  # view models must keep building and passing its tests on macOS and Linux so a cross-platform UI can sit on top later.
   core:
     strategy:
       fail-fast: false

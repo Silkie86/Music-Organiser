@@ -2,7 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>A row in the project list. Edits to your own fields save straight to the library.</summary>
 public sealed partial class ProjectItem : ObservableObject

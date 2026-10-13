@@ -1,11 +1,10 @@
 using System.ComponentModel;
-using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
 using MusicOrganiser.Core.Library;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>Every sample referenced by your projects, with missing ones first.</summary>
 public sealed partial class SamplesViewModel : ObservableObject, IFileDragSource
@@ -14,7 +13,7 @@ public sealed partial class SamplesViewModel : ObservableObject, IFileDragSource
     readonly MainViewModel _main;
 
     [ObservableProperty] IReadOnlyList<SampleUsage> _items = [];
-    [ObservableProperty] ICollectionView? _view;
+    [ObservableProperty] IItemsView? _view;
     [ObservableProperty] string _searchText = "";
     [ObservableProperty] bool _onlyMissing;
     [ObservableProperty] SampleUsage? _selected;
@@ -43,7 +42,7 @@ public sealed partial class SamplesViewModel : ObservableObject, IFileDragSource
     public void Reload()
     {
         Items = _db.SampleUsage();
-        View = CollectionViewSource.GetDefaultView(Items);
+        View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
         View.Filter = o => o is SampleUsage s &&
                            (!OnlyMissing || !s.Found) &&
                            (SearchText.Length == 0 || s.Path.Contains(SearchText, StringComparison.OrdinalIgnoreCase));

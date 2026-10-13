@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
@@ -8,7 +7,7 @@ using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>The right-hand panel for the selected project.</summary>
 public sealed partial class ProjectDetailViewModel : ObservableObject
@@ -142,18 +141,14 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     void Reveal() => Shell.Reveal(Item.Path);
 
     [RelayCommand]
-    void CopyPath() => Clipboard.SetText(Item.Path);
+    void CopyPath() => Ui.Current.CopyText(Item.Path);
 
     /// <summary>Opens the MIDI popup: each channel's notes, what plays them, and export.</summary>
     [RelayCommand]
     void ShowMidi()
     {
         if (Readers.For(Item.Path) is not { } reader) return;
-        var window = new Views.MidiWindow(new MidiPreviewViewModel(reader, Item.Path, Item.Name, ExportRoot, Item.Tempo))
-        {
-            Owner = Application.Current.MainWindow,
-        };
-        window.Show();
+        Ui.Current.ShowMidi(new MidiPreviewViewModel(reader, Item.Path, Item.Name, ExportRoot, Item.Tempo));
     }
 
     public bool IsFlStudio => Item.Daw == "FL Studio";
@@ -223,11 +218,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     void ShowPresets()
     {
         if (Readers.For(Item.Path) is not { } reader) return;
-        var window = new Views.PresetsWindow(new PresetsViewModel(reader, Item.Path, Item.Name, ExportRoot))
-        {
-            Owner = Application.Current.MainWindow,
-        };
-        window.Show();
+        Ui.Current.ShowPresets(new PresetsViewModel(reader, Item.Path, Item.Name, ExportRoot));
     }
 
     /// <summary>Exports the saved state of one plugin (every instance of it) from this project.</summary>
@@ -348,9 +339,7 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
             MatchMessage = "A file with that name is already in the project folder.";
             return;
         }
-        var ok = MessageBox.Show($"Copy\n{candidate}\n\ninto the project folder as\n{FileName}?",
-            "Recover sample", MessageBoxButton.OKCancel, MessageBoxImage.Question);
-        if (ok != MessageBoxResult.OK) return;
+        if (!Ui.Current.Confirm($"Copy\n{candidate}\n\ninto the project folder as\n{FileName}?", "Recover sample")) return;
         File.Copy(candidate, target);
         MatchMessage = "Copied. Your DAW will find it next time the project opens.";
         owner.Reindex();

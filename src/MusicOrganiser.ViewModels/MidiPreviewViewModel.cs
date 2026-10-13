@@ -1,14 +1,12 @@
 using System.IO;
-using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using MusicOrganiser.App.Audio;
 using MusicOrganiser.Core;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
 
-namespace MusicOrganiser.App.ViewModels;
+namespace MusicOrganiser.ViewModels;
 
 /// <summary>
 /// The MIDI popup: every channel (or track) with notes, what plays it, and a mini piano roll you
@@ -22,8 +20,8 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
     readonly string _path;
     readonly string _exportRoot;
     readonly double? _tempo;
-    readonly AudioPlayer _player = new();
-    readonly DispatcherTimer _clock = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(30) };
+    readonly IAudioPlayer _player = Ui.Current.CreateAudioPlayer();
+    readonly IUiTimer _clock;
     readonly Dictionary<string, MidiRender.Result> _renders = [];
     IReadOnlyList<MidiChannelRow> _sounding = [];
     string? _playingKey;
@@ -49,7 +47,7 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
         _tempo = tempo;
         Title = title;
         AsOneFile = new OneFileDrag(this);
-        _clock.Tick += (_, _) => Tick();
+        _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), Tick);
     }
 
     public async Task LoadAsync()
