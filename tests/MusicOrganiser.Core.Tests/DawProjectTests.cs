@@ -74,8 +74,9 @@ public class DawProjectTests
         var dir = Fixtures.TempDir();
         var (file, leftOut, setup) = Exporter.DawProjectFromFl(Fixtures.FlStudio25Automation(dir), Path.Combine(dir, "out"));
         Assert.Empty(leftOut);
-        Assert.Equal(@"Snare: in its Sampler, load C:\Samples\Snare 01.wav, then set Root key to A2 (A4 in FL Studio), tune it -2 semitones.",
-                     Assert.Single(setup));
+        Assert.Equal([@"Snare: in its Sampler, load C:\Samples\Snare 01.wav, then set Root key to A2 (A4 in FL Studio), tune it -2 semitones.",
+                      "Serum: add Bitwig's Transpose note effect before Serum and set it to -4 semitones (its FL root key was E5)."],
+                     setup);
         Assert.Contains("A2", File.ReadAllText(Path.Combine(Path.GetDirectoryName(file)!, "Automated - Bitwig setup.txt")));
 
         var (project, zip) = Open(file);

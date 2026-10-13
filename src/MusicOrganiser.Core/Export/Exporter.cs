@@ -31,7 +31,7 @@ public static class Exporter
         {
             var lines = new List<string> { $"Finishing {name} in Bitwig", "" };
             if (result.Setup.Count > 0)
-                lines.AddRange(["Sampler tracks: DAWproject can't carry a Sampler's sample or root key, so set them here.",
+                lines.AddRange(["DAWproject can't carry a Sampler's sample or root key, or FL's root key on plugins, so set them here.",
                                 .. result.Setup.Select(s => "  " + s), ""]);
             if (result.Notes.Count > 0)
                 lines.AddRange(["Not carried over:", .. result.Notes.Select(n => "  " + n)]);

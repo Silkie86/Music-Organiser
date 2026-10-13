@@ -24,7 +24,7 @@ public static class DawProject
     const string BitwigSampler = "468bc14b-b2e7-45a1-9666-e83117fe404e";
 
     /// <param name="Notes">What couldn't come across.</param>
-    /// <param name="Setup">Steps to finish in Bitwig: loading each Sampler's sample and setting its root key.</param>
+    /// <param name="Setup">Steps to finish in Bitwig: loading each Sampler's sample and setting its root key, and transposing plugins whose FL root key was moved.</param>
     public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<string> Setup);
 
     /// <summary>
@@ -151,6 +151,14 @@ public static class DawProject
                 setup.Add($"{c.Name}: in its Sampler, load {c.Sample}, then set Root key to {NoteName(c.RootKey)}" +
                           $" ({NoteName(c.RootKey, flStudio: true)} in FL Studio){tune}.");
                 device = Sampler(file);
+            }
+            else if (c.Instrument is { } plugin && c.RootKey != FlStudioReader.DefaultRoot)
+            {
+                // FL plays a plugin's root key as C5, so a moved root key transposes everything it plays.
+                var shift = $"{FlStudioReader.DefaultRoot - c.RootKey:+0;-0} semitones";
+                todo = $"Add a Transpose note effect before {plugin.Name}, set to {shift} (FL root key {NoteName(c.RootKey, flStudio: true)})";
+                setup.Add($"{c.Name}: add Bitwig's Transpose note effect before {plugin.Name} and set it to {shift}" +
+                          $" (its FL root key was {NoteName(c.RootKey, flStudio: true)}).");
             }
             var ch = Channel("regular", insertChannels.GetValueOrDefault(c.Insert, masterId), device is null ? [] : [device],
                              Gain(c.Volume), c.Pan);

@@ -272,8 +272,8 @@ public static class Fixtures
 
     /// <summary>
     /// An FL 25 song laid out like FL writes it: a sampler "Snare" (root key A4, pitch -2 semitones,
-    /// pan 25%, volume 100%) with an automation clip on its volume in bar 2, and a Serum VST with an
-    /// automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2.
+    /// pan 25%, volume 100%) with an automation clip on its volume in bar 2, and a Serum VST (root
+    /// key E5) with an automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2.
     /// </summary>
     public static string FlStudio25Automation(string dir)
     {
@@ -291,6 +291,7 @@ public static class Fixtures
             .Text(201, "Fruity Wrapper").Text(203, "Serum")
             .Data(213, WrapperBlob("Serum", @"C:\VstPlugins\Serum_x64.dll", "Xfer Records",
                                    FlVst2State([1, 2, 3]), version: 12, kind: 4, fourCc: "XfsX"))
+            .Dword(135, 64)
             .Word(64, 3).Byte(21, 5).Text(201, "").Text(203, "Serum - Cutoff")
             .Data(234, AutomationPoints((0, 0.2), (2, 1), (2, 0.5)))
             .Data(233, [.. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(384, 1, 384, 498), .. PlaylistItem25(0, 3, 384, 497)]);

@@ -169,8 +169,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
                       (setup.Count switch
                       {
                           0 => "",
-                          1 => " One Sampler track needs its sample and root key set; the steps are in the setup notes saved next to it.",
-                          var n => $" {n} Sampler tracks need their sample and root key set; the steps are in the setup notes saved next to it.",
+                          1 => " One track needs its sample or root key set by hand; the steps are in the setup notes saved next to it.",
+                          var n => $" {n} tracks need their sample or root key set by hand; the steps are in the setup notes saved next to it.",
                       }) +
                       (leftOut.Count == 0 ? "" : $" Not carried over yet: {string.Join("; ", leftOut.Take(4))}{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more" : "")}.");
             Shell.Reveal(file);
