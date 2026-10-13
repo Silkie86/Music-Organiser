@@ -45,7 +45,7 @@ public class BitwigPresetTests
         Assert.NotNull(t);
         Assert.Equal(("Serum", "VST2"), (t.Plugin, t.Format));
 
-        var fl = new PresetBlob("Big Bass", "Serum_x64", ".fxp", "CcnK program from FL"u8.ToArray());
+        var fl = new PresetBlob("Big Bass", "Serum_x64", ".fxp", Fxp.WrapChunk([1, 2, 3], "Big Bass", 0x58667358));
         Assert.Same(t, BitwigPreset.For(fl, new Dictionary<string, BitwigPreset.Template> { [BitwigPreset.Key(t.Plugin, t.Format)] = t }));
 
         var doc = BitwigFormat.Decode(BitwigPreset.Build(t, fl, "Big Bass"));
@@ -53,11 +53,13 @@ public class BitwigPresetTests
         Assert.Equal("Big Bass", doc.MetaString("preset_name"));
         Assert.Equal("silkie86", doc.MetaString("creator"));
         var device = doc.Root!;
-        Assert.Equal(("Serum", "Big Bass", "0f1e2d.fxp"), (device.Str(0x9a), device.Str(0x12de), device.Str(0xbe5)));
+        // FL's program goes in as a one-program bank, as Bitwig keeps VST2 settings.
+        Assert.Equal(("Serum", "Big Bass", "0f1e2d.fxb"), (device.Str(0x9a), device.Str(0x12de), device.Str(0xbe5)));
         using var zip = doc.OpenZip()!;
-        Assert.Null(zip.GetEntry("plugin-states/0f1e2d.fxb"));
-        using var state = new StreamReader(zip.GetEntry("plugin-states/0f1e2d.fxp")!.Open());
-        Assert.Equal("CcnK program from FL", state.ReadToEnd());
+        Assert.Null(zip.GetEntry("plugin-states/0f1e2d.fxp"));
+        using var state = new MemoryStream();
+        using (var s = zip.GetEntry("plugin-states/0f1e2d.fxb")!.Open()) s.CopyTo(state);
+        Assert.Equal(Fxp.ToBank(fl.Data), state.ToArray());
         Assert.NotNull(zip.GetEntry("preview.png"));
     }
 

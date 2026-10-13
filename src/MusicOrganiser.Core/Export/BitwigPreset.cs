@@ -121,16 +121,22 @@ public static class BitwigPreset
         return ms.ToArray();
     }
 
-    /// <summary>Builds the preset and checks it reads back with the new state, as Bitwig would read it.</summary>
+    /// <summary>
+    /// Builds the preset and checks it reads back with the new state, as Bitwig would read it. A VST2
+    /// program (.fxp) goes in as a one-program bank (.fxb), the form Bitwig saves and restores; it
+    /// loaded a plugin's defaults from a .fxp in DAWproject files.
+    /// </summary>
     public static byte[] Build(Template template, PresetBlob preset, string presetName)
     {
-        var bytes = Build(File.ReadAllBytes(template.Path), template.StateEntry, preset.Data, preset.Extension, presetName,
+        var (state, extension) = (preset.Data, preset.Extension);
+        if (extension == ".fxp" && Fxp.ToBank(state) is var bank && !ReferenceEquals(bank, state)) (state, extension) = (bank, ".fxb");
+        var bytes = Build(File.ReadAllBytes(template.Path), template.StateEntry, state, extension, presetName,
                           [Path.GetFileNameWithoutExtension(template.Path), template.PresetName], template.Plugin);
         var doc = BitwigFormat.Decode(bytes);
         if (doc.BodyError is not null) throw new InvalidDataException($"The new preset doesn't read back: {doc.BodyError}");
         using var zip = doc.OpenZip();
-        var entry = zip?.GetEntry("plugin-states/" + Path.GetFileNameWithoutExtension(template.StateEntry) + preset.Extension);
-        if (entry is null || entry.Length != preset.Data.Length) throw new InvalidDataException("The new preset lost its plugin settings");
+        var entry = zip?.GetEntry("plugin-states/" + Path.GetFileNameWithoutExtension(template.StateEntry) + extension);
+        if (entry is null || entry.Length != state.Length) throw new InvalidDataException("The new preset lost its plugin settings");
         return bytes;
     }
 
