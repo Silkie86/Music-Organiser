@@ -196,7 +196,8 @@ public sealed partial class FlStudioReader
     /// Automation clips placed where the playlist puts them, cut to each clip's length, joined per
     /// clip. A link (event 227) gives the clip's channel and its target: the low word is the control
     /// (0 volume, 1 pan, 4 pitch, 0x8000 + n plugin parameter n), the high word the channel it's on.
-    /// Clips that aren't in the playlist don't play, so they're left out.
+    /// Clips that aren't in the playlist don't play, so they're left out. A clip placed several times,
+    /// with gaps between, becomes one curve that holds its value through the gaps.
     /// </summary>
     static List<FlAutomation> PlaceAutomation(List<(int Clip, uint Target)> links, Dictionary<int, List<FlPoint>> curves,
                                               Dictionary<int, string> names, ReadOnlyMemory<byte>? playlist, int ppq)
@@ -209,7 +210,13 @@ public sealed partial class FlStudioReader
             if (!curves.TryGetValue(clip, out var curve) || curve.Count == 0) continue;
             var points = new List<FlPoint>();
             foreach (var item in items.Where(i => i.Index == clip))
-                points.AddRange(CutCurve(curve, item.At / (double)ppq, item.From / (double)ppq, item.Length / (double)ppq));
+            {
+                var placed = CutCurve(curve, item.At / (double)ppq, item.From / (double)ppq, item.Length / (double)ppq).ToList();
+                // Between clips FL holds the value the last one ended on, then jumps to where the next starts.
+                if (points.Count > 0 && placed.Count > 0 && points[^1].Beat < placed[0].Beat && points[^1].Value != placed[0].Value)
+                    points.Add(points[^1] with { Beat = placed[0].Beat });
+                points.AddRange(placed);
+            }
             if (points.Count == 0) continue;
             var low = (int)(target & 0xFFFF);
             var control = low switch { 0 => FlControl.Volume, 1 => FlControl.Pan, 4 => FlControl.Pitch, >= 0x8000 => FlControl.PluginParameter, _ => FlControl.Other };

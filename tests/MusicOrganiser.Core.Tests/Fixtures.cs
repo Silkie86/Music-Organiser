@@ -275,7 +275,7 @@ public static class Fixtures
     /// pan 25%, volume 100%) with an automation clip on its volume in bar 2, and a Serum VST (root
     /// key E5) with an automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2.
     /// </summary>
-    public static string FlStudio25Automation(string dir)
+    public static string FlStudio25Automation(string dir, bool volumePlacedTwice = false)
     {
         var b = new FlpBuilder()
             .Ascii(199, "25.2.5.5319")
@@ -294,7 +294,8 @@ public static class Fixtures
             .Dword(135, 64)
             .Word(64, 3).Byte(21, 5).Text(201, "").Text(203, "Serum - Cutoff")
             .Data(234, AutomationPoints((0, 0.2), (2, 1), (2, 0.5)))
-            .Data(233, [.. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(384, 1, 384, 498), .. PlaylistItem25(0, 3, 384, 497)]);
+            .Data(233, [.. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(384, 1, 384, 498), .. PlaylistItem25(0, 3, 384, 497),
+                        .. volumePlacedTwice ? PlaylistItem25(1152, 1, 384, 498) : []]);
         var path = Path.Combine(dir, "Automated.flp");
         File.WriteAllBytes(path, b.Build());
         return path;

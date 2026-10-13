@@ -69,6 +69,15 @@ public class DawProjectTests
     }
 
     [Fact]
+    public void AnAutomationClipPlacedTwiceHoldsItsValueThroughTheGap()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir(), volumePlacedTwice: true));
+        var volume = song.Automation.Single(a => a.Control == FlControl.Volume);
+        // Beats 4-8, then 12-16: it stays at 1 until the second clip starts back at 0.
+        Assert.Equal([new FlPoint(4, 0), new FlPoint(8, 1), new FlPoint(12, 1), new FlPoint(12, 0), new FlPoint(16, 1)], volume.Points);
+    }
+
+    [Fact]
     public void CarriesSamplerSetupLevelsAndAutomationIntoTheDawProject()
     {
         var dir = Fixtures.TempDir();
