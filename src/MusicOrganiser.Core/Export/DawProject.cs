@@ -208,6 +208,10 @@ public static class DawProject
                 case FlControl.Pan:
                     target = t.Channel.Element("Pan");
                     break;
+                case FlControl.PluginParameter when t.Device?.Name.LocalName == "Vst3Plugin":
+                    // FL numbers a VST3 plugin's settings by position, Bitwig by the plugin's own parameter ids.
+                    notes.Add($"{a.Name}: automation left out (FL and Bitwig number VST3 plugin settings differently)");
+                    continue;
                 case FlControl.PluginParameter when t.Device is not null:
                     target = new XElement("RealParameter", new XAttribute("id", Id()), new XAttribute("name", a.Name),
                         new XAttribute("parameterID", a.Parameter), new XAttribute("unit", "normalized"),

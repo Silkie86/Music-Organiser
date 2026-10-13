@@ -189,6 +189,7 @@ public static partial class BitwigFormat
 
         public void ReadMeta(int p)
         {
+            doc.MetaEnd = p;
             if (U32(p) != 4) return;
             p += 4;
             if (Str(ref p) != "meta") return;

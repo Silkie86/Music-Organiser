@@ -14,6 +14,8 @@ namespace MusicOrganiser.App.ViewModels;
 public sealed partial class ProjectDetailViewModel : ObservableObject
 {
     public const string ExportFolderKey = "export_folder";
+    /// <summary>The Bitwig project that FL Studio projects are converted with.</summary>
+    public const string BitwigTemplateKey = "bitwig_template";
     public static string DawExeKey(string daw) => $"daw_exe:{daw}";
 
     readonly LibraryDb _db;
@@ -155,6 +157,44 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     }
 
     public bool IsFlStudio => Item.Daw == "FL Studio";
+
+    /// <summary>
+    /// Converts an FL Studio project into a native Bitwig project and opens it in Bitwig. The first time,
+    /// it asks for the Bitwig project to build from (see <see cref="BitwigProject"/>).
+    /// </summary>
+    [RelayCommand]
+    async Task OpenInBitwig()
+    {
+        var template = _db.GetSetting(BitwigTemplateKey);
+        if (template is not { Length: > 0 } || !File.Exists(template))
+        {
+            template = SettingsViewModel.PickBitwigTemplate(_db);
+            if (template is null)
+            {
+                Message = "Converting needs a Bitwig template: a project saved in Bitwig with a Sampler track, a VST3 synth " +
+                          "with a Note Transpose before it and a clip of notes, and a VST2 synth. Pick it in Settings or try again.";
+                return;
+            }
+        }
+        Message = "Converting for Bitwig…";
+        try
+        {
+            var path = Item.Path;
+            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template)));
+            if (_db.GetSetting(DawExeKey("Bitwig Studio")) is { Length: > 0 } exe && File.Exists(exe))
+                Shell.OpenWith(file, exe);
+            else
+                Shell.Open(file);
+            Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig." +
+                      (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
+                                                 $"{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more, listed in the notes saved next to it" : "")}.");
+        }
+        catch (InvalidDataException e) when (e.Message.StartsWith("The Bitwig template", StringComparison.Ordinal))
+        {
+            Message = $"{e.Message}. Pick another template in Settings.";
+        }
+        catch (Exception e) { Message = $"Converting for Bitwig failed: {e.Message}"; }
+    }
 
     /// <summary>Converts an FL Studio project to a DAWproject file Bitwig can open, and shows it.</summary>
     [RelayCommand]

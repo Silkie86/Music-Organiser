@@ -22,6 +22,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] string? _selectedSampleFolder;
     [ObservableProperty] string? _selectedPluginFolder;
     [ObservableProperty] string _exportFolder = "";
+    [ObservableProperty] string _bitwigTemplate = "";
     [ObservableProperty] string _sampleIndexText = "";
     public string LibraryLocation => _db.FilePath;
 
@@ -36,6 +37,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         foreach (var r in Readers.All)
             Daws.Add(new DawSetting(db, r.Daw, string.Join(", ", r.Extensions)));
         _exportFolder = db.GetSetting(ProjectDetailViewModel.ExportFolderKey) ?? "";
+        _bitwigTemplate = db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) ?? "";
         UpdateSampleIndexText();
     }
 
@@ -103,6 +105,25 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (SelectedPluginFolder is not { } f) return;
         PluginFolders.Remove(f);
         _db.SetList(Scanner.PluginFoldersKey, PluginFolders);
+    }
+
+    /// <summary>Asks for the Bitwig project FL Studio projects are converted with, and remembers it.</summary>
+    public static string? PickBitwigTemplate(LibraryDb db)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Choose the Bitwig template (Sampler track, VST3 synth with Note Transpose and a clip, VST2 synth)",
+            Filter = "Bitwig projects (*.bwproject)|*.bwproject",
+        };
+        if (dialog.ShowDialog() != true) return null;
+        db.SetSetting(ProjectDetailViewModel.BitwigTemplateKey, dialog.FileName);
+        return dialog.FileName;
+    }
+
+    [RelayCommand]
+    void ChooseBitwigTemplate()
+    {
+        if (PickBitwigTemplate(_db) is { } f) BitwigTemplate = f;
     }
 
     [RelayCommand]

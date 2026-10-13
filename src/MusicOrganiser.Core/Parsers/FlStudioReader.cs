@@ -29,7 +29,7 @@ public sealed partial class FlStudioReader : IProjectReader
     const int EvPluginState = Data + 5;         // 213: plugin state; VST metadata for the Fruity Wrapper
     const int EvPatternNotes = Data + 16;       // 224: 24-byte note records
     const int EvInsertFlags = Data + 28;        // 236: starts each mixer insert (0 is the master)
-    const int EvInsertName = Text + 12;         // 204: an insert's name, after its slots
+    const int EvInsertName = Text + 12;         // 204: an insert's name, just before the flags that start it
 
     // Fruity Wrapper (VST host) state: u32 version (8, 10, 12 in FL 25), then records of (u32 id, u64 size, data).
     const int VstKind = 50, VstFourCc = 51, VstClassId = 52;
@@ -530,14 +530,14 @@ public sealed partial class FlStudioReader : IProjectReader
         PlaylistItems(d).Where(i => i.Index > PatternBase).Select(i => (i.Index - PatternBase, i.At, i.Length, i.From)).ToList();
 
     /// <summary>
-    /// Clips in the playlist. FL 9 onwards writes 32-byte items (60 from FL 21, 80 from FL 25):
+    /// Clips in the playlist. FL 9 onwards writes 32-byte items (60 from FL 21, 80 from FL 25, 88 from FL 26):
     /// u32 position, u16 pattern base (20480), u16 item index, u32 length, ..., start offset at 24
     /// (an integer before FL 21, a float since; -1 = none). Older layouts aren't read.
     /// </summary>
     static List<PlaylistItem> PlaylistItems(ReadOnlySpan<byte> d)
     {
         var items = new List<PlaylistItem>();
-        foreach (var size in new[] { 80, 60, 32 })
+        foreach (var size in new[] { 88, 80, 60, 32 })
         {
             if (d.Length == 0 || d.Length % size != 0) continue;
             var ok = true;
@@ -578,6 +578,7 @@ public sealed partial class FlStudioReader : IProjectReader
         var currentName = "";
         var insert = -1;
         var insertNames = new Dictionary<int, string>();
+        var nextInsertName = "";
         var presetInsert = new Dictionary<int, int>();   // preset index → mixer insert
         foreach (var e in flp.Events)
         {
@@ -585,8 +586,13 @@ public sealed partial class FlStudioReader : IProjectReader
             {
                 case EvChannelNew: channel = (int)e.Int; inMixer = false; channelHasPlugin = false; break;
                 case EvChannelType when channel is not null: channelTypes[channel.Value] = (int)e.Int; break;
-                case EvInsertFlags: inMixer = true; insert++; break;
-                case EvInsertName when insert >= 0: insertNames[insert] = flp.Str(e); break;
+                case EvInsertFlags:
+                    inMixer = true;
+                    insert++;
+                    if (nextInsertName.Length > 0) insertNames[insert] = nextInsertName;
+                    nextInsertName = "";
+                    break;
+                case EvInsertName: nextInsertName = flp.Str(e); break;
                 case EvMixerSlot: inMixer = true; break;
                 case EvPluginInternal:
                     pendingInternal = flp.Str(e);

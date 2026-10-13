@@ -124,6 +124,19 @@
 
             <Border Style="{StaticResource SettingsCard}">
                 <StackPanel>
+                    <TextBlock Text="FL Studio to Bitwig" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource CardIntro}"
+                               Text="Open in Bitwig builds each converted song from a project you saved in Bitwig: one with a Sampler track, a VST3 synth with a Note Transpose before it and a clip of notes, and a VST2 synth. Its tracks are copied and filled in, and its own tracks are left out." />
+                    <DockPanel>
+                        <ui:Button DockPanel.Dock="Right" Content="Choose…" Command="{Binding ChooseBitwigTemplateCommand}" Margin="6,0,0,0" />
+                        <ui:TextBox Text="{Binding BitwigTemplate, Mode=OneWay}" IsReadOnly="True"
+                                    PlaceholderText="Asked for the first time you convert" />
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel>
                     <TextBlock Text="Your library" Style="{StaticResource CardTitle}" />
                     <TextBlock Style="{StaticResource Muted}" FontSize="12.5">
                         <Run Text="Your tags, ratings and notes are stored on this PC in" />

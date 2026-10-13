@@ -446,6 +446,12 @@ public static class Fixtures
         public void MapKey(string key) { S.WriteByte(1); StrVal(key); }
         public void EndMap() => S.WriteByte(0);
         public void Named(int fid) => Type(fid, 0x1a);
+        /// <summary>A reference written as a bare object number (type 0x0b), as Bitwig does for objects it already wrote.</summary>
+        public void BareRef(int fid, int index) { Type(fid, 0x0b); U32(index); }
+        public void Uuid(int fid, string id) { Type(fid, 0x15); S.Write(Guid.Parse(id).ToByteArray(bigEndian: true)); }
+        public void I16(int fid, short v) { Type(fid, 0x02); Span<byte> b = stackalloc byte[2]; BinaryPrimitives.WriteInt16BigEndian(b, v); S.Write(b); }
+        public void I32(int fid, int v) { Type(fid, 0x03); U32((uint)v); }
+        public void Blob(int fid, byte[] v) { Type(fid, 0x0d); U32(v.Length); S.Write(v); }
 
         public static byte[] File(Action<BwWriter> meta, Action<BwWriter> body, byte[]? zip)
         {
@@ -534,7 +540,7 @@ public static class Fixtures
                 b.Begin(0x90);
                 b.Id(0xf);
                 b.Str(0x15b, "");
-                b.Map(0x168); b.MapKey("silkie86"); b.Begin(0x88); b.U8(0x2603, 64); b.End(); b.EndMap();
+                b.Map(0x168); b.MapKey("user"); b.Begin(0x88); b.U8(0x2603, 64); b.End(); b.EndMap();
                 b.List(0x4ba);
                 {
                     b.Begin(ClsVst3);
@@ -611,4 +617,255 @@ public static class Fixtures
     }
 
     const int ClsVst3 = 0x728;
+
+    /// <summary>
+    /// A Bitwig 6-style template for converting FL projects, laid out like one saved in Bitwig 6.1: a
+    /// Sampler track (Sampler and Amp, root key A2, sends to an effect track that's defined inside it,
+    /// and the master defined in its output routing), a VST3 track with a Note Transpose before
+    /// Serum 2 and a clip of notes, and a VST2 track with Drumazon, whose output chain sends to the
+    /// effect track. As in Bitwig's files, the mixer volume is first written in the track's per-user
+    /// view state and referenced from the mixer, and the project's view state and clip selection
+    /// point into the tracks.
+    /// </summary>
+    public static byte[] BitwigTemplate()
+    {
+        const string sampler = "468bc14b-b2e7-45a1-9666-e83117fe404e", noteTranspose = "0815cd9e-3a31-4429-a268-dabd952a3b68",
+                     amp = "41be8f3a-6d24-4442-9508-8548dbe62d47";
+        byte[] zip;
+        using (var zs = new MemoryStream())
+        {
+            using (var z = new ZipArchive(zs, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                using (var s = z.CreateEntry("plugin-states/serum.vstpreset").Open()) s.Write("template serum"u8);
+                using (var s = z.CreateEntry("plugin-states/drumazon.fxb").Open()) s.Write("template drumazon"u8);
+            }
+            zip = zs.ToArray();
+        }
+
+        var st = new BwWriter();
+        st.Begin(0x285);
+        st.Str(0xad3, "");
+        st.Obj(0xad2); st.Begin(0x283);
+        st.Str(0xad1, "Project");
+        st.List(0xace);
+        foreach (var n in new[] { "Kick", "Serum 2", "Drumazon" }) { st.Begin(0x288); st.Str(0xad1, n); st.End(); }
+        st.EndList();
+        st.List(0xacf); st.Begin(0x28a); st.Str(0xad1, "FX 1"); st.End(); st.EndList();
+        st.Obj(0xad0); st.Begin(0x28b); st.Str(0xad1, "Master"); st.End();
+        st.End();
+        st.End();
+        var structure = new MemoryStream();
+        structure.Write(Encoding.ASCII.GetBytes("BtWg0003000200000000002b000000000000000001\n"));
+        structure.Write(st.S.ToArray());
+
+        int master = 0, fx = 0, root = 0, firstTrack = 0, clip = 0, content = 0;
+        return BwWriter.File(meta: m =>
+        {
+            m.MetaEntry("application_version_name", 0x08); m.StrVal("6.1.3");
+            m.MetaEntry("structure", 0x0d); m.U32(structure.Length); m.S.Write(structure.ToArray());
+            m.MetaEntry("used_files", 0x19); m.U32(0);
+        }, body: b =>
+        {
+            void Param(int cls, string name, double value) { b.Begin(cls); b.Str(0x2bd, name); b.F64(0x2c8, value); b.End(); }
+            void Named(int cls, string name, Action fields) { b.Begin(cls); b.Str(0x2b9, name); fields(); b.End(); }
+            void FileRef(string path) { b.Begin(0x2a); b.Str(0x38, "PC"); b.Str(0x3a, "user"); b.Str(0x3b, path); b.End(); }
+            // A track's start: ids, per-user view state that first writes its mixer volume, its automation lanes.
+            int TrackStart(string name)
+            {
+                var t = b.Begin(0x90);
+                b.Id(0xf);
+                b.Str(0x15b, name);
+                b.Map(0x168); b.MapKey("user"); b.Begin(0x88);
+                b.Obj(0x4e6); b.Begin(0x23c); b.Obj(0x2a3); b.Begin(0xf1);
+                b.Obj(0x41); Param(0x4c4, "VOLUME", 1.0);
+                b.Str(0x133b, "Mixer"); b.Str(0x133a, "Volume");
+                b.End(); b.End();
+                b.End(); b.EndMap();
+                b.Obj(0x2dc9); b.Begin(0xfa2); b.List(0x4ba); b.EndList(); b.List(0x3f83); b.EndList(); b.End();
+                b.Id(0xa51);
+                return t;
+            }
+            // The rest: arrangement clips, clip contents, devices, mixer (volume by reference), output to the master.
+            void TrackEnd(int volume, Action? clips, Action devices, Action sends, Action output)
+            {
+                b.Obj(0x2bf8); b.Begin(0xef7);
+                b.Obj(0x2d8e); b.Begin(0x52); b.List(0x21f); clips?.Invoke(); b.EndList(); b.End();
+                b.End();
+                b.Obj(0x2aed); b.Begin(0xe6d); b.List(0x10e6); if (clips is not null) b.ListRef(content); b.EndList(); b.End();
+                b.Obj(0x164); b.Begin(0x8a); b.List(0x144); devices(); b.EndList(); b.End();
+                b.Obj(0x165); b.Begin(0xab);
+                b.BareRef(0x1a4, volume);
+                b.Obj(0x1a5); Param(0x4c3, "PANORAMA", 0.0);
+                b.List(0xa5); sends(); b.EndList();
+                b.End();
+                b.Obj(0x897); b.Begin(0x241); b.Named(0x89b); output(); b.StrVal("361"); b.End();
+                b.End();
+            }
+            void ToMaster() => b.ListRef(master);
+            void SendToFx() { b.Begin(0x27c); b.Obj(0xab3); Param(0x4c2, "AMOUNT", 0.0); b.Ref(0xbd0, fx); b.End(); }
+            void Contents(params (string Name, Action Value)[] items)
+            {
+                b.Obj(0xa4); b.Begin(0xd3); b.Str(0x2b9, "CONTENTS");
+                b.List(0x20c);
+                foreach (var (_, value) in items) value();
+                b.EndList();
+                b.End();
+            }
+
+            root = b.Begin(0x2e);
+            b.Id(0xf);
+            b.Obj(0x29a6); Param(0x4c1, "TEMPO", 120.0);
+            b.Obj(0x4dd); b.Begin(0x1dd);
+            b.Id(0xf);
+            b.Str(0x15b, "Project");
+            b.List(0x4de);
+            {
+                // Sampler track
+                firstTrack = TrackStart("");
+                var volume = firstTrack + 4;   // the track, its view state, lane, target, then the volume
+                TrackEnd(volume, null, devices: () =>
+                {
+                    b.Begin(0xa3); b.Id(0xf);
+                    b.Obj(0x197); b.Begin(0x40);
+                    b.Str(0x12de, "Kick"); b.Str(0x9a, "Sampler"); b.Str(0x9b, "Bitwig"); b.Str(0x9c, "Synth"); b.U8(0x9d, 2);
+                    b.Uuid(0x99, sampler);
+                    Contents(("TRANSPOSE", () => Named(0x85, "TRANSPOSE", () => b.F64(0x136, 0))),
+                             ("SAMPLE", () => Named(0x212, "SAMPLE", () =>
+                             {
+                                 b.Obj(0x74c); b.Begin(0x210); b.Str(0x2b9, "SAMPLE");
+                                 b.Obj(0x4112); b.Begin(0x15eb);
+                                 b.Obj(0x748); b.Begin(0x4a9);
+                                 b.Str(0x129f, "Kick.wav");
+                                 b.Obj(0x129e); b.Begin(0x4a6);
+                                 b.Str(0x512, "Kick.wav");
+                                 b.Obj(0xd3b); FileRef(@"J:\samples\Kick.wav");
+                                 b.Obj(0x513); b.Begin(0x1e2); b.Blob(0x16, new byte[16]); b.End();
+                                 b.I16(0x17, 3856);
+                                 b.End();
+                                 b.I32(0x94, 44100); b.F64(0x95, 0.25); b.U8(0x96, 1);
+                                 b.End();
+                                 b.End();
+                                 b.U8(0x75c, 57); b.F64(0x75f, 0.25); b.F64(0x761, 0.25);
+                                 b.End();
+                             })));
+                    b.End();
+                    b.Str(0x199, "Kick");
+                    b.End();
+                    b.Begin(0xa3); b.Id(0xf);
+                    b.Obj(0x197); b.Begin(0x40); b.Str(0x9a, "Amp"); b.U8(0x9d, 0); b.Uuid(0x99, amp); b.End();
+                    b.End();
+                }, sends: () =>
+                {
+                    // The effect track is first written inside this send.
+                    b.Begin(0x27c); b.Obj(0xab3); Param(0x4c2, "AMOUNT", 0.0);
+                    b.Obj(0xbd0); fx = b.Begin(0x90); b.Id(0xf); b.Str(0x15b, "FX 1"); b.End();
+                    b.End();
+                }, output: () =>
+                {
+                    master = b.Begin(0x90);
+                    b.Id(0xf);
+                    b.Str(0x15b, "Master");
+                    b.Obj(0x164); b.Begin(0x8a); b.List(0x144); b.EndList(); b.End();
+                    b.Obj(0x165); b.Begin(0xab); b.Obj(0x1a4); Param(0x4c4, "VOLUME", 1.0); b.Obj(0x1a5); Param(0x4c3, "PANORAMA", 0.0); b.End();
+                    b.End();
+                });
+
+                // VST3 track: Note Transpose, Serum 2, a clip with two notes on key 63 and one on 60
+                var vst3 = TrackStart("");
+                TrackEnd(vst3 + 4, clips: () =>
+                {
+                    clip = b.Begin(0x47);
+                    b.F64(0x2af, 0); b.F64(0x26, 4);
+                    b.Obj(0x2ae9); b.Begin(0xec0);
+                    b.Obj(0x10e9); content = b.Begin(0xbf);
+                    b.Obj(0x49c); b.Begin(0x6cc);
+                    b.List(0x18cb);
+                    foreach (var (key, starts) in new[] { (63, new[] { 0.0, 2.0 }), (60, new[] { 1.0 }) })
+                    {
+                        b.Begin(0x42);
+                        b.List(0x21f);
+                        foreach (var at in starts)
+                        {
+                            b.Begin(0x66); b.F64(0x2af, at); b.F64(0x26, 0.25);
+                            b.Obj(0x288); b.Begin(0x29); b.Null(0xc33); b.End();
+                            b.F64(0xef, 0.79); b.F64(0xf0, 0.79);
+                            b.End();
+                        }
+                        b.EndList();
+                        b.U8(0xee, (byte)key);
+                        b.End();
+                    }
+                    b.EndList();
+                    b.End(); b.End(); b.End();
+                    b.Obj(0x2adb); b.Begin(0x267);
+                    b.Obj(0x992); b.Begin(0x58); b.F64(0x2af, 0); b.F64(0x26, 4); b.End();
+                    b.Obj(0x98c); b.Begin(0x269); b.F64(0x2af, 0); b.End();
+                    b.Obj(0x98d); b.Begin(0x268); b.F64(0x2af, 4); b.End();
+                    b.End();
+                    b.End();
+                }, devices: () =>
+                {
+                    b.Begin(0xa3); b.Id(0xf);
+                    b.Obj(0x197); b.Begin(0x40);
+                    b.Str(0x9a, "Note Transpose"); b.Str(0x9c, "Note FX"); b.U8(0x9d, 1); b.Uuid(0x99, noteTranspose);
+                    Contents(("COARSE", () => Named(0x189, "COARSE", () => b.U8(0x330, 3))),
+                             ("OCTAVES", () => Named(0xf7, "OCTAVES", () => b.U8(0x273, 3))));
+                    b.End();
+                    b.End();
+                    b.Begin(0x729); b.Id(0xf);
+                    b.Obj(0x197); b.Begin(ClsVst3);
+                    b.Str(0x12de, ""); b.Str(0x9a, "Serum 2"); b.Str(0x9b, "Xfer Records"); b.Str(0x9c, "Synth"); b.U8(0x9d, 2);
+                    b.Obj(0xc5a); b.Begin(0x2b4); b.List(0xc5b); FileRef(@"C:\Program Files\Common Files\VST3\Serum2.vst3"); b.EndList(); b.End();
+                    b.Str(0xbe5, "serum.vstpreset");
+                    b.List(0x1318); b.Begin(0x4e0); b.I32(0x1319, 2000003); b.End(); b.EndList();
+                    b.Obj(0x137c); b.Begin(0x4f3); b.List(0x8e0); b.EndList(); b.End();
+                    b.U8(0x1809, 1);
+                    b.Str(0xce4, "56534558667350736572756D20320000");
+                    b.Str(0xc5e, "2.0.16");
+                    b.End();
+                    b.End();
+                }, sends: SendToFx, output: ToMaster);
+
+                // VST2 track: Drumazon, with an output chain that sends to the effect track
+                var vst2 = TrackStart("");
+                TrackEnd(vst2 + 4, null, devices: () =>
+                {
+                    b.Begin(0x1a6); b.Id(0xf);
+                    b.Obj(0x197); b.Begin(0x1a5);
+                    b.Str(0x12de, ""); b.Str(0x9a, "Drumazon"); b.Str(0x9b, "D16 Group Audio Software"); b.Str(0x9c, "Synth"); b.U8(0x9d, 2);
+                    b.Obj(0x1b75); b.Begin(0x7b1); b.Str(0x1b72, "Bass Drum"); b.End();
+                    b.Obj(0xc5a); b.Begin(0x2b4); b.List(0xc5b); FileRef(@"C:\Program Files\Vstplugins\Drumazon.dll"); b.EndList(); b.End();
+                    b.Str(0xbe5, "drumazon.fxb");
+                    b.List(0x1318); b.EndList();
+                    b.Obj(0x137c); b.Begin(0x4f3); b.List(0x8e0);
+                    b.Begin(0x5a0); b.Str(0x2b9, "CHAIN0"); b.Id(0x2ab8);
+                    b.Obj(0x825); b.Begin(0x23a); b.Str(0x2b9, "MIXER");
+                    b.List(0xbd2); b.Begin(0x732); b.Str(0x2b9, "TRACK_SEND(96d49fae-f171-4587-b7dd-1202ce2a9915)"); b.End(); b.EndList();
+                    b.End();
+                    b.End();
+                    b.EndList(); b.End();
+                    b.U8(0x1809, 0);
+                    b.I32(0xce4, 1144278322);
+                    b.I32(0xc5e, 67074);
+                    b.End();
+                    b.End();
+                }, sends: SendToFx, output: ToMaster);
+            }
+            b.EndList();
+            b.List(0x4df); b.ListRef(fx); b.EndList();
+            b.BareRef(0x4e0, master);
+            // The arrangement's clip selection points at the template's clip.
+            b.Obj(0x2bfb); b.Begin(0xef9);
+            b.Obj(0x2d8b); b.Begin(0x60a); b.List(0x21f);
+            b.Begin(0x60b); b.F64(0x2af, 0); b.F64(0x26, 4); b.List(0x3f8b); b.ListRef(clip); b.EndList(); b.End();
+            b.EndList(); b.End();
+            b.End();
+            b.End(); // project group
+            // The project's per-user view state: the selected track.
+            b.Map(0x4d); b.MapKey("user"); b.Begin(0xe4);
+            b.Obj(0xee6); b.Begin(0x325); b.Obj(0xb5e); b.Begin(0x29e); b.BareRef(0xb5d, firstTrack); b.End(); b.End();
+            b.End(); b.EndMap();
+            b.End(); // root
+        }, zip: zip);
+    }
 }

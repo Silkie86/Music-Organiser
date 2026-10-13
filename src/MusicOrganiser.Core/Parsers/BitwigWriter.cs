@@ -25,14 +25,17 @@ public static partial class BitwigFormat
 
         var meta = new MemoryStream();
         w.Out = meta;
-        w.U32(4);
-        w.Str("meta");
-        foreach (var (key, type) in doc.MetaTypes)
+        if (doc.MetaEnd > 42)   // documents nested in metadata have none
         {
-            w.U32(1);
-            w.Str(key);
-            meta.WriteByte(type);
-            w.Value(type, doc.Meta.GetValueOrDefault(key));
+            w.U32(4);
+            w.Str("meta");
+            foreach (var (key, type) in doc.MetaTypes)
+            {
+                w.U32(1);
+                w.Str(key);
+                meta.WriteByte(type);
+                w.Value(type, doc.Meta.GetValueOrDefault(key));
+            }
         }
         meta.Write(doc.Raw, doc.MetaEnd, doc.BodyOffset - doc.MetaEnd);   // end marker and padding, as they were
 
@@ -57,96 +60,99 @@ public static partial class BitwigFormat
 
     /// <summary>
     /// A copy of <paramref name="original"/> and everything inside it, for adding another track
-    /// or device like it. Objects inside it that are also referenced from elsewhere (Bitwig
-    /// defines the master track inside the first track that routes to it) aren't copied: the
-    /// copy links to them. References inside the copy point at the copied objects. Instance
-    /// ids (field 0xf) get fresh values, and other fields holding the same ids follow them.
+    /// or device like it. What counts as inside is what can only be reached through the original:
+    /// objects the rest of the document also reaches (the master track a track routes to, which
+    /// Bitwig defines inside the first track) aren't copied, the copy links to them. References
+    /// inside the copy point at the copied objects. Ids (instances, tracks, chains; not device
+    /// types) get fresh values, and other fields holding the same ids follow them.
     /// </summary>
-    public static BwObject Clone(Document doc, BwObject original)
+    public static BwObject Clone(Document doc, BwObject original) => new Copier(doc, original).Copy(original);
+
+    /// <summary>
+    /// Copies objects into a document, for building a project out of a template's tracks and devices.
+    /// Everything the document's root reaches when it's made is shared: copies link to it rather than
+    /// copying it. So take the objects to copy out of the tree first (detach them), then copy them as
+    /// often as needed.
+    /// </summary>
+    public sealed class Copier
     {
-        // Who refers to what, across the whole document.
-        var referrers = new Dictionary<BwObject, List<BwObject>>(ReferenceEqualityComparer.Instance);
-        var seen = new HashSet<BwObject>(ReferenceEqualityComparer.Instance);
-        void Walk(BwObject o)
-        {
-            if (!seen.Add(o)) return;
-            foreach (var (_, v) in o.Fields)
-                foreach (var x in Values(v))
-                {
-                    if (x is BwRef or BwLink && o.Resolve(x) is { } t)
-                    {
-                        if (!referrers.TryGetValue(t, out var list)) referrers[t] = list = new();
-                        list.Add(o);
-                    }
-                    if (o.Resolve(x) is { } next) Walk(next);
-                }
-        }
-        if (doc.Root is not null) Walk(doc.Root);
+        readonly HashSet<BwObject> _shared;
 
-        // What the copy owns: objects written inside the original, unless something outside refers to them.
-        var inside = new HashSet<BwObject>(ReferenceEqualityComparer.Instance);
-        void Collect(BwObject o)
+        /// <param name="besides">An object still in the tree that will be copied: what's only reachable through it isn't shared.</param>
+        public Copier(Document doc, BwObject? besides = null)
         {
-            inside.Add(o);
-            foreach (var (_, v) in o.Fields)
-                foreach (var x in Values(v))
-                    if (x is BwObject child) Collect(child);
+            _shared = new HashSet<BwObject>(ReferenceEqualityComparer.Instance);
+            if (doc.Root is { } root) Reach(root, _shared, o => o == besides);
         }
-        Collect(original);
-        bool Shared(BwObject o) => o != original && referrers.TryGetValue(o, out var from) && from.Any(r => !inside.Contains(r));
-        var owned = new HashSet<BwObject>(ReferenceEqualityComparer.Instance);
-        void Own(BwObject o)
-        {
-            if (Shared(o)) return;
-            owned.Add(o);
-            foreach (var (_, v) in o.Fields)
-                foreach (var x in Values(v))
-                    if (x is BwObject child) Own(child);
-        }
-        Own(original);
 
-        var ids = new Dictionary<Guid, Guid>();
-        foreach (var o in owned)
-            if (o[0xf] is Guid g) ids.TryAdd(g, Guid.NewGuid());
-
-        var copies = new Dictionary<BwObject, BwObject>(ReferenceEqualityComparer.Instance);
-        BwObject Copy(BwObject o)
+        static void Reach(BwObject start, HashSet<BwObject> seen, Func<BwObject, bool> stop)
         {
-            if (copies.TryGetValue(o, out var done)) return done;
-            var c = new BwObject { Class = o.Class, Table = o.Table };
-            copies[o] = c;
-            for (var i = 0; i < o.Fields.Count; i++)
+            var todo = new Stack<BwObject>();
+            todo.Push(start);
+            while (todo.Count > 0)
             {
-                var (id, v) = o.Fields[i];
-                c.Fields.Add((id, Map(v)));
-                if (i < o.Types.Count) c.Types.Add(o.Types[i]);
+                var o = todo.Pop();
+                if (stop(o) || !seen.Add(o)) continue;
+                foreach (var (_, v) in o.Fields)
+                    foreach (var x in Values(v))
+                        if (o.Resolve(x) is { } next) todo.Push(next);
             }
-            return c;
         }
-        object? Item(object? x)
+
+        /// <summary>Whether copies link to this object rather than copying it.</summary>
+        public bool Shares(BwObject o) => _shared.Contains(o);
+
+        public BwObject Copy(BwObject original)
         {
-            if (x is null) return null;
-            if (x is BwObject child) return owned.Contains(child) ? Copy(child) : new BwLink(child);
-            if (x is BwRef or BwLink && original.Resolve(x) is { } t)
-                return new BwLink(owned.Contains(t) ? Copy(t) : t);
-            return x;
+            var owned = new HashSet<BwObject>(ReferenceEqualityComparer.Instance);
+            Reach(original, owned, _shared.Contains);
+
+            // Every id the copied objects carry is theirs (instances, tracks, chains), except a device's type (0x99).
+            var ids = new Dictionary<Guid, Guid>();
+            foreach (var o in owned)
+                foreach (var (id, v) in o.Fields)
+                    if (v is Guid g && id != 0x99) ids.TryAdd(g, Guid.NewGuid());
+
+            var copies = new Dictionary<BwObject, BwObject>(ReferenceEqualityComparer.Instance);
+            BwObject Copy(BwObject o)
+            {
+                if (copies.TryGetValue(o, out var done)) return done;
+                var c = new BwObject { Class = o.Class, Table = o.Table };
+                copies[o] = c;
+                for (var i = 0; i < o.Fields.Count; i++)
+                {
+                    var (id, v) = o.Fields[i];
+                    c.Fields.Add((id, Map(v)));
+                    if (i < o.Types.Count) c.Types.Add(o.Types[i]);
+                }
+                return c;
+            }
+            object? Item(object? x)
+            {
+                if (x is null) return null;
+                if (x is BwObject child) return owned.Contains(child) ? Copy(child) : new BwLink(child);
+                if (x is BwRef or BwLink && original.Resolve(x) is { } t)
+                    return new BwLink(owned.Contains(t) ? Copy(t) : t);
+                return x;
+            }
+            object? Map(object? v) => v switch
+            {
+                BwObject or BwRef or BwLink => Item(v),
+                List<object?> list => list.Select(Item).ToList(),
+                Dictionary<string, object?> map => map.ToDictionary(kv => kv.Key, kv => Item(kv.Value), StringComparer.Ordinal),
+                KeyValuePair<object?, string> named => new KeyValuePair<object?, string>(Item(named.Key), named.Value),
+                Guid g => ids.GetValueOrDefault(g, g),
+                int[] a => a.ToArray(),
+                float[] a => a.ToArray(),
+                List<string> l => l.ToList(),
+                _ => v,
+            };
+            return Copy(original);
         }
-        object? Map(object? v) => v switch
-        {
-            BwObject or BwRef or BwLink => Item(v),
-            List<object?> list => list.Select(Item).ToList(),
-            Dictionary<string, object?> map => map.ToDictionary(kv => kv.Key, kv => Item(kv.Value), StringComparer.Ordinal),
-            KeyValuePair<object?, string> named => new KeyValuePair<object?, string>(Item(named.Key), named.Value),
-            Guid g => ids.GetValueOrDefault(g, g),
-            int[] a => a.ToArray(),
-            float[] a => a.ToArray(),
-            List<string> l => l.ToList(),
-            _ => v,
-        };
-        return Copy(original);
     }
 
-    static IEnumerable<object?> Values(object? v) => v switch
+    /// <summary>The values a field holds: a list's or map's items, a named reference's object, or the value itself.</summary>
+    internal static IEnumerable<object?> Values(object? v) => v switch
     {
         List<object?> list => list,
         Dictionary<string, object?> map => map.Values,
@@ -188,9 +194,11 @@ public static partial class BitwigFormat
 
         int _written;
 
+        bool Written(object r) => _numbers.TryGetValue(Target(r), out var n) && n <= _written;
+
         /// <summary>A reference's number; the object must already have been written.</summary>
-        int WrittenNumberOf(object r) => _numbers.TryGetValue(Target(r), out var n) && n <= _written
-            ? n : throw new InvalidDataException("reference to an object that isn't written before it");
+        int WrittenNumberOf(object r) => Written(r)
+            ? _numbers[Target(r)] : throw new InvalidDataException("reference to an object that isn't written before it");
 
         /// <summary>
         /// Numbers every object in the order it will be written: in full where it's first reached
@@ -200,8 +208,12 @@ public static partial class BitwigFormat
         {
             _numbers[o] = _numbers.Count + 1;
             for (var i = 0; i < o.Fields.Count; i++)
-                foreach (var slot in Slots(TypeAt(o, i), o.Fields[i].Value))
+            {
+                var (type, v) = (TypeAt(o, i), o.Fields[i].Value);
+                // A bare reference to an object not reached yet (its first home was edited away) is where it's written now.
+                foreach (var slot in type == 0x0b ? new[] { v } : Slots(type, v))
                     if (slot is not null && !_numbers.ContainsKey(Target(slot))) Number(Target(slot));
+            }
         }
 
         static byte TypeAt(BwObject o, int i) => i < o.Types.Count ? o.Types[i] : TypeOf(o.Fields[i].Value);
@@ -226,6 +238,7 @@ public static partial class BitwigFormat
                 var (id, v) = o.Fields[i];
                 U32(id);
                 var type = TypeAt(o, i);
+                if (type == 0x0b && v is not null && !Written(v)) type = 0x09;   // first reached here, so written in full, as Bitwig does
                 Out.WriteByte(type);
                 Value(type, v);
             }

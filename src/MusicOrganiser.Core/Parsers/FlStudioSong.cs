@@ -6,7 +6,8 @@ namespace MusicOrganiser.Core.Parsers;
 /// <param name="Format">"VST2", "VST3", or "FL" for FL Studio's own plugins.</param>
 /// <param name="DeviceId">How other DAWs identify the plugin: the VST2 unique id as a number, or the VST3 class id.</param>
 /// <param name="State">The plugin's settings as a file the plugin can load (.fxp or .vstpreset), when there is one.</param>
-public sealed record FlPlugin(string Name, string Vendor, string Format, string DeviceId, PresetBlob? State)
+/// <param name="Path">Where the plugin was installed on the PC that saved the project (.dll or .vst3).</param>
+public sealed record FlPlugin(string Name, string Vendor, string Format, string DeviceId, PresetBlob? State, string Path = "")
 {
     public bool Native => Format == "FL";
 }
@@ -41,7 +42,8 @@ public sealed record FlSong(string Title, int Ppq, double Tempo, IReadOnlyList<F
 
 public sealed partial class FlStudioReader
 {
-    const int EvChannelInsert = 22;             // BYTE: the mixer insert a channel is routed to
+    const int EvChannelInsert = 22;             // BYTE: the mixer insert a channel is routed to (older versions)
+    const int EvChannelRoute = 104;             // WORD: the mixer insert a channel is routed to (seen from FL 20 to 25)
     const int EvRootNote = 135;                 // DWORD: the channel's root key as a MIDI note; absent when it's C5 (60)
     const int EvChannelLevels = Data + 11;      // 219: i32 pan (0..12800), volume (0..12800), pitch in cents
     const int EvAutomationLink = Data + 19;     // 227: which control an automation clip moves
@@ -80,6 +82,7 @@ public sealed partial class FlStudioReader
         var pendingInternal = "";
         var pluginName = "";
         var insert = -1;
+        var nextInsertName = "";
 
         foreach (var e in flp.Events)
         {
@@ -92,7 +95,7 @@ public sealed partial class FlStudioReader
                     channel = (int)e.Int; inMixer = false; channelHasPlugin = false;
                     if (!order.Contains(channel.Value)) order.Add(channel.Value);
                     break;
-                case EvChannelInsert when channel is not null && !inMixer: routes[channel.Value] = (int)e.Int; break;
+                case EvChannelInsert or EvChannelRoute when channel is not null && !inMixer: routes[channel.Value] = (int)e.Int; break;
                 case EvChannelType when channel is not null && !inMixer: types[channel.Value] = (int)e.Int; break;
                 case EvRootNote when channel is not null && !inMixer && e.Int <= 127: roots[channel.Value] = (int)e.Int; break;
                 case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span) is { } lv:
@@ -106,8 +109,14 @@ public sealed partial class FlStudioReader
                 case EvSamplePath when channel is not null && !inMixer:
                     if (flp.Str(e) is { Length: > 0 } sample) samples[channel.Value] = ResolveSamplePath(sample, path);
                     break;
-                case EvInsertFlags: inMixer = true; insert++; break;
-                case EvInsertName when insert >= 0: insertNames[insert] = flp.Str(e); break;
+                case EvInsertFlags:
+                    inMixer = true;
+                    insert++;
+                    if (nextInsertName.Length > 0) insertNames[insert] = nextInsertName;
+                    nextInsertName = "";
+                    break;
+                // An insert's name (with its colour and icon) comes just before the flags that start it.
+                case EvInsertName: nextInsertName = flp.Str(e); break;
                 case EvMixerSlot: inMixer = true; break;
                 case EvPluginInternal:
                     pendingInternal = flp.Str(e);
@@ -249,6 +258,6 @@ public sealed partial class FlStudioReader
             state = WrapperPreset(f, raw, displayName.Length > 0 ? displayName : name, name);
             if (state.Extension is not (".fxp" or ".vstpreset")) state = null;   // raw states other DAWs can't load
         }
-        return new FlPlugin(name, WrapperText(f, VstVendor), isVst3 ? "VST3" : "VST2", id, state);
+        return new FlPlugin(name, WrapperText(f, VstVendor), isVst3 ? "VST3" : "VST2", id, state, WrapperText(f, VstPath));
     }
 }

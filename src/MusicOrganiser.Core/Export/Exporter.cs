@@ -41,6 +41,27 @@ public static class Exporter
         return (file, result.Notes, result.Setup);
     }
 
+    /// <summary>
+    /// An FL Studio project as a native Bitwig project, built from <paramref name="template"/> (a project
+    /// Bitwig saved; see <see cref="BitwigProject"/>). It's saved as Song/Song.bwproject, the layout Bitwig
+    /// expects, so it opens without asking for a project folder. What couldn't come across is returned and
+    /// saved next to it as "... - not carried over.txt".
+    /// </summary>
+    public static (string File, IReadOnlyList<string> LeftOut) BitwigFromFl(string project, string exportRoot, byte[] template)
+    {
+        var name = TextScan.SafeFileName(Path.GetFileNameWithoutExtension(project));
+        var result = BitwigProject.FromFl(Readers.FlStudio.ReadSong(project), template);
+        var dir = Path.Combine(OutDir(exportRoot, project, "Bitwig"), name);
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, name + ".bwproject");
+        File.WriteAllBytes(file, result.Bytes);
+        var notesFile = Path.Combine(dir, name + " - not carried over.txt");
+        if (result.Notes.Count > 0)
+            File.WriteAllLines(notesFile, [$"What didn't come across from FL Studio to Bitwig for {name}", "", .. result.Notes.Select(n => "  " + n)]);
+        else if (File.Exists(notesFile)) File.Delete(notesFile);
+        return (file, result.Notes);
+    }
+
     /// <summary>One MIDI file per channel (FL Studio) or track, named after it and what plays it.</summary>
     public static ExportResult Midi(IProjectReader reader, string project, string exportRoot, double? tempo) =>
         Midi(reader.ExtractChannels(project), project, exportRoot, tempo);
