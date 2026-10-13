@@ -24,7 +24,7 @@ public class MidiRenderTests
     }
 
     [Fact]
-    public void ASamplerChannelPlaysItsOwnSamplePitchedFromC5()
+    public void ASamplerChannelPlaysItsOwnSamplePitchedFromItsRootKey()
     {
         var dir = Fixtures.TempDir();
         var wav = Path.Combine(dir, "pluck.wav");
@@ -40,6 +40,13 @@ public class MidiRenderTests
         Assert.InRange(Sounding(atRoot.Audio), 0.8, 1.05);
         Assert.InRange(Sounding(octaveUp.Audio), 0.4, 0.55);
         Assert.StartsWith("its sample", atRoot.Voices[0]);
+
+        // With the root key moved to C4 (48), C5 is an octave up; pitched down an octave from there, it's back to normal.
+        var c5 = new NoteEvent(0, 24, 60, 100);
+        var rootC4 = MidiRender.Render([new MidiChannel("Pluck", "", 96, [c5], SamplePath: wav, RootKey: 48)], 120, "song.flp");
+        var pitchedDown = MidiRender.Render([new MidiChannel("Pluck", "", 96, [c5], SamplePath: wav, RootKey: 48, PitchCents: -1200)], 120, "song.flp");
+        Assert.InRange(Sounding(rootC4.Audio), 0.4, 0.55);
+        Assert.InRange(Sounding(pitchedDown.Audio), 0.8, 1.05);
     }
 
     [Fact]

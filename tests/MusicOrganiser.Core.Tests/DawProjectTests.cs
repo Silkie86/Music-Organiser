@@ -42,10 +42,75 @@ public class DawProjectTests
     }
 
     [Fact]
+    public void ReadsRootKeyPitchLevelsAndAutomationFromFl25()
+    {
+        var path = Fixtures.FlStudio25Automation(Fixtures.TempDir());
+        var song = Readers.FlStudio.ReadSong(path);
+
+        Assert.Equal(["Snare", "Serum"], song.Channels.Select(c => c.Name));   // automation clips aren't channels here
+        var snare = song.Channels[0];
+        Assert.Equal((57, -200, 1.0, 0.25), (snare.RootKey, snare.PitchCents, snare.Volume, snare.Pan));
+        Assert.Equal(4 * 96, snare.Notes[0].Start);   // the pattern sits in bar 2 of the FL 25 playlist
+
+        var volume = song.Automation.Single(a => a.Control == FlControl.Volume);
+        Assert.Equal((0, "Snare - Channel volume"), (volume.Channel, volume.Name));
+        Assert.Equal([new FlPoint(4, 0), new FlPoint(8, 1)], volume.Points);
+
+        // Points are stored as steps from the one before: 0, +2, +2.
+        var cutoff = song.Automation.Single(a => a.Control == FlControl.PluginParameter);
+        Assert.Equal((2, 205), (cutoff.Channel, cutoff.Parameter));
+        Assert.Equal([0, 2, 4], cutoff.Points.Select(p => p.Beat));
+        Assert.Equal([0.2, 1, 0.5], cutoff.Points.Select(p => p.Value));
+
+        var midi = Readers.FlStudio.ExtractChannels(path).Single(c => c.Name == "Snare");
+        Assert.Equal((57, -200), (midi.RootKey, midi.PitchCents));
+    }
+
+    [Fact]
+    public void CarriesSamplerSetupLevelsAndAutomationIntoTheDawProject()
+    {
+        var dir = Fixtures.TempDir();
+        var (file, leftOut, setup) = Exporter.DawProjectFromFl(Fixtures.FlStudio25Automation(dir), Path.Combine(dir, "out"));
+        Assert.Empty(leftOut);
+        Assert.Equal(@"Snare: in its Sampler, load C:\Samples\Snare 01.wav, then set Root key to A2 (A4 in FL Studio), tune it -2 semitones.",
+                     Assert.Single(setup));
+        Assert.Contains("A2", File.ReadAllText(Path.Combine(Path.GetDirectoryName(file)!, "Automated - Bitwig setup.txt")));
+
+        var (project, zip) = Open(file);
+        using (zip)
+        {
+            var root = project.Root!;
+            XElement TrackNamed(string name) => root.Element("Structure")!.Elements("Track").Single(t => (string?)t.Attribute("name") == name);
+            XElement LanesOf(XElement track) => root.Descendants("Lanes").Single(l => (string?)l.Attribute("track") == (string?)track.Attribute("id"));
+            string Id(XElement? e) => (string)e!.Attribute("id")!;
+
+            var snare = TrackNamed("Snare");
+            var sampler = snare.Descendants("BuiltinDevice").Single();
+            Assert.Equal(("468bc14b-b2e7-45a1-9666-e83117fe404e", "Sampler"), ((string?)sampler.Attribute("deviceID"), (string?)sampler.Attribute("deviceName")));
+            Assert.Contains("Root key to A2", (string?)snare.Attribute("comment"));
+            var channel = snare.Element("Channel")!;
+            Assert.Equal("0.25", (string?)channel.Element("Pan")!.Attribute("value"));
+            Assert.Equal("1.6384", (string?)channel.Element("Volume")!.Attribute("value"));   // FL's 100% is above its 78% default
+
+            var volume = LanesOf(snare).Element("Points")!;
+            Assert.Equal(Id(channel.Element("Volume")), (string?)volume.Element("Target")!.Attribute("parameter"));
+            Assert.Equal([("4", "0"), ("8", "1.6384")],
+                         volume.Elements("RealPoint").Select(p => ((string)p.Attribute("time")!, (string)p.Attribute("value")!)));
+
+            var serum = TrackNamed("Serum");
+            var param = serum.Descendants("RealParameter").Single();
+            Assert.Equal("205", (string?)param.Attribute("parameterID"));
+            var cutoff = LanesOf(serum).Element("Points")!;
+            Assert.Equal(Id(param), (string?)cutoff.Element("Target")!.Attribute("parameter"));
+            Assert.Equal(["0", "2", "4"], cutoff.Elements("RealPoint").Select(p => (string)p.Attribute("time")!));
+        }
+    }
+
+    [Fact]
     public void WritesADawProjectBitwigCanOpen()
     {
         var dir = Fixtures.TempDir();
-        var (file, leftOut) = Exporter.DawProjectFromFl(Fixtures.FlStudio25Project(dir, withNotes: true), Path.Combine(dir, "out"));
+        var (file, leftOut, _) = Exporter.DawProjectFromFl(Fixtures.FlStudio25Project(dir, withNotes: true), Path.Combine(dir, "out"));
         Assert.EndsWith("Shuffle.dawproject", file);
 
         var (project, zip) = Open(file);
@@ -79,7 +144,7 @@ public class DawProjectTests
     public void PlacesNotesInBeatsAndRoutesThroughInserts()
     {
         var dir = Fixtures.TempDir();
-        var (file, leftOut) = Exporter.DawProjectFromFl(Fixtures.FlStudioProject(dir), Path.Combine(dir, "out"));
+        var (file, leftOut, _) = Exporter.DawProjectFromFl(Fixtures.FlStudioProject(dir), Path.Combine(dir, "out"));
         var (project, zip) = Open(file);
         using (zip)
         {

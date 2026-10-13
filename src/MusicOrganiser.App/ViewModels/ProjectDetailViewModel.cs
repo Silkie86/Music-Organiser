@@ -164,8 +164,14 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         try
         {
             var path = Item.Path;
-            var (file, leftOut) = await Task.Run(() => Exporter.DawProjectFromFl(path, ExportRoot));
+            var (file, leftOut, setup) = await Task.Run(() => Exporter.DawProjectFromFl(path, ExportRoot));
             Message = $"Saved {Path.GetFileName(file)}. In Bitwig, use File > Open and pick it." +
+                      (setup.Count switch
+                      {
+                          0 => "",
+                          1 => " One Sampler track needs its sample and root key set; the steps are in the setup notes saved next to it.",
+                          var n => $" {n} Sampler tracks need their sample and root key set; the steps are in the setup notes saved next to it.",
+                      }) +
                       (leftOut.Count == 0 ? "" : $" Not carried over yet: {string.Join("; ", leftOut.Take(4))}{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more" : "")}.");
             Shell.Reveal(file);
         }

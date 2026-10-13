@@ -404,6 +404,8 @@ public sealed partial class FlStudioReader : IProjectReader
         var sources = new Dictionary<int, string>();
         var plugins = new Dictionary<int, string>();
         var samples = new Dictionary<int, string>();
+        var roots = new Dictionary<int, int>();
+        var pitches = new Dictionary<int, int>();
         var order = new List<int>();
         var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
         ReadOnlyMemory<byte>? playlist = null;
@@ -454,6 +456,10 @@ public sealed partial class FlStudioReader : IProjectReader
                         samples[channel.Value] = ResolveSamplePath(sample, path);
                     }
                     break;
+                case EvRootNote when channel is not null && !inMixer && e.Int <= 127: roots[channel.Value] = (int)e.Int; break;
+                case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span) is { } lv:
+                    pitches[channel.Value] = lv.Pitch;
+                    break;
                 case EvPatternNew: pattern = (int)e.Int; break;
                 case EvPatternNotes when pattern is not null: rawNotes.Add((pattern.Value, e.Payload)); break;
                 case EvPlaylist when playlist is null: playlist = e.Payload; break;
@@ -465,7 +471,8 @@ public sealed partial class FlStudioReader : IProjectReader
         return order.Union(notes.Keys).Where(notes.ContainsKey)
             .Select(ch => new MidiChannel(names.GetValueOrDefault(ch, $"Channel {ch + 1}"), sources.GetValueOrDefault(ch, ""), flp.Ppq,
                                           notes[ch].OrderBy(n => n.Start).ThenBy(n => n.Key).ToList(),
-                                          plugins.GetValueOrDefault(ch, ""), samples.GetValueOrDefault(ch, "")))
+                                          plugins.GetValueOrDefault(ch, ""), samples.GetValueOrDefault(ch, ""),
+                                          roots.GetValueOrDefault(ch, DefaultRoot), pitches.GetValueOrDefault(ch)))
             .ToList();
     }
 
@@ -515,15 +522,22 @@ public sealed partial class FlStudioReader : IProjectReader
         return notes;
     }
 
+    /// <summary>A clip in the playlist, in ticks. <see cref="Index"/> above 20480 is a pattern (index - 20480); otherwise a channel's clip.</summary>
+    readonly record struct PlaylistItem(int Index, long At, long Length, long From);
+
+    /// <summary>Pattern clips in the playlist: (pattern, position, length, offset into the pattern).</summary>
+    static List<(int Pattern, long At, long Length, long From)> PatternItems(ReadOnlySpan<byte> d) =>
+        PlaylistItems(d).Where(i => i.Index > PatternBase).Select(i => (i.Index - PatternBase, i.At, i.Length, i.From)).ToList();
+
     /// <summary>
-    /// Pattern clips in the playlist: (pattern, position, length, offset into the pattern).
-    /// FL 9 onwards writes 32-byte items (60 from FL 21): u32 position, u16 pattern base (20480),
-    /// u16 item index, u32 length, ..., i32 start offset at 24 (-1 = none). Older layouts aren't read.
+    /// Clips in the playlist. FL 9 onwards writes 32-byte items (60 from FL 21, 80 from FL 25):
+    /// u32 position, u16 pattern base (20480), u16 item index, u32 length, ..., start offset at 24
+    /// (an integer before FL 21, a float since; -1 = none). Older layouts aren't read.
     /// </summary>
-    static List<(int Pattern, long At, long Length, long From)> PatternItems(ReadOnlySpan<byte> d)
+    static List<PlaylistItem> PlaylistItems(ReadOnlySpan<byte> d)
     {
-        var items = new List<(int, long, long, long)>();
-        foreach (var size in new[] { 60, 32 })
+        var items = new List<PlaylistItem>();
+        foreach (var size in new[] { 80, 60, 32 })
         {
             if (d.Length == 0 || d.Length % size != 0) continue;
             var ok = true;
@@ -531,16 +545,20 @@ public sealed partial class FlStudioReader : IProjectReader
                 ok = BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 4)..]) == PatternBase;
             if (!ok) continue;
             for (var off = 0; off + size <= d.Length; off += size)
-            {
-                var index = BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 6)..]);
-                if (index <= PatternBase) continue;   // audio or automation clip
-                var from = BinaryPrimitives.ReadInt32LittleEndian(d[(off + 24)..]);
-                items.Add((index - PatternBase, BinaryPrimitives.ReadUInt32LittleEndian(d[off..]),
-                           BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), Math.Max(0, from)));
-            }
+                items.Add(new PlaylistItem(BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 6)..]), BinaryPrimitives.ReadUInt32LittleEndian(d[off..]),
+                                           BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), ItemOffset(d[(off + 24)..])));
             break;
         }
         return items;
+    }
+
+    /// <summary>A clip's start offset in ticks, written as a float or an integer depending on FL's version; none is 0.</summary>
+    static long ItemOffset(ReadOnlySpan<byte> d)
+    {
+        var f = BinaryPrimitives.ReadSingleLittleEndian(d);
+        if (f >= 1 && f < 1e9) return (long)f;
+        var i = BinaryPrimitives.ReadInt32LittleEndian(d);
+        return i is > 0 and < 1_000_000_000 ? i : 0;
     }
 
     /// <summary>

@@ -16,15 +16,29 @@ public static class Exporter
 
     /// <summary>
     /// An FL Studio project as a DAWproject file Bitwig can open: tracks, notes, plugins with their
-    /// settings and the mixer's effects. Returns the file and what couldn't come across.
+    /// settings, the mixer's effects and automation. Returns the file, what couldn't come across, and
+    /// the steps left to do in Bitwig, which are also saved next to it as "... - Bitwig setup.txt".
     /// </summary>
-    public static (string File, IReadOnlyList<string> LeftOut) DawProjectFromFl(string project, string exportRoot)
+    public static (string File, IReadOnlyList<string> LeftOut, IReadOnlyList<string> Setup) DawProjectFromFl(string project, string exportRoot)
     {
         var name = Path.GetFileNameWithoutExtension(project);
         var result = DawProject.FromFl(Readers.FlStudio.ReadSong(project), name);
-        var file = Path.Combine(OutDir(exportRoot, project, "DAWproject"), TextScan.SafeFileName(name) + ".dawproject");
+        var dir = OutDir(exportRoot, project, "DAWproject");
+        var file = Path.Combine(dir, TextScan.SafeFileName(name) + ".dawproject");
         File.WriteAllBytes(file, result.Bytes);
-        return (file, result.Notes);
+        var setupFile = Path.Combine(dir, TextScan.SafeFileName(name) + " - Bitwig setup.txt");
+        if (result.Setup.Count > 0 || result.Notes.Count > 0)
+        {
+            var lines = new List<string> { $"Finishing {name} in Bitwig", "" };
+            if (result.Setup.Count > 0)
+                lines.AddRange(["Sampler tracks: DAWproject can't carry a Sampler's sample or root key, so set them here.",
+                                .. result.Setup.Select(s => "  " + s), ""]);
+            if (result.Notes.Count > 0)
+                lines.AddRange(["Not carried over:", .. result.Notes.Select(n => "  " + n)]);
+            File.WriteAllLines(setupFile, lines);
+        }
+        else if (File.Exists(setupFile)) File.Delete(setupFile);
+        return (file, result.Notes, result.Setup);
     }
 
     /// <summary>One MIDI file per channel (FL Studio) or track, named after it and what plays it.</summary>

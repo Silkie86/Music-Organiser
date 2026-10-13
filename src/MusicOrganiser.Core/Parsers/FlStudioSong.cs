@@ -11,18 +11,48 @@ public sealed record FlPlugin(string Name, string Vendor, string Format, string 
     public bool Native => Format == "FL";
 }
 
-/// <summary>A channel in the Channel Rack: what plays it, which mixer insert it feeds, and its notes across the song.</summary>
-public sealed record FlChannel(int Index, string Name, FlPlugin? Instrument, string Sample, int Insert, IReadOnlyList<NoteEvent> Notes);
+/// <summary>
+/// A channel in the Channel Rack: what plays it, which mixer insert it feeds, and its notes across the song.
+/// <paramref name="RootKey"/> is the MIDI note the sample plays at its own pitch (60, FL's C5, unless changed);
+/// <paramref name="PitchCents"/> the channel's pitch knob. Volume and pan are FL's 0..1 knob positions.
+/// </summary>
+public sealed record FlChannel(int Index, string Name, FlPlugin? Instrument, string Sample, int Insert, IReadOnlyList<NoteEvent> Notes,
+                               int RootKey = FlStudioReader.DefaultRoot, int PitchCents = 0,
+                               double Volume = FlStudioReader.DefaultVolume, double Pan = 0.5);
+
+/// <summary>What an automation clip moves.</summary>
+public enum FlControl { Volume, Pan, Pitch, PluginParameter, Other }
+
+/// <summary>A point on an automation curve: beats from the start of the song, and the value (0..1).</summary>
+public readonly record struct FlPoint(double Beat, double Value);
+
+/// <summary>
+/// An automation clip's curve across the song, as placed in the playlist. It moves <paramref name="Control"/>
+/// on <paramref name="Channel"/>; for a plugin parameter, <paramref name="Parameter"/> is its index.
+/// </summary>
+public sealed record FlAutomation(string Name, int Channel, FlControl Control, int Parameter, IReadOnlyList<FlPoint> Points);
 
 /// <summary>A mixer insert (0 is the master) and its effects in slot order.</summary>
 public sealed record FlInsert(int Index, string Name, IReadOnlyList<FlPlugin> Effects);
 
 /// <summary>An FL Studio project laid out for moving to another DAW.</summary>
-public sealed record FlSong(string Title, int Ppq, double Tempo, IReadOnlyList<FlChannel> Channels, IReadOnlyList<FlInsert> Inserts);
+public sealed record FlSong(string Title, int Ppq, double Tempo, IReadOnlyList<FlChannel> Channels, IReadOnlyList<FlInsert> Inserts,
+                           IReadOnlyList<FlAutomation> Automation);
 
 public sealed partial class FlStudioReader
 {
     const int EvChannelInsert = 22;             // BYTE: the mixer insert a channel is routed to
+    const int EvRootNote = 135;                 // DWORD: the channel's root key as a MIDI note; absent when it's C5 (60)
+    const int EvChannelLevels = Data + 11;      // 219: i32 pan (0..12800), volume (0..12800), pitch in cents
+    const int EvAutomationLink = Data + 19;     // 227: which control an automation clip moves
+    const int EvAutomationPoints = Data + 26;   // 234: an automation clip's points
+    const int ChannelTypeAutomation = 5;
+    const double LevelsFull = 12800;
+
+    /// <summary>FL Studio's default root key, C5 (MIDI 60).</summary>
+    public const int DefaultRoot = 60;
+    /// <summary>FL Studio's default channel volume, 78% (10000 of 12800).</summary>
+    public const double DefaultVolume = 10000 / LevelsFull;
 
     /// <summary>Reads what's needed to rebuild the song elsewhere: channels, their plugins and notes, and the mixer.</summary>
     public FlSong ReadSong(string path)
@@ -37,6 +67,11 @@ public sealed partial class FlStudioReader
         var instruments = new Dictionary<int, FlPlugin>();
         var insertNames = new Dictionary<int, string>();
         var effects = new SortedDictionary<int, List<FlPlugin>>();
+        var roots = new Dictionary<int, int>();
+        var levels = new Dictionary<int, (double Pan, double Volume, int Pitch)>();
+        var types = new Dictionary<int, int>();
+        var curves = new Dictionary<int, List<FlPoint>>();
+        var links = new List<(int Clip, uint Target)>();
         var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
         ReadOnlyMemory<byte>? playlist = null;
         int? channel = null, pattern = null;
@@ -58,9 +93,18 @@ public sealed partial class FlStudioReader
                     if (!order.Contains(channel.Value)) order.Add(channel.Value);
                     break;
                 case EvChannelInsert when channel is not null && !inMixer: routes[channel.Value] = (int)e.Int; break;
+                case EvChannelType when channel is not null && !inMixer: types[channel.Value] = (int)e.Int; break;
+                case EvRootNote when channel is not null && !inMixer && e.Int <= 127: roots[channel.Value] = (int)e.Int; break;
+                case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span) is { } lv:
+                    levels[channel.Value] = lv;
+                    break;
+                case EvAutomationPoints when channel is not null && !inMixer: curves[channel.Value] = AutomationPoints(e.Payload.Span); break;
+                case EvAutomationLink when e.Payload.Length >= 12:
+                    links.Add((BinaryPrimitives.ReadUInt16LittleEndian(e.Payload.Span[2..]), BinaryPrimitives.ReadUInt32LittleEndian(e.Payload.Span[8..])));
+                    break;
                 case EvChannelNameOld when channel is not null && !inMixer: names.TryAdd(channel.Value, flp.Str(e)); break;
                 case EvSamplePath when channel is not null && !inMixer:
-                    if (flp.Str(e) is { Length: > 0 } sample) samples[channel.Value] = sample;
+                    if (flp.Str(e) is { Length: > 0 } sample) samples[channel.Value] = ResolveSamplePath(sample, path);
                     break;
                 case EvInsertFlags: inMixer = true; insert++; break;
                 case EvInsertName when insert >= 0: insertNames[insert] = flp.Str(e); break;
@@ -93,14 +137,98 @@ public sealed partial class FlStudioReader
 
         var notes = PlaceNotes(flp, rawNotes, playlist, order.ToHashSet());
         var channels = order
-            .Select(ch => new FlChannel(ch, names.GetValueOrDefault(ch, $"Channel {ch + 1}"), instruments.GetValueOrDefault(ch),
-                                        samples.GetValueOrDefault(ch, ""), routes.GetValueOrDefault(ch),
-                                        notes.TryGetValue(ch, out var n) ? n.OrderBy(x => x.Start).ThenBy(x => x.Key).ToList() : []))
+            .Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation)
+            .Select(ch =>
+            {
+                var lv = levels.GetValueOrDefault(ch, (Pan: 0.5, Volume: DefaultVolume, Pitch: 0));
+                return new FlChannel(ch, names.GetValueOrDefault(ch, $"Channel {ch + 1}"), instruments.GetValueOrDefault(ch),
+                                     samples.GetValueOrDefault(ch, ""), routes.GetValueOrDefault(ch),
+                                     notes.TryGetValue(ch, out var n) ? n.OrderBy(x => x.Start).ThenBy(x => x.Key).ToList() : [],
+                                     roots.GetValueOrDefault(ch, DefaultRoot), lv.Pitch, lv.Volume, lv.Pan);
+            })
             .ToList();
+        var automation = PlaceAutomation(links, curves, names, playlist, flp.Ppq);
         var inserts = effects.Keys.Union(insertNames.Keys).Union(channels.Select(c => c.Insert)).Distinct().Order()
             .Select(i => new FlInsert(i, insertNames.GetValueOrDefault(i, ""), effects.GetValueOrDefault(i) ?? []))
             .ToList();
-        return new FlSong(title, flp.Ppq, tempo ?? 140, channels, inserts);
+        return new FlSong(title, flp.Ppq, tempo ?? 140, channels, inserts, automation);
+    }
+
+    /// <summary>A channel's levels (event 219): pan and volume as 0..1 knob positions, and pitch in cents.</summary>
+    static (double Pan, double Volume, int Pitch)? Levels(ReadOnlySpan<byte> d) =>
+        d.Length < 12 ? null
+        : (Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d) / LevelsFull, 0, 1),
+           Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[4..]) / LevelsFull, 0, 1),
+           Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[8..]), -4800, 4800));
+
+    /// <summary>
+    /// An automation clip's points (event 234): a 21-byte header with the count at 17, then 24 bytes
+    /// per point: f64 beats since the previous point, f64 value (0..1), f32 tension, u32 flags.
+    /// Curves between points (tension) aren't kept; the points are joined by straight lines.
+    /// </summary>
+    static List<FlPoint> AutomationPoints(ReadOnlySpan<byte> d)
+    {
+        var points = new List<FlPoint>();
+        if (d.Length < 21) return points;
+        var count = Math.Min(BinaryPrimitives.ReadUInt32LittleEndian(d[17..]), (uint)(d.Length - 21) / 24);
+        var beat = 0.0;
+        for (var k = 0; k < count; k++)
+        {
+            var p = d[(21 + k * 24)..];
+            beat += BinaryPrimitives.ReadDoubleLittleEndian(p);
+            var value = BinaryPrimitives.ReadDoubleLittleEndian(p[8..]);
+            if (!double.IsFinite(beat) || beat < 0 || !double.IsFinite(value)) break;
+            points.Add(new FlPoint(beat, Math.Clamp(value, 0, 1)));
+        }
+        return points;
+    }
+
+    /// <summary>
+    /// Automation clips placed where the playlist puts them, cut to each clip's length, joined per
+    /// clip. A link (event 227) gives the clip's channel and its target: the low word is the control
+    /// (0 volume, 1 pan, 4 pitch, 0x8000 + n plugin parameter n), the high word the channel it's on.
+    /// Clips that aren't in the playlist don't play, so they're left out.
+    /// </summary>
+    static List<FlAutomation> PlaceAutomation(List<(int Clip, uint Target)> links, Dictionary<int, List<FlPoint>> curves,
+                                              Dictionary<int, string> names, ReadOnlyMemory<byte>? playlist, int ppq)
+    {
+        var result = new List<FlAutomation>();
+        if (playlist is not { } pl || ppq <= 0) return result;
+        var items = PlaylistItems(pl.Span).Where(i => i.Index <= PatternBase).OrderBy(i => i.At).ToList();
+        foreach (var (clip, target) in links)
+        {
+            if (!curves.TryGetValue(clip, out var curve) || curve.Count == 0) continue;
+            var points = new List<FlPoint>();
+            foreach (var item in items.Where(i => i.Index == clip))
+                points.AddRange(CutCurve(curve, item.At / (double)ppq, item.From / (double)ppq, item.Length / (double)ppq));
+            if (points.Count == 0) continue;
+            var low = (int)(target & 0xFFFF);
+            var control = low switch { 0 => FlControl.Volume, 1 => FlControl.Pan, 4 => FlControl.Pitch, >= 0x8000 => FlControl.PluginParameter, _ => FlControl.Other };
+            result.Add(new FlAutomation(names.GetValueOrDefault(clip, $"Automation {clip + 1}"), (int)(target >> 16), control,
+                                        control == FlControl.PluginParameter ? low - 0x8000 : low, points));
+        }
+        return result;
+    }
+
+    /// <summary>The part of a curve from <paramref name="from"/> to from + length (beats into the clip), moved to start at <paramref name="at"/>.</summary>
+    static IEnumerable<FlPoint> CutCurve(List<FlPoint> curve, double at, double from, double length)
+    {
+        double ValueAt(double beat)
+        {
+            if (beat <= curve[0].Beat) return curve[0].Value;
+            for (var k = 1; k < curve.Count; k++)
+                if (beat <= curve[k].Beat)
+                {
+                    var (a, b) = (curve[k - 1], curve[k]);
+                    return b.Beat <= a.Beat ? b.Value : a.Value + (b.Value - a.Value) * (beat - a.Beat) / (b.Beat - a.Beat);
+                }
+            return curve[^1].Value;
+        }
+        if (length <= 0) yield break;
+        yield return new FlPoint(at, ValueAt(from));
+        foreach (var p in curve)
+            if (p.Beat > from && p.Beat < from + length) yield return p with { Beat = at + p.Beat - from };
+        yield return new FlPoint(at + length, ValueAt(from + length));
     }
 
     static FlPlugin SongPlugin(string internalName, ReadOnlyMemory<byte> payload, string displayName)

@@ -13,12 +13,30 @@ namespace MusicOrganiser.Core.Export;
 /// and settings; one effect track per mixer insert that has effects, which those channels feed;
 /// and the master with the master insert's effects. FL Studio's own plugins have no equivalent
 /// elsewhere, so they're left out and named in the track's comment.
+///
+/// A sampler channel becomes Bitwig's Sampler. DAWproject can't carry the Sampler's sample or root
+/// key (Bitwig's own exports leave them out too), so those come back as setup steps. Channel volume,
+/// pan, and automation clips on volume, pan and plugin parameters come across as track automation.
 /// </summary>
 public static class DawProject
 {
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+    const string BitwigSampler = "468bc14b-b2e7-45a1-9666-e83117fe404e";
 
-    public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes);
+    /// <param name="Notes">What couldn't come across.</param>
+    /// <param name="Setup">Steps to finish in Bitwig: loading each Sampler's sample and setting its root key.</param>
+    public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<string> Setup);
+
+    /// <summary>
+    /// FL's channel volume knob (0..1, 0 dB at its default 78%) as a gain for a 0..2 linear fader.
+    /// FL's curve isn't published; a square law keeps each channel's level relative to the default.
+    /// </summary>
+    public static double Gain(double flVolume) => Math.Min(2, Math.Pow(flVolume / FlStudioReader.DefaultVolume, 2));
+
+    static readonly string[] NoteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+    /// <summary>A MIDI note's name in Bitwig (60 = C3) or FL Studio (60 = C5).</summary>
+    public static string NoteName(int key, bool flStudio = false) => NoteNames[key % 12] + (key / 12 - (flStudio ? 0 : 2));
 
     public static Result FromFl(FlSong song, string fallbackTitle)
     {
@@ -56,7 +74,7 @@ public static class DawProject
                 new XElement("State", new XAttribute("path", path)));
         }
 
-        XElement Channel(string role, string? destination, IEnumerable<XElement> devices) =>
+        XElement Channel(string role, string? destination, IEnumerable<XElement> devices, double volume = 1, double pan = 0.5) =>
             new("Channel",
                 new XAttribute("id", Id()),
                 new XAttribute("role", role),
@@ -64,14 +82,26 @@ public static class DawProject
                 destination is null ? null : new XAttribute("destination", destination),
                 new XElement("Devices", devices),
                 new XElement("Mute", new XAttribute("id", Id()), new XAttribute("value", "false")),
-                Param("Pan", "normalized", 0.5, 0, 1),
-                Param("Volume", "linear", 1, 0, 2));
+                Param("Pan", "normalized", pan, 0, 1),
+                Param("Volume", "linear", volume, 0, 2));
 
-        XElement Track(string name, string contentType, XElement channel, IReadOnlyCollection<string> skipped)
+        XElement Sampler(string sample) =>
+            new("BuiltinDevice",
+                new XAttribute("id", Id()),
+                new XAttribute("name", Path.GetFileNameWithoutExtension(sample)),
+                new XAttribute("deviceID", BitwigSampler),
+                new XAttribute("deviceName", "Sampler"),
+                new XAttribute("deviceRole", "instrument"),
+                new XAttribute("loaded", "true"),
+                new XElement("Enabled", new XAttribute("id", Id()), new XAttribute("value", "true")));
+
+        XElement Track(string name, string contentType, XElement channel, IReadOnlyCollection<string> skipped, string todo = "")
         {
             var t = new XElement("Track", new XAttribute("id", Id()), new XAttribute("name", name),
                                  new XAttribute("contentType", contentType), new XAttribute("loaded", "true"), channel);
-            if (skipped.Count > 0) t.Add(new XAttribute("comment", "Left out from FL Studio: " + string.Join(", ", skipped)));
+            var comment = string.Join(". ", new[] { todo, skipped.Count > 0 ? "Left out from FL Studio: " + string.Join(", ", skipped) : "" }
+                                                .Where(x => x.Length > 0));
+            if (comment.Length > 0) t.Add(new XAttribute("comment", comment));
             return t;
         }
 
@@ -84,7 +114,10 @@ public static class DawProject
         var masterId = (string)masterChannel.Attribute("id")!;
 
         // Inserts that channels feed or that hold effects, as effect tracks into the master.
-        var playing = song.Channels.Where(c => c.Notes.Count > 0 && (c.Instrument is not null || c.Sample.Length > 0)).ToList();
+        // Channels that play notes or are automated, with a plugin or sample to make the sound.
+        var automated = song.Automation.Select(a => a.Channel).ToHashSet();
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || automated.Contains(c.Index)) &&
+                                               (c.Instrument is not null || c.Sample.Length > 0)).ToList();
         var used = playing.Select(c => c.Insert).Where(i => i > 0).ToHashSet();
         var insertChannels = new Dictionary<int, string>();
         var insertTracks = new List<XElement>();
@@ -100,19 +133,36 @@ public static class DawProject
 
         // Instrument tracks, each with one clip holding its notes across the song.
         var lanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("timeUnit", "beats"));
+        var setup = new List<string>();
+        var placed = new Dictionary<int, (XElement Lanes, XElement Channel, XElement? Device)>();
         foreach (var c in playing)
         {
             var skipped = new List<string>();
             var device = c.Instrument is { } inst ? Device(inst, "instrument", skipped) : null;
-            if (c.Instrument is null && c.Sample.Length > 0) skipped.Add($"sampler with {Path.GetFileName(c.Sample)}");
-            var ch = Channel("regular", insertChannels.GetValueOrDefault(c.Insert, masterId), device is null ? [] : [device]);
-            var track = Track(c.Name, "notes", ch, skipped);
+            var todo = "";
+            if (c.Instrument is null && c.Sample.Length > 0)
+            {
+                var file = Path.GetFileName(c.Sample.Replace('\\', '/'));
+                var tune = c.PitchCents == 0 ? "" : $", tune it {c.PitchCents / 100.0:+0.##;-0.##} semitones";
+                todo = $"Sampler: load {file}, set Root key to {NoteName(c.RootKey)} ({NoteName(c.RootKey, flStudio: true)} in FL Studio){tune}";
+                setup.Add($"{c.Name}: in its Sampler, load {c.Sample}, then set Root key to {NoteName(c.RootKey)}" +
+                          $" ({NoteName(c.RootKey, flStudio: true)} in FL Studio){tune}.");
+                device = Sampler(file);
+            }
+            var ch = Channel("regular", insertChannels.GetValueOrDefault(c.Insert, masterId), device is null ? [] : [device],
+                             Gain(c.Volume), c.Pan);
+            var track = Track(c.Name, "notes", ch, skipped, todo);
             structure.Add(track);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
 
+            var trackLanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("track", (string)track.Attribute("id")!));
+            placed[c.Index] = (trackLanes, ch, device?.Name.LocalName is "Vst2Plugin" or "Vst3Plugin" ? device : null);
+            lanes.Add(trackLanes);
+            if (c.Notes.Count == 0) continue;
+
             double Beats(long ticks) => ticks / (double)song.Ppq;
             var end = Math.Ceiling(Beats(c.Notes.Max(n => n.Start + n.Length)) / 4) * 4;
-            lanes.Add(new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("track", (string)track.Attribute("id")!),
+            trackLanes.Add(
                 new XElement("Clips", new XAttribute("id", Id()),
                     new XElement("Clip", new XAttribute("time", "0"), new XAttribute("duration", Num(end)),
                         new XAttribute("playStart", "0"), new XAttribute("name", c.Name),
@@ -123,7 +173,47 @@ public static class DawProject
                                 new XAttribute("channel", 0),
                                 new XAttribute("key", Math.Clamp(n.Key, 0, 127)),
                                 new XAttribute("vel", Num(n.Velocity / 127.0)),
-                                new XAttribute("rel", Num(n.Velocity / 127.0)))))))));
+                                new XAttribute("rel", Num(n.Velocity / 127.0))))))));
+        }
+
+        // Automation clips, as automation on the track they move: its volume, pan or plugin parameter.
+        foreach (var a in song.Automation)
+        {
+            if (!placed.TryGetValue(a.Channel, out var t))
+            {
+                notes.Add($"{a.Name}: automation left out (what it moves isn't converted)");
+                continue;
+            }
+            XElement? target = null;
+            Func<double, double> value = v => v;
+            var unit = "normalized";
+            switch (a.Control)
+            {
+                case FlControl.Volume:
+                    target = t.Channel.Element("Volume");
+                    value = Gain;
+                    unit = "linear";
+                    break;
+                case FlControl.Pan:
+                    target = t.Channel.Element("Pan");
+                    break;
+                case FlControl.PluginParameter when t.Device is not null:
+                    target = new XElement("RealParameter", new XAttribute("id", Id()), new XAttribute("name", a.Name),
+                        new XAttribute("parameterID", a.Parameter), new XAttribute("unit", "normalized"),
+                        new XAttribute("min", "0"), new XAttribute("max", "1"), new XAttribute("value", Num(a.Points[0].Value)));
+                    if (t.Device.Element("Parameters") is { } ps) ps.Add(target);
+                    else t.Device.AddFirst(new XElement("Parameters", target));
+                    break;
+            }
+            if (target is null)
+            {
+                notes.Add($"{a.Name}: automation left out ({(a.Control == FlControl.Pitch ? "pitch" : "this control")} has no equivalent here)");
+                continue;
+            }
+            t.Lanes.Add(new XElement("Points", new XAttribute("id", Id()), new XAttribute("unit", unit),
+                new XElement("Target", new XAttribute("parameter", (string)target.Attribute("id")!)),
+                a.Points.Select(p => new XElement("RealPoint", new XAttribute("time", Num(p.Beat)),
+                    new XAttribute("value", Num(value(p.Value))), new XAttribute("interpolation", "linear")))));
         }
         foreach (var t in insertTracks) structure.Add(t);
         structure.Add(Track("Master", "audio notes", masterChannel, masterSkipped));
@@ -153,6 +243,6 @@ public static class DawProject
             Add("metadata.xml", s => metadata.Save(s));
             foreach (var (path, data) in files) Add(path, s => s.Write(data));
         }
-        return new Result(ms.ToArray(), notes);
+        return new Result(ms.ToArray(), notes, setup);
     }
 }

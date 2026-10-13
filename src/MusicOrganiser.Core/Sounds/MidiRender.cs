@@ -12,8 +12,6 @@ public static class MidiRender
     public const int Rate = 44100;
     /// <summary>Longest preview rendered; past this the song is cut off.</summary>
     public const double MaxSeconds = 8 * 60;
-    /// <summary>FL Studio's default root key (C5).</summary>
-    public const int DefaultRoot = 60;
     const double MaxSampleSeconds = 20;
 
     /// <summary>Mono audio at <see cref="Rate"/>, and what each channel was played with.</summary>
@@ -46,7 +44,7 @@ public static class MidiRender
                 if (at >= mix.Length) continue;
                 var held = TicksToSeconds(Math.Max(1, n.Length), c.Ppq, bpm);
                 var gain = 0.25f * Math.Clamp(n.Velocity, 1, 127) / 100f;
-                if (sample is not null) PlaySample(mix, at, sample.Value.Data, sample.Value.Step * Math.Pow(2, (n.Key - DefaultRoot) / 12.0), gain);
+                if (sample is not null) PlaySample(mix, at, sample.Value.Data, sample.Value.Step * Math.Pow(2, (n.Key - c.RootKey) / 12.0 + c.PitchCents / 1200.0), gain);
                 else if (drums) Hit(mix, at, n.Key, gain);
                 else Tone(mix, at, held, n.Key, gain);
             }

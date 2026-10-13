@@ -92,6 +92,58 @@ public static class Fixtures
         return b;
     }
 
+    /// <summary>An FL 25 playlist item (80 bytes): index 20480 + n is pattern n, a smaller index a channel's clip.</summary>
+    public static byte[] PlaylistItem25(uint pos, ushort index, uint length, ushort track = 499)
+    {
+        var b = new byte[80];
+        BinaryPrimitives.WriteUInt32LittleEndian(b, pos);
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(4), 20480);
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(6), index);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(8), length);
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(12), track);
+        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(24), -1);
+        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(28), -1);
+        return b;
+    }
+
+    /// <summary>A channel's levels (event 219): pan and volume out of 12800, pitch in cents.</summary>
+    public static byte[] Levels(int pan, int volume, int pitchCents)
+    {
+        var b = new byte[24];
+        BinaryPrimitives.WriteInt32LittleEndian(b, pan);
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(4), volume);
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(8), pitchCents);
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(12), 256);
+        return b;
+    }
+
+    /// <summary>An automation clip's points (event 234), each (beats since the previous point, value).</summary>
+    public static byte[] AutomationPoints(params (double Step, double Value)[] points)
+    {
+        var b = new byte[21 + 24 * points.Length];
+        BinaryPrimitives.WriteUInt32LittleEndian(b, 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(4), 64);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(9), 4);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(13), 3);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(17), (uint)points.Length);
+        for (var k = 0; k < points.Length; k++)
+        {
+            BinaryPrimitives.WriteDoubleLittleEndian(b.AsSpan(21 + 24 * k), points[k].Step);
+            BinaryPrimitives.WriteDoubleLittleEndian(b.AsSpan(29 + 24 * k), points[k].Value);
+        }
+        return b;
+    }
+
+    /// <summary>What an automation clip moves (event 227): its channel, and the target (channel &lt;&lt; 16 | control).</summary>
+    public static byte[] AutomationLink(ushort clip, uint target)
+    {
+        var b = new byte[20];
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(2), clip);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(8), target);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(12), 8);
+        return b;
+    }
+
     public static byte[] Note(uint pos, ushort channel, uint length, ushort key, byte velocity)
     {
         var b = new byte[24];
@@ -214,6 +266,35 @@ public static class Fixtures
                                    FlVst2ParamState([0.25f, 1f, 0.5f], "arp- sine beat"), version: 12, kind: 0, fourCc: "2drP"));
         if (withNotes) b.Word(65, 1).Data(224, [.. Note(0, 1, 96, 60, 100), .. Note(0, 2, 96, 64, 100)]);
         var path = Path.Combine(projects, "Shuffle.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// An FL 25 song laid out like FL writes it: a sampler "Snare" (root key A4, pitch -2 semitones,
+    /// pan 25%, volume 100%) with an automation clip on its volume in bar 2, and a Serum VST with an
+    /// automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2.
+    /// </summary>
+    public static string FlStudio25Automation(string dir)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319")
+            .Word(65, 1).Data(224, [.. Note(0, 0, 48, 72, 100), .. Note(0, 2, 96, 60, 100)])
+            .Data(227, AutomationLink(1, 0))
+            .Data(227, AutomationLink(3, 2u << 16 | 0x80cd))
+            .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare")
+            .Dword(135, 57).Data(219, Levels(3200, 12800, -200))
+            .Text(196, @"C:\Samples\Snare 01.wav")
+            .Word(64, 1).Byte(21, 5).Text(201, "").Text(203, "Snare - Channel volume")
+            .Data(219, Levels(0, 12800, 0)).Data(234, AutomationPoints((0, 0), (4, 1)))
+            .Word(64, 2).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Serum")
+            .Data(213, WrapperBlob("Serum", @"C:\VstPlugins\Serum_x64.dll", "Xfer Records",
+                                   FlVst2State([1, 2, 3]), version: 12, kind: 4, fourCc: "XfsX"))
+            .Word(64, 3).Byte(21, 5).Text(201, "").Text(203, "Serum - Cutoff")
+            .Data(234, AutomationPoints((0, 0.2), (2, 1), (2, 0.5)))
+            .Data(233, [.. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(384, 1, 384, 498), .. PlaylistItem25(0, 3, 384, 497)]);
+        var path = Path.Combine(dir, "Automated.flp");
         File.WriteAllBytes(path, b.Build());
         return path;
     }

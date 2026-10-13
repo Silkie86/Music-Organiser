@@ -4,9 +4,11 @@ namespace MusicOrganiser.Core.Parsers;
 /// One channel's (FL Studio) or track's (Bitwig, Studio One) notes across the whole song,
 /// with what plays them. Positions are song ticks at <see cref="Ppq"/>. <see cref="Source"/> is what to
 /// show (the sample, for a channel that has one); <see cref="Plugin"/> the plugin on the channel, if any;
-/// <see cref="SamplePath"/> the full path of the channel's sample, when it plays one.
+/// <see cref="SamplePath"/> the full path of the channel's sample, when it plays one, which sounds at its own
+/// pitch on <see cref="RootKey"/>, shifted by <see cref="PitchCents"/>.
 /// </summary>
-public sealed record MidiChannel(string Name, string Source, int Ppq, IReadOnlyList<NoteEvent> Notes, string Plugin = "", string SamplePath = "")
+public sealed record MidiChannel(string Name, string Source, int Ppq, IReadOnlyList<NoteEvent> Notes, string Plugin = "", string SamplePath = "",
+                                 int RootKey = 60, int PitchCents = 0)
 {
     public int Lowest => Notes.Count == 0 ? 0 : Notes.Min(n => n.Key);
     public int Highest => Notes.Count == 0 ? 0 : Notes.Max(n => n.Key);
