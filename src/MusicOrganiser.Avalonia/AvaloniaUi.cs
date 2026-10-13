@@ -23,8 +23,7 @@ public sealed class AvaloniaUi : IPlatformUi
 
     public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new AvaloniaTimer(interval, tick);
 
-    // Auditioning needs a cross-platform player (planned: miniaudio). Until then nothing plays.
-    public IAudioPlayer CreateAudioPlayer() => new SilentPlayer();
+    public IAudioPlayer CreateAudioPlayer() => new Audio.OpenAlPlayer();
 
     public async Task<string?> PickFolder(string title)
     {
@@ -157,16 +156,4 @@ sealed class AvaloniaTimer(TimeSpan interval, Action tick) : IUiTimer
 
     public void Start() => _timer.Start();
     public void Stop() => _timer.Stop();
-}
-
-sealed class SilentPlayer : IAudioPlayer
-{
-    public event Action? Stopped { add { } remove { } }
-    public string? Playing => null;
-    public double? Position => null;
-    public void Seek(double seconds) { }
-    public void Play(string path, double startSeconds = 0) { }
-    public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) { }
-    public void Stop() { }
-    public void Dispose() { }
 }
