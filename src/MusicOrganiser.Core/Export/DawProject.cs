@@ -208,13 +208,22 @@ public static class DawProject
                 case FlControl.Pan:
                     target = t.Channel.Element("Pan");
                     break;
-                case FlControl.PluginParameter when t.Device?.Name.LocalName == "Vst3Plugin":
-                    // FL numbers a VST3 plugin's settings by position, Bitwig by the plugin's own parameter ids.
-                    notes.Add($"{a.Name}: automation left out (FL and Bitwig number VST3 plugin settings differently)");
-                    continue;
                 case FlControl.PluginParameter when t.Device is not null:
+                    // FL numbers a VST3 plugin's settings by position, other DAWs by the plugin's own parameter ids,
+                    // which FL keeps in that order; VST2 settings are numbered the same way everywhere.
+                    long parameterId = a.Parameter;
+                    if (t.Device.Name.LocalName == "Vst3Plugin")
+                    {
+                        var pluginIds = song.Channels.FirstOrDefault(c => c.Index == a.Channel)?.Instrument?.ParameterIds;
+                        if (pluginIds is null || a.Parameter < 0 || a.Parameter >= pluginIds.Count)
+                        {
+                            notes.Add($"{a.Name}: automation left out (FL didn't save which of the plugin's settings it moves)");
+                            continue;
+                        }
+                        parameterId = pluginIds[a.Parameter];
+                    }
                     target = new XElement("RealParameter", new XAttribute("id", Id()), new XAttribute("name", a.Name),
-                        new XAttribute("parameterID", a.Parameter), new XAttribute("unit", "normalized"),
+                        new XAttribute("parameterID", parameterId), new XAttribute("unit", "normalized"),
                         new XAttribute("min", "0"), new XAttribute("max", "1"), new XAttribute("value", Num(a.Points[0].Value)));
                     if (t.Device.Element("Parameters") is { } ps) ps.Add(target);
                     else t.Device.AddFirst(new XElement("Parameters", target));

@@ -7,7 +7,9 @@ namespace MusicOrganiser.Core.Parsers;
 /// <param name="DeviceId">How other DAWs identify the plugin: the VST2 unique id as a number, or the VST3 class id.</param>
 /// <param name="State">The plugin's settings as a file the plugin can load (.fxp or .vstpreset), when there is one.</param>
 /// <param name="Path">Where the plugin was installed on the PC that saved the project (.dll or .vst3).</param>
-public sealed record FlPlugin(string Name, string Vendor, string Format, string DeviceId, PresetBlob? State, string Path = "")
+/// <param name="ParameterIds">A VST3 plugin's own ids for its settings, in FL's order: FL automates setting n, other DAWs ParameterIds[n].</param>
+public sealed record FlPlugin(string Name, string Vendor, string Format, string DeviceId, PresetBlob? State, string Path = "",
+                              IReadOnlyList<uint>? ParameterIds = null)
 {
     public bool Native => Format == "FL";
 }
@@ -265,6 +267,7 @@ public sealed partial class FlStudioReader
             state = WrapperPreset(f, raw, displayName.Length > 0 ? displayName : name, name);
             if (state.Extension is not (".fxp" or ".vstpreset")) state = null;   // raw states other DAWs can't load
         }
-        return new FlPlugin(name, WrapperText(f, VstVendor), isVst3 ? "VST3" : "VST2", id, state, WrapperText(f, VstPath));
+        return new FlPlugin(name, WrapperText(f, VstVendor), isVst3 ? "VST3" : "VST2", id, state, WrapperText(f, VstPath),
+                            isVst3 && raw is { Length: > 0 } ? Vst3ParameterIds(raw) : null);
     }
 }

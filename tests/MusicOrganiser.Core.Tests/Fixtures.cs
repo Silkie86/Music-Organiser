@@ -221,7 +221,7 @@ public static class Fixtures
     }
 
     /// <summary>FL's VST3 state: version 1, then records 1 (settings), 3 (component), 2 (controller).</summary>
-    public static byte[] FlVst3State(byte[] component, byte[] controller)
+    public static byte[] FlVst3State(byte[] component, byte[] controller, uint[]? parameterIds = null)
     {
         using var ms = new MemoryStream();
         ms.Write(BitConverter.GetBytes(1u));
@@ -234,6 +234,7 @@ public static class Fixtures
         Rec(1, new byte[64]);
         Rec(3, component);
         Rec(2, controller);
+        if (parameterIds is not null) Rec(4, [.. BitConverter.GetBytes((uint)parameterIds.Length), .. parameterIds.SelectMany(BitConverter.GetBytes)]);
         return ms.ToArray();
     }
 
@@ -259,7 +260,7 @@ public static class Fixtures
             .Word(64, 2).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Keys")
             .Data(213, WrapperBlob("Arcade", @"C:\Program Files\Common Files\VST3\Arcade.vst3", "Output",
-                                   FlVst3State([7, 7, 7], [8]), version: 12, kind: 8, classId: arcadeId))
+                                   FlVst3State([7, 7, 7], [8], parameterIds: [10, 20, 2000003]), version: 12, kind: 8, classId: arcadeId))
             .Word(64, 3).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Arp")
             .Data(213, WrapperBlob("Predator 2", @"C:\VstPlugins\Predator2.dll", "Rob Papen",
@@ -673,7 +674,7 @@ public static class Fixtures
             void FileRef(string path) { b.Begin(0x2a); b.Str(0x38, "PC"); b.Str(0x3a, "user"); b.Str(0x3b, path); b.End(); }
             // A track's start: ids, per-user view state that first writes its volume automation lane and
             // mixer volume, its automation lanes. An automated lane holds an automation clip and a point after it.
-            int TrackStart(string name, bool automated = false)
+            int TrackStart(string name, bool automated = false, Action? lanes = null)
             {
                 var t = b.Begin(0x90);
                 b.Id(0xf);
@@ -694,7 +695,7 @@ public static class Fixtures
                 b.Obj(0x2aec); b.Begin(0xe6c); b.List(0x10e6); b.EndList(); b.End();
                 b.End();
                 b.End(); b.EndMap();
-                b.Obj(0x2dc9); b.Begin(0xfa2); b.List(0x4ba); if (automated) b.ListRef(t + 2); b.EndList(); b.List(0x3f83); b.EndList(); b.End();
+                b.Obj(0x2dc9); b.Begin(0xfa2); b.List(0x4ba); if (automated) b.ListRef(t + 2); lanes?.Invoke(); b.EndList(); b.List(0x3f83); b.EndList(); b.End();
                 b.Id(0xa51);
                 return t;
             }
@@ -830,7 +831,7 @@ public static class Fixtures
                     b.Str(0x12de, ""); b.Str(0x9a, "Serum 2"); b.Str(0x9b, "Xfer Records"); b.Str(0x9c, "Synth"); b.U8(0x9d, 2);
                     b.Obj(0xc5a); b.Begin(0x2b4); b.List(0xc5b); FileRef(@"C:\Program Files\Common Files\VST3\Serum2.vst3"); b.EndList(); b.End();
                     b.Str(0xbe5, "serum.vstpreset");
-                    b.List(0x1318); b.Begin(0x4e0); b.I32(0x1319, 2000003); b.End(); b.EndList();
+                    b.List(0x1318); b.Begin(0x4e0); b.I32(0x1319, 2000003); b.F64(0x131a, 0.42); b.End(); b.EndList();
                     b.Obj(0x137c); b.Begin(0x4f3); b.List(0x8e0); b.EndList(); b.End();
                     b.U8(0x1809, 1);
                     b.Str(0xce4, "56534558667350736572756D20320000");
@@ -839,11 +840,31 @@ public static class Fixtures
                     b.End();
                 }, sends: SendToFx, output: ToMaster);
 
-                // VST2 track: Drumazon, with an output chain that sends to the effect track
-                var vst2 = TrackStart("");
-                TrackEnd(vst2 + 4, null, devices: () =>
+                // VST2 track: Drumazon, with an output chain that sends to the effect track, and its first
+                // setting automated. The plugin is first written in the automation lane, which comes first.
+                var drumazon = 0;
+                var vst2 = TrackStart("", lanes: () =>
                 {
-                    b.Begin(0x1a6); b.Id(0xf);
+                    b.Begin(0x23d);
+                    b.Obj(0x2d8c); b.Begin(0xd91);
+                    b.List(0x21f); b.Begin(0xd90); b.F64(0x2af, 0); b.F64(0x26, 4); b.End(); b.EndList();
+                    b.Obj(0x35ac); b.Begin(0x6e); b.List(0x21f);
+                    b.Begin(0x108); b.F64(0x2af, 4); b.F64(0x28f, 0.92); b.U8(0x359e, 1); b.F64(0xba6, 0); b.End();
+                    b.EndList(); b.End();
+                    b.End();
+                    b.Obj(0x2a3); b.Begin(0x65);
+                    b.Str(0x133b, "Drumazon"); b.Str(0x133a, "Bass Drum Level");
+                    b.Obj(0xec); drumazon = Drumazon();
+                    b.Str(0xed, "CONTENTS/ROOT_GENERIC_MODULE/PARAM0");
+                    b.Obj(0xe92); b.Begin(0x7b); b.F64(0x124, 0); b.F64(0x125, 1); b.End();
+                    b.End();
+                    b.Obj(0x2aec); b.Begin(0xe6c); b.List(0x10e6); b.EndList(); b.End();
+                    b.End();
+                });
+                TrackEnd(vst2 + 4, null, devices: () => b.ListRef(drumazon), sends: SendToFx, output: ToMaster);
+                int Drumazon()
+                {
+                    var d = b.Begin(0x1a6); b.Id(0xf);
                     b.Obj(0x197); b.Begin(0x1a5);
                     b.Str(0x12de, ""); b.Str(0x9a, "Drumazon"); b.Str(0x9b, "D16 Group Audio Software"); b.Str(0x9c, "Synth"); b.U8(0x9d, 2);
                     b.Obj(0x1b75); b.Begin(0x7b1); b.Str(0x1b72, "Bass Drum"); b.End();
@@ -862,7 +883,8 @@ public static class Fixtures
                     b.I32(0xc5e, 67074);
                     b.End();
                     b.End();
-                }, sends: SendToFx, output: ToMaster);
+                    return d;
+                }
             }
             b.EndList();
             b.List(0x4df); b.ListRef(fx); b.EndList();

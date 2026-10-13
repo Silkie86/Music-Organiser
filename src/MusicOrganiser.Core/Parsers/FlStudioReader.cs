@@ -298,11 +298,28 @@ public sealed partial class FlStudioReader : IProjectReader
 
     /// <summary>
     /// FL's VST3 state: u32 version, then records of (u32 id, u64 size, data):
-    /// 3 is the component (processor) state and 2 the controller state.
+    /// 3 is the component (processor) state, 2 the controller state and 4 the plugin's parameter ids.
     /// </summary>
-    static (byte[] Component, byte[] Controller)? Vst3State(byte[] state)
+    static (byte[] Component, byte[] Controller)? Vst3State(byte[] state) =>
+        Vst3Records(state) is { } r && r.TryGetValue(3, out var comp) ? (comp, r.TryGetValue(2, out var cont) ? cont : []) : null;
+
+    /// <summary>
+    /// The plugin's parameter ids in the order FL lists its settings (record 4: u32 count, then the ids),
+    /// which is how FL's automation names a setting. Seen in FL 26 with Serum 2: setting 205 is id 2000003.
+    /// </summary>
+    static IReadOnlyList<uint>? Vst3ParameterIds(byte[] state)
     {
-        byte[]? comp = null, cont = null;
+        if (Vst3Records(state) is not { } records || !records.TryGetValue(4, out var r) || r.Length < 4) return null;
+        var count = BinaryPrimitives.ReadUInt32LittleEndian(r);
+        if (count == 0 || 4 + 4L * count > r.Length) return null;
+        var ids = new uint[count];
+        for (var i = 0; i < count; i++) ids[i] = BinaryPrimitives.ReadUInt32LittleEndian(r.AsSpan(4 + 4 * i));
+        return ids;
+    }
+
+    static Dictionary<uint, byte[]>? Vst3Records(byte[] state)
+    {
+        var records = new Dictionary<uint, byte[]>();
         var pos = 4;
         while (pos + 12 <= state.Length)
         {
@@ -310,11 +327,10 @@ public sealed partial class FlStudioReader : IProjectReader
             var size = BinaryPrimitives.ReadUInt64LittleEndian(state.AsSpan(pos + 4));
             pos += 12;
             if (size > (ulong)(state.Length - pos)) return null;
-            if (id == 3) comp = state.AsSpan(pos, (int)size).ToArray();
-            else if (id == 2) cont = state.AsSpan(pos, (int)size).ToArray();
+            records[id] = state.AsSpan(pos, (int)size).ToArray();
             pos += (int)size;
         }
-        return comp is null ? null : (comp, cont ?? []);
+        return records;
     }
 
     /// <summary>One clip per pattern, one track per channel with notes in it.</summary>

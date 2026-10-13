@@ -88,7 +88,7 @@ public class BitwigProjectTests
         Assert.Equal(song.Tempo, All(doc).Single(o => o.Str(0x2bd) == "TEMPO").Num(0x2c8));
 
         // The snare's volume automation as a lane of points on its fader, in the fader's units; the
-        // template's automation clip and points don't come along. Plugin settings aren't automated yet.
+        // template's automation clips and points don't come along.
         var volumeLane = tracks[0].Obj(0x2dc9)!.List(0x4ba).Single();
         Assert.Same(mixer.Obj(0x1a4), volumeLane.Obj(0x2a3)!.Obj(0x41));
         Assert.Equal(("Mixer", "Volume"), (volumeLane.Obj(0x2a3)!.Str(0x133b), volumeLane.Obj(0x2a3)!.Str(0x133a)));
@@ -97,9 +97,18 @@ public class BitwigProjectTests
         Assert.Equal(song.Automation[0].Points.Select(p => (p.Beat, Math.Cbrt(DawProject.Gain(p.Value)))),
                      points.Select(p => (p.Num(0x2af)!.Value, p.Num(0x28f)!.Value)));
         Assert.All(points, p => Assert.Equal((1.0, 0.0), (p.Num(0x359e)!.Value, p.Num(0xba6)!.Value)));
-        Assert.Empty(tracks[1].Obj(0x2dc9)!.List(0x4ba));
-        Assert.Equal(["Serum - Cutoff: automation left out (plugin settings aren't automated in Bitwig projects yet)"],
-                     result.Notes.Where(n => n.Contains("automation")));
+
+        // Serum's cutoff (VST2 setting 205) on a lane for that setting of the plugin, which lists it as automated.
+        var cutoffLane = tracks[1].Obj(0x2dc9)!.List(0x4ba).Single();
+        var target = cutoffLane.Obj(0x2a3)!;
+        Assert.Same(serum, target.Obj(0xec));
+        Assert.Equal(("CONTENTS/ROOT_GENERIC_MODULE/PARAM205", "Serum", "Cutoff"), (target.Str(0xed), target.Str(0x133b), target.Str(0x133a)));
+        Assert.Equal([(0.0, 0.2), (2.0, 1.0), (4.0, 0.5)],
+                     cutoffLane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, p.Num(0x28f)!.Value)));
+        Assert.Empty(cutoffLane.Obj(0x2d8c)!.List(0x21f));
+        var listed = serumDef.List(0x1318).Single();
+        Assert.Equal((205.0, 0.2), (listed.Num(0x1319)!.Value, listed.Num(0x131a)!.Value));
+        Assert.DoesNotContain(result.Notes, n => n.Contains("automation"));
 
         // The browser's summary lists the new tracks.
         var bytes = (BwBlob)doc.Meta["structure"]!;
@@ -146,9 +155,11 @@ public class BitwigProjectTests
     [Fact]
     public void AutomatesVolumeAndPanWithOneLaneEachInSongOrder()
     {
-        var keys = new FlPlugin("Keys", "Spectrasonics", "VST3", "565354536B657973", null);
+        var keys = new FlPlugin("Keys", "Spectrasonics", "VST3", "565354536B657973", null, ParameterIds: [10, 20, 2000003]);
         FlAutomation Clip(string name, int channel, FlControl control, params (double, double)[] points) =>
             new(name, channel, control, 0, points.Select(p => new FlPoint(p.Item1, p.Item2)).ToList());
+        FlAutomation Setting(string name, int setting, params (double, double)[] points) =>
+            Clip(name, 0, FlControl.PluginParameter, points) with { Parameter = setting };
         var song = new FlSong("", 96, 120,
             [new FlChannel(0, "Keys", keys, "", 0, [new(0, 96, 60, 100)])],
             [],
@@ -156,6 +167,8 @@ public class BitwigProjectTests
              Clip("Pan later", 0, FlControl.Pan, (8, 0.5), (12, 0)),
              Clip("Pan first", 0, FlControl.Pan, (0, 0), (4, 1)),
              Clip("Bend", 0, FlControl.Pitch, (0, 0.5)),
+             Setting("Keys - Brightness", 2, (0, 0.25), (2, 0.75)),
+             Setting("Keys - Unknown", 3, (0, 1)),
              Clip("Elsewhere", 7, FlControl.Volume, (0, 1))]);
 
         var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => null);
@@ -163,14 +176,18 @@ public class BitwigProjectTests
         Assert.Null(doc.BodyError);
         var track = doc.Root!.Obj(0x4dd)!.List(0x4de).Single();
         var lanes = track.Obj(0x2dc9)!.List(0x4ba).ToList();
-        Assert.Equal(["Volume", "Pan"], lanes.Select(l => l.Obj(0x2a3)!.Str(0x133a)));
+        Assert.Equal(["Volume", "Pan", "Brightness"], lanes.Select(l => l.Obj(0x2a3)!.Str(0x133a)));
         Assert.Same(track.Obj(0x165)!.Obj(0x1a5), lanes[1].Obj(0x2a3)!.Obj(0x41));
         IEnumerable<(double, double)> Points(BwObject lane) =>
             lane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, Math.Round(p.Num(0x28f)!.Value, 4)));
         Assert.Equal([(0, 1.0), (1, 0.3571), (1.5, 1.0824), (3.25, 0.368)], Points(lanes[0]));   // FL's 78% fader is Bitwig's 0 dB
         Assert.Equal([(0, -1.0), (4, 1.0), (8, 0.0), (12, -1.0)], Points(lanes[1]));
+        // FL's VST3 setting 2 is the plugin's id 2000003, which Bitwig writes in hex.
+        Assert.Equal("CONTENTS/ROOT_GENERIC_MODULE/PID1e8483", lanes[2].Obj(0x2a3)!.Str(0xed));
+        Assert.Equal([(0, 0.25), (2, 0.75)], Points(lanes[2]));
 
         Assert.Equal(["Bend: automation left out (pitch has no equivalent here)",
+                      "Keys - Unknown: automation left out (FL didn't save which of the plugin's settings it moves)",
                       "Elsewhere: automation left out (what it moves isn't converted)"],
                      result.Notes.Where(n => n.Contains("automation")));
     }

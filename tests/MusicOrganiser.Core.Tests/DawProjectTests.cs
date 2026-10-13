@@ -69,6 +69,14 @@ public class DawProjectTests
     }
 
     [Fact]
+    public void ReadsTheIdsAVst3PluginGivesItsSettingsInFlsOrder()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Project(Fixtures.TempDir()));
+        Assert.Equal([10u, 20u, 2000003u], song.Channels.Single(c => c.Name == "Keys").Instrument!.ParameterIds);
+        Assert.Null(song.Channels.Single(c => c.Name == "Lead").Instrument!.ParameterIds);   // VST2 settings are numbered alike everywhere
+    }
+
+    [Fact]
     public void AnAutomationClipPlacedTwiceHoldsItsValueThroughTheGap()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir(), volumePlacedTwice: true));
