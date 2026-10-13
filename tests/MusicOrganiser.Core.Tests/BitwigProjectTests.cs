@@ -87,8 +87,19 @@ public class BitwigProjectTests
         Assert.Equal(2, tracks.Select(t => t[0xa51]).Distinct().Count());
         Assert.Equal(song.Tempo, All(doc).Single(o => o.Str(0x2bd) == "TEMPO").Num(0x2c8));
 
-        // Automation isn't written yet, and says so.
-        Assert.Equal(2, result.Notes.Count(n => n.Contains("automation")));
+        // The snare's volume automation as a lane of points on its fader, in the fader's units; the
+        // template's automation clip and points don't come along. Plugin settings aren't automated yet.
+        var volumeLane = tracks[0].Obj(0x2dc9)!.List(0x4ba).Single();
+        Assert.Same(mixer.Obj(0x1a4), volumeLane.Obj(0x2a3)!.Obj(0x41));
+        Assert.Equal(("Mixer", "Volume"), (volumeLane.Obj(0x2a3)!.Str(0x133b), volumeLane.Obj(0x2a3)!.Str(0x133a)));
+        Assert.Empty(volumeLane.Obj(0x2d8c)!.List(0x21f));
+        var points = volumeLane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).ToList();
+        Assert.Equal(song.Automation[0].Points.Select(p => (p.Beat, Math.Cbrt(DawProject.Gain(p.Value)))),
+                     points.Select(p => (p.Num(0x2af)!.Value, p.Num(0x28f)!.Value)));
+        Assert.All(points, p => Assert.Equal((1.0, 0.0), (p.Num(0x359e)!.Value, p.Num(0xba6)!.Value)));
+        Assert.Empty(tracks[1].Obj(0x2dc9)!.List(0x4ba));
+        Assert.Equal(["Serum - Cutoff: automation left out (plugin settings aren't automated in Bitwig projects yet)"],
+                     result.Notes.Where(n => n.Contains("automation")));
 
         // The browser's summary lists the new tracks.
         var bytes = (BwBlob)doc.Meta["structure"]!;
@@ -130,6 +141,47 @@ public class BitwigProjectTests
         Assert.Contains(result.Notes, n => n.Contains("own copy of Keys bus's effects"));
         using var zip = doc.OpenZip()!;
         Assert.Equal(5, zip.Entries.Count);   // two synths, two equalisers, one limiter
+    }
+
+    [Fact]
+    public void AutomatesVolumeAndPanWithOneLaneEachInSongOrder()
+    {
+        var keys = new FlPlugin("Keys", "Spectrasonics", "VST3", "565354536B657973", null);
+        FlAutomation Clip(string name, int channel, FlControl control, params (double, double)[] points) =>
+            new(name, channel, control, 0, points.Select(p => new FlPoint(p.Item1, p.Item2)).ToList());
+        var song = new FlSong("", 96, 120,
+            [new FlChannel(0, "Keys", keys, "", 0, [new(0, 96, 60, 100)])],
+            [],
+            [Clip("Fade", 0, FlControl.Volume, (0, 0.78125), (1, 0.1667), (1.5, 0.8798), (3.25, 0.1744)),
+             Clip("Pan later", 0, FlControl.Pan, (8, 0.5), (12, 0)),
+             Clip("Pan first", 0, FlControl.Pan, (0, 0), (4, 1)),
+             Clip("Bend", 0, FlControl.Pitch, (0, 0.5)),
+             Clip("Elsewhere", 7, FlControl.Volume, (0, 1))]);
+
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => null);
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+        var track = doc.Root!.Obj(0x4dd)!.List(0x4de).Single();
+        var lanes = track.Obj(0x2dc9)!.List(0x4ba).ToList();
+        Assert.Equal(["Volume", "Pan"], lanes.Select(l => l.Obj(0x2a3)!.Str(0x133a)));
+        Assert.Same(track.Obj(0x165)!.Obj(0x1a5), lanes[1].Obj(0x2a3)!.Obj(0x41));
+        IEnumerable<(double, double)> Points(BwObject lane) =>
+            lane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, Math.Round(p.Num(0x28f)!.Value, 4)));
+        Assert.Equal([(0, 1.0), (1, 0.3571), (1.5, 1.0824), (3.25, 0.368)], Points(lanes[0]));   // FL's 78% fader is Bitwig's 0 dB
+        Assert.Equal([(0, -1.0), (4, 1.0), (8, 0.0), (12, -1.0)], Points(lanes[1]));
+
+        Assert.Equal(["Bend: automation left out (pitch has no equivalent here)",
+                      "Elsewhere: automation left out (what it moves isn't converted)"],
+                     result.Notes.Where(n => n.Contains("automation")));
+    }
+
+    [Fact]
+    public void AutomationIsListedWhenTheTemplateHasNoLaneToCopy()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(automationLane: false), _ => null);
+        Assert.Null(Decode(result.Bytes).BodyError);
+        Assert.Contains("Snare - Channel volume: automation left out (the Bitwig template has no automation lane to copy)", result.Notes);
     }
 
     [Fact]

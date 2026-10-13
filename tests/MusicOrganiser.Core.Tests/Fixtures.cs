@@ -623,11 +623,12 @@ public static class Fixtures
     /// Sampler track (Sampler and Amp, root key A2, sends to an effect track that's defined inside it,
     /// and the master defined in its output routing), a VST3 track with a Note Transpose before
     /// Serum 2 and a clip of notes, and a VST2 track with Drumazon, whose output chain sends to the
-    /// effect track. As in Bitwig's files, the mixer volume is first written in the track's per-user
+    /// effect track. The Sampler track's volume is automated, with an automation clip and a point after it.
+    /// As in Bitwig's files, the mixer volume is first written in the track's per-user
     /// view state and referenced from the mixer, and the project's view state and clip selection
     /// point into the tracks.
     /// </summary>
-    public static byte[] BitwigTemplate()
+    public static byte[] BitwigTemplate(bool automationLane = true)
     {
         const string sampler = "468bc14b-b2e7-45a1-9666-e83117fe404e", noteTranspose = "0815cd9e-3a31-4429-a268-dabd952a3b68",
                      amp = "41be8f3a-6d24-4442-9508-8548dbe62d47";
@@ -669,19 +670,30 @@ public static class Fixtures
             void Param(int cls, string name, double value) { b.Begin(cls); b.Str(0x2bd, name); b.F64(0x2c8, value); b.End(); }
             void Named(int cls, string name, Action fields) { b.Begin(cls); b.Str(0x2b9, name); fields(); b.End(); }
             void FileRef(string path) { b.Begin(0x2a); b.Str(0x38, "PC"); b.Str(0x3a, "user"); b.Str(0x3b, path); b.End(); }
-            // A track's start: ids, per-user view state that first writes its mixer volume, its automation lanes.
-            int TrackStart(string name)
+            // A track's start: ids, per-user view state that first writes its volume automation lane and
+            // mixer volume, its automation lanes. An automated lane holds an automation clip and a point after it.
+            int TrackStart(string name, bool automated = false)
             {
                 var t = b.Begin(0x90);
                 b.Id(0xf);
                 b.Str(0x15b, name);
                 b.Map(0x168); b.MapKey("user"); b.Begin(0x88);
-                b.Obj(0x4e6); b.Begin(0x23c); b.Obj(0x2a3); b.Begin(0xf1);
+                b.Obj(0x4e6); b.Begin(0x23d); b.Obj(0x2a3); b.Begin(0xf1);
                 b.Obj(0x41); Param(0x4c4, "VOLUME", 1.0);
                 b.Str(0x133b, "Mixer"); b.Str(0x133a, "Volume");
-                b.End(); b.End();
+                b.End();
+                b.Obj(0x2d8c); b.Begin(0xd91);
+                b.List(0x21f);
+                if (automated) { b.Begin(0xd90); b.F64(0x2af, 0); b.F64(0x26, 4); b.End(); }
+                b.EndList();
+                b.Obj(0x35ac); b.Begin(0x6e); b.List(0x21f);
+                if (automated) { b.Begin(0x108); b.F64(0x2af, 4); b.F64(0x28f, 1.25992105); b.U8(0x359e, 0); b.F64(0xba6, 0.5); b.F64(0x2ebe, 0); b.End(); }
+                b.EndList(); b.End();
+                b.End();
+                b.Obj(0x2aec); b.Begin(0xe6c); b.List(0x10e6); b.EndList(); b.End();
+                b.End();
                 b.End(); b.EndMap();
-                b.Obj(0x2dc9); b.Begin(0xfa2); b.List(0x4ba); b.EndList(); b.List(0x3f83); b.EndList(); b.End();
+                b.Obj(0x2dc9); b.Begin(0xfa2); b.List(0x4ba); if (automated) b.ListRef(t + 2); b.EndList(); b.List(0x3f83); b.EndList(); b.End();
                 b.Id(0xa51);
                 return t;
             }
@@ -721,7 +733,7 @@ public static class Fixtures
             b.List(0x4de);
             {
                 // Sampler track
-                firstTrack = TrackStart("");
+                firstTrack = TrackStart("", automated: automationLane);
                 var volume = firstTrack + 4;   // the track, its view state, lane, target, then the volume
                 TrackEnd(volume, null, devices: () =>
                 {

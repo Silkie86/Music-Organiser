@@ -8,13 +8,14 @@ namespace MusicOrganiser.Core.Export;
 
 /// <summary>
 /// Writes an FL Studio song as a native Bitwig project (.bwproject), which carries more of the song
-/// than DAWproject can: each Sampler's sample, root key and tune, and a Note Transpose in front of
-/// plugins whose FL root key was moved.
+/// than DAWproject can: each Sampler's sample, root key and tune, a Note Transpose in front of
+/// plugins whose FL root key was moved, and volume and pan automation on Bitwig's faders.
 ///
 /// Bitwig's format isn't published, so the project is built from a template Bitwig saved: one with
 /// a Sampler track, a VST3 instrument track with a Note Transpose before the plugin and a clip of
-/// notes, and a VST2 instrument track. Those tracks, devices and the clip are copied for each FL
-/// channel and filled in; the template's own tracks, effect tracks and sends are left out.
+/// notes, a VST2 instrument track and, for automation, a track with its volume automated. Those
+/// tracks, devices, the clip and the lane are copied for each FL channel and filled in; the
+/// template's own tracks, effect tracks and sends are left out.
 ///
 /// Each channel that plays notes becomes a track on its own mixer channel, as Bitwig tracks are,
 /// with the VST effects of the FL insert it feeds after its instrument; the master insert's effects
@@ -165,8 +166,32 @@ public static class BitwigProject
         if (masterEffects.Count > 0) Chain(t.Master, [.. Chain(t.Master), .. masterEffects]);
         if (masterSkipped.Count > 0) notes.Add($"Master: left out {string.Join(", ", masterSkipped)}");
 
+        // Automation clips as automation lanes on the track they move: its volume or pan.
+        var placed = playing.Zip(tracks).ToDictionary(p => p.First.Index, p => p.Second);
         foreach (var a in song.Automation)
-            notes.Add($"{a.Name}: automation isn't carried into Bitwig projects yet");
+        {
+            if (!placed.TryGetValue(a.Channel, out var track))
+            {
+                notes.Add($"{a.Name}: automation left out (what it moves isn't converted)");
+                continue;
+            }
+            var mixer = track.Obj(0x165);
+            var (param, name, value) = a.Control switch
+            {
+                FlControl.Volume => (mixer?.Obj(0x1a4), "Volume", (Func<double, double>)(v => Math.Cbrt(DawProject.Gain(v)))),
+                FlControl.Pan => (mixer?.Obj(0x1a5), "Pan", v => Math.Clamp((v - 0.5) * 2, -1, 1)),
+                _ => (null, "", v => v),
+            };
+            if (param is null)
+                notes.Add($"{a.Name}: automation left out ({a.Control switch
+                {
+                    FlControl.PluginParameter => "plugin settings aren't automated in Bitwig projects yet",
+                    FlControl.Pitch => "pitch has no equivalent here",
+                    _ => "this control has no equivalent here",
+                }})");
+            else if (!t.AddAutomation(track, param, name, a.Points.Select(p => (p.Beat, value(p.Value)))))
+                notes.Add($"{a.Name}: automation left out (the Bitwig template has no automation lane to copy)");
+        }
 
         return new Result(t.Finish(tracks, song.Tempo, states), notes);
     }
@@ -253,6 +278,7 @@ public static class BitwigProject
         readonly Document _doc;
         readonly BwObject _group;
         readonly BwObject _clip, _keyLane, _note;
+        readonly BwObject? _lane, _point;
         readonly Copier _copier;
         public BwObject SamplerTrack { get; }
         public BwObject Vst3Track { get; }
@@ -290,6 +316,11 @@ public static class BitwigProject
             Vst2Device = Chain(Vst2Track).First(d => Vst(d, Vst2));
             _keyLane = KeyLanes(_clip).First(l => l.List(0x21f).Any());
             _note = _keyLane.List(0x21f).First();
+            // An automation lane on a mixer setting and one of its points, if the template has them.
+            _lane = originals.SelectMany(tr => tr.Obj(0x2dc9)?.List(0x4ba) ?? [])
+                             .FirstOrDefault(l => l.Obj(0x2a3)?.Has(0x41) == true && l.Obj(0x2d8c)?.Obj(0x35ac) is not null);
+            _point = _lane is null ? null : Reachable(_lane).FirstOrDefault(o => o.Has(0x2af) && o.Has(0x28f));
+            if (_point is null) _lane = null;
 
             // Take the template's tracks out of the project, with what points into them: the per-user
             // view state (selected track, editors), clip selections, sends and effect tracks. They stay
@@ -317,9 +348,19 @@ public static class BitwigProject
                         list.RemoveAll(x => o.Resolve(x)?.Str(0x2b9).StartsWith("TRACK_SEND(", StringComparison.Ordinal) == true);
             _keyLane.Set(0x21f, new List<object?>());
             NoteContent(_clip)!.Set(0x18cb, new List<object?>());
+            if (_lane is not null)
+            {
+                // No clips, points or per-user state, and no setting to move until it's given one.
+                var arrangement = _lane.Obj(0x2d8c)!;
+                arrangement.Set(0x21f, new List<object?>());
+                arrangement.Obj(0x35ac)!.Set(0x21f, new List<object?>());
+                _lane.Obj(0x2aec)?.Set(0x10e6, new List<object?>());
+                if (_lane.Has(0x4bc)) _lane.Set(0x4bc, new Dictionary<string, object?>(StringComparer.Ordinal));
+                _lane.Obj(0x2a3)!.Set(0x41, null, 0x0a);
+            }
 
             _copier = new Copier(_doc);
-            if (new[] { SamplerTrack, Vst3Track, Vst2Track, NoteTranspose, _clip }.Any(_copier.Shares))
+            if (new[] { SamplerTrack, Vst3Track, Vst2Track, NoteTranspose, _clip, _lane, _point }.OfType<BwObject>().Any(_copier.Shares))
                 throw new InvalidDataException("The Bitwig template refers to its tracks from somewhere this app doesn't know to clear");
         }
 
@@ -371,6 +412,38 @@ public static class BitwigProject
             ((List<object?>)arrangement[0x21f]!).Add(clip);
             // The track lists the contents of its clips.
             if (track.Obj(0x2aed)?[0x10e6] is List<object?> contents && content.Obj(0x10e9) is { } c) contents.Add(new BwLink(c));
+        }
+
+        /// <summary>
+        /// Automates one of a track's settings with a lane of points, values in Bitwig's units, joined
+        /// by straight lines. Several FL clips moving the same setting share its lane. False when the
+        /// template has no automation lane to copy.
+        /// </summary>
+        public bool AddAutomation(BwObject track, BwObject param, string name, IEnumerable<(double Beat, double Value)> points)
+        {
+            if (_lane is null || _point is null || track.Obj(0x2dc9)?[0x4ba] is not List<object?> lanes) return false;
+            var lane = lanes.Select(track.Resolve).OfType<BwObject>().FirstOrDefault(l => ReferenceEquals(l.Obj(0x2a3)?.Obj(0x41), param));
+            if (lane is null)
+            {
+                lane = Copy(_lane);
+                lane.Obj(0x2a3)!.Set(0x41, new BwLink(param), 0x09);
+                lane.Obj(0x2a3)!.Set(0x133a, name);
+                lanes.Add(new BwLink(lane));
+            }
+            var list = (List<object?>)lane.Obj(0x2d8c)!.Obj(0x35ac)![0x21f]!;
+            list.AddRange(points.Select(p =>
+            {
+                var point = Copy(_point);
+                point.Set(0x2af, p.Beat);
+                point.Set(0x28f, p.Value);
+                if (point.Has(0x359e)) point.Set(0x359e, (byte)1, 0x01);
+                if (point.Has(0xba6)) point.Set(0xba6, 0.0);   // a straight line to the next point
+                return (object?)point;
+            }));
+            var sorted = list.OrderBy(x => lane.Resolve(x)!.Num(0x2af)).ToList();
+            list.Clear();
+            list.AddRange(sorted);
+            return true;
         }
 
         /// <summary>Puts the new tracks in the project and writes it, with the plugin settings in its zip.</summary>
