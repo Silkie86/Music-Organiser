@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using System.IO.Compression;
+using System.Text;
 using System.Xml;
 using System.Xml.Schema;
 using System.Xml.Linq;
@@ -134,6 +136,26 @@ public class DawProjectTests
             Assert.Equal(32, ((string?)arcade.Attribute("deviceID"))!.Length);
             foreach (var p in plugins)
                 Assert.NotNull(zip.GetEntry((string)p.Element("State")!.Attribute("path")!));
+
+            // VST2 settings go in as one-program banks, the way Bitwig writes them.
+            byte[] StateOf(string name)
+            {
+                var path = (string)plugins.Single(p => (string?)p.Attribute("deviceName") == name).Element("State")!.Attribute("path")!;
+                Assert.EndsWith(name == "Arcade" ? ".vstpreset" : ".fxb", path);
+                using var ms = new MemoryStream();
+                using (var s = zip.GetEntry(path)!.Open()) s.CopyTo(ms);
+                return ms.ToArray();
+            }
+            var bank = StateOf("Serum");
+            Assert.Equal("CcnKFBCh", Encoding.ASCII.GetString(bank, 0, 4) + Encoding.ASCII.GetString(bank, 8, 4));
+            Assert.Equal(bank.Length - 8, BinaryPrimitives.ReadInt32BigEndian(bank.AsSpan(4)));
+            Assert.Equal("XfsX", Encoding.ASCII.GetString(bank, 16, 4));
+            Assert.Equal(3, BinaryPrimitives.ReadInt32BigEndian(bank.AsSpan(156)));
+            Assert.Equal([1, 2, 3], bank[160..]);
+            var paramBank = Fxp.ToBank(Fxp.WrapParams([0.25f, 1f], "arp", 0x32647250));
+            Assert.Equal("FxBk", Encoding.ASCII.GetString(paramBank, 8, 4));
+            Assert.Equal("CcnKFxCk", Encoding.ASCII.GetString(paramBank, 156, 4) + Encoding.ASCII.GetString(paramBank, 164, 4));
+            Assert.Equal(paramBank.Length - 8, BinaryPrimitives.ReadInt32BigEndian(paramBank.AsSpan(4)));
             Assert.All(plugins, p => Assert.Equal("instrument", (string?)p.Attribute("deviceRole")));
             Assert.All(tracks.SkipLast(1), t => Assert.Equal(masterId, (string?)t.Element("Channel")!.Attribute("destination")));
             Assert.DoesNotContain(leftOut, n => n.Contains("Serum") || n.Contains("Arcade"));

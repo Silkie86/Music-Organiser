@@ -634,9 +634,40 @@ public sealed partial class FlStudioReader : IProjectReader
     }
 }
 
-/// <summary>Builds VST2 .fxp program files around opaque plugin chunks.</summary>
+/// <summary>Builds VST2 .fxp program files around opaque plugin chunks, and .fxb banks from them.</summary>
 public static class Fxp
 {
+    /// <summary>
+    /// The same settings as a one-program .fxb bank, the form Bitwig writes (and reads back) in
+    /// DAWproject files: an 'FPCh' chunk becomes an 'FBCh' bank chunk; an 'FxCk' parameter
+    /// program goes inside an 'FxBk' bank. Anything else comes back unchanged.
+    /// </summary>
+    public static byte[] ToBank(byte[] fxp)
+    {
+        const int ProgramHeader = 60;   // CcnK, size, magic, version, id, plugin version, count, name[28]
+        if (fxp.Length < ProgramHeader - 4 || !fxp.AsSpan(0, 4).SequenceEqual("CcnK"u8)) return fxp;
+        var magic = Encoding.ASCII.GetString(fxp, 8, 4);
+        var isChunk = magic == "FPCh";
+        if (!isChunk && magic != "FxCk") return fxp;
+        ReadOnlySpan<byte> body = isChunk ? fxp.AsSpan(ProgramHeader) : fxp;
+        if (isChunk && (fxp.Length < ProgramHeader ||
+                        BinaryPrimitives.ReadInt32BigEndian(fxp.AsSpan(ProgramHeader - 4)) != fxp.Length - ProgramHeader)) return fxp;
+
+        using var ms = new MemoryStream();
+        void I32(int v) { Span<byte> b = stackalloc byte[4]; BinaryPrimitives.WriteInt32BigEndian(b, v); ms.Write(b); }
+        ms.Write("CcnK"u8);
+        I32(4 + 20 + 124 + (isChunk ? 4 : 0) + body.Length);
+        ms.Write(isChunk ? "FBCh"u8 : "FxBk"u8);
+        I32(2);                       // format version
+        ms.Write(fxp.AsSpan(16, 8));  // plugin id and version, as the program had them
+        I32(1);                       // number of programs
+        I32(0);                       // current program
+        ms.Write(new byte[124]);
+        if (isChunk) I32(body.Length);
+        ms.Write(body);
+        return ms.ToArray();
+    }
+
     /// <summary>
     /// Wraps a VST chunk in an 'FPCh' (opaque chunk) .fxp header. Pass the plugin's
     /// four-character id when known so hosts can match the preset to the plugin.
@@ -722,8 +753,9 @@ public static class VstPreset
         void I64(long v) { BinaryPrimitives.WriteInt64LittleEndian(b, v); ms.Write(b, 0, 8); }
 
         const int HeaderSize = 4 + 4 + 32 + 8;
-        var chunks = new List<(string Id, long Offset, long Size)> { ("Comp", HeaderSize, component.Length) };
-        if (controller.Length > 0) chunks.Add(("Cont", HeaderSize + component.Length, controller.Length));
+        // Bitwig lists the controller even when it's empty.
+        var chunks = new List<(string Id, long Offset, long Size)>
+            { ("Comp", HeaderSize, component.Length), ("Cont", HeaderSize + component.Length, controller.Length) };
         var listOffset = HeaderSize + component.Length + controller.Length;
 
         ms.Write("VST3"u8);

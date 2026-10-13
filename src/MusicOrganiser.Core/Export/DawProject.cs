@@ -61,8 +61,11 @@ public static class DawProject
                 skipped.Add(p.Native ? $"{p.Name} (FL Studio plugin)" : $"{p.Name} (settings not readable)");
                 return null;
             }
-            var path = $"plugins/{Guid.NewGuid()}{p.State.Extension}";
-            files.Add((path, p.State.Data));
+            // VST2 settings go in as a bank (.fxb), as Bitwig's own DAWproject files have them.
+            var (data, extension) = p.Format == "VST2" && p.State.Extension == ".fxp"
+                ? (Fxp.ToBank(p.State.Data), ".fxb") : (p.State.Data, p.State.Extension);
+            var path = $"plugins/{Guid.NewGuid()}{extension}";
+            files.Add((path, data));
             return new XElement(p.Format == "VST3" ? "Vst3Plugin" : "Vst2Plugin",
                 new XAttribute("id", Id()),
                 p.DeviceId.Length > 0 ? new XAttribute("deviceID", p.DeviceId) : null,
