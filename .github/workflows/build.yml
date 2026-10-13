@@ -30,3 +30,30 @@ jobs:
           dotnet-version: 10.0.x
       - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release
       - run: dotnet build src/MusicOrganiser.Avalonia -c Release
+
+  # The native tools (C++): the plugin scanner and the probe plugin as CLAP, VST3 and (macOS) AU.
+  # Tested by hosting the probe and scanning it. Each run keeps the built tools as a download.
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        shell: bash
+        run: |
+          extra=""
+          if [ "$RUNNER_OS" = "macOS" ]; then extra='-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'; fi
+          cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release -DMO_PROBE_WRAPPERS=ON ${extra:+"$extra"}
+      - name: Build
+        run: cmake --build native/build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir native/build -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: music-organiser-native-${{ runner.os }}
+          path: |
+            native/build/bin/
+            native/build/plugins/

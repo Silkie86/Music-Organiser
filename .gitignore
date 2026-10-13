@@ -3,3 +3,7 @@ obj/
 *.user
 .vs/
 publish/
+
+# Native (C++) build folders
+native/build/
+native/out/

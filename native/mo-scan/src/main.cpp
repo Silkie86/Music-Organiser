@@ -1,0 +1,86 @@
+// mo-scan: loads one plugin file and prints what's inside as JSON lines, one per plugin.
+// The app runs it once per plugin with a timeout, so a plugin that crashes or hangs only ends this process.
+//
+//   mo-scan [--no-params] [--state] [--format clap|vst3|vst2] <plugin path>
+//   mo-scan --version
+#include "json.h"
+#include "module.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace {
+
+constexpr const char* kVersion = "1";
+
+std::string lower(std::string s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+int run(const std::vector<std::filesystem::path>& args)
+{
+    mo::takeStdout();
+    mo::Options opt;
+    std::string format;
+    std::vector<std::filesystem::path> paths;
+    for (size_t i = 0; i < args.size(); i++)
+    {
+        auto a = args[i].u8string();
+        if (a == "--version")
+        {
+            mo::Json j;
+            mo::emit(j.begin().str("scanner", "mo-scan").str("version", kVersion).end());
+            return 0;
+        }
+        if (a == "--no-params") opt.params = false;
+        else if (a == "--state") opt.state = true;
+        else if (a == "--format" && i + 1 < args.size()) format = lower(args[++i].u8string());
+        else paths.push_back(args[i]);
+    }
+    if (paths.empty())
+    {
+        std::fprintf(stderr, "usage: mo-scan [--no-params] [--state] [--format clap|vst3|vst2] <plugin path>\n");
+        return 64;
+    }
+
+    int failed = 0;
+    for (auto& path : paths)
+    {
+        auto f = format.empty() ? lower(path.extension().u8string()) : "." + format;
+        std::string error;
+        bool ok;
+        if (!std::filesystem::exists(path)) { error = "not found"; ok = false; }
+        else if (f == ".clap") ok = mo::scanClap(path, opt, error);
+        else if (f == ".vst3") ok = mo::scanVst3(path, opt, error);
+        else if (f == ".dll" || f == ".so" || f == ".vst" || f == ".vst2") ok = mo::scanVst2(path, opt, error);
+        else { error = "unknown plugin type"; ok = false; }
+        if (!ok)
+        {
+            failed++;
+            mo::Json j;
+            mo::emit(j.begin().str("path", path.u8string()).str("error", error).end());
+        }
+    }
+    return failed ? 2 : 0;
+}
+
+} // namespace
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv)
+{
+    std::vector<std::filesystem::path> args(argv + 1, argv + argc);
+    return run(args);
+}
+#else
+int main(int argc, char** argv)
+{
+    std::vector<std::filesystem::path> args(argv + 1, argv + argc);
+    return run(args);
+}
+#endif
