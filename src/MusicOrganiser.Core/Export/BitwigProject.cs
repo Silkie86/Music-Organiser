@@ -9,7 +9,8 @@ namespace MusicOrganiser.Core.Export;
 /// <summary>
 /// Writes an FL Studio song as a native Bitwig project (.bwproject), which carries more of the song
 /// than DAWproject can: each Sampler's sample, root key and tune, a Note Transpose in front of
-/// plugins whose FL root key was moved, and volume and pan automation on Bitwig's faders.
+/// plugins whose FL root key was moved, muted notes and clips, and automation of volume, pan and
+/// plugin settings.
 ///
 /// Bitwig's format isn't published, so the project is built from a template Bitwig saved: one with
 /// a Sampler track, a VST3 instrument track with a Note Transpose before the plugin and a clip of
@@ -17,9 +18,10 @@ namespace MusicOrganiser.Core.Export;
 /// tracks, devices, the clip and the lane are copied for each FL channel and filled in; the
 /// template's own tracks, effect tracks and sends are left out.
 ///
-/// Each channel that plays notes becomes a track on its own mixer channel, as Bitwig tracks are,
-/// with the VST effects of the FL insert it feeds after its instrument; the master insert's effects
-/// go on the master. FL Studio's own plugins have no Bitwig equivalent, so they're left out and listed.
+/// Each channel that plays notes becomes a track on its own mixer channel, as Bitwig tracks are, with
+/// a clip for each FL pattern clip it plays in and the VST effects of the FL insert it feeds after its
+/// instrument; the master insert's effects go on the master. FL Studio's own plugins have no Bitwig
+/// equivalent, so they're left out and listed.
 /// </summary>
 public static class BitwigProject
 {
@@ -121,7 +123,7 @@ public static class BitwigProject
             (insert?.Effects ?? []).Select(e => Plugin(e, AudioEffect, skipped)).OfType<BwObject>().ToList();
 
         var automated = song.Automation.Select(a => a.Channel).ToHashSet();
-        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || automated.Contains(c.Index)) &&
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index)) &&
                                                (c.Instrument is not null || c.Sample.Length > 0)).ToList();
         var inserts = song.Inserts.ToDictionary(i => i.Index);
         var shared = playing.Where(c => c.Insert > 0).GroupBy(c => c.Insert).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
@@ -132,10 +134,14 @@ public static class BitwigProject
             var skipped = new List<string>();
             var devices = new List<BwObject>();
             BwObject track;
+            Func<int, long?>? sampleLength = null;
             if (c.Instrument is null)
             {
                 track = t.Copy(t.SamplerTrack);
-                devices.Add(Sampler(Chain(track).Single(), c, readSample(c.Sample), notes));
+                var info = readSample(c.Sample);
+                devices.Add(Sampler(Chain(track).Single(), c, info, notes));
+                if (info is { Seconds: > 0 })
+                    sampleLength = key => SampleTicks(info.Seconds, key - c.RootKey + c.PitchCents / 100.0, song.Tempo, song.Ppq);
             }
             else
             {
@@ -143,7 +149,11 @@ public static class BitwigProject
                 if (Plugin(c.Instrument, Instrument, skipped) is { } plugin)
                 {
                     instruments[c.Index] = (plugin, c.Instrument);
-                    if (c.RootKey != FlStudioReader.DefaultRoot) devices.Add(Transpose(t.Copy(t.NoteTranspose), FlStudioReader.DefaultRoot - c.RootKey));
+                    // FL plays a plugin's root key as C5, so a moved root key transposes it, as does the pitch knob.
+                    var shift = FlStudioReader.DefaultRoot - c.RootKey + (int)Math.Round(c.PitchCents / 100.0);
+                    if (shift != 0) devices.Add(Transpose(t.Copy(t.NoteTranspose), shift));
+                    if (c.PitchCents % 100 != 0)
+                        notes.Add($"{c.Name}: its pitch knob ({c.PitchCents / 100.0:+0.##;-0.##} semitones) is rounded to whole semitones");
                     devices.Add(plugin);
                 }
             }
@@ -157,7 +167,8 @@ public static class BitwigProject
             Chain(track, devices);
             track.Set(0x15b, c.Name);
             Mixer(track, c);
-            if (c.Notes.Count > 0) t.AddClip(track, c.Notes, song.Ppq);
+            foreach (var clip in FlClips.Of(c, song.Ppq))
+                t.AddClip(track, clip with { Notes = FlClips.Lengthen(clip.Notes, clip.Length, sampleLength) }, song.Ppq);
             tracks.Add(track);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
         }
@@ -259,15 +270,23 @@ public static class BitwigProject
         return sampler;
     }
 
-    /// <summary>Sets a Note Transpose to shift notes by <paramref name="semitones"/>, as whole octaves plus 0 to 11 semitones.</summary>
+    /// <summary>
+    /// Sets a Note Transpose to shift notes by <paramref name="semitones"/>: whole octaves (up to 3) and the
+    /// rest in semitones the same way, so -4 is 4 semitones down rather than an octave down and 8 up.
+    /// </summary>
     static BwObject Transpose(BwObject device, int semitones)
     {
         var def = Def(device)!;
-        var octaves = (int)Math.Floor(semitones / 12.0);
-        Param(def, "OCTAVES")?.Set(0x273, (byte)Math.Clamp(octaves + 3, 0, 6), 0x01);
-        Param(def, "COARSE")?.Set(0x330, (byte)(semitones - octaves * 12), 0x01);
+        var octaves = Math.Clamp(semitones / 12, -3, 3);
+        var rest = Math.Clamp(semitones - octaves * 12, -48, 48);
+        Param(def, "OCTAVES")?.Set(0x273, (byte)(octaves + 3), 0x01);
+        Param(def, "COARSE")?.Set(0x330, unchecked((byte)(sbyte)rest), 0x01);   // a signed byte: -4 is 252
         return device;
     }
+
+    /// <summary>How long, in ticks, a sample of <paramref name="seconds"/> plays when pitched <paramref name="semitones"/> up.</summary>
+    static long SampleTicks(double seconds, double semitones, double tempo, int ppq) =>
+        (long)Math.Ceiling(seconds / Math.Pow(2, semitones / 12) * tempo / 60 * ppq - 1e-6);
 
     /// <summary>Channel volume and pan on the track's mixer. Bitwig's fader holds the cube root of the gain.</summary>
     static void Mixer(BwObject track, FlChannel c)
@@ -404,17 +423,19 @@ public static class BitwigProject
         static IEnumerable<BwObject> KeyLanes(BwObject clip) => NoteContent(clip)?.List(0x18cb) ?? [];
 
         /// <summary>
-        /// One clip from the start of the song holding the channel's notes, in whole bars. Notes sit in
-        /// one lane per key, highest first, as Bitwig saves them.
+        /// One of a channel's FL clips as an arrangement clip, muted when it is in FL. Notes sit in one lane
+        /// per key, highest first, as Bitwig saves them, and are muted as in FL's piano roll.
         /// </summary>
-        public void AddClip(BwObject track, IReadOnlyList<NoteEvent> notes, int ppq)
+        public void AddClip(BwObject track, FlClip fl, int ppq)
         {
             double Beats(long ticks) => ticks / (double)ppq;
-            var length = Math.Max(4, Math.Ceiling(Beats(notes.Max(n => n.Start + n.Length)) / 4) * 4);
+            var length = Beats(fl.Length);
             var clip = Copy(_clip);
-            clip.Set(0x2af, 0.0);
+            clip.Set(0x2af, Beats(fl.Start));
             clip.Set(0x26, length);
+            if (fl.Muted || clip.Has(0x10f8)) clip.Set(0x10f8, (byte)(fl.Muted ? 1 : 0), 0x05);
             var content = clip.Obj(0x2ae9)!;
+            // The loop and play range are timed from the clip's start.
             if (clip.Obj(0x2adb) is { } loop)
             {
                 loop.Obj(0x992)?.Set(0x2af, 0.0);
@@ -423,7 +444,7 @@ public static class BitwigProject
                 loop.Obj(0x98d)?.Set(0x2af, length);
             }
             var lanes = new List<object?>();
-            foreach (var key in notes.GroupBy(n => Math.Clamp(n.Key, 0, 127)).OrderByDescending(g => g.Key))
+            foreach (var key in fl.Notes.GroupBy(n => Math.Clamp(n.Key, 0, 127)).OrderByDescending(g => g.Key))
             {
                 var lane = Copy(_keyLane);
                 lane.Set(0xee, (byte)key.Key, 0x01);
@@ -433,6 +454,7 @@ public static class BitwigProject
                     var velocity = Math.Clamp(n.Velocity / 127.0, 0, 1);
                     note.Set(0x2af, Beats(n.Start));
                     note.Set(0x26, Beats(n.Length));
+                    if (n.Muted || note.Has(0x10f8)) note.Set(0x10f8, (byte)(n.Muted ? 1 : 0), 0x05);
                     note.Set(0xef, velocity);
                     note.Set(0xf0, velocity);
                     return (object?)note;

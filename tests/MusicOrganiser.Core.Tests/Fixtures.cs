@@ -24,6 +24,7 @@ public static class Fixtures
         public FlpBuilder Byte(int id, byte v) { _events.WriteByte((byte)id); _events.WriteByte(v); return this; }
         public FlpBuilder Word(int id, ushort v) { _events.WriteByte((byte)id); _events.Write(BitConverter.GetBytes(v)); return this; }
         public FlpBuilder Dword(int id, uint v) { _events.WriteByte((byte)id); _events.Write(BitConverter.GetBytes(v)); return this; }
+        public FlpBuilder Raw(params byte[] bytes) { _events.Write(bytes); return this; }
 
         public FlpBuilder Data(int id, byte[] data)
         {
@@ -93,7 +94,7 @@ public static class Fixtures
     }
 
     /// <summary>An FL 25 playlist item (80 bytes): index 20480 + n is pattern n, a smaller index a channel's clip.</summary>
-    public static byte[] PlaylistItem25(uint pos, ushort index, uint length, ushort track = 499)
+    public static byte[] PlaylistItem25(uint pos, ushort index, uint length, ushort track = 499, bool muted = false)
     {
         var b = new byte[80];
         BinaryPrimitives.WriteUInt32LittleEndian(b, pos);
@@ -101,6 +102,7 @@ public static class Fixtures
         BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(6), index);
         BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(8), length);
         BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(12), track);
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(18), (ushort)(muted ? 0x2040 : 0x0040));
         BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(24), -1);
         BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(28), -1);
         return b;
@@ -144,13 +146,15 @@ public static class Fixtures
         return b;
     }
 
-    public static byte[] Note(uint pos, ushort channel, uint length, ushort key, byte velocity)
+    public static byte[] Note(uint pos, ushort channel, uint length, ushort key, byte velocity, bool muted = false)
     {
         var b = new byte[24];
         BinaryPrimitives.WriteUInt32LittleEndian(b, pos);
+        BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(4), 0x4000);
         BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(6), channel);
         BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(8), length);
         BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(12), key);
+        if (muted) b[19] = 0x20;
         b[21] = velocity;
         return b;
     }
@@ -272,14 +276,37 @@ public static class Fixtures
     }
 
     /// <summary>
-    /// An FL 25 song laid out like FL writes it: a sampler "Snare" (root key A4, pitch -2 semitones,
+    /// Like Solomon's FL 25 test of mutes and steps: pattern "Beat" has a sampler "Snare" playing two half-beat
+    /// notes, the second muted in the piano roll, and a sampler "Kick" with four steps from the step sequencer
+    /// (no length) on beats 1, 2, 3 and 4½. It's in the playlist in bar 1, then again in bar 2, muted.
+    /// </summary>
+    public static string FlStudio25MutesAndSteps(string dir)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 140_000)
+            .Word(65, 1).Text(193, "Beat")
+            .Data(224, [.. Note(0, 0, 48, 72, 100), .. Note(96, 0, 48, 72, 100, muted: true),
+                        .. Note(0, 1, 0, 60, 100), .. Note(96, 1, 0, 60, 100), .. Note(192, 1, 0, 60, 100), .. Note(336, 1, 0, 60, 100)])
+            .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare").Text(196, @"C:\Samples\Snare 01.wav")
+            .Word(64, 1).Byte(21, 0).Text(201, "").Text(203, "Kick").Text(196, @"C:\Samples\Kick 01.wav")
+            .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384, muted: true)]);
+        var path = Path.Combine(dir, "Mutes and steps.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// An FL 25 song laid out like FL writes it, at 132 bpm: a sampler "Snare" (root key A4, pitch -2 semitones,
     /// pan 25%, volume 100%) with an automation clip on its volume in bar 2, and a Serum VST (root
     /// key E5) with an automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2.
     /// </summary>
     public static string FlStudio25Automation(string dir, bool volumePlacedTwice = false)
     {
         var b = new FlpBuilder()
-            .Ascii(199, "25.2.5.5319")
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1)
+            .Raw(172, 1, 1, 0)   // as FL 25 writes it: three bytes, not four
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 132_000)
             .Word(65, 1).Data(224, [.. Note(0, 0, 48, 72, 100), .. Note(0, 2, 96, 60, 100)])
             .Data(227, AutomationLink(1, 0))
             .Data(227, AutomationLink(3, 2u << 16 | 0x80cd))

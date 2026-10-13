@@ -15,13 +15,24 @@ public sealed record FlPlugin(string Name, string Vendor, string Format, string 
 }
 
 /// <summary>
-/// A channel in the Channel Rack: what plays it, which mixer insert it feeds, and its notes across the song.
-/// <paramref name="RootKey"/> is the MIDI note the sample plays at its own pitch (60, FL's C5, unless changed);
-/// <paramref name="PitchCents"/> the channel's pitch knob. Volume and pan are FL's 0..1 knob positions.
+/// A channel in the Channel Rack: what plays it, which mixer insert it feeds, and the notes it plays across
+/// the song (in song ticks, without muted notes or clips). <paramref name="RootKey"/> is the MIDI note the
+/// sample plays at its own pitch (60, FL's C5, unless changed); <paramref name="PitchCents"/> the channel's
+/// pitch knob. Volume and pan are FL's 0..1 knob positions.
 /// </summary>
 public sealed record FlChannel(int Index, string Name, FlPlugin? Instrument, string Sample, int Insert, IReadOnlyList<NoteEvent> Notes,
                                int RootKey = FlStudioReader.DefaultRoot, int PitchCents = 0,
-                               double Volume = FlStudioReader.DefaultVolume, double Pan = 0.5);
+                               double Volume = FlStudioReader.DefaultVolume, double Pan = 0.5)
+{
+    /// <summary>The channel's part of each pattern clip in the playlist, muted ones and muted notes included.</summary>
+    public IReadOnlyList<FlClip> Clips { get; init; } = [];
+}
+
+/// <summary>
+/// One pattern placed in the playlist, as one channel plays it: where it starts and how long it is (song
+/// ticks), and the channel's notes in it, timed from the clip's start.
+/// </summary>
+public sealed record FlClip(string Name, long Start, long Length, IReadOnlyList<NoteEvent> Notes, bool Muted = false);
 
 /// <summary>What an automation clip moves.</summary>
 public enum FlControl { Volume, Pan, Pitch, PluginParameter, Other }
@@ -77,6 +88,7 @@ public sealed partial class FlStudioReader
         var curves = new Dictionary<int, List<FlPoint>>();
         var links = new List<(int Clip, uint Target)>();
         var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
+        var patternNames = new Dictionary<int, string>();
         ReadOnlyMemory<byte>? playlist = null;
         int? channel = null, pattern = null;
         var inMixer = false;
@@ -141,21 +153,22 @@ public sealed partial class FlStudioReader
                     pendingInternal = "";
                     break;
                 case EvPatternNew: pattern = (int)e.Int; break;
+                case EvPatternName when pattern is not null: patternNames[pattern.Value] = flp.Str(e); break;
                 case EvPatternNotes when pattern is not null: rawNotes.Add((pattern.Value, e.Payload)); break;
                 case EvPlaylist when playlist is null: playlist = e.Payload; break;
             }
         }
 
-        var notes = PlaceNotes(flp, rawNotes, playlist, order.ToHashSet());
+        var clips = PlaceClips(flp, rawNotes, playlist, order.ToHashSet(), patternNames);
         var channels = order
             .Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation)
             .Select(ch =>
             {
                 var lv = levels.GetValueOrDefault(ch, (Pan: 0.5, Volume: DefaultVolume, Pitch: 0));
+                var placed = clips.GetValueOrDefault(ch) ?? [];
                 return new FlChannel(ch, names.GetValueOrDefault(ch, $"Channel {ch + 1}"), instruments.GetValueOrDefault(ch),
-                                     samples.GetValueOrDefault(ch, ""), routes.GetValueOrDefault(ch),
-                                     notes.TryGetValue(ch, out var n) ? n.OrderBy(x => x.Start).ThenBy(x => x.Key).ToList() : [],
-                                     roots.GetValueOrDefault(ch, DefaultRoot), lv.Pitch, lv.Volume, lv.Pan);
+                                     samples.GetValueOrDefault(ch, ""), routes.GetValueOrDefault(ch), Audible(placed),
+                                     roots.GetValueOrDefault(ch, DefaultRoot), lv.Pitch, lv.Volume, lv.Pan) { Clips = placed };
             })
             .ToList();
         var automation = PlaceAutomation(links, curves, names, playlist, flp.Ppq);
@@ -198,7 +211,7 @@ public sealed partial class FlStudioReader
     /// Automation clips placed where the playlist puts them, cut to each clip's length, joined per
     /// clip. A link (event 227) gives the clip's channel and its target: the low word is the control
     /// (0 volume, 1 pan, 4 pitch, 0x8000 + n plugin parameter n), the high word the channel it's on.
-    /// Clips that aren't in the playlist don't play, so they're left out. A clip placed several times,
+    /// Clips that aren't in the playlist, or are muted there, don't play, so they're left out. A clip placed several times,
     /// with gaps between, becomes one curve that holds its value through the gaps.
     /// </summary>
     static List<FlAutomation> PlaceAutomation(List<(int Clip, uint Target)> links, Dictionary<int, List<FlPoint>> curves,
@@ -211,7 +224,7 @@ public sealed partial class FlStudioReader
         {
             if (!curves.TryGetValue(clip, out var curve) || curve.Count == 0) continue;
             var points = new List<FlPoint>();
-            foreach (var item in items.Where(i => i.Index == clip))
+            foreach (var item in items.Where(i => i.Index == clip && !i.Muted))
             {
                 var placed = CutCurve(curve, item.At / (double)ppq, item.From / (double)ppq, item.Length / (double)ppq).ToList();
                 // Between clips FL holds the value the last one ended on, then jumps to where the next starts.

@@ -119,7 +119,7 @@ public static class DawProject
         // Inserts that channels feed or that hold effects, as effect tracks into the master.
         // Channels that play notes or are automated, with a plugin or sample to make the sound.
         var automated = song.Automation.Select(a => a.Channel).ToHashSet();
-        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || automated.Contains(c.Index)) &&
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index)) &&
                                                (c.Instrument is not null || c.Sample.Length > 0)).ToList();
         var used = playing.Select(c => c.Insert).Where(i => i > 0).ToHashSet();
         var insertChannels = new Dictionary<int, string>();
@@ -134,7 +134,7 @@ public static class DawProject
             if (skipped.Count > 0) notes.Add($"{name}: left out {string.Join(", ", skipped)}");
         }
 
-        // Instrument tracks, each with one clip holding its notes across the song.
+        // Instrument tracks, with a clip for each FL pattern clip the channel plays in.
         var lanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("timeUnit", "beats"));
         var setup = new List<string>();
         var placed = new Dictionary<int, (XElement Lanes, XElement Channel, XElement? Device)>();
@@ -169,22 +169,26 @@ public static class DawProject
             var trackLanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("track", (string)track.Attribute("id")!));
             placed[c.Index] = (trackLanes, ch, device?.Name.LocalName is "Vst2Plugin" or "Vst3Plugin" ? device : null);
             lanes.Add(trackLanes);
-            if (c.Notes.Count == 0) continue;
+            var clips = FlClips.Of(c, song.Ppq);
+            if (clips.Count == 0) continue;
 
+            // DAWproject has no muted notes, so FL's muted notes are left out; a muted clip is switched off.
             double Beats(long ticks) => ticks / (double)song.Ppq;
-            var end = Math.Ceiling(Beats(c.Notes.Max(n => n.Start + n.Length)) / 4) * 4;
-            trackLanes.Add(
-                new XElement("Clips", new XAttribute("id", Id()),
-                    new XElement("Clip", new XAttribute("time", "0"), new XAttribute("duration", Num(end)),
-                        new XAttribute("playStart", "0"), new XAttribute("name", c.Name),
-                        new XElement("Notes", new XAttribute("id", Id()),
-                            c.Notes.Select(n => new XElement("Note",
-                                new XAttribute("time", Num(Beats(n.Start))),
-                                new XAttribute("duration", Num(Beats(n.Length))),
-                                new XAttribute("channel", 0),
-                                new XAttribute("key", Math.Clamp(n.Key, 0, 127)),
-                                new XAttribute("vel", Num(n.Velocity / 127.0)),
-                                new XAttribute("rel", Num(n.Velocity / 127.0))))))));
+            trackLanes.Add(new XElement("Clips", new XAttribute("id", Id()), clips.Select(clip =>
+            {
+                var x = new XElement("Clip", new XAttribute("time", Num(Beats(clip.Start))), new XAttribute("duration", Num(Beats(clip.Length))),
+                    new XAttribute("playStart", "0"), new XAttribute("name", clip.Name),
+                    new XElement("Notes", new XAttribute("id", Id()),
+                        FlClips.Lengthen(clip.Notes, clip.Length).Where(n => !n.Muted).Select(n => new XElement("Note",
+                            new XAttribute("time", Num(Beats(n.Start))),
+                            new XAttribute("duration", Num(Beats(n.Length))),
+                            new XAttribute("channel", 0),
+                            new XAttribute("key", Math.Clamp(n.Key, 0, 127)),
+                            new XAttribute("vel", Num(n.Velocity / 127.0)),
+                            new XAttribute("rel", Num(n.Velocity / 127.0))))));
+                if (clip.Muted) x.Add(new XAttribute("enable", "false"));
+                return x;
+            })));
         }
 
         // Automation clips, as automation on the track they move: its volume, pan or plugin parameter.

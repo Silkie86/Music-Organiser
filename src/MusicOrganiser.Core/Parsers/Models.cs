@@ -18,7 +18,9 @@ public enum PluginKind { Unknown, Instrument, Effect, NoteEffect }
 public sealed record PluginRef(string Name, string Vendor = "", PluginKind Kind = PluginKind.Unknown,
                                string Format = "", string Path = "");
 
-public readonly record struct NoteEvent(long Start, long Length, int Key, int Velocity);
+/// <param name="Muted">Muted in the piano roll, so it doesn't play (FL Studio).</param>
+/// <param name="Step">Entered in FL's step sequencer: it has no length of its own and FL plays it until its sound ends.</param>
+public readonly record struct NoteEvent(long Start, long Length, int Key, int Velocity, bool Muted = false, bool Step = false);
 
 public sealed class MidiClip
 {

@@ -16,6 +16,10 @@ public class BitwigProjectTests
     static IEnumerable<BwObject> Chain(BwObject track) => track.Obj(0x164)!.List(0x144);
     static BwObject Param(BwObject device, string name) => Def(device).Obj(0xa4)!.List(0x20c).Single(p => p.Str(0x2b9) == name);
     static IEnumerable<BwObject> All(Document doc) => doc.Objects;
+    static int Semitones(BwObject transpose) => (sbyte)(byte)Param(transpose, "COARSE").Num(0x330)!.Value;
+    static List<BwObject> Clips(BwObject track) => track.Obj(0x2bf8)!.Obj(0x2d8e)!.List(0x21f).ToList();
+    static IEnumerable<BwObject> Notes(BwObject clip) =>
+        clip.Obj(0x2ae9)!.Obj(0x10e9)!.Obj(0x49c)!.List(0x18cb).SelectMany(l => l.List(0x21f)).OrderBy(n => n.Num(0x2af));
 
     [Fact]
     public void BuildsTracksFromTheTemplateWithSamplerRootKeysAndTransposedPlugins()
@@ -50,10 +54,10 @@ public class BitwigProjectTests
         Assert.Equal(Math.Cbrt(DawProject.Gain(1.0)), mixer.Obj(0x1a4)!.Num(0x2c8)!.Value, 6);
         Assert.Equal(-0.5, mixer.Obj(0x1a5)!.Num(0x2c8)!.Value, 6);
 
-        // Serum (VST2), root key E5: a Note Transpose of -4 semitones (an octave down, 8 up) in front of it.
+        // Serum (VST2), root key E5: a Note Transpose of -4 semitones in front of it (octaves ±0, stored as 3).
         var (transpose, serum) = (Chain(tracks[1]).First(), Chain(tracks[1]).Last());
         Assert.Equal("Note Transpose", Def(transpose).Str(0x9a));
-        Assert.Equal((2.0, 8.0), (Param(transpose, "OCTAVES").Num(0x273)!.Value, Param(transpose, "COARSE").Num(0x330)!.Value));
+        Assert.Equal((3.0, -4), (Param(transpose, "OCTAVES").Num(0x273)!.Value, Semitones(transpose)));
         var serumDef = Def(serum);
         Assert.Equal(("Serum", "Xfer Records"), (serumDef.Str(0x9a), serumDef.Str(0x9b)));
         Assert.Equal(song.Channels[1].Instrument!.DeviceId, serumDef[0xce4]!.ToString());
@@ -68,13 +72,13 @@ public class BitwigProjectTests
             Assert.Equal("FBCh", System.Text.Encoding.ASCII.GetString(head, 8, 4));
         }
 
-        // Notes in one clip per track from the start of the song, in whole bars; the pattern is in bar 2.
+        // A clip where the pattern sits in the playlist (bar 2, one bar long), its notes timed from the clip's start.
         var clip = tracks[1].Obj(0x2bf8)!.Obj(0x2d8e)!.List(0x21f).Single();
-        Assert.Equal(8.0, clip.Num(0x26));
+        Assert.Equal((4.0, 4.0), (clip.Num(0x2af), clip.Num(0x26)));
         var lane = clip.Obj(0x2ae9)!.Obj(0x10e9)!.Obj(0x49c)!.List(0x18cb).Single();
         Assert.Equal(60, lane.Num(0xee));
         var note = lane.List(0x21f).Single();
-        Assert.Equal((4.0, 1.0, song.Channels[1].Notes.Single().Velocity / 127.0), (note.Num(0x2af)!.Value, note.Num(0x26)!.Value, note.Num(0xef)!.Value));
+        Assert.Equal((0.0, 1.0, song.Channels[1].Notes.Single().Velocity / 127.0), (note.Num(0x2af)!.Value, note.Num(0x26)!.Value, note.Num(0xef)!.Value));
         Assert.Same(clip.Obj(0x2ae9)!.Obj(0x10e9), tracks[1].Obj(0x2aed)!.List(0x10e6).Single());
         Assert.NotSame(lane, tracks[0].Obj(0x2bf8)!.Obj(0x2d8e)!.List(0x21f).Single().Obj(0x2ae9)!.Obj(0x10e9)!.Obj(0x49c)!.List(0x18cb).Single());
 
@@ -114,6 +118,60 @@ public class BitwigProjectTests
         var bytes = (BwBlob)doc.Meta["structure"]!;
         var summary = Decode(result.Bytes[bytes.Offset..(bytes.Offset + bytes.Length)]);
         Assert.Equal(["Snare", "Serum"], summary.Root!.Obj(0xad2)!.List(0xace).Select(e => e.Str(0xad1)));
+    }
+
+    [Fact]
+    public void KeepsMutedNotesAndClipsMutedAndPlaysStepsUntilTheirSoundEnds()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir()));
+        // The kick's sample lasts 0.25 s: 0.58 beats at 140 bpm.
+        var doc = Decode(BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
+            p => p.EndsWith("Kick 01.wav") ? new BitwigProject.SampleFile(1234, Md5, 48000, 2, 0.25) : Snare(p)).Bytes);
+        Assert.Null(doc.BodyError);
+        var tracks = doc.Root!.Obj(0x4dd)!.List(0x4de).ToList();
+
+        // One clip per placement: the pattern in bar 1, then muted in bar 2; the snare's second note muted in both.
+        // (Unmuted is no mute field where the template has none.)
+        var snare = Clips(tracks[0]);
+        Assert.Equal([(0.0, 4.0, 0.0), (4.0, 4.0, 1.0)], snare.Select(c => (c.Num(0x2af)!.Value, c.Num(0x26)!.Value, c.Num(0x10f8) ?? 0)));
+        Assert.All(snare, c => Assert.Equal([(0.0, 0.5, 0.0), (1.0, 0.5, 1.0)],
+                                            Notes(c).Select(n => (n.Num(0x2af)!.Value, n.Num(0x26)!.Value, n.Num(0x10f8) ?? 0))));
+        Assert.Equal(2, tracks[0].Obj(0x2aed)!.List(0x10e6).Distinct().Count());   // each clip has its own notes
+
+        // Steps last until the next one or the end of the clip, but no longer than the sample.
+        var kick = Clips(tracks[1]);
+        Assert.Equal(2, kick.Count);
+        Assert.Equal([(0.0, 56 / 96.0), (1.0, 56 / 96.0), (2.0, 56 / 96.0), (3.5, 0.5)],
+                     Notes(kick[0]).Select(n => (n.Num(0x2af)!.Value, n.Num(0x26)!.Value)));
+    }
+
+    [Fact]
+    public void ClipsThatOverlapInFlBecomeOneClip()
+    {
+        // On two playlist tracks in FL: a bar from the start, and a muted bar from beat 3.
+        var lead = new FlChannel(0, "Lead", new FlPlugin("Serum", "Xfer Records", "VST2", "1483109208", null), "", 0,
+                                 [new NoteEvent(0, 96, 60, 100)])
+        {
+            Clips = [new FlClip("A", 0, 384, [new NoteEvent(0, 96, 60, 100)]),
+                     new FlClip("B", 192, 384, [new NoteEvent(0, 96, 64, 100)], Muted: true)],
+        };
+        var doc = Decode(BitwigProject.FromFl(new FlSong("", 96, 120, [lead], [], []), Fixtures.BitwigTemplate(), Snare).Bytes);
+        var clip = Clips(doc.Root!.Obj(0x4dd)!.List(0x4de).Single()).Single();
+        Assert.Equal((0.0, 6.0, 0.0), (clip.Num(0x2af)!.Value, clip.Num(0x26)!.Value, clip.Num(0x10f8) ?? 0));
+        Assert.Equal([(0.0, 0.0), (2.0, 1.0)], Notes(clip).Select(n => (n.Num(0x2af)!.Value, n.Num(0x10f8) ?? 0)));
+    }
+
+    [Fact]
+    public void TransposesByOctavesAndSemitonesTheSameWay()
+    {
+        int[] roots = [57, 64, 74, 48, 72, 12];   // A4, E5, D6, C4, C6 and C0 (four octaves up: three on the octave knob)
+        var song = new FlSong("", 96, 120, roots.Select((root, i) =>
+            new FlChannel(i, $"Synth {i}", new FlPlugin("Serum", "Xfer Records", "VST2", "1483109208", null), "", 0,
+                          [new NoteEvent(0, 96, 60, 100)], RootKey: root)).ToList(), [], []);
+        var doc = Decode(BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), Snare).Bytes);
+        var transposes = doc.Root!.Obj(0x4dd)!.List(0x4de).Select(t => Chain(t).First()).ToList();
+        Assert.Equal([(0, 3), (0, -4), (-1, -2), (1, 0), (-1, 0), (3, 12)],
+                     transposes.Select(t => ((int)Param(t, "OCTAVES").Num(0x273)!.Value - 3, Semitones(t))));
     }
 
     [Fact]

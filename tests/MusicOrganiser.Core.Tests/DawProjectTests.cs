@@ -49,6 +49,8 @@ public class DawProjectTests
         var path = Fixtures.FlStudio25Automation(Fixtures.TempDir());
         var song = Readers.FlStudio.ReadSong(path);
 
+        Assert.Equal(132, song.Tempo);   // past FL 25's three-byte event 172, which used to swallow it
+        Assert.Equal(132.0, Readers.FlStudio.Read(path).Tempo);
         Assert.Equal(["Snare", "Serum"], song.Channels.Select(c => c.Name));   // automation clips aren't channels here
         var snare = song.Channels[0];
         Assert.Equal((57, -200, 1.0, 0.25), (snare.RootKey, snare.PitchCents, snare.Volume, snare.Pan));
@@ -123,6 +125,48 @@ public class DawProjectTests
             var cutoff = LanesOf(serum).Element("Points")!;
             Assert.Equal(Id(param), (string?)cutoff.Element("Target")!.Attribute("parameter"));
             Assert.Equal(["0", "2", "4"], cutoff.Elements("RealPoint").Select(p => (string)p.Attribute("time")!));
+        }
+    }
+
+    [Fact]
+    public void ReadsMutedNotesMutedClipsAndStepsFromFl25()
+    {
+        var path = Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir());
+        var song = Readers.FlStudio.ReadSong(path);
+        Assert.Equal(140, song.Tempo);
+        var (snare, kick) = (song.Channels[0], song.Channels[1]);
+
+        // What plays: the pattern in bar 1 only, less the muted note. Steps have no length of their own.
+        Assert.Equal([0L], snare.Notes.Select(n => n.Start));
+        Assert.Equal([0L, 96, 192, 336], kick.Notes.Select(n => n.Start));
+        Assert.All(kick.Notes, n => Assert.True(n.Step && n.Length == 1));
+
+        // Each placement as a clip, with muted clips and notes kept and marked.
+        Assert.Equal([("Beat", 0L, 384L, false), ("Beat", 384L, 384L, true)], snare.Clips.Select(c => (c.Name, c.Start, c.Length, c.Muted)));
+        Assert.Equal([false, true], snare.Clips[1].Notes.Select(n => n.Muted));
+
+        // MIDI has no muted notes, so they're left out there.
+        Assert.Single(Readers.FlStudio.ExtractChannels(path).Single(c => c.Name == "Snare").Notes);
+        Assert.Single(Readers.FlStudio.ExtractMidi(path).Single().Track("Snare"));
+    }
+
+    [Fact]
+    public void WritesEachFlClipAsADawProjectClipWithMutedOnesSwitchedOff()
+    {
+        var dir = Fixtures.TempDir();
+        var (file, _, _) = Exporter.DawProjectFromFl(Fixtures.FlStudio25MutesAndSteps(dir), Path.Combine(dir, "out"));
+        var (project, zip) = Open(file);
+        using (zip)
+        {
+            var clips = project.Descendants("Lanes").Where(l => l.Attribute("track") is not null)
+                               .Select(l => l.Descendants("Clip").ToList()).ToList();
+            Assert.Equal([("0", "4", null), ("4", "4", "false")],
+                         clips[0].Select(c => ((string)c.Attribute("time")!, (string)c.Attribute("duration")!, (string?)c.Attribute("enable"))));
+            Assert.Equal(["0"], clips[0][0].Descendants("Note").Select(n => (string)n.Attribute("time")!));   // the muted note is left out
+
+            // Steps last until the next one on their key or the end of the clip.
+            Assert.Equal([("0", "1"), ("1", "1"), ("2", "1.5"), ("3.5", "0.5")],
+                         clips[1][0].Descendants("Note").Select(n => ((string)n.Attribute("time")!, (string)n.Attribute("duration")!)));
         }
     }
 
