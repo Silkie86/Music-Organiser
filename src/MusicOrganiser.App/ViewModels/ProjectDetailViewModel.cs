@@ -154,6 +154,24 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         window.Show();
     }
 
+    public bool IsFlStudio => Item.Daw == "FL Studio";
+
+    /// <summary>Converts an FL Studio project to a DAWproject file Bitwig can open, and shows it.</summary>
+    [RelayCommand]
+    async Task ExportToBitwig()
+    {
+        Message = "Converting for Bitwig…";
+        try
+        {
+            var path = Item.Path;
+            var (file, leftOut) = await Task.Run(() => Exporter.DawProjectFromFl(path, ExportRoot));
+            Message = $"Saved {Path.GetFileName(file)}. In Bitwig, use File > Open and pick it." +
+                      (leftOut.Count == 0 ? "" : $" Not carried over yet: {string.Join("; ", leftOut.Take(4))}{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more" : "")}.");
+            Shell.Reveal(file);
+        }
+        catch (Exception e) { Message = $"Converting for Bitwig failed: {e.Message}"; }
+    }
+
     /// <summary>Opens the presets popup: every plugin state, with filters, ready to export.</summary>
     [RelayCommand]
     void ShowPresets()

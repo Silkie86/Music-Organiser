@@ -189,7 +189,7 @@ public static class Fixtures
     /// An FL Studio 25 project inside "FL Studio/Projects": wrapper state version 12 with a
     /// VST2 (Serum) and a VST3 (Arcade), and a sample under %FLStudioUserData%.
     /// </summary>
-    public static string FlStudio25Project(string dir)
+    public static string FlStudio25Project(string dir, bool withNotes = false)
     {
         var projects = Path.Combine(dir, "FL Studio", "Projects");
         Directory.CreateDirectory(projects);
@@ -212,6 +212,7 @@ public static class Fixtures
             .Text(201, "Fruity Wrapper").Text(203, "Arp")
             .Data(213, WrapperBlob("Predator 2", @"C:\VstPlugins\Predator2.dll", "Rob Papen",
                                    FlVst2ParamState([0.25f, 1f, 0.5f], "arp- sine beat"), version: 12, kind: 0, fourCc: "2drP"));
+        if (withNotes) b.Word(65, 1).Data(224, [.. Note(0, 1, 96, 60, 100), .. Note(0, 2, 96, 64, 100)]);
         var path = Path.Combine(projects, "Shuffle.flp");
         File.WriteAllBytes(path, b.Build());
         return path;

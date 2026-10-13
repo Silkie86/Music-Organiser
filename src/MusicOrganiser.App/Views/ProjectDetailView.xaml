@@ -83,6 +83,10 @@
                            Command="{Binding ShowPresetsCommand}" Margin="0,0,6,6"
                            IsEnabled="{Binding CanExtractPresets}"
                            ToolTip="See the plugin settings saved in this project and export them as presets" />
+                <ui:Button Content="Bitwig project" Icon="{ui:SymbolIcon FolderArrowRight24}"
+                           Command="{Binding ExportToBitwigCommand}" Margin="0,0,6,6"
+                           Visibility="{Binding IsFlStudio, Converter={StaticResource BoolToVisibility}}"
+                           ToolTip="Convert this FL Studio project into a DAWproject file that Bitwig can open: tracks, notes, tempo, VST plugins with their settings and mixer effects" />
             </WrapPanel>
             <Border Margin="0,6,0,0" Padding="12,8" CornerRadius="8" Background="{StaticResource AccentFaintBrush}"
                     Visibility="{Binding Message, Converter={StaticResource NullToVisibility}}">

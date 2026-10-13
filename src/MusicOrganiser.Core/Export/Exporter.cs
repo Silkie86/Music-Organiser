@@ -14,6 +14,19 @@ public static class Exporter
         return dir;
     }
 
+    /// <summary>
+    /// An FL Studio project as a DAWproject file Bitwig can open: tracks, notes, plugins with their
+    /// settings and the mixer's effects. Returns the file and what couldn't come across.
+    /// </summary>
+    public static (string File, IReadOnlyList<string> LeftOut) DawProjectFromFl(string project, string exportRoot)
+    {
+        var name = Path.GetFileNameWithoutExtension(project);
+        var result = DawProject.FromFl(Readers.FlStudio.ReadSong(project), name);
+        var file = Path.Combine(OutDir(exportRoot, project, "DAWproject"), TextScan.SafeFileName(name) + ".dawproject");
+        File.WriteAllBytes(file, result.Bytes);
+        return (file, result.Notes);
+    }
+
     /// <summary>One MIDI file per channel (FL Studio) or track, named after it and what plays it.</summary>
     public static ExportResult Midi(IProjectReader reader, string project, string exportRoot, double? tempo) =>
         Midi(reader.ExtractChannels(project), project, exportRoot, tempo);

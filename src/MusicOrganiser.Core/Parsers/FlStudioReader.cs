@@ -13,7 +13,7 @@ namespace MusicOrganiser.Core.Parsers;
 /// From these we get tempo, version, channels, sample paths, plugin names
 /// (native, and VST via the Fruity Wrapper state), plugin states and pattern notes.
 /// </summary>
-public sealed class FlStudioReader : IProjectReader
+public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
@@ -455,8 +455,23 @@ public sealed class FlStudioReader : IProjectReader
             }
         }
 
+        var notes = PlaceNotes(flp, rawNotes, playlist, order.ToHashSet());
+
+        return order.Union(notes.Keys).Where(notes.ContainsKey)
+            .Select(ch => new MidiChannel(names.GetValueOrDefault(ch, $"Channel {ch + 1}"), sources.GetValueOrDefault(ch, ""), flp.Ppq,
+                                          notes[ch].OrderBy(n => n.Start).ThenBy(n => n.Key).ToList(),
+                                          plugins.GetValueOrDefault(ch, "")))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Each channel's notes across the song. Patterns are placed where the playlist puts them
+    /// (the first arrangement); with nothing in the playlist, patterns play one after another.
+    /// </summary>
+    static Dictionary<int, List<NoteEvent>> PlaceNotes(Flp flp, List<(int Pattern, ReadOnlyMemory<byte> Data)> rawNotes,
+                                                       ReadOnlyMemory<byte>? playlist, IReadOnlySet<int> known)
+    {
         var patterns = new SortedDictionary<int, List<(int Channel, NoteEvent Note)>>();
-        var known = order.ToHashSet();
         foreach (var (pat, data) in rawNotes)
         {
             if (!patterns.TryGetValue(pat, out var list)) patterns[pat] = list = new();
@@ -492,12 +507,7 @@ public sealed class FlStudioReader : IProjectReader
                 at += length;
             }
         }
-
-        return order.Union(notes.Keys).Where(notes.ContainsKey)
-            .Select(ch => new MidiChannel(names.GetValueOrDefault(ch, $"Channel {ch + 1}"), sources.GetValueOrDefault(ch, ""), flp.Ppq,
-                                          notes[ch].OrderBy(n => n.Start).ThenBy(n => n.Key).ToList(),
-                                          plugins.GetValueOrDefault(ch, "")))
-            .ToList();
+        return notes;
     }
 
     /// <summary>
