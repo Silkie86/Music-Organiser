@@ -12,8 +12,8 @@
         <DataTemplate DataType="vm:SettingsViewModel"><views:SettingsView /></DataTemplate>
         <!-- Screens not moved over from the Windows app yet. -->
         <DataTemplate DataType="vm:SoundsViewModel"><views:NotPortedView PageName="Sound Lab" /></DataTemplate>
-        <DataTemplate DataType="vm:PluginsViewModel"><views:NotPortedView PageName="Plugins" /></DataTemplate>
-        <DataTemplate DataType="vm:SamplesViewModel"><views:NotPortedView PageName="Samples" /></DataTemplate>
+        <DataTemplate DataType="vm:PluginsViewModel"><views:PluginsView /></DataTemplate>
+        <DataTemplate DataType="vm:SamplesViewModel"><views:SamplesView /></DataTemplate>
     </Window.DataTemplates>
 
     <Grid ColumnDefinitions="232,*">

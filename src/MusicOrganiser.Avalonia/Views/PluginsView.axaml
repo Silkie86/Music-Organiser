@@ -1,0 +1,46 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:lib="using:MusicOrganiser.Core.Library"
+             x:Class="MusicOrganiser.Avalonia.Views.PluginsView"
+             x:DataType="vm:PluginsViewModel">
+    <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,18">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <CheckBox Content="Not installed only" IsChecked="{Binding OnlyMissing}" Margin="0,0,12,0" />
+                <TextBox Width="360" PlaceholderText="Search plugins or vendors…" Text="{Binding SearchText}" />
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Text="Plugins" Classes="pageTitle" />
+                <TextBlock Text="{Binding Summary}" Classes="pageSubtitle" />
+            </StackPanel>
+        </DockPanel>
+        <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontSize="12" Classes="muted"
+                   Text="Double-click a plugin to see the projects that use it. 'Installed' compares against the plugin folders in Settings." />
+        <Border Classes="card" Padding="8,10,8,8">
+            <DataGrid ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" SelectedItem="{Binding Selected}"
+                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" CanUserSortColumns="True"
+                      GridLinesVisibility="None" Background="Transparent" DoubleTapped="OnDoubleTapped">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Plugin" Width="2*" Binding="{Binding Name}" x:DataType="lib:PluginUsage" />
+                    <DataGridTextColumn Header="Vendor" Width="*" Binding="{Binding Vendor}" x:DataType="lib:PluginUsage" />
+                    <DataGridTextColumn Header="Format" Width="90" Binding="{Binding Format}" x:DataType="lib:PluginUsage" />
+                    <DataGridTextColumn Header="Projects" Width="90" Binding="{Binding Projects}" x:DataType="lib:PluginUsage" />
+                    <DataGridTextColumn Header="Used in" Width="*" Binding="{Binding Daws}" x:DataType="lib:PluginUsage" />
+                    <DataGridTemplateColumn Header="Installed" Width="140" SortMemberPath="Installed">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate x:DataType="lib:PluginUsage">
+                                <Panel Margin="8,0" VerticalAlignment="Center">
+                                    <TextBlock Text="Yes" Foreground="{StaticResource OkBrush}" IsVisible="{Binding Installed}" VerticalAlignment="Center" />
+                                    <Button Content="Search online" Padding="8,2" FontSize="12" IsVisible="{Binding !Installed}"
+                                            Command="{Binding $parent[UserControl].((vm:PluginsViewModel)DataContext).SearchOnlineCommand}"
+                                            CommandParameter="{Binding}" />
+                                </Panel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+    </DockPanel>
+</UserControl>
