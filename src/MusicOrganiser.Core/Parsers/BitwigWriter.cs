@@ -316,6 +316,10 @@ public static partial class BitwigFormat
                 case 0x16:
                     foreach (var c in (float[])v!) { BinaryPrimitives.WriteSingleBigEndian(_b, c); Out.Write(_b, 0, 4); }
                     break;
+                case 0x17:
+                    U32(((float[])v!).Length);
+                    foreach (var c in (float[])v!) { BinaryPrimitives.WriteSingleBigEndian(_b, c); Out.Write(_b, 0, 4); }
+                    break;
                 case 0x19:
                     var strings = (List<string>)v!;
                     U32(strings.Count);

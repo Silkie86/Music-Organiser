@@ -317,6 +317,16 @@ public static partial class BitwigFormat
                     for (var i = 0; i < 4; i++, p += 4) c[i] = BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(p));
                     return c;
                 }
+                case 0x17:
+                {
+                    // A list of floats: u32 count, then f32s (FM-4's MATRIX).
+                    var n = U32(p);
+                    p += 4;
+                    if (n < 0 || p + 4L * n > d.Length) throw new InvalidDataException("float list too long");
+                    var f = new float[n];
+                    for (var i = 0; i < n; i++, p += 4) f[i] = BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(p));
+                    return f;
+                }
                 case 0x19:
                 {
                     var n = U32(p);

@@ -12,6 +12,24 @@ public class BitwigWriterTests
     }
 
     [Fact]
+    public void ReadsAndWritesListsOfFloats()
+    {
+        // FM-4 keeps its modulation matrix as a counted list of floats (type 0x17).
+        var raw = Fixtures.BwWriter.File(meta: _ => { }, body: b =>
+        {
+            b.Begin(0x2e);
+            b.Obj(0xa4); b.Begin(0x3c); b.Str(0x2b9, "MATRIX"); b.Floats(0xe75, 0.43f, 0, 0.35f); b.End();
+            b.Str(0x15b, "after");
+            b.End();
+        }, zip: null);
+        var doc = BitwigFormat.Decode(raw);
+        Assert.Null(doc.BodyError);
+        Assert.Equal([0.43f, 0f, 0.35f], (float[])doc.Root!.Obj(0xa4)![0xe75]!);
+        Assert.Equal("after", doc.Root.Str(0x15b));
+        Assert.Equal(raw, BitwigFormat.Encode(doc));
+    }
+
+    [Fact]
     public void EditsKeepReferencesPointingAtTheRightObjects()
     {
         var doc = BitwigFormat.Decode(File.ReadAllBytes(Fixtures.BitwigProject(Fixtures.TempDir())));

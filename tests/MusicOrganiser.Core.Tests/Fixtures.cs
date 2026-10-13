@@ -454,6 +454,14 @@ public static class Fixtures
         public void I16(int fid, short v) { Type(fid, 0x02); Span<byte> b = stackalloc byte[2]; BinaryPrimitives.WriteInt16BigEndian(b, v); S.Write(b); }
         public void I32(int fid, int v) { Type(fid, 0x03); U32((uint)v); }
         public void Blob(int fid, byte[] v) { Type(fid, 0x0d); U32(v.Length); S.Write(v); }
+        /// <summary>A list of floats (type 0x17), as FM-4 saves its modulation matrix.</summary>
+        public void Floats(int fid, params float[] v)
+        {
+            Type(fid, 0x17);
+            U32(v.Length);
+            Span<byte> b = stackalloc byte[4];
+            foreach (var f in v) { BinaryPrimitives.WriteSingleBigEndian(b, f); S.Write(b); }
+        }
 
         public static byte[] File(Action<BwWriter> meta, Action<BwWriter> body, byte[]? zip)
         {
