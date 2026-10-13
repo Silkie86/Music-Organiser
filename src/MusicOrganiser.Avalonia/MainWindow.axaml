@@ -11,7 +11,7 @@
         <DataTemplate DataType="vm:ProjectsViewModel"><views:ProjectsView /></DataTemplate>
         <DataTemplate DataType="vm:SettingsViewModel"><views:SettingsView /></DataTemplate>
         <!-- Screens not moved over from the Windows app yet. -->
-        <DataTemplate DataType="vm:SoundsViewModel"><views:NotPortedView PageName="Sound Lab" /></DataTemplate>
+        <DataTemplate DataType="vm:SoundsViewModel"><views:SoundsView /></DataTemplate>
         <DataTemplate DataType="vm:PluginsViewModel"><views:PluginsView /></DataTemplate>
         <DataTemplate DataType="vm:SamplesViewModel"><views:SamplesView /></DataTemplate>
     </Window.DataTemplates>

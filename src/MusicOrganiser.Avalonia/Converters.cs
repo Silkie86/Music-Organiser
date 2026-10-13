@@ -71,3 +71,18 @@ public sealed class IndexToBool : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         value is true && int.TryParse(parameter as string, out var p) ? p : BindingOperations.DoNothing;
 }
+
+/// <summary>A length in seconds, short: "0.4s", "12s", "1:05".</summary>
+public sealed class Seconds : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is double s ? s >= 60 ? $"{(int)s / 60}:{s % 60:00}" : s >= 10 ? $"{s:0}s" : $"{s:0.0}s" : "";
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>True for zero, e.g. to show an "empty list" hint.</summary>
+public sealed class Zero : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value is 0;
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}

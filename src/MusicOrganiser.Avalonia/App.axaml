@@ -20,6 +20,9 @@
         <SolidColorBrush x:Key="MissingBrush" Color="#FFF0616D" />
         <SolidColorBrush x:Key="MissingSoftBrush" Color="#26F0616D" />
 
+        <!-- Fluent keeps room for a sort arrow on every header; only the sorted column needs it. -->
+        <x:Double x:Key="DataGridSortIconMinWidth">0</x:Double>
+
         <local:DawBrush x:Key="DawBrush" />
         <local:BoolToStar x:Key="BoolToStar" />
         <local:Stars x:Key="Stars" />
@@ -27,6 +30,8 @@
         <local:IndexToBool x:Key="IndexToBool" />
         <local:ItemsViewSource x:Key="ItemsViewSource" />
         <local:RatingText x:Key="RatingText" />
+        <local:Seconds x:Key="Seconds" />
+        <local:Zero x:Key="Zero" />
         <SolidColorBrush x:Key="OkBrush" Color="#FF4ACB8B" />
         <SolidColorBrush x:Key="OkSoftBrush" Color="#264ACB8B" />
         <SolidColorBrush x:Key="HoverBrush" Color="#FF24252C" />
@@ -82,6 +87,10 @@
         <Style Selector="TextBlock.pillText">
             <Setter Property="FontSize" Value="11.5" />
             <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <!-- Less padding than Fluent's default, so short headers like "Key" and "BPM" fit narrow columns. -->
+        <Style Selector="DataGridColumnHeader">
+            <Setter Property="Padding" Value="8,0,0,0" />
         </Style>
         <Style Selector="ComboBox">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
