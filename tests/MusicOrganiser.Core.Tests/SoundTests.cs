@@ -424,6 +424,34 @@ public class LearningTests
     }
 
     [Fact]
+    public void Unplugged_sample_drive_keeps_its_sounds()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        var drive = Path.Combine(root, "External");
+        var local = Path.Combine(root, "Local");
+        Directory.CreateDirectory(drive);
+        Directory.CreateDirectory(local);
+        Synth.Write(Path.Combine(drive, "Kick.wav"), Synth.Kick(1));
+        Synth.Write(Path.Combine(local, "Hat.wav"), Synth.Hat(2));
+        Synth.Write(Path.Combine(local, "Snare.wav"), Synth.Snare(3));
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        using var org = new SoundOrganiser(lib);
+        Assert.Equal(3, org.Scan([drive, local]));
+        lib.AddTag(org.Sounds.Single(s => s.Name == "Kick").Id, "favourite");
+
+        // The drive is unplugged and a local file is deleted: only the deleted one is forgotten.
+        Directory.Move(drive, drive + " (away)");
+        File.Delete(Path.Combine(local, "Snare.wav"));
+        org.Scan([drive, local]);
+        Assert.Equal(new[] { "Hat", "Kick" }, org.Sounds.Select(s => s.Name).Order().ToArray());
+        Assert.Single(lib.SoundsTagged("favourite"));
+
+        // Taking the folder out of the list still forgets its sounds.
+        org.Scan([local]);
+        Assert.Equal(new[] { "Hat" }, org.Sounds.Select(s => s.Name).ToArray());
+    }
+
+    [Fact]
     public void Learns_your_own_tags()
     {
         var root = Directory.CreateTempSubdirectory().FullName;
