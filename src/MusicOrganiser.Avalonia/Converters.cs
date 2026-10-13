@@ -61,3 +61,13 @@ public sealed class ItemsViewSource : IValueConverter
         value is AvaloniaItemsView v ? v.Inner : value;
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
+
+/// <summary>Index → bool for a group of radio buttons bound to one int.</summary>
+public sealed class IndexToBool : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is int i && int.TryParse(parameter as string, out var p) && i == p;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is true && int.TryParse(parameter as string, out var p) ? p : BindingOperations.DoNothing;
+}

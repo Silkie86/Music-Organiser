@@ -24,6 +24,7 @@
         <local:BoolToStar x:Key="BoolToStar" />
         <local:Stars x:Key="Stars" />
         <local:NonZero x:Key="NonZero" />
+        <local:IndexToBool x:Key="IndexToBool" />
         <local:ItemsViewSource x:Key="ItemsViewSource" />
         <local:RatingText x:Key="RatingText" />
         <SolidColorBrush x:Key="OkBrush" Color="#FF4ACB8B" />

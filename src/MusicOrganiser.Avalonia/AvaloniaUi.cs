@@ -82,15 +82,14 @@ public sealed class AvaloniaUi : IPlatformUi
         if (MainWindow?.Clipboard is { } clipboard) _ = clipboard.SetTextAsync(text);
     }
 
-    public void ShowMidi(MidiPreviewViewModel vm) =>
-        NotPortedYet($"MIDI · {vm.Title}", "The MIDI window isn't on this version of the app yet. It's coming as the screens are moved over.");
-
-    public void ShowPresets(PresetsViewModel vm) =>
-        NotPortedYet($"Presets · {vm.Title}", "The presets window isn't on this version of the app yet. It's coming as the screens are moved over.");
-
-    static void NotPortedYet(string title, string message)
+    public void ShowMidi(MidiPreviewViewModel vm)
     {
-        if (MainWindow is { } owner) _ = new ConfirmWindow(message, title, okOnly: true).ShowDialog<bool>(owner);
+        if (MainWindow is { } owner) new Views.MidiWindow(vm).Show(owner);
+    }
+
+    public void ShowPresets(PresetsViewModel vm)
+    {
+        if (MainWindow is { } owner) new Views.PresetsWindow(vm).Show(owner);
     }
 }
 
