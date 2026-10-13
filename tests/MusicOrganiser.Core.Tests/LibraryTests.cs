@@ -111,8 +111,23 @@ public class LibraryTests : IDisposable
     [InlineData("Pitcher", "", "", true)]
     [InlineData("IL Harmor", "", "", true)]
     [InlineData("Serum", "Xfer Records", @"C:\VST\Serum.dll", false)]
+    [InlineData("Some Synth", "", "/Library/Audio/Plug-Ins/VST3/Image-Line/Some Synth.vst3", true)]
     public void KnowsWhatComesWithFlStudio(string name, string vendor, string path, bool bundled) =>
         Assert.Equal(bundled, PluginCatalog.IsFlStudioBundled(name, vendor, path));
+
+    [Fact]
+    public void ScansMacStylePluginBundlesAsOnePluginEach()
+    {
+        var folder = Path.Combine(_root, "Plug-Ins");
+        foreach (var bundle in new[] { "Serum.component", "Vital.clap", "Diva.vst3", "Old Synth.vst" })
+        {
+            var inner = Path.Combine(folder, bundle, "Contents", "MacOS");
+            Directory.CreateDirectory(inner);
+            File.WriteAllText(Path.Combine(inner, "helper.dll"), "");
+        }
+        var names = PluginCatalog.Scan([folder]).Except(PluginCatalog.AlwaysKnown).Order().ToList();
+        Assert.Equal(["Diva", "Old Synth", "Serum", "Vital"], names);
+    }
 
     [Theory]
     [InlineData("LFOTool", "LFOTool_x64")]

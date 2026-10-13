@@ -14,3 +14,18 @@ jobs:
           dotnet-version: 10.0.x
       - run: dotnet build MusicOrganiser.sln -c Release
       - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release --no-build
+
+  # The app is Windows-only for now, but Core (readers, writers, library, Sound Lab) must keep
+  # building and passing its tests on macOS and Linux so a cross-platform UI can sit on top later.
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release

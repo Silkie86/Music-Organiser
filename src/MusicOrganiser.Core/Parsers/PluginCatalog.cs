@@ -44,8 +44,8 @@ public static partial class PluginCatalog
         ImageLine.Contains(name.Trim()) ||
         name.StartsWith("IL ", StringComparison.OrdinalIgnoreCase) && ImageLine.Contains(name[3..].Trim()) ||
         vendor.StartsWith("Image-Line", StringComparison.OrdinalIgnoreCase) ||
-        path.Contains(@"\Image-Line\", StringComparison.OrdinalIgnoreCase) ||
-        FlStudioPluginFolder().IsMatch(path);
+        path.Replace('/', '\\').Contains(@"\Image-Line\", StringComparison.OrdinalIgnoreCase) ||
+        FlStudioPluginFolder().IsMatch(path.Replace('/', '\\'));
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\\FL Studio[^\\]*\\Plugins\\", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FlStudioPluginFolder();
@@ -104,8 +104,31 @@ public static partial class PluginCatalog
     public static PluginKind KindOf(string name) =>
         ElektronDevice(name) is not null ? PluginKind.Instrument : PluginKind.Unknown;
 
+    /// <summary>The standard plugin folders for this operating system.</summary>
     public static IEnumerable<string> DefaultFolders()
     {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (OperatingSystem.IsMacOS())
+        {
+            foreach (var root in new[] { "/Library/Audio/Plug-Ins", Path.Combine(home, "Library", "Audio", "Plug-Ins") })
+                foreach (var kind in new[] { "VST3", "CLAP", "VST", "Components" })
+                    yield return Path.Combine(root, kind);
+            yield break;
+        }
+        if (OperatingSystem.IsLinux())
+        {
+            yield return Path.Combine(home, ".vst3");
+            yield return Path.Combine(home, ".clap");
+            yield return Path.Combine(home, ".vst");
+            foreach (var root in new[] { "/usr/lib", "/usr/local/lib" })
+            {
+                yield return Path.Combine(root, "vst3");
+                yield return Path.Combine(root, "clap");
+                yield return Path.Combine(root, "vst");
+            }
+            yield break;
+        }
+
         var common = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
         var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         if (common.Length > 0)
@@ -135,8 +158,8 @@ public static partial class PluginCatalog
             {
                 foreach (var e in entries)
                 {
-                    // .vst3 bundles are folders; skip what's inside them.
-                    if (e.Contains(".vst3" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
+                    // .vst3 bundles (and on a Mac .component, .clap and .vst too) are folders; skip what's inside them.
+                    if (InsideBundle(e)) continue;
                     if (TextScan.IsPluginPath(e))
                     {
                         var name = TextScan.PluginNameFromPath(e);
@@ -148,4 +171,9 @@ public static partial class PluginCatalog
         }
         return names;
     }
+
+    static readonly string[] BundleExtensions = [".vst3", ".component", ".clap", ".vst"];
+
+    static bool InsideBundle(string path) =>
+        BundleExtensions.Any(b => path.Contains(b + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
 }
