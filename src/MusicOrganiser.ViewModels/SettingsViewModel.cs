@@ -265,7 +265,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// </summary>
     public static async Task<(string? Template, string? Problem)> PickBitwigTemplate(LibraryDb db, string dataFolder)
     {
-        if (await Ui.Current.PickFile("Choose the Bitwig template (Sampler track, VST3 synth with Note Transpose and a clip, VST2 synth)",
+        if (await Ui.Current.PickFile("Choose the Bitwig template (Sampler track, VST3 synth with Note Transpose and a clip, VST2 synth, audio track with a clip)",
                 "Bitwig projects", "bwproject") is not { } file) return (null, null);
         try
         {
