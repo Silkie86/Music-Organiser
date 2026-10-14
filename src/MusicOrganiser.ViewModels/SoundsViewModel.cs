@@ -85,6 +85,13 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     Dictionary<long, double>? _describeScores;
 
+    public const string AutoPlayKey = "sound_lab_autoplay";
+
+    /// <summary>Plays each sound as soon as you click it or arrow onto it in the list.</summary>
+    [ObservableProperty] bool _autoPlay;
+
+    partial void OnAutoPlayChanged(bool value) => _db.SetSetting(AutoPlayKey, value ? "1" : "0");
+
     public SoundsViewModel(LibraryDb db, SoundOrganiser org, MainViewModel main)
     {
         _db = db;
@@ -92,6 +99,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Org = org;
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
+        _autoPlay = db.GetSetting(AutoPlayKey) == "1";
         _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), FollowPlayback);
         Reload();
         if (SampleFolders.Count > 0) _ = ScanAsync();
@@ -305,13 +313,46 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         catch (Exception e) { Message = $"Can't play {s.Name}: {e.Message}"; }
     }
 
-    void Start(Sound s, double from)
+    void Start(Sound s, double from, bool count = true)
     {
         _player.Play(s.Path, from);
-        Org.Library.MarkPlayed(s.Id);
-        s.Plays++;
+        _preview = count ? null : s.Path;
+        if (count) Count(s);
         FollowPlayback();
         _clock.Start();
+    }
+
+    string? _preview;
+
+    // Plays feed Rediscover's sense of what you like, so only deliberate plays count.
+    void Count(Sound s)
+    {
+        Org.Library.MarkPlayed(s.Id);
+        s.Plays++;
+    }
+
+    /// <summary>
+    /// The views call this when you click a row or arrow onto one, not when the list moves the
+    /// selection by itself (a sort, a filter, coming back to the tab). Autoplay previews don't
+    /// count as plays.
+    /// </summary>
+    public void PlayPicked()
+    {
+        if (!AutoPlay || Selected is not { } s || _player.Playing == s.Path) return;
+        try { Start(s, 0, count: false); }
+        catch (Exception e) { Message = $"Can't play {s.Name}: {e.Message}"; }
+    }
+
+    /// <summary>
+    /// A double-click: plays or stops the sound. With Autoplay on, the first click already started it,
+    /// so it keeps playing and now counts as a play.
+    /// </summary>
+    [RelayCommand]
+    void Audition()
+    {
+        if (!AutoPlay || Selected is not { } s) Play(null);
+        else if (_player.Playing != s.Path) Play(s);
+        else if (_preview == s.Path) { Count(s); _preview = null; }
     }
 
     /// <summary>A click on the waveform: jump there if it's playing, otherwise play from there.</summary>
