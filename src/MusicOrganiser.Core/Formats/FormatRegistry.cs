@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -14,7 +15,10 @@ public sealed record FormatEntry
     public string Id { get; init; } = "";
     public string Name { get; init; } = "";
     public string About { get; init; } = "";
-    /// <summary>Bitwig: the value's type. FL Studio: byte, word, dword, text or data.</summary>
+    /// <summary>
+    /// Bitwig: the value's type. FL Studio events: byte, word, dword, text, ascii or data. Records inside them:
+    /// u32, i32, fourcc (a VST2 ID), utf8 or bytes.
+    /// </summary>
     public string? Type { get; init; }
     /// <summary>FL Studio data: named numbers at fixed offsets, e.g. "pan i32@0, volume i32@4".</summary>
     public string? Layout { get; init; }
@@ -46,6 +50,57 @@ public sealed record FormatEntry
             if (int.TryParse(v, out var n) && n <= major && n > from) (from, size) = (n, s);
         return size ?? Record;
     }
+}
+
+/// <summary>One named number in an FL Studio layout: "pan i32@0" is a 32-bit integer called pan at byte 0.</summary>
+public readonly record struct LayoutField(string Name, string Type, int Offset)
+{
+    /// <summary>How many bytes it takes: 1 to 8.</summary>
+    public int Size => SizeOf(Type);
+
+    /// <summary>Reads "pan i32@0, volume i32@4": each a name, a type (u8 to u64, i8 to i64, f32, f64) and @offset.</summary>
+    /// <exception cref="FormatException">A part isn't written that way.</exception>
+    public static IReadOnlyList<LayoutField> Parse(string? layout)
+    {
+        var fields = new List<LayoutField>();
+        if (string.IsNullOrWhiteSpace(layout)) return fields;
+        foreach (var part in layout.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var space = part.LastIndexOf(' ');
+            var spec = part[(space + 1)..].Split('@');
+            if (space <= 0 || spec.Length != 2 || SizeOf(spec[0]) == 0 ||
+                !int.TryParse(spec[1], NumberStyles.None, CultureInfo.InvariantCulture, out var offset))
+                throw new FormatException($"Can't read the layout \"{part}\": it should be a name, a type and @offset");
+            fields.Add(new LayoutField(part[..space], spec[0], offset));
+        }
+        return fields;
+    }
+
+    /// <summary>The number at its offset in <paramref name="data"/> (little-endian, as FL writes them), or null past the end.</summary>
+    public object? Read(ReadOnlySpan<byte> data)
+    {
+        if (Offset + Size > data.Length) return null;
+        var b = data[Offset..];
+        return Type switch
+        {
+            "u8" => (long)b[0],
+            "i8" => (long)(sbyte)b[0],
+            "u16" => (long)BinaryPrimitives.ReadUInt16LittleEndian(b),
+            "i16" => (long)BinaryPrimitives.ReadInt16LittleEndian(b),
+            "u32" => (long)BinaryPrimitives.ReadUInt32LittleEndian(b),
+            "i32" => (long)BinaryPrimitives.ReadInt32LittleEndian(b),
+            "u64" => (long)BinaryPrimitives.ReadUInt64LittleEndian(b),
+            "i64" => BinaryPrimitives.ReadInt64LittleEndian(b),
+            "f32" => (double)BinaryPrimitives.ReadSingleLittleEndian(b),
+            "f64" => BinaryPrimitives.ReadDoubleLittleEndian(b),
+            _ => null,
+        };
+    }
+
+    static int SizeOf(string type) => type switch
+    {
+        "u8" or "i8" => 1, "u16" or "i16" => 2, "u32" or "i32" or "f32" => 4, "u64" or "i64" or "f64" => 8, _ => 0,
+    };
 }
 
 /// <summary>

@@ -23,7 +23,10 @@ public enum LabFormat { Bitwig, FlStudio }
 /// something that only holds other things.
 /// </param>
 /// <param name="IsGroup">It holds other things (an object, a list, an event made of parts) rather than a value.</param>
-public sealed record LabItem(string Key, string Path, int Depth, string Label, string Value, object? Data, bool IsGroup = false);
+/// <param name="Start">Where its bytes sit in the data of the item that holds it, when that's known (FL Studio's parts); else -1.</param>
+/// <param name="Length">How many bytes it takes there.</param>
+public sealed record LabItem(string Key, string Path, int Depth, string Label, string Value, object? Data, bool IsGroup = false,
+                             int Start = -1, int Length = 0);
 
 /// <summary>A Bitwig or FL Studio file laid out for Format Lab: everything in it, in file order.</summary>
 public sealed class LabFile

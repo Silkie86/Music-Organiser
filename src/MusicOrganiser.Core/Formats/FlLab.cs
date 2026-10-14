@@ -125,19 +125,19 @@ static class FlLab
     /// <summary>The numbers the registry's layout names, and the data's records with theirs.</summary>
     static void Layout(FormatEntry entry, byte[] data, int major, string key, string path, List<LabItem> parts)
     {
-        foreach (var f in ParseLayout(entry.Layout))
-            if (Read(data, f) is { } v)
-                parts.Add(new LabItem($"{key}/{f.Name}", $"{path} › {f.Name}", 2, f.Name, Text(v), v));
+        foreach (var f in LayoutField.Parse(entry.Layout))
+            if (f.Read(data) is { } v)
+                parts.Add(new LabItem($"{key}/{f.Name}", $"{path} › {f.Name}", 2, f.Name, Text(v), v, Start: f.Offset, Length: f.Size));
         if (entry.RecordSize(major) is not { } size || size <= 0 || entry.RecordLayout is null) return;
-        var fields = ParseLayout(entry.RecordLayout);
+        var fields = LayoutField.Parse(entry.RecordLayout);
         var at = entry.RecordAt ?? 0;
         for (int r = 0, off = at; off + size <= data.Length; r++, off += size)
         {
             var record = data.AsSpan(off, size).ToArray();
-            parts.Add(new LabItem($"{key}/[{r}]", $"{path}[{r}]", 2, $"[{r}]", LabText.Bytes(record), record, true));
+            parts.Add(new LabItem($"{key}/[{r}]", $"{path}[{r}]", 2, $"[{r}]", LabText.Bytes(record), record, true, off, size));
             foreach (var f in fields)
-                if (Read(record, f) is { } v)
-                    parts.Add(new LabItem($"{key}/[{r}]/{f.Name}", $"{path}[{r}] › {f.Name}", 3, f.Name, Text(v), v));
+                if (f.Read(record) is { } v)
+                    parts.Add(new LabItem($"{key}/[{r}]/{f.Name}", $"{path}[{r}] › {f.Name}", 3, f.Name, Text(v), v, Start: f.Offset, Length: f.Size));
         }
     }
 
@@ -155,13 +155,14 @@ static class FlLab
             var k = $"{key}/wrapper {r.Id}";
             var p = $"{path} › {label}";
             var bytes = data.AsSpan(r.Offset, r.Length).ToArray();
-            parts.Add(Part(entry, k, p, 2, label, bytes));
+            parts.Add(Part(entry, k, p, 2, label, bytes) with { Start = r.Offset, Length = r.Length });
             if (!vst3 || r.Id != WrapperState || FlStudioReader.Records(bytes) is not { } inner) continue;
             foreach (var x in inner)
             {
                 var e = Registry.Vst3Record(x.Id);
                 var l = e is null ? $"vst3 {x.Id}" : $"vst3 {x.Id} {e.Name}";
-                parts.Add(Part(e, $"{k}/vst3 {x.Id}", $"{p} › {l}", 3, l, bytes.AsSpan(x.Offset, x.Length).ToArray()));
+                parts.Add(Part(e, $"{k}/vst3 {x.Id}", $"{p} › {l}", 3, l, bytes.AsSpan(x.Offset, x.Length).ToArray())
+                          with { Start = x.Offset, Length = x.Length });
             }
         }
     }
@@ -179,52 +180,14 @@ static class FlLab
             case "i32" when bytes.Length == 4:
                 return new LabItem(key, path, depth, label, LabText.Number(BinaryPrimitives.ReadInt32LittleEndian(bytes)),
                                    (long)BinaryPrimitives.ReadInt32LittleEndian(bytes));
+            case "fourcc" when bytes.Length == 4:
+                // A VST2 ID: a number that's also four letters, read most significant byte first ("XfsX" is Serum).
+                var id = BinaryPrimitives.ReadInt32LittleEndian(bytes);
+                var letters = Encoding.Latin1.GetString([bytes[3], bytes[2], bytes[1], bytes[0]]);
+                return new LabItem(key, path, depth, label,
+                                   LabText.Number(id) + (letters.All(c => c is >= ' ' and <= '~') ? $" ({LabText.Quote(letters)})" : ""), (long)id);
             default:
                 return new LabItem(key, path, depth, label, LabText.Bytes(bytes), bytes);
         }
-    }
-
-    public readonly record struct LayoutField(string Name, string Type, int Offset);
-
-    /// <summary>Reads "pan i32@0, volume i32@4": a name, then a type (u8 to u64, i8 to i64, f32, f64) and an offset.</summary>
-    public static IReadOnlyList<LayoutField> ParseLayout(string? layout)
-    {
-        var fields = new List<LayoutField>();
-        if (string.IsNullOrWhiteSpace(layout)) return fields;
-        foreach (var part in layout.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-        {
-            var space = part.LastIndexOf(' ');
-            var spec = part[(space + 1)..].Split('@');
-            if (space <= 0 || spec.Length != 2 || Size(spec[0]) == 0 ||
-                !int.TryParse(spec[1], NumberStyles.None, CultureInfo.InvariantCulture, out var offset))
-                throw new FormatException($"Can't read the layout \"{part}\": it should be a name, a type and @offset");
-            fields.Add(new LayoutField(part[..space], spec[0], offset));
-        }
-        return fields;
-    }
-
-    static int Size(string type) => type switch
-    {
-        "u8" or "i8" => 1, "u16" or "i16" => 2, "u32" or "i32" or "f32" => 4, "u64" or "i64" or "f64" => 8, _ => 0,
-    };
-
-    static object? Read(ReadOnlySpan<byte> d, LayoutField f)
-    {
-        if (f.Offset + Size(f.Type) > d.Length) return null;
-        var b = d[f.Offset..];
-        return f.Type switch
-        {
-            "u8" => (long)b[0],
-            "i8" => (long)(sbyte)b[0],
-            "u16" => (long)BinaryPrimitives.ReadUInt16LittleEndian(b),
-            "i16" => (long)BinaryPrimitives.ReadInt16LittleEndian(b),
-            "u32" => (long)BinaryPrimitives.ReadUInt32LittleEndian(b),
-            "i32" => (long)BinaryPrimitives.ReadInt32LittleEndian(b),
-            "u64" => (long)BinaryPrimitives.ReadUInt64LittleEndian(b),
-            "i64" => BinaryPrimitives.ReadInt64LittleEndian(b),
-            "f32" => (double)BinaryPrimitives.ReadSingleLittleEndian(b),
-            "f64" => BinaryPrimitives.ReadDoubleLittleEndian(b),
-            _ => null,
-        };
     }
 }

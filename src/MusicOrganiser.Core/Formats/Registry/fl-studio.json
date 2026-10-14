@@ -35,7 +35,7 @@
   ],
   "wrapper": [
     { "id": "50", "name": "plugin format", "type": "u32", "about": "8 is VST3.", "seen": "20-26", "proof": "FlStudio25Tests.FindsVstPluginsInNewerWrapperStates", "code": "VstKind" },
-    { "id": "51", "name": "VST2 ID", "type": "i32", "about": "A VST2 plugin's unique ID (its four-character code).", "seen": "20-26", "proof": "FlStudio25Tests.ExportsVst2AsFxpWithThePluginId", "code": "VstFourCc" },
+    { "id": "51", "name": "VST2 ID", "type": "fourcc", "about": "A VST2 plugin's unique ID: a number that's also four letters (Serum is XfsX).", "seen": "20-26", "proof": "FlStudio25Tests.ExportsVst2AsFxpWithThePluginId", "code": "VstFourCc" },
     { "id": "52", "name": "VST3 class ID", "type": "bytes", "about": "A VST3 plugin's 16-byte class ID.", "seen": "20-26", "proof": "FlStudio25Tests.ExportsVst3AsVstPreset", "code": "VstClassId" },
     { "id": "53", "name": "plugin's own state", "type": "bytes", "about": "VST2: a 21-byte header, then the plugin's chunk or its settings as floats. VST3: another record list (see vst3).", "seen": "20-26", "proof": "FlStudio25Tests.ExportsVst2AsFxpWithThePluginId; FlStudio25Tests.ExportsVst3AsVstPreset", "code": "VstState" },
     { "id": "54", "name": "plugin name", "type": "utf8", "seen": "20-26", "proof": "FlStudio25Tests.FindsVstPluginsInNewerWrapperStates", "code": "VstName" },

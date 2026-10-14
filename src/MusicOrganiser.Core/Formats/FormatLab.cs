@@ -192,41 +192,44 @@ public static class FormatLab
     /// <summary>
     /// Everywhere the file holds <paramref name="query"/>: as text (ignoring case), and, when it's a number, as
     /// a number in any field, or in any data as a 32-bit integer, a 32- or 64-bit float (either byte order).
-    /// Text is also looked for inside data, as UTF-8 and UTF-16.
+    /// Text is also looked for inside data, as UTF-8 and UTF-16. Bytes that a part of the data found on its
+    /// own (a record, or a number in it) aren't listed again for the data around it.
     /// </summary>
     public static IReadOnlyList<LabHit> Find(LabFile f, string query, bool textOnly = false)
     {
-        var hits = new List<LabHit>();
-        if (query.Length == 0) return hits;
+        if (query.Length == 0) return [];
         double? number = !textOnly && double.TryParse(query, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) ? n : null;
         var patterns = Patterns(query, number);
-        foreach (var i in f.Items)
+        var items = f.Items;
+        var found = new List<(int Item, LabHit Hit, int At, int Length)>();
+        for (var i = 0; i < items.Count; i++)
         {
-            switch (i.Data)
+            var item = items[i];
+            switch (item.Data)
             {
                 case string s when s.Contains(query, StringComparison.OrdinalIgnoreCase):
-                    hits.Add(new LabHit(i.Path, i.Value, "text"));
+                    found.Add((i, new LabHit(item.Path, item.Value, "text"), -1, 0));
                     break;
                 case long l when number is { } x && l == x:
                 case double d when number is { } y && Close(d, y):
-                    hits.Add(new LabHit(i.Path, i.Value, "number"));
+                    found.Add((i, new LabHit(item.Path, item.Value, "number"), -1, 0));
                     break;
                 case long[] a when number is { } x && Array.FindIndex(a, v => v == x) is var k and >= 0:
-                    hits.Add(new LabHit(i.Path, i.Value, $"number, item {k} of the list"));
+                    found.Add((i, new LabHit(item.Path, item.Value, $"number, item {k} of the list"), -1, 0));
                     break;
                 case double[] a when number is { } x && Array.FindIndex(a, v => Close(v, x)) is var k and >= 0:
-                    hits.Add(new LabHit(i.Path, i.Value, $"number, item {k} of the list"));
+                    found.Add((i, new LabHit(item.Path, item.Value, $"number, item {k} of the list"), -1, 0));
                     break;
                 case string[] a when Array.FindIndex(a, v => v.Contains(query, StringComparison.OrdinalIgnoreCase)) is var k and >= 0:
-                    hits.Add(new LabHit(i.Path, i.Value, $"text, item {k} of the list"));
+                    found.Add((i, new LabHit(item.Path, item.Value, $"text, item {k} of the list"), -1, 0));
                     break;
                 case byte[] b:
                     foreach (var (name, bytes) in patterns)
                     {
-                        var found = 0;
-                        for (var at = b.AsSpan().IndexOf(bytes); at >= 0 && found < 10; found++)
+                        var times = 0;
+                        for (var at = b.AsSpan().IndexOf(bytes); at >= 0 && times < 10; times++)
                         {
-                            hits.Add(new LabHit(i.Path, i.Value, $"{name} at byte {at:N0}"));
+                            found.Add((i, new LabHit(item.Path, item.Value, $"{name} at byte {at:N0}"), at, bytes.Length));
                             var next = b.AsSpan(at + 1).IndexOf(bytes);
                             at = next < 0 ? -1 : at + 1 + next;
                         }
@@ -234,7 +237,29 @@ public static class FormatLab
                     break;
             }
         }
-        return hits;
+
+        // Each item's parent, and which items hold a find (in themselves or deeper down).
+        var parent = new int[items.Count];
+        var open = new List<int>();
+        for (var i = 0; i < items.Count; i++)
+        {
+            var depth = items[i].Depth;
+            while (open.Count > 0 && items[open[^1]].Depth >= depth) open.RemoveAt(open.Count - 1);
+            parent[i] = open.Count > 0 && items[open[^1]].Depth == depth - 1 ? open[^1] : -1;
+            open.Add(i);
+        }
+        var holds = new bool[items.Count];
+        foreach (var (i, _, _, _) in found)
+            for (var p = i; p >= 0 && !holds[p]; p = parent[p]) holds[p] = true;
+        var children = new Dictionary<int, List<int>>();
+        for (var i = 0; i < items.Count; i++)
+            if (parent[i] >= 0 && holds[i] && items[i].Start >= 0)
+                (children.TryGetValue(parent[i], out var list) ? list : children[parent[i]] = []).Add(i);
+
+        bool Covered(int item, int at, int length) =>
+            children.TryGetValue(item, out var kids) &&
+            kids.Any(k => items[k].Start < at + length && at < items[k].Start + items[k].Length);
+        return found.Where(h => h.At < 0 || !Covered(h.Item, h.At, h.Length)).Select(h => h.Hit).ToList();
     }
 
     static bool Close(double a, double b) => Math.Abs(a - b) <= Math.Max(1e-9, Math.Abs(b) * 1e-6);
