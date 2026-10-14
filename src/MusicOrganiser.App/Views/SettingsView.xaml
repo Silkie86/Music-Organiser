@@ -201,7 +201,7 @@
                                                    ToolTip="Opens loopMIDI's page in your browser, to download it" />
                                         <ui:Button Content="Choose folder…" Command="{Binding ChooseFolderCommand}" Margin="0,0,6,0"
                                                    Visibility="{Binding CanChooseFolder, Converter={StaticResource BoolToVisibility}}"
-                                                   ToolTip="Pick FL Studio's user data folder, if it's somewhere the app didn't find" />
+                                                   ToolTip="{Binding ChooseFolderTip}" />
                                         <ui:Button Content="Check connection" Icon="{ui:SymbolIcon PlugConnected24}" Command="{Binding CheckCommand}" />
                                     </WrapPanel>
                                     <TextBlock Text="{Binding Result}" Margin="18,6,0,0" TextWrapping="Wrap" FontSize="12.5"

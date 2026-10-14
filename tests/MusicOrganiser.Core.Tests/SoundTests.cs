@@ -452,6 +452,32 @@ public class LearningTests
     }
 
     [Fact]
+    public void Sounds_this_app_cant_read_are_kept_while_their_files_are_there()
+    {
+        // The Avalonia app reads only WAV and AIFF; on Windows it shares the sound library with the WPF app,
+        // which also reads MP3 and the rest. Its scan mustn't forget those.
+        var root = Directory.CreateTempSubdirectory().FullName;
+        var samples = Path.Combine(root, "Samples");
+        Directory.CreateDirectory(samples);
+        Synth.Write(Path.Combine(samples, "Hat.wav"), Synth.Hat(2));
+        var vocal = Path.Combine(samples, "Vocal.mp3");
+        var gone = Path.Combine(samples, "Gone.mp3");
+        File.WriteAllBytes(vocal, [0xff, 0xfb, 0x90, 0x00]);
+        Assert.False(AudioFile.CanRead(vocal));
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        using var org = new SoundOrganiser(lib);
+        lib.Save([new(vocal, 4, 1, null, null, null, null), new(gone, 4, 1, null, null, null, null)]);
+
+        org.Scan([samples]);
+        var known = lib.KnownFiles().Keys.Select(Path.GetFileName).Order().ToArray();
+        Assert.Equal(new[] { "Hat.wav", "Vocal.mp3" }, known);
+
+        // Taking the folder out of the list still forgets them.
+        org.Scan([]);
+        Assert.Empty(lib.KnownFiles());
+    }
+
+    [Fact]
     public void Learns_your_own_tags()
     {
         var root = Directory.CreateTempSubdirectory().FullName;

@@ -480,6 +480,8 @@ public sealed partial class DawLinkSetting : ObservableObject
     /// <summary>What to do in the DAW once the script is installed.</summary>
     public string Steps => _steps();
     public bool CanChooseFolder => _folder is not null;
+    /// <summary>What Choose folder… is for, which differs by DAW.</summary>
+    public string? ChooseFolderTip => _folder?.Prompt;
     /// <summary>For FL Studio: how the MIDI port it runs the script for is made.</summary>
     public FlPortSetting? MidiPort { get; }
     /// <summary>Whether to offer the choice of how the port is made: for FL Studio, on Windows.</summary>
