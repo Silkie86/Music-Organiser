@@ -21,7 +21,7 @@
                     <TextBlock Text="Filters" />
                 </StackPanel>
             </ToggleButton>
-            <TextBox DockPanel.Dock="Right" Width="360" VerticalAlignment="Center"
+            <TextBox Classes="clearButton" DockPanel.Dock="Right" Width="360" VerticalAlignment="Center"
                      PlaceholderText="Search name, plugin, tag, notes…" Text="{Binding SearchText}" />
             <StackPanel>
                 <TextBlock Text="Projects" Classes="pageTitle" />

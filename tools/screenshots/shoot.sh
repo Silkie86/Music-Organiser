@@ -66,3 +66,13 @@ done
 # The rest of Settings, a screen further down.
 xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1590 990; shot 7-settings-more
 xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1590 990; shot 8-settings-more
+# The search box with text in it, showing its clear (X) button.
+nav 0; sleep 1; xdotool mousemove 1130 49 click 1 type --delay 40 "test"; xdotool mousemove 1590 990; shot 9-projects-search
+xdotool key ctrl+a BackSpace
+# A project's Presets window (a separate window, so it is photographed on its own), pointer on the first row.
+xdotool mousemove 650 150 click 1; sleep 1; xdotool mousemove 1350 221 click 1; sleep 3
+PWIN=$(xdotool search --name "Presets" | tail -1)
+if [[ -n $PWIN ]]; then
+  xdotool windowmove "$PWIN" 0 0; sleep 0.5; xdotool mousemove 300 190; sleep 0.5
+  import -window "$PWIN" "$OUT/10-presets.png"; echo "$OUT/10-presets.png"
+fi

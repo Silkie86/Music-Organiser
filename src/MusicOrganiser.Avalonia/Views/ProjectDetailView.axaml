@@ -148,11 +148,11 @@
                     </ComboBox>
 
                     <TextBlock Grid.Row="2" Text="Key" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
-                    <TextBox Grid.Row="2" Grid.Column="1" Margin="0,0,0,8" PlaceholderText="e.g. F minor"
+                    <TextBox Classes="clearButton" Grid.Row="2" Grid.Column="1" Margin="0,0,0,8" PlaceholderText="e.g. F minor"
                              Text="{Binding Item.MusicalKey, UpdateSourceTrigger=LostFocus}" />
 
                     <TextBlock Grid.Row="3" Text="Tags" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
-                    <TextBox Grid.Row="3" Grid.Column="1" Margin="0,0,0,8" PlaceholderText="techno, live set, collab"
+                    <TextBox Classes="clearButton" Grid.Row="3" Grid.Column="1" Margin="0,0,0,8" PlaceholderText="techno, live set, collab"
                              Text="{Binding Item.TagsText, UpdateSourceTrigger=LostFocus}" />
 
                     <TextBlock Grid.Row="4" Text="Favourite" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />

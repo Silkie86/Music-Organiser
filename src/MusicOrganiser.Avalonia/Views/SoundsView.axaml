@@ -72,14 +72,14 @@
                                 <CheckBox Content="Include keys that mix well" IsChecked="{Binding CompatibleKeys}" Margin="0,4,0,0" />
                                 <TextBlock Text="BPM" Classes="filterLabel" Margin="2,16,0,6" />
                                 <Grid ColumnDefinitions="*,Auto,*">
-                                    <TextBox PlaceholderText="from" Text="{Binding BpmFrom}" />
+                                    <TextBox Classes="clearButton" PlaceholderText="from" Text="{Binding BpmFrom}" />
                                     <TextBlock Grid.Column="1" Text="–" Margin="6,0" VerticalAlignment="Center" Foreground="{StaticResource FaintBrush}" />
-                                    <TextBox Grid.Column="2" PlaceholderText="to" Text="{Binding BpmTo}" />
+                                    <TextBox Classes="clearButton" Grid.Column="2" PlaceholderText="to" Text="{Binding BpmTo}" />
                                 </Grid>
                                 <CheckBox Content="Never used in a project" IsChecked="{Binding OnlyUnused}" Margin="0,12,0,0" />
                                 <CheckBox Content="Favourites" IsChecked="{Binding OnlyFavourites}" />
                                 <TextBlock Text="TAG" Classes="filterLabel" Margin="2,16,0,6" />
-                                <TextBox PlaceholderText="any tag" Text="{Binding TagFilter}" />
+                                <TextBox Classes="clearButton" PlaceholderText="any tag" Text="{Binding TagFilter}" />
                                 <Button Content="Clear filters" Command="{Binding ClearFiltersCommand}" Margin="0,14,0,0"
                                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Background="Transparent" />
                             </StackPanel>
@@ -100,7 +100,7 @@
                                           ToolTip.Tip="Search by describing the sound, e.g. “dusty vinyl snare” or “dark gritty reese”. Press Enter to search." />
                             <CheckBox DockPanel.Dock="Right" Content="Autoplay" IsChecked="{Binding AutoPlay}" Margin="12,0,0,0" VerticalAlignment="Center"
                                       ToolTip.Tip="Play each sound as soon as you click it or arrow onto it" />
-                            <TextBox PlaceholderText="Search names, types and tags… or switch on Describe it" Text="{Binding SearchText}">
+                            <TextBox Classes="clearButton" PlaceholderText="Search names, types and tags… or switch on Describe it" Text="{Binding SearchText}">
                                 <TextBox.KeyBindings>
                                     <KeyBinding Gesture="Enter" Command="{Binding SearchCommand}" />
                                 </TextBox.KeyBindings>
@@ -260,7 +260,7 @@
                                     </ItemsControl>
                                     <DockPanel Margin="0,4,0,0">
                                         <Button DockPanel.Dock="Right" Content="Add" Command="{Binding AddTagCommand}" Margin="6,0,0,0" />
-                                        <TextBox PlaceholderText="Add a tag (e.g. dusty, signature)" Text="{Binding NewTag}">
+                                        <TextBox Classes="clearButton" PlaceholderText="Add a tag (e.g. dusty, signature)" Text="{Binding NewTag}">
                                             <TextBox.KeyBindings>
                                                 <KeyBinding Gesture="Enter" Command="{Binding AddTagCommand}" />
                                             </TextBox.KeyBindings>
@@ -419,7 +419,7 @@
                                     <CheckBox Content="Favour sounds I haven't used" IsChecked="{Binding PreferUnused}" />
                                     <CheckBox Content="Keep it to one pack" IsChecked="{Binding SamePack}" />
                                     <TextBlock Text="VIBE (NEEDS DEEP LISTENING)" Classes="filterLabel" Margin="2,10,0,4" />
-                                    <TextBox PlaceholderText="e.g. dusty lo-fi, hard techno, 90s boom bap" Text="{Binding Vibe}" />
+                                    <TextBox Classes="clearButton" PlaceholderText="e.g. dusty lo-fi, hard techno, 90s boom bap" Text="{Binding Vibe}" />
                                     <TextBlock Text="KEY FOR BASS AND 808 PADS" Classes="filterLabel" Margin="2,10,0,4" />
                                     <ComboBox ItemsSource="{x:Static vm:SoundsViewModel.KeyChoices}" SelectedItem="{Binding Key}" />
                                     <TextBlock Text="RANDOMNESS" Classes="filterLabel" Margin="2,10,0,4" />

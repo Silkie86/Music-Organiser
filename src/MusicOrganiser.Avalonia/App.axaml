@@ -67,6 +67,8 @@
         <StreamGeometry x:Key="NavIcon.Plugins">M9,3 L9,7.5 M15,3 L15,7.5 M6,7.5 L18,7.5 L18,11 C18,14.3 15.3,17 12,17 C8.7,17 6,14.3 6,11 Z M12,17 L12,21</StreamGeometry>
         <StreamGeometry x:Key="NavIcon.Samples">M9,18 C9,19.7 7.7,21 6,21 C4.3,21 3,19.7 3,18 C3,16.3 4.3,15 6,15 C7.7,15 9,16.3 9,18 Z M9,18 L9,5.5 L20,3.5 L20,16 M20,16 C20,17.7 18.7,19 17,19 C15.3,19 14,17.7 14,16 C14,14.3 15.3,13 17,13 C18.7,13 20,14.3 20,16 Z</StreamGeometry>
         <StreamGeometry x:Key="NavIcon.Settings">M4,6 L13,6 M17,6 L20,6 M15,4 L15,8 M4,12 L7,12 M11,12 L20,12 M9,10 L9,14 M4,18 L15,18 M19,18 L20,18 M17,16 L17,20</StreamGeometry>
+        <!-- Six dots: "you can drag this row". -->
+        <StreamGeometry x:Key="GripIcon">M0,0 h2 v2 h-2 Z M4,0 h2 v2 h-2 Z M0,4 h2 v2 h-2 Z M4,4 h2 v2 h-2 Z M0,8 h2 v2 h-2 Z M4,8 h2 v2 h-2 Z</StreamGeometry>
         <StreamGeometry x:Key="FilterIcon">M4,6 L20,6 M7,12 L17,12 M10,18 L14,18</StreamGeometry>
         <local:NavIcon x:Key="NavIcon" />
     </Application.Resources>
@@ -220,6 +222,21 @@
         <Style Selector="Border.dragChip:pointerover">
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
             <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
+        </Style>
+        <!-- The grip on a row that can be dragged into a DAW (presets, MIDI channels): faint until the pointer is on the row. -->
+        <Style Selector="Path.grip">
+            <Setter Property="Data" Value="{StaticResource GripIcon}" />
+            <Setter Property="Fill" Value="{StaticResource MutedBrush}" />
+            <Setter Property="Width" Value="6" />
+            <Setter Property="Height" Value="10" />
+            <Setter Property="Margin" Value="2,0,10,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Opacity" Value="0.25" />
+            <Setter Property="Cursor" Value="SizeAll" />
+            <Setter Property="ToolTip.Tip" Value="Drag into your DAW" />
+        </Style>
+        <Style Selector="ListBoxItem:pointerover Path.grip">
+            <Setter Property="Opacity" Value="1" />
         </Style>
         <!-- Columns can be widened and moved, as in the Windows app (Avalonia's grid allows neither by default). -->
         <Style Selector="DataGrid">
