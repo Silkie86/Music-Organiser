@@ -35,10 +35,48 @@
         <SolidColorBrush x:Key="OkBrush" Color="#FF4ACB8B" />
         <SolidColorBrush x:Key="OkSoftBrush" Color="#264ACB8B" />
         <SolidColorBrush x:Key="HoverBrush" Color="#FF24252C" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#338B7CF6" />
+
+        <!-- Tables: no black header bar, soft violet for the selected row and no box around the clicked cell. -->
+        <SolidColorBrush x:Key="DataGridColumnHeaderBackgroundBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="DataGridColumnHeaderForegroundBrush" Color="#FF9A9DA7" />
+        <SolidColorBrush x:Key="DataGridColumnHeaderHoveredBackgroundBrush" Color="#FF24252C" />
+        <SolidColorBrush x:Key="DataGridColumnHeaderPressedBackgroundBrush" Color="#FF2A2C33" />
+        <SolidColorBrush x:Key="DataGridScrollBarsSeparatorBackground" Color="Transparent" />
+        <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="Transparent" />
+        <Color x:Key="DataGridRowHoveredBackgroundColor">#FF24252C</Color>
+        <SolidColorBrush x:Key="DataGridRowSelectedBackgroundBrush" Color="#FF8B7CF6" />
+        <SolidColorBrush x:Key="DataGridRowSelectedHoveredBackgroundBrush" Color="#FF8B7CF6" />
+        <SolidColorBrush x:Key="DataGridRowSelectedUnfocusedBackgroundBrush" Color="#FF8B7CF6" />
+        <SolidColorBrush x:Key="DataGridRowSelectedHoveredUnfocusedBackgroundBrush" Color="#FF8B7CF6" />
+        <x:Double x:Key="DataGridRowSelectedBackgroundOpacity">0.22</x:Double>
+        <x:Double x:Key="DataGridRowSelectedHoveredBackgroundOpacity">0.28</x:Double>
+        <x:Double x:Key="DataGridRowSelectedUnfocusedBackgroundOpacity">0.16</x:Double>
+        <x:Double x:Key="DataGridRowSelectedHoveredUnfocusedBackgroundOpacity">0.22</x:Double>
+        <SolidColorBrush x:Key="DataGridCellFocusVisualPrimaryBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="DataGridCellFocusVisualSecondaryBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="DataGridCurrencyVisualPrimaryBrush" Color="Transparent" />
+
+        <!-- Tab headers (Sound Lab, Settings): Fluent's are 24 pt, too loud next to the page title. -->
+        <x:Double x:Key="TabItemHeaderFontSize">16</x:Double>
+
+        <!-- Sidebar icons, drawn as outlines on a 24 × 24 grid. NavIcon picks one by the page's title. -->
+        <StreamGeometry x:Key="NavIcon.Projects">M3,7.5 C3,6.1 4.1,5 5.5,5 L9.5,5 L11.5,7 L18.5,7 C19.9,7 21,8.1 21,9.5 L21,16.5 C21,17.9 19.9,19 18.5,19 L5.5,19 C4.1,19 3,17.9 3,16.5 Z</StreamGeometry>
+        <StreamGeometry x:Key="NavIcon.SoundLab">M4,11 L4,13 M8,8 L8,16 M12,4 L12,20 M16,8.5 L16,15.5 M20,10.5 L20,13.5</StreamGeometry>
+        <StreamGeometry x:Key="NavIcon.Plugins">M9,3 L9,7.5 M15,3 L15,7.5 M6,7.5 L18,7.5 L18,11 C18,14.3 15.3,17 12,17 C8.7,17 6,14.3 6,11 Z M12,17 L12,21</StreamGeometry>
+        <StreamGeometry x:Key="NavIcon.Samples">M9,18 C9,19.7 7.7,21 6,21 C4.3,21 3,19.7 3,18 C3,16.3 4.3,15 6,15 C7.7,15 9,16.3 9,18 Z M9,18 L9,5.5 L20,3.5 L20,16 M20,16 C20,17.7 18.7,19 17,19 C15.3,19 14,17.7 14,16 C14,14.3 15.3,13 17,13 C18.7,13 20,14.3 20,16 Z</StreamGeometry>
+        <StreamGeometry x:Key="NavIcon.Settings">M4,6 L13,6 M17,6 L20,6 M15,4 L15,8 M4,12 L7,12 M11,12 L20,12 M9,10 L9,14 M4,18 L15,18 M19,18 L20,18 M17,16 L17,20</StreamGeometry>
+        <StreamGeometry x:Key="FilterIcon">M4,6 L20,6 M7,12 L17,12 M10,18 L14,18</StreamGeometry>
+        <local:NavIcon x:Key="NavIcon" />
     </Application.Resources>
 
     <Application.Styles>
-        <FluentTheme />
+        <FluentTheme>
+            <!-- Fluent's own blue (or the Windows accent colour) becomes the app's violet: selected items, ticks, main buttons. -->
+            <FluentTheme.Palettes>
+                <ColorPaletteResources x:Key="Dark" Accent="#FF8B7CF6" RegionColor="#FF101114" />
+            </FluentTheme.Palettes>
+        </FluentTheme>
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
 
         <Style Selector="TextBlock.pageTitle">
@@ -92,6 +130,81 @@
         <Style Selector="DataGridColumnHeader">
             <Setter Property="Padding" Value="8,0,0,0" />
         </Style>
+        <!-- Tables -->
+        <Style Selector="DataGrid">
+            <Setter Property="HeadersVisibility" Value="Column" />
+            <Setter Property="RowHeight" Value="34" />
+        </Style>
+        <Style Selector="DataGridColumnHeader">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="MinHeight" Value="34" />
+        </Style>
+
+        <!-- Lists: the same soft violet as the tables for the chosen item, instead of Fluent's solid block. -->
+        <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+
+        <!-- The "Filters" switch in a page header that shows or hides the filter panel. -->
+        <Style Selector="ToggleButton.filters">
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="ToggleButton.filters:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.filters:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+
+        <!-- Sidebar navigation: an icon and a title, a soft violet pill for the page you're on. -->
+        <Style Selector="ListBox.nav ListBoxItem">
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="Margin" Value="0,1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected Path.navIcon">
+            <Setter Property="Stroke" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <Style Selector="Path.navIcon">
+            <Setter Property="Width" Value="18" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="StrokeThickness" Value="1.7" />
+            <Setter Property="StrokeLineCap" Value="Round" />
+            <Setter Property="StrokeJoin" Value="Round" />
+            <Setter Property="Stroke" Value="{StaticResource MutedBrush}" />
+        </Style>
+
         <Style Selector="ComboBox">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
         </Style>

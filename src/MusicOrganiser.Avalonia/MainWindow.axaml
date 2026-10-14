@@ -5,7 +5,7 @@
         x:Class="MusicOrganiser.Avalonia.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="Music Organiser" Width="1440" Height="900" MinWidth="1080" MinHeight="640"
-        WindowStartupLocation="CenterScreen"
+        WindowStartupLocation="CenterScreen" WindowState="Maximized"
         Background="{StaticResource AppBackgroundBrush}">
     <Window.DataTemplates>
         <DataTemplate DataType="vm:ProjectsViewModel"><views:ProjectsView /></DataTemplate>
@@ -86,10 +86,13 @@
                     </StackPanel>
                 </Border>
 
-                <ListBox ItemsSource="{Binding Nav}" SelectedItem="{Binding SelectedNav}" Background="Transparent">
+                <ListBox ItemsSource="{Binding Nav}" SelectedItem="{Binding SelectedNav}" Background="Transparent" Classes="nav">
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="vm:NavItem">
-                            <TextBlock Text="{Binding Title}" FontSize="14" VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <Path Classes="navIcon" Data="{Binding Title, Converter={StaticResource NavIcon}}" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Medium" VerticalAlignment="Center" />
+                            </StackPanel>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>

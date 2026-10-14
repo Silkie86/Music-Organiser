@@ -50,11 +50,12 @@
         <TabControl Grid.Row="2" Margin="0,10,0,0">
             <!-- ============ Library ============ -->
             <TabItem Header="Library">
-                <Grid ColumnDefinitions="240,*,350" Margin="0,8,0,0">
+                <Grid ColumnDefinitions="Auto,*,350" Margin="0,8,0,0">
                     <!-- Filters -->
-                    <Border Classes="card" Padding="12,14" Margin="0,0,16,0">
+                    <Border Classes="card" Padding="12,14,4,14" Margin="0,0,16,0" Width="240"
+                            IsVisible="{Binding #SoundFiltersToggle.IsChecked}">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel>
+                            <StackPanel Margin="0,0,10,0">
                                 <TextBlock Text="TYPE" Classes="filterLabel" />
                                 <ListBox ItemsSource="{Binding TypeCounts}" SelectedItem="{Binding SelectedType}" MaxHeight="320" Background="Transparent" />
                                 <TextBlock Text="LENGTH" Classes="filterLabel" Margin="2,16,0,6" />
@@ -88,6 +89,13 @@
                     <!-- List -->
                     <DockPanel Grid.Column="1">
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                            <ToggleButton x:Name="SoundFiltersToggle" DockPanel.Dock="Left" Classes="filters" IsChecked="True" Margin="0,0,10,0"
+                                          ToolTip.Tip="Show or hide the filters, to give the list more room">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Path Data="{StaticResource FilterIcon}" Classes="navIcon" Width="14" Height="14" Stroke="{Binding $parent[ToggleButton].Foreground}" />
+                                    <TextBlock Text="Filters" />
+                                </StackPanel>
+                            </ToggleButton>
                             <ToggleButton DockPanel.Dock="Right" Content="Describe it" IsChecked="{Binding DescribeMode}" Margin="8,0,0,0"
                                           ToolTip.Tip="Search by describing the sound, e.g. “dusty vinyl snare” or “dark gritty reese”. Press Enter to search." />
                             <CheckBox DockPanel.Dock="Right" Content="Autoplay" IsChecked="{Binding AutoPlay}" Margin="12,0,0,0" VerticalAlignment="Center"

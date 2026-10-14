@@ -86,3 +86,14 @@ public sealed class Zero : IValueConverter
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value is 0;
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
+
+/// <summary>A sidebar page's icon: the NavIcon.&lt;title without spaces&gt; geometry in App.axaml.</summary>
+public sealed class NavIcon : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        global::Avalonia.Application.Current?.TryGetResource("NavIcon." + (value as string ?? "").Replace(" ", ""), null, out var icon) == true
+            ? icon
+            : null;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}

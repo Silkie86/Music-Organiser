@@ -4,9 +4,16 @@
              xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.ProjectsView"
              x:DataType="vm:ProjectsViewModel">
-    <Grid RowDefinitions="Auto,*" ColumnDefinitions="240,*,12,400">
+    <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*,12,400">
         <!-- Header -->
         <DockPanel Grid.ColumnSpan="4" Margin="0,0,0,18">
+<ToggleButton x:Name="FiltersToggle" DockPanel.Dock="Right" Classes="filters" IsChecked="True" Margin="10,0,0,0"
+                          ToolTip.Tip="Show or hide the filters, to give the list more room">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Path Data="{StaticResource FilterIcon}" Classes="navIcon" Width="14" Height="14" Stroke="{Binding $parent[ToggleButton].Foreground}" />
+                    <TextBlock Text="Filters" />
+                </StackPanel>
+            </ToggleButton>
             <TextBox DockPanel.Dock="Right" Width="360" VerticalAlignment="Center"
                      PlaceholderText="Search name, plugin, tag, notes…" Text="{Binding SearchText}" />
             <StackPanel>
@@ -16,9 +23,10 @@
         </DockPanel>
 
         <!-- Filters -->
-        <Border Grid.Row="1" Classes="card" Margin="0,0,16,0" Padding="14">
+        <Border Grid.Row="1" Classes="card" Margin="0,0,16,0" Padding="14,14,4,14" Width="240"
+                IsVisible="{Binding #FiltersToggle.IsChecked}">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel>
+                <StackPanel Margin="0,0,10,0">
                     <TextBlock Text="DAW" Classes="filterLabel" />
                     <ComboBox ItemsSource="{Binding DawFilters}" SelectedItem="{Binding DawFilter}" Margin="0,0,0,14" />
                     <TextBlock Text="STATUS" Classes="filterLabel" />
@@ -92,22 +100,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Status" Width="84" Binding="{Binding Status}" x:DataType="vm:ProjectItem" />
-                        <DataGridTemplateColumn Header="Rating" Width="76" SortMemberPath="Rating">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate x:DataType="vm:ProjectItem">
-                                    <TextBlock Text="{Binding Rating, Converter={StaticResource Stars}}" Foreground="{StaticResource AccentBrush}"
-                                               VerticalAlignment="Center" Margin="8,0" />
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="BPM" Width="56" SortMemberPath="Tempo" Binding="{Binding TempoText}" x:DataType="vm:ProjectItem" />
-                        <DataGridTextColumn Header="Key" Width="56" Binding="{Binding MusicalKey}" x:DataType="vm:ProjectItem" />
-                        <DataGridTextColumn Header="Modified" Width="104" SortMemberPath="Modified"
-                                            Binding="{Binding Modified, StringFormat='d MMM yyyy'}" x:DataType="vm:ProjectItem" />
-                        <DataGridTextColumn Header="Plugins" Width="66" Binding="{Binding PluginCount}" x:DataType="vm:ProjectItem" />
-                        <DataGridTextColumn Header="Saves" Width="60" Binding="{Binding SaveCount}" x:DataType="vm:ProjectItem" />
-                        <DataGridTemplateColumn Header="Missing" Width="130" SortMemberPath="HasMissing">
+                        <DataGridTemplateColumn Header="Missing" Width="150" SortMemberPath="HasMissing">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:ProjectItem">
                                     <Border Classes="pill" Margin="8,0" Background="{StaticResource MissingSoftBrush}"
@@ -119,6 +112,21 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="Modified" Width="114" SortMemberPath="Modified"
+                                            Binding="{Binding Modified, StringFormat='d MMM yyyy'}" x:DataType="vm:ProjectItem" />
+                        <DataGridTextColumn Header="Status" Width="84" Binding="{Binding Status}" x:DataType="vm:ProjectItem" />
+                        <DataGridTemplateColumn Header="Rating" Width="76" SortMemberPath="Rating">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="vm:ProjectItem">
+                                    <TextBlock Text="{Binding Rating, Converter={StaticResource Stars}}" Foreground="{StaticResource AccentBrush}"
+                                               VerticalAlignment="Center" Margin="8,0" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="BPM" Width="56" SortMemberPath="Tempo" Binding="{Binding TempoText}" x:DataType="vm:ProjectItem" />
+                        <DataGridTextColumn Header="Key" Width="56" Binding="{Binding MusicalKey}" x:DataType="vm:ProjectItem" />
+                        <DataGridTextColumn Header="Plugins" Width="66" Binding="{Binding PluginCount}" x:DataType="vm:ProjectItem" />
+                        <DataGridTextColumn Header="Saves" Width="60" Binding="{Binding SaveCount}" x:DataType="vm:ProjectItem" />
                     </DataGrid.Columns>
                 </DataGrid>
             </DockPanel>
