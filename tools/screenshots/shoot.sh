@@ -55,11 +55,11 @@ WIN=$(xdotool search --name "Music Organiser" | head -1)
 xdotool windowmove "$WIN" 0 0; sleep 0.5
 
 shot() { sleep "${2:-1.5}"; import -window root "$OUT/$1.png"; echo "$OUT/$1.png"; }
-# The sidebar is a list: click its first item (Projects), then arrow down to each page in turn.
-xdotool mousemove 110 91 click 1 mousemove 1590 990
-shot 1-projects
+# Sidebar items are 36 px apart from y=91. Clicking moves the pointer away after, so no item looks hovered.
+nav() { xdotool mousemove 110 $((91 + $1 * 36)) click 1 mousemove 1590 990; }
+nav 0; shot 1-projects
 xdotool mousemove 650 150 click 1; shot 2-project-selected
-xdotool mousemove 110 91 click 1 mousemove 1590 990
+i=1
 for page in 3-sound-lab 4-plugins 5-samples 6-settings; do
-  xdotool key Down; shot "$page" 2
+  nav $i; shot "$page" 2; i=$((i + 1))
 done

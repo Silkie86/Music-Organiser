@@ -21,7 +21,7 @@ How it works, so you can extend it:
 - The library lives in a temp folder (HOME and XDG_DATA_HOME point there). The project folder is copied and nine
   made-up WAVs are generated with ffmpeg, so nothing real is touched. Folders are added by writing `roots` and the
   `sample_folders` setting into `library.db` with sqlite3 after a first run creates it.
-- Pages are reached by clicking the first sidebar item and pressing Down. Other clicks use fixed coordinates
+- Pages are reached by clicking sidebar items (36 px apart from y=91). All clicks use fixed coordinates
   (the window is moved to 0,0 and is 1440 × 900 because there's no window manager to maximise it). Look at a
   shot before trusting a new click position.
 - Missing tools (xvfb, xdotool, imagemagick, sqlite3, ffmpeg) are installed with apt on first use.
