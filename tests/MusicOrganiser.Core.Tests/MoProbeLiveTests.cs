@@ -368,11 +368,13 @@ public class ProbeKnobCheckTests
         Assert.Equal((0.4, -6.0), (probe[1001], probe[1002]));
         Assert.Empty(check.Notes);
 
-        // Cancelled part way: the knob being checked still goes back.
+        // Cancelled part way: the knob being checked still goes back, and the check comes back saying so, with any notes.
         using var stop = new CancellationTokenSource();
         var cancelling = new Each(l => { if (l.Knob == 1003) stop.Cancel(); });
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            ProbeKnobCheck.RunAsync(new FakeDaw(probe), Assert.Single(MoProbeLive.Running(dir)), cancelling, Quick, Settle, stop.Token));
+        check = await ProbeKnobCheck.RunAsync(new FakeDaw(probe), Assert.Single(MoProbeLive.Running(dir)), cancelling, Quick, Settle, stop.Token);
+        Assert.Equal(ProbeKnobCheck.YouStopped, check.Stopped);
+        Assert.False(check.AllMatched);
+        Assert.Empty(check.Notes);
         Assert.Equal(440, probe[1003]);
     }
 

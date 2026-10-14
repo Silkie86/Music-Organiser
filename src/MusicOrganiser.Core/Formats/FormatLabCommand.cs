@@ -206,11 +206,13 @@ public static class FormatLabCommand
             output.WriteLine(check.Summary);
             foreach (var note in check.Notes) output.WriteLine($"  • {note}");
             if (check.ChangesOff is { } off) output.WriteLine(off);
+            if (check.Stopped is not null && check.Lines.Count > 0 && check.Notes.Count == 0)
+                output.WriteLine("The knobs it had turned were put back.");
             return check.AllMatched ? 0 : 1;
         }
         catch (OperationCanceledException)
         {
-            return Fail(error, "Stopped. It put back the knobs it had turned (formatlab probe live shows them).");
+            return Fail(error, "Stopped before it turned any knobs.");
         }
         finally
         {

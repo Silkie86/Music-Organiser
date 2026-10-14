@@ -294,7 +294,8 @@ public sealed partial class RunningProbeRow : ObservableObject
             var probe = Probe;
             CheckResult = Describe(await Task.Run(() => ProbeKnobCheck.BitwigAsync(link, probe, progress, ct), ct));
         }
-        catch (OperationCanceledException) { CheckResult = "Stopped. Any knobs it had turned were set back as they were."; }
+        // Stopped while finding it: once the knobs are being turned, the check comes back with what it did instead.
+        catch (OperationCanceledException) { CheckResult = "Stopped before it turned any knobs."; }
         catch (DawLinkException e) { CheckResult = e.Message; }
         catch (Exception e) { CheckResult = $"Couldn't check its knobs: {e.Message}"; }
         finally
@@ -316,6 +317,9 @@ public sealed partial class RunningProbeRow : ObservableObject
         lines.AddRange(check.Lines.Where(l => !l.Matched).Select(l => $"{l.Mark} {l.Text}"));
         if (check.ChangesOff is { } off) lines.Add(off);
         lines.AddRange(check.Notes);
+        // The notes name any knob that didn't go back, so without any they all did.
+        if (check.Stopped is not null && check.Lines.Count > 0 && check.Notes.Count == 0)
+            lines.Add("The knobs it had turned were set back as they were.");
         return string.Join(Environment.NewLine, lines);
     }
 }

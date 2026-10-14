@@ -203,6 +203,8 @@ public static class ProbeKnobCheck
     /// value from before, which may be what this turn should give.
     /// </summary>
     public static readonly TimeSpan DefaultSettle = TimeSpan.FromMilliseconds(150);
+    /// <summary>The check's <see cref="KnobCheck.Stopped"/> when it was cancelled part way.</summary>
+    public const string YouStopped = "You stopped it.";
     static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(50);
 
     readonly record struct Timing(TimeSpan Wait, TimeSpan Settle);
@@ -291,6 +293,11 @@ public static class ProbeKnobCheck
         catch (Exception e) when (e is DawLinkException or IOException or UnauthorizedAccessException)
         {
             stopped = e.Message;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Returned rather than thrown, so any knob that didn't go back is still in the notes.
+            stopped = YouStopped;
         }
         finally
         {
