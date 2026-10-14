@@ -6,13 +6,35 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace MusicOrganiser.Core.DawLink;
 
 /// <summary>What the Bitwig script says when the app connects.</summary>
+/// <param name="Engine">
+/// Whether Bitwig's audio engine is on, as the script says. The Java extension puts its own name here ("java") instead,
+/// which reads as on (<see cref="BitwigLink.HelloJson"/> has what it said).
+/// </param>
 /// <param name="Changes">Whether "Let the app make changes" is on in the controller's settings in Bitwig.</param>
 public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
-                                 string Project, bool Modified, bool Engine, bool Changes);
+                                 string Project, bool Modified, [property: JsonConverter(typeof(EngineOn))] bool Engine,
+                                 bool Changes);
+
+/// <summary>
+/// Reads the hello's engine: true or false from the script, or any other value (the Java extension's "java") as on, so
+/// a link that names itself there still connects.
+/// </summary>
+sealed class EngineOn : JsonConverter<bool>
+{
+    public override bool Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var on = reader.TokenType != JsonTokenType.False;
+        reader.Skip();
+        return on;
+    }
+
+    public override void Write(Utf8JsonWriter writer, bool value, JsonSerializerOptions options) => writer.WriteBooleanValue(value);
+}
 
 /// <summary>The project open in Bitwig, as Bitwig shows it.</summary>
 /// <param name="TrackCount">Every track in the project; <see cref="Tracks"/> holds the first 128.</param>
@@ -76,7 +98,7 @@ public sealed class BitwigLink : IDisposable
     readonly BufferedStream _incoming;
     readonly SemaphoreSlim _writing = new(1, 1);
     readonly ConcurrentDictionary<int, TaskCompletionSource<JsonElement>> _waiting = new();
-    readonly TaskCompletionSource<BitwigHello> _hello = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    readonly TaskCompletionSource<JsonElement> _hello = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly CancellationTokenSource _closing = new();
     volatile bool _open = true;
     int _lastId;
@@ -95,6 +117,9 @@ public sealed class BitwigLink : IDisposable
 
     /// <summary>What Bitwig said when the link connected.</summary>
     public BitwigHello Hello { get; private set; } = null!;
+
+    /// <summary>The same as it came, with any fields newer than <see cref="BitwigHello"/> (the live tests look at those).</summary>
+    public JsonElement HelloJson { get; private set; }
 
     public bool IsOpen => _open;
 
@@ -138,7 +163,7 @@ public sealed class BitwigLink : IDisposable
         try
         {
             // The script greets every connection, which also shows it's the Music Organiser script listening.
-            link.Hello = await link._hello.Task.WaitAsync(limit, ct);
+            link.Greeted(await link._hello.Task.WaitAsync(limit, ct));
             return link;
         }
         catch (TimeoutException)
@@ -160,8 +185,17 @@ public sealed class BitwigLink : IDisposable
         _tcp.Dispose();
     }
 
-    public async Task<BitwigHello> HelloAsync(CancellationToken ct = default) =>
-        Hello = Parse<BitwigHello>(await RequestAsync(new() { ["cmd"] = "hello" }, ct));
+    public async Task<BitwigHello> HelloAsync(CancellationToken ct = default)
+    {
+        Greeted(await RequestAsync(new() { ["cmd"] = "hello" }, ct));
+        return Hello;
+    }
+
+    void Greeted(JsonElement hello)
+    {
+        Hello = Parse<BitwigHello>(hello);
+        HelloJson = hello;
+    }
 
     public async Task<BitwigProject> ProjectAsync(CancellationToken ct = default) =>
         Parse<BitwigProject>(await RequestAsync(new() { ["cmd"] = "project" }, ct));
@@ -206,6 +240,17 @@ public sealed class BitwigLink : IDisposable
     /// <summary>Runs one of Bitwig's actions by its ID, e.g. to save the project.</summary>
     public Task RunActionAsync(string id, CancellationToken ct = default) =>
         RequestAsync(new() { ["cmd"] = "action", ["action"] = id }, ct);
+
+    /// <summary>
+    /// Sends any command, with <paramref name="fields"/> added to it, and returns Bitwig's answer as it came. For commands
+    /// and fields newer than this app's records, such as the Java extension's selftest, which the live tests look at.
+    /// </summary>
+    public Task<JsonElement> CommandAsync(string cmd, JsonObject? fields = null, CancellationToken ct = default)
+    {
+        var request = fields?.DeepClone().AsObject() ?? new JsonObject();
+        request["cmd"] = cmd;
+        return RequestAsync(request, ct);
+    }
 
     // Sending things in (link version 2): these wait for Bitwig to make each change.
 
@@ -412,7 +457,7 @@ public sealed class BitwigLink : IDisposable
             if (root.TryGetProperty("event", out var ev) && ev.ValueKind == JsonValueKind.String)
             {
                 if (ev.GetString() == "hello" && root.TryGetProperty("result", out var hello))
-                    _hello.TrySetResult(Parse<BitwigHello>(hello));
+                    _hello.TrySetResult(hello.Clone());
                 return;
             }
             if (!root.TryGetProperty("id", out var idElement) || !idElement.TryGetInt32(out var id)) return;

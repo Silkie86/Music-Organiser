@@ -200,6 +200,25 @@
                                     </WrapPanel>
                                     <TextBlock Text="{Binding Result}" Margin="18,6,0,0" TextWrapping="Wrap" FontSize="12.5"
                                                Visibility="{Binding Result, Converter={StaticResource NullToVisibility}}" />
+                                    <StackPanel Margin="18,14,0,0" Visibility="{Binding HasLiveTests, Converter={StaticResource BoolToVisibility}}">
+                                        <TextBlock Text="Live tests" FontSize="12.5" Margin="0,0,0,4" />
+                                        <TextBlock TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}"
+                                                   Text="Tries out what the app does with Bitwig, in the Bitwig open now, and writes a report. It only reads, unless Bitwig lets the app make changes and the open project's name starts with “MO Live Test”: then it adds a few tracks to that project and saves it, so your own projects are never touched." />
+                                        <WrapPanel Margin="0,10,0,0">
+                                            <ui:Button Content="Run live tests" Icon="{ui:SymbolIcon Beaker24}" Command="{Binding LiveTests.RunCommand}" Margin="0,0,6,0"
+                                                       ToolTip="Runs the live tests while Bitwig is answering. They take about a minute, a few more with MO Probe installed." />
+                                            <ui:Button Content="Stop" Icon="{ui:SymbolIcon Dismiss24}" Command="{Binding LiveTests.StopCommand}" Margin="0,0,6,0"
+                                                       Visibility="{Binding LiveTests.Running, Converter={StaticResource BoolToVisibility}}"
+                                                       ToolTip="Stops after the test running now, which puts back anything it was in the middle of. The report is still written." />
+                                            <ui:Button Content="Open report" Icon="{ui:SymbolIcon DocumentText24}" Command="{Binding LiveTests.OpenReportCommand}"
+                                                       ToolTip="Opens the newest run's report. The reports are kept in %LOCALAPPDATA%\MusicOrganiser\reports\live." />
+                                        </WrapPanel>
+                                        <TextBlock Text="{Binding LiveTests.ProgressLine}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   Visibility="{Binding LiveTests.ProgressLine, Converter={StaticResource NullToVisibility}}" />
+                                        <TextBlock Text="{Binding LiveTests.Summary}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                   Visibility="{Binding LiveTests.Summary, Converter={StaticResource NullToVisibility}}" />
+                                    </StackPanel>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

@@ -3,10 +3,11 @@ using System.Text;
 using System.Text.Json.Nodes;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.LiveTests;
 
 namespace MusicOrganiser.Core.Formats;
 
-/// <summary>The formatlab command (tools/MusicOrganiser.FormatLab): Format Lab, the census and MO Probe from a terminal.</summary>
+/// <summary>The formatlab command (tools/MusicOrganiser.FormatLab): Format Lab, the census, MO Probe and the live tests from a terminal.</summary>
 public static class FormatLabCommand
 {
     public const string Usage = """
@@ -23,6 +24,8 @@ public static class FormatLabCommand
                                                    sends a running probe a command, and shows its answer
           formatlab probe check-bitwig [<probe>]   turns the probe's knobs through Bitwig and back, to check Bitwig's values
           formatlab fields bitwig|fl [<id>]        what the app knows (the field registry)
+          formatlab live bitwig [--port N] [--reports <folder>]
+                                                   runs the Bitwig live tests in the Bitwig open now, and writes their report
 
         Files: .bwproject, .bwpreset, .bwclip and .flp. A <probe> is its instance, its track or its label.
         """;
@@ -118,6 +121,21 @@ public static class FormatLabCommand
                     output.Write(Fields(rest[0] == "bitwig" ? FormatRegistry.Bitwig : FormatRegistry.FlStudio, rest.ElementAtOrDefault(1)));
                     return 0;
                 }
+                case "live":
+                {
+                    var reports = Option("--reports");
+                    var port = Option("--port");
+                    if (rest is not ["bitwig"]) return Wrong(error, "live needs bitwig (FL Studio's live tests come once its link works)");
+                    if (reports is "") return Wrong(error, "--reports needs a folder");
+                    int? bitwigPort = null;
+                    if (port is not null)
+                    {
+                        if (!int.TryParse(port, NumberStyles.None, CultureInfo.InvariantCulture, out var n) || n is < 1 or > 65535)
+                            return Wrong(error, $"“{port}” isn't a port number");
+                        bitwigPort = n;
+                    }
+                    return LiveBitwig(bitwigPort, reports ?? LiveReports.DefaultFolder, output, error);
+                }
                 default:
                     return Wrong(error, $"there's no command \"{args[0]}\"");
             }
@@ -200,7 +218,7 @@ public static class FormatLabCommand
         try
         {
             using var link = BitwigLink.ConnectAsync(ct: stop.Token).GetAwaiter().GetResult();
-            var check = ProbeKnobCheck.BitwigAsync(link, probe, new Lines(l => output.WriteLine($"  {l.Mark} {l.Text}")), stop.Token)
+            var check = ProbeKnobCheck.BitwigAsync(link, probe, new Lines<KnobCheckLine>(l => output.WriteLine($"  {l.Mark} {l.Text}")), stop.Token)
                                       .GetAwaiter().GetResult();
             output.WriteLine();
             output.WriteLine(check.Summary);
@@ -211,6 +229,53 @@ public static class FormatLabCommand
         catch (OperationCanceledException)
         {
             return Fail(error, "Stopped. It put back the knobs it had turned (formatlab probe live shows them).");
+        }
+        finally
+        {
+            Console.CancelKeyPress -= Stop;
+        }
+    }
+
+    /// <summary>
+    /// Runs the Bitwig live tests (<see cref="BitwigLiveTests"/>), a line for each test as it ends, then the summary and where
+    /// the report is. Fails (1) when a test failed, the run was stopped or the report couldn't be written.
+    /// </summary>
+    static int LiveBitwig(int? port, string reports, TextWriter output, TextWriter error)
+    {
+        error.WriteLine($"Running the Bitwig live tests in the Bitwig open now. They only change a project whose name starts with " +
+                        $"“{BitwigLiveTests.TestProject}”, and only while Bitwig lets the app make changes. Ctrl+C stops them (the report " +
+                        "is still written).");
+        using var stop = new CancellationTokenSource();
+        void Stop(object? sender, ConsoleCancelEventArgs e)
+        {
+            e.Cancel = true;
+            stop.Cancel();
+            error.WriteLine("Stopping after the test running now…");
+        }
+        Console.CancelKeyPress += Stop;
+        try
+        {
+            var options = new BitwigLiveOptions { Connect = ct => BitwigLink.ConnectAsync(port, ct: ct), ReportFolder = reports };
+            string? skipped = null;
+            var progress = new Lines<LiveProgress>(p =>
+            {
+                if (p.Result is not { } r) return;
+                // As in the report: the same reason to skip again and again (every change, say) is said once.
+                var why = r.Outcome == LiveOutcome.Failed || (r.Outcome == LiveOutcome.Skipped && r.Detail != skipped) ? $": {r.Detail}" : "";
+                var time = r.Took >= TimeSpan.FromMilliseconds(0.5) ? $" ({r.Time})" : "";
+                output.WriteLine($"  {p.Text}{time}{why}");
+                skipped = r.Outcome == LiveOutcome.Skipped ? r.Detail : null;
+            });
+            var run = BitwigLiveTests.RunAsync(options, progress, stop.Token).GetAwaiter().GetResult();
+            output.WriteLine();
+            output.WriteLine(run.Summary + ".");
+            if (run.ReportMarkdown is { } md)
+            {
+                output.WriteLine($"Report: {md}");
+                output.WriteLine($"Everything it saw, as JSON: {run.ReportJson}");
+            }
+            else Fail(error, run.ReportProblem ?? "The report wasn't written.");
+            return run.Failed > 0 || run.Cancelled || run.ReportMarkdown is null ? 1 : 0;
         }
         finally
         {
@@ -243,9 +308,9 @@ public static class FormatLabCommand
     }
 
     /// <summary>Reports each line straight away, in order (Progress would post them to the thread pool).</summary>
-    sealed class Lines(Action<KnobCheckLine> write) : IProgress<KnobCheckLine>
+    sealed class Lines<T>(Action<T> write) : IProgress<T>
     {
-        public void Report(KnobCheckLine value) => write(value);
+        public void Report(T value) => write(value);
     }
 
     static string Fields(FormatRegistry r, string? id)

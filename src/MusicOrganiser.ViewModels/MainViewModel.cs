@@ -35,7 +35,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <param name="watch">How the DAWs are reached: their usual links unless given (tests use stand-ins).</param>
     /// <param name="pluginScanner">The plugin scanner: mo-scan where the build put it unless given (tests use a stand-in).</param>
-    public MainViewModel(LibraryDb db, SoundOrganiser sounds, DawWatch? watch = null, PluginScanner? pluginScanner = null)
+    /// <param name="dataFolder">
+    /// Where Settings finds MO Probe's reports and puts the live tests' reports: the app's data folder unless given (tests
+    /// use a folder of their own).
+    /// </param>
+    public MainViewModel(LibraryDb db, SoundOrganiser sounds, DawWatch? watch = null, PluginScanner? pluginScanner = null,
+                         string? dataFolder = null)
     {
         _db = db;
         PluginScanner = pluginScanner ?? new();
@@ -44,7 +49,7 @@ public sealed partial class MainViewModel : ObservableObject
         Projects = new ProjectsViewModel(db, this);
         Plugins = new PluginsViewModel(db, this);
         Samples = new SamplesViewModel(db, this);
-        Settings = new SettingsViewModel(db, this);
+        Settings = new SettingsViewModel(db, this, dataFolder);
         Sounds = new SoundsViewModel(db, sounds, this);
         Nav =
         [

@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.LiveTests;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Plugins;
 using MusicOrganiser.Core.Sounds;
@@ -39,10 +40,14 @@ public class ViewModelTests : IDisposable
         _db.Dispose();
     }
 
+    /// <summary>The window, with the app's data folder in the test's own folder, so opening Settings never reaches the real one.</summary>
+    MainViewModel Main(DawWatch? watch = null, PluginScanner? pluginScanner = null) =>
+        new(_db, _sounds, watch, pluginScanner, Path.Combine(_root, "data"));
+
     [Fact]
     public void FirstRunOpensSettings()
     {
-        var main = new MainViewModel(_db, _sounds);
+        var main = Main();
         Assert.Same(main.Settings, main.SelectedNav.Page);
     }
 
@@ -52,7 +57,7 @@ public class ViewModelTests : IDisposable
         _db.AddRoot(_root);
         new Scanner(_db).ScanProjects();
         _db.RemoveRoot(_root);   // keeps the projects, and stops the screen starting its own background scan
-        var main = new MainViewModel(_db, _sounds);
+        var main = Main();
         var projects = main.Projects;
         projects.Reload();
         Assert.Equal(3, projects.View.Count);
@@ -68,7 +73,7 @@ public class ViewModelTests : IDisposable
         _db.AddRoot(_root);
         new Scanner(_db).ScanProjects();
         _db.RemoveRoot(_root);
-        var projects = new MainViewModel(_db, _sounds).Projects;
+        var projects = Main().Projects;
         projects.Reload();
         var offered = projects.View.Cast<ProjectItem>().OrderBy(p => p.Daw).Select(p =>
         {
@@ -81,7 +86,7 @@ public class ViewModelTests : IDisposable
     [Fact]
     public async Task SettingsShowsTheDawLinks()
     {
-        var settings = new MainViewModel(_db, _sounds).Settings;
+        var settings = Main().Settings;
         await settings.RefreshLinksAsync();
         Assert.Equal(["Bitwig Studio", "FL Studio"], settings.Links.Select(l => l.Daw));
         Assert.All(settings.Links, l => Assert.Matches("^(Not installed|Installed)", l.Status));
@@ -90,6 +95,74 @@ public class ViewModelTests : IDisposable
         // Only FL Studio needs a MIDI port, and only Windows offers two ways to make it.
         Assert.Equal([false, OperatingSystem.IsWindows()], settings.Links.Select(l => l.CanChoosePort));
         Assert.Null(settings.Links[0].MidiPort);
+        // Bitwig has live tests; FL Studio's come once its link works. No report yet, in the test's own data folder.
+        Assert.Equal([true, false], settings.Links.Select(l => l.HasLiveTests));
+        var live = settings.Links[0].LiveTests!;
+        Assert.Equal((Path.Combine(_root, "data", "reports", "live"), null, ""), (live.Folder, live.Report, live.Summary));
+    }
+
+    [Fact]
+    public async Task SettingsRunsTheLiveTestsWhileBitwigAnswers()
+    {
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        if (bitwig is null) return;
+        using var watch = new DawWatch(bitwig.Port, new FlLinkTests.QuietPort(), flOpen: () => false, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
+        var main = Main(watch);
+        var tests = main.Settings.Links[0].LiveTests!;
+        Assert.False(tests.RunCommand.CanExecute(null));   // until the app has seen Bitwig answer
+        await PollUntil(main.Live, () => main.Live.IsAnswering(DawState.Bitwig));
+        Assert.True(tests.RunCommand.CanExecute(null));
+        using var link = await watch.ConnectBitwigAsync();
+        var before = await link.ProjectAsync();
+
+        // Bitwig has “Night Drive” open, which isn't a project for the tests, so they only read.
+        await tests.RunCommand.ExecuteAsync(null);
+
+        var lines = tests.Summary.Split(Environment.NewLine);
+        Assert.Equal(3, lines.Length);
+        Assert.Matches(@"^[1-9]\d* passed, 0 failed, [1-9]\d* skipped, in ", lines[0]);
+        Assert.StartsWith("Bitwig has “Night Drive” open, so the run changed nothing", lines[1]);
+        Assert.EndsWith(BitwigLiveTests.HowToAllowChanges, lines[1]);
+        Assert.Equal($"The report: {tests.Report}", lines[2]);
+        Assert.Equal(Path.Combine(_root, "data", "reports", "live"), Path.GetDirectoryName(tests.Report));
+        Assert.Contains("Bitwig Studio 6.1.2 · JavaScript script, link 2 · “Night Drive”", File.ReadAllText(tests.Report!));
+        Assert.True(tests.OpenReportCommand.CanExecute(null));
+        var after = await link.ProjectAsync();
+        Assert.Equal(before.Tracks.Select(t => t.Name), after.Tracks.Select(t => t.Name));
+        Assert.False(after.Modified);
+
+        // The next time Settings opens, the report is there to open.
+        var again = Main(watch).Settings;
+        await again.RefreshLinksAsync();
+        Assert.Equal(tests.Report, again.Links[0].LiveTests!.Report);
+        Assert.EndsWith($": {lines[0]}", again.Links[0].LiveTests!.Summary);
+    }
+
+    [Fact]
+    public void LiveTestsGoThroughWhatTheAppKnows()
+    {
+        ScanFixtures();
+        var drumMachine = Guid.NewGuid();
+        _db.SetSetting(KitViewModel.DrumMachineKey, drumMachine.ToString());
+        var user = Path.Combine(_root, "Bitwig Studio");
+        _db.SetSetting(SettingsViewModel.BitwigUserKey, user);
+        using var watch = new DawWatch(ClosedPort(), new FlLinkTests.QuietPort(), flOpen: () => false, bitwigOpen: () => false);
+        var settings = Main(watch).Settings;
+        settings.PluginFolders.Add(Path.Combine(_root, "plugins"));
+
+        var options = settings.LiveTestOptions();
+
+        // The app's own way to Bitwig, and its folders, so a run from Settings finds what the app finds.
+        Assert.Equal(new Func<CancellationToken, Task<BitwigLink>>(watch.ConnectBitwigAsync), options.Connect);
+        Assert.Equal(Path.Combine(_root, "data", "reports", "live"), options.ReportFolder);
+        Assert.Equal(Path.Combine(_root, "data", "probe"), options.ProbeFolder);
+        Assert.Equal(settings.Probe.Folder, options.ProbeFolder);
+        Assert.Contains(Path.Combine(_root, "plugins"), options.PluginFolders());
+        Assert.Equal([user], options.BitwigUserFolders());
+        Assert.Equal(_db.Projects().Where(p => p.Daw == "Bitwig Studio").Select(p => p.Path), options.LibraryProjects());
+        Assert.Single(options.LibraryProjects());
+        Assert.Equal(drumMachine, options.DrumMachine!(default));
+        Assert.Empty(options.ScannedProbes);
     }
 
     [Fact]
@@ -98,7 +171,7 @@ public class ViewModelTests : IDisposable
         var before = FlSetup.Port;
         try
         {
-            var fl = new MainViewModel(_db, _sounds).Settings.Links.Single(l => l.Daw == "FL Studio");
+            var fl = Main().Settings.Links.Single(l => l.Daw == "FL Studio");
             var port = fl.MidiPort!;
             Assert.Equal((0, FlMidiPort.LoopMidi, FlMidiPort.LoopMidi), (port.Choice, port.Port, FlSetup.Port));
             Assert.Contains(OperatingSystem.IsMacOS() ? "IAC Driver" : "loopMIDI", fl.Steps);
@@ -110,7 +183,7 @@ public class ViewModelTests : IDisposable
             Assert.Equal((FlMidiPort.WindowsMidi, FlMidiPort.WindowsMidi, "windows"), (port.Port, FlSetup.Port, _db.GetSetting(FlPortSetting.Key)));
             Assert.Contains(nameof(DawLinkSetting.Steps), changed);
             if (!OperatingSystem.IsMacOS()) Assert.Contains("Install also makes a port called Music Organiser", fl.Steps);
-            Assert.Equal(1, new MainViewModel(_db, _sounds).Settings.Links[1].MidiPort!.Choice);
+            Assert.Equal(1, Main().Settings.Links[1].MidiPort!.Choice);
 
             port.Choice = 0;
             Assert.Equal((FlMidiPort.LoopMidi, "loopmidi"), (FlSetup.Port, _db.GetSetting(FlPortSetting.Key)));
@@ -161,7 +234,7 @@ public class ViewModelTests : IDisposable
         {
             // The stand-in's Drum Machine ID, as if the app had found it in a Bitwig project.
             _db.SetSetting(KitViewModel.DrumMachineKey, "d7d7d7d7-0000-4000-8000-000000000001");
-            var kit = new MainViewModel(_db, _sounds).Sounds.Kit;
+            var kit = Main().Sounds.Kit;
             foreach (var (slot, file) in kit.Slots.Take(4).Zip(["Kick 01.wav", "Snare 02.wav", "Clap.wav", "Hat.wav"]))
                 slot.Slot.Sound = new Sound { Path = Path.Combine(_root, file) };
             kit.Seed = 42;
@@ -188,7 +261,7 @@ public class ViewModelTests : IDisposable
     public async Task AScanGoesBeforeReadingParametersWhichCarriesOnAfter()
     {
         var (asked, go) = (Directory.CreateDirectory(Path.Combine(_root, "asked")).FullName, Path.Combine(_root, "go"));
-        var main = new MainViewModel(_db, _sounds, pluginScanner: SlowPlugins(asked, go));
+        var main = Main(pluginScanner: SlowPlugins(asked, go));
         Assert.True(main.Plugins.CanReadAll);
         var reading = main.ReadAllParametersAsync();
         await Until(() => Directory.GetFiles(asked).Length == 2);   // both plugins loading, and taking their time
@@ -210,7 +283,7 @@ public class ViewModelTests : IDisposable
     public async Task ClosingTheAppEndsPluginsStillLoading()
     {
         var asked = Directory.CreateDirectory(Path.Combine(_root, "asked")).FullName;
-        var main = new MainViewModel(_db, _sounds, pluginScanner: SlowPlugins(asked, Path.Combine(_root, "go")));
+        var main = Main(pluginScanner: SlowPlugins(asked, Path.Combine(_root, "go")));
         var reading = main.ReadAllParametersAsync();
         await Until(() => Directory.GetFiles(asked).Length == 2);
 
@@ -258,7 +331,7 @@ public class ViewModelTests : IDisposable
     public async Task SidebarSaysWhenNoDawIsOpen()
     {
         using var watch = new DawWatch(ClosedPort(), new FlLinkTests.QuietPort(), flOpen: () => false, bitwigOpen: () => false) { Retry = TimeSpan.Zero };
-        var main = new MainViewModel(_db, _sounds, watch);
+        var main = Main(watch);
         // (A look at FL Studio is skipped while another request to it is under way, as in other tests running alongside.)
         await PollUntil(main.Live, () => main.Live.Rows.All(r => r.Text != "Not connected"));
         Assert.Equal([("Bitwig", "Not open", false), ("FL Studio", "Not open", false)],
@@ -281,7 +354,7 @@ public class ViewModelTests : IDisposable
         bitwig.Change("""{"project": "Loop Idea"}""");
         fl.Change("""{"modified": 1}""");
         using var watch = new DawWatch(bitwig.Port, fl, flOpen: () => true, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
-        var main = new MainViewModel(_db, _sounds, watch);
+        var main = Main(watch);
         await PollUntil(main.Live, () => main.Live.Rows.All(r => r.Answering));
 
         Assert.Equal([("Bitwig", "Loop Idea", ""), ("FL Studio", "Night Drive", "Unsaved changes")],
@@ -309,7 +382,7 @@ public class ViewModelTests : IDisposable
         ScanFixtures();
         fl.Change("""{"modified": 1}""");
         using var watch = new DawWatch(ClosedPort(), fl, flOpen: () => true, bitwigOpen: () => false) { Retry = TimeSpan.Zero };
-        var main = new MainViewModel(_db, _sounds, watch);
+        var main = Main(watch);
         await PollUntil(main.Live, () => main.Live.IsAnswering(DawState.FlStudio));
 
         // FL Studio saves the project: the file changes, and the project's unsaved changes clear.
@@ -333,7 +406,7 @@ public class ViewModelTests : IDisposable
         fl.Change("""{"knob": [0, 3, 0.9]}""");
         fl.Change("""{"modified": 1}""");
         using var watch = new DawWatch(bitwig.Port, fl, flOpen: () => true, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
-        var main = new MainViewModel(_db, _sounds, watch);
+        var main = Main(watch);
         await PollUntil(main.Live, () => main.Live.Rows.All(r => r.Answering));
 
         var path = Path.Combine(_root, "Night Drive.flp");
@@ -503,7 +576,7 @@ public class ViewModelTests : IDisposable
     }
 
     /// <summary>A port on this computer that nothing listens on, standing in for a Bitwig that isn't open.</summary>
-    static int ClosedPort()
+    internal static int ClosedPort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();

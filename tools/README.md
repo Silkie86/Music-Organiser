@@ -23,9 +23,13 @@ dotnet run --project tools/MusicOrganiser.FormatLab -- tree "Night Drive.flp"
 | `probe send <probe> <command>` | Sends a running probe a command and prints its answer (the line in its report). The commands are `ping`, `beep [<seconds>]`, `label <text>` and `set <knob> <value>`, with the knob by name or id (`gain`, `1002`) and the value in its own units (`-12`, `On`, `Charlie`). |
 | `probe check-bitwig [<probe>]` | With a probe on a track in Bitwig and the Music Organiser script answering: turns each knob through Bitwig (0, ¼, ½ and 1, or each step) and reads what the probe got, then has the probe turn it and reads Bitwig's value back. One line per turn, then a summary; the knobs are put back at the end. Needs "Let the app make changes" in Bitwig for the Bitwig-to-probe half. |
 | `fields bitwig\|fl [<id or name>]` | What the app knows: the field registry. With an id or name, also what it means, how that was found out and where the code uses it. |
+| `live bitwig [--port N] [--reports <folder>]` | Runs the Bitwig live tests in the Bitwig open now, as Settings' *Run live tests* does: a line for each test as it ends (with why, for one that failed or was skipped), then the summary and where the report is. They only change a project whose name starts with “MO Live Test”, while Bitwig lets the app make changes. Exits with 1 when a test failed; Ctrl+C stops the run after the test running then, and the report is still written. `--reports` puts the report somewhere other than `reports\live` in the app's data folder, and `--port` asks Bitwig on another port. Unlike Settings, it doesn't read the app's library, so it looks for the saved test project only in Bitwig's Projects folder, and for the Drum Machine's ID only in Bitwig's own files. |
 
 Ids are written the way each format numbers them: hex for Bitwig (`0x2c8`), plain numbers for FL Studio
 events (`156`).
+
+`extensions/README.md` (“Live tests”) says what the live tests do, how to make the project they change, and
+what their reports hold.
 
 The `probe` commands all take `--reports <folder>` for a report folder other than the probe's own. A `<probe>`
 is its instance (or its first few characters, as report names have them), its track or its label; it can

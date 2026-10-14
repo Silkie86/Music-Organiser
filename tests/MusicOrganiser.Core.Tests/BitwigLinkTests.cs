@@ -86,8 +86,9 @@ public class BitwigLinkTests
         using var other = new TcpListener(IPAddress.Loopback, 0);
         other.Start();
         var accepting = other.AcceptTcpClientAsync();
+        // Long enough to connect while the other tests keep the machine busy; then it waits that long for a hello that never comes.
         var e = await Assert.ThrowsAsync<DawLinkException>(() =>
-            BitwigLink.ConnectAsync(((IPEndPoint)other.LocalEndpoint).Port, TimeSpan.FromMilliseconds(500)));
+            BitwigLink.ConnectAsync(((IPEndPoint)other.LocalEndpoint).Port, TimeSpan.FromSeconds(2)));
         Assert.Contains("not the Music Organiser script", e.Message);
         (await accepting).Dispose();
     }
@@ -170,7 +171,8 @@ public class BitwigLinkTests
             Port = port;
         }
 
-        public static ScriptServer? Start(bool raw)
+        /// <param name="events">Hears what the stand-in says happened (serve.js --events): an MO Probe added, one of its knobs set.</param>
+        public static ScriptServer? Start(bool raw, Action<string>? events = null)
         {
             var script = Fixtures.RepoFile(Path.Combine("extensions", "bitwig", "test", "serve.js"));
             if (script is null) return null;
@@ -178,14 +180,24 @@ public class BitwigLinkTests
             {
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
+                RedirectStandardError = events is not null,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
             psi.ArgumentList.Add(script);
             if (raw) psi.ArgumentList.Add("--raw");
+            if (events is not null) psi.ArgumentList.Add("--events");
             Process node;
             try { node = Process.Start(psi)!; }
             catch (Win32Exception) { return null; }   // no Node.js here
+            if (events is not null)
+            {
+                node.ErrorDataReceived += (_, e) =>
+                {
+                    if (e.Data is { Length: > 0 } line) events(line);
+                };
+                node.BeginErrorReadLine();
+            }
             var line = node.StandardOutput.ReadLine() ?? "";
             if (!line.StartsWith("port ")) throw new InvalidOperationException($"serve.js said: {line}");
             return new ScriptServer(node, int.Parse(line[5..]));
@@ -194,10 +206,14 @@ public class BitwigLinkTests
         /// <summary>Changes the stand-in as if done in Bitwig, e.g. {"project": "Other Song", "modified": true}.</summary>
         public void Change(string json)
         {
-            _node.StandardInput.WriteLine(json);
-            _node.StandardInput.Flush();
-            var line = _node.StandardOutput.ReadLine();
-            if (line != "ok") throw new InvalidOperationException($"serve.js said: {line}");
+            // A stand-in probe turns knobs from its own thread.
+            lock (_node)
+            {
+                _node.StandardInput.WriteLine(json);
+                _node.StandardInput.Flush();
+                var line = _node.StandardOutput.ReadLine();
+                if (line != "ok") throw new InvalidOperationException($"serve.js said: {line}");
+            }
         }
 
         /// <summary>Stops the stand-in, as if Bitwig closed. Safe to call again.</summary>

@@ -301,8 +301,10 @@ public class MoProbeLiveTests
 public class ProbeKnobCheckTests
 {
     const string Instance = "1683A80113A64904";
-    // The stand-in probe writes its status every 20 milliseconds, not every half second.
-    static readonly TimeSpan Quick = TimeSpan.FromMilliseconds(400), Settle = TimeSpan.FromMilliseconds(30);
+    // The stand-in probe writes its status every 20 milliseconds, not every half second. A turn that arrives counts at once,
+    // so the wait only runs out on one that doesn't; it's long enough for a machine busy with the other tests (and stand-in
+    // DAWs) to write and read the files.
+    static readonly TimeSpan Quick = TimeSpan.FromMilliseconds(1500), Settle = TimeSpan.FromMilliseconds(30);
 
     [Fact]
     public async Task PassesWhenTheDawSpreadsValuesEvenly()
@@ -455,23 +457,28 @@ sealed class FakeProbe : IAsyncDisposable
     readonly CancellationTokenSource _stop = new();
     readonly string _status, _commands;
     readonly Task _running;
+    readonly string _host, _hostVersion;
     int _n, _handled;
 
-    public FakeProbe(string folder, string instance = "1683A80113A64904", string track = "Inst 3")
+    /// <param name="format">How the DAW loaded it. As a VST3 it's inside the CLAP wrapper, which names the DAW its own way.</param>
+    public FakeProbe(string folder, string instance = "1683A80113A64904", string track = "Inst 3", string format = "CLAP")
     {
         Instance = instance;
         Track = track;
+        Format = format;
+        (_host, _hostVersion) = format == "VST3" ? ("Bitwig Studio (CLAP-as-VST3)", "0.16.0") : ("Bitwig Studio", "6.1.3");
         var live = Path.Combine(folder, "live");
         _status = Path.Combine(live, instance + ".json");
         _commands = Directory.CreateDirectory(Path.Combine(live, instance + ".in")).FullName;
         ReportFile = Path.Combine(folder, $"20261014T091855Z-instrument-{instance[..8]}.jsonl");
-        Write("create", new() { ["plugin"] = "org.musicorganiser.probe.instrument", ["host"] = "Bitwig Studio", ["hostVersion"] = "6.1.3", ["format"] = "CLAP" });
+        Write("create", new() { ["plugin"] = "org.musicorganiser.probe.instrument", ["host"] = _host, ["hostVersion"] = _hostVersion, ["format"] = format });
         WriteStatus();
         _running = Task.Run(RunAsync);
     }
 
     public string Instance { get; }
     public string Track { get; }
+    public string Format { get; }
     public string ReportFile { get; }
     public string Label { get; private set; } = "";
     /// <summary>Whether it takes commands: a probe from before commands doesn't.</summary>
@@ -581,8 +588,8 @@ sealed class FakeProbe : IAsyncDisposable
             foreach (var (id, v) in _knobs) knobs[id.ToString(CultureInfo.InvariantCulture)] = v;
         var status = new JsonObject
         {
-            ["probe"] = "instrument", ["instance"] = Instance, ["identity"] = Instance, ["label"] = Label, ["host"] = "Bitwig Studio",
-            ["hostVersion"] = "6.1.3", ["format"] = "CLAP", ["track"] = Track, ["trackColor"] = "#C69F6F",
+            ["probe"] = "instrument", ["instance"] = Instance, ["identity"] = Instance, ["label"] = Label, ["host"] = _host,
+            ["hostVersion"] = _hostVersion, ["format"] = Format, ["track"] = Track, ["trackColor"] = "#C69F6F",
             ["report"] = Path.GetFileName(ReportFile), ["t"] = Now(), ["pid"] = Environment.ProcessId, ["active"] = true,
             ["playing"] = false, ["beats"] = 12.5, ["bar"] = 4, ["tempo"] = 110, ["commands"] = _handled, ["params"] = knobs,
         };
