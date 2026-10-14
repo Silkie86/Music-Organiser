@@ -36,7 +36,8 @@ public static class Parallelism
     /// have been found and the folder being read, every couple of hundred folders.
     /// </summary>
     public static List<string> FindFiles(IEnumerable<string> roots, Func<string, bool> keepFile, Func<string, string, bool> skipDir,
-                                         Action<int, string>? progress = null, CancellationToken ct = default)
+                                         Action<int, string>? progress = null, CancellationToken ct = default,
+                                         ConcurrentBag<string>? unreadable = null)
     {
         var found = new ConcurrentBag<string>();
         var folders = 0;
@@ -52,7 +53,7 @@ public static class Parallelism
                     files = Directory.GetFiles(dir);
                     dirs = Directory.GetDirectories(dir);
                 }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return; }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { unreadable?.Add(dir); return; }
                 foreach (var f in files)
                     if (keepFile(f)) found.Add(f);
                 var parent = Path.GetFileName(dir.TrimEnd('\\', '/'));
