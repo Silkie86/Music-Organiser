@@ -440,6 +440,48 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Sounds_open_shuffled_and_can_be_ordered_by_how_much_you_like_them()
+    {
+        ((HeadlessUi)Ui.Current).Player = () => new Recorder(new List<string>());
+        _soundDb.Save(new[] { "Kick 01", "Snare 02", "Hat 03", "Pad 04", "Bass 05" }.Select(n =>
+            new SoundLibrary.Analysed($"/samples/{n}.wav", 1, 1, null, null, null, null)));
+        _sounds.Reload();
+        var lab = Main().Sounds;
+        Assert.Equal(SoundsViewModel.Shuffled, lab.SortBy);
+        Assert.Equal(SoundsViewModel.Tiles, lab.ViewMode);
+        Sound Named(string name) => lab.Items.Single(s => s.Name == name);
+
+        // Played three times, dragged out once, a favourite: most liked first, and the tooltip says why.
+        lab.Selected = Named("Pad 04");
+        foreach (var _ in Enumerable.Range(0, 3)) { lab.PlayCommand.Execute(null); lab.StopPlayingCommand.Execute(null); }
+        lab.MakeDrag([Named("Hat 03")]);
+        lab.Selected = Named("Bass 05");
+        lab.ToggleFavouriteCommand.Execute(null);
+        lab.SortBy = SoundsViewModel.MostLiked;
+        Assert.Equal(["Bass 05", "Pad 04", "Hat 03"], lab.Shown.Take(3).Select(s => s.Name));
+        Assert.Equal("Played 3 times", Named("Pad 04").LikedTip);
+        Assert.Equal(1, Named("Bass 05").LikedShare);
+
+        // History: what you played on purpose, newest first.
+        lab.ViewMode = SoundsViewModel.History;
+        Assert.Equal(["Pad 04"], lab.HistoryItems.Select(h => h.Sound.Name));
+
+        // Settings can make a play count for more than a favourite.
+        Main().Settings.Liked.Play = 20;
+        var again = Main().Sounds;
+        again.SortBy = SoundsViewModel.MostLiked;
+        again.ViewMode = SoundsViewModel.Tiles;
+        Assert.Equal("Pad 04", again.Shown[0].Name);
+
+        // The page remembers tiles or list, and four tiles to a row make two rows of five sounds.
+        again.ViewMode = SoundsViewModel.List;
+        Assert.Equal(SoundsViewModel.List, Main().Sounds.ViewMode);
+        again.ViewMode = SoundsViewModel.Tiles;
+        again.TileColumns = 4;
+        Assert.Equal([4, 1], again.TileRows.Select(r => r.Tiles.Count));
+    }
+
+    [Fact]
     public void AutoplayPlaysTheSoundYouPickButNotOnesTheListSelectsByItself()
     {
         var played = new List<string>();
@@ -879,7 +921,12 @@ public class ViewModelTests : IDisposable
         public void GroupBy(string? property) { }
         public void Refresh() { }
         public int Count => items.Cast<object>().Count(i => Filter?.Invoke(i) ?? true);
-        public IEnumerator GetEnumerator() => items.Cast<object>().Where(i => Filter?.Invoke(i) ?? true).GetEnumerator();
+        public IEnumerator GetEnumerator()
+        {
+            var shown = items.Cast<object>().Where(i => Filter?.Invoke(i) ?? true).ToList();
+            if (CustomSort is { } sort) shown.Sort(sort.Compare);
+            return shown.GetEnumerator();
+        }
     }
 
     sealed class NoTimer : IUiTimer

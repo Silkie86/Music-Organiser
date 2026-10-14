@@ -500,4 +500,21 @@ public class LearningTests
         Assert.NotEmpty(learned);
         Assert.All(learned, n => Assert.StartsWith("one", n));
     }
+
+    [Fact]
+    public void Older_signs_of_liking_count_half_and_settings_change_the_weights()
+    {
+        var s = new Sound
+        {
+            Path = "kick.wav", UsedIn = 3, UsedInRecently = 1, Favourite = true,
+            Activity = new SoundActivity(Plays: 4, OlderPlays: 2, Drags: 1, OlderDrags: 0, Sends: 0, OlderSends: 2),
+        };
+        // Projects 5 × (1 + 2 × ½), drags 3 × 1, sends 3 × (2 × ½), plays 1 × (4 + 2 × ½), favourite 10.
+        Assert.Equal(10 + 3 + 3 + 5 + 10, LikedWeights.Default.Score(s));
+        // Older counting in full, and projects worth 2: 2 × 3 + 3 × 1 + 3 × 2 + 1 × 6 + 10.
+        Assert.Equal(6 + 3 + 6 + 6 + 10, (LikedWeights.Default with { OlderShare = 1, Project = 2 }).Score(s));
+        Assert.Equal("Favourite, in 3 projects, dragged out once, sent into a DAW 2 times, played 6 times", LikedWeights.Explain(s));
+        Assert.Equal(LikedWeights.Default with { Play = 7 }, LikedWeights.FromJson((LikedWeights.Default with { Play = 7 }).ToJson()));
+        Assert.Equal(LikedWeights.Default, LikedWeights.FromJson("not json"));
+    }
 }

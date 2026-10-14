@@ -42,7 +42,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public const string StartPageKey = "start_page";
     public const string LastPageChoice = "Last page I used";
     public static IReadOnlyList<string> StartPageChoices { get; } =
-        ["Projects", "Sound Lab", "Plugins", "Samples", "Settings", LastPageChoice];
+        ["Projects", "Sound Lab", "Plugins", "Settings", LastPageChoice];
     [ObservableProperty] string _startPage;
     [ObservableProperty] string _sampleIndexText = "";
     public string LibraryLocation => _db.FilePath;
@@ -63,12 +63,15 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// </param>
     /// <summary>The theme, accent, font, size and motion.</summary>
     public AppearanceViewModel Appearance { get; }
+    /// <summary>How Sounds › Most liked weighs things.</summary>
+    public LikedSettingsViewModel Liked { get; }
 
     public SettingsViewModel(LibraryDb db, MainViewModel main, string? dataFolder = null)
     {
         _db = db;
         _main = main;
         Appearance = new AppearanceViewModel(db);
+        Liked = new LikedSettingsViewModel(db);
         foreach (var r in db.Roots()) ProjectFolders.Add(r);
         foreach (var f in db.GetList(Scanner.SampleFoldersKey)) SampleFolders.Add(f);
         var plugins = db.GetList(Scanner.PluginFoldersKey);
@@ -79,7 +82,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _bitwigTemplate = BitwigTemplateStore.Find(db, main.DataFolder) ?? "";
         _bitwigTemplateNote = TemplateNote(_bitwigTemplate);
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
-        _startPage = db.GetSetting(StartPageKey) is { } start && StartPageChoices.Contains(start) ? start : "Projects";
+        _startPage = db.GetSetting(StartPageKey) is { } start ? start == "Samples" ? "Sound Lab" : start : "Projects";   // Samples is on the Sounds page now
+        if (!StartPageChoices.Contains(_startPage)) _startPage = "Projects";
         UpdateSampleIndexText();
         var watch = main.Live.Watch;
         Probe = new ProbeReportsViewModel(folder: dataFolder is null ? null : Path.Combine(dataFolder, "probe"),

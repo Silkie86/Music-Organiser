@@ -104,26 +104,30 @@ public sealed class SoundOrganiser : IDisposable
 
     // ---- usage from your projects -------------------------------------------------------
 
-    IReadOnlyList<(string Path, int Projects)> _lastUsage = [];
+    IReadOnlyList<(string Path, int Projects, int Recent)> _lastUsage = [];
+
+    public void ApplyUsage(IReadOnlyList<(string Path, int Projects)> usage) =>
+        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Projects)).ToList());
 
     /// <summary>
-    /// Counts how many of your projects use each sound. Projects store samples by full
-    /// path, relative path or just a file name (Bitwig collects copies), so a full-path
-    /// match is used when there is one, otherwise the file name.
+    /// Counts how many of your projects use each sound, and how many of those were saved in the last year. Projects
+    /// store samples by full path, relative path or just a file name (Bitwig collects copies), so a full-path match is
+    /// used when there is one, otherwise the file name.
     /// </summary>
-    public void ApplyUsage(IReadOnlyList<(string Path, int Projects)> usage)
+    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage)
     {
         _lastUsage = usage;
-        var byPath = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var byName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (p, n) in usage)
+        var byPath = new Dictionary<string, (int All, int Recent)>(StringComparer.OrdinalIgnoreCase);
+        var byName = new Dictionary<string, (int All, int Recent)>(StringComparer.OrdinalIgnoreCase);
+        static (int, int) Add((int All, int Recent) a, int n, int r) => (a.All + n, a.Recent + r);
+        foreach (var (p, n, r) in usage)
         {
-            byPath[p] = byPath.GetValueOrDefault(p) + n;
+            byPath[p] = Add(byPath.GetValueOrDefault(p), n, r);
             var name = p.Split('\\', '/')[^1];
-            byName[name] = byName.GetValueOrDefault(name) + n;
+            byName[name] = Add(byName.GetValueOrDefault(name), n, r);
         }
         foreach (var s in _sounds)
-            s.UsedIn = byPath.TryGetValue(s.Path, out var n) ? n : byName.GetValueOrDefault(System.IO.Path.GetFileName(s.Path));
+            (s.UsedIn, s.UsedInRecently) = byPath.TryGetValue(s.Path, out var u) ? u : byName.GetValueOrDefault(System.IO.Path.GetFileName(s.Path));
     }
 
     // ---- scanning ----------------------------------------------------------------------

@@ -60,12 +60,12 @@ public sealed partial class MainViewModel : ObservableObject
         Samples = new SamplesViewModel(db, this);
         Settings = new SettingsViewModel(db, this, dataFolder);
         Sounds = new SoundsViewModel(db, sounds, this);
+        Settings.Liked.Changed += Sounds.WeightsChanged;
         Nav =
         [
             new("Projects", "", Projects),
             new("Sound Lab", "\uE8D6", Sounds),
             new("Plugins", "", Plugins),
-            new("Samples", "", Samples),
             new("Settings", "", Settings),
         ];
         _selectedNav = StartPage();
@@ -82,6 +82,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var choice = _db.GetSetting(SettingsViewModel.StartPageKey) ?? "Projects";
         var title = choice == SettingsViewModel.LastPageChoice ? _db.GetSetting(LastPageKey) : choice;
+        if (title == "Samples") title = "Sound Lab";   // Samples is a tab on the Sounds page now
         return Nav.FirstOrDefault(n => n.Title == title) ?? Nav[0];
     }
 

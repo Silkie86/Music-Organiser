@@ -532,6 +532,14 @@ public sealed partial class LibraryDb : IDisposable
         GROUP BY s.path COLLATE NOCASE ORDER BY found, n DESC, s.path LIMIT 20000
         """, r => new SampleUsage(Str(r, "path"), (int)Long(r, "n"), Long(r, "found") == 1));
 
+    /// <summary>Each sample's projects, and how many of them were saved since <paramref name="recentSince"/>.</summary>
+    public IReadOnlyList<(string Path, int Projects, int Recent)> SampleUsageByAge(DateTime recentSince) => Query("""
+        SELECT s.path, COUNT(DISTINCT s.project_id) AS n, COUNT(DISTINCT CASE WHEN p.mtime >= $c THEN s.project_id END) AS recent
+        FROM samples s JOIN projects p ON p.id = s.project_id
+        WHERE p.file_missing = 0
+        GROUP BY s.path COLLATE NOCASE
+        """, r => (Str(r, "path"), (int)Long(r, "n"), (int)Long(r, "recent")), ("$c", new DateTimeOffset(recentSince).ToUnixTimeSeconds()));
+
     /// <summary>Projects using a plugin (by name) or a sample (by path).</summary>
     public IReadOnlyList<long> ProjectsUsingPlugin(string name) =>
         Query("SELECT DISTINCT project_id FROM plugins WHERE name_key = $k", r => (long)r["project_id"], ("$k", NameKey(name)));

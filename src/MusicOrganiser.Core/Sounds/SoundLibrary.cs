@@ -27,9 +27,20 @@ public sealed class Sound
     public bool Favourite { get; set; }
     public int Rating { get; set; }
     public int Plays { get; set; }
+    /// <summary>When the file was last changed: what "Newest" sorts by.</summary>
+    public DateTime Added { get; init; }
+    /// <summary>What you've done with it in the app, recent (the last year) and older, for Most liked.</summary>
+    public SoundActivity Activity { get; set; } = SoundActivity.None;
 
     /// <summary>Number of your projects that use this sample (from the project library).</summary>
     public int UsedIn { get; set; }
+    /// <summary>How many of <see cref="UsedIn"/> were saved in the last year.</summary>
+    public int UsedInRecently { get; set; }
+    /// <summary>Its Most liked score (see <see cref="LikedWeights"/>), and that as a share of the most liked sound's, for its bar.</summary>
+    public double Liked { get; set; }
+    public double LikedShare { get; set; }
+    /// <summary>What the liked bar is made of, e.g. "In 4 projects, dragged out 6 times, played 12 times".</summary>
+    public string LikedTip => LikedWeights.Explain(this);
 
     public double Seconds => Analysis?.Seconds ?? 0;
     public bool IsLoop => Analysis?.IsLoop ?? false;
@@ -38,6 +49,18 @@ public sealed class Sound
     public string RootNote => Analysis?.RootNoteName ?? "";
     public string Chord => Analysis?.Chord ?? "";
     public string Character => Analysis is null ? "" : string.Join(", ", Analysis.Character);
+}
+
+/// <summary>What can be done with a sound that says you like it.</summary>
+public static class SoundEvent
+{
+    public const string Play = "play", Drag = "drag", Send = "send";
+}
+
+/// <summary>Deliberate plays, drags out of the app and sends into a DAW: in the last year, and before it.</summary>
+public sealed record SoundActivity(int Plays, int OlderPlays, int Drags, int OlderDrags, int Sends, int OlderSends)
+{
+    public static readonly SoundActivity None = new(0, 0, 0, 0, 0, 0);
 }
 
 /// <summary>
@@ -65,6 +88,11 @@ public sealed class SoundLibrary : IDisposable
             UNIQUE(sound_id, tag)
         );
         CREATE INDEX IF NOT EXISTS ix_sound_tags_tag ON sound_tags(tag);
+        CREATE TABLE IF NOT EXISTS sound_events (
+            sound_id INTEGER REFERENCES sounds(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL, at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_sound_events ON sound_events(kind, at);
         """;
 
     readonly SqliteConnection _conn;
@@ -202,10 +230,11 @@ public sealed class SoundLibrary : IDisposable
 
     public List<Sound> All()
     {
+        var activity = Activity();
         var tags = Query("SELECT sound_id, tag FROM sound_tags ORDER BY tag", r => ((long)r["sound_id"], (string)r["tag"]))
             .GroupBy(t => t.Item1).ToDictionary(g => g.Key, g => g.Select(t => t.Item2).ToList());
-        return Query("""
-            SELECT id, path, error, analysis, name_type, user_type, type, type_source, type_conf, favourite, rating, plays
+        var sounds = Query("""
+            SELECT id, path, mtime, error, analysis, name_type, user_type, type, type_source, type_conf, favourite, rating, plays
             FROM sounds ORDER BY path
             """, r =>
         {
@@ -221,8 +250,61 @@ public sealed class SoundLibrary : IDisposable
                 TypeConfidence = r["type_conf"] is double d ? d : 0,
                 Favourite = Long(r, "favourite") == 1, Rating = (int)Long(r, "rating"), Plays = (int)Long(r, "plays"),
                 Tags = tags.GetValueOrDefault(id) ?? [],
+                Added = DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime,
             };
         });
+        foreach (var s in sounds) s.Activity = activity.GetValueOrDefault(s.Id) ?? SoundActivity.None;
+        return sounds;
+    }
+
+    /// <summary>
+    /// What's been done with each sound since <paramref name="since"/> and before it: deliberate plays, drags out of the
+    /// app and sends into a DAW. Plays counted before the app kept dates count as recent.
+    /// </summary>
+    public Dictionary<long, SoundActivity> Activity(DateTime? since = null)
+    {
+        var cutoff = new DateTimeOffset(since ?? DateTime.Now.AddYears(-1)).ToUnixTimeSeconds();
+        var counts = Query("""
+            SELECT sound_id, kind, SUM(at >= $c) AS recent, SUM(at < $c) AS older FROM sound_events GROUP BY sound_id, kind
+            """, r => ((long)r["sound_id"], (string)r["kind"], (int)Long(r, "recent"), (int)Long(r, "older")), ("$c", cutoff));
+        var plays = Query("SELECT id, plays FROM sounds WHERE plays > 0", r => ((long)r["id"], (int)Long(r, "plays"))).ToDictionary(t => t.Item1, t => t.Item2);
+        var result = new Dictionary<long, SoundActivity>();
+        foreach (var g in counts.GroupBy(c => c.Item1))
+        {
+            (int, int) Of(string kind) => g.Where(c => c.Item2 == kind).Select(c => (c.Item3, c.Item4)).FirstOrDefault();
+            var (pr, po) = Of(SoundEvent.Play);
+            var (dr, d_o) = Of(SoundEvent.Drag);
+            var (sr, so) = Of(SoundEvent.Send);
+            var legacy = Math.Max(0, plays.GetValueOrDefault(g.Key) - pr - po);
+            result[g.Key] = new SoundActivity(pr + legacy, po, dr, d_o, sr, so);
+        }
+        foreach (var (id, n) in plays)
+            result.TryAdd(id, new SoundActivity(n, 0, 0, 0, 0, 0));
+        return result;
+    }
+
+    /// <summary>The sounds you've played on purpose, most recent first, each once with when you last played it.</summary>
+    public IReadOnlyList<(long Id, DateTime At)> History(int limit = 500) => Query("""
+        SELECT sound_id, MAX(at) AS at FROM sound_events WHERE kind = 'play' GROUP BY sound_id ORDER BY at DESC LIMIT $n
+        """, r => ((long)r["sound_id"], DateTimeOffset.FromUnixTimeSeconds(Long(r, "at")).LocalDateTime), ("$n", limit));
+
+    /// <summary>Notes that a sound was dragged out of the app or sent into a DAW (see <see cref="SoundEvent"/>).</summary>
+    public void Record(IEnumerable<long> ids, string kind)
+    {
+        var at = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var id in ids.Distinct())
+            {
+                // A sound forgotten since (its file gone in a rescan) is skipped.
+                using var cmd = Cmd("INSERT INTO sound_events SELECT $id, $k, $t WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $id)",
+                                    ("$id", id), ("$k", kind), ("$t", at));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
     }
 
     /// <summary>Vectors for every sound in a space: "features" (always) or "clap" (when the model has run).</summary>
@@ -264,8 +346,13 @@ public sealed class SoundLibrary : IDisposable
     public void SetFavourite(long id, bool fav) => Exec("UPDATE sounds SET favourite = $f WHERE id = $id", ("$f", fav ? 1 : 0), ("$id", id));
     public void SetRating(long id, int rating) => Exec("UPDATE sounds SET rating = $r WHERE id = $id", ("$r", rating), ("$id", id));
 
-    public void MarkPlayed(long id) =>
-        Exec("UPDATE sounds SET plays = plays + 1, last_played = $t WHERE id = $id", ("$t", DateTimeOffset.UtcNow.ToUnixTimeSeconds()), ("$id", id));
+    /// <summary>A deliberate play: counted, and kept for History and Most liked.</summary>
+    public void MarkPlayed(long id)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        Exec("UPDATE sounds SET plays = plays + 1, last_played = $t WHERE id = $id", ("$t", now), ("$id", id));
+        Exec("INSERT INTO sound_events SELECT $id, 'play', $t WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $id)", ("$id", id), ("$t", now));
+    }
 
     public void AddTag(long id, string tag, string source = "you") =>
         Exec("""

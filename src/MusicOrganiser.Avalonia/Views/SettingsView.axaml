@@ -138,6 +138,47 @@
                 </StackPanel>
             </Border>
 
+            <!-- Most liked: what puts a sound at the top of Sounds › Most liked. -->
+            <Border Classes="card settingsCard" DataContext="{Binding Liked}" x:DataType="vm:LikedSettingsViewModel">
+                <StackPanel Spacing="4">
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Reset to defaults" Command="{Binding ResetCommand}" VerticalAlignment="Top" />
+                        <TextBlock Text="Most liked sounds" Classes="sectionHeader" />
+                    </DockPanel>
+                    <TextBlock Classes="cardIntro" TextWrapping="Wrap"
+                               Text="How much each thing counts when the Sounds page is ordered by Most liked. Each sound's liked bar shows what it's made of." />
+                    <Grid ColumnDefinitions="220,*,64" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,6,0,0">
+                        <Grid.Styles>
+                            <Style Selector="TextBlock.sliderLabel"><Setter Property="VerticalAlignment" Value="Center" /></Style>
+                            <Style Selector="TextBlock.sliderValue">
+                                <Setter Property="VerticalAlignment" Value="Center" />
+                                <Setter Property="HorizontalAlignment" Value="Right" />
+                                <Setter Property="FontFamily" Value="{DynamicResource NumberFont}" />
+                            </Style>
+                            <Style Selector="Slider"><Setter Property="Margin" Value="12,0" /></Style>
+                        </Grid.Styles>
+                        <TextBlock Grid.Row="0" Classes="sliderLabel" Text="Each project that uses it" />
+                        <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Project}" />
+                        <TextBlock Grid.Row="0" Grid.Column="2" Classes="sliderValue" Text="{Binding Project, StringFormat='{}{0:0} pts'}" />
+                        <TextBlock Grid.Row="1" Classes="sliderLabel" Text="Each drag out of the app" />
+                        <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Drag}" />
+                        <TextBlock Grid.Row="1" Grid.Column="2" Classes="sliderValue" Text="{Binding Drag, StringFormat='{}{0:0} pts'}" />
+                        <TextBlock Grid.Row="2" Classes="sliderLabel" Text="Each send into a DAW" />
+                        <Slider Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Send}" />
+                        <TextBlock Grid.Row="2" Grid.Column="2" Classes="sliderValue" Text="{Binding Send, StringFormat='{}{0:0} pts'}" />
+                        <TextBlock Grid.Row="3" Classes="sliderLabel" Text="Each play on purpose" />
+                        <Slider Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Play}" />
+                        <TextBlock Grid.Row="3" Grid.Column="2" Classes="sliderValue" Text="{Binding Play, StringFormat='{}{0:0} pts'}" />
+                        <TextBlock Grid.Row="4" Classes="sliderLabel" Text="Being a favourite" />
+                        <Slider Grid.Row="4" Grid.Column="1" Minimum="0" Maximum="50" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Favourite}" />
+                        <TextBlock Grid.Row="4" Grid.Column="2" Classes="sliderValue" Text="{Binding Favourite, StringFormat='{}{0:0} pts'}" />
+                        <TextBlock Grid.Row="5" Classes="sliderLabel" Text="Older than a year counts" />
+                        <Slider Grid.Row="5" Grid.Column="1" Minimum="0" Maximum="100" TickFrequency="5" IsSnapToTickEnabled="True" Value="{Binding OlderPercent}" />
+                        <TextBlock Grid.Row="5" Grid.Column="2" Classes="sliderValue" Text="{Binding OlderPercent, StringFormat='{}{0:0}%'}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <Border Classes="card settingsCard">
                 <StackPanel>
                     <TextBlock Text="Project folders" Classes="sectionHeader" />

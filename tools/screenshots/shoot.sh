@@ -70,10 +70,9 @@ xdotool mousemove 650 150 click 1; shot 2-project-selected
 # Feedback: a rescan from the rail, mid-way (ring, spinner, activity card) and just after (the card's tick).
 xdotool mousemove 42 863 click 1 mousemove 1430 892; shot 2a-scanning 0.05
 shot 2b-scan-done 2.5
-i=1
-for page in 3-sound-lab 4-plugins 5-samples 6-settings; do
-  nav $i; shot "$page" 2; i=$((i + 1))
-done
+nav 1; shot 3-sounds 2
+nav 2; shot 4-plugins 2
+nav 4; shot 6-settings 2
 # The rest of Settings, a screen further down.
 xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1430 892; shot 7-settings-more
 xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1430 892; shot 8-settings-more

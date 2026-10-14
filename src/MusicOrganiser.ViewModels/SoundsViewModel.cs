@@ -86,6 +86,49 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     Dictionary<long, double>? _describeScores;
 
     public const string AutoPlayKey = "sound_lab_autoplay";
+    /// <summary>Tiles or List: how the sounds were shown last time.</summary>
+    public const string ViewKey = "sounds_view";
+    public const string Tiles = "Tiles", List = "List", History = "History";
+    public static IReadOnlyList<string> ViewChoices { get; } = [Tiles, List, History];
+
+    public const string Shuffled = "Shuffled", MostLiked = "Most liked";
+    /// <summary>The orders on offer. The page opens shuffled, a new order every time, to stumble on forgotten sounds.</summary>
+    public static IReadOnlyList<string> SortChoices { get; } = [Shuffled, MostLiked, "Name", "Type", "Key", "Newest"];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsTiles), nameof(IsList), nameof(IsHistory))]
+    string _viewMode;
+    public bool IsTiles => ViewMode == Tiles;
+    public bool IsList => ViewMode == List;
+    public bool IsHistory => ViewMode == History;
+
+    [ObservableProperty] string _sortBy = Shuffled;
+
+    /// <summary>The tiles, a row at a time (so only the rows on screen are drawn), <see cref="TileColumns"/> to a row.</summary>
+    [ObservableProperty] IReadOnlyList<TileRow> _tileRows = [];
+    /// <summary>The sounds in tile order, as shown: for moving round the tiles with the arrow keys.</summary>
+    public IReadOnlyList<Sound> Shown { get; private set; } = [];
+    int _tileColumns = 4;
+    public int TileColumns
+    {
+        get => _tileColumns;
+        set
+        {
+            value = Math.Max(1, value);
+            if (value == _tileColumns) return;
+            _tileColumns = value;
+            OnPropertyChanged();
+            BuildTiles();
+        }
+    }
+
+    /// <summary>Sounds you've played on purpose, most recent first.</summary>
+    [ObservableProperty] IReadOnlyList<HistoryItem> _historyItems = [];
+    [ObservableProperty] HistoryItem? _historySelected;
+    public bool HasHistory => HistoryItems.Count > 0;
+
+    Dictionary<long, int> _shuffle = [];
+    LikedWeights _weights = LikedWeights.Default;
 
     /// <summary>Plays each sound as soon as you click it or arrow onto it in the list.</summary>
     [ObservableProperty] bool _autoPlay;
@@ -100,6 +143,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
+        _viewMode = db.GetSetting(ViewKey) == List ? List : Tiles;
+        _weights = LikedWeights.FromJson(db.GetSetting(LikedWeightsKey));
         _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), FollowPlayback);
         Reload();
         if (SampleFolders.Count > 0) _ = ScanAsync();
@@ -107,14 +152,19 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     IReadOnlyList<string> SampleFolders => _db.GetList(Scanner.SampleFoldersKey);
 
+    /// <summary>Settings › Most liked: how much each sign of liking a sound counts.</summary>
+    public const string LikedWeightsKey = "liked_weights";
+
     public void Reload()
     {
-        var usage = _db.SampleUsage().Select(u => (u.Path, u.Projects)).ToList();
-        Org.ApplyUsage(usage);
+        Org.ApplyUsage(_db.SampleUsageByAge(DateTime.Now.AddYears(-1)));
         Items = Org.Sounds;
+        foreach (var s in Items) _shuffle.TryAdd(s.Id, Random.Shared.Next());
+        Score();
         View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
         View.Filter = o => o is Sound s && Matches(s);
         ApplySort();
+        LoadHistory();
         TypeCounts = [new TypeCount("All sounds", Items.Count), .. Items.GroupBy(s => s.Type).OrderByDescending(g => g.Count()).Select(g => new TypeCount(g.Key, g.Count()))];
         SelectedType ??= TypeCounts[0];
         var loops = Items.Count(s => s.IsLoop);
@@ -178,38 +228,134 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if (View is null) return;
         View.CustomSort = _describeScores is { } scores
             ? Comparer<object>.Create((a, b) => scores.GetValueOrDefault(((Sound)b).Id).CompareTo(scores.GetValueOrDefault(((Sound)a).Id)))
-            : null;
+            : Comparer<object>.Create((a, b) => Compare((Sound)a, (Sound)b));
+        BuildTiles();
+    }
+
+    int Compare(Sound a, Sound b)
+    {
+        var c = SortBy switch
+        {
+            MostLiked => b.Liked.CompareTo(a.Liked),
+            "Name" => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
+            "Type" => string.Compare(a.Type, b.Type, StringComparison.OrdinalIgnoreCase),
+            "Key" => KeyOrder(a).CompareTo(KeyOrder(b)),
+            "Newest" => b.Added.CompareTo(a.Added),
+            _ => _shuffle.GetValueOrDefault(a.Id).CompareTo(_shuffle.GetValueOrDefault(b.Id)),
+        };
+        return c != 0 ? c : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Keys in note order, major before minor; sounds with no key last.
+    static int KeyOrder(Sound s) => s.Analysis?.KeyTonic is { } t ? t * 2 + (s.Analysis.KeyMinor ? 1 : 0) : int.MaxValue;
+
+    partial void OnSortByChanged(string value) => ApplySort();
+
+    /// <summary>A new random order (and switches to it).</summary>
+    [RelayCommand]
+    void Shuffle()
+    {
+        _shuffle = Items.ToDictionary(s => s.Id, _ => Random.Shared.Next());
+        if (SortBy == Shuffled) ApplySort();
+        else SortBy = Shuffled;
+    }
+
+    partial void OnViewModeChanged(string value)
+    {
+        if (value != History) _db.SetSetting(ViewKey, value);
+        if (value == Tiles) BuildTiles();
+        if (value == History) LoadHistory();
+    }
+
+    /// <summary>The filter or something it depends on changed: the list and the tiles follow.</summary>
+    void Refresh()
+    {
+        View?.Refresh();
+        BuildTiles();
+    }
+
+    Dictionary<long, SoundTile> _tiles = [];
+
+    void BuildTiles()
+    {
+        if (View is null || !IsTiles) return;
+        Shown = View.Cast<Sound>().ToList();
+        _tiles = Shown.ToDictionary(s => s.Id, s => new SoundTile(s) { IsSelected = s == Selected });
+        TileRows = Shown.Chunk(TileColumns).Select(c => new TileRow(c.Select(s => _tiles[s.Id]).ToList())).ToList();
+    }
+
+    /// <summary>The row of tiles holding a sound, to scroll it into view.</summary>
+    public TileRow? RowOf(Sound s) => TileRows.FirstOrDefault(r => r.Tiles.Any(t => t.Sound == s));
+
+    /// <summary>Works out every sound's Most liked score, and its bar as a share of the most liked one's.</summary>
+    void Score()
+    {
+        foreach (var s in Items) s.Liked = _weights.Score(s);
+        var top = Items.Count == 0 ? 0 : Items.Max(s => s.Liked);
+        foreach (var s in Items) s.LikedShare = top > 0 ? s.Liked / top : 0;
+    }
+
+    /// <summary>Settings changed how Most liked weighs things.</summary>
+    public void WeightsChanged(LikedWeights weights)
+    {
+        _weights = weights;
+        Score();
+        if (SortBy == MostLiked) ApplySort();
+        else BuildTiles();
+    }
+
+    void LoadHistory()
+    {
+        var byId = Items.ToDictionary(s => s.Id);
+        HistoryItems = Org.Library.History().Where(h => byId.ContainsKey(h.Id)).Select(h => new HistoryItem(byId[h.Id], h.At)).ToList();
+        OnPropertyChanged(nameof(HasHistory));
+    }
+
+    partial void OnHistorySelectedChanged(HistoryItem? value)
+    {
+        if (value is not null) Selected = value.Sound;
+    }
+
+    /// <summary>Notes something done with sounds that says you like them (a drag out, a send into a DAW).</summary>
+    internal void Record(IEnumerable<Sound> sounds, string kind)
+    {
+        var list = sounds.DistinctBy(s => s.Id).ToList();
+        if (list.Count == 0) return;
+        Org.Library.Record(list.Select(s => s.Id), kind);
+        foreach (var s in list)
+            s.Activity = kind == SoundEvent.Drag ? s.Activity with { Drags = s.Activity.Drags + 1 } : s.Activity with { Sends = s.Activity.Sends + 1 };
+        Score();
     }
 
     partial void OnSearchTextChanged(string value)
     {
         if (DescribeMode) return;   // describe searches run on Enter
-        View?.Refresh();
+        Refresh();
     }
 
     partial void OnDescribeModeChanged(bool value)
     {
         _describeScores = null;
         ApplySort();
-        View?.Refresh();
+        Refresh();
     }
 
-    partial void OnSelectedTypeChanged(TypeCount? value) => View?.Refresh();
-    partial void OnLoopFilterChanged(int value) => View?.Refresh();
-    partial void OnKeyFilterChanged(string value) => View?.Refresh();
-    partial void OnCompatibleKeysChanged(bool value) => View?.Refresh();
-    partial void OnBpmFromChanged(string value) => View?.Refresh();
-    partial void OnBpmToChanged(string value) => View?.Refresh();
-    partial void OnOnlyUnusedChanged(bool value) => View?.Refresh();
-    partial void OnOnlyFavouritesChanged(bool value) => View?.Refresh();
-    partial void OnTagFilterChanged(string value) => View?.Refresh();
+    partial void OnSelectedTypeChanged(TypeCount? value) => Refresh();
+    partial void OnLoopFilterChanged(int value) => Refresh();
+    partial void OnKeyFilterChanged(string value) => Refresh();
+    partial void OnCompatibleKeysChanged(bool value) => Refresh();
+    partial void OnBpmFromChanged(string value) => Refresh();
+    partial void OnBpmToChanged(string value) => Refresh();
+    partial void OnOnlyUnusedChanged(bool value) => Refresh();
+    partial void OnOnlyFavouritesChanged(bool value) => Refresh();
+    partial void OnTagFilterChanged(string value) => Refresh();
 
     [RelayCommand]
     async Task Search()
     {
         if (!DescribeMode)
         {
-            View?.Refresh();
+            Refresh();
             return;
         }
         if (string.IsNullOrWhiteSpace(SearchText))
@@ -229,7 +375,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             Message = $"Best matches for “{text}”, closest first";
         }
         ApplySort();
-        View?.Refresh();
+        Refresh();
     }
 
     [RelayCommand]
@@ -246,7 +392,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         TagFilter = "";
         Message = "";
         ApplySort();
-        View?.Refresh();
+        Refresh();
     }
 
     // ---- dragging into a DAW -------------------------------------------------------
@@ -259,6 +405,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Suggestion s => s.Sound,
         KitSlotItem k => k.Slot.Sound,
         Disagreement d => d.Sound,
+        SoundTile t => t.Sound,
+        HistoryItem h => h.Sound,
         _ => null,
     };
 
@@ -271,6 +419,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         var sounds = items.Select(SoundOf).OfType<Sound>().Where(s => File.Exists(s.Path)).DistinctBy(s => s.Path).ToList();
         if (sounds.Count == 0) return null;
+        Record(sounds, SoundEvent.Drag);
         return new DragPayload(sounds.Select(s => s.Path).ToList(), sounds.Select(Card).ToList(),
             sounds.Count == 1 ? "1 sound" : $"{sounds.Count} sounds");
     }
@@ -279,6 +428,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     partial void OnSelectedChanged(Sound? value)
     {
+        foreach (var old in _tiles.Values.Where(x => x.IsSelected)) old.IsSelected = false;
+        if (value is not null && _tiles.TryGetValue(value.Id, out var tile)) tile.IsSelected = true;
         OnPropertyChanged(nameof(WaveSeconds));
         FollowPlayback();
         Notes = [];
@@ -297,7 +448,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if (Selected is not { } s || string.IsNullOrEmpty(value) || value == s.Type) return;
         Org.SetUserType(s, value == SoundTypes.Unknown ? null : value);
         Message = $"Labelled {s.Name} as {value}. Retrain on the Teach tab to let it learn from this.";
-        View?.Refresh();
+        Refresh();
     }
 
     [RelayCommand]
@@ -329,6 +480,10 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         Org.Library.MarkPlayed(s.Id);
         s.Plays++;
+        s.Activity = s.Activity with { Plays = s.Activity.Plays + 1 };
+        Score();
+        if (IsHistory) return;   // the History list doesn't jump about under the pointer while you play from it
+        LoadHistory();
     }
 
     /// <summary>
@@ -404,8 +559,9 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if (Selected is not { } s) return;
         s.Favourite = !s.Favourite;
         Org.Library.SetFavourite(s.Id, s.Favourite);
+        Score();
         OnPropertyChanged(nameof(Selected));
-        View?.Refresh();
+        Refresh();
     }
 
     [RelayCommand]
@@ -464,6 +620,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     internal LibraryDb Db => _db;
+    /// <summary>Samples your projects use, missing ones first: the "In your projects" tab.</summary>
+    public SamplesViewModel Samples => _main.Samples;
     internal string DataFolder => _main.DataFolder;
     internal ActivityFeed Activities => _main.Activities;
 
@@ -611,7 +769,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void FilterByTag(string? tag)
     {
         TagFilter = tag ?? "";
-        View?.Refresh();
+        Refresh();
     }
 
     [RelayCommand]
@@ -775,6 +933,7 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
             .Order(StringComparer.OrdinalIgnoreCase).ToList();
         var pads = Slots.Where(s => s.Slot.Sound is not null).ToList();
         var cards = pads.Select(p => new DragCard(p.Name, p.SoundName, Glyphs.Kit)).ToList();
+        parent.Record(pads.Select(p => p.Slot.Sound).OfType<Sound>(), SoundEvent.Drag);
         Status = $"Exported to {folder}";
         return new DragPayload(files, cards, $"Kit of {files.Count} pads", Numbered: true);
     }
@@ -826,6 +985,7 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
             }
             Status = Describe(kit, name);
             card.Finish($"{name} is in Bitwig", $"{pads.Count} pads on a Drum Machine");
+            parent.Record(Slots.Select(s => s.Slot.Sound).OfType<Sound>(), SoundEvent.Send);
         }
         catch (DawLinkException e) { Status = e.Message; card.Fail("Couldn't send the kit", e.Message); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -895,4 +1055,31 @@ public sealed partial class KitSlotItem(KitSlot slot) : ObservableObject
         OnPropertyChanged(nameof(Detail));
         OnPropertyChanged(nameof(Locked));
     }
+}
+
+/// <summary>A row of tiles on the Sounds page.</summary>
+public sealed record TileRow(IReadOnlyList<SoundTile> Tiles);
+
+/// <summary>One sound as a tile.</summary>
+public sealed partial class SoundTile(Sound sound) : ObservableObject
+{
+    public Sound Sound => sound;
+    [ObservableProperty] bool _isSelected;
+    /// <summary>"Kick · C · 0.4s" or "Loop · 124 BPM · F minor · 8.0s".</summary>
+    public string Details => string.Join(" · ", new[]
+    {
+        sound.Type, sound.Bpm is { } b ? $"{b:0.#} BPM" : "", sound.Key, sound.Seconds > 0 ? $"{sound.Seconds:0.0}s" : "",
+    }.Where(x => x.Length > 0));
+}
+
+/// <summary>A sound in History, with when you last played it.</summary>
+public sealed record HistoryItem(Sound Sound, DateTime At)
+{
+    public string When => Ago(DateTime.Now - At, At);
+
+    static string Ago(TimeSpan t, DateTime at) =>
+        t.TotalMinutes < 1 ? "just now" :
+        t.TotalHours < 1 ? $"{(int)t.TotalMinutes} min ago" :
+        t.TotalDays < 1 ? $"{(int)t.TotalHours} h ago" :
+        t.TotalDays < 7 ? at.ToString("dddd HH:mm") : at.ToString("d MMM yyyy");
 }

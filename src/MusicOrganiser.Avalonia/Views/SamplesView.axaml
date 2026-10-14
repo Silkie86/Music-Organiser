@@ -12,8 +12,8 @@
                 <TextBox Classes="clearButton" Width="360" PlaceholderText="Search sample paths…" Text="{Binding SearchText}" />
             </StackPanel>
             <StackPanel>
-                <TextBlock Text="Samples" Classes="pageTitle" />
-                <TextBlock Text="{Binding Summary}" Classes="pageSubtitle" />
+                <TextBlock Text="Samples your projects use" Classes="sectionHeader" />
+                <TextBlock Text="{Binding Summary}" Classes="muted" />
             </StackPanel>
         </DockPanel>
 
