@@ -56,6 +56,11 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void ShowProjects() => SelectedNav = Nav.First(n => n.Page == Projects);
 
+    partial void OnSelectedNavChanged(NavItem value)
+    {
+        if (value.Page == Settings) _ = Settings.RefreshLinksAsync();
+    }
+
     public void RefreshAll()
     {
         Projects.Reload();

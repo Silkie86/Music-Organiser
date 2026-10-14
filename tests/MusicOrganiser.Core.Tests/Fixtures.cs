@@ -14,6 +14,14 @@ public static class Fixtures
         return d;
     }
 
+    /// <summary>A file in the repository (e.g. extensions/bitwig/test/serve.js), found from where the tests run.</summary>
+    public static string? RepoFile(string relative)
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+            if (File.Exists(Path.Combine(dir.FullName, relative))) return Path.Combine(dir.FullName, relative);
+        return null;
+    }
+
     // ---- FL Studio ---------------------------------------------------------
 
     public sealed class FlpBuilder

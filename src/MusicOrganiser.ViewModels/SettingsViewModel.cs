@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
 
@@ -9,6 +10,9 @@ namespace MusicOrganiser.ViewModels;
 /// <summary>Where your projects, samples and plugins live, and how projects are opened.</summary>
 public sealed partial class SettingsViewModel : ObservableObject
 {
+    /// <summary>FL Studio's user data folder, when it was chosen here.</summary>
+    public const string FlUserDataKey = "fl_user_data";
+
     readonly LibraryDb _db;
     readonly MainViewModel _main;
 
@@ -25,6 +29,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] string _sampleIndexText = "";
     public string LibraryLocation => _db.FilePath;
 
+    /// <summary>The scripts that let the app ask Bitwig and FL Studio what they show.</summary>
+    public IReadOnlyList<DawLinkSetting> Links { get; }
+
     public SettingsViewModel(LibraryDb db, MainViewModel main)
     {
         _db = db;
@@ -38,6 +45,51 @@ public sealed partial class SettingsViewModel : ObservableObject
         _exportFolder = db.GetSetting(ProjectDetailViewModel.ExportFolderKey) ?? "";
         _bitwigTemplate = db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) ?? "";
         UpdateSampleIndexText();
+        Links =
+        [
+            new DawLinkSetting("Bitwig Studio", BitwigSteps, () => DawScripts.Bitwig(), CheckBitwig),
+            new DawLinkSetting("FL Studio", FlSteps, () => FlScript(db), CheckFlStudio, new FolderChoice(
+                "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
+                DawScripts.IsFlUserData,
+                "That isn't FL Studio's user data folder: it has Settings, Presets and Projects folders in it. " +
+                "FL Studio shows where it is in Options > File settings.",
+                f => db.SetSetting(FlUserDataKey, f))),
+        ];
+    }
+
+    static string BitwigSteps =>
+        "Then open Settings > Controllers in Bitwig, click Add controller and pick Music Organiser > DAW link. " +
+        "If it isn't in the list, restart Bitwig." +
+        (OperatingSystem.IsWindows() ? " If Windows asks whether Bitwig may use the network, you can say no: the app only talks to it on this PC." : "");
+
+    static string FlSteps =>
+        "Then restart FL Studio. FL Studio runs a script for a MIDI input, so in Options > MIDI settings, pick an input and " +
+        "set its Controller type to Music Organiser. " +
+        (OperatingSystem.IsMacOS()
+            ? "With no input to spare, turn on the IAC Driver in Audio MIDI Setup and add a port called Music Organiser."
+            : "With no input to spare, make one called Music Organiser in loopMIDI (free); FL Studio should then pick the script for it by itself.");
+
+    /// <summary>The FL Studio script, for every FL Studio user data folder: chosen here, in Documents, or holding FL projects.</summary>
+    static DawScript FlScript(LibraryDb db) => DawScripts.FlStudio(DawScripts.FlUserDataFolders(
+        db.Projects().Where(p => p.Daw == "FL Studio").Select(p => p.Path), db.GetSetting(FlUserDataKey)));
+
+    static async Task<string> CheckBitwig()
+    {
+        using var link = await BitwigLink.ConnectAsync();
+        return $"Connected to {link.Hello.Product} {link.Hello.Version}, with “{link.Hello.Project}” open.";
+    }
+
+    static async Task<string> CheckFlStudio()
+    {
+        var hello = await new FlLink { Timeout = TimeSpan.FromSeconds(3) }.HelloAsync();
+        return $"Connected to FL Studio {hello.Version}. Its window says “{hello.Title}”." +
+               (hello.Api < 26 ? " This FL Studio is too old to check projects with: that needs scripting version 26 or later." : "");
+    }
+
+    /// <summary>Shows whether each DAW's script is installed. Settings calls it each time it opens.</summary>
+    public async Task RefreshLinksAsync()
+    {
+        foreach (var link in Links) await link.RefreshAsync();
     }
 
     void UpdateSampleIndexText() => SampleIndexText = $"{_db.SampleIndexCount():N0} audio files indexed";
@@ -155,5 +207,116 @@ public sealed partial class DawSetting : ObservableObject
     {
         ExePath = "";
         _db.SetSetting(ProjectDetailViewModel.DawExeKey(Daw), "");
+    }
+}
+
+/// <summary>Where a DAW keeps its files, when the app has to ask.</summary>
+/// <param name="Prompt">What the folder picker asks for.</param>
+/// <param name="IsRight">Whether a folder is the right kind.</param>
+/// <param name="Wrong">What to say when it isn't.</param>
+/// <param name="Save">Remembers the folder.</param>
+public sealed record FolderChoice(string Prompt, Func<string, bool> IsRight, string Wrong, Action<string> Save);
+
+/// <summary>The link with one DAW: its script, installed into the DAW's own folder, and whether the DAW answers.</summary>
+public sealed partial class DawLinkSetting : ObservableObject
+{
+    readonly Func<DawScript> _script;
+    readonly Func<Task<string>> _check;
+    readonly FolderChoice? _folder;
+
+    public string Daw { get; }
+    /// <summary>What to do in the DAW once the script is installed.</summary>
+    public string Steps { get; }
+    public bool CanChooseFolder => _folder is not null;
+    /// <summary>Whether the script is installed, and where.</summary>
+    [ObservableProperty] string _status = "";
+    /// <summary>What happened when installing or checking.</summary>
+    [ObservableProperty] string _result = "";
+
+    public DawLinkSetting(string daw, string steps, Func<DawScript> script, Func<Task<string>> check, FolderChoice? folder = null)
+    {
+        Daw = daw;
+        Steps = steps;
+        _script = script;
+        _check = check;
+        _folder = folder;
+    }
+
+    public async Task RefreshAsync()
+    {
+        try
+        {
+            Status = await Task.Run(() => Describe(_script()));
+        }
+        catch (Exception e)
+        {
+            Status = $"Couldn't look for the script: {e.Message}";
+        }
+    }
+
+    string Describe(DawScript script) => script.State switch
+    {
+        ScriptState.NotInstalled when script.Folders.Count == 0 =>
+            $"Not installed, and the app didn't find {Daw}'s folder for it. Install asks where it is.",
+        ScriptState.NotInstalled => "Not installed.",
+        ScriptState.Outdated => "Installed, but an older version. Install it again to update it.",
+        _ => $"Installed in {string.Join(" and ", script.InstalledIn)}.",
+    };
+
+    [RelayCommand]
+    async Task Install()
+    {
+        try
+        {
+            var script = await Task.Run(_script);
+            if (script.Folders.Count == 0)
+            {
+                if (!await ChooseFolderAsync()) return;
+                script = await Task.Run(_script);
+            }
+            var update = script.State != ScriptState.NotInstalled;
+            await Task.Run(script.Install);
+            Result = update ? $"Updated. Restart {Daw} to load the new version." : $"Installed. Now set it up in {Daw} as described above.";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Result = $"Couldn't install it: {e.Message}";
+        }
+        await RefreshAsync();
+    }
+
+    [RelayCommand]
+    async Task ChooseFolder()
+    {
+        if (await ChooseFolderAsync())
+        {
+            await RefreshAsync();
+            Result = "Install puts the script there too.";
+        }
+    }
+
+    async Task<bool> ChooseFolderAsync()
+    {
+        if (_folder is null || await Ui.Current.PickFolder(_folder.Prompt) is not { } chosen) return false;
+        if (!_folder.IsRight(chosen))
+        {
+            Result = _folder.Wrong;
+            return false;
+        }
+        _folder.Save(chosen);
+        return true;
+    }
+
+    /// <summary>Asks the DAW to answer, through the script.</summary>
+    [RelayCommand]
+    async Task Check()
+    {
+        Result = $"Asking {Daw}…";
+        try
+        {
+            Result = await _check();
+        }
+        catch (DawLinkException e) { Result = e.Message; }
+        catch (Exception e) { Result = $"Couldn't reach {Daw}: {e.Message}"; }
     }
 }

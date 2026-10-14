@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:MusicOrganiser.ViewModels"
              xmlns:lib="using:MusicOrganiser.Core.Library"
+             xmlns:dl="using:MusicOrganiser.Core.DawLink"
              xmlns:sys="using:System"
              x:Class="MusicOrganiser.Avalonia.Views.ProjectDetailView"
              x:DataType="vm:ProjectDetailViewModel">
@@ -38,6 +39,15 @@
         </Style>
         <Style Selector="WrapPanel.actions > Button">
             <Setter Property="Margin" Value="0,0,6,6" />
+        </Style>
+        <Style Selector="TextBlock.mark">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
+        <Style Selector="TextBlock.mark.same">
+            <Setter Property="Foreground" Value="{StaticResource OkBrush}" />
+        </Style>
+        <Style Selector="TextBlock.mark.different">
+            <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
         </Style>
     </UserControl.Styles>
 
@@ -80,10 +90,28 @@
                         ToolTip.Tip="Convert this FL Studio project into a Bitwig project and open it: tracks, notes, tempo, each Sampler's sample and root key, VST plugins with their settings, mixer effects, volume and pan" />
                 <Button Content="DAWproject" Command="{Binding ExportToBitwigCommand}" IsVisible="{Binding IsFlStudio}"
                         ToolTip.Tip="Convert this FL Studio project into a DAWproject file, the open format Bitwig and Studio One import: tracks, notes, tempo, VST plugins with their settings, mixer effects and automation" />
+                <Button Content="{Binding CheckWithDawText}" Command="{Binding CheckWithDawCommand}" IsVisible="{Binding CanCheckWithDaw}"
+                        ToolTip.Tip="Compare what the app read from this file with what the DAW shows for it. Open the project there first; the link with the DAW is set up in Settings" />
             </WrapPanel>
             <Border Margin="0,6,0,0" Padding="12,8" CornerRadius="8" Background="{StaticResource AccentFaintBrush}"
                     IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                 <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12" />
+            </Border>
+
+            <!-- The last check with the DAW: what it shows, against what the app read -->
+            <Border Classes="panel" Margin="0,6,0,0" IsVisible="{Binding HasCheckLines}">
+                <ItemsControl ItemsSource="{Binding CheckLines}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="dl:CheckLine">
+                            <DockPanel Margin="0,2">
+                                <TextBlock DockPanel.Dock="Left" Text="{Binding Mark}" Width="18" FontSize="12" FontWeight="SemiBold" Classes="mark"
+                                           Classes.same="{Binding Result, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static dl:CheckResult.Same}}"
+                                           Classes.different="{Binding Result, Converter={x:Static ObjectConverters.Equal}, ConverterParameter={x:Static dl:CheckResult.Different}}" />
+                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
             </Border>
 
             <!-- Warnings about what could be read -->

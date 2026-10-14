@@ -137,6 +137,39 @@
 
             <Border Style="{StaticResource SettingsCard}">
                 <StackPanel>
+                    <TextBlock Text="DAW links" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource CardIntro}"
+                               Text="Small scripts the app installs in Bitwig and FL Studio, so it can ask them what they show for the open project. The Check with Bitwig and Check with FL Studio buttons on a project then compare that with what the app read from its file." />
+                    <ItemsControl ItemsSource="{Binding Links}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:DawLinkSetting}">
+                                <StackPanel Margin="0,0,0,14">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center"
+                                                 Fill="{Binding Daw, Converter={StaticResource DawBrush}}" />
+                                        <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding Status}" Margin="18,4,0,0" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding Steps}" Margin="18,4,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                               Foreground="{StaticResource MutedBrush}" />
+                                    <WrapPanel Margin="18,10,0,0">
+                                        <ui:Button Content="Install" Icon="{ui:SymbolIcon ArrowDownload24}" Command="{Binding InstallCommand}" Margin="0,0,6,0" />
+                                        <ui:Button Content="Choose folder…" Command="{Binding ChooseFolderCommand}" Margin="0,0,6,0"
+                                                   Visibility="{Binding CanChooseFolder, Converter={StaticResource BoolToVisibility}}"
+                                                   ToolTip="Pick FL Studio's user data folder, if it's somewhere the app didn't find" />
+                                        <ui:Button Content="Check connection" Icon="{ui:SymbolIcon PlugConnected24}" Command="{Binding CheckCommand}" />
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding Result}" Margin="18,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                               Visibility="{Binding Result, Converter={StaticResource NullToVisibility}}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource SettingsCard}">
+                <StackPanel>
                     <TextBlock Text="Your library" Style="{StaticResource CardTitle}" />
                     <TextBlock Style="{StaticResource Muted}" FontSize="12.5">
                         <Run Text="Your tags, ratings and notes are stored on this PC in" />

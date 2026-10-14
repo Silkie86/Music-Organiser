@@ -32,6 +32,30 @@ jobs:
       - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release
       - run: dotnet build src/MusicOrganiser.Avalonia -c Release
 
+  # The DAW scripts: the Bitwig controller script, type-checked against Bitwig's API and run in a stand-in
+  # Bitwig, and the FL Studio script, run in a stand-in FL Studio. (The app's own tests above also talk to
+  # both through their stand-ins, when Node.js and Python are there.)
+  extensions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Bitwig script
+        working-directory: extensions/bitwig
+        run: |
+          npm ci
+          npm test
+      - name: FL Studio script
+        run: |
+          # FL Studio 2024 and later run Python 3.12; FL Studio 21 ran 3.9, so the script keeps to 3.9's syntax.
+          python -c "import ast, sys; ast.parse(open(sys.argv[1], encoding='utf-8').read(), feature_version=(3, 9))" extensions/fl-studio/device_MusicOrganiser.py
+          python -m unittest discover -s extensions/fl-studio/test -v
+
   # The native tools (C++): the plugin scanner and the probe plugin as CLAP, VST3 and (macOS) AU.
   # Tested by hosting the probe and scanning it. Each run keeps the built tools as a download.
   native:

@@ -17,6 +17,12 @@
     <None Include="Sounds\Models\NOTICE-basic-pitch.txt" Link="Models\NOTICE-basic-pitch.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The scripts that link the app with Bitwig and FL Studio, copied next to the app; Settings installs them in each DAW. -->
+    <None Include="..\..\extensions\bitwig\MusicOrganiser.control.js" Link="Extensions\Bitwig\MusicOrganiser.control.js" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\extensions\fl-studio\device_MusicOrganiser.py" Link="Extensions\FL Studio\device_MusicOrganiser.py" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- The plugin scanner (C++), built with CMake and copied next to the app. -->
   <Import Project="..\..\native\MusicOrganiser.Native.targets" />
 

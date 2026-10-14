@@ -1,0 +1,103 @@
+using System.Text.RegularExpressions;
+using MusicOrganiser.Core.Export;
+
+namespace MusicOrganiser.Core.DawLink;
+
+public enum ScriptState { NotInstalled, Installed, Outdated }
+
+/// <summary>A script that links the app with a DAW, and the folders the DAW loads it from.</summary>
+/// <param name="Source">The copy that ships with the app, in Extensions next to it.</param>
+/// <param name="Folders">Where it goes: one folder for each place the DAW may look.</param>
+/// <param name="Kept">The start of a setting line people may change in their copy, which updates keep.</param>
+public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> Folders, string? Kept = null)
+{
+    public string FileName => Path.GetFileName(Source);
+
+    /// <summary>The folders that have the script in them.</summary>
+    public IReadOnlyList<string> InstalledIn => Folders.Where(f => File.Exists(Path.Combine(f, FileName))).ToList();
+
+    /// <summary>Installed when every copy matches the app's own (apart from the kept setting).</summary>
+    public ScriptState State
+    {
+        get
+        {
+            var installed = InstalledIn;
+            if (installed.Count == 0) return ScriptState.NotInstalled;
+            var shipped = Lines(File.ReadAllText(Source));
+            return installed.All(f => Lines(File.ReadAllText(Path.Combine(f, FileName))).SequenceEqual(shipped))
+                ? ScriptState.Installed : ScriptState.Outdated;
+        }
+    }
+
+    /// <summary>Copies the app's script into every folder, keeping the <see cref="Kept"/> setting each copy has.</summary>
+    public void Install()
+    {
+        var shipped = File.ReadAllText(Source);
+        foreach (var folder in Folders)
+        {
+            var target = Path.Combine(folder, FileName);
+            var text = shipped;
+            if (Kept is { } kept && File.Exists(target) && Setting(File.ReadAllText(target), kept) is { } theirs)
+                text = new Regex("^" + Regex.Escape(kept) + "[^\r\n]*", RegexOptions.Multiline).Replace(text, theirs.Replace("$", "$$"), 1);
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(target, text);
+        }
+    }
+
+    IEnumerable<string> Lines(string text) =>
+        text.ReplaceLineEndings("\n").TrimEnd('\n').Split('\n').Where(l => Kept is null || !l.StartsWith(Kept, StringComparison.Ordinal));
+
+    static string? Setting(string text, string kept) =>
+        text.ReplaceLineEndings("\n").Split('\n').FirstOrDefault(l => l.StartsWith(kept, StringComparison.Ordinal));
+}
+
+/// <summary>The scripts that link the app with Bitwig and FL Studio, and where each DAW looks for them.</summary>
+public static class DawScripts
+{
+    /// <summary>The FL Studio script's setting for letting the app make changes, which updates keep.</summary>
+    public const string FlChanges = "LET_THE_APP_MAKE_CHANGES = ";
+
+    /// <summary>One of the scripts the app ships, in Extensions next to it.</summary>
+    public static string Shipped(string daw, string file) => Path.Combine(AppContext.BaseDirectory, "Extensions", daw, file);
+
+    /// <summary>The Bitwig controller script, for Controller Scripts in Bitwig's user folder.</summary>
+    public static DawScript Bitwig(string? userFolder = null) =>
+        new("Bitwig Studio", Shipped("Bitwig", "MusicOrganiser.control.js"),
+            [Path.Combine(userFolder ?? BitwigUserFolder, "Controller Scripts", "Music Organiser")]);
+
+    /// <summary>Bitwig's user folder: Documents\Bitwig Studio (on Linux, ~/Bitwig Studio).</summary>
+    public static string BitwigUserFolder => BitwigPreset.DefaultFolders()[0];
+
+    /// <summary>The FL Studio script, for Settings\Hardware in each of FL Studio's user data folders.</summary>
+    public static DawScript FlStudio(IReadOnlyList<string> userDataFolders) =>
+        new("FL Studio", Shipped("FL Studio", FlLink.Script),
+            userDataFolders.Select(f => Path.Combine(f, "Settings", "Hardware", "Music Organiser")).ToList(), FlChanges);
+
+    /// <summary>
+    /// FL Studio's user data folders: one picked in the app, the usual one in Documents, and any that holds
+    /// the given FL projects (FL Studio keeps a Projects folder next to its Settings). FL Studio can be told
+    /// to use another, so there may be more than one.
+    /// </summary>
+    public static IReadOnlyList<string> FlUserDataFolders(IEnumerable<string> projects, string? chosen = null)
+    {
+        var found = new List<string>();
+        void Add(string folder)
+        {
+            if (!found.Contains(folder, StringComparer.OrdinalIgnoreCase)) found.Add(folder);
+        }
+
+        if (chosen is { Length: > 0 }) Add(chosen);
+        var documents = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Image-Line", "FL Studio");
+        if (IsFlUserData(documents)) Add(documents);
+        var looked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in projects)
+            for (var dir = Path.GetDirectoryName(project); !string.IsNullOrEmpty(dir) && looked.Add(dir); dir = Path.GetDirectoryName(dir))
+                if (IsFlUserData(dir)) Add(dir);
+        return found;
+    }
+
+    /// <summary>FL Studio's user data folder has Settings, Presets and Projects folders in it.</summary>
+    public static bool IsFlUserData(string folder) =>
+        Directory.Exists(Path.Combine(folder, "Settings")) && Directory.Exists(Path.Combine(folder, "Presets")) &&
+        Directory.Exists(Path.Combine(folder, "Projects"));
+}

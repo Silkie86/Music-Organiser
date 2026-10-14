@@ -5,6 +5,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
              xmlns:vm="clr-namespace:MusicOrganiser.ViewModels;assembly=MusicOrganiser.ViewModels"
+             xmlns:dl="clr-namespace:MusicOrganiser.Core.DawLink;assembly=MusicOrganiser.Core"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:ProjectDetailViewModel}">
     <UserControl.Resources>
@@ -91,10 +92,38 @@
                            Command="{Binding ExportToBitwigCommand}" Margin="0,0,6,6"
                            Visibility="{Binding IsFlStudio, Converter={StaticResource BoolToVisibility}}"
                            ToolTip="Convert this FL Studio project into a DAWproject file, the open format Bitwig and Studio One import: tracks, notes, tempo, VST plugins with their settings, mixer effects and automation" />
+                <ui:Button Content="{Binding CheckWithDawText}" Icon="{ui:SymbolIcon CheckmarkCircle24}"
+                           Command="{Binding CheckWithDawCommand}" Margin="0,0,6,6"
+                           Visibility="{Binding CanCheckWithDaw, Converter={StaticResource BoolToVisibility}}"
+                           ToolTip="Compare what the app read from this file with what the DAW shows for it. Open the project there first; the link with the DAW is set up in Settings" />
             </WrapPanel>
             <Border Margin="0,6,0,0" Padding="12,8" CornerRadius="8" Background="{StaticResource AccentFaintBrush}"
                     Visibility="{Binding Message, Converter={StaticResource NullToVisibility}}">
                 <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12" />
+            </Border>
+
+            <!-- The last check with the DAW: what it shows, against what the app read -->
+            <Border Style="{StaticResource Panel}" Margin="0,6,0,0"
+                    Visibility="{Binding HasCheckLines, Converter={StaticResource BoolToVisibility}}">
+                <ItemsControl ItemsSource="{Binding CheckLines}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type dl:CheckLine}">
+                            <DockPanel Margin="0,2">
+                                <TextBlock x:Name="Mark" DockPanel.Dock="Left" Text="{Binding Mark}" Width="18" FontSize="12"
+                                           FontWeight="SemiBold" Foreground="{StaticResource MutedBrush}" />
+                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12" />
+                            </DockPanel>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding Result}" Value="Same">
+                                    <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource OkBrush}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Result}" Value="Different">
+                                    <Setter TargetName="Mark" Property="Foreground" Value="{StaticResource WarningBrush}" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
             </Border>
 
             <!-- Warnings about what could be read -->

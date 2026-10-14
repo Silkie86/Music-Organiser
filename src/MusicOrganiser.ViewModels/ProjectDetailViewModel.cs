@@ -3,6 +3,7 @@ using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
@@ -211,6 +212,44 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             Shell.Reveal(file);
         }
         catch (Exception e) { Message = $"Converting for Bitwig failed: {e.Message}"; }
+    }
+
+    public bool IsBitwig => Item.Daw == "Bitwig Studio";
+
+    /// <summary>Bitwig and FL Studio projects can be checked against what the DAW itself shows, through its script.</summary>
+    public bool CanCheckWithDaw => IsBitwig || IsFlStudio;
+    public string CheckWithDawText => IsFlStudio ? "Check with FL Studio" : "Check with Bitwig";
+
+    /// <summary>The last check with the DAW, line by line: the same in both, different, or a note.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasCheckLines))] IReadOnlyList<CheckLine> _checkLines = [];
+    public bool HasCheckLines => CheckLines.Count > 0;
+
+    /// <summary>
+    /// Asks the DAW what it shows for this project (through the Music Organiser script installed in it) and
+    /// compares that with what the app read from the file, to catch anything the app reads wrong.
+    /// </summary>
+    [RelayCommand]
+    async Task CheckWithDaw()
+    {
+        var daw = IsFlStudio ? "FL Studio" : "Bitwig";
+        CheckLines = [];
+        Message = $"Asking {daw}…";
+        try
+        {
+            var plugins = Plugins.Select(p => p.Name).ToList();
+            if (IsFlStudio)
+            {
+                CheckLines = FlCheck.Compare(Item.Path, Item.Tempo, Tracks, plugins, await new FlLink().ProjectAsync());
+            }
+            else
+            {
+                using var link = await BitwigLink.ConnectAsync();
+                CheckLines = BitwigCheck.Compare(Item.Path, Item.Tempo, Tracks, plugins, await link.ProjectAsync());
+            }
+            Message = "";
+        }
+        catch (DawLinkException e) { Message = e.Message; }
+        catch (Exception e) { Message = $"Checking with {daw} failed: {e.Message}"; }
     }
 
     /// <summary>Opens the presets popup: every plugin state, with filters, ready to export.</summary>

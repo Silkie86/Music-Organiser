@@ -56,6 +56,32 @@ public class ViewModelTests : IDisposable
         Assert.Equal("1 of 3 songs", projects.CountText);
     }
 
+    [Fact]
+    public void ProjectPanelOffersACheckWithTheDaw()
+    {
+        _db.AddRoot(_root);
+        new Scanner(_db).ScanProjects();
+        _db.RemoveRoot(_root);
+        var projects = new MainViewModel(_db, _sounds).Projects;
+        projects.Reload();
+        var offered = projects.View.Cast<ProjectItem>().OrderBy(p => p.Daw).Select(p =>
+        {
+            projects.Selected = p;
+            return (p.Daw, projects.Detail!.CanCheckWithDaw ? projects.Detail.CheckWithDawText : "");
+        });
+        Assert.Equal([("Bitwig Studio", "Check with Bitwig"), ("FL Studio", "Check with FL Studio"), ("Studio One", "")], offered);
+    }
+
+    [Fact]
+    public async Task SettingsShowsTheDawLinks()
+    {
+        var settings = new MainViewModel(_db, _sounds).Settings;
+        await settings.RefreshLinksAsync();
+        Assert.Equal(["Bitwig Studio", "FL Studio"], settings.Links.Select(l => l.Daw));
+        Assert.All(settings.Links, l => Assert.Matches("^(Not installed|Installed)", l.Status));
+        Assert.Equal([false, true], settings.Links.Select(l => l.CanChooseFolder));
+    }
+
     sealed class HeadlessUi : IPlatformUi
     {
         public IItemsView CreateView(IList items) => new ListView(items);

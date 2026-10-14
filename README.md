@@ -13,6 +13,7 @@ A Windows desktop app that keeps track of all your music projects across Bitwig 
 - **Spots your Elektron boxes** (Analog Rytm MKII, Digitakt II, Syntakt) in a project through their Overbridge plugins.
 - **Shows and exports MIDI** per channel or track (FL Studio patterns placed as in the playlist), with what plays each one and a mini piano roll, plus **plugin presets** (where the format allows): all at once, filtered to third-party or FL plugins and synths or effects, or one plugin at a time. Synths that play no notes in an FL song are tucked away in the plugin list.
 - **Reads your installed plugins** with its own plugin scanner (`native/mo-scan`, C++): every plugin inside each VST3, CLAP and VST2 file (including the hundreds in a Waves shell), with the exact ID projects save it under, its vendor, version and kind. Select a plugin on the Plugins screen to see this, and press *Read parameters* to list its parameters. Each plugin file is read in its own process with a time limit, so a plugin that crashes or hangs can't take the app down, and only new or updated files are read again.
+- **Checks its reading against the DAW**: small scripts for Bitwig and FL Studio, installed from Settings, let the app ask the DAW what it shows for the open project. *Check with Bitwig* or *Check with FL Studio* on a project then compares that with what the app read from the file (tempo, tracks or channels, devices and plugins). See `extensions/README.md`.
 - **Opens projects** in their DAW, or shows them in Explorer.
 - **Organise however you like**: status (Idea → Released), rating, favourite, musical key, tags and notes. Filter, search and group by DAW, status, folder, month, year, Elektron box or rating.
 
@@ -70,6 +71,7 @@ Hot Reload works for most changes while the app is running.
 - `src/MusicOrganiser.Avalonia` – the same app on Avalonia, for Windows, macOS and Linux. Every screen is moved over: Projects (with the details panel), Sound Lab, Plugins, Samples, Settings and the MIDI and Presets windows. Dragging files out to a DAW is WPF-only for now. It plays sound through OpenAL Soft (WAV and AIFF files, and MIDI previews; MP3, FLAC and OGG still need a decoder there). To try it in Visual Studio, right-click it → *Set as Startup Project* and press F5.
 - `src/MusicOrganiser.App` – the Windows (WPF) app: XAML views, Fluent styling with WPF-UI, NAudio playback, and `Platform/WpfUi.cs`.
 - `native` – C++ tools, built with CMake: the plugin scanner (`mo-scan`) and **MO Probe**, a test plugin (CLAP, VST3, AU) that reports what a DAW does with it, for working out project formats. See `native/README.md`.
+- `extensions` – the Bitwig controller script and FL Studio MIDI script that link the app with the DAWs, each tested in a stand-in DAW. See `extensions/README.md`.
 - `tests/MusicOrganiser.Core.Tests` – xUnit tests using small generated project files. Run with `dotnet test`.
 
 Your library lives in `%LOCALAPPDATA%\MusicOrganiser\library.db`.

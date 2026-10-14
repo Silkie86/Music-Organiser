@@ -1,0 +1,328 @@
+using System.Buffers.Binary;
+using System.Collections.Concurrent;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace MusicOrganiser.Core.DawLink;
+
+/// <summary>What the Bitwig script says when the app connects.</summary>
+/// <param name="Changes">Whether "Let the app make changes" is on in the controller's settings in Bitwig.</param>
+public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
+                                 string Project, bool Modified, bool Engine, bool Changes);
+
+/// <summary>The project open in Bitwig, as Bitwig shows it.</summary>
+/// <param name="TrackCount">Every track in the project; <see cref="Tracks"/> holds the first 128.</param>
+public sealed record BitwigProject(string Name, bool Modified, double Tempo, string TimeSignature, bool Playing,
+                                   double Position, int TrackCount, IReadOnlyList<BitwigTrack> Tracks);
+
+/// <summary>One track in Bitwig's flat track list (tracks inside groups included, then effect tracks and the master).</summary>
+/// <param name="DeviceCount">Devices at the top of the track's chain; <see cref="Devices"/> holds the first 16.</param>
+public sealed record BitwigTrack(int Index, string Name, string Type, bool Group, string Color, bool Active, bool Mute,
+                                 bool Solo, bool Arm, string Volume, double? VolumeValue, string Pan, double? PanValue,
+                                 int DeviceCount, IReadOnlyList<BitwigDevice> Devices);
+
+/// <param name="Index">Its place in the track's chain (-1 for the selected device).</param>
+/// <param name="Kind">Bitwig's device type, e.g. note_to_audio for an instrument.</param>
+public sealed record BitwigDevice(int Index, string Name, string Preset, string Kind, bool Plugin, bool Enabled);
+
+/// <summary>The device selected in Bitwig, with every parameter Bitwig lists for it.</summary>
+public sealed record BitwigSelection(string Track, BitwigDevice? Device, IReadOnlyList<BitwigParam> Params);
+
+/// <param name="Id">The ID Bitwig keeps the parameter under, e.g. "CONTENTS/PID3e8" for a plugin's parameter 1000.</param>
+/// <param name="Value">0 to 1, or null when Bitwig can't read it.</param>
+/// <param name="Display">The value as Bitwig shows it ("-6.0 dB"), or null if it didn't say in time.</param>
+public sealed record BitwigParam(string Id, string Name, double? Value, string? Display);
+
+public sealed record BitwigAction(string Id, string Name, string Category, string Menu);
+
+/// <summary>
+/// Talks to Bitwig Studio through the Music Organiser controller script
+/// (extensions/bitwig/MusicOrganiser.control.js), which listens on port 19791 on this computer.
+/// Each message is JSON with a 4-byte big-endian length in front.
+/// </summary>
+public sealed class BitwigLink : IDisposable
+{
+    public const int DefaultPort = 19791;
+    public const string NotRunning = "Bitwig isn't answering. Check that Bitwig Studio is open, with the Music Organiser " +
+                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link).";
+    const int MaxMessage = 64 << 20;
+
+    static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    readonly TcpClient _tcp;
+    readonly NetworkStream _stream;
+    readonly BufferedStream _incoming;
+    readonly SemaphoreSlim _writing = new(1, 1);
+    readonly ConcurrentDictionary<int, TaskCompletionSource<JsonElement>> _waiting = new();
+    readonly TaskCompletionSource<BitwigHello> _hello = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    readonly CancellationTokenSource _closing = new();
+    volatile bool _open = true;
+    int _lastId;
+
+    /// <summary>How long to wait for each answer. Reading a big plugin's parameters can take a couple of seconds.</summary>
+    public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>What Bitwig said when the link connected.</summary>
+    public BitwigHello Hello { get; private set; } = null!;
+
+    public bool IsOpen => _open;
+
+    BitwigLink(TcpClient tcp)
+    {
+        _tcp = tcp;
+        _stream = tcp.GetStream();
+        _incoming = new BufferedStream(_stream, 1 << 16);
+        _ = Task.Run(ReadAllAsync);
+    }
+
+    /// <summary>Connects to the Bitwig script and waits for its greeting.</summary>
+    public static async Task<BitwigLink> ConnectAsync(int port = DefaultPort, TimeSpan? timeout = null, CancellationToken ct = default)
+    {
+        var limit = timeout ?? TimeSpan.FromSeconds(3);
+        TcpClient? tcp = null;
+        Exception? failure = null;
+        foreach (var address in new[] { IPAddress.Loopback, IPAddress.IPv6Loopback })
+        {
+            TcpClient? attempt = null;
+            try
+            {
+                attempt = new TcpClient(address.AddressFamily) { NoDelay = true };
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(limit);
+                await attempt.ConnectAsync(address, port, cts.Token);
+                tcp = attempt;
+                break;
+            }
+            catch (Exception e) when (e is SocketException || (e is OperationCanceledException && !ct.IsCancellationRequested))
+            {
+                attempt?.Dispose();
+                failure = e;
+            }
+        }
+        ct.ThrowIfCancellationRequested();
+        if (tcp is null) throw new DawLinkException(NotRunning, failure);
+
+        var link = new BitwigLink(tcp);
+        try
+        {
+            // The script greets every connection, which also shows it's the Music Organiser script listening.
+            link.Hello = await link._hello.Task.WaitAsync(limit, ct);
+            return link;
+        }
+        catch (TimeoutException)
+        {
+            link.Dispose();
+            throw new DawLinkException($"Something answered on port {port}, but not the Music Organiser script in Bitwig.");
+        }
+        catch
+        {
+            link.Dispose();
+            throw;
+        }
+    }
+
+    public void Dispose()
+    {
+        _open = false;
+        _closing.Cancel();
+        _tcp.Dispose();
+    }
+
+    public async Task<BitwigHello> HelloAsync(CancellationToken ct = default) =>
+        Hello = Parse<BitwigHello>(await RequestAsync(new() { ["cmd"] = "hello" }, ct));
+
+    public async Task<BitwigProject> ProjectAsync(CancellationToken ct = default) =>
+        Parse<BitwigProject>(await RequestAsync(new() { ["cmd"] = "project" }, ct));
+
+    /// <summary>The device selected in Bitwig with all its parameters (Device is null if none is selected).</summary>
+    public async Task<BitwigSelection> SelectedDeviceAsync(CancellationToken ct = default) =>
+        Parse<BitwigSelection>(await RequestAsync(new() { ["cmd"] = "device" }, ct));
+
+    /// <summary>Every action Bitwig offers (its menu commands and shortcuts), to run with <see cref="RunActionAsync"/>.</summary>
+    public async Task<IReadOnlyList<BitwigAction>> ActionsAsync(CancellationToken ct = default) =>
+        Parse<List<BitwigAction>>(await RequestAsync(new() { ["cmd"] = "actions" }, ct));
+
+    /// <summary>Selects a track (its index in <see cref="BitwigProject.Tracks"/>) and, optionally, one of its devices.</summary>
+    public Task SelectAsync(int track, int? device = null, CancellationToken ct = default) =>
+        RequestAsync(new() { ["cmd"] = "select", ["track"] = track, ["device"] = device }, ct);
+
+    // Changes: these need "Let the app make changes" turned on in Bitwig.
+
+    /// <summary>Sets one of the selected device's parameters (by its Bitwig ID) to a value from 0 to 1.</summary>
+    public Task SetParameterAsync(string param, double value, CancellationToken ct = default) =>
+        RequestAsync(new() { ["cmd"] = "set", ["param"] = param, ["value"] = value }, ct);
+
+    /// <summary>
+    /// Adds a plugin at the end of the selected track's chain, by the ID the plugin scanner reads: a VST3
+    /// class ID, a CLAP ID or a VST2 ID (four letters or a number). Bitwig ignores IDs it doesn't know.
+    /// </summary>
+    public Task InsertPluginAsync(string format, string id, CancellationToken ct = default)
+    {
+        JsonNode plugin = format.ToUpperInvariant() switch
+        {
+            "VST3" or "CLAP" => id,
+            "VST2" => Vst2Id(id) ?? throw new ArgumentException($"Not a VST2 plugin ID: {id}", nameof(id)),
+            _ => throw new ArgumentException($"Bitwig can't insert {format} plugins by ID.", nameof(format)),
+        };
+        return RequestAsync(new() { ["cmd"] = "insert", ["kind"] = format.ToLowerInvariant(), ["plugin"] = plugin }, ct);
+    }
+
+    /// <summary>Adds a VST2 plugin by its ID as a number (the scanner's uniqueId), which is never ambiguous.</summary>
+    public Task InsertVst2Async(int uniqueId, CancellationToken ct = default) =>
+        RequestAsync(new() { ["cmd"] = "insert", ["kind"] = "vst2", ["plugin"] = uniqueId }, ct);
+
+    /// <summary>Adds one of Bitwig's own devices at the end of the selected track's chain.</summary>
+    public Task InsertBitwigDeviceAsync(Guid id, CancellationToken ct = default) =>
+        RequestAsync(new() { ["cmd"] = "insert", ["kind"] = "bitwig", ["device"] = id.ToString() }, ct);
+
+    /// <summary>Adds a preset or a sample at the end of the selected track's chain.</summary>
+    public Task InsertFileAsync(string path, CancellationToken ct = default) =>
+        RequestAsync(new() { ["cmd"] = "insert", ["kind"] = "file", ["path"] = path }, ct);
+
+    /// <summary>Runs one of Bitwig's actions by its ID, e.g. to save the project.</summary>
+    public Task RunActionAsync(string id, CancellationToken ct = default) =>
+        RequestAsync(new() { ["cmd"] = "action", ["action"] = id }, ct);
+
+    /// <summary>
+    /// A VST2 ID as a number, read the way the plugin scanner writes it: four printable characters are the
+    /// ID's own letters ("MoB2"), and anything else is the number itself ("-1294"). A number such as 1234
+    /// reads as the letters "1234", so where the scanner's uniqueId is to hand, use that instead.
+    /// </summary>
+    public static int? Vst2Id(string id)
+    {
+        if (id.Length == 4 && id.All(c => c is >= ' ' and <= '~')) return BinaryPrimitives.ReadInt32BigEndian(Encoding.ASCII.GetBytes(id));
+        return int.TryParse(id, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var n) ? n : null;
+    }
+
+    static T Parse<T>(JsonElement result)
+    {
+        try
+        {
+            return result.Deserialize<T>(Json) ?? throw new DawLinkException("Bitwig's answer was empty.");
+        }
+        catch (JsonException e)
+        {
+            throw new DawLinkException("Bitwig's answer wasn't what the app expected. Install the script again from Settings, " +
+                                       "in case Bitwig has an older version.", e);
+        }
+    }
+
+    async Task<JsonElement> RequestAsync(JsonObject request, CancellationToken ct)
+    {
+        var id = Interlocked.Increment(ref _lastId);
+        request["id"] = id;
+        var answer = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiting[id] = answer;
+        try
+        {
+            if (!_open) throw new DawLinkException("The connection to Bitwig is closed.");
+            await SendAsync(Encoding.UTF8.GetBytes(request.ToJsonString()), ct);
+            return await answer.Task.WaitAsync(Timeout, ct);
+        }
+        catch (TimeoutException)
+        {
+            throw new DawLinkException("Bitwig didn't answer in time.");
+        }
+        catch (Exception e) when (e is IOException or ObjectDisposedException)
+        {
+            throw new DawLinkException("Lost the connection to Bitwig.", e);
+        }
+        finally
+        {
+            _waiting.TryRemove(id, out _);
+        }
+    }
+
+    async Task SendAsync(byte[] json, CancellationToken ct)
+    {
+        var frame = new byte[4 + json.Length];
+        BinaryPrimitives.WriteInt32BigEndian(frame, json.Length);
+        json.CopyTo(frame, 4);
+        await _writing.WaitAsync(ct);
+        try { await _stream.WriteAsync(frame, ct); }
+        finally { _writing.Release(); }
+    }
+
+    async Task ReadAllAsync()
+    {
+        Exception? failure = null;
+        try
+        {
+            while (await ReadMessageAsync(_closing.Token) is { } message)
+                Dispatch(message);
+        }
+        catch (Exception e) when (e is IOException or ObjectDisposedException or OperationCanceledException or InvalidDataException or SocketException)
+        {
+            failure = e;
+        }
+        _open = false;
+        var closed = new DawLinkException("Bitwig closed the connection.", failure);
+        _hello.TrySetException(closed);
+        foreach (var id in _waiting.Keys)
+            if (_waiting.TryRemove(id, out var waiting)) waiting.TrySetException(closed);
+    }
+
+    /// <summary>
+    /// One message from Bitwig. Bitwig puts a 4-byte big-endian length in front of each; the script also
+    /// ends each with a newline, so a message that arrives without the length still reads.
+    /// </summary>
+    async Task<byte[]?> ReadMessageAsync(CancellationToken ct)
+    {
+        var first = new byte[1];
+        if (await _incoming.ReadAsync(first, ct) == 0) return null;
+        if (first[0] == (byte)'{')
+        {
+            var line = new MemoryStream();
+            line.WriteByte(first[0]);
+            while (true)
+            {
+                // Buffered, so most of these return straight away.
+                if (await _incoming.ReadAsync(first, ct) == 0) return null;
+                if (first[0] == '\n') return line.ToArray();
+                line.WriteByte(first[0]);
+                if (line.Length > MaxMessage) throw new InvalidDataException("Bitwig sent a message that never ends.");
+            }
+        }
+        var header = new byte[4];
+        header[0] = first[0];
+        await _incoming.ReadExactlyAsync(header.AsMemory(1), ct);
+        var length = BinaryPrimitives.ReadInt32BigEndian(header);
+        if (length is < 0 or > MaxMessage) throw new InvalidDataException($"Bitwig sent a message of {length} bytes.");
+        var body = new byte[length];
+        await _incoming.ReadExactlyAsync(body, ct);
+        return body;
+    }
+
+    void Dispatch(byte[] message)
+    {
+        // Something we can't use: the request it answers will time out.
+        try { DispatchJson(message); }
+        catch (Exception e) when (e is JsonException or DawLinkException or InvalidOperationException) { }
+    }
+
+    void DispatchJson(byte[] message)
+    {
+        using (var doc = JsonDocument.Parse(message))
+        {
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return;
+            if (root.TryGetProperty("event", out var ev) && ev.ValueKind == JsonValueKind.String)
+            {
+                if (ev.GetString() == "hello" && root.TryGetProperty("result", out var hello))
+                    _hello.TrySetResult(Parse<BitwigHello>(hello));
+                return;
+            }
+            if (!root.TryGetProperty("id", out var idElement) || !idElement.TryGetInt32(out var id)) return;
+            if (!_waiting.TryRemove(id, out var waiting)) return;
+            if (root.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True)
+                waiting.TrySetResult(root.TryGetProperty("result", out var result) ? result.Clone() : default);
+            else
+                waiting.TrySetException(new DawLinkException(
+                    root.TryGetProperty("error", out var error) && error.GetString() is { Length: > 0 } text ? text : "Bitwig said no."));
+        }
+    }
+}
