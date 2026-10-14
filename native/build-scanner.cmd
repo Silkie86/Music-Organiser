@@ -41,7 +41,11 @@ if errorlevel 1 (
 )
 set "GENERATOR=NMake Makefiles"
 where ninja >nul 2>nul && set "GENERATOR=Ninja"
-if not exist "%OUT%\CMakeCache.txt" (
+rem Set up the build once. A setup that stopped part way (before the C++ workload was added, say) leaves
+rem CMake's cache without the build files, so that one starts again from scratch.
+if not exist "%OUT%\build.ninja" if not exist "%OUT%\Makefile" (
+  if exist "%OUT%\CMakeCache.txt" del "%OUT%\CMakeCache.txt"
+  if exist "%OUT%\CMakeFiles" rmdir /s /q "%OUT%\CMakeFiles"
   cmake -S "%HERE%." -B "%OUT%" -G "%GENERATOR%" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
   if errorlevel 1 exit /b 1
 )

@@ -46,7 +46,12 @@ public sealed partial class PluginsViewModel : ObservableObject
         Summary = $"{Items.Count} plugins used" + (missing > 0 ? $", {missing} not installed on this PC" : "");
 
         if (!_main.PluginScanner.Available)
-            ScannerNote = "IDs, versions and parameters come from the plugin scanner, which isn't built on this computer yet (see native/README.md).";
+            ScannerNote = "IDs, versions and parameters come from the plugin scanner, which isn't built on this computer yet. " +
+                          (PluginScanner.BuildProblem() is { } problem
+                              ? $"The last try to build it said: {problem} (the rest is in native/out/app/build.log)."
+                              : OperatingSystem.IsWindows()
+                                  ? "Building the app builds it once Visual Studio's \"Desktop development with C++\" workload is installed (see native/README.md)."
+                                  : "Building the app builds it once CMake and a C++ compiler are installed (see native/README.md).");
         else
         {
             var (files, plugins, failed) = _db.PluginScanCounts();

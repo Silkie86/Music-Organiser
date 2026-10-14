@@ -31,7 +31,7 @@
         <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
             <TextBlock FontSize="12" Classes="muted"
                        Text="Double-click a plugin to see the projects that use it. 'Installed' compares against the plugin folders in Settings." />
-            <TextBlock FontSize="12" Classes="muted" Margin="0,2,0,0" Text="{Binding ScannerNote}" />
+            <TextBlock FontSize="12" Classes="muted" Margin="0,2,0,0" TextWrapping="Wrap" Text="{Binding ScannerNote}" />
         </StackPanel>
 
         <!-- The selected plugin as installed: what the plugin scanner read from its file. -->

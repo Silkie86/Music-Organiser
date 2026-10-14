@@ -18,7 +18,10 @@ if [ -z "$cmake" ]; then
 fi
 
 (
-  if [ ! -f "$out/CMakeCache.txt" ]; then
+  # Set up the build once. A setup that stopped part way (before there was a compiler, say) leaves
+  # CMake's cache without the build files, so that one starts again from scratch.
+  if [ ! -f "$out/Makefile" ] && [ ! -f "$out/build.ninja" ]; then
+    rm -rf "$out/CMakeCache.txt" "$out/CMakeFiles"
     "$cmake" -S "$here" -B "$out" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF || exit 1
   fi
   "$cmake" --build "$out" --target mo-scan --parallel

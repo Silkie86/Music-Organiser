@@ -147,6 +147,27 @@ public class PluginScannerTests : IDisposable
         Assert.DoesNotContain("crashed", scan.Error);
     }
 
+    [Fact]
+    public void SaysWhyTheScannerWasntBuilt()
+    {
+        // The app runs from src/<project>/bin/Debug/<framework> under the source folders; the build's log is in native/out/app.
+        var app = Directory.CreateDirectory(Path.Combine(_root, "src", "MusicOrganiser.App", "bin", "Debug", "net10.0-windows")).FullName;
+        var log = Path.Combine(Directory.CreateDirectory(Path.Combine(_root, "native", "out", "app")).FullName, "build.log");
+        Assert.Null(PluginScanner.BuildProblem(app));
+
+        File.WriteAllText(log, "Visual Studio has no C++ compiler. In Visual Studio Installer, add the \"Desktop development with C++\" workload.\r\n");
+        Assert.Equal("Visual Studio has no C++ compiler. In Visual Studio Installer, add the \"Desktop development with C++\" workload.",
+                     PluginScanner.BuildProblem(app));
+
+        File.WriteAllLines(log, ["Using C:\\Program Files\\Microsoft Visual Studio\\18\\Community", "[1/3] Building CXX object mo-scan\\CMakeFiles\\mo-scan.dir\\src\\main.cpp.obj",
+                                 "C:\\repo\\native\\mo-scan\\src\\main.cpp(12): error C2065: 'x': undeclared identifier", "ninja: build stopped: subcommand failed."]);
+        Assert.Equal("C:\\repo\\native\\mo-scan\\src\\main.cpp(12): error C2065: 'x': undeclared identifier", PluginScanner.BuildProblem(app));
+
+        // A build that worked leaves a log too.
+        File.WriteAllLines(log, ["Using C:\\Program Files\\Microsoft Visual Studio\\18\\Community", "[3/3] Linking CXX executable bin\\mo-scan.exe"]);
+        Assert.Null(PluginScanner.BuildProblem(app));
+    }
+
     /// <summary>A stand-in for mo-scan: a script that prints the given lines (or hangs, or fails).</summary>
     string FakeScanner(string name, string[] lines, int exitCode = 0, string stderr = "", bool hang = false)
     {

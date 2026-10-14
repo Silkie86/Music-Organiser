@@ -1,8 +1,8 @@
 <Project>
   <!--
-    Builds the plugin scanner (native/mo-scan, C++) with CMake whenever its code changes, and copies it
-    next to the app. MusicOrganiser.Core imports this, so the Windows app, the Avalonia app and the tests
-    all get mo-scan beside them.
+    Builds the plugin scanner (native/mo-scan, C++) with CMake when it isn't built yet or its code changed,
+    and copies it next to the app. MusicOrganiser.Core imports this, so the Windows app, the Avalonia app
+    and the tests all get mo-scan beside them.
 
     It needs CMake and a C++ compiler. In Visual Studio that's the "Desktop development with C++"
     workload; on a Mac, Xcode's command line tools and CMake. Without them the build still succeeds,
@@ -20,13 +20,18 @@
 
   <ItemGroup>
     <MoScanSource Include="$(MoNativeDir)CMakeLists.txt;$(MoNativeDir)build-scanner.*;$(MoNativeDir)mo-scan/**" />
-    <!-- So Visual Studio's quick up-to-date check notices changes to the C++ code too. -->
-    <UpToDateCheckInput Include="@(MoScanSource)" />
+  </ItemGroup>
+  <!-- Visual Studio doesn't build a project it thinks is up to date. These make it build when the C++ code
+       changes, and also while the scanner is missing, so after adding the C++ workload F5 is enough.
+       They're a set of their own, so the scanner is only compared with its own code, not the C# files. -->
+  <ItemGroup Condition="'$(MoBuildNative)' == 'true'">
+    <UpToDateCheckInput Include="@(MoScanSource)" Set="MoScanner" />
+    <UpToDateCheckOutput Include="$(MoScanBuilt)" Set="MoScanner" />
   </ItemGroup>
 
   <Target Name="MoBuildScanner" Condition="'$(MoBuildNative)' == 'true' and '$(DesignTimeBuild)' != 'true'"
           Inputs="@(MoScanSource)" Outputs="$(MoScanBuilt)">
-    <Message Importance="high" Text="Building the plugin scanner (native/mo-scan). This only happens when its code changes." />
+    <Message Importance="high" Text="Building the plugin scanner (native/mo-scan). This only happens when it isn't built yet or its code changed." />
     <Exec Condition="'$(OS)' == 'Windows_NT'" Command="&quot;$(MoNativeDir)build-scanner.cmd&quot;"
           IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">
       <Output TaskParameter="ExitCode" PropertyName="MoScanExit" />

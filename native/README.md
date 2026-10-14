@@ -11,13 +11,14 @@ with CMake, and CI builds and tests them on all three.
 ## Building
 
 The app builds the scanner for you: building `MusicOrganiser.App` (or the Avalonia app, or the tests)
-runs `build-scanner.cmd` (Windows) or `build-scanner.sh` (Mac, Linux) the first time and whenever
-the scanner's code changes, then copies `mo-scan` next to the app. That needs CMake and a C++
+runs `build-scanner.cmd` (Windows) or `build-scanner.sh` (Mac, Linux) while the scanner isn't built
+and whenever its code changes, then copies `mo-scan` next to the app. That needs CMake and a C++
 compiler. In Visual Studio 2026 that's the **Desktop development with C++** workload (Visual Studio
 Installer → Modify), which includes CMake; on a Mac, Xcode's command line tools and CMake. Without
 them the app still builds and runs, with a build warning, and just can't read plugin details. What
-went wrong is in `native/out/app/build.log`. `-p:MoBuildNative=false` turns this off; on CI it's off
-unless asked for (the Windows build job asks).
+went wrong is in `native/out/app/build.log`, and the Plugins screen says it too. Once they're
+installed, F5 builds the scanner: Visual Studio keeps building the app's projects until it's there.
+`-p:MoBuildNative=false` turns this off; on CI it's off unless asked for (the Windows build job asks).
 
 By hand, everything including the probe and the tests:
 

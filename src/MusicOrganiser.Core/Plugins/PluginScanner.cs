@@ -47,6 +47,29 @@ public sealed class PluginScanner
                          .Select(c => c.path).FirstOrDefault();
     }
 
+    /// <summary>
+    /// Why building mo-scan failed last time, from the log the build left in native/out/app of the source
+    /// folders the app was built from: build-scanner's own reason, or the first error. Null when there's no
+    /// log or it shows no problem.
+    /// </summary>
+    public static string? BuildProblem(string? appFolder = null)
+    {
+        for (var dir = new DirectoryInfo(appFolder ?? AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var log = Path.Combine(dir.FullName, "native", "out", "app", "build.log");
+            if (!File.Exists(log)) continue;
+            try
+            {
+                var problem = File.ReadLines(log).Select(l => l.Trim()).FirstOrDefault(l =>
+                    l.Contains("wasn't found", StringComparison.Ordinal) || l.Contains("has no C++ compiler", StringComparison.Ordinal) ||
+                    l.Contains("isn't installed", StringComparison.Ordinal) || l.Contains("error", StringComparison.OrdinalIgnoreCase));
+                return problem is null ? null : problem.Length > 300 ? problem[..300] + "…" : problem;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        }
+        return null;
+    }
+
     public static bool CanRead(string path) =>
         Readable.Any(e => path.TrimEnd('\\', '/').EndsWith(e, StringComparison.OrdinalIgnoreCase));
 
