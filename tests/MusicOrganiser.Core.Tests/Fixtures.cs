@@ -14,6 +14,18 @@ public static class Fixtures
         return d;
     }
 
+    /// <summary>
+    /// A temp folder for tests that scan sounds. The organiser reads a sound's type from its name and up to
+    /// four folders above it, and a random temp name can read as one ("aoSD9a" says snare, "ohQCpE" open hat),
+    /// so four plain folders keep the random part out of reach.
+    /// </summary>
+    public static string SoundsDir()
+    {
+        var d = Path.Combine(TempDir(), "nothing", "to", "read", "here");
+        Directory.CreateDirectory(d);
+        return d;
+    }
+
     /// <summary>A file in the repository (e.g. extensions/bitwig/test/serve.js), found from where the tests run.</summary>
     public static string? RepoFile(string relative)
     {
