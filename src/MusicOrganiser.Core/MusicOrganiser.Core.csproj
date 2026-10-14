@@ -30,5 +30,7 @@
 
   <!-- The plugin scanner (C++), built with CMake and copied next to the app. -->
   <Import Project="..\..\native\MusicOrganiser.Native.targets" />
+  <!-- The Bitwig extension (Java), built with Maven when there's a JDK and copied next to the app. -->
+  <Import Project="..\..\extensions\bitwig-java\MusicOrganiser.BitwigExtension.targets" />
 
 </Project>

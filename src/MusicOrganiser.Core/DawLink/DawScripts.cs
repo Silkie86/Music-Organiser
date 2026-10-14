@@ -9,9 +9,14 @@ public enum ScriptState { NotInstalled, Installed, Outdated }
 /// <param name="Source">The copy that ships with the app, in Extensions next to it.</param>
 /// <param name="Folders">Where it goes: one folder for each place the DAW may look.</param>
 /// <param name="Kept">The start of a setting line people may change in their copy, which updates keep.</param>
-public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> Folders, string? Kept = null)
+/// <param name="Replaces">Older forms of the link to remove when this is installed, so the DAW doesn't run both.</param>
+public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> Folders, string? Kept = null,
+                               IReadOnlyList<string>? Replaces = null)
 {
     public string FileName => Path.GetFileName(Source);
+
+    /// <summary>A built extension (Bitwig's .bwextension, a Java archive) rather than a script's text.</summary>
+    public bool Binary => Path.GetExtension(Source).Equals(".bwextension", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The folders that have the script in them.</summary>
     public IReadOnlyList<string> InstalledIn => Folders.Where(f => File.Exists(Path.Combine(f, FileName))).ToList();
@@ -23,6 +28,12 @@ public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> 
         {
             var installed = InstalledIn;
             if (installed.Count == 0) return ScriptState.NotInstalled;
+            if (Binary)
+            {
+                var built = File.ReadAllBytes(Source);
+                return installed.All(f => File.ReadAllBytes(Path.Combine(f, FileName)).AsSpan().SequenceEqual(built))
+                    ? ScriptState.Installed : ScriptState.Outdated;
+            }
             var shipped = Lines(File.ReadAllText(Source));
             return installed.All(f => Lines(File.ReadAllText(Path.Combine(f, FileName))).SequenceEqual(shipped))
                 ? ScriptState.Installed : ScriptState.Outdated;
@@ -32,6 +43,27 @@ public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> 
     /// <summary>Copies the app's script into every folder, keeping the <see cref="Kept"/> setting each copy has.</summary>
     public void Install()
     {
+        foreach (var old in Replaces ?? [])
+        {
+            if (!File.Exists(old)) continue;
+            File.Delete(old);
+            var folder = Path.GetDirectoryName(old)!;
+            if (!Directory.EnumerateFileSystemEntries(folder).Any()) Directory.Delete(folder);
+        }
+        if (Binary)
+        {
+            foreach (var folder in Folders)
+            {
+                Directory.CreateDirectory(folder);
+                try { File.Copy(Source, Path.Combine(folder, FileName), overwrite: true); }
+                catch (IOException e) when (File.Exists(Path.Combine(folder, FileName)))
+                {
+                    // Windows won't replace a file a program has open, and the DAW may keep its extensions open.
+                    throw new IOException($"{e.Message} If {Daw} is open, close it, then press Install again.", e);
+                }
+            }
+            return;
+        }
         var shipped = File.ReadAllText(Source);
         foreach (var folder in Folders)
         {
@@ -67,6 +99,22 @@ public static class DawScripts
     public static DawScript Bitwig(IReadOnlyList<string>? userFolders = null) =>
         new("Bitwig Studio", Shipped("Bitwig", "MusicOrganiser.control.js"),
             (userFolders ?? BitwigUserFolders()).Select(f => Path.Combine(f, "Controller Scripts", "Music Organiser")).ToList());
+
+    /// <summary>
+    /// The Bitwig extension (Java), for Extensions in each of these user folders. It takes over from the script, as the
+    /// same controller, so installing it removes the script.
+    /// </summary>
+    public static DawScript BitwigExtension(IReadOnlyList<string>? userFolders = null, string? source = null)
+    {
+        var folders = userFolders ?? BitwigUserFolders();
+        return new("Bitwig Studio", source ?? Shipped("Bitwig", "MusicOrganiser.bwextension"),
+                   folders.Select(f => Path.Combine(f, "Extensions")).ToList(),
+                   Replaces: Bitwig(folders).Folders.Select(f => Path.Combine(f, "MusicOrganiser.control.js")).ToList());
+    }
+
+    /// <summary>Bitwig's link: the extension when the build made it (it needs a JDK), else the script.</summary>
+    public static DawScript BitwigLink(IReadOnlyList<string>? userFolders = null) =>
+        BitwigExtension(userFolders) is var extension && File.Exists(extension.Source) ? extension : Bitwig(userFolders);
 
     /// <summary>Bitwig's usual user folder: Documents\Bitwig Studio (on Linux, ~/Bitwig Studio).</summary>
     public static string BitwigUserFolder => BitwigPreset.DefaultFolders()[0];

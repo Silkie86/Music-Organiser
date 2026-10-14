@@ -62,7 +62,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         var watch = main.Live.Watch;
         Links =
         [
-            new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.Bitwig(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey))),
+            new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.BitwigLink(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey))),
                                () => CheckBitwig(watch), new FolderChoice(
                 "Choose Bitwig's user folder (the Bitwig Studio folder Bitwig shows in Settings > Locations)",
                 DawScripts.IsBitwigUserFolder,
@@ -106,7 +106,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     static string BitwigSteps =>
         "Then open Settings > Controllers in Bitwig, click Add controller and pick Music Organiser > DAW link. " +
-        "If it isn't in the list, restart Bitwig." +
+        "If it isn't in the list, restart Bitwig. (When the app has its Bitwig extension, Install puts that in place of " +
+        "the script: it's the same controller, so one that's set up already stays set up once Bitwig restarts.)" +
         (OperatingSystem.IsWindows() ? " If Windows asks whether Bitwig may use the network, you can say no: the app only talks to it on this PC." : "");
 
     static string FlSteps(FlMidiPort port) =>

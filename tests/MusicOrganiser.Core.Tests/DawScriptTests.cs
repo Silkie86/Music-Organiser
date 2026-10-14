@@ -58,6 +58,33 @@ public class DawScriptTests
     }
 
     [Fact]
+    public void TheBitwigExtensionTakesOverFromTheScript()
+    {
+        var user = Fixtures.TempDir();
+        DawScripts.Bitwig(user).Install();
+        var script = Path.Combine(user, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js");
+        Assert.True(File.Exists(script));
+
+        // Without a built extension next to the app, Settings keeps installing the script.
+        Assert.Equal("MusicOrganiser.control.js", DawScripts.BitwigLink([user]).FileName);
+
+        var built = Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension");
+        File.WriteAllBytes(built, [0x50, 0x4B, 3, 4, 1, 2, 3]);
+        var extension = DawScripts.BitwigExtension([user], built);
+        Assert.True(extension.Binary);
+        Assert.Equal(ScriptState.NotInstalled, extension.State);
+        extension.Install();
+        Assert.Equal(ScriptState.Installed, extension.State);
+        Assert.Equal(File.ReadAllBytes(built), File.ReadAllBytes(Path.Combine(user, "Extensions", "MusicOrganiser.bwextension")));
+        // The script goes, with its now empty folder, so Bitwig doesn't run both on the same port.
+        Assert.False(File.Exists(script));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(script)));
+
+        File.WriteAllBytes(built, [0x50, 0x4B, 3, 4, 9]);
+        Assert.Equal(ScriptState.Outdated, extension.State);
+    }
+
+    [Fact]
     public void KeepsTheFlStudioChangesSettingWhenUpdating()
     {
         var data = FlUserData(Fixtures.TempDir());

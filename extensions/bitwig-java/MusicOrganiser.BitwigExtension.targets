@@ -1,0 +1,55 @@
+<Project>
+  <!--
+    Builds the Bitwig extension (extensions/bitwig-java, Java) with the Maven Wrapper when it isn't built yet or its
+    code changed, and copies MusicOrganiser.bwextension next to the app as Extensions\Bitwig, where Settings installs
+    it from. MusicOrganiser.Core imports this, so the Windows app, the Avalonia app and the tests all get it.
+
+    It needs a JDK, version 17 or later (on Windows: winget install Microsoft.OpenJDK.21); the wrapper fetches Maven
+    and Bitwig's extension API by itself the first time. Without a JDK the build still succeeds, with a warning, and
+    Settings installs the older Bitwig script instead. -p:MoBuildBitwig=false turns it off. CI builds the extension
+    in its own job, so there it's off unless asked for.
+  -->
+  <PropertyGroup>
+    <MoBitwigDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)'))</MoBitwigDir>
+    <MoBitwigBuilt>$(MoBitwigDir)target/MusicOrganiser.bwextension</MoBitwigBuilt>
+    <MoBuildBitwig Condition="'$(MoBuildBitwig)' == '' and '$(CI)' == 'true'">false</MoBuildBitwig>
+    <MoBuildBitwig Condition="'$(MoBuildBitwig)' == '' and !Exists('$(MoBitwigDir)pom.xml')">false</MoBuildBitwig>
+    <MoBuildBitwig Condition="'$(MoBuildBitwig)' == ''">true</MoBuildBitwig>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <MoBitwigSource Include="$(MoBitwigDir)pom.xml;$(MoBitwigDir)src/main/**" />
+  </ItemGroup>
+  <!-- Visual Studio doesn't build a project it thinks is up to date: these make it build when the Java changes, and
+       while the extension is missing, so after installing a JDK F5 is enough. -->
+  <ItemGroup Condition="'$(MoBuildBitwig)' == 'true'">
+    <UpToDateCheckInput Include="@(MoBitwigSource)" Set="MoBitwig" />
+    <UpToDateCheckOutput Include="$(MoBitwigBuilt)" Set="MoBitwig" />
+  </ItemGroup>
+
+  <Target Name="MoBuildBitwigExtension" Condition="'$(MoBuildBitwig)' == 'true' and '$(DesignTimeBuild)' != 'true'"
+          Inputs="@(MoBitwigSource)" Outputs="$(MoBitwigBuilt)">
+    <Message Importance="high" Text="Building the Bitwig extension (extensions/bitwig-java). This only happens when it isn't built yet or its code changed." />
+    <!-- The tests run in CI; here the build only packages it. Its output goes to target/build.log for when it fails. -->
+    <Exec Condition="'$(OS)' == 'Windows_NT'" WorkingDirectory="$(MoBitwigDir)"
+          Command="&quot;$(MoBitwigDir)mvnw.cmd&quot; -B -q -DskipTests package &gt; build.log 2&gt;&amp;1"
+          IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="MoBitwigExit" />
+    </Exec>
+    <Exec Condition="'$(OS)' != 'Windows_NT'" WorkingDirectory="$(MoBitwigDir)"
+          Command="/bin/sh &quot;$(MoBitwigDir)mvnw&quot; -B -q -DskipTests package &gt; build.log 2&gt;&amp;1"
+          IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="MoBitwigExit" />
+    </Exec>
+    <Warning Condition="'$(MoBitwigExit)' != '0'"
+             Text="The Bitwig extension (extensions/bitwig-java) couldn't be built, so Settings installs the older Bitwig script instead. It needs a JDK, version 17 or later: on Windows, run winget install Microsoft.OpenJDK.21, then build again. What went wrong is in extensions/bitwig-java/build.log." />
+    <Touch Condition="'$(MoBitwigExit)' == '0' and Exists('$(MoBitwigBuilt)')" Files="$(MoBitwigBuilt)" />
+  </Target>
+
+  <Target Name="MoAddBitwigExtension" BeforeTargets="AssignTargetPaths" DependsOnTargets="MoBuildBitwigExtension"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup Condition="Exists('$(MoBitwigBuilt)')">
+      <None Include="$(MoBitwigBuilt)" Link="Extensions\Bitwig\MusicOrganiser.bwextension" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>

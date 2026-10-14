@@ -11,3 +11,7 @@ native/out/
 # Node.js packages for the extension checks
 node_modules/
 __pycache__/
+
+# The Bitwig extension (Java) build
+extensions/bitwig-java/target/
+extensions/bitwig-java/build.log
