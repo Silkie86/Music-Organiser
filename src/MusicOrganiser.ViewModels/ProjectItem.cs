@@ -51,10 +51,17 @@ public sealed partial class ProjectItem : ObservableObject
     {
         Daw,
         Tempo is { } t ? $"{t:0.##} BPM" : null,
-        string.IsNullOrWhiteSpace(MusicalKey) ? null : MusicalKey,
+        Key.Length == 0 ? null : Key,
         SaveCount > 1 ? $"{SaveCount} saves" : null,
     }.OfType<string>());
     public int MissingCount => _p.MissingPlugins + _p.MissingSamples;
+
+    /// <summary>The key the project's notes point to (drums left out), or "" when they don't point to one.</summary>
+    public string DetectedKey => _p.DetectedKey;
+    /// <summary>The key: the one typed in, or else the one its notes point to.</summary>
+    public string Key => string.IsNullOrWhiteSpace(MusicalKey) ? DetectedKey : MusicalKey.Trim();
+    /// <summary>The Key box's hint: the key the notes point to, until one is typed in.</summary>
+    public string KeyHint => DetectedKey.Length > 0 ? $"{DetectedKey} (from the notes)" : "e.g. F minor";
 
     public static string WhenGroupFor(DateTime modified, DateTime now)
     {
@@ -91,7 +98,7 @@ public sealed partial class ProjectItem : ObservableObject
     [ObservableProperty] string _status;
     [ObservableProperty] int _rating;
     [ObservableProperty] bool _favourite;
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(DetailsLine))] string _musicalKey;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(DetailsLine), nameof(Key))] string _musicalKey;
     [ObservableProperty] string _notes;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(TagsText))] IReadOnlyList<string> _tags;
 
@@ -140,7 +147,7 @@ public sealed partial class ProjectItem : ObservableObject
         Folder.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         Notes.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         Daw.Contains(text, StringComparison.OrdinalIgnoreCase) ||
-        MusicalKey.Equals(text, StringComparison.OrdinalIgnoreCase) ||
+        Key.Equals(text, StringComparison.OrdinalIgnoreCase) ||
         (text.Length == 4 && int.TryParse(text, out var year) && year == Year) ||
         Tags.Any(t => t.Contains(text, StringComparison.OrdinalIgnoreCase)) ||
         PluginNames.Any(p => p.Contains(text, StringComparison.OrdinalIgnoreCase));

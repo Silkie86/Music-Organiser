@@ -65,6 +65,14 @@ public sealed partial class LibraryDb : IDisposable
         _conn.Open();
         Exec(Schema);
         Exec(PluginScanSchema);
+        AddColumn("projects", "detected_key", "TEXT");
+    }
+
+    /// <summary>A column added after the first release: libraries made before it get it here.</summary>
+    void AddColumn(string table, string column, string type)
+    {
+        var has = Query($"SELECT name FROM pragma_table_info('{table}')", r => (string)r["name"]).Contains(column);
+        if (!has) Exec($"ALTER TABLE {table} ADD COLUMN {column} {type}");
     }
 
     // Under the lock, so a query still running on a background task (say, Settings looking for the DAW scripts) finishes
@@ -141,12 +149,18 @@ public sealed partial class LibraryDb : IDisposable
 
     // ---- indexing ----------------------------------------------------------------
 
+    /// <remarks>A project whose key hasn't been worked out yet (read before the app could) counts as changed, so the next scan reads it again.</remarks>
     public Dictionary<string, (long Mtime, long Size)> KnownFiles() =>
-        Query("SELECT path, mtime, size FROM projects", r => (Path: (string)r["path"], Mtime: Long(r, "mtime"), Size: Long(r, "size")))
+        Query("SELECT path, mtime, size, detected_key IS NULL AS unkeyed FROM projects",
+              r => (Path: (string)r["path"], Mtime: Long(r, "unkeyed") == 1 ? -1 : Long(r, "mtime"), Size: Long(r, "size")))
             .ToDictionary(x => x.Path, x => (x.Mtime, x.Size), StringComparer.OrdinalIgnoreCase);
 
     public sealed record IndexedFile(string Path, long Size, long Mtime, ProjectInfo? Info, string? Error,
-                                     IReadOnlyList<(string Path, bool Found)> Samples, IReadOnlyList<string> Hardware);
+                                     IReadOnlyList<(string Path, bool Found)> Samples, IReadOnlyList<string> Hardware)
+    {
+        /// <summary>The key its notes point to, "" for none, or null when the notes couldn't be read.</summary>
+        public string? DetectedKey { get; init; }
+    }
 
     public void Upsert(IndexedFile f) => UpsertMany([f]);
 
@@ -175,21 +189,21 @@ public sealed partial class LibraryDb : IDisposable
         var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
         using (var cmd = Cmd("""
             INSERT INTO projects (path, name, daw, folder, size, mtime, tempo, version, title, confidence,
-                                  can_midi, can_presets, info, error, file_missing, hardware)
+                                  can_midi, can_presets, info, error, file_missing, hardware, detected_key)
             VALUES ($path, $name, $daw, $folder, $size, $mtime, $tempo, $version, $title, $conf,
-                    $midi, $presets, $info, $error, 0, $hw)
+                    $midi, $presets, $info, $error, 0, $hw, $key)
             ON CONFLICT(path) DO UPDATE SET name=excluded.name, daw=excluded.daw, folder=excluded.folder,
                 size=excluded.size, mtime=excluded.mtime, tempo=excluded.tempo, version=excluded.version,
                 title=excluded.title, confidence=excluded.confidence, can_midi=excluded.can_midi,
                 can_presets=excluded.can_presets, info=excluded.info, error=excluded.error, file_missing=0,
-                hardware=excluded.hardware
+                hardware=excluded.hardware, detected_key=excluded.detected_key
             """,
             ("$path", f.Path), ("$name", Path.GetFileNameWithoutExtension(f.Path)),
             ("$daw", info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown"), ("$folder", Path.GetDirectoryName(f.Path)),
             ("$size", f.Size), ("$mtime", f.Mtime), ("$tempo", info?.Tempo), ("$version", info?.Version),
             ("$title", info?.Title), ("$conf", (int)(info?.Confidence ?? Confidence.Catalogue)),
             ("$midi", info?.CanExtractMidi == true ? 1 : 0), ("$presets", info?.CanExtractPresets == true ? 1 : 0),
-            ("$info", infoJson), ("$error", f.Error), ("$hw", string.Join(", ", f.Hardware))))
+            ("$info", infoJson), ("$error", f.Error), ("$hw", string.Join(", ", f.Hardware)), ("$key", f.DetectedKey ?? "")))
         {
             cmd.Transaction = tx;
             cmd.ExecuteNonQuery();
@@ -426,6 +440,7 @@ public sealed partial class LibraryDb : IDisposable
         Status = Str(r, "status") is { Length: > 0 } s ? s : "Idea",
         Rating = (int)Long(r, "rating"), Favourite = Long(r, "favourite") == 1,
         MusicalKey = Str(r, "musical_key"), Notes = Str(r, "notes"),
+        DetectedKey = HasCol(r, "detected_key") ? Str(r, "detected_key") : "",
     };
 
     static bool HasCol(SqliteDataReader r, string name)

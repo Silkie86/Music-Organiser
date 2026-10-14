@@ -228,7 +228,8 @@
                         <Grid ColumnDefinitions="*,16,2*" Margin="0,0,0,16">
                             <StackPanel>
                                 <TextBlock Text="KEY" Classes="filterLabel" />
-                                <TextBox Classes="clearButton" PlaceholderText="e.g. F minor"
+                                <TextBox Classes="clearButton" PlaceholderText="{Binding Item.KeyHint}"
+                                         ToolTip.Tip="Worked out from the notes (drums left out) until you type one in"
                                          Text="{Binding Item.MusicalKey, UpdateSourceTrigger=LostFocus}" />
                             </StackPanel>
                             <StackPanel Grid.Column="2">

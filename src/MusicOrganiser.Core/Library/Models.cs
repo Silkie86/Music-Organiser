@@ -40,6 +40,8 @@ public sealed class ProjectSummary
     public int Rating { get; set; }
     public bool Favourite { get; set; }
     public string MusicalKey { get; set; } = "";
+    /// <summary>The key the project's notes point to (drums left out), or "" when they don't point to one.</summary>
+    public string DetectedKey { get; init; } = "";
     public string Notes { get; set; } = "";
 }
 
