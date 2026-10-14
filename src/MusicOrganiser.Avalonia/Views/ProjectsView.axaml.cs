@@ -52,7 +52,7 @@ public partial class ProjectsView : UserControl
         switch (e.Key)
         {
             case Key.Down:
-                if (Grid.SelectedItem is null) Grid.SelectedIndex = 0;
+                if (Grid.SelectedItem is null && HasRows) Grid.SelectedIndex = 0;
                 Grid.Focus();
                 e.Handled = true;
                 break;
@@ -61,7 +61,7 @@ public partial class ProjectsView : UserControl
                 e.Handled = true;
                 break;
             case Key.Enter when Vm is { } vm:
-                if (vm.Selected is null) Grid.SelectedIndex = 0;
+                if (vm.Selected is null && HasRows) Grid.SelectedIndex = 0;
                 vm.OpenSelectedCommand.Execute(null);
                 e.Handled = true;
                 break;
@@ -69,6 +69,8 @@ public partial class ProjectsView : UserControl
     }
 
     ProjectsViewModel? Vm => DataContext as ProjectsViewModel;
+
+    bool HasRows => Vm?.View.GetEnumerator().MoveNext() == true;
 
     void OnDoubleTapped(object? sender, TappedEventArgs e)
     {
