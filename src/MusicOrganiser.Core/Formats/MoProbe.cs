@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MusicOrganiser.Core.Parsers;
 
 namespace MusicOrganiser.Core.Formats;
@@ -56,6 +57,21 @@ public static class MoProbe
     public static string ReportFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify),
                      "MusicOrganiser", "probe");
+
+    /// <summary>
+    /// The DAW's name and version, from what the probe's host told it. The probe's VST3 and AU are its CLAP inside
+    /// the CLAP wrapper, which tells it the DAW's name with its own suffix ("Bitwig Studio (CLAP-as-VST3)") and its
+    /// own version ("0.16.0", vendor "The CLAP Wrapper Team"), so the suffix goes and there's no version.
+    /// </summary>
+    public static (string Name, string Version) Daw(string host, string vendor, string version)
+    {
+        var wrapped = WrapperSuffix.Match(host);
+        if (!wrapped.Success && !vendor.Equals(WrapperVendor, StringComparison.OrdinalIgnoreCase)) return (host.Trim(), version.Trim());
+        return ((wrapped.Success ? host[..wrapped.Index] : host).Trim(), "");
+    }
+
+    const string WrapperVendor = "The CLAP Wrapper Team";
+    static readonly Regex WrapperSuffix = new(@"\s*\(CLAP-as-[^)]*\)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 }
 
 /// <summary>One line of a probe report: when, what happened, and the rest of what it says.</summary>
@@ -83,8 +99,11 @@ public sealed class ProbeReport
     public string Kind => First("create")?.Str("plugin") is { } p && p.EndsWith(".effect", StringComparison.Ordinal) ? "effect"
         : Path.GetFileName(File).Contains("-effect-", StringComparison.Ordinal) ? "effect" : "instrument";
     public string Instance => Lines.Select(l => l.Str("instance")).FirstOrDefault(s => s.Length > 0) ?? "";
-    public string Host => First("create")?.Str("host") ?? "";
-    public string HostVersion => First("create")?.Str("hostVersion") ?? "";
+    /// <summary>The DAW, e.g. "Bitwig Studio" (without the CLAP wrapper's suffix when it came through that: <see cref="MoProbe.Daw"/>).</summary>
+    public string Host => Daw.Name;
+    /// <summary>The DAW's version, or empty when the probe came through the CLAP wrapper, which only gives its own.</summary>
+    public string HostVersion => Daw.Version;
+    (string Name, string Version) Daw => First("create") is { } c ? MoProbe.Daw(c.Str("host"), c.Str("hostVendor"), c.Str("hostVersion")) : ("", "");
     /// <summary>CLAP, VST3 or AU: how the DAW loaded it.</summary>
     public string Format => First("create")?.Str("format") ?? "";
     /// <summary>The track it's on, as the DAW last said (only DAWs that tell CLAP plugins do).</summary>
@@ -240,7 +259,7 @@ public sealed record ProbeState(string Where, string How, string Kind, string Id
             if (s.SavedBy(reports) is { } r)
             {
                 var save = r.Saves.First(x => x.Number == s.Save);
-                sb.AppendLine($"    Saved by {r.Host} {r.HostVersion} as {r.Format}{(r.Track.Length > 0 ? $", on “{r.Track}”" : "")}, " +
+                sb.AppendLine($"    Saved by {$"{r.Host} {r.HostVersion}".Trim()} as {r.Format}{(r.Track.Length > 0 ? $", on “{r.Track}”" : "")}, " +
                               $"{save.Time.ToLocalTime():yyyy-MM-dd HH:mm:ss} ({Path.GetFileName(r.File)})");
             }
             else sb.AppendLine("    No report has this save (it may have been saved on another computer, or the reports were cleared).");

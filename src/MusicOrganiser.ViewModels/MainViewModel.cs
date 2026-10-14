@@ -69,9 +69,15 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSelectedNavChanged(NavItem value)
     {
-        if (value.Page != Settings) return;
+        // The MO Probes running now are followed only while Settings shows them.
+        if (value.Page != Settings)
+        {
+            Settings.Probe.StopLive();
+            return;
+        }
         _ = Settings.RefreshLinksAsync();
         _ = Settings.Probe.RefreshAsync();
+        Settings.Probe.StartLive();
     }
 
     public void RefreshAll()

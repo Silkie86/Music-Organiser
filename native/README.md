@@ -98,7 +98,7 @@ vendor "Music Organiser". Put one on a track, save, and:
 - **It writes a live report** to the app's data folder, one file per plugin instance:
   - Windows `%LOCALAPPDATA%\MusicOrganiser\probe`
   - macOS `~/Library/Application Support/MusicOrganiser/probe`
-  - Linux `~/.local/share/MusicOrganiser/probe`
+  - Linux `~/.local/share/MusicOrganiser/probe` (or under `$XDG_DATA_HOME` when that's set)
 
   Each line is JSON with a time (`t`), an order number (`n`) and an `event`:
 
@@ -132,6 +132,70 @@ values, and says which save of which report wrote it (see `tools/README.md`).
 writer: put a probe with a known label on each track, open the project in Bitwig, press play, and
 compare the reported notes with what the song should play).
 
+### Talking to it while it runs
+
+Once a probe is in use (when its report starts), it keeps a **status file** up to date and takes
+**commands** from files, so anything that can read and write files can talk to it: the app (Settings'
+MO Probe card, and its knob check through Bitwig), `formatlab probe live` and `probe send`, and Claude
+through file tools. Both are in `live` inside the report folder, named after the instance (the
+16-digit `instance` in its report):
+
+| File | What it is |
+|---|---|
+| `live/<instance>.json` | its status, rewritten about every half second |
+| `live/<instance>.in/` | its command folder: put `.json` files in here |
+
+Both go when the DAW removes the plugin. A status whose `t` is more than 3 seconds old is from a DAW
+that went away without saying so: treat that probe as gone. One over a minute old can be deleted, with
+its `.in` folder (probes starting up clear those too).
+
+**The status** is one JSON object, written to `<instance>.json.tmp` and renamed over the old one, so a
+reader never sees half of it:
+
+```json
+{"probe":"instrument","instance":"1683A80113A64904","identity":"1683A80113A64904","label":"",
+ "host":"Bitwig Studio","hostVersion":"6.1.3","format":"CLAP","track":"Inst 3","trackColor":"#C69F6F",
+ "report":"20261014T091855Z-instrument-1683A801.jsonl","t":"2026-10-14T09:30:00.123Z","pid":1234,
+ "active":true,"playing":false,"beats":12.5,"bar":4,"tempo":110,"commands":3,
+ "params":{"1001":0.25,"1002":0,"1003":440,"1004":3,"1005":0,"1006":1,"1007":50,"1008":0}}
+```
+
+- `identity` and `label` are the ones in its saved state; `track` and `trackColor` are what the DAW
+  last said (empty if it doesn't say); `report` is its report file, in the folder above.
+- `active` while the DAW has it switched on. `playing`, `beats` (song position), `bar` and `tempo`
+  are from the last block it played, and left out when the DAW gives no transport.
+- `params` has each knob's value in its own units (dB, Hz and so on, as listed above). `commands`
+  counts the command lines it has handled.
+
+**Commands.** Write a file ending in `.json` into the `.in` folder: one command per line, each a JSON
+object with a `cmd`. Write it under another name (say `.tmp`) and rename it where you can; the probe
+leaves alone any file changed in the last 150 ms anyway. About every 100 ms it reads the files in name
+order, deletes each one and handles its lines, then writes its status straight away. Give a command an
+`id` (any text) and its answer in the report carries it as `for`:
+
+```
+{"cmd":"ping","id":"a1"}
+{"cmd":"set","param":1002,"value":-12,"id":"a2"}
+```
+
+| cmd | fields | what it does | report line |
+|---|---|---|---|
+| `ping` | | answers, and writes its status | `pong` |
+| `set` | `param` (1001-1008), `value` | sets the knob, in its own units (clamped; text like `"On"`, `"Bravo"` or `"-6 dB"` works too), and tells the DAW it moved as if turned by hand, so the DAW's knob, automation recording and undo follow | `app-set` with `id`, `name`, `value` and `told`; then `app-set-sent` once the DAW has been told |
+| `label` | `label` | keeps it as its label (up to 64 characters; quotes, backslashes and control characters are dropped), saved in its state, and tells the DAW the project has changed | `label` |
+| `beep` | `seconds` (0.3 if left out, at most 2) | plays a quiet 880 Hz tone on its output, so you can hear which track it's on | `beep` |
+
+`told` says how the DAW hears about a `set`: `process` (the next block it plays tells it), `flush` (it
+isn't playing blocks, so the probe asked the DAW for a flush) or `waiting` (the DAW can't be asked;
+it's told when it next plays or flushes). A line that isn't a JSON object with a `cmd`, or a command
+the probe doesn't know, gives `command-error` with the `error`, `file` and `line`. Files are read as
+UTF-8 (a UTF-16 file, as Windows PowerShell's `>` writes, is fine too).
+
+**For Claude**, through file tools that list, read and write whole files: list `live`, read a status
+(a fresh `t` means it's running), and write each command as a new file in its `.in` folder (files
+can't be added to once written, and the probe deletes them once read). Then read the file named in
+`report` for the lines with your `for`, or read the status again for the new knob value.
+
 ## Layout
 
 ```
@@ -141,7 +205,7 @@ native/
   MusicOrganiser.Native.targets   builds the scanner from the .NET projects (imported by Core)
   build-scanner.cmd/.sh   what that runs: the scanner only, into out/app
   mo-scan/src/            scanner: main, CLAP, VST3, VST2, loading libraries, JSON
-  mo-probe/src/           probe: plugin, report writer, entry point
+  mo-probe/src/           probe: plugin, report writer, live status and commands, entry point
   tests/                  probe_test.cpp (hosts the probe), check_scan.cmake (scans it),
                           fake_vst2.cpp + check_vst2.cmake (a stand-in VST2 shell)
   third_party/            CLAP headers, VST3 pluginterfaces (MIT)

@@ -390,6 +390,110 @@ public class ViewModelTests : IDisposable
         Assert.Equal("The script was already installed. Bitwig isn't answering.", link.Result);
     }
 
+    [Fact]
+    public async Task SettingsShowsTheProbesRunningNow()
+    {
+        var reports = Path.Combine(_root, "probe");
+        var live = Path.Combine(reports, "live");
+        var now = DateTimeOffset.UtcNow;
+        ProbeStatus(live, "AAAA000000000001", now, "1-instrument-AAAA0000.jsonl", playing: true, bar: 5);
+        ProbeStatus(live, "AAAA000000000002", now.AddSeconds(-10), "2-instrument-AAAA0000.jsonl");   // its DAW went away
+        ProbeStatus(live, "AAAA000000000003", now, "3-instrument-AAAA0000.jsonl", host: "FL Studio", version: "25.1.6", format: "VST3",
+                    track: "", bar: 1, tempo: 140);
+        var probe = new ProbeReportsViewModel(reports, () => []);
+        Assert.Equal("", probe.RunningNote);   // before the first look
+
+        await probe.RefreshRunningAsync();
+        Assert.Equal(["AAAA000000000001", "AAAA000000000003"], probe.Running.Select(r => r.Instance));
+        var row = probe.Running[0];
+        Assert.Equal(("MO Probe Instrument on “Inst 3”", "Bitwig Studio 6.1.3 · CLAP · playing, bar 5 · 110 BPM", true),
+                     (row.Title, row.Details, row.CanCheckKnobs));
+        Assert.Equal("Knob A 0.250 · Gain 0.0 dB · Frequency 440.0 Hz · Steps 3 · Switch Off · Choice Bravo · Ramp 50.0 % · Bypass Off", row.Knobs);
+        var fl = probe.Running[1];
+        Assert.Equal(("MO Probe Instrument", "FL Studio 25.1.6 · VST3 · stopped at bar 1 · 140 BPM", false), (fl.Title, fl.Details, fl.CanCheckKnobs));
+        Assert.Equal("", probe.RunningNote);
+
+        // The next look changes the rows in place, so what their buttons said stays.
+        row.Reply = "Answered in 85 ms";
+        ProbeStatus(live, "AAAA000000000001", DateTimeOffset.UtcNow, "1-instrument-AAAA0000.jsonl", playing: true, bar: 6, gain: -12);
+        await probe.RefreshRunningAsync();
+        Assert.Same(row, probe.Running[0]);
+        Assert.Equal(("Bitwig Studio 6.1.3 · CLAP · playing, bar 6 · 110 BPM", "Answered in 85 ms"), (row.Details, row.Reply));
+        Assert.StartsWith("Knob A 0.250 · Gain -12.0 dB · ", row.Knobs);
+
+        // Their DAWs closed, taking them off.
+        File.Delete(Path.Combine(live, "AAAA000000000001.json"));
+        File.Delete(Path.Combine(live, "AAAA000000000003.json"));
+        await probe.RefreshRunningAsync();
+        Assert.Empty(probe.Running);
+        Assert.Equal(ProbeReportsViewModel.NoneRunning, probe.RunningNote);
+    }
+
+    [Fact]
+    public async Task ProbeButtonsSendCommandsAndSayWhenThereIsNoAnswer()
+    {
+        // A probe whose status is there, but nothing takes what's dropped in its command folder.
+        var reports = Path.Combine(_root, "probe");
+        var live = Path.Combine(reports, "live");
+        ProbeStatus(live, "AAAA000000000001", DateTimeOffset.UtcNow, "1-instrument-AAAA0000.jsonl");
+        var probe = new ProbeReportsViewModel(reports, () => []) { AnswerWait = TimeSpan.FromMilliseconds(300) };
+        await probe.RefreshRunningAsync();
+        var row = Assert.Single(probe.Running);
+
+        await row.BeepCommand.ExecuteAsync(null);
+        var sent = Assert.Single(Directory.GetFiles(Path.Combine(live, "AAAA000000000001.in")));
+        Assert.EndsWith(".json", sent);
+        Assert.Equal("beep", (string?)System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(sent))!["cmd"]);
+        Assert.StartsWith("No answer", row.Reply);
+
+        await row.PingCommand.ExecuteAsync(null);
+        Assert.Equal("No answer in 0.3 s, though it's still running.", row.Reply);
+    }
+
+    [Fact]
+    public async Task ProbeButtonsHearBackFromARunningProbe()
+    {
+        var reports = Path.Combine(_root, "probe");
+        // The knob check gets as far as asking Bitwig, which a stand-in says isn't answering.
+        var probe = new ProbeReportsViewModel(reports, () => [], _ => Task.FromException<BitwigLink>(new DawLinkException(BitwigLink.NotRunning)));
+        await using (new FakeProbe(reports))
+        {
+            await probe.RefreshRunningAsync();
+            var row = Assert.Single(probe.Running);
+            await row.PingCommand.ExecuteAsync(null);
+            Assert.Matches("^Answered in [0-9]+ ms$", row.Reply);
+            await row.BeepCommand.ExecuteAsync(null);
+            Assert.Equal("Beeped: listen for a short tone on its track.", row.Reply);
+
+            Assert.True(row.CanCheckKnobs);
+            await row.CheckKnobsCommand.ExecuteAsync(null);
+            Assert.Equal((BitwigLink.NotRunning, false), (row.CheckResult, row.Checking));
+        }
+        await probe.RefreshRunningAsync();
+        Assert.Empty(probe.Running);
+    }
+
+    /// <summary>A status as MO Probe writes it while it runs (native/README.md, "MO Probe"), with its command folder.</summary>
+    static void ProbeStatus(string live, string instance, DateTimeOffset t, string report, string host = "Bitwig Studio",
+                            string version = "6.1.3", string format = "CLAP", string track = "Inst 3", bool playing = false,
+                            int bar = 4, double tempo = 110, double gain = 0)
+    {
+        Directory.CreateDirectory(Path.Combine(live, instance + ".in"));
+        var status = new System.Text.Json.Nodes.JsonObject
+        {
+            ["probe"] = "instrument", ["instance"] = instance, ["identity"] = instance, ["label"] = "", ["host"] = host,
+            ["hostVersion"] = version, ["format"] = format, ["track"] = track, ["trackColor"] = "", ["report"] = report,
+            ["t"] = t.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture),
+            ["pid"] = 1234, ["active"] = true, ["playing"] = playing, ["beats"] = (bar - 1) * 4.0, ["bar"] = bar, ["tempo"] = tempo,
+            ["commands"] = 0,
+            ["params"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["1001"] = 0.25, ["1002"] = gain, ["1003"] = 440, ["1004"] = 3, ["1005"] = 0, ["1006"] = 1, ["1007"] = 50, ["1008"] = 0,
+            },
+        };
+        File.WriteAllText(Path.Combine(live, instance + ".json"), status.ToJsonString());
+    }
+
     /// <summary>Puts the three test projects in the library, without the screens starting a scan of their own.</summary>
     void ScanFixtures()
     {

@@ -27,6 +27,8 @@ class Line
 {
 public:
     Line(char* buf, size_t size, const char* event);
+    /// A plain object, without the time and event a report line starts with.
+    Line(char* buf, size_t size);
     Line& str(const char* key, const char* value);
     Line& str(const char* key, const std::string& value) { return str(key, value.c_str()); }
     Line& num(const char* key, double value);
@@ -61,8 +63,8 @@ public:
     bool writeAudio(const char* line);
     /// The instance is in real use: create the report file and keep writing to it.
     void keep();
-
-    const std::filesystem::path& file() const { return path_; }
+    /// The report file's name (no folder), or empty before keep(). [any thread]
+    std::string fileName() const;
 
 private:
     static constexpr size_t kSlots = 4096;
@@ -71,9 +73,9 @@ private:
 
     std::string kind_;
     std::string instance_;
-    std::filesystem::path path_;
+    std::string name_;   // the report file's name, chosen by keep()
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable wake_;
     std::vector<std::string> mainQueue_;
     std::vector<std::string> pending_;   // lines kept until the file exists
@@ -90,7 +92,7 @@ private:
 
     void run();
     void drain(std::vector<std::string>& lines);
-    void open();
+    void open(const std::string& name);
 };
 
 /// The folder the reports go in, created if missing.

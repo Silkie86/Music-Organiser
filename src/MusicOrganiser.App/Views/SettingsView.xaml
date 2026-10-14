@@ -212,7 +212,39 @@
                     <TextBlock Text="MO Probe" Style="{StaticResource CardTitle}" />
                     <TextBlock Style="{StaticResource CardIntro}"
                                Text="A test plugin for learning how each DAW saves things. Put it on a track and use it: it reports what the DAW tells it, and Format Lab finds its knobs and saved settings in the project file." />
-                    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8" />
+                    <TextBlock Text="Running now" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding RunningNote}" Style="{StaticResource Muted}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8"
+                               Visibility="{Binding RunningNote, Converter={StaticResource NullToVisibility}}" />
+                    <ItemsControl ItemsSource="{Binding Running}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:RunningProbeRow}">
+                                <StackPanel Margin="0,0,0,12">
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" ToolTip="{Binding Tip}" />
+                                    <TextBlock Text="{Binding Details}" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}" />
+                                    <TextBlock Text="{Binding Knobs}" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" />
+                                    <WrapPanel Margin="0,8,0,0">
+                                        <ui:Button Content="Beep" Icon="{ui:SymbolIcon Speaker224}" Padding="9,3" FontSize="12" Margin="0,0,6,0"
+                                                   Command="{Binding BeepCommand}" ToolTip="Plays a short tone on its track, so you can hear which one it's on" />
+                                        <ui:Button Content="Ping" Icon="{ui:SymbolIcon Pulse24}" Padding="9,3" FontSize="12" Margin="0,0,6,0"
+                                                   Command="{Binding PingCommand}" ToolTip="Checks that it answers the app, and how quickly" />
+                                        <ui:Button Content="Check knobs through Bitwig" Icon="{ui:SymbolIcon Options24}" Padding="9,3" FontSize="12" Margin="0,0,6,0"
+                                                   Command="{Binding CheckKnobsCommand}"
+                                                   Visibility="{Binding CanCheckKnobs, Converter={StaticResource BoolToVisibility}}"
+                                                   ToolTip="Turns each knob through Bitwig and reads what the probe got, then the other way round, and puts them back as they were. It takes about half a minute." />
+                                        <ui:Button Content="Stop the check" Icon="{ui:SymbolIcon Dismiss24}" Padding="9,3" FontSize="12"
+                                                   Command="{Binding StopCheckCommand}"
+                                                   Visibility="{Binding Checking, Converter={StaticResource BoolToVisibility}}"
+                                                   ToolTip="Stops the check, and puts the knobs back as they were" />
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding Reply}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,0"
+                                               Visibility="{Binding Reply, Converter={StaticResource NullToVisibility}}" />
+                                    <TextBlock Text="{Binding CheckResult}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,0"
+                                               Visibility="{Binding CheckResult, Converter={StaticResource NullToVisibility}}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,8" />
                     <ItemsControl ItemsSource="{Binding Reports}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:ProbeReportRow}">

@@ -44,6 +44,11 @@ Line::Line(char* buf, size_t size, const char* event) : buf_(buf), size_(size)
     str("event", event);
 }
 
+Line::Line(char* buf, size_t size) : buf_(buf), size_(size)
+{
+    putc('{');
+}
+
 void Line::put(const char* s)
 {
     size_t n = std::strlen(s);
@@ -100,6 +105,9 @@ Line& Line::num(const char* k, double value)
     char buf[40];
     if (std::isfinite(value)) std::snprintf(buf, sizeof buf, "%.10g", value);
     else std::snprintf(buf, sizeof buf, "null");
+    // A DAW may have set a locale with a decimal comma; JSON always has a point.
+    for (char* c = buf; *c; c++)
+        if (*c == ',') *c = '.';
     put(buf);
     if (truncated_) len_ = start;
     return *this;
@@ -218,29 +226,37 @@ void Log::keep()
 {
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!keep_)
+        {
+            char stamp[32];
+            std::time_t t = std::time(nullptr);
+            std::tm tm{};
+#ifdef _WIN32
+            gmtime_s(&tm, &t);
+#else
+            gmtime_r(&t, &tm);
+#endif
+            std::strftime(stamp, sizeof stamp, "%Y%m%dT%H%M%SZ", &tm);
+            name_ = std::string(stamp) + "-" + kind_ + "-" + instance_.substr(0, 8) + ".jsonl";
+        }
         keep_ = true;
     }
     wake_.notify_all();
 }
 
-void Log::open()
+std::string Log::fileName() const
 {
-    char stamp[32];
-    {
-        std::time_t t = std::time(nullptr);
-        std::tm tm{};
+    std::lock_guard<std::mutex> lock(mutex_);
+    return name_;
+}
+
+void Log::open(const std::string& name)
+{
+    auto path = reportFolder() / name;
 #ifdef _WIN32
-        gmtime_s(&tm, &t);
+    out_ = _wfopen(path.c_str(), L"ab");
 #else
-        gmtime_r(&t, &tm);
-#endif
-        std::strftime(stamp, sizeof stamp, "%Y%m%dT%H%M%SZ", &tm);
-    }
-    path_ = reportFolder() / (std::string(stamp) + "-" + kind_ + "-" + instance_.substr(0, 8) + ".jsonl");
-#ifdef _WIN32
-    out_ = _wfopen(path_.c_str(), L"ab");
-#else
-    out_ = std::fopen(path_.c_str(), "ab");
+    out_ = std::fopen(path.c_str(), "ab");
 #endif
 }
 
@@ -272,11 +288,13 @@ void Log::run()
     for (;;)
     {
         bool stopping, keeping;
+        std::string name;
         {
             std::unique_lock<std::mutex> lock(mutex_);
             wake_.wait_for(lock, std::chrono::milliseconds(50), [this] { return stop_; });
             stopping = stop_;
             keeping = keep_;
+            if (keeping && !out_) name = name_;
             lines.swap(mainQueue_);
         }
         drain(lines);
@@ -285,7 +303,7 @@ void Log::run()
 
         if (keeping && !out_)
         {
-            open();
+            open(name);
             if (out_)
                 for (auto& p : pending_) { std::fputs(p.c_str(), out_); std::fputc('\n', out_); }
             pending_.clear();

@@ -191,7 +191,36 @@
                     <TextBlock Text="MO Probe" Classes="sectionHeader" />
                     <TextBlock Classes="cardIntro"
                                Text="A test plugin for learning how each DAW saves things. Put it on a track and use it: it reports what the DAW tells it, and Format Lab finds its knobs and saved settings in the project file." />
-                    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8" />
+                    <TextBlock Text="Running now" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding RunningNote}" Classes="muted" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8"
+                               IsVisible="{Binding RunningNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    <ItemsControl ItemsSource="{Binding Running}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:RunningProbeRow">
+                                <StackPanel Margin="0,0,0,12">
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" ToolTip.Tip="{Binding Tip}" />
+                                    <TextBlock Text="{Binding Details}" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}" />
+                                    <TextBlock Text="{Binding Knobs}" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" />
+                                    <WrapPanel Classes="buttons" Margin="0,8,0,0">
+                                        <Button Content="Beep" Padding="9,3" FontSize="12" Command="{Binding BeepCommand}"
+                                                ToolTip.Tip="Plays a short tone on its track, so you can hear which one it's on" />
+                                        <Button Content="Ping" Padding="9,3" FontSize="12" Command="{Binding PingCommand}"
+                                                ToolTip.Tip="Checks that it answers the app, and how quickly" />
+                                        <Button Content="Check knobs through Bitwig" Padding="9,3" FontSize="12" Command="{Binding CheckKnobsCommand}"
+                                                IsVisible="{Binding CanCheckKnobs}"
+                                                ToolTip.Tip="Turns each knob through Bitwig and reads what the probe got, then the other way round, and puts them back as they were. It takes about half a minute." />
+                                        <Button Content="Stop the check" Padding="9,3" FontSize="12" Command="{Binding StopCheckCommand}"
+                                                IsVisible="{Binding Checking}" ToolTip.Tip="Stops the check, and puts the knobs back as they were" />
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding Reply}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,0"
+                                               IsVisible="{Binding Reply, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                    <TextBlock Text="{Binding CheckResult}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,0"
+                                               IsVisible="{Binding CheckResult, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,8" />
                     <ItemsControl ItemsSource="{Binding Reports}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:ProbeReportRow">

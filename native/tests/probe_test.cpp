@@ -1,16 +1,21 @@
 // Hosts the probe like a DAW would and checks what it reports: the track, transport, a note at a
-// known beat, a parameter change, and a save and load of its state.
+// known beat, a parameter change, and a save and load of its state. Then talks to it while it runs,
+// through its live status and command files.
 //
 //   mo-probe-test <path to "MO Probe.clap"> <empty folder for the reports>
 #include "library.h"
 
 #include <clap/clap.h>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -44,9 +49,22 @@ bool trackInfo(const clap_host_t*, clap_track_info_t* info)
 
 const clap_host_track_info_t kTrackInfo = { trackInfo };
 
+// Counted, since the probe calls these from its live thread.
+std::atomic<int> flushRequests{ 0 }, dirtyMarks{ 0 }, callbackRequests{ 0 };
+
+const clap_host_params_t kHostParams = {
+    [](const clap_host_t*, clap_param_rescan_flags) {},
+    [](const clap_host_t*, clap_id, clap_param_clear_flags) {},
+    [](const clap_host_t*) { flushRequests++; },
+};
+
+const clap_host_state_t kHostState = { [](const clap_host_t*) { dirtyMarks++; } };
+
 const void* hostExtension(const clap_host_t*, const char* id)
 {
     if (!std::strcmp(id, CLAP_EXT_TRACK_INFO)) return &kTrackInfo;
+    if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &kHostParams;
+    if (!std::strcmp(id, CLAP_EXT_STATE)) return &kHostState;
     return nullptr;
 }
 
@@ -61,7 +79,7 @@ clap_host_t makeHost()
     h.get_extension = hostExtension;
     h.request_restart = [](const clap_host_t*) {};
     h.request_process = [](const clap_host_t*) {};
-    h.request_callback = [](const clap_host_t*) {};
+    h.request_callback = [](const clap_host_t*) { callbackRequests++; };   // the test calls on_main_thread itself
     return h;
 }
 
@@ -88,15 +106,45 @@ struct InEvents
 
 struct OutEvents
 {
+    struct Event
+    {
+        uint16_t type;
+        clap_id param;
+        double value;
+    };
     clap_output_events_t api{};
-    int count = 0;
+    std::vector<Event> events;
+
     OutEvents()
     {
         api.ctx = this;
-        api.try_push = [](const clap_output_events_t* e, const clap_event_header_t*) {
-            static_cast<OutEvents*>(e->ctx)->count++;
+        api.try_push = [](const clap_output_events_t* e, const clap_event_header_t* h) {
+            Event ev{ h->type, CLAP_INVALID_ID, 0 };
+            if (h->type == CLAP_EVENT_PARAM_VALUE)
+            {
+                auto v = reinterpret_cast<const clap_event_param_value_t*>(h);
+                ev.param = v->param_id;
+                ev.value = v->value;
+            }
+            else if (h->type == CLAP_EVENT_PARAM_GESTURE_BEGIN || h->type == CLAP_EVENT_PARAM_GESTURE_END)
+                ev.param = reinterpret_cast<const clap_event_param_gesture_t*>(h)->param_id;
+            static_cast<OutEvents*>(e->ctx)->events.push_back(ev);
             return true;
         };
+    }
+
+    /// The plugin told the host about a knob as if it was turned by hand: gesture begin, value, gesture end.
+    bool turned(clap_id param, double value) const
+    {
+        int step = 0;
+        for (auto& e : events)
+        {
+            if (e.param != param) continue;
+            if (step == 0 && e.type == CLAP_EVENT_PARAM_GESTURE_BEGIN) step = 1;
+            else if (step == 1 && e.type == CLAP_EVENT_PARAM_VALUE && e.value == value) step = 2;
+            else if (step == 2 && e.type == CLAP_EVENT_PARAM_GESTURE_END) return true;
+        }
+        return false;
     }
 };
 
@@ -178,6 +226,39 @@ const std::string* find(const std::vector<std::string>& lines, const char* event
     for (auto& l : lines)
         if (l.find(e) != std::string::npos && (!also || l.find(also) != std::string::npos)) return &l;
     return nullptr;
+}
+
+bool has(const std::string* line, const char* text) { return line && line->find(text) != std::string::npos; }
+
+std::string readFile(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    std::ostringstream text;
+    text << file.rdbuf();
+    return text.str();
+}
+
+/// Writes a command file the way senders should: under another name, then renamed.
+void sendCommands(const std::filesystem::path& inbox, const std::string& name, const std::string& text)
+{
+    auto tmp = inbox / (name + ".tmp");
+    {
+        std::ofstream file(tmp, std::ios::binary);
+        file << text;
+    }
+    std::filesystem::rename(tmp, inbox / (name + ".json"));
+}
+
+/// Waits up to `seconds` for `done`.
+bool waitFor(double seconds, const std::function<bool()>& done)
+{
+    auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+    while (!done())
+    {
+        if (std::chrono::steady_clock::now() > until) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return true;
 }
 
 } // namespace
@@ -301,13 +382,118 @@ int main(int argc, char** argv)
     value = 0;
     CHECK(params2->get_value(p2, 1007, &value) && value == 75, "the loaded state restores the parameter");
     p2->destroy(p2);
+
+    // ---- Talking to it while it runs ----
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto live = reportFolder(base) / "live";
+
+    // A status left behind by a DAW that went away without saying so: the next probe clears it.
+    fs::create_directories(live / "DEADBEEF00000000.in");
+    sendCommands(live / "DEADBEEF00000000.in", "old", "{\"cmd\":\"ping\"}");
+    { std::ofstream(live / "DEADBEEF00000000.json") << "{}"; }
+    fs::last_write_time(live / "DEADBEEF00000000.json", fs::file_time_type::clock::now() - std::chrono::minutes(2));
+
+    auto p3 = factory->create_plugin(factory, &host, "org.musicorganiser.probe.instrument");
+    CHECK(p3 && p3->init(p3), "create a third instrument");
+    auto params3 = static_cast<const clap_plugin_params_t*>(p3->get_extension(p3, CLAP_EXT_PARAMS));
+    auto state3 = static_cast<const clap_plugin_state_t*>(p3->get_extension(p3, CLAP_EXT_STATE));
+    CHECK(p3->activate(p3, rate, 1, frames) && p3->start_processing(p3), "activate it");
+
+    fs::path statusFile;
+    waitFor(2, [&] {
+        for (auto& f : fs::directory_iterator(live, ec))
+            if (f.path().extension() == ".json" && f.path().stem() != "DEADBEEF00000000") statusFile = f.path();
+        return !statusFile.empty();
+    });
+    CHECK(!statusFile.empty(), "its live status appears after activate");
+    std::string instance = statusFile.stem().u8string(), status = readFile(statusFile);
+    auto inbox = live / (instance + ".in");
+    CHECK(status.find("\"probe\":\"instrument\",\"instance\":\"" + instance + "\"") != std::string::npos, "the status names its instance");
+    CHECK(status.find("\"host\":\"Probe Test Host\",\"hostVersion\":\"9.9\",\"format\":\"CLAP\"") != std::string::npos, "the status names the host");
+    CHECK(status.find("\"track\":\"Bass\",\"trackColor\":\"#4080C0\"") != std::string::npos, "the status names the track");
+    CHECK(status.find("\"active\":true") != std::string::npos, "the status says it's active");
+    CHECK(status.find("\"params\":{\"1001\":0.25,\"1002\":0,\"1003\":440,") != std::string::npos, "the status has the knobs");
+    CHECK(fs::is_directory(inbox), "its command folder is there");
+    CHECK(!fs::exists(live / "DEADBEEF00000000.json") && !fs::exists(live / "DEADBEEF00000000.in"), "an old status and its commands are cleared");
+
+    sendCommands(inbox, "a",
+                 "{\"cmd\":\"ping\",\"id\":\"p1\"}\n"
+                 "{\"cmd\":\"set\",\"param\":1002,\"value\":-12,\"id\":\"s1\"}\r\n"
+                 "{\"cmd\":\"label\", \"label\":\"Kick\", \"id\":\"l1\"}\n"
+                 "\n"
+                 "{\"cmd\":\"beep\",\"id\":\"b1\"}\n"
+                 "{\"cmd\":\"wobble\",\"id\":\"w1\"}\n"
+                 "this isn't JSON\n");
+
+    // Keep processing, like a DAW, while the probe picks the commands up.
+    OutEvents toHost;
+    float beep = 0;
+    bool handled = false;
+    int after = 0;
+    auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    for (int block = 0; after < 80 && std::chrono::steady_clock::now() < until; block++)
+    {
+        InEvents in;
+        auto transport = transportAt(block * frames / rate * tempo / 60.0, tempo);
+        clap_process_t proc{};
+        proc.steady_time = block * frames;
+        proc.frames_count = frames;
+        proc.transport = &transport;
+        proc.audio_outputs = &out;
+        proc.audio_outputs_count = 1;
+        proc.in_events = &in.api;
+        proc.out_events = &toHost.api;
+        p3->process(p3, &proc);
+        for (float x : left) beep = std::max(beep, std::fabs(x));   // no notes, so anything here is the beep
+        if (!handled && block % 10 == 0) handled = readFile(statusFile).find("\"commands\":6,") != std::string::npos;
+        if (handled) after++;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(handled, "it handles the command file within a few seconds");
+    CHECK(!fs::exists(inbox / "a.json"), "and deletes it");
+    CHECK(toHost.turned(1002, -12), "set tells the DAW: gesture begin, value, gesture end");
+    value = 0;
+    CHECK(params3->get_value(p3, 1002, &value) && value == -12, "set moves the knob");
+    status = readFile(statusFile);
+    CHECK(status.find("\"1002\":-12") != std::string::npos, "the status shows the knob's new value");
+    CHECK(status.find("\"label\":\"Kick\"") != std::string::npos, "the status shows the label");
+    CHECK(status.find("\"playing\":true") != std::string::npos && status.find("\"tempo\":120") != std::string::npos, "the status shows the transport");
+    auto reportName = [&] {
+        auto at = status.find("\"report\":\"");
+        return at == std::string::npos ? std::string() : status.substr(at + 10, status.find('"', at + 10) - at - 10);
+    }();
+    CHECK(!reportName.empty() && fs::exists(reportFolder(base) / reportName), "the status names its report file");
+    CHECK(beep > 0.05f, "beep plays on the output");
+
+    CHECK(callbackRequests > 0 && dirtyMarks == 0, "label asks for the main thread");
+    p3->on_main_thread(p3);
+    CHECK(dirtyMarks == 1, "and then tells the DAW the state changed");
+    Stream saved3;
+    CHECK(state3->save(p3, &saved3.out), "save the third");
+    CHECK(std::string(saved3.data.begin(), saved3.data.end()).find("\"label\":\"Kick\"") != std::string::npos, "the saved state holds the label");
+    CHECK(flushRequests == 0, "no flush needed while processing");
+
+    // While not active, a knob set goes out through the DAW's flush.
+    p3->stop_processing(p3);
+    p3->deactivate(p3);
+    sendCommands(inbox, "b", "{\"cmd\":\"set\",\"param\":1003,\"value\":1000,\"id\":\"s2\"}");
+    CHECK(waitFor(3, [] { return flushRequests > 0; }), "set while not active asks the DAW for a flush");
+    InEvents none;
+    OutEvents flushed;
+    params3->flush(p3, &none.api, &flushed.api);
+    CHECK(flushed.turned(1003, 1000), "the flush tells the DAW about the knob");
+
+    p3->destroy(p3);
+    CHECK(!fs::exists(statusFile) && !fs::exists(inbox), "the status and command folder go with the probe");
     entry->deinit();
 
     // Read the reports (the plugins have finished writing them when destroy returns).
     std::vector<std::string> lines;
-    std::error_code ec;
     for (auto& f : std::filesystem::directory_iterator(reportFolder(base), ec))
     {
+        if (!f.is_regular_file()) continue;
         std::ifstream file(f.path());
         for (std::string line; std::getline(file, line);) lines.push_back(line);
     }
@@ -327,6 +513,17 @@ int main(int argc, char** argv)
     auto load = find(lines, "load", "\"marker\":true");
     CHECK(load != nullptr, "report has the load");
     CHECK(load && load->find("\"params\":8") != std::string::npos, "the load restored all eight parameters");
+
+    CHECK(find(lines, "pong", "\"for\":\"p1\"") != nullptr, "report answers ping");
+    auto set = find(lines, "app-set", "\"for\":\"s1\"");
+    CHECK(has(set, "\"id\":1002") && has(set, "\"value\":-12") && has(set, "\"told\":\"process\""), "report has the set, told while processing");
+    CHECK(find(lines, "app-set-sent", "\"via\":\"process\"") != nullptr, "report says process told the DAW");
+    CHECK(has(find(lines, "app-set", "\"for\":\"s2\""), "\"told\":\"flush\""), "report has the set while not active, told by flush");
+    CHECK(has(find(lines, "app-set-sent", "\"via\":\"flush\""), "\"id\":1003"), "report says flush told the DAW");
+    CHECK(has(find(lines, "label", "\"for\":\"l1\""), "\"label\":\"Kick\""), "report has the label");
+    CHECK(find(lines, "beep", "\"for\":\"b1\"") != nullptr, "report has the beep");
+    CHECK(has(find(lines, "command-error", "\"for\":\"w1\""), "unknown command"), "an unknown command is an error");
+    CHECK(find(lines, "command-error", "not a JSON object") != nullptr, "a line that isn't JSON is an error");
 
     if (failures) std::fprintf(stderr, "%d check(s) failed\n", failures);
     else std::printf("all probe checks passed\n");

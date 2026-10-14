@@ -1,10 +1,12 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json.Nodes;
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 
 namespace MusicOrganiser.Core.Formats;
 
-/// <summary>The formatlab command (tools/MusicOrganiser.FormatLab): Format Lab, the census and the probe from a terminal.</summary>
+/// <summary>The formatlab command (tools/MusicOrganiser.FormatLab): Format Lab, the census and MO Probe from a terminal.</summary>
 public static class FormatLabCommand
 {
     public const string Usage = """
@@ -16,9 +18,13 @@ public static class FormatLabCommand
           formatlab census <folder>... [--top N]   what the app doesn't know yet, across all projects in folders
           formatlab probe [<file>] [--reports <folder>]
                                                    MO Probe's reports, or the probe's state in a project checked against them
+          formatlab probe live                     the MO Probes running in a DAW now, with their knobs
+          formatlab probe send <probe> ping|beep [<seconds>]|label <text>|set <knob> <value>
+                                                   sends a running probe a command, and shows its answer
+          formatlab probe check-bitwig [<probe>]   turns the probe's knobs through Bitwig and back, to check Bitwig's values
           formatlab fields bitwig|fl [<id>]        what the app knows (the field registry)
 
-        Files: .bwproject, .bwpreset, .bwclip and .flp.
+        Files: .bwproject, .bwpreset, .bwclip and .flp. A <probe> is its instance, its track or its label.
         """;
 
     /// <summary>Runs one command; returns the exit code (0 done, 1 failed, 2 not understood).</summary>
@@ -82,6 +88,17 @@ public static class FormatLabCommand
                 case "probe":
                 {
                     var folder = Option("--reports");
+                    switch (rest.FirstOrDefault())
+                    {
+                        case "live":
+                            if (rest.Count != 1) return Wrong(error, "probe live takes nothing more");
+                            return ProbeLive(folder ?? MoProbe.ReportFolder, output);
+                        case "send":
+                            return ProbeSend(rest.Skip(1).ToList(), folder ?? MoProbe.ReportFolder, output, error);
+                        case "check-bitwig":
+                            if (rest.Count > 2) return Wrong(error, "probe check-bitwig takes one probe, or none when only one is running");
+                            return ProbeCheckBitwig(rest.ElementAtOrDefault(1), folder ?? MoProbe.ReportFolder, output, error);
+                    }
                     var reports = ProbeReport.ReadAll(folder);
                     if (rest.Count == 0)
                     {
@@ -105,10 +122,130 @@ public static class FormatLabCommand
                     return Wrong(error, $"there's no command \"{args[0]}\"");
             }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException or DawLinkException)
         {
             return Fail(error, e.Message);
         }
+    }
+
+    static int ProbeLive(string folder, TextWriter output)
+    {
+        var running = MoProbeLive.Running(folder);
+        if (running.Count == 0)
+        {
+            output.WriteLine($"No MO Probe is running now (none has written its status in {Path.Combine(folder, "live")} in the last " +
+                             $"{MoProbeLive.Stale.TotalSeconds:0} seconds). Put one on a track in your DAW to see it here.");
+            return 0;
+        }
+        output.WriteLine($"MO Probes running now: {running.Count}");
+        foreach (var p in running)
+        {
+            output.WriteLine($"  {p.Instance} {p.Title} · {p.Summary} · {Checks.Count(p.Commands, "command")}");
+            output.WriteLine($"    {p.KnobsText}");
+            output.WriteLine($"    report: {p.Report}");
+        }
+        return 0;
+    }
+
+    static int ProbeSend(List<string> args, string folder, TextWriter output, TextWriter error)
+    {
+        const string how = "probe send needs a probe (its instance, track or label) and a command: ping, beep [<seconds>], label <text> or set <knob> <value>";
+        if (args.Count < 2) return Wrong(error, how);
+        JsonObject? command;
+        switch (args[1])
+        {
+            case "ping" when args.Count == 2:
+                command = ProbeCommand.Ping();
+                break;
+            case "beep" when args.Count <= 3:
+                double? seconds = null;
+                if (args.Count == 3)
+                {
+                    if (!double.TryParse(args[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var s)) return Wrong(error, $"“{args[2]}” isn't a number of seconds");
+                    seconds = s;
+                }
+                command = ProbeCommand.Beep(seconds);
+                break;
+            case "label" when args.Count >= 3:
+                command = ProbeCommand.Label(string.Join(' ', args.Skip(2)));
+                break;
+            case "set" when args.Count == 4:
+                if (ProbeKnobs.Find(args[2]) is not { } knob)
+                    return Wrong(error, $"MO Probe has no knob “{args[2]}”: its knobs are {string.Join(", ", MoProbe.Knobs.Select(k => $"{k.Id} {k.Name}"))}");
+                if (ProbeKnobs.Parse(knob, args[3]) is not { } value) return Wrong(error, $"“{args[3]}” isn't a value for {MoProbe.KnobName(knob)}");
+                command = ProbeCommand.Set(knob, value);
+                break;
+            default:
+                return Wrong(error, how);
+        }
+        if (Pick(folder, args[0], error) is not { } probe) return 1;
+        error.WriteLine($"Sending {args[1]} to {probe.Title} ({probe.Instance}), and waiting for its answer…");
+        var answer = MoProbeLive.SendAsync(probe.Instance, command, folder).GetAwaiter().GetResult();
+        output.WriteLine(answer.Data.GetRawText());
+        return answer.Event == "command-error" ? 1 : 0;
+    }
+
+    static int ProbeCheckBitwig(string? which, string folder, TextWriter output, TextWriter error)
+    {
+        if (Pick(folder, which, error, bitwig: true) is not { } probe) return 1;
+        error.WriteLine($"Checking {probe.Title}'s knobs through Bitwig: each one turned in Bitwig, then by the probe. " +
+                        "Ctrl+C stops it (the knobs are put back).");
+        using var stop = new CancellationTokenSource();
+        void Stop(object? sender, ConsoleCancelEventArgs e)
+        {
+            e.Cancel = true;
+            stop.Cancel();
+        }
+        Console.CancelKeyPress += Stop;
+        try
+        {
+            using var link = BitwigLink.ConnectAsync(ct: stop.Token).GetAwaiter().GetResult();
+            var check = ProbeKnobCheck.BitwigAsync(link, probe, new Lines(l => output.WriteLine($"  {l.Mark} {l.Text}")), stop.Token)
+                                      .GetAwaiter().GetResult();
+            output.WriteLine();
+            output.WriteLine(check.Summary);
+            foreach (var note in check.Notes) output.WriteLine($"  • {note}");
+            if (check.ChangesOff is { } off) output.WriteLine(off);
+            return check.AllMatched ? 0 : 1;
+        }
+        catch (OperationCanceledException)
+        {
+            return Fail(error, "Stopped. It put back the knobs it had turned (formatlab probe live shows them).");
+        }
+        finally
+        {
+            Console.CancelKeyPress -= Stop;
+        }
+    }
+
+    /// <summary>
+    /// The running probe <paramref name="which"/> names (<see cref="MoProbeLive.Find"/>); with none named, the one running
+    /// (in Bitwig, for <paramref name="bitwig"/>). Null, having said why, when there isn't exactly one.
+    /// </summary>
+    static MoProbeLive? Pick(string folder, string? which, TextWriter error, bool bitwig = false)
+    {
+        var running = MoProbeLive.Running(folder);
+        if (running.Count == 0)
+        {
+            Fail(error, "No MO Probe is running now. Put one on a track in your DAW, then try again (formatlab probe live lists them).");
+            return null;
+        }
+        var found = running;
+        if (which is not null) found = MoProbeLive.Find(running, which);
+        else if (bitwig && running.Where(p => p.Host.Contains("Bitwig", StringComparison.OrdinalIgnoreCase)).ToList() is { Count: > 0 } inBitwig)
+            found = inBitwig;
+        if (found.Count == 1) return found[0];
+        var listed = string.Join(Environment.NewLine, running.Select(p => $"  {p.Instance} {p.Title} · {p.Summary}"));
+        Fail(error, found.Count == 0 ? $"No running MO Probe is “{which}”. The ones running now:{Environment.NewLine}{listed}"
+                                     : $"{found.Count} MO Probes {(which is null ? "are running" : $"match “{which}”")}: say which, by its " +
+                                       $"instance, track or label.{Environment.NewLine}{listed}");
+        return null;
+    }
+
+    /// <summary>Reports each line straight away, in order (Progress would post them to the thread pool).</summary>
+    sealed class Lines(Action<KnobCheckLine> write) : IProgress<KnobCheckLine>
+    {
+        public void Report(KnobCheckLine value) => write(value);
     }
 
     static string Fields(FormatRegistry r, string? id)

@@ -19,10 +19,17 @@ dotnet run --project tools/MusicOrganiser.FormatLab -- tree "Night Drive.flp"
 | `find <file> <value> [--text]` | Everywhere the file holds a text or number: in a named field, or as raw bytes (16-bit text, 32-bit numbers, 32- and 64-bit floats, in both byte orders). `--text` looks for it as text only. |
 | `census <folder>... [--top N]` | Across every project in the folders: which FL Studio events and Bitwig classes and fields the app doesn't know yet, by how many projects have them. Only ids and counts, nothing of the music, so it's safe to paste into a conversation. |
 | `probe [<file>] [--reports <folder>]` | MO Probe's reports, newest first. With a project file: where the probe's saved state is in it, its knob values, and which save of which report wrote it. |
+| `probe live` | The MO Probes running in a DAW now: where each is (DAW, format, track, transport), its knobs, and its report. |
+| `probe send <probe> <command>` | Sends a running probe a command and prints its answer (the line in its report). The commands are `ping`, `beep [<seconds>]`, `label <text>` and `set <knob> <value>`, with the knob by name or id (`gain`, `1002`) and the value in its own units (`-12`, `On`, `Charlie`). |
+| `probe check-bitwig [<probe>]` | With a probe on a track in Bitwig and the Music Organiser script answering: turns each knob through Bitwig (0, ¼, ½ and 1, or each step) and reads what the probe got, then has the probe turn it and reads Bitwig's value back. One line per turn, then a summary; the knobs are put back at the end. Needs "Let the app make changes" in Bitwig for the Bitwig-to-probe half. |
 | `fields bitwig\|fl [<id or name>]` | What the app knows: the field registry. With an id or name, also what it means, how that was found out and where the code uses it. |
 
 Ids are written the way each format numbers them: hex for Bitwig (`0x2c8`), plain numbers for FL Studio
 events (`156`).
+
+The `probe` commands all take `--reports <folder>` for a report folder other than the probe's own. A `<probe>`
+is its instance (or its first few characters, as report names have them), its track or its label; it can
+be left out of `check-bitwig` when only one probe is running in Bitwig.
 
 ### The loop for working out a format
 
@@ -32,6 +39,25 @@ events (`156`).
 
 MO Probe helps with plugin state and automation: its saved state starts with `MOPROBE1`, its knobs have
 ids 1001 to 1008, and its reports say what the DAW sent it and when it saved (`native/README.md`).
+
+### Talking to MO Probe while it runs
+
+Each probe in use writes its live status to `live/<instance>.json` in its report folder about twice a
+second (its track, the transport and every knob), and takes commands as files dropped in
+`live/<instance>.in/`, answering in its report. They're plain files, so anything that can read and write
+files can take part:
+
+```
+formatlab probe live
+formatlab probe send "Inst 3" set gain -12
+formatlab probe send 1683A801 beep
+formatlab probe check-bitwig
+```
+
+By hand, write one JSON object per line, e.g. `{"cmd":"set","param":1002,"value":-12,"id":"mine-1"}`, to
+a file ending in `.json` in the probe's `.in` folder (write it under another name and rename it, where you
+can). The probe takes it within a moment and deletes it, and the line in its report that answers has
+`"for":"mine-1"`. `native/README.md` has the commands and the status in full.
 
 ## The field registry
 

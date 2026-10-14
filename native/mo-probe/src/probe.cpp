@@ -7,9 +7,12 @@
 //   parameter IDs are easy to spot in project files.
 // - It writes a live report (see log.h): the host's name and version, the track it's on, transport,
 //   every note and parameter change with its exact position in beats, and every save and load.
+// - While it runs it keeps a status file up to date and takes commands from files (see live.h), so
+//   the app, Bitwig's script and Claude can ask it things, move its knobs, label it and make it beep.
 //
 // Two plugins share this code: an instrument (plays a quiet sine per note) and an effect (gain).
 #include "probe.h"
+#include "live.h"
 #include "log.h"
 
 #include <clap/clap.h>
@@ -23,8 +26,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 #if __has_include(<clapwrapper/vst3.h>)
 #include <clapwrapper/auv2.h>
@@ -131,22 +141,43 @@ struct Voice
     bool releasing = false;
 };
 
+struct Probe;
+void liveStatus(Probe* s, Line& l);
+void liveCommand(Probe* s, const std::string& line, const std::string& file);
+
+constexpr uint32_t kHaveTransport = 1u << 31;   // in Probe::nowFlags, next to the transport's own flags
+
 struct Probe
 {
     clap_plugin_t plugin{};
     const clap_host_t* host = nullptr;
     const clap_host_track_info_t* hostTrackInfo = nullptr;
+    const clap_host_params_t* hostParams = nullptr;
+    const clap_host_state_t* hostState = nullptr;
     bool instrument = false;
 
     std::string instance = randomId();   // this run
+    // The live thread reads these too, so they're behind textMutex.
     std::string identity = instance;     // survives save and load, so a probe can be followed across sessions
     std::string label;                    // set by whoever wrote the state (e.g. the app's round-trip check)
+    std::string track, trackColor;        // from the host's track info
+    std::mutex textMutex;
     unsigned saves = 0;
 
     std::array<std::atomic<double>, kParamCount> values{};
     double sampleRate = 48000;
     bool firstProcess = true;
     std::atomic<bool> active{ false };
+    std::atomic<bool> processing{ false };
+
+    // The live link (see live.h): what its commands asked for, and what the audio thread shows it.
+    std::array<std::atomic<bool>, kParamCount> appSet{};   // knobs set by a command that the DAW hasn't been told about
+    std::atomic<bool> labelChanged{ false };              // tell the DAW its state changed, on the main thread
+    std::atomic<uint32_t> beepMs{ 0 };
+    std::atomic<unsigned> commands{ 0 };
+    std::atomic<uint32_t> nowFlags{ 0 };   // the last block's transport flags, with kHaveTransport
+    std::atomic<double> nowBeats{ 0 }, nowTempo{ 0 };
+    std::atomic<int> nowBar{ 0 };
 
     // Audio thread only.
     std::array<Voice, 16> voices{};
@@ -156,14 +187,31 @@ struct Probe
     double lastTempo = 0, nextBeat = NAN;
     uint16_t lastNum = 0, lastDen = 0;
     bool lastLoop = false;
+    uint32_t beepLeft = 0, beepLength = 0;
+    double beepPhase = 0;
 
     std::unique_ptr<Log> log;
+    std::unique_ptr<Live> live;
     std::atomic<unsigned long long> seq{ 0 };   // orders lines from the main and audio threads
 
     Probe(const clap_host_t* h, bool inst) : host(h), instrument(inst)
     {
-        for (int i = 0; i < kParamCount; i++) values[i] = kParams[i].def;
+        for (int i = 0; i < kParamCount; i++)
+        {
+            values[i] = kParams[i].def;
+            appSet[i] = false;
+        }
         log = std::make_unique<Log>(inst ? "instrument" : "effect", instance);
+        live = std::make_unique<Live>(
+            instance, [this](Line& l) { liveStatus(this, l); },
+            [this](const std::string& line, const std::string& file) { liveCommand(this, line, file); });
+    }
+
+    /// The instance is in real use: start its report file and its live status.
+    void keep()
+    {
+        log->keep();
+        live->start();
     }
 
     // Main-thread report line.
@@ -201,14 +249,17 @@ void reportTrack(Probe* s)
     if (!s->hostTrackInfo) return;
     clap_track_info_t info{};
     if (!s->hostTrackInfo->get(s->host, &info)) return;
+    char hex[16] = "";
+    if (info.flags & CLAP_TRACK_INFO_HAS_TRACK_COLOR)
+        std::snprintf(hex, sizeof hex, "#%02X%02X%02X", info.color.red, info.color.green, info.color.blue);
+    {
+        std::lock_guard<std::mutex> lock(s->textMutex);
+        s->track = (info.flags & CLAP_TRACK_INFO_HAS_TRACK_NAME) ? info.name : "";
+        s->trackColor = hex;
+    }
     s->report("track", [&](Line& l) {
         if (info.flags & CLAP_TRACK_INFO_HAS_TRACK_NAME) l.str("name", info.name);
-        if (info.flags & CLAP_TRACK_INFO_HAS_TRACK_COLOR)
-        {
-            char hex[16];
-            std::snprintf(hex, sizeof hex, "#%02X%02X%02X", info.color.red, info.color.green, info.color.blue);
-            l.str("color", hex).integer("alpha", info.color.alpha);
-        }
+        if (info.flags & CLAP_TRACK_INFO_HAS_TRACK_COLOR) l.str("color", hex).integer("alpha", info.color.alpha);
         if (info.flags & CLAP_TRACK_INFO_HAS_AUDIO_CHANNEL)
         {
             l.integer("channels", info.audio_channel_count);
@@ -218,7 +269,7 @@ void reportTrack(Probe* s)
             .boolean("bus", info.flags & CLAP_TRACK_INFO_IS_FOR_BUS)
             .boolean("master", info.flags & CLAP_TRACK_INFO_IS_FOR_MASTER);
     });
-    s->log->keep();
+    s->keep();
 }
 
 // -- lifecycle --
@@ -227,6 +278,11 @@ bool init(const clap_plugin_t* p)
 {
     auto s = self(p);
     s->hostTrackInfo = static_cast<const clap_host_track_info_t*>(hostExtension(s->host, CLAP_EXT_TRACK_INFO, CLAP_EXT_TRACK_INFO_COMPAT));
+    // For the live link: telling the DAW about knobs a command moved, and that a new label needs saving.
+    s->hostParams = static_cast<const clap_host_params_t*>(hostExtension(s->host, CLAP_EXT_PARAMS, nullptr));
+    if (s->hostParams && !s->hostParams->request_flush) s->hostParams = nullptr;
+    s->hostState = static_cast<const clap_host_state_t*>(hostExtension(s->host, CLAP_EXT_STATE, nullptr));
+    if (s->hostState && !s->hostState->mark_dirty) s->hostState = nullptr;
     s->report("create", [&](Line& l) {
         l.str("plugin", s->instrument ? kInstrumentId : kEffectId)
             .str("probeVersion", kVersion)
@@ -253,6 +309,7 @@ bool init(const clap_plugin_t* p)
 void destroy(const clap_plugin_t* p)
 {
     auto s = self(p);
+    s->live.reset();   // stops the live thread, then deletes the status file and the command folder
     s->report("destroy", [&](Line& l) { l.integer("saves", s->saves); });
     delete s;   // the log's destructor writes everything out
 }
@@ -262,9 +319,11 @@ bool activate(const clap_plugin_t* p, double sampleRate, uint32_t minFrames, uin
     auto s = self(p);
     s->sampleRate = sampleRate;
     s->firstProcess = true;
+    s->beepMs = 0;   // a beep asked for while switched off would only surprise later
+    s->beepLeft = 0;
     s->active = true;
     s->report("activate", [&](Line& l) { l.num("sampleRate", sampleRate).integer("minFrames", minFrames).integer("maxFrames", maxFrames); });
-    s->log->keep();
+    s->keep();
     return true;
 }
 
@@ -272,11 +331,18 @@ void deactivate(const clap_plugin_t* p)
 {
     auto s = self(p);
     s->active = false;
+    s->processing = false;
+    s->nowFlags = 0;
     s->report("deactivate", [](Line&) {});
 }
 
-bool startProcessing(const clap_plugin_t*) { return true; }
-void stopProcessing(const clap_plugin_t*) {}
+bool startProcessing(const clap_plugin_t* p)
+{
+    self(p)->processing = true;
+    return true;
+}
+
+void stopProcessing(const clap_plugin_t* p) { self(p)->processing = false; }
 
 void reset(const clap_plugin_t* p)
 {
@@ -531,6 +597,84 @@ void handleEvents(Probe* s, const clap_input_events_t* in, bool audio)
         }
 }
 
+// -- the live link, on the audio thread --
+
+/// What the live status shows of the transport: the last block's.
+void publishTransport(Probe* s, const clap_event_transport_t* t)
+{
+    if (!t)
+    {
+        s->nowFlags.store(0, std::memory_order_relaxed);
+        return;
+    }
+    s->nowBeats.store(double(t->song_pos_beats) / CLAP_BEATTIME_FACTOR, std::memory_order_relaxed);
+    s->nowBar.store(t->bar_number + 1, std::memory_order_relaxed);
+    s->nowTempo.store(t->tempo, std::memory_order_relaxed);
+    s->nowFlags.store(t->flags | kHaveTransport, std::memory_order_relaxed);
+}
+
+clap_event_header_t eventHeader(uint16_t type, uint32_t size)
+{
+    clap_event_header_t h{};
+    h.size = size;
+    h.space_id = CLAP_CORE_EVENT_SPACE_ID;
+    h.type = type;
+    return h;
+}
+
+/// Tells the DAW about knobs a command set, as if turned by hand: gesture begin, value, gesture end,
+/// so its own knob, automation recording and undo follow. From process() while processing, else from
+/// params.flush() (on the main thread while not active).
+void tellHost(Probe* s, const clap_output_events_t* out, bool audio, const char* via)
+{
+    if (!out) return;
+    for (int i = 0; i < kParamCount; i++)
+    {
+        if (!s->appSet[i].load(std::memory_order_relaxed) || !s->appSet[i].exchange(false)) continue;
+        double v = s->values[i];
+        clap_event_param_gesture_t begin{}, end{};
+        begin.header = eventHeader(CLAP_EVENT_PARAM_GESTURE_BEGIN, static_cast<uint32_t>(sizeof begin));
+        begin.param_id = kParams[i].id;
+        end.header = eventHeader(CLAP_EVENT_PARAM_GESTURE_END, static_cast<uint32_t>(sizeof end));
+        end.param_id = kParams[i].id;
+        clap_event_param_value_t value{};
+        value.header = eventHeader(CLAP_EVENT_PARAM_VALUE, static_cast<uint32_t>(sizeof value));
+        value.param_id = kParams[i].id;
+        value.note_id = -1;
+        value.port_index = -1;
+        value.channel = -1;
+        value.key = -1;
+        value.value = v;
+        if (!out->try_push(out, &begin.header) || !out->try_push(out, &value.header) || !out->try_push(out, &end.header))
+        {
+            s->appSet[i] = true;   // the DAW's queue is full: next time
+            continue;
+        }
+        auto fill = [&](Line& l) { l.integer("id", kParams[i].id).str("name", kParams[i].name).num("value", v).str("via", via); };
+        if (audio) s->reportAudio("app-set-sent", fill);
+        else s->report("app-set-sent", fill);
+    }
+}
+
+/// The beep command: a quiet 880 Hz tone mixed into every output channel, so you can hear which
+/// track the probe is on.
+void mixBeep(Probe* s, const clap_audio_buffer_t& out, uint32_t frames)
+{
+    if (s->beepMs.load(std::memory_order_relaxed))
+        if (uint32_t ms = s->beepMs.exchange(0)) s->beepLeft = s->beepLength = static_cast<uint32_t>(ms * s->sampleRate / 1000);
+    if (!s->beepLeft || !out.data32) return;
+    const double step = kTwoPi * 880.0 / s->sampleRate, fade = 0.005 * s->sampleRate;
+    for (uint32_t f = 0; f < frames && s->beepLeft; f++, s->beepLeft--)
+    {
+        // 5 ms fades at each end, so it doesn't click.
+        double edge = std::min<double>(s->beepLeft, s->beepLength - s->beepLeft + 1);
+        float x = static_cast<float>(0.1 * std::min(1.0, edge / fade) * std::sin(s->beepPhase));
+        s->beepPhase += step;
+        if (s->beepPhase > kTwoPi) s->beepPhase -= kTwoPi;
+        for (uint32_t c = 0; c < out.channel_count; c++) out.data32[c][f] += x;
+    }
+}
+
 clap_process_status process(const clap_plugin_t* p, const clap_process_t* proc)
 {
     auto s = self(p);
@@ -540,6 +684,7 @@ clap_process_status process(const clap_plugin_t* p, const clap_process_t* proc)
         s->haveTransport = true;
     }
     else s->haveTransport = false;
+    publishTransport(s, proc->transport);
 
     if (s->firstProcess)
     {
@@ -553,6 +698,7 @@ clap_process_status process(const clap_plugin_t* p, const clap_process_t* proc)
         });
     }
     checkTransport(s, proc->frames_count);
+    tellHost(s, proc->out_events, true, "process");
     handleEvents(s, proc->in_events, true);
 
     bool bypass = s->values[kBypass] >= 0.5;
@@ -573,6 +719,7 @@ clap_process_status process(const clap_plugin_t* p, const clap_process_t* proc)
                 for (uint32_t f = 0; f < frames; f++) dst[f] = src ? src[f] * g : 0.0f;
             }
         }
+        if (proc->audio_outputs_count) mixBeep(s, proc->audio_outputs[0], frames);
         return CLAP_PROCESS_CONTINUE;
     }
 
@@ -610,6 +757,7 @@ clap_process_status process(const clap_plugin_t* p, const clap_process_t* proc)
             v.key = -1;
         }
     }
+    mixBeep(s, out, frames);
     return CLAP_PROCESS_CONTINUE;
 }
 
@@ -655,11 +803,12 @@ bool paramsFromText(const clap_plugin_t*, clap_id id, const char* text, double* 
     return i >= 0 && parseValue(i, text, *value);
 }
 
-void paramsFlush(const clap_plugin_t* p, const clap_input_events_t* in, const clap_output_events_t*)
+void paramsFlush(const clap_plugin_t* p, const clap_input_events_t* in, const clap_output_events_t* out)
 {
     // Called on the audio thread while active, otherwise on the main thread.
     auto s = self(p);
     handleEvents(s, in, s->active);
+    tellHost(s, out, s->active, "flush");
 }
 
 const clap_plugin_params_t kParamsExt = { paramsCount, paramsInfo, paramsValue, paramsToText, paramsFromText, paramsFlush };
@@ -685,8 +834,14 @@ bool saveState(const clap_plugin_t* p, const clap_ostream_t* stream, uint32_t co
     text += s->instrument ? "instrument" : "effect";
     text += "\",\"version\":\"";
     text += kVersion;
-    text += "\",\"identity\":\"" + s->identity + "\",\"label\":\"";
-    for (char c : s->label)
+    std::string identity, label;
+    {
+        std::lock_guard<std::mutex> lock(s->textMutex);
+        identity = s->identity;
+        label = s->label;
+    }
+    text += "\",\"identity\":\"" + identity + "\",\"label\":\"";
+    for (char c : label)
         if (c != '"' && c != '\\' && static_cast<unsigned char>(c) >= 0x20) text += c;
     text += "\",\"instance\":\"" + s->instance + "\",\"save\":" + std::to_string(s->saves);
     text += ",\"context\":\"";
@@ -711,9 +866,9 @@ bool saveState(const clap_plugin_t* p, const clap_ostream_t* stream, uint32_t co
     }
     s->report("save", [&](Line& l) {
         l.str("context", contextName(context)).integer("bytes", static_cast<long long>(text.size())).integer("save", s->saves)
-            .str("identity", s->identity);
+            .str("identity", identity);
     });
-    s->log->keep();
+    s->keep();
     return true;
 }
 
@@ -743,6 +898,7 @@ bool loadState(const clap_plugin_t* p, const clap_istream_t* stream, uint32_t co
     }
     bool marker = text.compare(0, std::strlen(kMarker), kMarker) == 0;
     int restored = 0;
+    std::string identity, label;
     if (marker)
     {
         for (int i = 0; i < kParamCount; i++)
@@ -755,8 +911,14 @@ bool loadState(const clap_plugin_t* p, const clap_istream_t* stream, uint32_t co
             restored++;
         }
         auto id = jsonString(text, "identity");
+        std::lock_guard<std::mutex> lock(s->textMutex);
         if (!id.empty()) s->identity = id;
         s->label = jsonString(text, "label");
+    }
+    {
+        std::lock_guard<std::mutex> lock(s->textMutex);
+        identity = s->identity;
+        label = s->label;
     }
     std::string savedBy = jsonString(text, "instance"), savedContext = jsonString(text, "context");
     std::string save = [&] {
@@ -765,10 +927,10 @@ bool loadState(const clap_plugin_t* p, const clap_istream_t* stream, uint32_t co
     }();
     s->report("load", [&](Line& l) {
         l.str("context", contextName(context)).integer("bytes", static_cast<long long>(text.size())).boolean("marker", marker)
-            .integer("params", restored).str("identity", s->identity).str("label", s->label)
+            .integer("params", restored).str("identity", identity).str("label", label)
             .str("savedBy", savedBy).str("savedContext", savedContext).str("savedNumber", save);
     });
-    s->log->keep();
+    s->keep();
     return marker;
 }
 
@@ -888,7 +1050,212 @@ const void* getExtension(const clap_plugin_t*, const char* id)
     return nullptr;
 }
 
-void onMainThread(const clap_plugin_t*) {}
+void onMainThread(const clap_plugin_t* p)
+{
+    // A label command: tell the DAW the state changed, so the label is saved with the project.
+    auto s = self(p);
+    if (s->labelChanged.exchange(false) && s->hostState) s->hostState->mark_dirty(s->host);
+}
+
+// ---- The live link (see live.h): runs on the live thread ----
+
+long long processId()
+{
+#ifdef _WIN32
+    return _getpid();
+#else
+    return getpid();
+#endif
+}
+
+void liveStatus(Probe* s, Line& l)
+{
+    std::string identity, label, track, trackColor;
+    {
+        std::lock_guard<std::mutex> lock(s->textMutex);
+        identity = s->identity;
+        label = s->label;
+        track = s->track;
+        trackColor = s->trackColor;
+    }
+    l.str("probe", s->instrument ? "instrument" : "effect")
+        .str("instance", s->instance)
+        .str("identity", identity)
+        .str("label", label)
+        .str("host", s->host->name ? s->host->name : "")
+        .str("hostVersion", s->host->version ? s->host->version : "")
+        .str("format", wrappedFormat())
+        .str("track", track)
+        .str("trackColor", trackColor)
+        .str("report", s->log->fileName())
+        .str("t", nowIso())
+        .integer("pid", processId())
+        .boolean("active", s->active);
+    uint32_t flags = s->nowFlags.load(std::memory_order_relaxed);
+    if (flags & kHaveTransport)
+    {
+        l.boolean("playing", flags & CLAP_TRANSPORT_IS_PLAYING);
+        if (flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE) l.num("beats", s->nowBeats.load()).integer("bar", s->nowBar.load());
+        if (flags & CLAP_TRANSPORT_HAS_TEMPO) l.num("tempo", s->nowTempo.load());
+    }
+    l.integer("commands", s->commands);
+
+    char buf[512];
+    Line params(buf, sizeof buf);
+    for (int i = 0; i < kParamCount; i++)
+    {
+        char id[16];
+        std::snprintf(id, sizeof id, "%u", kParams[i].id);
+        params.num(id, s->values[i]);
+    }
+    l.raw("params", params.finish());
+}
+
+/// A label as the probe keeps it: up to 64 characters, without quotes, backslashes or control characters.
+std::string cleanLabel(const std::string& text)
+{
+    std::string out;
+    int chars = 0;
+    for (unsigned char c : text)
+    {
+        if (c == '"' || c == '\\' || c < 0x20 || c == 0x7F) continue;
+        if ((c & 0xC0) != 0x80 && ++chars > 64) break;   // counts characters, not UTF-8 bytes
+        out += static_cast<char>(c);
+    }
+    return out;
+}
+
+/// The text cut to at most `max` bytes, without splitting a character.
+std::string shorten(const std::string& text, size_t max)
+{
+    if (text.size() <= max) return text;
+    while (max > 0 && (static_cast<unsigned char>(text[max]) & 0xC0) == 0x80) max--;
+    return text.substr(0, max) + "...";
+}
+
+void liveCommand(Probe* s, const std::string& line, const std::string& file)
+{
+    s->commands++;
+    Fields fields;
+    bool isObject = parseObject(line, fields);
+    auto field = [&](const char* key) -> const Field* {
+        auto at = fields.find(key);
+        return at == fields.end() ? nullptr : &at->second;
+    };
+    // Every answer carries the command's "id" as "for", so the sender can find it in the report.
+    const Field* id = field("id");
+    auto answer = [&](const char* event, auto fill) {
+        s->report(event, [&](Line& l) {
+            if (id && id->kind == Field::String) l.str("for", id->text);
+            fill(l);
+        });
+    };
+    auto fail = [&](const std::string& why) {
+        answer("command-error", [&](Line& l) { l.str("error", why).str("file", file).str("line", shorten(line, 300)); });
+    };
+
+    const Field* cmd = field("cmd");
+    if (!isObject)
+    {
+        fail("not a JSON object");
+        return;
+    }
+    if (!cmd || cmd->kind != Field::String)
+    {
+        fail("no \"cmd\": a command looks like {\"cmd\":\"ping\"}");
+        return;
+    }
+
+    if (cmd->text == "ping")
+    {
+        answer("pong", [](Line&) {});
+        return;
+    }
+
+    if (cmd->text == "set")
+    {
+        const Field* param = field("param");
+        const Field* value = field("value");
+        int i = -1;
+        if (param && param->kind == Field::Number && param->number == std::floor(param->number) && param->number >= 0 && param->number < 1e9)
+            i = paramIndex(static_cast<clap_id>(param->number));
+        else if (param && param->kind == Field::String)
+            i = paramIndex(static_cast<clap_id>(std::strtoul(param->text.c_str(), nullptr, 10)));
+        if (i < 0)
+        {
+            fail("\"param\" must be a knob's ID, 1001 to 1008");
+            return;
+        }
+        double v = 0;
+        bool ok = false;
+        if (value && value->kind == Field::Number)
+        {
+            v = value->number;
+            ok = true;
+        }
+        // Text is read the way the knob reads it, so "On", "Bravo" or "-6 dB" work too.
+        else if (value && value->kind == Field::String) ok = parseValue(i, value->text.c_str(), v);
+        if (!ok || std::isnan(v))
+        {
+            fail("\"value\" must be a number, in the knob's own units");
+            return;
+        }
+
+        const auto& d = kParams[i];
+        bool clamped = v < d.min || v > d.max;
+        v = std::clamp(v, d.min, d.max);
+        if (d.flags & CLAP_PARAM_IS_STEPPED) v = std::round(v);
+        s->values[i] = v;
+        s->appSet[i] = true;
+        // While processing, the next block tells the DAW; otherwise the DAW is asked for a flush.
+        const char* told = s->processing ? "process" : s->hostParams ? "flush" : "waiting";
+        char text[64];
+        formatValue(i, v, text, sizeof text);
+        answer("app-set", [&](Line& l) {
+            l.integer("id", d.id).str("name", d.name).num("value", v).str("text", text);
+            if (clamped) l.boolean("clamped", true);
+            l.str("told", told);
+        });
+        if (!std::strcmp(told, "flush")) s->hostParams->request_flush(s->host);
+        return;
+    }
+
+    if (cmd->text == "label")
+    {
+        const Field* text = field("label");
+        if (!text || text->kind != Field::String)
+        {
+            fail("\"label\" must be text");
+            return;
+        }
+        std::string label = cleanLabel(text->text);
+        {
+            std::lock_guard<std::mutex> lock(s->textMutex);
+            s->label = label;
+        }
+        // The DAW is told the state changed from on_main_thread, where CLAP allows it.
+        s->labelChanged = true;
+        answer("label", [&](Line& l) { l.str("label", label); });
+        if (s->host->request_callback) s->host->request_callback(s->host);
+        return;
+    }
+
+    if (cmd->text == "beep")
+    {
+        const Field* seconds = field("seconds");
+        if (seconds && seconds->kind != Field::Number && seconds->kind != Field::Null)
+        {
+            fail("\"seconds\" must be a number");
+            return;
+        }
+        double length = seconds && seconds->kind == Field::Number ? std::clamp(seconds->number, 0.0, 2.0) : 0.3;
+        s->beepMs = static_cast<uint32_t>(std::lround(length * 1000));
+        answer("beep", [&](Line& l) { l.num("seconds", length); });
+        return;
+    }
+
+    fail("unknown command \"" + cmd->text + "\"");
+}
 
 // ---- Factory ----
 

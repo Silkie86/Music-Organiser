@@ -1,7 +1,7 @@
 # MO Probe: one CLAP holding an instrument and an effect that report what the DAW does with them.
 find_package(Threads REQUIRED)
 
-add_library(mo-probe-impl STATIC src/probe.cpp src/log.cpp)
+add_library(mo-probe-impl STATIC src/probe.cpp src/log.cpp src/live.cpp)
 target_link_libraries(mo-probe-impl PUBLIC clap Threads::Threads)
 if(MSVC)
   target_compile_definitions(mo-probe-impl PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
