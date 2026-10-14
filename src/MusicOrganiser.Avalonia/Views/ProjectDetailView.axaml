@@ -49,6 +49,36 @@
         <Style Selector="TextBlock.mark.different">
             <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
         </Style>
+        <Style Selector="Button.bigAction">
+            <Setter Property="Height" Value="48" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.squareAction">
+            <Setter Property="Width" Value="48" />
+            <Setter Property="Height" Value="48" />
+            <Setter Property="Margin" Value="10,0,0,0" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Border.trouble">
+            <Setter Property="Background" Value="#FF2A1A1E" />
+            <Setter Property="BorderBrush" Value="#FF4A2229" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Padding" Value="14,12" />
+        </Style>
+        <Style Selector="TabControl.detailTabs TabItem">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Padding" Value="12,0" />
+        </Style>
     </UserControl.Styles>
 
     <UserControl.Resources>
@@ -66,43 +96,62 @@
         </DataTemplate>
     </UserControl.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="20,18,20,20">
-            <!-- Header -->
-            <TextBlock Text="{Binding Item.Name}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
-            <WrapPanel Margin="0,8,0,0">
-                <Border Classes="pill" Margin="0,0,8,0"
-                        Background="{Binding Item.Daw, Converter={StaticResource DawBrush}, ConverterParameter=Soft}">
-                    <TextBlock Text="{Binding Item.Daw}" Classes="pillText"
-                               Foreground="{Binding Item.Daw, Converter={StaticResource DawBrush}}" />
+    <DockPanel>
+        <!-- Header: what it is, the one big action, then everything else in tabs. -->
+        <StackPanel DockPanel.Dock="Top" Margin="24,22,24,0">
+            <WrapPanel>
+                <Border Classes="pill" Margin="0,0,8,0" Background="{Binding Item.Daw, Converter={StaticResource DawBrush}}">
+                    <TextBlock Text="{Binding Item.Daw}" Classes="pillText" Foreground="{StaticResource AppBackgroundBrush}" FontWeight="Bold" />
                 </Border>
                 <Border Classes="pill" Margin="0,0,8,0" Background="{StaticResource OkSoftBrush}" IsVisible="{Binding IsLive}">
                     <TextBlock Text="{Binding LiveText}" Classes="pillText" Foreground="{StaticResource OkBrush}" />
                 </Border>
+                <TextBlock Text="{Binding Item.Modified, StringFormat='Saved {0:d MMM yyyy}'}" Foreground="{StaticResource MutedBrush}"
+                           FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <TextBlock Text="{Binding SavesText}" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"
                            TextWrapping="Wrap" IsVisible="{Binding HasOlderSaves}" />
                 <TextBlock Text="{Binding LiveText}" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"
                            TextWrapping="Wrap" Margin="8,0,0,0" IsVisible="{Binding OlderSaveOpen}" />
             </WrapPanel>
+            <TextBlock Text="{Binding Item.Name}" FontSize="26" FontWeight="Bold" TextWrapping="Wrap" Margin="0,10,0,0" />
+            <TextBlock Text="{Binding Item.DetailsLine}" FontSize="13" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" TextWrapping="Wrap" />
 
-            <WrapPanel Classes="actions" Margin="0,16,0,0">
-                <Button Content="Open in DAW" Classes="accent" Command="{Binding OpenInDawCommand}" />
-                <Button Content="Show in folder" Command="{Binding RevealCommand}" />
-                <Button Content="MIDI" Command="{Binding ShowMidiCommand}" IsEnabled="{Binding CanExtractMidi}" ToolTip.Tip="{Binding MidiNote}" />
-                <Button Content="Presets" Command="{Binding ShowPresetsCommand}" IsEnabled="{Binding CanExtractPresets}"
-                        ToolTip.Tip="See the plugin settings saved in this project and export them as presets" />
-                <Button Content="Open in Bitwig" Command="{Binding OpenInBitwigCommand}" IsVisible="{Binding IsFlStudio}"
-                        ToolTip.Tip="Convert this FL Studio project into a Bitwig project and open it: tracks, notes, tempo, each Sampler's sample and root key, VST plugins with their settings, mixer effects, volume and pan" />
-                <Button Content="DAWproject" Command="{Binding ExportToBitwigCommand}" IsVisible="{Binding IsFlStudio}"
-                        ToolTip.Tip="Convert this FL Studio project into a DAWproject file, the open format Bitwig and Studio One import: tracks, notes, tempo, VST plugins with their settings, mixer effects and automation" />
-                <Button Content="{Binding CheckWithDawText}" Command="{Binding CheckWithDawCommand}" IsVisible="{Binding CanCheckWithDaw}"
-                        ToolTip.Tip="Compare what the app read from this file with what the DAW shows for it. Open the project there first; the link with the DAW is set up in Settings" />
-            </WrapPanel>
-            <Border Margin="0,6,0,0" Padding="12,8" CornerRadius="8" Background="{StaticResource AccentFaintBrush}"
+            <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,18,0,0">
+                <Button Classes="accent bigAction" Command="{Binding OpenInDawCommand}" HorizontalAlignment="Stretch"
+                        ToolTip.Tip="Open the newest save in its DAW (Enter does the same in the list)">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Path Data="M7,4 L20,12 L7,20 Z" Fill="{StaticResource AppBackgroundBrush}" Width="13" Height="13" Stretch="Uniform" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Item.Daw, StringFormat='Open in {0}'}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button Grid.Column="1" Classes="squareAction" Command="{Binding RevealCommand}" ToolTip.Tip="Show in folder">
+                    <Path Data="{StaticResource NavIcon.Projects}" Classes="navIcon" />
+                </Button>
+                <Button Grid.Column="2" Classes="squareAction" ToolTip.Tip="More: MIDI, presets, convert to Bitwig, check with the DAW">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <Ellipse Width="4" Height="4" Fill="{StaticResource MutedBrush}" />
+                        <Ellipse Width="4" Height="4" Fill="{StaticResource MutedBrush}" />
+                        <Ellipse Width="4" Height="4" Fill="{StaticResource MutedBrush}" />
+                    </StackPanel>
+                    <Button.Flyout>
+                        <MenuFlyout Placement="BottomEdgeAlignedRight">
+                            <MenuItem Header="MIDI…" Command="{Binding ShowMidiCommand}" IsEnabled="{Binding CanExtractMidi}" ToolTip.Tip="{Binding MidiNote}" />
+                            <MenuItem Header="Presets…" Command="{Binding ShowPresetsCommand}" IsEnabled="{Binding CanExtractPresets}"
+                                      ToolTip.Tip="See the plugin settings saved in this project and export them as presets" />
+                            <MenuItem Header="Open in Bitwig" Command="{Binding OpenInBitwigCommand}" IsVisible="{Binding IsFlStudio}"
+                                      ToolTip.Tip="Convert this FL Studio project into a Bitwig project and open it" />
+                            <MenuItem Header="Save as DAWproject" Command="{Binding ExportToBitwigCommand}" IsVisible="{Binding IsFlStudio}"
+                                      ToolTip.Tip="Convert this FL Studio project into a DAWproject file, the open format Bitwig and Studio One import" />
+                            <MenuItem Header="{Binding CheckWithDawText}" Command="{Binding CheckWithDawCommand}" IsVisible="{Binding CanCheckWithDaw}"
+                                      ToolTip.Tip="Compare what the app read from this file with what the DAW shows for it" />
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+            </Grid>
+            <Border Margin="0,10,0,0" Padding="12,8" CornerRadius="8" Background="{StaticResource AccentFaintBrush}"
                     IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                 <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12" />
             </Border>
-
             <!-- The last check with the DAW: what it shows, against what the app read -->
             <Border Classes="panel" Margin="0,6,0,0" IsVisible="{Binding HasCheckLines}">
                 <ItemsControl ItemsSource="{Binding CheckLines}">
@@ -129,194 +178,242 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </Border>
-
-            <!-- Your organisation -->
-            <Border Classes="panel" Margin="0,16,0,0">
-                <Grid ColumnDefinitions="76,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
-                    <TextBlock Text="Status" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
-                    <ComboBox Grid.Column="1" Margin="0,0,0,8" ItemsSource="{x:Static vm:ProjectsViewModel.StatusChoices}"
-                              SelectedItem="{Binding Item.Status}" />
-
-                    <TextBlock Grid.Row="1" Text="Rating" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
-                    <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,0,0,8" ItemsSource="{x:Static vm:ProjectsViewModel.RatingChoices}"
-                              SelectedItem="{Binding Item.Rating}">
-                        <ComboBox.ItemTemplate>
-                            <DataTemplate x:DataType="sys:Int32">
-                                <TextBlock Text="{Binding Converter={StaticResource RatingText}}" />
-                            </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                    </ComboBox>
-
-                    <TextBlock Grid.Row="2" Text="Key" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
-                    <TextBox Classes="clearButton" Grid.Row="2" Grid.Column="1" Margin="0,0,0,8" PlaceholderText="e.g. F minor"
-                             Text="{Binding Item.MusicalKey, UpdateSourceTrigger=LostFocus}" />
-
-                    <TextBlock Grid.Row="3" Text="Tags" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
-                    <TextBox Classes="clearButton" Grid.Row="3" Grid.Column="1" Margin="0,0,0,8" PlaceholderText="techno, live set, collab"
-                             Text="{Binding Item.TagsText, UpdateSourceTrigger=LostFocus}" />
-
-                    <TextBlock Grid.Row="4" Text="Favourite" VerticalAlignment="Center" Margin="0,0,8,8" Foreground="{StaticResource MutedBrush}" />
-                    <ToggleSwitch Grid.Row="4" Grid.Column="1" Margin="0,0,0,8" IsChecked="{Binding Item.Favourite}" OnContent="" OffContent="" />
-
-                    <TextBlock Grid.Row="5" Text="Notes" VerticalAlignment="Top" Margin="0,8,8,0" Foreground="{StaticResource MutedBrush}" />
-                    <TextBox Grid.Row="5" Grid.Column="1" MinHeight="70" AcceptsReturn="True" TextWrapping="Wrap"
-                             PlaceholderText="Ideas, to-dos, what this needs next…"
-                             Text="{Binding Item.Notes, UpdateSourceTrigger=LostFocus}" />
-                </Grid>
-            </Border>
-
-            <!-- Plugins -->
-            <TextBlock Text="{Binding PluginHeader}" Classes="sectionHeader" Margin="0,24,0,6" />
-            <ItemsControl ItemsSource="{Binding VisiblePlugins}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:PluginRow">
-                        <Border Classes="listRow">
-                            <StackPanel>
-                                <StackPanel>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <WrapPanel>
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Margin="0,0,8,0" />
-                                            <Border Classes="pill" Background="{StaticResource MissingSoftBrush}" Margin="0,0,6,0"
-                                                    IsVisible="{Binding !Installed}">
-                                                <TextBlock Text="Not installed" Classes="pillText" Foreground="{StaticResource MissingBrush}" />
-                                            </Border>
-                                            <Border Classes="pill" Background="{StaticResource OkSoftBrush}"
-                                                    IsVisible="{Binding Elektron, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                                <TextBlock Text="{Binding Elektron, StringFormat='Elektron · {0}'}" Classes="pillText"
-                                                           Foreground="{StaticResource OkBrush}" />
-                                            </Border>
-                                        </WrapPanel>
-                                        <TextBlock FontSize="12" Foreground="{StaticResource FaintBrush}" Margin="0,2,0,0">
-                                            <Run Text="{Binding KindText, Mode=OneWay}" />
-                                            <Run Text="{Binding Format, Mode=OneWay}" />
-                                            <Run Text="{Binding Vendor, Mode=OneWay}" />
-                                        </TextBlock>
-                                        <TextBlock Text="{Binding OtherVersion, StringFormat='You have {0} installed'}" FontSize="12"
-                                                   Foreground="{StaticResource OkBrush}" TextWrapping="Wrap" Margin="0,2,0,0"
-                                                   ToolTip.Tip="A different version of this plugin. The project won't load it by itself; swap it in."
-                                                   IsVisible="{Binding OtherVersion, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                    </StackPanel>
-                                    <WrapPanel Classes="rowActions" Margin="-4,4,0,0">
-                                        <StackPanel Orientation="Horizontal" IsVisible="{Binding !Installed}">
-                                            <Button Content="Find similar" Classes="row" Command="{Binding FindSimilarCommand}" />
-                                            <Button Content="Search online" Classes="row" Command="{Binding SearchOnlineCommand}" />
-                                        </StackPanel>
-                                        <Button Content="Preset" Classes="row"
-                                                ToolTip.Tip="Export this plugin's settings from the project as a preset"
-                                                IsVisible="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).CanExtractPresets}"
-                                                Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).ExportPluginPresetCommand}"
-                                                CommandParameter="{Binding}" />
-                                        <Button Content="Projects" Classes="row" ToolTip.Tip="Show every project that uses this plugin"
-                                                Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).ShowProjectsUsingPluginCommand}"
-                                                CommandParameter="{Binding}" />
-                                    </WrapPanel>
-                                </StackPanel>
-                                <TextBlock Text="{Binding MatchMessage}" FontSize="12" Margin="12,4,0,0" Foreground="{StaticResource MutedBrush}"
-                                           IsVisible="{Binding MatchMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                <ItemsControl ItemsSource="{Binding Matches}" ItemTemplate="{StaticResource MatchTemplate}" />
-                            </StackPanel>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-            <Button Content="{Binding SilentToggleText}" Background="Transparent" Padding="8,4" Margin="-8,4,0,0"
-                    HorizontalAlignment="Left" FontSize="12" Foreground="{StaticResource AccentBrush}"
-                    Command="{Binding ToggleSilentCommand}" ToolTip.Tip="Synths on channels that play no notes in the song"
-                    IsVisible="{Binding SilentCount, Converter={StaticResource NonZero}}" />
-
-            <!-- Samples -->
-            <TextBlock Text="{Binding SampleHeader}" Classes="sectionHeader" Margin="0,24,0,6" />
-            <ItemsControl ItemsSource="{Binding Samples}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:SampleRow">
-                        <Border Classes="listRow">
-                            <StackPanel>
-                                <DockPanel>
-                                    <StackPanel DockPanel.Dock="Right" Classes="rowActions">
-                                        <StackPanel Orientation="Horizontal" IsVisible="{Binding !Found}">
-                                            <Button Content="Find matches" Classes="row" Command="{Binding FindMatchesCommand}" />
-                                            <Button Content="Search online" Classes="row" Command="{Binding SearchOnlineCommand}" />
-                                        </StackPanel>
-                                        <Button Content="Show" Classes="row" Command="{Binding RevealCommand}" IsVisible="{Binding Found}" />
-                                    </StackPanel>
-                                    <StackPanel>
-                                        <WrapPanel>
-                                            <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
-                                            <Border Classes="pill" Background="{StaticResource MissingSoftBrush}" IsVisible="{Binding !Found}">
-                                                <TextBlock Text="Can't be found" Classes="pillText" Foreground="{StaticResource MissingBrush}" />
-                                            </Border>
-                                        </WrapPanel>
-                                        <TextBlock Text="{Binding Path}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
-                                                   ToolTip.Tip="{Binding Path}" Foreground="{StaticResource FaintBrush}" />
-                                    </StackPanel>
-                                </DockPanel>
-                                <TextBlock Text="{Binding MatchMessage}" FontSize="12" Margin="12,4,0,0" TextWrapping="Wrap"
-                                           Foreground="{StaticResource MutedBrush}"
-                                           IsVisible="{Binding MatchMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                <ItemsControl ItemsSource="{Binding Matches}" ItemTemplate="{StaticResource MatchTemplate}" />
-                            </StackPanel>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-
-            <!-- Tracks -->
-            <TextBlock Text="Tracks and channels" Classes="sectionHeader" Margin="0,24,0,8" />
-            <ItemsControl ItemsSource="{Binding Tracks}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="sys:String">
-                        <Border Margin="0,0,6,6" Padding="10,3" CornerRadius="11" Background="{StaticResource SurfaceRaisedBrush}">
-                            <TextBlock Text="{Binding}" FontSize="12" />
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-
-            <!-- Details -->
-            <TextBlock Text="Details" Classes="sectionHeader" Margin="0,20,0,8" />
-            <Border Classes="panel">
-                <ItemsControl ItemsSource="{Binding Facts}">
-                    <ItemsControl.ItemTemplate>
-                        <!-- A generic pair, which compiled bindings can't name, so this one binds by reflection. -->
-                        <DataTemplate x:CompileBindings="False">
-                            <Grid Margin="0,3" ColumnDefinitions="130,*">
-                                <TextBlock Text="{Binding Key}" Foreground="{StaticResource MutedBrush}" FontSize="12" />
-                                <TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" FontSize="12" />
-                            </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </Border>
-
-            <!-- Older numbered saves of this song (Song_2, Song_3 …), newest first -->
-            <StackPanel IsVisible="{Binding HasOlderSaves}">
-                <TextBlock Text="{Binding OlderSavesHeader}" Classes="sectionHeader" Margin="0,24,0,6" />
-                <ItemsControl ItemsSource="{Binding OlderSaves}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="lib:ProjectSummary">
-                            <Border Classes="listRow" Padding="10,4">
-                                <DockPanel>
-                                    <StackPanel DockPanel.Dock="Right" Classes="rowActions">
-                                        <Button Content="Open" Classes="row"
-                                                Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).OpenSaveCommand}"
-                                                CommandParameter="{Binding}" />
-                                        <Button Content="Show" Classes="row"
-                                                Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).RevealSaveCommand}"
-                                                CommandParameter="{Binding}" />
-                                    </StackPanel>
-                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Modified, StringFormat='d MMM yyyy'}" Margin="8,0"
-                                               VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource FaintBrush}" />
-                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                                               ToolTip.Tip="{Binding Path}" />
-                                </DockPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
         </StackPanel>
-    </ScrollViewer>
+
+        <TabControl Margin="12,14,12,0" Classes="detailTabs">
+            <TabItem Header="Overview">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12,14,12,20">
+                        <!-- Trouble first: what's missing, in one red card. -->
+                        <Border Classes="trouble" IsVisible="{Binding Item.HasMissing}" Margin="0,0,0,18">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Left" Width="34" Height="34" CornerRadius="10" Background="#33F0616D" Margin="0,0,14,0">
+                                    <TextBlock Text="!" FontWeight="Bold" FontSize="16" Foreground="{StaticResource MissingBrush}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Item.MissingText, StringFormat='{}{0} missing'}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                    <TextBlock Text="It will open with gaps. The Plugins and Samples tabs say what to do." FontSize="12"
+                                               Foreground="#FFC9A3A8" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <TextBlock Text="WHERE IT'S AT" Classes="filterLabel" />
+                        <ListBox Classes="chips" ItemsSource="{x:Static vm:ProjectsViewModel.StatusChoices}" SelectedItem="{Binding Item.Status}"
+                                 Margin="0,2,0,16">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                        </ListBox>
+
+                        <Grid ColumnDefinitions="*,16,*" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="RATING" Classes="filterLabel" />
+                                <ComboBox HorizontalAlignment="Stretch" ItemsSource="{x:Static vm:ProjectsViewModel.RatingChoices}"
+                                          SelectedItem="{Binding Item.Rating}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="sys:Int32">
+                                            <TextBlock Text="{Binding Converter={StaticResource RatingText}}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="FAVOURITE" Classes="filterLabel" />
+                                <ToggleSwitch IsChecked="{Binding Item.Favourite}" OnContent="Yes" OffContent="No" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid ColumnDefinitions="*,16,2*" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="KEY" Classes="filterLabel" />
+                                <TextBox Classes="clearButton" PlaceholderText="e.g. F minor"
+                                         Text="{Binding Item.MusicalKey, UpdateSourceTrigger=LostFocus}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="TAGS" Classes="filterLabel" />
+                                <TextBox Classes="clearButton" PlaceholderText="techno, live set, collab"
+                                         Text="{Binding Item.TagsText, UpdateSourceTrigger=LostFocus}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="NOTES" Classes="filterLabel" />
+                        <TextBox MinHeight="90" AcceptsReturn="True" TextWrapping="Wrap"
+                                 PlaceholderText="Ideas, to-dos, what this needs next…"
+                                 Text="{Binding Item.Notes, UpdateSourceTrigger=LostFocus}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Plugins">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12,14,12,20">
+                        <TextBlock Text="{Binding PluginHeader}" Classes="sectionHeader" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding VisiblePlugins}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:PluginRow">
+                                    <Border Classes="listRow">
+                                        <StackPanel>
+                                            <StackPanel>
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <WrapPanel>
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Margin="0,0,8,0" />
+                                                        <Border Classes="pill" Background="{StaticResource MissingSoftBrush}" Margin="0,0,6,0"
+                                                                IsVisible="{Binding !Installed}">
+                                                            <TextBlock Text="Not installed" Classes="pillText" Foreground="{StaticResource MissingBrush}" />
+                                                        </Border>
+                                                        <Border Classes="pill" Background="{StaticResource OkSoftBrush}"
+                                                                IsVisible="{Binding Elektron, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                                            <TextBlock Text="{Binding Elektron, StringFormat='Elektron · {0}'}" Classes="pillText"
+                                                                       Foreground="{StaticResource OkBrush}" />
+                                                        </Border>
+                                                    </WrapPanel>
+                                                    <TextBlock FontSize="12" Foreground="{StaticResource FaintBrush}" Margin="0,2,0,0">
+                                                        <Run Text="{Binding KindText, Mode=OneWay}" />
+                                                        <Run Text="{Binding Format, Mode=OneWay}" />
+                                                        <Run Text="{Binding Vendor, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding OtherVersion, StringFormat='You have {0} installed'}" FontSize="12"
+                                                               Foreground="{StaticResource OkBrush}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                               ToolTip.Tip="A different version of this plugin. The project won't load it by itself; swap it in."
+                                                               IsVisible="{Binding OtherVersion, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                                </StackPanel>
+                                                <WrapPanel Classes="rowActions" Margin="-4,4,0,0">
+                                                    <StackPanel Orientation="Horizontal" IsVisible="{Binding !Installed}">
+                                                        <Button Content="Find similar" Classes="row" Command="{Binding FindSimilarCommand}" />
+                                                        <Button Content="Search online" Classes="row" Command="{Binding SearchOnlineCommand}" />
+                                                    </StackPanel>
+                                                    <Button Content="Preset" Classes="row"
+                                                            ToolTip.Tip="Export this plugin's settings from the project as a preset"
+                                                            IsVisible="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).CanExtractPresets}"
+                                                            Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).ExportPluginPresetCommand}"
+                                                            CommandParameter="{Binding}" />
+                                                    <Button Content="Projects" Classes="row" ToolTip.Tip="Show every project that uses this plugin"
+                                                            Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).ShowProjectsUsingPluginCommand}"
+                                                            CommandParameter="{Binding}" />
+                                                </WrapPanel>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding MatchMessage}" FontSize="12" Margin="12,4,0,0" Foreground="{StaticResource MutedBrush}"
+                                                       IsVisible="{Binding MatchMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                            <ItemsControl ItemsSource="{Binding Matches}" ItemTemplate="{StaticResource MatchTemplate}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Button Content="{Binding SilentToggleText}" Background="Transparent" Padding="8,4" Margin="-8,4,0,0"
+                                HorizontalAlignment="Left" FontSize="12" Foreground="{StaticResource AccentBrush}"
+                                Command="{Binding ToggleSilentCommand}" ToolTip.Tip="Synths on channels that play no notes in the song"
+                                IsVisible="{Binding SilentCount, Converter={StaticResource NonZero}}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Samples">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12,14,12,20">
+                        <TextBlock Text="{Binding SampleHeader}" Classes="sectionHeader" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding Samples}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:SampleRow">
+                                    <Border Classes="listRow">
+                                        <StackPanel>
+                                            <DockPanel>
+                                                <StackPanel DockPanel.Dock="Right" Classes="rowActions">
+                                                    <StackPanel Orientation="Horizontal" IsVisible="{Binding !Found}">
+                                                        <Button Content="Find matches" Classes="row" Command="{Binding FindMatchesCommand}" />
+                                                        <Button Content="Search online" Classes="row" Command="{Binding SearchOnlineCommand}" />
+                                                    </StackPanel>
+                                                    <Button Content="Show" Classes="row" Command="{Binding RevealCommand}" IsVisible="{Binding Found}" />
+                                                </StackPanel>
+                                                <StackPanel>
+                                                    <WrapPanel>
+                                                        <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                                        <Border Classes="pill" Background="{StaticResource MissingSoftBrush}" IsVisible="{Binding !Found}">
+                                                            <TextBlock Text="Can't be found" Classes="pillText" Foreground="{StaticResource MissingBrush}" />
+                                                        </Border>
+                                                    </WrapPanel>
+                                                    <TextBlock Text="{Binding Path}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
+                                                               ToolTip.Tip="{Binding Path}" Foreground="{StaticResource FaintBrush}" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding MatchMessage}" FontSize="12" Margin="12,4,0,0" TextWrapping="Wrap"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       IsVisible="{Binding MatchMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                            <ItemsControl ItemsSource="{Binding Matches}" ItemTemplate="{StaticResource MatchTemplate}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Saves" IsVisible="{Binding HasOlderSaves}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12,14,12,20">
+                        <TextBlock Text="{Binding OlderSavesHeader}" Classes="sectionHeader" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding OlderSaves}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="lib:ProjectSummary">
+                                    <Border Classes="listRow" Padding="10,4">
+                                        <DockPanel>
+                                            <StackPanel DockPanel.Dock="Right" Classes="rowActions">
+                                                <Button Content="Open" Classes="row"
+                                                        Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).OpenSaveCommand}"
+                                                        CommandParameter="{Binding}" />
+                                                <Button Content="Show" Classes="row"
+                                                        Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).RevealSaveCommand}"
+                                                        CommandParameter="{Binding}" />
+                                            </StackPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="{Binding Modified, StringFormat='d MMM yyyy'}" Margin="8,0"
+                                                       VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource FaintBrush}" />
+                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                                       ToolTip.Tip="{Binding Path}" />
+                                        </DockPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Details">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12,14,12,20">
+                        <TextBlock Text="Tracks and channels" Classes="sectionHeader" Margin="0,0,0,8" />
+                        <ItemsControl ItemsSource="{Binding Tracks}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="sys:String">
+                                    <Border Margin="0,0,6,6" Padding="10,3" CornerRadius="11" Background="{StaticResource SurfaceRaisedBrush}">
+                                        <TextBlock Text="{Binding}" FontSize="12" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="File" Classes="sectionHeader" Margin="0,16,0,8" />
+                        <Border Classes="panel">
+                            <ItemsControl ItemsSource="{Binding Facts}">
+                                <ItemsControl.ItemTemplate>
+                                    <!-- A generic pair, which compiled bindings can't name, so this one binds by reflection. -->
+                                    <DataTemplate x:CompileBindings="False">
+                                        <Grid Margin="0,3" ColumnDefinitions="130,*">
+                                            <TextBlock Text="{Binding Key}" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" FontSize="12" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
 </UserControl>

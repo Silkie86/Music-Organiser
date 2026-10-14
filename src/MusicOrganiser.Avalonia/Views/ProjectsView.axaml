@@ -4,146 +4,135 @@
              xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.ProjectsView"
              x:DataType="vm:ProjectsViewModel">
-    <Grid RowDefinitions="Auto,*">
+    <Grid RowDefinitions="Auto,Auto,*">
         <!-- The splitter can't squeeze the list or the selected project's panel to nothing. -->
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" MinWidth="420" />
-            <ColumnDefinition Width="12" />
-            <ColumnDefinition Width="400" MinWidth="320" />
+            <ColumnDefinition Width="16" />
+            <ColumnDefinition Width="440" MinWidth="340" />
         </Grid.ColumnDefinitions>
-        <!-- Header -->
-        <DockPanel Grid.ColumnSpan="4" Margin="0,0,0,18">
-<ToggleButton x:Name="FiltersToggle" DockPanel.Dock="Right" Classes="filters" IsChecked="True" Margin="10,0,0,0"
-                          ToolTip.Tip="Show or hide the filters, to give the list more room">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Path Data="{StaticResource FilterIcon}" Classes="navIcon" Width="14" Height="14" Stroke="{Binding $parent[ToggleButton].Foreground}" />
-                    <TextBlock Text="Filters" />
-                </StackPanel>
-            </ToggleButton>
-            <TextBox x:Name="Search" Classes="clearButton" DockPanel.Dock="Right" Width="360" VerticalAlignment="Center"
-                     PlaceholderText="{x:Static views:Keys.SearchProjects}" Text="{Binding SearchText}"
-                     ToolTip.Tip="Several words find projects matching all of them, e.g. &quot;serum dark 2019&quot;. Down arrow goes to the list, Esc clears." />
-            <StackPanel>
-                <TextBlock Text="Projects" Classes="pageTitle" />
-                <TextBlock Text="{Binding CountText}" Classes="pageSubtitle" />
+
+        <!-- One big search box, and how many songs it leaves. -->
+        <DockPanel Grid.ColumnSpan="3">
+            <StackPanel DockPanel.Dock="Right" Margin="18,0,0,0" VerticalAlignment="Center">
+                <TextBlock Text="{Binding CountText}" FontSize="13" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
             </StackPanel>
+            <TextBox x:Name="Search" Classes="clearButton bigSearch" VerticalAlignment="Center"
+                     PlaceholderText="{x:Static views:Keys.SearchProjects}" Text="{Binding SearchText}"
+                     ToolTip.Tip="Several words find projects matching all of them, e.g. &quot;serum dark 2019&quot;. Down arrow goes to the list, Esc clears.">
+                <TextBox.InnerLeftContent>
+                    <Path Data="M11,4 A7,7 0 1 1 10.99,4 Z M20,20 L16.5,16.5" Classes="navIcon" Margin="16,0,4,0" />
+                </TextBox.InnerLeftContent>
+            </TextBox>
         </DockPanel>
 
-        <!-- Filters -->
-        <Border Grid.Row="1" Classes="card" Margin="0,0,16,0" Padding="14,14,4,14" Width="240"
-                IsVisible="{Binding #FiltersToggle.IsChecked}">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="0,0,10,0">
-                    <TextBlock Text="DAW" Classes="filterLabel" />
-                    <ComboBox ItemsSource="{Binding DawFilters}" SelectedItem="{Binding DawFilter}" Margin="0,0,0,14" />
-                    <TextBlock Text="STATUS" Classes="filterLabel" />
-                    <ComboBox ItemsSource="{Binding StatusFilters}" SelectedItem="{Binding StatusFilter}" Margin="0,0,0,14" />
-                    <TextBlock Text="TAG" Classes="filterLabel" />
-                    <ComboBox ItemsSource="{Binding TagFilters}" SelectedItem="{Binding TagFilter}" Margin="0,0,0,14" />
-                    <TextBlock Text="ELEKTRON BOX" Classes="filterLabel" />
-                    <ComboBox ItemsSource="{Binding HardwareFilters}" SelectedItem="{Binding HardwareFilter}" Margin="0,0,0,14"
-                              ToolTip.Tip="Projects that talk to an Elektron box through Overbridge" />
-                    <TextBlock Text="GROUP BY" Classes="filterLabel" />
-                    <ComboBox ItemsSource="{x:Static vm:ProjectsViewModel.GroupChoices}" SelectedItem="{Binding GroupBy}" Margin="0,0,0,16" />
-
-                    <Border Height="1" Background="{StaticResource StrokeBrush}" Margin="0,0,0,12" />
-                    <CheckBox Content="Favourites only" IsChecked="{Binding OnlyFavourites}" />
-                    <CheckBox Content="Missing plugins or samples" IsChecked="{Binding OnlyMissing}" />
-                    <CheckBox Content="Hide archived" IsChecked="{Binding HideArchived}" />
-                    <CheckBox Content="One row per song" IsChecked="{Binding GroupSaves}" Margin="0,0,0,14"
-                              ToolTip.Tip="Show numbered saves (Song_2, Song_3 …) as one song, opening the newest" />
-
-                    <Button Content="Clear filters" Command="{Binding ClearFiltersCommand}" HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Center" Background="Transparent" />
+        <!-- Filters as chips: the DAW, two quick toggles, the rest under More. -->
+        <WrapPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,12,0,14">
+            <ListBox Classes="chips" ItemsSource="{Binding DawFilters}" SelectedItem="{Binding DawFilter}">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="x:String">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Ellipse Width="8" Height="8" VerticalAlignment="Center" Fill="{Binding Converter={StaticResource DawBrush}}"
+                                     IsVisible="{Binding Converter={StaticResource NotAny}}" />
+                            <TextBlock Text="{Binding Converter={StaticResource DawChipText}}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <Border Width="1" Height="22" Background="{StaticResource StrokeBrush}" Margin="6,0,12,0" VerticalAlignment="Center" />
+            <ToggleButton Classes="chip" IsChecked="{Binding OnlyMissing}" ToolTip.Tip="Only projects with missing plugins or samples">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Ellipse Width="8" Height="8" Fill="{StaticResource MissingBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="Has missing stuff" VerticalAlignment="Center" />
                 </StackPanel>
-            </ScrollViewer>
-        </Border>
+            </ToggleButton>
+            <ToggleButton Classes="chip" IsChecked="{Binding OnlyFavourites}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="★" Foreground="{StaticResource WarningBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="Favourites" VerticalAlignment="Center" />
+                </StackPanel>
+            </ToggleButton>
+            <Button Classes="chip" ToolTip.Tip="Status, tag, Elektron box, grouping, archived and older saves">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Path Data="{StaticResource FilterIcon}" Classes="navIcon" Width="14" Height="14" />
+                    <TextBlock Text="More" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button.Flyout>
+                    <Flyout Placement="BottomEdgeAlignedLeft">
+                        <StackPanel Width="260" Margin="4">
+                            <TextBlock Text="STATUS" Classes="filterLabel" />
+                            <ComboBox ItemsSource="{Binding StatusFilters}" SelectedItem="{Binding StatusFilter}" Margin="0,0,0,12" HorizontalAlignment="Stretch" />
+                            <TextBlock Text="TAG" Classes="filterLabel" />
+                            <ComboBox ItemsSource="{Binding TagFilters}" SelectedItem="{Binding TagFilter}" Margin="0,0,0,12" HorizontalAlignment="Stretch" />
+                            <TextBlock Text="ELEKTRON BOX" Classes="filterLabel" />
+                            <ComboBox ItemsSource="{Binding HardwareFilters}" SelectedItem="{Binding HardwareFilter}" Margin="0,0,0,12" HorizontalAlignment="Stretch"
+                                      ToolTip.Tip="Projects that talk to an Elektron box through Overbridge" />
+                            <TextBlock Text="GROUP BY" Classes="filterLabel" />
+                            <ComboBox ItemsSource="{x:Static vm:ProjectsViewModel.GroupChoices}" SelectedItem="{Binding GroupBy}" Margin="0,0,0,12" HorizontalAlignment="Stretch" />
+                            <CheckBox Content="Hide archived" IsChecked="{Binding HideArchived}" />
+                            <CheckBox Content="One row per song" IsChecked="{Binding GroupSaves}" Margin="0,0,0,10"
+                                      ToolTip.Tip="Show numbered saves (Song_2, Song_3 …) as one song, opening the newest" />
+                            <Button Content="Clear all filters" Command="{Binding ClearFiltersCommand}" HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center" />
+                        </StackPanel>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
+        </WrapPanel>
 
-        <!-- Project list -->
-        <Border Grid.Row="1" Grid.Column="1" Classes="card" Padding="8,10,8,8">
-            <DockPanel>
-                <Border DockPanel.Dock="Top" Padding="12,8" Margin="4,0,4,8" CornerRadius="8"
-                        Background="{StaticResource AccentFaintBrush}" IsVisible="{Binding HasIdFilter}">
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Show all" Command="{Binding ClearFiltersCommand}" />
-                        <TextBlock Text="{Binding IdFilterLabel}" VerticalAlignment="Center" FontWeight="SemiBold" />
-                    </DockPanel>
-                </Border>
+        <!-- The list: two lines per song, a stripe in its DAW's colour, grouped by when it was saved. -->
+        <DockPanel Grid.Row="2">
+            <Border DockPanel.Dock="Top" Padding="12,8" Margin="0,0,0,8" CornerRadius="8"
+                    Background="{StaticResource AccentFaintBrush}" IsVisible="{Binding HasIdFilter}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Show all" Command="{Binding ClearFiltersCommand}" />
+                    <TextBlock Text="{Binding IdFilterLabel}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                </DockPanel>
+            </Border>
 
-                <DataGrid x:Name="Grid" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
-                          AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" CanUserReorderColumns="True"
-                          CanUserSortColumns="True" GridLinesVisibility="None" Background="Transparent"
-                          DoubleTapped="OnDoubleTapped" views:FileDrag.Source="{Binding}">
-                    <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="" Width="34" SortMemberPath="Favourite">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate x:DataType="vm:ProjectItem">
-                                    <TextBlock Text="{Binding Favourite, Converter={StaticResource BoolToStar}}"
-                                               Foreground="{StaticResource WarningBrush}" FontSize="14" VerticalAlignment="Center" Margin="8,0" />
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Name" Width="*" MinWidth="200" SortMemberPath="Name">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate x:DataType="vm:ProjectItem">
-                                    <DockPanel Margin="8,0">
-                                        <TextBlock DockPanel.Dock="Right" Text="{Binding OpenIn}" FontSize="11" Margin="8,0,0,0"
-                                                   VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
-                                                   IsVisible="{Binding OpenIn, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center" ToolTip.Tip="{Binding Path}" />
-                                    </DockPanel>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Modified" Width="114" SortMemberPath="Modified"
-                                            Binding="{Binding Modified, StringFormat='d MMM yyyy'}" x:DataType="vm:ProjectItem" />
-                        <DataGridTemplateColumn Header="DAW" Width="110" SortMemberPath="Daw">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate x:DataType="vm:ProjectItem">
-                                    <Border Classes="pill" Margin="8,0"
-                                            Background="{Binding Daw, Converter={StaticResource DawBrush}, ConverterParameter=Soft}">
-                                        <TextBlock Text="{Binding Daw}" Classes="pillText"
-                                                   Foreground="{Binding Daw, Converter={StaticResource DawBrush}}" />
-                                    </Border>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Missing" Width="170" SortMemberPath="HasMissing">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate x:DataType="vm:ProjectItem">
-                                    <Border Classes="pill" Margin="8,0" Background="{StaticResource MissingSoftBrush}"
-                                            IsVisible="{Binding MissingText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                                            ToolTip.Tip="Missing plugins / missing samples">
-                                        <TextBlock Text="{Binding MissingText}" Classes="pillText"
-                                                   Foreground="{StaticResource MissingBrush}" TextTrimming="CharacterEllipsis" />
-                                    </Border>
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Status" Width="84" Binding="{Binding Status}" x:DataType="vm:ProjectItem" />
-                        <DataGridTemplateColumn Header="Rating" Width="76" SortMemberPath="Rating">
-                            <DataGridTemplateColumn.CellTemplate>
-                                <DataTemplate x:DataType="vm:ProjectItem">
-                                    <TextBlock Text="{Binding Rating, Converter={StaticResource Stars}}" Foreground="{StaticResource AccentBrush}"
-                                               VerticalAlignment="Center" Margin="8,0" />
-                                </DataTemplate>
-                            </DataGridTemplateColumn.CellTemplate>
-                        </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="BPM" Width="56" SortMemberPath="Tempo" Binding="{Binding TempoText}" x:DataType="vm:ProjectItem" />
-                        <DataGridTextColumn Header="Key" Width="56" Binding="{Binding MusicalKey}" x:DataType="vm:ProjectItem" />
-                        <DataGridTextColumn Header="Plugins" Width="66" Binding="{Binding PluginCount}" x:DataType="vm:ProjectItem" />
-                        <DataGridTextColumn Header="Saves" Width="60" Binding="{Binding SaveCount}" x:DataType="vm:ProjectItem" />
-                    </DataGrid.Columns>
-                </DataGrid>
-            </DockPanel>
-        </Border>
+            <DataGrid x:Name="Grid" Classes="songs" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
+                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="None"
+                      CanUserSortColumns="False" CanUserResizeColumns="False" CanUserReorderColumns="False"
+                      GridLinesVisibility="None" Background="Transparent" views:ColumnFloor.Enabled="False" RowHeight="64"
+                      DoubleTapped="OnDoubleTapped" views:FileDrag.Source="{Binding}">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Width="*">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate x:DataType="vm:ProjectItem">
+                                <DockPanel Height="60" Margin="0,0,14,0" Background="Transparent" ToolTip.Tip="{Binding Path}">
+                                    <Border DockPanel.Dock="Left" Width="4" Height="36" CornerRadius="2" Margin="10,0,14,0"
+                                            Background="{Binding Daw, Converter={StaticResource DawBrush}}" />
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding ShortDate}" Width="86" TextAlignment="Right" FontSize="12.5"
+                                               VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                    <TextBlock DockPanel.Dock="Right" Text="★" Margin="12,0,0,0" VerticalAlignment="Center"
+                                               Foreground="{StaticResource WarningBrush}" IsVisible="{Binding Favourite}" />
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                IsVisible="{Binding HasMissing}" ToolTip.Tip="{Binding MissingText, StringFormat='{}{0} missing'}">
+                                        <Ellipse Width="7" Height="7" Fill="{StaticResource MissingBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding MissingCount}" FontSize="12" Foreground="#FFF0838D" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding OpenIn}" FontSize="11" Margin="12,0,0,0" VerticalAlignment="Center"
+                                               Foreground="{StaticResource OkBrush}"
+                                               IsVisible="{Binding OpenIn, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                    <StackPanel VerticalAlignment="Center" Spacing="3">
+                                        <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding DetailsLine}" FontSize="12.5" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
 
-        <GridSplitter Grid.Row="1" Grid.Column="2" Width="12" Background="Transparent" ResizeDirection="Columns" />
+        <GridSplitter Grid.Row="2" Grid.Column="1" Width="16" Background="Transparent" ResizeDirection="Columns" />
 
         <!-- Selected project -->
-        <Border Grid.Row="1" Grid.Column="3" Classes="card" Padding="0">
+        <Border Grid.Row="2" Grid.Column="2" Classes="card" Padding="0">
             <Grid>
                 <ContentControl Content="{Binding Detail}" IsVisible="{Binding Detail, Converter={x:Static ObjectConverters.IsNotNull}}">
                     <ContentControl.ContentTemplate>

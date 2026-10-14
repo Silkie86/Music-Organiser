@@ -25,6 +25,10 @@
         <x:Double x:Key="DataGridSortIconMinWidth">0</x:Double>
 
         <local:DawBrush x:Key="DawBrush" />
+        <local:NavLabel x:Key="NavLabel" />
+        <local:NavDock x:Key="NavDock" />
+        <local:DawChipText x:Key="DawChipText" />
+        <local:NotAny x:Key="NotAny" />
         <local:BoolToStar x:Key="BoolToStar" />
         <local:Stars x:Key="Stars" />
         <local:NonZero x:Key="NonZero" />
@@ -69,6 +73,7 @@
         <StreamGeometry x:Key="NavIcon.Settings">M4,6 L13,6 M17,6 L20,6 M15,4 L15,8 M4,12 L7,12 M11,12 L20,12 M9,10 L9,14 M4,18 L15,18 M19,18 L20,18 M17,16 L17,20</StreamGeometry>
         <!-- Six dots: "you can drag this row". -->
         <StreamGeometry x:Key="GripIcon">M0,0 h2 v2 h-2 Z M4,0 h2 v2 h-2 Z M0,4 h2 v2 h-2 Z M4,4 h2 v2 h-2 Z M0,8 h2 v2 h-2 Z M4,8 h2 v2 h-2 Z</StreamGeometry>
+        <StreamGeometry x:Key="RescanIcon">M20,11 A8,8 0 1 0 17.7,16.7 M20,5 L20,11 L14,11</StreamGeometry>
         <StreamGeometry x:Key="FilterIcon">M4,6 L20,6 M7,12 L17,12 M10,18 L14,18</StreamGeometry>
         <local:NavIcon x:Key="NavIcon" />
     </Application.Resources>
@@ -173,11 +178,16 @@
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         </Style>
 
-        <!-- Sidebar navigation: an icon and a title, a soft violet pill for the page you're on. -->
+        <!-- The rail: an icon over a short label, a soft violet tile for the page you're on. -->
         <Style Selector="ListBox.nav ListBoxItem">
-            <Setter Property="Padding" Value="10,8" />
-            <Setter Property="Margin" Value="0,1" />
-            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="DockPanel.Dock" Value="{ReflectionBinding Converter={StaticResource NavDock}}" />
+            <Setter Property="Width" Value="64" />
+            <Setter Property="Height" Value="58" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="10,2" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
         </Style>
         <Style Selector="ListBox.nav ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
@@ -194,6 +204,23 @@
         </Style>
         <Style Selector="ListBox.nav ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+        </Style>
+        <!-- Small square buttons on the rail (scan), and the DAW lights above them. -->
+        <Style Selector="Button.railButton">
+            <Setter Property="Width" Value="44" />
+            <Setter Property="Height" Value="44" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
+        <Style Selector="Button.dawLight">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding" Value="6,5" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
         </Style>
         <Style Selector="ListBox.nav ListBoxItem:selected Path.navIcon">
             <Setter Property="Stroke" Value="{StaticResource AccentBrush}" />
@@ -237,6 +264,68 @@
         </Style>
         <Style Selector="ListBoxItem:pointerover Path.grip">
             <Setter Property="Opacity" Value="1" />
+        </Style>
+        <!-- Chips: small round filters under a search box. A ListBox.chips is a pick-one row; ToggleButton.chip is on/off. -->
+        <Style Selector="ListBox.chips">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem, ToggleButton.chip, Button.chip">
+            <Setter Property="Height" Value="34" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="Margin" Value="0,0,8,6" />
+            <Setter Property="CornerRadius" Value="17" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="Foreground" Value="#FFC9CBD2" />
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="CornerRadius" Value="17" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter, ListBox.chips ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter, ListBox.chips ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.chip:checked /template/ ContentPresenter#PART_ContentPresenter, ToggleButton.chip:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <!-- The big search box at the top of a page. -->
+        <Style Selector="TextBox.bigSearch">
+            <Setter Property="Height" Value="52" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="6,0,12,0" />
+        </Style>
+        <!-- The song list: rows are the whole card, no column headers, a time heading over each group. -->
+        <Style Selector="DataGrid.songs DataGridRow">
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+        <Style Selector="DataGrid.songs DataGridCell">
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <Style Selector="DataGrid.songs DataGridRowGroupHeader">
+            <Setter Property="IsPropertyNameVisible" Value="False" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="#FFC9CBD2" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Margin" Value="0,10,0,4" />
         </Style>
         <!-- Columns can be widened and moved, as in the Windows app (Avalonia's grid allows neither by default). -->
         <Style Selector="DataGrid">

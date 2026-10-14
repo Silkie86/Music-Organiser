@@ -42,6 +42,27 @@ public sealed partial class ProjectItem : ObservableObject
     public DateTime Modified => _p.Modified;
     public int Year => _p.Modified.Year;
     public string MonthGroup => _p.Modified.ToString("yyyy · MMMM");
+    /// <summary>The list's time heading: "This week", "This month", "Earlier in 2026", then one per year.</summary>
+    public string WhenGroup => WhenGroupFor(_p.Modified, DateTime.Now);
+    /// <summary>"3 Aug" this year, "3 Aug 2019" before.</summary>
+    public string ShortDate => _p.Modified.Year == DateTime.Now.Year ? _p.Modified.ToString("d MMM") : _p.Modified.ToString("d MMM yyyy");
+    /// <summary>The row's second line: "FL Studio · 140 BPM · G minor · 77 saves", leaving out what isn't known.</summary>
+    public string DetailsLine => string.Join(" · ", new[]
+    {
+        Daw,
+        Tempo is { } t ? $"{t:0.##} BPM" : null,
+        string.IsNullOrWhiteSpace(MusicalKey) ? null : MusicalKey,
+        SaveCount > 1 ? $"{SaveCount} saves" : null,
+    }.OfType<string>());
+    public int MissingCount => _p.MissingPlugins + _p.MissingSamples;
+
+    public static string WhenGroupFor(DateTime modified, DateTime now)
+    {
+        if (modified > now.Date.AddDays(-7)) return "This week";
+        if (modified.Year == now.Year && modified.Month == now.Month) return "This month";
+        if (modified.Year == now.Year) return $"Earlier in {now.Year}";
+        return modified.Year.ToString();
+    }
     public double? Tempo => _p.Tempo;
     public string TempoText => _p.Tempo is { } t ? t.ToString("0.##") : "";
     public long Size => _p.Size;
@@ -70,7 +91,7 @@ public sealed partial class ProjectItem : ObservableObject
     [ObservableProperty] string _status;
     [ObservableProperty] int _rating;
     [ObservableProperty] bool _favourite;
-    [ObservableProperty] string _musicalKey;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(DetailsLine))] string _musicalKey;
     [ObservableProperty] string _notes;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(TagsText))] IReadOnlyList<string> _tags;
 

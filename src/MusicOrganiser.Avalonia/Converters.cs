@@ -1,8 +1,10 @@
 using System.Globalization;
+using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
+using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia;
 
@@ -11,18 +13,54 @@ public sealed class DawBrush : IValueConverter
 {
     static readonly Dictionary<string, Color> Colours = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Bitwig Studio"] = Color.FromRgb(0xFF, 0x8A, 0x4C),
-        ["FL Studio"] = Color.FromRgb(0x9C, 0xD0, 0x6A),
-        ["Studio One"] = Color.FromRgb(0x5A, 0xAE, 0xFF),
+        ["Bitwig Studio"] = Color.FromRgb(0xF2, 0x99, 0x4A),
+        ["FL Studio"] = Color.FromRgb(0x5E, 0xA8, 0xFF),
+        ["Studio One"] = Color.FromRgb(0x4A, 0xCB, 0x8B),
     };
 
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        var c = Colours.TryGetValue(value as string ?? "", out var found) ? found : Color.FromRgb(0x9A, 0x9D, 0xA7);
+        var known = Colours.TryGetValue(value as string ?? "", out var found);
+        var c = known ? found : Color.FromRgb(0x67, 0x6A, 0x74);
+        // "Light": a DAW light's fill, lit in the DAW's colour, hollow when it isn't answering.
+        if (parameter as string == "Light") return known ? new ImmutableSolidColorBrush(c) : Brushes.Transparent;
         if (parameter as string == "Soft") c = Color.FromArgb(0x26, c.R, c.G, c.B);
         return new ImmutableSolidColorBrush(c);
     }
 
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>The short label under a rail icon: "Sound Lab" fits as "Sounds".</summary>
+public sealed class NavLabel : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value as string == "Sound Lab" ? "Sounds" : value;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>Settings docks at the bottom of the rail; every other place stacks from the top.</summary>
+public sealed class NavDock : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is NavItem { Title: "Settings" } ? Dock.Bottom : Dock.Top;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>The DAW chips: "Any" reads "All DAWs".</summary>
+public sealed class DawChipText : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value as string == ProjectsViewModel.Any ? "All DAWs" : value;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+public sealed class NotAny : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value as string != ProjectsViewModel.Any;
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
 
