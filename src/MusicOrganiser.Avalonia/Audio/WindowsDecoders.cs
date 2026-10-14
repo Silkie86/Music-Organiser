@@ -8,8 +8,8 @@ namespace MusicOrganiser.Avalonia.Audio;
 /// Windows' own decoders, as the WPF app uses them. Media Foundation lets the Sound Lab and the
 /// player read MP3, FLAC, M4A, OGG, WMA and AAC (WAV and AIFF are read by the Sound Lab itself),
 /// and Windows' audio codecs let the player play WAVs the Sound Lab can't read (ADPCM, µ-law, A-law,
-/// GSM, as old drum-machine packs often are, and 64-bit float). On a Mac or Linux those files are listed but can't be
-/// played or analysed yet.
+/// GSM, as old drum-machine packs often are). On a Mac or Linux there's nothing to read MP3, FLAC and the
+/// rest yet, so the Sound Lab leaves them out there.
 /// </summary>
 [SupportedOSPlatform("windows")]
 static class WindowsDecoders

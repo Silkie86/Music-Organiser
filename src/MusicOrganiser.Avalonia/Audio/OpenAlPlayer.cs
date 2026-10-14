@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using MusicOrganiser.Core;
 using MusicOrganiser.ViewModels;
 using Avalonia.Threading;
@@ -45,6 +46,10 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
     {
         try
         {
+            // Silk.NET looks for the bundled OpenAL Soft by the system's own id (ubuntu.24.04-x64, say)
+            // and on Ubuntu never tries linux-x64, where the library sits. .NET's own search finds it, and
+            // once it's loaded Silk's "libopenal.so.1" picks up that copy (its soname).
+            if (OperatingSystem.IsLinux()) NativeLibrary.TryLoad("libopenal.so", typeof(OpenAlPlayer).Assembly, null, out _);
             var alc = ALContext.GetApi(true);
             var al = AL.GetApi(true);
             var device = alc.OpenDevice("");
@@ -53,7 +58,7 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
             alc.MakeContextCurrent(context);
             return (al, alc);
         }
-        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException)
+        catch (Exception e) when (e is DllNotFoundException or FileNotFoundException or EntryPointNotFoundException or InvalidOperationException)
         {
             return null;
         }

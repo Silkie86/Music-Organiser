@@ -35,9 +35,12 @@ public sealed class AudioTests : IDisposable
 
     static float Sample(int frame, int channel) => frame % 100000 / 200000f + channel / 10f;
 
-    static void NeedSilentOutput() =>
-        Assert.SkipUnless(Environment.GetEnvironmentVariable("ALSOFT_DRIVERS") == "null" && OpenAlPlayer.HasOutput,
+    static void NeedSilentOutput()
+    {
+        Assert.SkipUnless(Environment.GetEnvironmentVariable("ALSOFT_DRIVERS") == "null",
             "Plays sound: run with ALSOFT_DRIVERS=null for OpenAL's silent output");
+        Assert.True(OpenAlPlayer.HasOutput, "The bundled OpenAL Soft didn't load, so the app would have no sound here");
+    }
 
     [Fact]
     public void Channels_past_the_first_two_are_heard_on_both_sides()
