@@ -218,6 +218,40 @@ public class BitwigLiveTestsTests
     }
 
     [Fact]
+    public async Task StopsWhenAnotherProjectComesToTheFrontWhileBitwigMakesAChange()
+    {
+        var dir = Fixtures.TempDir();
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        if (bitwig is null) return;
+        bitwig.Change("""{"project": "MO Live Test"}""");
+        // After the app's own check, while Bitwig is adding the run's first track.
+        bitwig.Change("""{"switchDuring": "newtrack", "project": "Night Drive"}""");
+
+        var run = await BitwigLiveTests.RunAsync(Options(dir, bitwig.Port, probeInstalled: false));
+
+        var track = Find(run, "Changes", "New track");
+        Assert.Equal(LiveOutcome.Skipped, track.Outcome);
+        Assert.StartsWith("Stopped part way through: Bitwig has “Night Drive” open, so the run made no more changes", track.Detail);
+        Assert.All(run.Results.SkipWhile(r => r != track).Skip(1), r => Assert.Equal(LiveOutcome.Skipped, r.Outcome));
+        using var link = await BitwigLink.ConnectAsync(bitwig.Port);
+        Assert.DoesNotContain($"Devices {run.Stamp[9..15]}", Listing(await link.ProjectAsync()));   // never named
+    }
+
+    [Fact]
+    public async Task ChangesNothingThroughALinkThatCantKeepChangesInTheTestProject()
+    {
+        var dir = Fixtures.TempDir();
+        // As an extension from before onlyIn would say hello: changes on, the test project open, but no "onlyIn".
+        await using var old = new FakeJavaBitwig("""{"link":3,"product":"Bitwig Studio","version":"6.1.3","api":23,"platform":"WINDOWS","port":19791,"project":"MO Live Test","modified":false,"engine":true,"changes":true,"runtime":"java","extension":"3.0"}""");
+
+        var run = await BitwigLiveTests.RunAsync(Options(dir, old.Port));
+
+        Assert.Equal("The Music Organiser extension in Bitwig is older than the app, and can't make sure each change stays in “MO Live Test”, so the run " +
+                     "changed nothing. " + BitwigLiveTests.Reinstall, Find(run, "Changes", "Changes allowed").Detail);
+        Assert.All(run.Results.Where(r => r.Area != "Link"), r => Assert.Equal(LiveOutcome.Skipped, r.Outcome));
+    }
+
+    [Fact]
     public async Task KeepsWhatTheKnobCheckFoundWhenStoppedDuringIt()
     {
         var dir = Fixtures.TempDir();
@@ -505,16 +539,18 @@ sealed class ProbeBridge(string folder, BitwigLinkTests.ScriptServer bitwig) : I
 
 /// <summary>
 /// The Java extension for Bitwig as the app sees it: the script's commands with its newer fields, and its own commands, in
-/// canned answers. Changes are off.
+/// canned answers. Changes are off, unless a test gives a hello of its own.
 /// </summary>
 sealed class FakeJavaBitwig : IAsyncDisposable
 {
     readonly TcpListener _server = new(IPAddress.Loopback, 0);
     readonly CancellationTokenSource _stop = new();
     readonly Task _serving;
+    readonly string _hello;
 
-    public FakeJavaBitwig()
+    public FakeJavaBitwig(string? hello = null)
     {
+        _hello = hello ?? Answers["hello"];
         _server.Start();
         _serving = Task.Run(ServeAsync);
     }
@@ -523,7 +559,7 @@ sealed class FakeJavaBitwig : IAsyncDisposable
 
     static readonly Dictionary<string, string> Answers = new()
     {
-        ["hello"] = """{"link":3,"product":"Bitwig Studio","version":"6.1.3","api":23,"platform":"WINDOWS","port":19791,"project":"Night Drive","modified":false,"engine":true,"changes":false,"runtime":"java","extension":"3.0"}""",
+        ["hello"] = """{"link":3,"product":"Bitwig Studio","version":"6.1.3","api":23,"platform":"WINDOWS","port":19791,"project":"Night Drive","modified":false,"engine":true,"changes":false,"runtime":"java","extension":"3.0","onlyIn":true}""",
         ["project"] = """{"name":"Night Drive","modified":false,"tempo":124,"timeSignature":"4/4","playing":false,"position":0,"trackCount":2,"tracks":[{"index":0,"id":"7f2c","name":"Bass","type":"Instrument","group":false,"color":"#ff8000","active":true,"mute":false,"solo":false,"arm":false,"volume":"0.0 dB","volumeValue":0.79,"pan":"C","panValue":0.5,"deviceCount":1,"devices":[{"index":0,"name":"Serum","preset":"","kind":"note_to_audio","plugin":true,"enabled":true}]},{"index":1,"id":"7f2d","name":"Master","type":"Master","group":false,"color":"#000000","active":true,"mute":false,"solo":false,"arm":false,"volume":"0.0 dB","volumeValue":0.79,"pan":"C","panValue":0.5,"deviceCount":0,"devices":[]}]}""",
         ["device"] = """{"track":"Bass","device":{"index":-1,"name":"Serum","preset":"","kind":"note_to_audio","plugin":true,"enabled":true},"params":[{"id":"CONTENTS/PID0","name":"Cutoff","value":0.25,"display":"440 Hz","steps":-1,"origin":0,"automated":true},{"id":"CONTENTS/PID1","name":"Mode","value":0,"display":"Saw"},{"id":"CONTENTS/PID2","name":"Drive","value":0.1,"display":"10 %"}],"drumPads":false,"page":"Main","controls":[{"index":0,"name":"Cutoff","value":0.25,"display":"440 Hz","steps":-1,"origin":0,"automated":true,"param":"CONTENTS/PID0"},{"index":1,"name":"Mode","value":0,"display":"Saw","steps":3,"stepNames":["Saw","Square","Noise"],"origin":0,"automated":false,"param":null}]}""",
         ["actions"] = """[{"id":"Save","name":"Save","category":"File","menu":"Save"}]""",
@@ -551,7 +587,7 @@ sealed class FakeJavaBitwig : IAsyncDisposable
             var stream = client.GetStream();
             try
             {
-                await SendAsync(stream, $$"""{"event":"hello","result":{{Answers["hello"]}}}""");
+                await SendAsync(stream, $$"""{"event":"hello","result":{{_hello}}}""");
                 var head = new byte[4];
                 while (true)
                 {
@@ -561,7 +597,7 @@ sealed class FakeJavaBitwig : IAsyncDisposable
                     var request = JsonNode.Parse(body)!;
                     var id = (int)request["id"]!;
                     var cmd = (string)request["cmd"]!;
-                    await SendAsync(stream, Answers.TryGetValue(cmd, out var answer)
+                    await SendAsync(stream, (cmd == "hello" ? _hello : Answers.GetValueOrDefault(cmd)) is { } answer
                         ? $$"""{"id":{{id}},"ok":true,"result":{{answer}}}"""
                         : $$"""{"id":{{id}},"ok":false,"error":"Unknown command: {{cmd}}"}""");
                 }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using MusicOrganiser.Core.DawLink;
@@ -94,6 +95,10 @@ public static class BitwigLiveTests
     public const string HowToAllowChanges =
         "To run the tests that change things: in Bitwig, make a new project and save it as “MO Live Test”, then turn on “Let the " +
         "app make changes” (Settings > Controllers > Music Organiser), and run the live tests again.";
+
+    /// <summary>What to do when the link in Bitwig is older than the app.</summary>
+    public const string Reinstall =
+        "Install it again from Settings > DAW links > Bitwig Studio, restart Bitwig, then run the live tests again.";
 
     public const string NeedsJava =
         "This needs the Music Organiser extension for Bitwig (Java), which tells the app more than the JavaScript script Bitwig " +
@@ -233,6 +238,10 @@ public static class BitwigLiveTests
         BitwigLink? _link;
         JsonElement _hello;
         string? _closed, _save;
+        /// <summary>The test project the run changes, once the gate has first let it: every change is for that one.</summary>
+        string? _testProject;
+        /// <summary>The project the run saved, whose file it then looks for.</summary>
+        string? _savedProject;
         bool _changed, _saved, _sampleMade;
         int? _drum;
         DateTime _savedAt;
@@ -742,6 +751,7 @@ public static class BitwigLiveTests
                     await Task.Delay(100, t);
                 }
                 _saved = true;
+                _savedProject = project;
                 return LiveVerdict.Pass(wasModified
                     ? $"Bitwig saved “{project}”: its unsaved changes cleared {Ms(took.Elapsed.TotalMilliseconds)} after Save."
                     : $"Bitwig ran Save. “{project}” had no unsaved changes before, so this only shows they stayed clear.");
@@ -750,8 +760,7 @@ public static class BitwigLiveTests
             string? path = null;
             await Read(Saved, "Find the saved project", (link, t) =>
             {
-                if (!_saved) return Task.FromResult(LiveVerdict.Skip(_closed ?? "Needs Changes › Save, which didn't work."));
-                var name = link.Hello.Project;
+                if (!_saved || _savedProject is not { } name) return Task.FromResult(LiveVerdict.Skip(_closed ?? "Needs Changes › Save, which didn't work."));
                 var looked = SavedFolders().ToList();
                 path = FindSaved(name, _savedAt.AddSeconds(-2), options.LibraryProjects(), looked);
                 if (path is null)
@@ -768,7 +777,10 @@ public static class BitwigLiveTests
             {
                 if (path is null) return LiveVerdict.Skip(_saved ? "Needs the saved project, which wasn't found." : _closed ?? "Needs Changes › Save, which didn't work.");
                 var read = Readers.Bitwig.Read(path);
-                return CompareSaved(path, read, await link.ProjectAsync(t));
+                var live = await link.ProjectAsync(t);
+                if (live.Name != _savedProject)
+                    return LiveVerdict.Skip($"Bitwig has “{live.Name}” open now, not “{_savedProject}”, so there was nothing to compare the saved file with.");
+                return CompareSaved(path, read, live);
             });
         }
 
@@ -818,24 +830,42 @@ public static class BitwigLiveTests
                 if (_link is null) return LiveVerdict.Skip(NoLink);
                 if (await GateAsync(_link, t) is { } why) return LiveVerdict.Skip(why);
                 _changed = true;
-                try
-                {
-                    var verdict = await body(_link, t);
-                    return _closed is { } closed ? PartWay(closed, verdict) : verdict;
-                }
-                catch (DawLinkException) when (_closed is { } closed)
-                {
-                    return PartWay(closed, null);
-                }
+                LiveVerdict? verdict = null;
+                DawLinkException? refused = null;
+                try { verdict = await body(_link, t); }
+                catch (DawLinkException e) { refused = e; }
+                // A test that went wrong because another project came to the front (a change refused, a selection that went
+                // astray) says that, rather than blaming Bitwig.
+                if ((_closed is not null || refused is not null || verdict!.Outcome == LiveOutcome.Failed) &&
+                    await ClosedSinceAsync(_link) is { } closed)
+                    return PartWay(closed, verdict);
+                if (refused is not null) ExceptionDispatchInfo.Throw(refused);
+                return verdict!;
             }, timeout);
+
+        /// <summary>Why the run may no longer change the project, asking Bitwig afresh if it hasn't said yet; null while it may.</summary>
+        async Task<string?> ClosedSinceAsync(BitwigLink link)
+        {
+            if (_closed is not null) return _closed;
+            try
+            {
+                using var quick = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                return await GateAsync(link, quick.Token);
+            }
+            catch (Exception e) when (e is DawLinkException or OperationCanceledException)
+            {
+                return null;
+            }
+        }
 
         static LiveVerdict PartWay(string why, LiveVerdict? found) =>
             LiveVerdict.Skip("Stopped part way through: " + why, found?.Data) with { Lines = found?.Lines ?? [] };
 
         /// <summary>
         /// Why the run may not change the project, or null when it may: Bitwig lets the app make changes and has a project
-        /// made for the tests open. Asked afresh before each change, since another project may have been opened meanwhile;
-        /// once closed, it stays closed for the rest of the run.
+        /// made for the tests open, the same one all run, and its link can keep each change in that project (<see
+        /// cref="BitwigLink.OnlyIn"/>, which the run then sets). Asked afresh before each change, since another project may
+        /// have been opened meanwhile; once closed, it stays closed for the rest of the run.
         /// </summary>
         async Task<string?> GateAsync(BitwigLink link, CancellationToken t)
         {
@@ -846,6 +876,16 @@ public static class BitwigLiveTests
             else if (!IsTestProject(hello.Project))
                 _closed = $"Bitwig has “{hello.Project}” open, {changed}: it only changes a project whose name starts with “{TestProject}”, " +
                           $"never your own work. {HowToAllowChanges}";
+            else if (_testProject is { } first && hello.Project != first)
+                _closed = $"Bitwig has “{hello.Project}” open now, not “{first}”, {changed}. Keep one test project in front while the tests run.";
+            else if (!hello.OnlyIn)
+                _closed = $"The {(hello.Runtime == "java" ? "Music Organiser extension" : "Music Organiser script")} in Bitwig is older than the " +
+                          $"app, and can't make sure each change stays in “{hello.Project}”, {changed}. {Reinstall}";
+            else if (_testProject is null)
+            {
+                _testProject = hello.Project;
+                link.OnlyIn = hello.Project;
+            }
             return _closed;
         }
 

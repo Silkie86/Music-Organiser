@@ -84,6 +84,34 @@ public class BitwigLinkTests
     }
 
     [Fact]
+    public async Task KeepsChangesInTheProjectTheyWereMeantFor()
+    {
+        using var bitwig = ScriptServer.Start(raw: false);
+        if (bitwig is null) return;
+        bitwig.Change("""{"project": "MO Live Test"}""");
+        using var link = await BitwigLink.ConnectAsync(bitwig.Port);
+        Assert.True(link.Hello.OnlyIn);
+        link.OnlyIn = "MO Live Test";
+        await link.NewTrackAsync("Kept");
+        const string Elsewhere = "Bitwig has \"Night Drive\" open, not \"MO Live Test\", so the link stopped before changing anything there.";
+
+        // Another project in front: refused before anything is done.
+        bitwig.Change("""{"project": "Night Drive"}""");
+        Assert.Equal(Elsewhere, (await Assert.ThrowsAsync<DawLinkException>(() => link.NewTrackAsync("Stray"))).Message);
+        Assert.Equal(Elsewhere, (await Assert.ThrowsAsync<DawLinkException>(() => link.SelectAsync(0))).Message);
+
+        // Another project comes to the front while Bitwig makes the track: the link stops before naming it.
+        bitwig.Change("""{"project": "MO Live Test"}""");
+        bitwig.Change("""{"switchDuring": "newtrack", "project": "Night Drive"}""");
+        Assert.Equal(Elsewhere, (await Assert.ThrowsAsync<DawLinkException>(() => link.NewTrackAsync("Half"))).Message);
+
+        var names = (await link.ProjectAsync()).Tracks.Select(t => t.Name).ToList();
+        Assert.Contains("Kept", names);
+        Assert.DoesNotContain("Stray", names);
+        Assert.DoesNotContain("Half", names);
+    }
+
+    [Fact]
     public async Task SaysWhenSomethingElseAnswers()
     {
         using var other = new TcpListener(IPAddress.Loopback, 0);

@@ -14,9 +14,10 @@ namespace MusicOrganiser.Core.DawLink;
 /// <param name="Changes">Whether "Let the app make changes" is on in the controller's settings in Bitwig.</param>
 /// <param name="Runtime">"java" when the Bitwig extension answers (link version 3); null for the script.</param>
 /// <param name="Extension">The extension's version, when it's the extension.</param>
+/// <param name="OnlyIn">Whether the link honours <see cref="BitwigLink.OnlyIn"/> (older scripts don't).</param>
 public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
                                  string Project, bool Modified, bool Engine, bool Changes, string? Runtime = null,
-                                 string? Extension = null)
+                                 string? Extension = null, bool OnlyIn = false)
 {
     /// <summary>What answers in Bitwig: the extension or the script.</summary>
     public string Answering => Runtime == "java" ? $"the Music Organiser extension {Extension}".TrimEnd() : "the Music Organiser script";
@@ -110,14 +111,22 @@ public sealed class BitwigLink : IDisposable
     public bool IsOpen => _open;
 
     /// <summary>
-    /// Asked just before each request that changes Bitwig's project (the ones that need "Let the app make changes"); it
-    /// throws to stop the request. The live tests use it to check, right before each change, that Bitwig still has their
-    /// test project open.
+    /// Asked just before each request that changes or selects something in Bitwig's project (the changes, which need "Let
+    /// the app make changes", and select); it throws to stop the request. The live tests use it to check, right before each
+    /// one, that Bitwig still has their test project open.
     /// </summary>
     public Func<CancellationToken, Task>? BeforeChange { get; set; }
 
-    /// <summary>The commands that change the project, as the script and the extension list them.</summary>
-    static readonly HashSet<string> ChangeCommands = ["set", "insert", "newtrack", "clip", "pads", "transpose", "action", "recorder"];
+    /// <summary>
+    /// A project's name, or null: when set, each request that changes or selects something carries it ("onlyIn"), and the
+    /// link in Bitwig refuses the request, or stops a change part way, unless that project is the one open. Bitwig makes
+    /// some changes in steps, and only the link sees each step, so this is what keeps a change in the project it was meant
+    /// for when another one comes to the front meanwhile (<see cref="BitwigHello.OnlyIn"/> says whether the link does it).
+    /// </summary>
+    public string? OnlyIn { get; set; }
+
+    /// <summary>The commands that change or select something in the project, as the script and the extension list them.</summary>
+    static readonly HashSet<string> ProjectCommands = ["set", "insert", "newtrack", "clip", "pads", "transpose", "action", "recorder", "select"];
 
     BitwigLink(TcpClient tcp)
     {
@@ -353,8 +362,11 @@ public sealed class BitwigLink : IDisposable
 
     async Task<JsonElement> RequestAsync(JsonObject request, CancellationToken ct, TimeSpan? timeout = null)
     {
-        if (BeforeChange is { } before && request["cmd"] is JsonValue cmd && cmd.TryGetValue<string>(out var name) && ChangeCommands.Contains(name))
-            await before(ct);
+        if (request["cmd"] is JsonValue cmd && cmd.TryGetValue<string>(out var name) && ProjectCommands.Contains(name))
+        {
+            if (BeforeChange is { } before) await before(ct);
+            if (OnlyIn is { } project) request["onlyIn"] = project;
+        }
         var id = Interlocked.Increment(ref _lastId);
         request["id"] = id;
         var answer = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
