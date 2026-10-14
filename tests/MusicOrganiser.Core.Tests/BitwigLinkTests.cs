@@ -191,8 +191,20 @@ public class BitwigLinkTests
             return new ScriptServer(node, int.Parse(line[5..]));
         }
 
+        /// <summary>Changes the stand-in as if done in Bitwig, e.g. {"project": "Other Song", "modified": true}.</summary>
+        public void Change(string json)
+        {
+            _node.StandardInput.WriteLine(json);
+            _node.StandardInput.Flush();
+            var line = _node.StandardOutput.ReadLine();
+            if (line != "ok") throw new InvalidOperationException($"serve.js said: {line}");
+        }
+
+        /// <summary>Stops the stand-in, as if Bitwig closed. Safe to call again.</summary>
         public void Dispose()
         {
+            if (_stopped) return;
+            _stopped = true;
             try
             {
                 _node.StandardInput.Close();
@@ -201,5 +213,7 @@ public class BitwigLinkTests
             catch (InvalidOperationException) { }
             _node.Dispose();
         }
+
+        bool _stopped;
     }
 }

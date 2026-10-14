@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Library;
@@ -30,7 +31,32 @@ public static class BitwigSend
     /// <param name="Instrument">What plays it there, e.g. "Sampler" or "Serum with the project's settings"; empty for nothing.</param>
     /// <param name="Clip">Whether its notes went in, as a clip in the track's first empty launcher slot.</param>
     /// <param name="Problems">What didn't come across, in words to show.</param>
-    public sealed record SentChannel(string Name, int Track, string Instrument, bool Clip, IReadOnlyList<string> Problems);
+    public sealed record SentChannel(string Name, int Track, string Instrument, bool Clip, IReadOnlyList<string> Problems)
+    {
+        /// <summary>FL Studio's knobs set on the plugin in Bitwig, when they were given.</summary>
+        public KnobCopy? Knobs { get; init; }
+
+        /// <summary>Whether the app read the new track back from Bitwig afterwards; anything it found missing is in the problems.</summary>
+        public bool Checked { get; init; }
+    }
+
+    /// <summary>FL Studio's knobs, set on the plugin in Bitwig.</summary>
+    /// <param name="Matched">FL Studio's knobs that the plugin in Bitwig has too, by name.</param>
+    /// <param name="Changed">Those Bitwig had at another value, which were set.</param>
+    /// <param name="Unmatched">FL Studio's knobs with no knob of the same name in Bitwig.</param>
+    /// <param name="NotTaken">Knobs that didn't end up at FL Studio's value when the app read them back, by Bitwig's names.</param>
+    public sealed record KnobCopy(int Matched, int Changed, int Unmatched, IReadOnlyList<string> NotTaken);
+
+    /// <summary>How close a knob in Bitwig has to be to FL Studio's value (both from 0 to 1) to count as the same.</summary>
+    const double KnobTolerance = 0.005;
+    /// <summary>How long to wait for Bitwig to show a device the app selected, or knobs it set.</summary>
+    static readonly TimeSpan SelectionWait = TimeSpan.FromSeconds(4);
+
+    /// <summary>What's on a sent channel's new track: its instrument, as Bitwig named it, and where.</summary>
+    /// <param name="Text">What plays the channel, in words: "Serum with the project's settings".</param>
+    /// <param name="Before">The device put before it (a Note Transpose), as Bitwig named it.</param>
+    /// <param name="Lost">Why the project's settings for the plugin didn't load, or null if they did or there were none.</param>
+    sealed record Placed(string Text, string Device, int Index, string? Before = null, string? Lost = null);
 
     /// <summary>The settings the project saved for the plugin on this channel, if it has any.</summary>
     public static PresetBlob? PresetFor(MidiChannel channel, IEnumerable<PresetBlob> presets)
@@ -51,16 +77,38 @@ public static class BitwigSend
     /// </summary>
     /// <param name="preset">The plugin's settings from the project (<see cref="PresetFor"/>).</param>
     /// <param name="installed">The plugin as the plugin scan found it, to load by ID if the settings don't load.</param>
+    /// <param name="knobs">
+    /// The plugin's knobs as FL Studio has them now, read through its link, to set on the plugin in Bitwig by name: they
+    /// bring unsaved tweaks across, and the sound when Bitwig can't load the saved settings. Null when FL Studio
+    /// doesn't have the project open.
+    /// </param>
     public static async Task<SentChannel> ChannelAsync(BitwigLink link, MidiChannel channel, PresetBlob? preset,
-                                                       IReadOnlyList<ScannedPlugin> installed, Files files, CancellationToken ct = default)
+                                                       IReadOnlyList<ScannedPlugin> installed, Files files,
+                                                       IReadOnlyList<FlParam>? knobs = null, CancellationToken ct = default)
     {
         CheckChanges(link);
         var problems = new List<string>();
         var track = await link.NewTrackAsync(channel.Name, ct: ct);
-        var instrument = channel.SamplePath.Length > 0 ? await SamplerAsync(link, track, channel, problems, ct)
+        var placed = channel.SamplePath.Length > 0 ? await SamplerAsync(link, track, channel, problems, ct)
             : channel.Plugin.Length > 0 ? await PluginAsync(link, track, channel, preset, installed, files, problems, ct)
-            : "";
+            : null;
         if (channel.SamplePath.Length == 0 && channel.Plugin.Length == 0) problems.Add("nothing plays it in the project, so its track has no instrument");
+
+        KnobCopy? copied = null;
+        var knobProblems = new List<string>();
+        if (placed is not null && channel.SamplePath.Length == 0 && knobs is not null)
+            copied = await CopyKnobsAsync(link, track, channel.Name, placed, knobs, knobProblems, ct);
+        if (placed?.Lost is { } lost)
+        {
+            problems.Add(copied is { Matched: > 0 }
+                ? $"{lost}, so its knobs were set to FL Studio's one by one: anything that isn't a knob, like a wavetable or a sample, has its default"
+                : $"{channel.Plugin} has its default sound: {lost}" +
+                  (knobs is null ? ". Open the project in FL Studio and send it again to copy its knobs across" : ""));
+            if (copied is { Matched: > 0, Unmatched: > 0 and var n })
+                problems.Add((n == 1 ? "1 of FL Studio's knobs has" : $"{n} of FL Studio's knobs have") +
+                             " no knob of the same name in Bitwig, so " + (n == 1 ? "it has its default" : "they have their defaults"));
+        }
+        problems.AddRange(knobProblems);
 
         var clip = false;
         if (channel.Notes.Count > 0)
@@ -75,22 +123,23 @@ public static class BitwigSend
                 problems.Add($"its notes didn't go in: {e.Message}");
             }
         }
-        return new SentChannel(channel.Name, track, instrument, clip, problems);
+        var looked = await CheckTrackAsync(link, track, channel.Name, placed, problems, ct);
+        return new SentChannel(channel.Name, track, placed?.Text ?? "", clip, problems) { Knobs = copied, Checked = looked };
     }
 
-    static async Task<string> SamplerAsync(BitwigLink link, int track, MidiChannel c, List<string> problems, CancellationToken ct)
+    static async Task<Placed?> SamplerAsync(BitwigLink link, int track, MidiChannel c, List<string> problems, CancellationToken ct)
     {
         var file = Path.GetFileName(c.SamplePath.Replace('\\', '/'));
         if (!File.Exists(c.SamplePath))
         {
             problems.Add($"its sample isn't at {c.SamplePath}");
-            return "";
+            return null;
         }
         var sampler = await link.InsertFileAsync(track, c.SamplePath, ct: ct);
         if (sampler is not { Added: true, Index: { } at })
         {
             problems.Add($"Bitwig didn't load {file}");
-            return "";
+            return null;
         }
         // FL Studio plays the sample at its own pitch on the channel's root key; a new Sampler does on C3 (the
         // same note, 60). Its Transpose makes up the difference, and takes the pitch knob too.
@@ -99,16 +148,17 @@ public static class BitwigSend
             await TuneAsync(link, track, at, semitones,
                 $"set the Sampler's root key to {DawProject.NoteName(c.RootKey)}" +
                 (c.PitchCents == 0 ? "" : $" and tune it {c.PitchCents / 100.0:+0.##;-0.##} semitones"), problems, ct);
-        return "Sampler";
+        return new Placed("Sampler", sampler.Device?.Name is { Length: > 0 } shown ? shown : "Sampler", at);
     }
 
-    static async Task<string> PluginAsync(BitwigLink link, int track, MidiChannel c, PresetBlob? preset,
-                                          IReadOnlyList<ScannedPlugin> installed, Files files, List<string> problems,
-                                          CancellationToken ct)
+    static async Task<Placed?> PluginAsync(BitwigLink link, int track, MidiChannel c, PresetBlob? preset,
+                                           IReadOnlyList<ScannedPlugin> installed, Files files, List<string> problems,
+                                           CancellationToken ct)
     {
         var name = c.Plugin;
         BitwigInserted? added = null;
         var withSettings = false;
+        string? lost = null;
         if (preset is { Native: false })
         {
             List<string> settings;
@@ -132,10 +182,12 @@ public static class BitwigSend
             {
                 added = await InsertAsync(link, track, plugin, ct);
                 if (!added.Added) continue;
-                if (preset is { Native: false })
-                    problems.Add($"{name} has its default sound: Bitwig didn't take the settings saved in the project");
-                else if (preset is { Native: true })
-                    problems.Add($"{name} has its default sound: its settings are saved the FL Studio way, which Bitwig can't read");
+                lost = preset switch
+                {
+                    { Native: false } => "Bitwig didn't take the settings saved in the project",
+                    { Native: true } => "its settings are saved the FL Studio way, which Bitwig can't read",
+                    _ => null,
+                };
                 break;
             }
         }
@@ -144,23 +196,139 @@ public static class BitwigSend
             problems.Add(installed.Count > 0 ? $"Bitwig didn't load {name}"
                 : preset is { Native: true } ? $"{name} is one of FL Studio's own plugins, which Bitwig can't load"
                 : $"couldn't load {name}: the app hasn't found it among your installed plugins (Plugins screen)");
-            return "";
+            return null;
         }
 
         // FL Studio plays a plugin's notes as they are when the channel's root key is C5 (60); a moved root key
         // transposes them, as does the pitch knob. A Note Transpose before the plugin does the same in Bitwig.
         var shift = FlStudioReader.DefaultRoot - c.RootKey + (int)Math.Round(c.PitchCents / 100.0);
+        string? before = null;
         if (shift != 0)
         {
             var byHand = $"put a Note Transpose before {name}, set to {shift:+0;-0} semitones";
             var transpose = await link.InsertBitwigDeviceAsync(track, NoteTranspose, atStart: true, ct);
-            if (transpose.Added) await TuneAsync(link, track, 0, shift, byHand, problems, ct);
+            if (transpose.Added)
+            {
+                before = transpose.Device?.Name is { Length: > 0 } called ? called : "Note Transpose";
+                at++;   // the plugin moved along one
+                await TuneAsync(link, track, 0, shift, byHand, problems, ct);
+            }
             else problems.Add($"Bitwig didn't add a Note Transpose: {byHand}");
         }
         if (c.PitchCents % 100 != 0)
             problems.Add($"its pitch knob ({c.PitchCents / 100.0:+0.##;-0.##} semitones) is rounded to whole semitones");
         var device = added.Device?.Name is { Length: > 0 } shown ? shown : name;
-        return withSettings ? $"{device} with the project's settings" : device;
+        return new Placed(withSettings ? $"{device} with the project's settings" : device, device, at, before, lost);
+    }
+
+    /// <summary>
+    /// Sets the plugin's knobs in Bitwig to FL Studio's, matched by name (<see cref="MatchKnobs"/>), then reads them back
+    /// to see which took. Only knobs at another value are set. It selects the plugin in Bitwig to get at its knobs.
+    /// </summary>
+    static async Task<KnobCopy?> CopyKnobsAsync(BitwigLink link, int track, string trackName, Placed placed, IReadOnlyList<FlParam> knobs,
+                                                List<string> problems, CancellationToken ct)
+    {
+        try
+        {
+            await link.SelectAsync(track, placed.Index, ct);
+            var shown = await SelectionAsync(link, trackName, placed.Device, s => s.Params.Count > 0, ct);
+            if (shown is not { Params.Count: > 0 })
+            {
+                problems.Add($"FL Studio's knobs weren't copied: Bitwig didn't show {placed.Device}'s knobs");
+                return null;
+            }
+            var pairs = MatchKnobs(knobs, shown.Params);
+            var set = pairs.Where(p => p.Fl.Value is { } v && !(p.Bitwig.Value is { } b && Math.Abs(b - v) <= KnobTolerance)).ToList();
+            foreach (var (fl, bitwig) in set) await link.SetParameterAsync(bitwig.Id, Math.Clamp(fl.Value!.Value, 0, 1), ct);
+
+            IReadOnlyList<string> notTaken = [];
+            if (set.Count > 0)
+            {
+                bool Took(BitwigSelection s, (FlParam Fl, BitwigParam Bitwig) p) =>
+                    s.Params.FirstOrDefault(x => x.Id == p.Bitwig.Id)?.Value is { } now && Math.Abs(now - p.Fl.Value!.Value) <= KnobTolerance;
+                var after = await SelectionAsync(link, trackName, placed.Device, s => set.All(p => Took(s, p)), ct);
+                notTaken = set.Where(p => after is null || !Took(after, p)).Select(p => p.Bitwig.Name).ToList();
+            }
+            if (pairs.Count == 0)
+                problems.Add($"none of FL Studio's knobs for {placed.Device} has a knob of the same name in Bitwig, so none were copied");
+            else if (notTaken.Count > 0)
+                problems.Add($"{Checks.Count(notTaken.Count, "knob")} didn't take FL Studio's value in Bitwig: {Checks.List(notTaken)}");
+            return new KnobCopy(pairs.Count, set.Count, knobs.Count - pairs.Count, notTaken);
+        }
+        catch (DawLinkException e)
+        {
+            problems.Add($"FL Studio's knobs weren't copied: {e.Message.TrimEnd('.')}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Pairs FL Studio's knobs with the plugin's knobs in Bitwig by name, ignoring case, spaces and punctuation, since
+    /// the plugin's formats can differ (VST2 in FL Studio, CLAP or VST3 in Bitwig). A name used more than once pairs up
+    /// in order.
+    /// </summary>
+    public static IReadOnlyList<(FlParam Fl, BitwigParam Bitwig)> MatchKnobs(IEnumerable<FlParam> fl, IEnumerable<BitwigParam> bitwig)
+    {
+        var byName = bitwig.GroupBy(p => KnobKey(p.Name)).Where(g => g.Key.Length > 0)
+                           .ToDictionary(g => g.Key, g => new Queue<BitwigParam>(g));
+        var pairs = new List<(FlParam, BitwigParam)>();
+        foreach (var f in fl)
+            if (byName.TryGetValue(KnobKey(f.Name), out var same) && same.Count > 0) pairs.Add((f, same.Dequeue()));
+        return pairs;
+    }
+
+    static string KnobKey(string name) => string.Concat(name.Where(char.IsLetterOrDigit)).ToLowerInvariant();
+
+    /// <summary>
+    /// The device selected in Bitwig, once it's <paramref name="device"/> on <paramref name="track"/> and
+    /// <paramref name="ready"/> says so; or, if Bitwig doesn't get there in time, as it last showed that device (null
+    /// if it never did). Bitwig moves its selection, and its knobs move, a moment after being asked.
+    /// </summary>
+    static async Task<BitwigSelection?> SelectionAsync(BitwigLink link, string track, string device, Func<BitwigSelection, bool> ready,
+                                                       CancellationToken ct)
+    {
+        BitwigSelection? last = null;
+        var waited = Stopwatch.StartNew();
+        while (true)
+        {
+            var now = await link.SelectedDeviceAsync(ct);
+            if (now.Track == track && now.Device?.Name == device)
+            {
+                last = now;
+                if (ready(now)) return now;
+            }
+            if (waited.Elapsed >= SelectionWait) return last;
+            await Task.Delay(100, ct);
+        }
+    }
+
+    /// <summary>
+    /// Reads the new track back from Bitwig and adds anything that isn't as it was sent to <paramref name="problems"/>:
+    /// the track, its instrument and the Note Transpose before it. False if Bitwig couldn't be asked.
+    /// </summary>
+    static async Task<bool> CheckTrackAsync(BitwigLink link, int index, string name, Placed? placed, List<string> problems, CancellationToken ct)
+    {
+        BitwigProject project;
+        try { project = await link.ProjectAsync(ct); }
+        catch (DawLinkException e)
+        {
+            problems.Add($"the app couldn't check it in Bitwig afterwards: {e.Message.TrimEnd('.')}");
+            return false;
+        }
+        var track = project.Tracks.FirstOrDefault(t => t.Index == index && t.Name == name) ?? project.Tracks.LastOrDefault(t => t.Name == name);
+        if (track is null)
+        {
+            problems.Add("its track wasn't in Bitwig when the app checked afterwards");
+            return true;
+        }
+        if (placed is null) return true;
+        var devices = track.Devices.Select(d => d.Name).ToList();
+        var at = devices.IndexOf(placed.Device);
+        if (at < 0)
+            problems.Add($"{placed.Device} wasn't on its track when the app checked afterwards");
+        else if (placed.Before is { } before && devices.IndexOf(before) is var b && (b < 0 || b > at))
+            problems.Add($"the {before} wasn't before {placed.Device} when the app checked afterwards, so its notes aren't transposed");
+        return true;
     }
 
     static async Task TuneAsync(BitwigLink link, int track, int device, double semitones, string byHand, List<string> problems,

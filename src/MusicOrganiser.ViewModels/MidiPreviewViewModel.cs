@@ -25,6 +25,7 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
     readonly string _exportRoot;
     readonly double? _tempo;
     readonly LibraryDb? _db;
+    readonly LiveDawsViewModel? _live;
     readonly IAudioPlayer _player = Ui.Current.CreateAudioPlayer();
     readonly IUiTimer _clock;
     readonly Dictionary<string, MidiRender.Result> _renders = [];
@@ -48,13 +49,16 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
     double Tempo => _tempo is > 10 and < 1000 ? _tempo.Value : 120;
 
     /// <param name="db">The library, for the plugins the plugin scan found, which Bitwig loads by their IDs.</param>
-    public MidiPreviewViewModel(IProjectReader reader, string path, string title, string exportRoot, double? tempo, LibraryDb? db = null)
+    /// <param name="live">The DAWs as they are now: how to reach them, and whether FL Studio is there to read knobs from.</param>
+    public MidiPreviewViewModel(IProjectReader reader, string path, string title, string exportRoot, double? tempo, LibraryDb? db = null,
+                                LiveDawsViewModel? live = null)
     {
         _reader = reader;
         _path = path;
         _exportRoot = exportRoot;
         _tempo = tempo;
         _db = db;
+        _live = live;
         Title = title;
         AsOneFile = new OneFileDrag(this);
         _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), Tick);
@@ -211,7 +215,8 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
 
     /// <summary>
     /// Puts every channel into the project open in Bitwig, each on a new track named after it: its sample in a
-    /// Sampler or its plugin with the settings the project saved, and its notes as a clip.
+    /// Sampler or its plugin with the settings the project saved, and its notes as a clip. With the project open in
+    /// FL Studio, each plugin's knobs are then set as FL Studio has them now.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanSendAll))]
     Task SendAllToBitwig() => SendToBitwig(Channels);
@@ -234,7 +239,7 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
         try
         {
             Message = "Connecting to Bitwig…";
-            using var link = await BitwigLink.ConnectAsync(ct: cancel.Token);
+            using var link = await (_live?.Watch.ConnectBitwigAsync(cancel.Token) ?? BitwigLink.ConnectAsync(ct: cancel.Token));
             var presets = await Task.Run(() =>
             {
                 try { return _reader.ExtractPresets(_path); }
@@ -245,6 +250,7 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
             var templates = settings.Any(p => p is { Native: false })
                 ? await Task.Run(PresetsViewModel.BitwigTemplates, cancel.Token)
                 : new Dictionary<string, BitwigPreset.Template>();
+            var (knobs, fromFl) = await KnobsInFlAsync(rows, cancel.Token);
             var files = new BitwigSend.Files(_path, _exportRoot, _tempo, templates);
             foreach (var (row, preset) in rows.Zip(settings))
             {
@@ -252,16 +258,16 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
                 var c = row.Channel;
                 IReadOnlyList<ScannedPlugin> installed = c.SamplePath.Length == 0 && c.Plugin.Length > 0 && _db is not null
                     ? _db.ScannedPluginsNamed(c.Plugin) : [];
-                var result = await BitwigSend.ChannelAsync(link, c, preset, installed, files, cancel.Token);
+                var result = await BitwigSend.ChannelAsync(link, c, preset, installed, files, knobs.GetValueOrDefault(row), cancel.Token);
                 row.Sent = Describe(result);
                 row.SentWhole = result.Problems.Count == 0;
                 sent++;
             }
             var rough = rows.Count(r => !r.SentWhole);
-            Message = rows.Count == 1 ? $"{rows[0].Name} is on a new track in Bitwig." +
-                                        (rough == 0 ? "" : " Not everything came across: it says what under its name.")
-                : $"Sent {rows.Count} channels to Bitwig, each on a new track named after it." +
-                  (rough == 0 ? "" : $" {rough} didn't come across whole: each says what under its name.");
+            Message = (rows.Count == 1 ? $"{rows[0].Name} is on a new track in Bitwig." +
+                                         (rough == 0 ? "" : " Not everything came across: it says what under its name.")
+                          : $"Sent {rows.Count} channels to Bitwig, each on a new track named after it." +
+                            (rough == 0 ? "" : $" {rough} didn't come across whole: each says what under its name.")) + fromFl;
         }
         catch (DawLinkException e) { Message = sent == 0 ? e.Message : $"Sent {sent} of {rows.Count}, then: {e.Message}"; }
         catch (OperationCanceledException) { }
@@ -273,7 +279,45 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
         }
     }
 
-    /// <summary>What a channel's row says once it's in Bitwig: what plays it there, and what didn't come across.</summary>
+    /// <summary>
+    /// The knobs of each plugin channel as FL Studio has them now, when it has this project open, and a sentence for the
+    /// summary ("" when FL Studio wasn't asked). They bring tweaks made since the last save across, and the sound when
+    /// Bitwig can't load the settings the project saved. A channel is only read when FL Studio has it with the same plugin.
+    /// </summary>
+    async Task<(Dictionary<MidiChannelRow, IReadOnlyList<FlParam>> Knobs, string Note)> KnobsInFlAsync(IReadOnlyList<MidiChannelRow> rows,
+                                                                                                       CancellationToken ct)
+    {
+        var knobs = new Dictionary<MidiChannelRow, IReadOnlyList<FlParam>>();
+        var plugins = rows.Where(r => r.Channel.SamplePath.Length == 0 && r.Channel.Plugin.Length > 0).ToList();
+        if (_live is null || plugins.Count == 0 || !_live.IsAnswering(DawState.FlStudio)) return (knobs, "");
+        var fl = _live.Watch.Fl();
+        FlProject project;
+        try
+        {
+            Message = "Asking FL Studio for its knobs…";
+            project = await fl.ProjectAsync(ct);
+        }
+        catch (DawLinkException) { return (knobs, ""); }
+        if (!FlCheck.ShowsProject(project.Title, Path.GetFileNameWithoutExtension(_path))) return (knobs, "");
+
+        static bool Same(string a, string b) => a.Trim().Equals(b.Trim(), StringComparison.OrdinalIgnoreCase);
+        foreach (var row in plugins)
+        {
+            var c = row.Channel;
+            var named = project.Channels.Where(x => Same(x.Name, c.Name)).ToList();
+            var there = named.FirstOrDefault(x => x.Index == c.Channel) ?? (named.Count == 1 ? named[0] : null);
+            if (there?.Plugin is not { } plugin || LibraryDb.NameKey(plugin) != LibraryDb.NameKey(c.Plugin)) continue;
+            Message = $"Reading {row.Name}'s knobs in FL Studio…";
+            try { knobs[row] = await fl.ParamsAsync(Core.DawLink.FlPlugin.OnChannel(there.Index), ct: ct); }
+            catch (DawLinkException) { }
+        }
+        if (knobs.Count == 0) return (knobs, "");
+        return (knobs, project.Modified
+            ? " FL Studio has unsaved changes: the knobs are as it has them now, but the notes and samples are from the last save."
+            : " The knobs are as FL Studio has them now.");
+    }
+
+    /// <summary>What a channel's row says once it's in Bitwig: what plays it there, its knobs, and what didn't come across.</summary>
     static string Describe(BitwigSend.SentChannel sent)
     {
         var what = (sent.Instrument.Length > 0, sent.Clip) switch
@@ -283,7 +327,16 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
             (false, true) => "In Bitwig: its notes, as a clip.",
             _ => "In Bitwig as an empty track.",
         };
-        return string.Join(" ", [what, .. sent.Problems.Select(p => char.ToUpperInvariant(p[0]) + p[1..] + (p.EndsWith('.') ? "" : "."))]);
+        var knobs = sent.Knobs switch
+        {
+            { Changed: > 0 } k => k.Changed == 1 ? "1 knob set to match FL Studio now." : $"{k.Changed} knobs set to match FL Studio now.",
+            { Matched: > 0 } => "Its knobs match FL Studio's.",
+            _ => "",
+        };
+        var all = sent.Checked && sent.Problems.Count == 0 ? "Checked in Bitwig afterwards: it's all there." : "";
+        return string.Join(" ", new[] { what, knobs }
+            .Concat(sent.Problems.Select(p => char.ToUpperInvariant(p[0]) + p[1..] + (p.EndsWith('.') ? "" : ".")))
+            .Append(all).Where(x => x.Length > 0));
     }
 
     static DragCard Card(MidiChannelRow r) => new(r.Name, r.Details, Glyphs.Midi);

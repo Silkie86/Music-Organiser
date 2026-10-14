@@ -387,6 +387,10 @@ public sealed partial class LibraryDb : IDisposable
 
     public IReadOnlyList<ProjectSummary> Projects() => Summaries("");
 
+    /// <summary>A DAW's projects with this file name (without the extension, ignoring case), newest first, leaving out moved files.</summary>
+    public IReadOnlyList<ProjectSummary> ProjectsNamed(string daw, string name) =>
+        Summaries("WHERE p.daw = $daw AND p.name = $name COLLATE NOCASE AND p.file_missing = 0", ("$daw", daw), ("$name", name.Trim()));
+
     IReadOnlyList<ProjectSummary> Summaries(string where, params (string, object?)[] args) => Query($"""
         SELECT p.*,
           (SELECT COUNT(*) FROM plugins WHERE project_id = p.id) AS plugin_count,
@@ -402,7 +406,7 @@ public sealed partial class LibraryDb : IDisposable
     {
         Id = (long)r["id"], Path = (string)r["path"], Name = (string)r["name"], Daw = (string)r["daw"],
         Folder = Str(r, "folder"), Size = Long(r, "size"),
-        Modified = DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime,
+        Modified = DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime, Mtime = Long(r, "mtime"),
         Tempo = r["tempo"] is double t ? t : null, Version = Str(r, "version"),
         Confidence = (Confidence)Long(r, "confidence"), FileMissing = Long(r, "file_missing") == 1,
         Error = r["error"] as string,

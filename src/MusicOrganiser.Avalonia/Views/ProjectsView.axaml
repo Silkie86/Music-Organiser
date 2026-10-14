@@ -71,8 +71,13 @@
                         <DataGridTemplateColumn Header="Name" Width="*" MinWidth="200" SortMemberPath="Name">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:ProjectItem">
-                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center" Margin="8,0" ToolTip.Tip="{Binding Path}" />
+                                    <DockPanel Margin="8,0">
+                                        <TextBlock DockPanel.Dock="Right" Text="{Binding OpenIn}" FontSize="11" Margin="8,0,0,0"
+                                                   VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
+                                                   IsVisible="{Binding OpenIn, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" ToolTip.Tip="{Binding Path}" />
+                                    </DockPanel>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>

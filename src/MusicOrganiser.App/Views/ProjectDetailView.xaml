@@ -68,8 +68,14 @@
                     <TextBlock Text="{Binding Item.Daw}" Style="{StaticResource PillText}"
                                Foreground="{Binding Item.Daw, Converter={StaticResource DawBrush}}" />
                 </Border>
+                <Border Style="{StaticResource Pill}" Margin="0,0,8,0" Background="{StaticResource OkSoftBrush}"
+                        Visibility="{Binding IsLive, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock Text="{Binding LiveText}" Style="{StaticResource PillText}" Foreground="{StaticResource OkBrush}" />
+                </Border>
                 <TextBlock Text="{Binding SavesText}" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"
                            TextWrapping="Wrap" Visibility="{Binding HasOlderSaves, Converter={StaticResource BoolToVisibility}}" />
+                <TextBlock Text="{Binding LiveText}" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"
+                           TextWrapping="Wrap" Margin="8,0,0,0" Visibility="{Binding OlderSaveOpen, Converter={StaticResource BoolToVisibility}}" />
             </WrapPanel>
 
             <WrapPanel Margin="0,16,0,0">

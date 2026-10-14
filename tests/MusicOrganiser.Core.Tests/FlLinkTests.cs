@@ -191,7 +191,7 @@ public class FlLinkTests
         Assert.Equal(shows, FlCheck.ShowsProject(title, name));
 
     /// <summary>extensions/fl-studio/test/serve.py, run with Python in a folder of its own.</summary>
-    sealed class ScriptRunner : IDisposable
+    internal sealed class ScriptRunner : IDisposable
     {
         readonly Process _python;
         public string Folder { get; }
@@ -232,6 +232,18 @@ public class FlLinkTests
                 if (error.Contains("Traceback", StringComparison.Ordinal)) throw new InvalidOperationException($"serve.py failed:\n{error}");
             }
             return null;
+        }
+
+        /// <summary>
+        /// Changes the stand-in as if done in FL Studio: {"title": "Other Song - FL Studio 2025", "modified": 1}, or
+        /// {"knob": [channel, param, value]}.
+        /// </summary>
+        public void Change(string json)
+        {
+            _python.StandardInput.WriteLine(json);
+            _python.StandardInput.Flush();
+            var line = _python.StandardOutput.ReadLine();
+            if (line != "ok") throw new InvalidOperationException($"serve.py said: {line}");
         }
 
         public void Dispose()

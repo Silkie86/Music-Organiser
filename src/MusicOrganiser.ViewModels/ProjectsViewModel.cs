@@ -71,6 +71,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
 
         Selected = Items.FirstOrDefault(i => i.Id == selectedId || i.OlderSaves.Any(o => o.Id == selectedId));
         ApplyFilter();
+        _main.Live.MarkProjects();
     }
 
     static void Refill(ObservableCollection<string> target, IEnumerable<string> values, string current, Action<string> reset)
@@ -134,8 +135,21 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         View.GroupBy(prop);
     }
 
-    partial void OnSelectedChanged(ProjectItem? value) =>
+    partial void OnSelectedChanged(ProjectItem? value)
+    {
         Detail = value is null ? null : new ProjectDetailViewModel(_db, value, _main);
+        _main.Live.ShowOn(Detail);
+    }
+
+    /// <summary>Shows a project (or the song it's a save of) in the list and opens its page, clearing filters that hide it.</summary>
+    public void Reveal(long id)
+    {
+        _main.ShowProjects();
+        var item = Items.FirstOrDefault(i => i.Id == id || i.OlderSaves.Any(o => o.Id == id));
+        if (item is null) return;
+        if (!Filter(item)) ClearFilters();
+        Selected = item;
+    }
 
     public void ShowOnly(IEnumerable<long> ids, string label)
     {

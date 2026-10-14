@@ -1,10 +1,12 @@
 # DAW extensions
 
 Two small scripts that run inside the DAWs, so the app can ask a DAW what it shows for the open project.
-The app uses them to check how it reads project files (**Check with Bitwig** and **Check with FL Studio**
-on a project), to send things into Bitwig (FL Studio channels with their sounds and notes, and Sound Lab
-kits; see [Sending into Bitwig](#sending-into-bitwig)), and later to learn what plugin settings and file
-changes mean.
+The app keeps up with both while they're open (see [Staying connected](#staying-connected)), and uses
+them to check how it reads project files (**Check with Bitwig** and **Check with FL Studio** on a project,
+which also run by themselves when the DAW has that project open), to send things into Bitwig (FL Studio
+channels with their sounds, knobs and notes, and Sound Lab kits; see
+[Sending into Bitwig](#sending-into-bitwig)), and later to learn what plugin settings and file changes
+mean.
 
 | Folder | Runs in | How the app talks to it |
 |---|---|---|
@@ -15,8 +17,10 @@ Neither changes anything in a project unless you turn that on (see [Changes](#ch
 
 ## Installing
 
-In the app: **Settings → DAW links → Install**, for each DAW. The scripts ship next to the app
-(`Extensions` in its folder), and Install copies them where the DAW looks:
+In the app: **Settings → DAW links → Set up both** installs (or updates) each DAW's script, skipping a DAW
+the app doesn't find on this computer, makes FL Studio's MIDI port the way chosen in Settings, then checks
+each link and says what's left to do. Each DAW also has its own **Install** button. The scripts ship next
+to the app (`Extensions` in its folder), and installing copies them where the DAW looks:
 
 - **Bitwig**: `Documents\Bitwig Studio\Controller Scripts\Music Organiser` (on Linux, `~/Bitwig Studio/...`).
   Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
@@ -56,6 +60,27 @@ Reading is always allowed. Changing things needs your say-so in the DAW:
 - **FL Studio**: set `LET_THE_APP_MAKE_CHANGES = True` near the top of `device_MusicOrganiser.py` (in the
   folder above) and reload the script. Then the app can set plugin parameters. Updating the script from
   Settings keeps this line as you set it.
+
+## Staying connected
+
+While the app runs, it asks both DAWs every 2 seconds what they have open (`Core/DawLink/DawWatch.cs` and
+`ViewModels/LiveDawsViewModel.cs`). Its connection to Bitwig stays open between looks (the script takes
+more than one connection at a time, so the app's other features connect alongside it). FL Studio is only
+asked while it's open, as far as this computer can tell, and not while another screen is asking it
+something. A DAW that doesn't answer is asked again 6 seconds later; one that answered is only shown as
+gone after three missed looks in a row.
+
+- The sidebar's **In your DAWs** shows the project each DAW has open, whether it has unsaved changes, and
+  whether the library has it. Clicking one shows that project, or Settings while the DAW isn't linked.
+- The open project is found in the library by name (Bitwig's project name, or the name in FL Studio's
+  window title), the newest save first. The projects list marks it *Open in Bitwig* or *Open in FL
+  Studio*, and its page says so and checks it with the DAW by itself, once, showing the result under the
+  buttons.
+- When a DAW saves (its unsaved changes clear, or it shows another project after Save As), the app re-reads
+  the file as soon as the DAW has finished writing it. A project the library doesn't have yet is found by
+  a scan for new projects, at most once a minute.
+- Sending FL Studio channels to Bitwig while FL Studio has the project open reads each plugin's knobs in
+  FL Studio first (see [Sending into Bitwig](#sending-into-bitwig)).
 
 ## Bitwig link
 
@@ -100,6 +125,14 @@ app this is `Core/DawLink/BitwigLink.cs`.
   plugin loads with its default sound by the ID the plugin scanner read, and the channel says so. A moved
   root key puts a Note Transpose before the plugin. The notes go in as a clip in the first empty launcher
   slot. FL Studio's own plugins can't load in Bitwig; their channels still get their notes.
+- **FL Studio's knobs**: when FL Studio has the project open, the app reads each plugin's knobs there
+  first (a channel only when FL Studio has it with the same plugin), selects the plugin in Bitwig, sets
+  the knobs whose value differs, matched by name (ignoring case, spaces and punctuation, since the plugin's
+  format can differ), and reads them back to see which took. That brings tweaks made since the last save
+  across, and most of the sound when Bitwig doesn't take the saved settings: anything that isn't a knob,
+  like a wavetable or a sample, stays at its default, and the channel says so.
+- **Read back**: after each channel, the app reads the project back from Bitwig and says if the track, its
+  instrument, or the Note Transpose before it isn't there as sent.
 - **A Sound Lab kit** (*Send to Bitwig* on the Kit builder) goes on a new track with a Drum Machine, kick on
   C1, snare on D1, clap on D#1, closed hat on F#1, tom on A1, open hat on A#1 and cymbal on C#2 (where
   General MIDI drum parts go), and the other pads on the free notes from C1 up. Adding a Drum Machine needs
@@ -125,7 +158,7 @@ and `slot`.
 
 | Command | Asks for | Result |
 |---|---|---|
-| `hello` | | `link`, `product`, `version` ("Producer Edition v25.1.6 [build 4997]"), `api` (FL Studio's scripting version), `title` (the window title, which names the project), `changes`, `platform`, `script` (the folder FL Studio loaded it from) |
+| `hello` | | `link`, `product`, `version` ("Producer Edition v25.1.6 [build 4997]"), `api` (FL Studio's scripting version), `title` (the window title, which names the project), `modified` (whether it has unsaved changes), `changes`, `platform`, `script` (the folder FL Studio loaded it from) |
 | `project` | | `title`, `tempo`, `modified`, `grouped`, `channels` (`index`, `name`, `type`, `mixer` track, `plugin` or null, `params` count) and `mixer`: each track's `index`, `name` and `plugins` (`slot`, `name`, `label`, `params` count) |
 | `params` | a plugin, `from` (optional), `midi` (optional) | `plugin`, `count`, `params` (`index`, `name`, `value` 0 to 1, `text` as the plugin shows it) and `next`: where to carry on, or null at the end. Each page takes about 40 ms at most, so FL Studio never stalls. VST plugins list 4240 parameters: their own 4096, then MIDI CC and aftertouch, which are left out unless `midi` is true. Unnamed parameters are skipped. |
 | `set` ✎ | a plugin, `param`, `value` (0 to 1) | The parameter as it now is |
@@ -144,8 +177,10 @@ python -m unittest discover -s extensions/fl-studio/test
 ```
 
 The app's own tests (`dotnet test`) also talk to both scripts end to end through `test/serve.js` and
-`test/serve.py`, when Node.js and Python are installed; without them those tests return early. CI runs
-all of it.
+`test/serve.py`, when Node.js and Python are installed; without them those tests return early. Each line
+of JSON on their input changes the stand-in as if done in the DAW (another project, unsaved changes, the
+channels in FL Studio's rack, a knob), which is how the tests follow saves and copy knobs. They never
+reach a real DAW, its folders, or this computer's MIDI ports. CI runs all of it.
 
 ## Still to confirm in the real DAWs
 
@@ -157,7 +192,13 @@ Bitwig:
 - [ ] Parameter IDs from `device` look like `CONTENTS/PID3e8`, and `set` takes them back.
 - [ ] `insert` takes the scanner's VST3 class ID as Bitwig wants it, and a UUID for its own devices.
 - [ ] The words `type` and `kind` use (e.g. `Instrument`, `note_to_audio`).
-- [ ] `project` names the project as its file is named (Check with Bitwig relies on it).
+- [ ] `project` names the project as its file is named (Check with Bitwig relies on it, and so does
+      finding the open project in the library).
+- [ ] `modified` clears when the project is saved, and stays clear after Save As (the app re-reads the
+      file then).
+- [ ] Two connections at once (the app's look every 2 seconds, and a send or a check) work side by side.
+- [ ] A plugin's parameter names in Bitwig match FL Studio's for the same plugin (VST3 or CLAP in Bitwig,
+      often VST2 in FL Studio), which is how knobs are copied.
 - [ ] It listens on 127.0.0.1 or ::1 (the app tries both), and what Windows' firewall asks the first time.
 - [ ] A clip slot's `insertFile` makes a clip from a MIDI file.
 - [ ] A device chain's `insertFile` loads `.bwpreset`, `.vstpreset` and `.fxb` files with their settings.
@@ -175,7 +216,9 @@ Bitwig:
 
 FL Studio:
 
-- [ ] The window title's wording (Check with FL Studio finds the project name in it).
+- [ ] The window title's wording (Check with FL Studio finds the project name in it, and so does
+      finding the open project in the library).
+- [ ] `general.getChangedFlag()` is non-zero exactly while the project has unsaved changes.
 - [ ] `mixer.getCurrentTempo()` gives BPM or thousandths of one (the script handles both).
 - [ ] A loopMIDI port called Music Organiser gets the script by itself (`supportedDevices`).
 - [ ] loopMIDI installs as `Tobias Erichsen\loopMIDI\loopMIDI.exe` in Program Files (x86) or Program Files

@@ -18,6 +18,8 @@ public sealed class ProjectSummary
     public string Folder { get; init; } = "";
     public long Size { get; init; }
     public DateTime Modified { get; init; }
+    /// <summary>When the file was last written, as the scan saw it (Unix seconds): <see cref="Modified"/> as stored.</summary>
+    public long Mtime { get; init; }
     public double? Tempo { get; init; }
     public string Version { get; init; } = "";
     public Confidence Confidence { get; init; }

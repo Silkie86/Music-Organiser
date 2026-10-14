@@ -401,6 +401,32 @@ test("fills a new Drum Machine's empty pads, from the lowest note", () => {
   assert.equal(filled[36].devices.length, 1);
 });
 
+test("reads and sets the knobs of a plugin it put on a track, once that's selected", () => {
+  // How the app copies FL Studio's knobs across and checks they took.
+  const { bitwig, app } = studio({
+    plugins: {
+      "VST3:805ECA49563E43EA8119369F0ED6096D": {
+        name: "Serum", plugin: true, kind: "note_to_audio",
+        knobs: [
+          { id: "CONTENTS/PID0", name: "Master Volume", value: 0.5, display: "50%" },
+          { id: "CONTENTS/PID3e8", name: "Filter Cutoff", value: 0.5, display: "50%" },
+        ],
+      },
+    },
+  });
+  const track = app.wait({ id: 1, cmd: "newtrack", name: "Lead" }).result.index;
+  const added = app.wait({ id: 2, cmd: "insert", track, kind: "vst3", plugin: "805ECA49563E43EA8119369F0ED6096D" }).result;
+  app.wait({ id: 3, cmd: "select", track, device: added.index });
+  const before = app.wait({ id: 4, cmd: "device" }).result;
+  assert.deepEqual([before.track, before.device.name], ["Lead", "Serum"]);
+  assert.deepEqual(before.params.map((p) => [p.name, p.value]), [["Master Volume", 0.5], ["Filter Cutoff", 0.5]]);
+
+  assert.equal(app.ask({ id: 5, cmd: "set", param: "CONTENTS/PID3e8", value: 0.25 }).ok, true);
+  bitwig.clock.advance(100);
+  const after = app.wait({ id: 6, cmd: "device" }).result.params;
+  assert.deepEqual(after.map((p) => [p.name, p.value, p.display]), [["Master Volume", 0.5, "50%"], ["Filter Cutoff", 0.25, "25%"]]);
+});
+
 test("fills the selected Drum Machine, and says when the selected device isn't one", () => {
   const { bitwig, app } = studio();
   app.wait({ id: 1, cmd: "insert", track: 0, at: "start", kind: "bitwig", device: DRUM_MACHINE });

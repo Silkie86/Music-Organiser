@@ -1,5 +1,8 @@
 using System.Collections;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
@@ -135,7 +138,7 @@ public class ViewModelTests : IDisposable
             Assert.Equal("Sent 3 channels to Bitwig, each on a new track named after it. 2 didn't come across whole: each says what under its name.",
                          midi.Message);
             Assert.Equal([
-                ("Lead", "In Bitwig: Serum with the project's settings, and its notes as a clip."),
+                ("Lead", "In Bitwig: Serum with the project's settings, and its notes as a clip. Checked in Bitwig afterwards: it's all there."),
                 ("Kick", @"In Bitwig: its notes, as a clip. Its sample isn't at C:\Samples\Drums\Kick 01.wav."),
                 ("Bass", "In Bitwig: its notes, as a clip. 3x Osc is one of FL Studio's own plugins, which Bitwig can't load."),
             ], midi.Channels.Select(r => (r.Name, r.Sent)));
@@ -177,6 +180,180 @@ public class ViewModelTests : IDisposable
                          "Clap (D#1), Closed hat (F#1) already had sounds, so they were left alone.", kit.Status);
         }
         finally { BitwigLink.Port = port; }
+    }
+
+    [Fact]
+    public async Task SidebarSaysWhenNoDawIsOpen()
+    {
+        using var watch = new DawWatch(ClosedPort(), Fixtures.TempDir(), flOpen: () => false, bitwigOpen: () => false) { Retry = TimeSpan.Zero };
+        var main = new MainViewModel(_db, _sounds, watch);
+        // (A look at FL Studio is skipped while another request to it is under way, as in other tests running alongside.)
+        await PollUntil(main.Live, () => main.Live.Rows.All(r => r.Text != "Not connected"));
+        Assert.Equal([("Bitwig", "Not open", false), ("FL Studio", "Not open", false)],
+                     main.Live.Rows.Select(r => (r.Name, r.Text, r.Answering)));
+        Assert.All(main.Settings.Links, l => Assert.Equal("Not answering right now.", l.Live));
+
+        // Clicking one goes to Settings, where the links are set up.
+        main.ShowProjects();
+        main.Live.Rows[1].OpenCommand.Execute(null);
+        Assert.Same(main.Settings, main.SelectedNav.Page);
+    }
+
+    [Fact]
+    public async Task SidebarShowsWhatEachDawHasOpen()
+    {
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        using var fl = FlLinkTests.ScriptRunner.Start();
+        if (bitwig is null || fl is null) return;
+        ScanFixtures();
+        bitwig.Change("""{"project": "Loop Idea"}""");
+        fl.Change("""{"modified": 1}""");
+        using var watch = new DawWatch(bitwig.Port, fl.Folder, flOpen: () => true, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
+        var main = new MainViewModel(_db, _sounds, watch);
+        await PollUntil(main.Live, () => main.Live.Rows.All(r => r.Answering));
+
+        Assert.Equal([("Bitwig", "Loop Idea", ""), ("FL Studio", "Night Drive", "Unsaved changes")],
+                     main.Live.Rows.Select(r => (r.Name, r.Text, r.Detail)));
+        Assert.Equal([("Loop Idea", "Open in Bitwig"), ("Night Drive", "Open in FL Studio"), ("Sunday Song", "")],
+                     main.Projects.Items.Select(i => (i.Name, i.OpenIn)).Order());
+        Assert.Equal("✓ Answering now: Bitwig Studio 6.1.2, with “Loop Idea” open.", main.Settings.Links[0].Live);
+
+        // Bitwig's row shows its project, which the app checks with Bitwig by itself.
+        main.Live.Rows[0].OpenCommand.Execute(null);
+        var page = main.Projects.Detail!;
+        Assert.Equal(("Loop Idea", "Open in Bitwig now", true), (page.Item.Name, page.LiveText, page.IsLive));
+        await Until(() => page.HasCheckLines);
+        Assert.Equal("Bitwig has this project open, so the app checked it there by itself.", page.CheckLines[0].Text);
+
+        main.Projects.Selected = main.Projects.Items.Single(i => i.Name == "Night Drive");
+        Assert.Equal("Open in FL Studio now, with unsaved changes", main.Projects.Detail!.LiveText);
+    }
+
+    [Fact]
+    public async Task RereadsAProjectWhenItsDawSavesIt()
+    {
+        using var fl = FlLinkTests.ScriptRunner.Start();
+        if (fl is null) return;
+        ScanFixtures();
+        fl.Change("""{"modified": 1}""");
+        using var watch = new DawWatch(ClosedPort(), fl.Folder, flOpen: () => true, bitwigOpen: () => false) { Retry = TimeSpan.Zero };
+        var main = new MainViewModel(_db, _sounds, watch);
+        await PollUntil(main.Live, () => main.Live.IsAnswering(DawState.FlStudio));
+
+        // FL Studio saves the project: the file changes, and the project's unsaved changes clear.
+        var path = Path.Combine(_root, "Night Drive.flp");
+        var saved = DateTime.UtcNow.AddMinutes(1);
+        File.SetLastWriteTimeUtc(path, saved);
+        fl.Change("""{"modified": 0}""");
+        await PollUntil(main.Live, () => main.ScanStatus.Length > 0);
+        Assert.StartsWith("Re-read Night Drive after FL Studio saved it · ", main.ScanStatus);
+        Assert.Equal(new DateTimeOffset(saved).ToUnixTimeSeconds(), _db.Projects().Single(p => p.Path == path).Mtime);
+    }
+
+    [Fact]
+    public async Task MidiWindowSendsFlStudiosKnobsAsTheyAreNow()
+    {
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        using var fl = FlLinkTests.ScriptRunner.Start();
+        if (bitwig is null || fl is null) return;
+        // FL Studio has the project open, with the Lead's Filter Cutoff turned up since it was saved.
+        fl.Change("""{"channels": [["Lead", "Serum"], ["Kick", null], ["Bass", "3x Osc"]]}""");
+        fl.Change("""{"knob": [0, 3, 0.9]}""");
+        fl.Change("""{"modified": 1}""");
+        using var watch = new DawWatch(bitwig.Port, fl.Folder, flOpen: () => true, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
+        var main = new MainViewModel(_db, _sounds, watch);
+        await PollUntil(main.Live, () => main.Live.Rows.All(r => r.Answering));
+
+        var path = Path.Combine(_root, "Night Drive.flp");
+        var midi = new MidiPreviewViewModel(Readers.For(path)!, path, "Night Drive", Path.Combine(_root, "Exports"), 128, _db, main.Live);
+        await midi.LoadAsync();
+        await midi.SendAllToBitwigCommand.ExecuteAsync(null);
+
+        Assert.Equal("Sent 3 channels to Bitwig, each on a new track named after it. 2 didn't come across whole: each says what under " +
+                     "its name. FL Studio has unsaved changes: the knobs are as it has them now, but the notes and samples are from the last save.",
+                     midi.Message);
+        Assert.Equal("In Bitwig: Serum with the project's settings, and its notes as a clip. 2 knobs set to match FL Studio now. " +
+                     "Checked in Bitwig afterwards: it's all there.", midi.Channels.Single(r => r.Name == "Lead").Sent);
+
+        // The Lead's Serum in Bitwig has FL Studio's knobs. (Bitwig moves its selection a moment after being asked.)
+        using var link = await watch.ConnectBitwigAsync();
+        var lead = (await link.ProjectAsync()).Tracks.Single(t => t.Name == "Lead");
+        await link.SelectAsync(lead.Index, lead.Devices.Single(d => d.Name == "Serum").Index);
+        var shown = await link.SelectedDeviceAsync();
+        for (var waited = Stopwatch.StartNew(); shown.Track != "Lead" && waited.Elapsed < TimeSpan.FromSeconds(5); )
+        {
+            await Task.Delay(100);
+            shown = await link.SelectedDeviceAsync();
+        }
+        Assert.Equal(("Lead", "Serum"), (shown.Track, shown.Device?.Name));
+        Assert.Equal([("Master Volume", 0.7), ("A Octave", 0.5), ("Osc B Level", 0.5), ("Filter Cutoff", 0.9)],
+                     shown.Params.Select(p => (p.Name, Math.Round(p.Value ?? -1, 3))));
+    }
+
+    [Fact]
+    public async Task SetUpInstallsTheScriptThenChecksTheLink()
+    {
+        // A Bitwig user folder of the test's own, and a check that answers or doesn't, so nothing reaches a real Bitwig.
+        var user = Path.Combine(_root, "Bitwig Studio");
+        var found = false;
+        var answers = true;
+        Task<string> Check() => answers
+            ? Task.FromResult("Connected to Bitwig Studio 6.1.2, with “Night Drive” open.")
+            : Task.FromException<string>(new DawLinkException("Bitwig isn't answering."));
+        var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.Bitwig(user), Check, found: () => found);
+
+        Assert.Equal("Bitwig Studio: not found on this computer, so it was skipped.", await link.SetUpAsync());
+        Assert.Equal("Skipped: the app didn't find Bitwig Studio on this computer.", link.Result);
+        Assert.False(Directory.Exists(user));
+
+        found = true;
+        Assert.Equal("✓ Bitwig Studio: set up and answering.", await link.SetUpAsync());
+        Assert.Equal("Installed the script. Connected to Bitwig Studio 6.1.2, with “Night Drive” open.", link.Result);
+        Assert.Equal(ScriptState.Installed, DawScripts.Bitwig(user).State);
+        Assert.StartsWith("Installed in ", link.Status);
+
+        answers = false;
+        Assert.Equal("Bitwig Studio: the script is in place, but Bitwig Studio isn't answering yet. What's left is below.",
+                     await link.SetUpAsync());
+        Assert.Equal("The script was already installed. Bitwig isn't answering.", link.Result);
+    }
+
+    /// <summary>Puts the three test projects in the library, without the screens starting a scan of their own.</summary>
+    void ScanFixtures()
+    {
+        _db.AddRoot(_root);
+        new Scanner(_db).ScanProjects();
+        _db.RemoveRoot(_root);
+    }
+
+    /// <summary>A port on this computer that nothing listens on, standing in for a Bitwig that isn't open.</summary>
+    static int ClosedPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    /// <summary>Asks the DAWs (as the app does every couple of seconds) until <paramref name="done"/>.</summary>
+    static async Task PollUntil(LiveDawsViewModel live, Func<bool> done)
+    {
+        var waited = Stopwatch.StartNew();
+        while (true)
+        {
+            await live.PollAsync();
+            if (done()) return;
+            if (waited.Elapsed > TimeSpan.FromSeconds(20))
+                Assert.Fail($"The DAWs didn't get there: {string.Join(", ", live.Rows.Select(r => $"{r.Name}: {r.Text}"))}");
+            await Task.Delay(50);
+        }
+    }
+
+    static async Task Until(Func<bool> done)
+    {
+        for (var waited = Stopwatch.StartNew(); !done(); await Task.Delay(50))
+            if (waited.Elapsed > TimeSpan.FromSeconds(20)) Assert.Fail("Timed out.");
     }
 
     sealed class HeadlessUi : IPlatformUi

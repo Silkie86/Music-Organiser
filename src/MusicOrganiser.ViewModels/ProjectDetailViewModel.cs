@@ -151,7 +151,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     void ShowMidi()
     {
         if (Readers.For(Item.Path) is not { } reader) return;
-        Ui.Current.ShowMidi(new MidiPreviewViewModel(reader, Item.Path, Item.Name, ExportRoot, Item.Tempo, _db));
+        Ui.Current.ShowMidi(new MidiPreviewViewModel(reader, Item.Path, Item.Name, ExportRoot, Item.Tempo, _db, _main.Live));
     }
 
     public bool IsFlStudio => Item.Daw == "FL Studio";
@@ -227,32 +227,66 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasCheckLines))] IReadOnlyList<CheckLine> _checkLines = [];
     public bool HasCheckLines => CheckLines.Count > 0;
 
+    /// <summary>"Open in Bitwig now" while the project's DAW has it open, or that it has an older save of it open; else empty.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(OlderSaveOpen))] string _liveText = "";
+    /// <summary>Whether the project's DAW has this project open now.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(OlderSaveOpen))] bool _isLive;
+    /// <summary>Whether <see cref="LiveText"/> says the DAW has an older save of it open instead.</summary>
+    public bool OlderSaveOpen => !IsLive && LiveText.Length > 0;
+    bool _checkedLive;
+
+    /// <summary>
+    /// Whether the project's DAW has it open now (<paramref name="open"/>), in words. The first time it does, the page
+    /// checks it there by itself, quietly: only the result shows.
+    /// </summary>
+    public void ShowLive(string text, bool open)
+    {
+        LiveText = text;
+        IsLive = open;
+        if (!open || _checkedLive || !CanCheckWithDaw || Item.FileMissing) return;
+        _checkedLive = true;
+        _ = CheckAsync(quiet: true);
+    }
+
     /// <summary>
     /// Asks the DAW what it shows for this project (through the Music Organiser script installed in it) and
     /// compares that with what the app read from the file, to catch anything the app reads wrong.
     /// </summary>
     [RelayCommand]
-    async Task CheckWithDaw()
+    Task CheckWithDaw() => CheckAsync(quiet: false);
+
+    async Task CheckAsync(bool quiet)
     {
         var daw = IsFlStudio ? "FL Studio" : "Bitwig";
-        CheckLines = [];
-        Message = $"Asking {daw}…";
+        if (!quiet)
+        {
+            CheckLines = [];
+            Message = $"Asking {daw}…";
+        }
         try
         {
             var plugins = Plugins.Select(p => p.Name).ToList();
+            IReadOnlyList<CheckLine> lines;
             if (IsFlStudio)
             {
-                CheckLines = FlCheck.Compare(Item.Path, Item.Tempo, Tracks, plugins, await new FlLink().ProjectAsync());
+                lines = FlCheck.Compare(Item.Path, Item.Tempo, Tracks, plugins, await _main.Live.Watch.Fl().ProjectAsync());
             }
             else
             {
-                using var link = await BitwigLink.ConnectAsync();
-                CheckLines = BitwigCheck.Compare(Item.Path, Item.Tempo, Tracks, plugins, await link.ProjectAsync());
+                using var link = await _main.Live.Watch.ConnectBitwigAsync();
+                lines = BitwigCheck.Compare(Item.Path, Item.Tempo, Tracks, plugins, await link.ProjectAsync());
             }
-            Message = "";
+            CheckLines = quiet ? [new(CheckResult.Note, $"{daw} has this project open, so the app checked it there by itself."), .. lines] : lines;
+            if (!quiet) Message = "";
         }
-        catch (DawLinkException e) { Message = e.Message; }
-        catch (Exception e) { Message = $"Checking with {daw} failed: {e.Message}"; }
+        catch (DawLinkException e)
+        {
+            if (!quiet) Message = e.Message;
+        }
+        catch (Exception e)
+        {
+            if (!quiet) Message = $"Checking with {daw} failed: {e.Message}";
+        }
     }
 
     /// <summary>Opens the presets popup: every plugin state, with filters, ready to export.</summary>

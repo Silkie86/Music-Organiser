@@ -117,8 +117,13 @@
                         <DataGridTemplateColumn Header="Name" Width="*" MinWidth="200" SortMemberPath="Name">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding Path}" />
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Right" Text="{Binding OpenIn}" FontSize="11" Margin="8,0,0,0"
+                                                   VerticalAlignment="Center" Foreground="{StaticResource OkBrush}"
+                                                   Visibility="{Binding OpenIn, Converter={StaticResource NullToVisibility}}" />
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding Path}" />
+                                    </DockPanel>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>

@@ -1,12 +1,13 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Plugins;
 using MusicOrganiser.Core.Sounds;
 
 namespace MusicOrganiser.ViewModels;
 
-/// <summary>The window: which screen is showing, and background scans.</summary>
+/// <summary>The window: which screen is showing, background scans, and the DAWs open now.</summary>
 public sealed partial class MainViewModel : ObservableObject
 {
     readonly LibraryDb _db;
@@ -22,6 +23,9 @@ public sealed partial class MainViewModel : ObservableObject
     public SoundsViewModel Sounds { get; }
     public SettingsViewModel Settings { get; }
 
+    /// <summary>Bitwig and FL Studio as they are now, through their links (the sidebar's "In your DAWs").</summary>
+    public LiveDawsViewModel Live { get; }
+
     public IReadOnlyList<NavItem> Nav { get; }
 
     [ObservableProperty] NavItem _selectedNav;
@@ -29,10 +33,12 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] string _scanStatus = "";
     [ObservableProperty] double _scanPercent;
 
-    public MainViewModel(LibraryDb db, SoundOrganiser sounds)
+    /// <param name="watch">How the DAWs are reached: their usual links unless given (tests use stand-ins).</param>
+    public MainViewModel(LibraryDb db, SoundOrganiser sounds, DawWatch? watch = null)
     {
         _db = db;
         _scanner = new Scanner(db);
+        Live = new LiveDawsViewModel(db, this, watch ?? new DawWatch());
         Projects = new ProjectsViewModel(db, this);
         Plugins = new PluginsViewModel(db, this);
         Samples = new SamplesViewModel(db, this);
@@ -52,9 +58,12 @@ public sealed partial class MainViewModel : ObservableObject
         // First run: send people to Settings to add their project folders.
         if (_db.Roots().Count == 0 && _db.GetList(Scanner.SampleFoldersKey).Count == 0) SelectedNav = Nav[^1];
         else _ = ScanAsync(false);
+        Live.Start();
     }
 
     public void ShowProjects() => SelectedNav = Nav.First(n => n.Page == Projects);
+
+    public void ShowSettings() => SelectedNav = Nav.First(n => n.Page == Settings);
 
     partial void OnSelectedNavChanged(NavItem value)
     {
@@ -67,6 +76,7 @@ public sealed partial class MainViewModel : ObservableObject
         Plugins.Reload();
         Samples.Reload();
         Sounds.Reload();
+        Live.Match();   // the library may have the projects the DAWs have open now
     }
 
     [RelayCommand]

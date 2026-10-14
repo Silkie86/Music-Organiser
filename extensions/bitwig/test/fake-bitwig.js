@@ -189,10 +189,23 @@ class CursorDevice extends Device {
   /** Selects a device in "Bitwig" that isn't on any track: its parameters arrive through the observers. */
   show(spec, params) {
     this.world.cursor.device = undefined;
+    this.followed = undefined;
     this.load(spec);
     this.where.v = spec ? 0 : -1;
     this.drum.v = !!(spec && spec.drum);
-    this.params = params || [];
+    this.announce(params || []);
+  }
+  /**
+   * Bitwig's direct parameters for the device on a track the cursor is on now: the `knobs` its spec has
+   * ({ id, name, value, display }), or none. Only a different device announces them again.
+   */
+  follow(spec) {
+    if (spec === this.followed) return;
+    this.followed = spec;
+    this.announce(spec && spec.knobs ? spec.knobs : []);
+  }
+  announce(params) {
+    this.params = params;
     this.idObserver(this.params.map((p) => p.id));
     for (const p of this.params) {
       this.nameObserver(p.id, p.name);
@@ -209,7 +222,17 @@ class CursorDevice extends Device {
     this.selected.push(device);
     this.world.selectDevice(device);
   }
-  setDirectParameterValueNormalized(id, value, resolution) { this.setCalls.push([id, value, resolution]); }
+  /** The value changes a moment later, and Bitwig tells the script, as it does for a knob turned by hand. A `locked` knob stays put. */
+  setDirectParameterValueNormalized(id, value, resolution) {
+    this.setCalls.push([id, value, resolution]);
+    const knob = this.params.find((p) => p.id === id);
+    if (!knob || knob.locked) return;
+    this.world.later(20, () => {
+      knob.value = value / (resolution - 1);
+      if (knob.display !== undefined) knob.display = `${Math.round(knob.value * 100)}%`;
+      this.valueObserver(id, knob.value);
+    });
+  }
 }
 
 class DrumPad {
@@ -362,7 +385,8 @@ function baseName(file) {
  * the plugin its name starts with: "Serum - Lead.vstpreset"), `plugins` ("VST3:<id>", "VST2:<number>",
  * "CLAP:<id>" -> the device), `drumMachine` (the UUID that adds a Drum Machine here), `scenes` (how many
  * scenes the project has), `padScroll` (where the pad list starts) and `browserOnNewTrack` (whether a new
- * track opens Bitwig's browser).
+ * track opens Bitwig's browser). A device can list its `knobs`, which the script sees once it's selected,
+ * and `knobs` can give them by device name ("Serum" -> its knobs) for whatever the app inserts.
  */
 function startBitwig(model = {}) {
   const clock = {
@@ -460,6 +484,7 @@ function startBitwig(model = {}) {
         spec = (model.plugins || {})[`${format}:${arg}`];
       }
       if (!spec) return;
+      if (!spec.knobs && model.knobs && model.knobs[spec.name]) spec = { ...spec, knobs: model.knobs[spec.name] };
       const track = state.tracks[t];
       world.later(40, () => {
         const device = JSON.parse(JSON.stringify(spec));
@@ -537,6 +562,7 @@ function startBitwig(model = {}) {
       cursorDevice.load(device);
       cursorDevice.where.v = device && selected ? selected.devices.indexOf(device) : -1;
       cursorDevice.drum.v = !!(device && device.drum);
+      cursorDevice.follow(device);
     }
     if (world.pads) {
       const from = world.padDevice();

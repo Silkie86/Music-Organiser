@@ -1,6 +1,9 @@
 // Serves the Bitwig script, running in the stand-in Bitwig, on a TCP port on this computer, with each
 // message framed as Bitwig frames them (a 4-byte big-endian length in front). The app's tests use it
 // to talk to the real script. Prints "port <number>" once it's listening; stops when stdin closes.
+// Each line on stdin changes the stand-in, as if done in Bitwig: {"project": "Other Song", "modified": true}
+// opens another project or edits this one, and {"presets": false} stops it loading preset files. It prints
+// "ok" once the change is made.
 //
 //   node serve.js [--raw]     --raw: send without the length in front, to check the app copes either way
 "use strict";
@@ -9,12 +12,21 @@ const net = require("node:net");
 const { startBitwig } = require("./fake-bitwig");
 
 const raw = process.argv.includes("--raw");
-const bitwig = startBitwig({
+const model = {
   project: "Night Drive",
   tempo: 124,
   // What the app can send in: any preset file, one plugin by its ID, and a Drum Machine (the stand-in's ID).
   presets: true,
   plugins: { "VST3:805ECA49563E43EA8119369F0ED6096D": { name: "Serum", plugin: true, kind: "note_to_audio" } },
+  // A new Serum's knobs, by the names FL Studio's stand-in gives them, and one that doesn't move when set.
+  knobs: {
+    Serum: [
+      { id: "CONTENTS/PID0", name: "Master Volume", value: 0.5, display: "50%" },
+      { id: "CONTENTS/PID1", name: "A Octave", value: 0.5, display: "50%" },
+      { id: "CONTENTS/PID2", name: "Osc B Level", value: 0.5, display: "50%", locked: true },
+      { id: "CONTENTS/PID3e8", name: "Filter Cutoff", value: 0.5, display: "50%" },
+    ],
+  },
   drumMachine: "d7d7d7d7-0000-4000-8000-000000000001",
   tracks: [
     { name: "Drums", type: "Group", group: true, devices: [] },
@@ -27,7 +39,8 @@ const bitwig = startBitwig({
   ],
   selectedTrack: "Bass",
   actions: [{ id: "Save", name: "Save", category: "File" }],
-});
+};
+const bitwig = startBitwig(model);
 bitwig.allowChanges(true);
 bitwig.cursorDevice.show({ name: "Serum", preset: "Reese", plugin: true, kind: "note_to_audio" }, [
   { id: "CONTENTS/PID0", name: "Master Volume", value: 0.7, display: "-3.1 dB" },
@@ -68,5 +81,20 @@ const server = net.createServer((socket) => {
   socket.on("error", () => {});
 });
 server.listen(0, "127.0.0.1", () => console.log("port " + server.address().port));
+
+let typed = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  typed += chunk;
+  for (let end = typed.indexOf("\n"); end >= 0; end = typed.indexOf("\n")) {
+    const line = typed.slice(0, end).trim();
+    typed = typed.slice(end + 1);
+    if (!line) continue;
+    const change = JSON.parse(line);
+    if ("project" in change) bitwig.app.name.v = change.project;
+    if ("modified" in change) bitwig.project.modified.v = !!change.modified;
+    if ("presets" in change) model.presets = change.presets;
+    console.log("ok");
+  }
+});
 process.stdin.on("end", () => process.exit(0));
-process.stdin.resume();

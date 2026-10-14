@@ -143,6 +143,11 @@
                     <TextBlock Text="DAW links" Style="{StaticResource CardTitle}" />
                     <TextBlock Style="{StaticResource CardIntro}"
                                Text="Small scripts the app installs in Bitwig and FL Studio, so it can ask them what they show for the open project. The Check with Bitwig and Check with FL Studio buttons on a project then compare that with what the app read from its file." />
+                    <ui:Button Content="Set up both" Icon="{ui:SymbolIcon PlugConnected24}" Appearance="Primary"
+                               Command="{Binding SetUpBothCommand}" Margin="0,0,0,8" HorizontalAlignment="Left"
+                               ToolTip="Installs the script for each DAW on this computer, makes FL Studio's MIDI port the way chosen below, then checks each link" />
+                    <TextBlock Text="{Binding SetUpResult}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,14"
+                               Visibility="{Binding SetUpResult, Converter={StaticResource NullToVisibility}}" />
                     <ItemsControl ItemsSource="{Binding Links}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:DawLinkSetting}">
@@ -153,6 +158,19 @@
                                         <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
                                     </StackPanel>
                                     <TextBlock Text="{Binding Status}" Margin="18,4,0,0" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding Live}" Margin="18,2,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                               Visibility="{Binding Live, Converter={StaticResource NullToVisibility}}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsAnswering}" Value="True">
+                                                        <Setter Property="Foreground" Value="{StaticResource OkBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                     <TextBlock Text="{Binding Steps}" Margin="18,4,0,0" TextWrapping="Wrap" FontSize="12.5"
                                                Foreground="{StaticResource MutedBrush}" />
                                     <StackPanel Margin="18,10,0,0" Visibility="{Binding CanChoosePort, Converter={StaticResource BoolToVisibility}}">

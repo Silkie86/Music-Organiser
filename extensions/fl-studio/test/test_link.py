@@ -127,6 +127,15 @@ class LinkTests(unittest.TestCase):
         self.assertEqual((hello["link"], hello["api"], hello["changes"]), (1, 37, False))
         self.assertEqual(hello["version"], "Producer Edition v25.1.6 [build 4997]")
         self.assertEqual(hello["title"], "Night Drive - FL Studio 2025")
+        self.assertEqual(hello["modified"], False)
+
+    def test_says_when_the_project_has_unsaved_changes(self):
+        # The app watches this to re-read a project as soon as it's saved.
+        studio = night_drive(modified=1)
+        link = self.link(studio)
+        self.assertEqual(link.result({"cmd": "hello"})["modified"], True)
+        studio.modified = 0
+        self.assertEqual(link.result({"cmd": "hello"})["modified"], False)
 
     def test_lists_the_channels_and_the_mixer(self):
         link = self.link()

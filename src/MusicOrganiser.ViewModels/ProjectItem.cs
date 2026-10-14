@@ -64,6 +64,9 @@ public sealed partial class ProjectItem : ObservableObject
     public DateTime? LastOpened => _p.LastOpened;
     public bool IsHeuristic => _p.Confidence == Confidence.Heuristic;
 
+    /// <summary>"Open in Bitwig" while a DAW has this song open, else empty.</summary>
+    [ObservableProperty] string _openIn = "";
+
     [ObservableProperty] string _status;
     [ObservableProperty] int _rating;
     [ObservableProperty] bool _favourite;

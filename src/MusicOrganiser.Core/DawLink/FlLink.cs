@@ -10,8 +10,9 @@ namespace MusicOrganiser.Core.DawLink;
 /// <param name="Title">FL Studio's window title, which names the open project.</param>
 /// <param name="Changes">Whether LET_THE_APP_MAKE_CHANGES is on in the installed script.</param>
 /// <param name="Script">The folder FL Studio loaded the script from, if it could tell.</param>
+/// <param name="Modified">Whether the open project has unsaved changes, or null from an older copy of the script, which doesn't say.</param>
 public sealed record FlHello(int Link, string Product, string Version, int Api, string Title, bool Changes, string Platform,
-                             string? Script);
+                             string? Script, bool? Modified = null);
 
 /// <summary>The project open in FL Studio, as FL Studio shows it.</summary>
 /// <param name="Tempo">In BPM, or null if FL Studio didn't say.</param>
@@ -76,6 +77,15 @@ public sealed class FlLink
 
     public string Folder { get; }
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Whether to work out why FL Studio isn't answering when it doesn't (from its program and this computer's MIDI
+    /// inputs), for the message. Off for quick checks that only need to know whether it answers.
+    /// </summary>
+    public bool Explain { get; init; } = true;
+
+    /// <summary>Whether a request is waiting for FL Studio's answer, from anywhere in the app.</summary>
+    public static bool Busy => One.CurrentCount == 0;
 
     public async Task<FlHello> HelloAsync(CancellationToken ct = default) =>
         Parse<FlHello>(await RequestAsync(new() { ["cmd"] = "hello" }, ct));
@@ -170,7 +180,7 @@ public sealed class FlLink
             }
             if (!File.Exists(asked)) throw new DawLinkException("FL Studio took the request but didn't answer in time.");
             TryDelete(asked);
-            throw new DawLinkException(FlSetup.WhyNotAnswering());
+            throw new DawLinkException(Explain ? FlSetup.WhyNotAnswering() : NotRunning);
         }
         finally
         {

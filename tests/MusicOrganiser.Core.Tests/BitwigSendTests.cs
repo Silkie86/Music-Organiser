@@ -69,6 +69,62 @@ public class BitwigSendTests
         Assert.Equal([("Note Transpose", ""), ("Serum", "Lead")], tracks[4].Devices.Select(d => (d.Name, d.Preset)));
         Assert.Equal(["Serum"], tracks[5].Devices.Select(d => d.Name));
         Assert.Empty(tracks[6].Devices);
+        // Each was read back from Bitwig afterwards.
+        Assert.All([pluck, lead, bass, pad, diva, gone], c => Assert.True(c.Checked));
+    }
+
+    [Fact]
+    public async Task CopiesFlStudiosKnobsWhenBitwigCantLoadTheSettings()
+    {
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        if (bitwig is null) return;
+        bitwig.Change("""{"presets": false}""");   // as if this Bitwig can't load the plugin's settings saved in the project
+        using var link = await BitwigLink.ConnectAsync(bitwig.Port);
+        var dir = Fixtures.TempDir();
+        var files = new BitwigSend.Files(Path.Combine(dir, "Night Drive.flp"), dir, 124, new Dictionary<string, BitwigPreset.Template>());
+        var state = new PresetBlob("Lead", "Serum", ".vstpreset", "VST3 state"u8.ToArray()) { Kind = PluginKind.Instrument, Channel = 2 };
+        var installed = new ScannedPlugin { Format = "VST3", Id = SerumId, Name = "Serum", Kind = "instrument" };
+        // Serum's knobs as FL Studio has them. A new Serum in Bitwig has every knob half way, and its Osc B Level doesn't move.
+        FlParam[] knobs =
+        [
+            new(0, "Master Volume", 0.7, "-3.1 dB"), new(1, "A Octave", 0.5, "0"), new(2, "Osc B Level", 0.3, "30%"),
+            new(3, "Filter cutoff", 0.25, "440 Hz"), new(4, "Noise Level", 0.1, "10%"),
+        ];
+
+        var lead = await BitwigSend.ChannelAsync(link, Channel("Lead", "Serum", index: 2), state, [installed], files, knobs);
+        Assert.Equal(("Serum", true, true), (lead.Instrument, lead.Clip, lead.Checked));
+        Assert.Equal((4, 3, 1), (lead.Knobs!.Matched, lead.Knobs.Changed, lead.Knobs.Unmatched));
+        Assert.Equal(["Osc B Level"], lead.Knobs.NotTaken);
+        Assert.Equal([
+            "Bitwig didn't take the settings saved in the project, so its knobs were set to FL Studio's one by one: " +
+            "anything that isn't a knob, like a wavetable or a sample, has its default",
+            "1 of FL Studio's knobs has no knob of the same name in Bitwig, so it has its default",
+            "1 knob didn't take FL Studio's value in Bitwig: “Osc B Level”",
+        ], lead.Problems);
+
+        // Bitwig shows the plugin with FL Studio's knobs.
+        var shown = await link.SelectedDeviceAsync();
+        Assert.Equal(("Lead", "Serum"), (shown.Track, shown.Device?.Name));
+        Assert.Equal([("Master Volume", 0.7), ("A Octave", 0.5), ("Osc B Level", 0.5), ("Filter Cutoff", 0.25)],
+                     shown.Params.Select(p => (p.Name, Math.Round(p.Value ?? -1, 3))));
+
+        // Without FL Studio's knobs, the channel says how to get them.
+        var bass = await BitwigSend.ChannelAsync(link, Channel("Bass", "Serum", index: 3), state with { Channel = 3 }, [installed], files);
+        Assert.Null(bass.Knobs);
+        Assert.Equal("Serum has its default sound: Bitwig didn't take the settings saved in the project. Open the project in FL Studio " +
+                     "and send it again to copy its knobs across", Assert.Single(bass.Problems));
+    }
+
+    [Fact]
+    public void MatchesKnobsByName()
+    {
+        static FlParam Fl(string name) => new(0, name, 0.5, "");
+        static BitwigParam Bitwig(string id, string name) => new(id, name, 0.5, null);
+        var pairs = BitwigSend.MatchKnobs(
+            [Fl("Filter Cutoff"), Fl("LFO 1 Rate"), Fl("Mix"), Fl("Mix"), Fl("Mix"), Fl("Drive")],
+            [Bitwig("a", "filter cutoff"), Bitwig("b", "LFO1 Rate"), Bitwig("c", "Mix"), Bitwig("d", "Mix"), Bitwig("e", "")]);
+        // Case, spaces and punctuation aside; a name used twice pairs up in order; no knob for a third Mix or Drive.
+        Assert.Equal([("Filter Cutoff", "a"), ("LFO 1 Rate", "b"), ("Mix", "c"), ("Mix", "d")], pairs.Select(p => (p.Fl.Name, p.Bitwig.Id)));
     }
 
     [Fact]

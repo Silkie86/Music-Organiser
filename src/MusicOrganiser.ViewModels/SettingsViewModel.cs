@@ -34,6 +34,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>The scripts that let the app ask Bitwig and FL Studio what they show.</summary>
     public IReadOnlyList<DawLinkSetting> Links { get; }
 
+    /// <summary>What Set up both did: a line for each DAW.</summary>
+    [ObservableProperty] string _setUpResult = "";
+    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SetUpBothCommand))] bool _settingUp;
+
     public SettingsViewModel(LibraryDb db, MainViewModel main)
     {
         _db = db;
@@ -49,16 +53,44 @@ public sealed partial class SettingsViewModel : ObservableObject
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
         UpdateSampleIndexText();
         var flPort = new FlPortSetting(db);
+        var watch = main.Live.Watch;
         Links =
         [
-            new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.Bitwig(), CheckBitwig),
-            new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), CheckFlStudio, new FolderChoice(
+            new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.Bitwig(), () => CheckBitwig(watch),
+                               found: () => Directory.Exists(DawScripts.BitwigUserFolder)),
+            new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), () => CheckFlStudio(watch), new FolderChoice(
                 "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
                 DawScripts.IsFlUserData,
                 "That isn't FL Studio's user data folder: it has Settings, Presets and Projects folders in it. " +
                 "FL Studio shows where it is in Options > File settings.",
                 f => db.SetSetting(FlUserDataKey, f)), flPort),
         ];
+    }
+
+    /// <summary>
+    /// One button for both DAWs: installs each one's script if the DAW is on this computer, makes FL Studio's MIDI port
+    /// the way chosen, then checks each link. Each DAW says below what happened and what's left to do.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanSetUp))]
+    async Task SetUpBoth()
+    {
+        SettingUp = true;
+        SetUpResult = "Setting up…";
+        try
+        {
+            var lines = new List<string>();
+            foreach (var link in Links) lines.Add(await link.SetUpAsync());
+            SetUpResult = string.Join(Environment.NewLine, lines);
+        }
+        finally { SettingUp = false; }
+    }
+
+    bool CanSetUp() => !SettingUp;
+
+    /// <summary>Shows whether each DAW answers right now, from the app's last look.</summary>
+    public void ShowLive(LiveDawsViewModel live)
+    {
+        foreach (var link in Links) link.ShowLive(live.State(link.Daw));
     }
 
     static string BitwigSteps =>
@@ -84,15 +116,17 @@ public sealed partial class SettingsViewModel : ObservableObject
     static DawScript FlScript(LibraryDb db) => DawScripts.FlStudio(DawScripts.FlUserDataFolders(
         db.Projects().Where(p => p.Daw == "FL Studio").Select(p => p.Path), db.GetSetting(FlUserDataKey)));
 
-    static async Task<string> CheckBitwig()
+    static async Task<string> CheckBitwig(DawWatch watch)
     {
-        using var link = await BitwigLink.ConnectAsync();
+        using var link = await watch.ConnectBitwigAsync();
         return $"Connected to {link.Hello.Product} {link.Hello.Version}, with “{link.Hello.Project}” open.";
     }
 
-    static async Task<string> CheckFlStudio()
+    static async Task<string> CheckFlStudio(DawWatch watch)
     {
-        var hello = await new FlLink { Timeout = TimeSpan.FromSeconds(3) }.HelloAsync();
+        var fl = watch.Fl();
+        fl.Timeout = TimeSpan.FromSeconds(3);
+        var hello = await fl.HelloAsync();
         return $"Connected to FL Studio {hello.Version}. Its window says “{hello.Title}”." +
                (hello.Api < 26 ? " This FL Studio is too old to check projects with: that needs scripting version 26 or later." : "");
     }
@@ -314,6 +348,7 @@ public sealed partial class DawLinkSetting : ObservableObject
     readonly Func<string> _steps;
     readonly Func<DawScript> _script;
     readonly Func<Task<string>> _check;
+    readonly Func<bool> _found;
     readonly FolderChoice? _folder;
 
     public string Daw { get; }
@@ -329,14 +364,19 @@ public sealed partial class DawLinkSetting : ObservableObject
     [ObservableProperty] string _status = "";
     /// <summary>What happened when installing or checking.</summary>
     [ObservableProperty] string _result = "";
+    /// <summary>Whether the DAW answers right now, in words, from the app's last look; empty before it has looked.</summary>
+    [ObservableProperty] string _live = "";
+    [ObservableProperty] bool _isAnswering;
 
+    /// <param name="found">Whether the DAW is on this computer, for Set up both: unless given, whether the app found a folder for its script.</param>
     public DawLinkSetting(string daw, Func<string> steps, Func<DawScript> script, Func<Task<string>> check,
-                          FolderChoice? folder = null, FlPortSetting? midiPort = null)
+                          FolderChoice? folder = null, FlPortSetting? midiPort = null, Func<bool>? found = null)
     {
         Daw = daw;
         _steps = steps;
         _script = script;
         _check = check;
+        _found = found ?? (() => script().Folders.Count > 0);
         _folder = folder;
         MidiPort = midiPort;
         if (midiPort is not null)
@@ -413,6 +453,65 @@ public sealed partial class DawLinkSetting : ObservableObject
         }
         _folder.Save(chosen);
         return true;
+    }
+
+    /// <summary>
+    /// For Set up both: installs or updates the script if the DAW is on this computer (or skips it), makes FL Studio's
+    /// MIDI port the way chosen, then checks the link. Says what happened in <see cref="Result"/>, and returns a line
+    /// for the summary.
+    /// </summary>
+    public async Task<string> SetUpAsync()
+    {
+        if (!await Task.Run(_found))
+        {
+            Result = $"Skipped: the app didn't find {Daw} on this computer." +
+                     (_folder is not null ? " If it's here, use Choose folder… to show the app where it keeps its files." : "");
+            return $"{Daw}: not found on this computer, so it was skipped.";
+        }
+        string done;
+        try
+        {
+            var (script, state) = await Task.Run(() => { var s = _script(); return (s, s.State); });
+            if (state != ScriptState.Installed) await Task.Run(script.Install);
+            done = state switch
+            {
+                ScriptState.NotInstalled => "Installed the script.",
+                ScriptState.Outdated => $"Updated the script: restart {Daw} to load the new version.",
+                _ => "The script was already installed.",
+            };
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Result = $"Couldn't install the script: {e.Message}";
+            await RefreshAsync();
+            return $"{Daw}: couldn't install the script, as it says below.";
+        }
+        if (MidiPort is not null) await MidiPort.SetUpAsync();
+        Result = $"{done} Asking {Daw}…";
+        var answered = false;
+        string answer;
+        try
+        {
+            answer = await _check();
+            answered = true;
+        }
+        catch (DawLinkException e) { answer = e.Message; }
+        catch (Exception e) { answer = $"Couldn't reach {Daw}: {e.Message}"; }
+        Result = $"{done} {answer}";
+        await RefreshAsync();
+        return answered ? $"✓ {Daw}: set up and answering." : $"{Daw}: the script is in place, but {Daw} isn't answering yet. What's left is below.";
+    }
+
+    internal void ShowLive(DawState? state)
+    {
+        if (state is null) return;
+        IsAnswering = state.Answering;
+        Live = state.Answering
+            ? $"✓ Answering now: {state.Version}" + (state.Project.Length > 0 ? $", with “{state.Project}” open." : ".") +
+              (state.Daw == DawState.Bitwig && !state.Changes
+                  ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "")
+            : state.Running == true ? $"Not answering right now, though {Daw} is open. Check connection says what's missing."
+            : "Not answering right now.";
     }
 
     /// <summary>Asks the DAW to answer, through the script.</summary>

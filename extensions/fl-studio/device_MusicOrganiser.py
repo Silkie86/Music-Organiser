@@ -179,6 +179,7 @@ def hello(request):
         "version": ui.getVersion(4),
         "api": general.getVersion(),
         "title": ui.getProgTitle(),
+        "modified": general.getChangedFlag() != 0,
         "changes": LET_THE_APP_MAKE_CHANGES,
         "platform": sys.platform,
         "script": _script,
