@@ -83,7 +83,7 @@ public sealed class PluginScanner
         lock (_running) running = [.. _running];
         foreach (var process in running)
             try { process.Kill(entireProcessTree: true); }
-            catch (Exception e) when (e is InvalidOperationException or Win32Exception or NotSupportedException) { }
+            catch (Exception e) when (e is InvalidOperationException or Win32Exception or NotSupportedException or AggregateException) { }
     }
 
     public static bool CanRead(string path) =>
@@ -175,7 +175,7 @@ public sealed class PluginScanner
             {
                 timedOut = !ct.IsCancellationRequested;
                 try { process.Kill(entireProcessTree: true); }
-                catch (Exception e) when (e is InvalidOperationException or Win32Exception or NotSupportedException) { }
+                catch (Exception e) when (e is InvalidOperationException or Win32Exception or NotSupportedException or AggregateException) { }
             }
         }
         lock (_running) _running.Remove(process);

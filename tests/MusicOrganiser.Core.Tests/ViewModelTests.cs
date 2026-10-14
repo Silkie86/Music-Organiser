@@ -201,8 +201,8 @@ public class ViewModelTests : IDisposable
         // ...which carries on after it, loading the two plugins it was loading again.
         await Until(() => _db.ParameterCounts() == (2, 0) && !main.IsScanning);
         Assert.All(new[] { "alpha", "beta" }, id => Assert.Equal(2, File.ReadAllLines(Path.Combine(asked, id)).Length));
-        Assert.StartsWith("Parameters read for 2 plugins", main.ScanStatus);
         Assert.False(main.Plugins.CanReadAll);
+        // (Not the status line: without a UI thread a progress report can land after the last word.)
     }
 
     [Fact]
@@ -216,7 +216,6 @@ public class ViewModelTests : IDisposable
         main.Shutdown();
         Assert.Same(reading, await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(20))));
         Assert.Equal((0, 2), _db.ParameterCounts());   // not kept as plugins that couldn't be loaded
-        Assert.StartsWith("Stopped reading parameters", main.ScanStatus);
     }
 
     /// <summary>

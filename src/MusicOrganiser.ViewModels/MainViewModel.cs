@@ -174,14 +174,15 @@ public sealed partial class MainViewModel : ObservableObject
         if (!IsScanning) return RunScanAsync(full, plugins, samples);
         var q = _queuedScan ?? default;
         _queuedScan = (q.Full || full, q.Plugins || plugins, q.Samples || samples);
-        if (_readingParameters && !_parametersQueued)
+        var done = (_queuedScanDone ??= new TaskCompletionSource()).Task;
+        if (_readingParameters && !_parametersQueued && _scanCts is { IsCancellationRequested: false })
         {
             // Reading every plugin's parameters can take an hour: it makes way for the scan (the plugins it was
-            // loading are read again) and carries on after it.
+            // loading are read again) and carries on after it. (Not when Stop has just stopped it.)
             _parametersQueued = true;
-            _scanCts?.Cancel();
+            _scanCts.Cancel();
         }
-        return (_queuedScanDone ??= new TaskCompletionSource()).Task;
+        return done;
     }
 
     void DropQueuedScan()
