@@ -90,6 +90,8 @@
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                             <ToggleButton DockPanel.Dock="Right" Content="Describe it" IsChecked="{Binding DescribeMode}" Margin="8,0,0,0"
                                           ToolTip.Tip="Search by describing the sound, e.g. “dusty vinyl snare” or “dark gritty reese”. Press Enter to search." />
+                            <CheckBox DockPanel.Dock="Right" Content="Autoplay" IsChecked="{Binding AutoPlay}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                      ToolTip.Tip="Play each sound as soon as you click it or arrow onto it" />
                             <TextBox PlaceholderText="Search names, types and tags… or switch on Describe it" Text="{Binding SearchText}">
                                 <TextBox.KeyBindings>
                                     <KeyBinding Gesture="Enter" Command="{Binding SearchCommand}" />

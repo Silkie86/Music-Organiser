@@ -73,6 +73,15 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     [ObservableProperty] string _keyDetail = "";
     /// <summary>Where the selected sound is playing, in seconds, or -1 when it isn't.</summary>
     [ObservableProperty] double _playPosition = -1;
+    /// <summary>Plays each sound as soon as it's selected, so clicking or arrowing through the list auditions it.</summary>
+    [ObservableProperty] bool _autoPlay;
+    /// <summary>Library setting: "1" when <see cref="AutoPlay"/> is on.</summary>
+    public const string AutoPlayKey = "sound_lab_autoplay";
+    /// <summary>
+    /// Above 0 while the list is rebuilt or redrawn: a list can select a row of its own then (the first, say),
+    /// and that shouldn't start a sound.
+    /// </summary>
+    int _quiet;
     /// <summary>Seconds the selected sound's waveform covers (the analysis reads the first minute).</summary>
     public double WaveSeconds => Selected is { } s ? Math.Min(s.Seconds, AudioFile.MaxSeconds) : 0;
 
@@ -93,6 +102,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
         _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), FollowPlayback);
+        _autoPlay = db.GetSetting(AutoPlayKey) == "1";
         Reload();
         if (SampleFolders.Count > 0) _ = ScanAsync();
     }
@@ -104,9 +114,14 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         var usage = _db.SampleUsage().Select(u => (u.Path, u.Projects)).ToList();
         Org.ApplyUsage(usage);
         Items = Org.Sounds;
-        View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
-        View.Filter = o => o is Sound s && Matches(s);
-        ApplySort();
+        _quiet++;
+        try
+        {
+            View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
+            View.Filter = o => o is Sound s && Matches(s);
+            ApplySort();
+        }
+        finally { _quiet--; }
         TypeCounts = [new TypeCount("All sounds", Items.Count), .. Items.GroupBy(s => s.Type).OrderByDescending(g => g.Count()).Select(g => new TypeCount(g.Key, g.Count()))];
         SelectedType ??= TypeCounts[0];
         var loops = Items.Count(s => s.IsLoop);
@@ -168,40 +183,53 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void ApplySort()
     {
         if (View is null) return;
-        View.CustomSort = _describeScores is { } scores
-            ? Comparer<object>.Create((a, b) => scores.GetValueOrDefault(((Sound)b).Id).CompareTo(scores.GetValueOrDefault(((Sound)a).Id)))
-            : null;
+        _quiet++;
+        try
+        {
+            View.CustomSort = _describeScores is { } scores
+                ? Comparer<object>.Create((a, b) => scores.GetValueOrDefault(((Sound)b).Id).CompareTo(scores.GetValueOrDefault(((Sound)a).Id)))
+                : null;
+        }
+        finally { _quiet--; }
+    }
+
+    /// <summary>Redraws the list after a filter or label change, without auto-playing whatever it selects.</summary>
+    void RefreshView()
+    {
+        _quiet++;
+        try { View?.Refresh(); }
+        finally { _quiet--; }
     }
 
     partial void OnSearchTextChanged(string value)
     {
         if (DescribeMode) return;   // describe searches run on Enter
-        View?.Refresh();
+        RefreshView();
     }
 
     partial void OnDescribeModeChanged(bool value)
     {
         _describeScores = null;
         ApplySort();
-        View?.Refresh();
+        RefreshView();
     }
 
-    partial void OnSelectedTypeChanged(TypeCount? value) => View?.Refresh();
-    partial void OnLoopFilterChanged(int value) => View?.Refresh();
-    partial void OnKeyFilterChanged(string value) => View?.Refresh();
-    partial void OnCompatibleKeysChanged(bool value) => View?.Refresh();
-    partial void OnBpmFromChanged(string value) => View?.Refresh();
-    partial void OnBpmToChanged(string value) => View?.Refresh();
-    partial void OnOnlyUnusedChanged(bool value) => View?.Refresh();
-    partial void OnOnlyFavouritesChanged(bool value) => View?.Refresh();
-    partial void OnTagFilterChanged(string value) => View?.Refresh();
+    partial void OnSelectedTypeChanged(TypeCount? value) => RefreshView();
+    partial void OnLoopFilterChanged(int value) => RefreshView();
+    partial void OnKeyFilterChanged(string value) => RefreshView();
+    partial void OnCompatibleKeysChanged(bool value) => RefreshView();
+    partial void OnBpmFromChanged(string value) => RefreshView();
+    partial void OnBpmToChanged(string value) => RefreshView();
+    partial void OnOnlyUnusedChanged(bool value) => RefreshView();
+    partial void OnOnlyFavouritesChanged(bool value) => RefreshView();
+    partial void OnTagFilterChanged(string value) => RefreshView();
 
     [RelayCommand]
     async Task Search()
     {
         if (!DescribeMode)
         {
-            View?.Refresh();
+            RefreshView();
             return;
         }
         if (string.IsNullOrWhiteSpace(SearchText))
@@ -221,7 +249,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             Message = $"Best matches for “{text}”, closest first";
         }
         ApplySort();
-        View?.Refresh();
+        RefreshView();
     }
 
     [RelayCommand]
@@ -238,7 +266,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         TagFilter = "";
         Message = "";
         ApplySort();
-        View?.Refresh();
+        RefreshView();
     }
 
     // ---- dragging into a DAW -------------------------------------------------------
@@ -282,14 +310,17 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             ? $"{MusicTheory.NoteNames[t]} {(a.KeyMinor ? "minor" : "major")} · Camelot {MusicTheory.Camelot(t, a.KeyMinor)} · {a.KeySource}" +
               (a.KeySource == "detected" ? $" ({a.KeyConfidence:P0} sure)" : "")
             : "";
+        if (AutoPlay && _quiet == 0 && value is not null && _player.Playing != value.Path) Play(value);
     }
+
+    partial void OnAutoPlayChanged(bool value) => _db.SetSetting(AutoPlayKey, value ? "1" : "0");
 
     partial void OnSelectedTypeLabelChanged(string value)
     {
         if (Selected is not { } s || string.IsNullOrEmpty(value) || value == s.Type) return;
         Org.SetUserType(s, value == SoundTypes.Unknown ? null : value);
         Message = $"Labelled {s.Name} as {value}. Retrain on the Teach tab to let it learn from this.";
-        View?.Refresh();
+        RefreshView();
     }
 
     [RelayCommand]
@@ -302,6 +333,19 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             if (_player.Playing == s.Path) { _player.Stop(); FollowPlayback(); return; }
             Start(s, 0);
         }
+        catch (Exception e) { Message = $"Can't play {s.Name}: {e.Message}"; }
+    }
+
+    /// <summary>
+    /// A double-click in the list. With autoplay on, its first click has already started the sound, so this plays
+    /// it again from the start rather than stopping it.
+    /// </summary>
+    [RelayCommand]
+    void Audition()
+    {
+        if (!AutoPlay) { Play(null); return; }
+        if (Selected is not { } s) return;
+        try { Start(s, 0); }
         catch (Exception e) { Message = $"Can't play {s.Name}: {e.Message}"; }
     }
 
@@ -353,8 +397,9 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void Select(Sound? s)
     {
         if (s is null) return;
+        var moved = Selected != s;
         Selected = s;
-        Play(s);
+        if (!(AutoPlay && moved)) Play(s);   // a newly selected sound already started on its own
     }
 
     [RelayCommand]
@@ -364,7 +409,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         s.Favourite = !s.Favourite;
         Org.Library.SetFavourite(s.Id, s.Favourite);
         OnPropertyChanged(nameof(Selected));
-        View?.Refresh();
+        RefreshView();
     }
 
     [RelayCommand]
@@ -390,8 +435,13 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void RefreshSelected()
     {
         var s = Selected;
-        Selected = null;
-        Selected = s;
+        _quiet++;
+        try
+        {
+            Selected = null;
+            Selected = s;
+        }
+        finally { _quiet--; }
         TagSummaries = Org.Library.TagCounts().Select(t => new TagSummary(t.Tag, t.Yours, t.Learned)).ToList();
     }
 
@@ -549,7 +599,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void FilterByTag(string? tag)
     {
         TagFilter = tag ?? "";
-        View?.Refresh();
+        RefreshView();
     }
 
     [RelayCommand]

@@ -8,7 +8,7 @@ public partial class SoundsView : UserControl
 {
     public SoundsView() => InitializeComponent();
 
-    void OnGridDoubleTapped(object? sender, TappedEventArgs e) => (DataContext as SoundsViewModel)?.PlayCommand.Execute(null);
+    void OnGridDoubleTapped(object? sender, TappedEventArgs e) => (DataContext as SoundsViewModel)?.AuditionCommand.Execute(null);
 
     // Space plays the selected sound, as in the Windows app.
     void OnGridKeyDown(object? sender, KeyEventArgs e)

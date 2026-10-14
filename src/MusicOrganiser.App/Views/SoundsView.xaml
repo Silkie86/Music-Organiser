@@ -103,6 +103,8 @@
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                             <ToggleButton DockPanel.Dock="Right" Content="Describe it" IsChecked="{Binding DescribeMode}" Margin="8,0,0,0"
                                           ToolTip="Search by describing the sound, e.g. “dusty vinyl snare” or “dark gritty reese”. Press Enter to search." />
+                            <CheckBox DockPanel.Dock="Right" Content="Autoplay" IsChecked="{Binding AutoPlay}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                      ToolTip="Play each sound as soon as you click it or arrow onto it" />
                             <ui:TextBox PlaceholderText="Search names, types and tags… or switch on Describe it" Icon="{ui:SymbolIcon Search24}"
                                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}">
                                 <ui:TextBox.InputBindings>
@@ -116,7 +118,7 @@
                                   EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizingWhenGrouping="True">
                             <DataGrid.InputBindings>
                                 <KeyBinding Key="Space" Command="{Binding PlayCommand}" />
-                                <MouseBinding Gesture="LeftDoubleClick" Command="{Binding PlayCommand}" />
+                                <MouseBinding Gesture="LeftDoubleClick" Command="{Binding AuditionCommand}" />
                             </DataGrid.InputBindings>
                             <DataGrid.Columns>
                                 <DataGridTemplateColumn Header="" Width="32" SortMemberPath="Favourite">
