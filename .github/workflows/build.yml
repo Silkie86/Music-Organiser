@@ -42,9 +42,6 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release
-      # The player needs OpenAL Soft, which Ubuntu's runner doesn't have.
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -y -q libopenal1
       # Builds the Avalonia app too, and runs its tests without a screen (or a sound card).
       - run: dotnet test tests/MusicOrganiser.Avalonia.Tests -c Release
         env:
