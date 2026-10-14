@@ -101,8 +101,11 @@ public static class Fixtures
         return b;
     }
 
-    /// <summary>An FL 25 playlist item (80 bytes): index 20480 + n is pattern n, a smaller index a channel's clip.</summary>
-    public static byte[] PlaylistItem25(uint pos, ushort index, uint length, ushort track = 499, bool muted = false)
+    /// <summary>
+    /// An FL 25 playlist item (80 bytes): index 20480 + n is pattern n, a smaller index a channel's clip. An audio
+    /// clip trimmed in the playlist has where it starts and ends in its sample, in milliseconds (-1 = not trimmed).
+    /// </summary>
+    public static byte[] PlaylistItem25(uint pos, ushort index, uint length, ushort track = 499, bool muted = false, float from = -1, float to = -1)
     {
         var b = new byte[80];
         BinaryPrimitives.WriteUInt32LittleEndian(b, pos);
@@ -111,8 +114,21 @@ public static class Fixtures
         BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(8), length);
         BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(12), track);
         BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(18), (ushort)(muted ? 0x2040 : 0x0040));
-        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(24), -1);
-        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(28), -1);
+        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(24), from);
+        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(28), to);
+        return b;
+    }
+
+    /// <summary>
+    /// A channel's sampler settings (event 215, 168 bytes) as FL 25 writes them for an audio clip, with its time
+    /// stretching: Time at 96, pitch in cents at 100, the multiplier at 104 (10000 = twice as long), the mode at 108.
+    /// </summary>
+    public static byte[] ChannelParams(int time = 0, int cents = 0, int multiplier = 0, int mode = 1)
+    {
+        int[] v = [140, 0, 1, -1, 60, 1065353216, 1065353216, 1065353216, 1065353216, 1065353216, 0, 3, 0, 1024, 48, 65536, 1447, 0, 256, 0,
+                   16777216, 0, 0, 1, time, cents, multiplier, mode, 2, -2, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        var b = new byte[v.Length * 4];
+        for (var i = 0; i < v.Length; i++) BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(i * 4), v[i]);
         return b;
     }
 
@@ -349,6 +365,40 @@ public static class Fixtures
             .Data(233, [.. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(384, 1, 384, 498), .. PlaylistItem25(0, 3, 384, 497),
                         .. volumePlacedTwice ? PlaylistItem25(1152, 1, 384, 498) : []]);
         var path = Path.Combine(dir, "Automated.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// Like Solomon's FL 25 test of audio clips, at 120 bpm with a 32 second sample, "Drop.wav", in the playlist on
+    /// four audio clip channels: as it is (bar 1, 16 bars), stretched to twice as long (Mul, bar 17, 32 bars), stretched
+    /// and pitched up 3 semitones (bar 49, 32 bars), and pitched up 3 semitones and trimmed to its second half (bar 81,
+    /// 8 bars). A fifth channel resamples (pitch and length together) at twice as long, plays backwards and its clip
+    /// in bar 89 is muted. An automation clip moves the first channel's volume, and a pattern of notes plays a Sampler.
+    /// </summary>
+    public static string FlStudio25AudioClips(string dir)
+    {
+        const string drop = @"C:\Samples\Drop.wav";
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 120_000)
+            .Word(65, 1).Data(224, [.. Note(0, 0, 96, 60, 100)])
+            .Data(227, AutomationLink(6, 1u << 16))
+            .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Kick").Text(196, @"C:\Samples\Kick 01.wav");
+        void Audio(int channel, string name, byte[] parameters, ushort fx = 0) =>
+            b.Word(64, (ushort)channel).Byte(21, 4).Byte(0, 1).Word(70, fx).Data(219, Levels(6400, 10000, 0)).Data(215, parameters)
+             .Text(203, name).Text(196, drop);
+        Audio(1, "Drop", ChannelParams());
+        Audio(2, "Drop stretched", ChannelParams(multiplier: 10000));
+        Audio(3, "Drop stretched up", ChannelParams(cents: 300, multiplier: 10000));
+        Audio(4, "Drop trimmed up", ChannelParams(cents: 300));
+        Audio(5, "Drop resampled", ChannelParams(multiplier: 10000, mode: 0), fx: 0x2);
+        b.Word(64, 6).Byte(21, 5).Text(201, "").Text(203, "Drop - Volume")
+         .Data(219, Levels(0, 12800, 0)).Data(234, AutomationPoints((0, 0), (4, 1)))
+         .Data(233, [.. PlaylistItem25(0, 1, 6144), .. PlaylistItem25(0, 6, 384, 498), .. PlaylistItem25(0, 20481, 384, 497),
+                     .. PlaylistItem25(6144, 2, 12288), .. PlaylistItem25(18432, 3, 12288),
+                     .. PlaylistItem25(30720, 4, 3072, from: 16000, to: 32000), .. PlaylistItem25(33792, 5, 3072, muted: true)]);
+        var path = Path.Combine(dir, "Audio clips.flp");
         File.WriteAllBytes(path, b.Build());
         return path;
     }
@@ -685,11 +735,13 @@ public static class Fixtures
     /// and the master defined in its output routing), a VST3 track with a Note Transpose before
     /// Serum 2 and a clip of notes, and a VST2 track with Drumazon, whose output chain sends to the
     /// effect track. The Sampler track's volume is automated, with an automation clip and a point after it.
+    /// Between the Sampler and VST3 tracks, an audio track holds an audio clip playing a 32 second sample, as
+    /// Bitwig 6.1 saves one: its content is laid out like a clip of notes, with the audio as its one "note".
     /// As in Bitwig's files, the mixer volume is first written in the track's per-user
     /// view state and referenced from the mixer, and the project's view state and clip selection
     /// point into the tracks.
     /// </summary>
-    public static byte[] BitwigTemplate(bool automationLane = true)
+    public static byte[] BitwigTemplate(bool automationLane = true, bool audioTrack = true)
     {
         const string sampler = "468bc14b-b2e7-45a1-9666-e83117fe404e", noteTranspose = "0815cd9e-3a31-4429-a268-dabd952a3b68",
                      amp = "41be8f3a-6d24-4442-9508-8548dbe62d47";
@@ -710,7 +762,10 @@ public static class Fixtures
         st.Obj(0xad2); st.Begin(0x283);
         st.Str(0xad1, "Project");
         st.List(0xace);
-        foreach (var n in new[] { "Kick", "Serum 2", "Drumazon" }) { st.Begin(0x288); st.Str(0xad1, n); st.End(); }
+        foreach (var n in audioTrack ? new[] { "Kick", "Drops", "Serum 2", "Drumazon" } : ["Kick", "Serum 2", "Drumazon"])
+        {
+            st.Begin(n == "Drops" ? 0x287 : 0x288); st.Str(0xad1, n); st.End();
+        }
         st.EndList();
         st.List(0xacf); st.Begin(0x28a); st.Str(0xad1, "FX 1"); st.End(); st.EndList();
         st.Obj(0xad0); st.Begin(0x28b); st.Str(0xad1, "Master"); st.End();
@@ -842,6 +897,64 @@ public static class Fixtures
                     b.Obj(0x165); b.Begin(0xab); b.Obj(0x1a4); Param(0x4c4, "VOLUME", 1.0); b.Obj(0x1a5); Param(0x4c3, "PANORAMA", 0.0); b.End();
                     b.End();
                 });
+
+                if (audioTrack)
+                {
+                    var audio = TrackStart("Drops");
+                    TrackEnd(audio + 4, clips: () =>
+                    {
+                        b.Begin(0xee);
+                        b.F64(0x2af, 0); b.F64(0x26, 64); b.Bool(0x10f8, false);
+                        b.Obj(0x2ae9); b.Begin(0xec2);
+                        b.Obj(0x10e9); content = b.Begin(0x105);
+                        b.Str(0x2d24, "Drops");
+                        b.Obj(0x49c); b.Begin(0x6ce);
+                        b.List(0x18cb);
+                        b.Begin(0xce);
+                        b.List(0x21f);
+                        b.Begin(0xd4);
+                        b.F64(0x2af, 0); b.F64(0x26, 64); b.Bool(0x10f8, false);
+                        b.Obj(0x288); b.Begin(0x9f);
+                        b.Null(0xc33);
+                        b.Obj(0x20d); b.Begin(0x1db);
+                        b.Obj(0x4b4); var drops = b.Begin(0x4a9);
+                        b.Str(0x129f, "Drops.wav");
+                        b.Obj(0x129e); b.Begin(0x4a6);
+                        b.Str(0x512, "Drops.wav");
+                        b.Obj(0xd3b); FileRef(@"J:\samples\Drops.wav");
+                        b.Obj(0x513); b.Begin(0x1e2); b.Blob(0x16, new byte[16]); b.End();
+                        b.I32(0x17, 8467244);
+                        b.List(0x129c); b.ListRef(drops); b.EndList();
+                        b.End();
+                        b.I32(0x94, 44100); b.F64(0x95, 32); b.U8(0x96, 2);
+                        b.End();
+                        b.End();
+                        b.U8(0x4b0, 3);
+                        b.Obj(0x192); b.Begin(0x8b); b.List(0x21f);
+                        b.Begin(0x43); b.F64(0x2af, 0); b.F64(0xa6, 0); b.End();
+                        b.Begin(0x43); b.F64(0x2af, 64); b.F64(0xa6, 32); b.End();
+                        b.EndList(); b.End();
+                        b.Obj(0x10ea); b.Begin(0x36b);
+                        b.Obj(0x10e9); b.Begin(0xb6); b.List(0x21f);
+                        foreach (var at in new[] { 0.0, 8.5 }) { b.Begin(0x203); b.F64(0x2af, at); b.F64(0x703, 1.99); b.End(); }
+                        b.EndList(); b.U8(0x4406, 1); b.End();
+                        b.End();
+                        b.End(); // play
+                        b.F64(0xc04, 0); b.F64(0xc05, 32);
+                        b.End(); // audio
+                        b.EndList();
+                        b.End(); // lane
+                        b.EndList();
+                        b.End(); b.End(); b.End();
+                        b.Obj(0x2adb); b.Begin(0x267);
+                        b.U8(0x991, 0);
+                        b.Obj(0x992); b.Begin(0x58); b.F64(0x2af, 0); b.F64(0x26, 69.33); b.End();
+                        b.Obj(0x98c); b.Begin(0x269); b.F64(0x2af, 0); b.End();
+                        b.Obj(0x98d); b.Begin(0x268); b.F64(0x2af, 64); b.End();
+                        b.End();
+                        b.End();
+                    }, devices: () => { }, sends: SendToFx, output: ToMaster);
+                }
 
                 // VST3 track: Note Transpose, Serum 2, a clip with two notes on key 63 and one on 60
                 var vst3 = TrackStart("");

@@ -9,19 +9,21 @@ namespace MusicOrganiser.Core.Export;
 /// <summary>
 /// Writes an FL Studio song as a native Bitwig project (.bwproject), which carries more of the song
 /// than DAWproject can: each Sampler's sample, root key and tune, a Note Transpose in front of
-/// plugins whose FL root key was moved, muted notes and clips, and automation of volume, pan and
-/// plugin settings.
+/// plugins whose FL root key was moved, muted notes and clips, audio clips stretched and pitched as
+/// in FL, and automation of volume, pan and plugin settings.
 ///
 /// Bitwig's format isn't published, so the project is built from a template Bitwig saved: one with
 /// a Sampler track, a VST3 instrument track with a Note Transpose before the plugin and a clip of
-/// notes, a VST2 instrument track and, for automation, a track with its volume automated. Those
-/// tracks, devices, the clip and the lane are copied for each FL channel and filled in; the
-/// template's own tracks, effect tracks and sends are left out.
+/// notes, a VST2 instrument track and, for automation, a track with its volume automated; for audio
+/// clips, an audio track with an audio clip on it. Those tracks, devices, clips and the lane are
+/// copied for each FL channel and filled in; the template's own tracks, effect tracks and sends are
+/// left out.
 ///
 /// Each channel that plays notes becomes a track on its own mixer channel, as Bitwig tracks are, with
 /// a clip for each FL pattern clip it plays in and the VST effects of the FL insert it feeds after its
-/// instrument; the master insert's effects go on the master. FL Studio's own plugins have no Bitwig
-/// equivalent, so they're left out and listed.
+/// instrument; an audio clip channel's clips in the playlist go on an audio track like it. The master
+/// insert's effects go on the master. FL Studio's own plugins have no Bitwig equivalent, so they're
+/// left out and listed.
 /// </summary>
 public static class BitwigProject
 {
@@ -35,6 +37,8 @@ public static class BitwigProject
     const string NoteTransposeId = "0815cd9e-3a31-4429-a268-dabd952a3b68";
     const int Vst3 = 0x728, Vst2 = 0x1a5;                 // plugin device classes
     const int AudioEffect = 0, Instrument = 2;            // device kinds (field 0x9d)
+    const int AudioClipClass = 0xee;                      // an arrangement audio clip (a clip of notes is 0x47)
+    const int AudioEntry = 0x287;                         // an audio track in the project's summary (instrument tracks are 0x288)
 
     /// <summary>Why a project can't be the template (for example "The Bitwig template needs a VST2 instrument track"), or null when it can.</summary>
     public static string? TemplateProblem(byte[] template)
@@ -50,25 +54,35 @@ public static class BitwigProject
         }
     }
 
-    /// <summary>Reads what Bitwig records about a sample, or null when the file can't be read.</summary>
+    /// <summary>
+    /// Reads what Bitwig records about a sample, or null when the file can't be read. When it can be read but not
+    /// decoded (a format the app doesn't play), its length is 0.
+    /// </summary>
     public static SampleFile? ReadSample(string path)
     {
+        byte[] md5;
+        long bytes;
         try
         {
             if (!File.Exists(path)) return null;
-            byte[] md5;
-            long bytes;
-            using (var fs = File.OpenRead(path))
-            {
-                bytes = fs.Length;
-                md5 = MD5.HashData(fs);
-            }
+            using var fs = File.OpenRead(path);
+            bytes = fs.Length;
+            md5 = MD5.HashData(fs);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        try
+        {
             var audio = AudioFile.CanRead(path) ? AudioFile.Read(path, maxSeconds: 0.01) : null;
             return new SampleFile(bytes, md5, audio?.SampleRate ?? 44100, audio?.Channels.Length ?? 2, audio?.FileSeconds ?? 0);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException)
+        // Windows' own decoders (for MP3 and the like) fail with COM errors.
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException or
+                                       System.Runtime.InteropServices.ExternalException)
         {
-            return null;
+            return new SampleFile(bytes, md5, 44100, 2, 0);
         }
     }
 
@@ -141,13 +155,34 @@ public static class BitwigProject
             (insert?.Effects ?? []).Select(e => Plugin(e, AudioEffect, skipped)).OfType<BwObject>().ToList();
 
         var automated = song.Automation.Select(a => a.Channel).ToHashSet();
-        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index)) &&
-                                               (c.Instrument is not null || c.Sample.Length > 0)).ToList();
+        // Audio clip channels play their clips on audio tracks; one automated, with no notes, needs no instrument track too.
+        var audio = song.Channels.Where(c => c.AudioClips.Count > 0 && c.Sample.Length > 0).ToHashSet();
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index) && !audio.Contains(c)) &&
+                                               (c.Instrument is not null || c.Sample.Length > 0)).ToHashSet();
         var inserts = song.Inserts.ToDictionary(i => i.Index);
-        var shared = playing.Where(c => c.Insert > 0).GroupBy(c => c.Insert).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
+        var shared = song.Channels.Where(c => (playing.Contains(c) || audio.Contains(c) && t.AudioTrack is not null) && c.Insert > 0)
+                                  .GroupBy(c => c.Insert).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
         var tracks = new List<BwObject>();
+        // Each channel's tracks: its instrument track first, if it has one, then its audio tracks.
+        var placed = new Dictionary<int, (FlChannel Channel, List<BwObject> Tracks)>();
         var instruments = new Dictionary<int, (BwObject Device, FlPlugin Plugin)>();
-        foreach (var c in playing)
+        // How many of each channel's tracks have their own copy of its insert's effects.
+        var effectCopies = new Dictionary<int, int>();
+
+        // The VST effects of the FL insert a channel feeds, after what's on its track.
+        void InsertEffects(FlChannel c, List<BwObject> devices, List<string> skipped)
+        {
+            if (c.Insert <= 0 || !inserts.TryGetValue(c.Insert, out var insert)) return;
+            var effects = Effects(insert, skipped);
+            devices.AddRange(effects);
+            if (effects.Count == 0) return;
+            effectCopies[c.Index] = effectCopies.GetValueOrDefault(c.Index) + 1;
+            if (shared.Contains(c.Insert))
+                notes.Add($"{c.Name}: has its own copy of {InsertName(insert)}'s effects, which other channels also feed in FL Studio");
+        }
+
+        // A channel that plays notes: an instrument track with its Sampler or plugin, and a clip for each FL pattern clip.
+        BwObject InstrumentTrack(FlChannel c)
         {
             var skipped = new List<string>();
             var devices = new List<BwObject>();
@@ -175,21 +210,70 @@ public static class BitwigProject
                     devices.Add(plugin);
                 }
             }
-            if (c.Insert > 0 && inserts.TryGetValue(c.Insert, out var insert))
-            {
-                var effects = Effects(insert, skipped);
-                devices.AddRange(effects);
-                if (effects.Count > 0 && shared.Contains(c.Insert))
-                    notes.Add($"{c.Name}: has its own copy of {InsertName(insert)}'s effects, which other channels also feed in FL Studio");
-            }
+            InsertEffects(c, devices, skipped);
             Chain(track, devices);
             track.Set(0x15b, c.Name);
             Mixer(track, c);
             foreach (var clip in FlClips.Of(c, song.Ppq))
                 t.AddClip(track, clip with { Notes = FlClips.Lengthen(clip.Notes, clip.Length, sampleLength) }, song.Ppq);
-            tracks.Add(track);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
             if (c.VolumeEnvelope is not null) notes.Add($"{c.Name}: {DawProject.EnvelopeLeftOut}");
+            return track;
+        }
+
+        // An audio clip channel's clips in the playlist on audio tracks, stretched and pitched as in FL. Clips that
+        // overlap (on different playlist tracks in FL) play at once, so each goes on the first of its tracks that's free.
+        List<BwObject> AudioClipTracks(FlChannel c)
+        {
+            var skipped = new List<string>();
+            var info = readSample(c.Sample);
+            var lanes = new List<(BwObject Track, long End)>();
+            foreach (var clip in c.AudioClips.OrderBy(x => x.Start))
+            {
+                var lane = lanes.FindIndex(l => l.End <= clip.Start);
+                if (lane < 0)
+                {
+                    var track = t.NewAudioTrack();
+                    var devices = new List<BwObject>();
+                    InsertEffects(c, devices, lanes.Count == 0 ? skipped : []);
+                    Chain(track, devices);
+                    track.Set(0x15b, lanes.Count == 0 ? c.Name : $"{c.Name} {lanes.Count + 1}");
+                    Mixer(track, c);
+                    lanes.Add((track, 0));
+                    lane = lanes.Count - 1;
+                }
+                t.AddAudioClip(lanes[lane].Track, c, clip, info, song.Tempo, song.Ppq);
+                lanes[lane] = (lanes[lane].Track, clip.Start + clip.Length);
+            }
+            if (lanes.Count > 1) notes.Add($"{c.Name}: its audio clips overlap in FL Studio, so they're on {lanes.Count} tracks");
+            if (info is null)
+                notes.Add($"{c.Name}: couldn't read {c.Sample}, so Bitwig will ask where it is, and how far its clips are stretched is a guess");
+            else if (info.Seconds <= 0)
+                notes.Add($"{c.Name}: couldn't tell how long {c.Sample} is, so Bitwig will ask where it is, and how far its clips are stretched is a guess");
+            if (c.Stretch.Reversed) notes.Add($"{c.Name}: plays its sample backwards in FL Studio; reverse its clips in Bitwig");
+            if (c.PitchCents != 0)
+                notes.Add($"{c.Name}: its channel pitch knob ({c.PitchCents / 100.0:+0.##;-0.##} semitones) isn't carried over to its audio clips; " +
+                          "the pitch in its time stretching is");
+            if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
+            return lanes.Select(l => l.Track).ToList();
+        }
+
+        foreach (var c in song.Channels)
+        {
+            var own = new List<BwObject>();
+            if (playing.Contains(c)) own.Add(InstrumentTrack(c));
+            if (c.AudioClips.Count > 0 && c.Sample.Length == 0)
+                notes.Add($"{c.Name}: its audio clips are left out (FL Studio didn't save which sample they play)");
+            else if (audio.Contains(c) && t.AudioTrack is null)
+                notes.Add($"{c.Name}: its audio clips are left out (the Bitwig template has no audio track with an audio clip on it " +
+                          "that can be copied; it can't be in a group)");
+            else if (audio.Contains(c)) own.AddRange(AudioClipTracks(c));
+            if (own.Count == 0) continue;
+            if (effectCopies.GetValueOrDefault(c.Index) is var copies and > 1)
+                notes.Add($"{c.Name}: each of its {copies} tracks has its own copy of {InsertName(inserts[c.Insert])}'s effects, " +
+                          "which FL Studio runs once on all of them");
+            tracks.AddRange(own);
+            placed[c.Index] = (c, own);
         }
 
         // The master insert's effects on Bitwig's master.
@@ -199,7 +283,6 @@ public static class BitwigProject
         if (masterSkipped.Count > 0) notes.Add($"Master: left out {string.Join(", ", masterSkipped)}");
 
         // Automation clips as automation lanes on the track they move: its volume, pan or a setting of its plugin.
-        var placed = playing.Zip(tracks).ToDictionary(p => p.First.Index, p => (Channel: p.First, Track: p.Second));
         foreach (var a in song.Automation)
         {
             if (!placed.TryGetValue(a.Channel, out var on))
@@ -208,21 +291,25 @@ public static class BitwigProject
                 continue;
             }
             const string noLane = "the Bitwig template has no automation lane to copy";
-            var track = on.Track;
             string? why = null;
             switch (a.Control)
             {
+                // The channel's volume or pan moves all its tracks' faders.
                 case FlControl.Volume or FlControl.Pan:
                     var pan = a.Control == FlControl.Pan;
                     Func<double, double> value = pan ? v => Math.Clamp((v - 0.5) * 2, -1, 1) : v => Math.Cbrt(DawProject.Gain(v));
-                    if (track.Obj(0x165)?.Obj(pan ? 0x1a5 : 0x1a4) is not { } param) why = "this track has no fader";
-                    else if (!t.AddMixerAutomation(track, param, pan ? "Pan" : "Volume", a.Points.Select(p => (p.Beat, value(p.Value)))))
-                        why = noLane;
+                    foreach (var track in on.Tracks)
+                    {
+                        if (track.Obj(0x165)?.Obj(pan ? 0x1a5 : 0x1a4) is not { } param) why = "this track has no fader";
+                        else if (!t.AddMixerAutomation(track, param, pan ? "Pan" : "Volume", a.Points.Select(p => (p.Beat, value(p.Value)))))
+                            why = noLane;
+                    }
                     break;
+                // The plugin is on the channel's instrument track, its first.
                 case FlControl.PluginParameter when instruments.TryGetValue(a.Channel, out var instrument):
                     if (SettingPath(instrument.Plugin, a.Parameter) is not { } setting)
                         why = "FL didn't save which of the plugin's settings it moves";
-                    else if (!t.AddPluginAutomation(track, instrument.Device, setting.Path, setting.Id, SettingName(a.Name, on.Channel.Name),
+                    else if (!t.AddPluginAutomation(on.Tracks[0], instrument.Device, setting.Path, setting.Id, SettingName(a.Name, on.Channel.Name),
                                                     a.Points.Select(p => (p.Beat, p.Value))))
                         why = noLane;
                     break;
@@ -236,7 +323,8 @@ public static class BitwigProject
             if (why is not null) notes.Add($"{a.Name}: automation left out ({why})");
         }
 
-        return new Result(t.Finish(tracks, song.Tempo, states), notes);
+        // A channel's notes about its insert or sample can come from each of its tracks.
+        return new Result(t.Finish(tracks, song.Tempo, states), notes.Distinct().ToList());
     }
 
     /// <summary>
@@ -268,25 +356,40 @@ public static class BitwigProject
 
         var zone = Param(def, "SAMPLE")?.Obj(0x74c);
         var sample = zone?.Obj(0x4112)?.Obj(0x748);
-        var file = sample?.Obj(0x129e);
-        if (zone is null || sample is null || file is null) throw new InvalidDataException("The template's Sampler has no sample in it");
+        if (zone is null || sample is null || !SampleIs(sample, c.Sample, info)) throw new InvalidDataException("The template's Sampler has no sample in it");
         zone.Set(0x75c, (byte)Math.Clamp(c.RootKey, 0, 127), 0x01);
-        sample.Set(0x129f, fileName);
-        file.Set(0x512, fileName);
-        file.Obj(0xd3b)?.Set(0x3b, c.Sample);
-        file.Obj(0x513)?.Set(0x16, info?.Md5 ?? new byte[16], 0x0d);
-        if (info is null)
+        if (info is not { Seconds: > 0 })
         {
-            notes.Add($"{c.Name}: couldn't read {c.Sample}, so Bitwig will ask where it is");
+            notes.Add(info is null ? $"{c.Name}: couldn't read {c.Sample}, so Bitwig will ask where it is"
+                                   : $"{c.Name}: couldn't tell how long {c.Sample} is, so Bitwig will ask where it is");
             return sampler;
         }
+        zone.Set(0x75f, info.Seconds);
+        zone.Set(0x761, info.Seconds);
+        return sampler;
+    }
+
+    /// <summary>
+    /// Points a sample Bitwig saved (a Sampler's, or an audio clip's) at another file: its name, path, and what Bitwig
+    /// recognises it by. When the file couldn't be read, or how long it is couldn't be told, its MD5 is zeros, so
+    /// Bitwig asks where it is and reads it itself rather than trusting a made-up length. False when
+    /// <paramref name="sample"/> isn't a sample.
+    /// </summary>
+    static bool SampleIs(BwObject sample, string path, SampleFile? info)
+    {
+        if (sample.Obj(0x129e) is not { } file) return false;
+        var fileName = Path.GetFileName(path.Replace('\\', '/'));
+        sample.Set(0x129f, fileName);
+        file.Set(0x512, fileName);
+        file.Obj(0xd3b)?.Set(0x3b, path);
+        var known = info is { Seconds: > 0 };
+        file.Obj(0x513)?.Set(0x16, known ? info!.Md5 : new byte[16], 0x0d);
+        if (!known) return true;
         file.Set(0x17, info.Bytes, IntType(info.Bytes));
         sample.Set(0x94, info.Rate, IntType(info.Rate));
         sample.Set(0x95, info.Seconds);
         sample.Set(0x96, (byte)info.Channels, 0x01);
-        zone.Set(0x75f, info.Seconds);
-        zone.Set(0x761, info.Seconds);
-        return sampler;
+        return true;
     }
 
     /// <summary>
@@ -345,7 +448,8 @@ public static class BitwigProject
         readonly Document _doc;
         readonly BwObject _group;
         readonly BwObject _clip, _keyLane, _note;
-        readonly BwObject? _mixerLane, _pluginLane, _point, _setting;
+        readonly BwObject? _mixerLane, _pluginLane, _point, _setting, _audioClip;
+        readonly HashSet<BwObject> _audioTracks = new(ReferenceEqualityComparer.Instance);
         readonly Copier _copier;
         public BwObject SamplerTrack { get; }
         public BwObject Vst3Track { get; }
@@ -354,6 +458,8 @@ public static class BitwigProject
         public BwObject Vst2Device { get; }
         public BwObject NoteTranspose { get; }
         public BwObject Master { get; }
+        /// <summary>A track to copy for audio clips, when the template has one with an audio clip on it.</summary>
+        public BwObject? AudioTrack { get; }
 
         public Template(byte[] raw)
         {
@@ -376,7 +482,9 @@ public static class BitwigProject
             Vst3Track = Need(Find(d => Vst(d, Vst3)), "a VST3 instrument track");
             Vst2Track = Need(Find(d => Vst(d, Vst2)), "a VST2 instrument track");
             NoteTranspose = Need(originals.SelectMany(Chain).FirstOrDefault(d => BitwigId(d) == NoteTransposeId), "a Note Transpose");
-            _clip = Need(originals.SelectMany(Clips).FirstOrDefault(c => KeyLanes(c).Any(l => l.List(0x21f).Any())), "a clip with notes");
+            // A clip of notes, the VST3 track's first; an audio clip's content is laid out the same, so it's told apart by its class.
+            _clip = Need(originals.OrderBy(tr => tr == Vst3Track ? 0 : 1).SelectMany(Clips)
+                                  .FirstOrDefault(c => c.Class != AudioClipClass && KeyLanes(c).Any(l => l.List(0x21f).Any())), "a clip with notes");
             if (missing.Count > 0)
                 throw new InvalidDataException($"The Bitwig template needs {string.Join(", ", missing)}");
             Vst3Device = Chain(Vst3Track).First(d => Vst(d, Vst3));
@@ -391,6 +499,10 @@ public static class BitwigProject
             _point = lanes.SelectMany(Reachable).FirstOrDefault(o => o.Has(0x2af) && o.Has(0x28f));
             if (_point is null) _mixerLane = _pluginLane = null;
             _setting = new[] { Vst3Device, Vst2Device }.SelectMany(d => Def(d)!.List(0x1318)).FirstOrDefault(o => o.Has(0x1319));
+            // An audio track and an audio clip with a sample, on a track of its own, if the template has them.
+            AudioTrack = originals.Except([SamplerTrack, Vst3Track, Vst2Track], ReferenceEqualityComparer.Instance).Cast<BwObject>()
+                                  .FirstOrDefault(tr => Clips(tr).Any(IsAudioClip));
+            _audioClip = AudioTrack is null ? null : Clips(AudioTrack).First(IsAudioClip);
 
             // Take the template's tracks out of the project, with what points into them: the per-user
             // view state (selected track, editors), clip selections, sends and effect tracks. They stay
@@ -411,13 +523,21 @@ public static class BitwigProject
             Chain(SamplerTrack, Chain(SamplerTrack).Where(d => BitwigId(d) == SamplerId).Take(1).ToList());
             Chain(Vst3Track, [Vst3Device]);
             Chain(Vst2Track, [Vst2Device]);
+            if (AudioTrack is not null) Chain(AudioTrack, []);
             // Sends to effect tracks inside devices (a multi-out plugin's output chains) go with the effect tracks.
-            foreach (var o in Reachable(SamplerTrack).Concat(Reachable(Vst3Track)).Concat(Reachable(Vst2Track)))
+            foreach (var o in new[] { SamplerTrack, Vst3Track, Vst2Track, AudioTrack }.OfType<BwObject>().SelectMany(Reachable))
                 foreach (var (_, v) in o.Fields)
                     if (v is List<object?> list)
                         list.RemoveAll(x => o.Resolve(x)?.Str(0x2b9).StartsWith("TRACK_SEND(", StringComparison.Ordinal) == true);
             _keyLane.Set(0x21f, new List<object?>());
             NoteContent(_clip)!.Set(0x18cb, new List<object?>());
+            if (_audioClip is not null)
+            {
+                // Only the audio that's filled in: anything else in the template's clip would play its own sample.
+                var audioLane = KeyLanes(_audioClip).First();
+                audioLane.Set(0x21f, new List<object?> { AudioEvent(_audioClip) });
+                NoteContent(_audioClip)!.Set(0x18cb, new List<object?> { audioLane });
+            }
             foreach (var lane in new[] { _mixerLane, _pluginLane }.OfType<BwObject>())
             {
                 // No clips, points or per-user state, and nothing to move until it's given something.
@@ -433,11 +553,19 @@ public static class BitwigProject
             if (new[] { SamplerTrack, Vst3Track, Vst2Track, NoteTranspose, _clip, _mixerLane, _pluginLane, _point, _setting }
                     .OfType<BwObject>().Any(_copier.Shares))
                 throw new InvalidDataException("The Bitwig template refers to its tracks from somewhere this app doesn't know to clear");
+            // Audio clips are filled in where they're copied, so nothing in one may be shared with the rest of the project.
+            if (AudioTrack is not null && (_copier.Shares(AudioTrack) || Reachable(_audioClip!).Any(_copier.Shares)))
+                (AudioTrack, _audioClip) = (null, null);
         }
 
         public BwObject Copy(BwObject pattern) => _copier.Copy(pattern);
 
         static IEnumerable<BwObject> Clips(BwObject track) => track.Obj(0x2bf8)?.Obj(0x2d8e)?.List(0x21f) ?? [];
+
+        /// <summary>An audio clip's audio: its one event, which plays the sample.</summary>
+        static BwObject? AudioEvent(BwObject clip) => clip.Class == AudioClipClass ? KeyLanes(clip).FirstOrDefault()?.List(0x21f).FirstOrDefault() : null;
+
+        static bool IsAudioClip(BwObject clip) => AudioEvent(clip)?.Obj(0x288)?.Obj(0x20d)?.Obj(0x4b4)?.Has(0x129e) == true;
         static BwObject? NoteContent(BwObject clip) => clip.Obj(0x2ae9)?.Obj(0x10e9)?.Obj(0x49c);
         static IEnumerable<BwObject> KeyLanes(BwObject clip) => NoteContent(clip)?.List(0x18cb) ?? [];
 
@@ -486,6 +614,95 @@ public static class BitwigProject
             ((List<object?>)arrangement[0x21f]!).Add(clip);
             // The track lists the contents of its clips.
             if (track.Obj(0x2aed)?[0x10e6] is List<object?> contents && content.Obj(0x10e9) is { } c) contents.Add(new BwLink(c));
+        }
+
+        /// <summary>A copy of the template's audio track, to hold audio clips.</summary>
+        public BwObject NewAudioTrack()
+        {
+            var track = Copy(AudioTrack ?? throw new InvalidOperationException("The Bitwig template has no audio track"));
+            _audioTracks.Add(track);
+            return track;
+        }
+
+        /// <summary>
+        /// One of an FL audio clip channel's clips as an arrangement audio clip. The clip's audio is the whole sample,
+        /// stretched to play as long as it does in FL (warp markers at its start and end) and transposed by the
+        /// semitones it's pitched in FL; the clip plays the part of it the FL clip does. The sample's transients,
+        /// which Bitwig found in the template's sample, are emptied for it to find this one's.
+        /// </summary>
+        public void AddAudioClip(BwObject track, FlChannel c, FlAudioClip fl, SampleFile? info, double tempo, int ppq)
+        {
+            double Beats(long ticks) => ticks / (double)ppq;
+            var length = Beats(fl.Length);
+            var beatsPerSecond = tempo / 60;
+            // How long the sample is, and how long it plays: when it couldn't be read, a guess that the clip plays to its end.
+            var seconds = info is { Seconds: > 0 } ? info.Seconds : fl.From + length / beatsPerSecond / Math.Max(c.Stretch.PlayedSeconds(1, 0), 1e-6);
+            var played = c.Stretch.PlayedSeconds(seconds, tempo) * beatsPerSecond;
+            var from = seconds > 0 ? fl.From / seconds * played : 0;
+
+            var clip = Copy(_audioClip!);
+            clip.Set(0x2af, Beats(fl.Start));
+            clip.Set(0x26, length);
+            if (fl.Muted || clip.Has(0x10f8)) clip.Set(0x10f8, (byte)(fl.Muted ? 1 : 0), 0x05);
+            if (clip.Obj(0x2adb) is { } range)
+            {
+                range.Obj(0x992)?.Set(0x2af, from);
+                range.Obj(0x992)?.Set(0x26, length);
+                range.Obj(0x98c)?.Set(0x2af, from);
+                range.Obj(0x98d)?.Set(0x2af, from + length);
+            }
+            var content = clip.Obj(0x2ae9)!.Obj(0x10e9)!;
+            if (content.Has(0x2d24)) content.Set(0x2d24, c.Name);
+
+            var audio = AudioEvent(clip)!;
+            audio.Set(0x2af, 0.0);
+            audio.Set(0x26, played);
+            if (audio.Has(0x10f8)) audio.Set(0x10f8, (byte)0, 0x05);
+            if (audio.Has(0xc04)) audio.Set(0xc04, 0.0);
+            if (audio.Has(0xc05)) audio.Set(0xc05, seconds);   // where the sample ends, in its seconds
+            var play = audio.Obj(0x288)!;
+            // Bitwig's stretch mode that keeps pitch and length apart, as it saves a clip stretched and transposed.
+            if (play.Has(0x4b0)) play.Set(0x4b0, (byte)3);
+            var semitones = c.Stretch.Semitones(seconds, played / beatsPerSecond);
+            if (Math.Abs(semitones) < 1e-6) play.Set(0xc33, null, 0x0a);
+            else play.Set(0xc33, Transposition(semitones), 0x09);
+            SampleIs(play.Obj(0x20d)!.Obj(0x4b4)!, c.Sample, info);
+            // Warp markers: the sample's start at the clip's, its end where it ends when stretched.
+            if (play.Obj(0x192) is { } warp)
+            {
+                var marker = warp.List(0x21f).FirstOrDefault()?.Class ?? 0x43;
+                BwObject Marker(double beat, double second)
+                {
+                    var m = new BwObject { Class = marker };
+                    m.Set(0x2af, beat);
+                    m.Set(0xa6, second);
+                    return m;
+                }
+                warp.Set(0x21f, new List<object?> { Marker(0, 0), Marker(played, seconds) });
+            }
+            if (play.Obj(0x10ea)?.Obj(0x10e9) is { } transients)
+            {
+                transients.Set(0x21f, new List<object?>());
+                if (transients.Has(0x4406)) transients.Set(0x4406, (byte)0);
+            }
+
+            ((List<object?>)track.Obj(0x2bf8)!.Obj(0x2d8e)![0x21f]!).Add(clip);
+            if (track.Obj(0x2aed)?[0x10e6] is List<object?> contents) contents.Add(new BwLink(content));
+        }
+
+        /// <summary>An audio clip's transposition, as Bitwig saves it: one point holding the semitones.</summary>
+        static BwObject Transposition(double semitones)
+        {
+            var point = new BwObject { Class = 0x108 };
+            point.Set(0x2af, 0.0);
+            point.Set(0x28f, semitones);
+            point.Set(0x359e, (byte)1);
+            point.Set(0xba6, 0.0);
+            point.Set(0x2ebe, 0.0);
+            var expression = new BwObject { Class = 0x2af };
+            expression.Set(0x1fd, (byte)0);
+            expression.Set(0x21f, new List<object?> { point });
+            return expression;
         }
 
         /// <summary>Automates the track's volume or pan fader (<paramref name="param"/>), with values in Bitwig's units.</summary>
@@ -566,8 +783,10 @@ public static class BitwigProject
             {
                 var summary = Decode(_doc.Raw[blob.Offset..(blob.Offset + blob.Length)]);
                 var project = summary.Root?.Obj(0xad2);
-                var trackEntry = project?.List(0xace).FirstOrDefault();
-                if (summary.BodyError is null && project is not null && trackEntry is not null)
+                var trackEntry = project?.List(0xace).FirstOrDefault(e => e.Class != AudioEntry) ?? project?.List(0xace).FirstOrDefault();
+                // Audio tracks have their own kind of entry; the template's, if it lists one.
+                var audioEntry = project?.List(0xace).FirstOrDefault(e => e.Class == AudioEntry) ?? trackEntry;
+                if (summary.BodyError is null && project is not null && trackEntry is not null && audioEntry is not null)
                 {
                     var copier = new Copier(summary);
                     var entries = new List<object?>();
@@ -575,7 +794,7 @@ public static class BitwigProject
                     project.Set(0xacf, new List<object?>());
                     foreach (var tr in tracks)
                     {
-                        var e = copier.Copy(trackEntry);
+                        var e = copier.Copy(_audioTracks.Contains(tr) ? audioEntry : trackEntry);
                         e.Set(0xad1, tr.Str(0x15b));
                         entries.Add(e);
                     }

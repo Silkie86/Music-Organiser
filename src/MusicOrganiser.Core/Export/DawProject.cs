@@ -122,7 +122,8 @@ public static class DawProject
         // Inserts that channels feed or that hold effects, as effect tracks into the master.
         // Channels that play notes or are automated, with a plugin or sample to make the sound.
         var automated = song.Automation.Select(a => a.Channel).ToHashSet();
-        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index)) &&
+        // An audio clip channel with no notes isn't a Sampler, automated or not.
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index) && c.AudioClips.Count == 0) &&
                                                (c.Instrument is not null || c.Sample.Length > 0)).ToList();
         var used = playing.Select(c => c.Insert).Where(i => i > 0).ToHashSet();
         var insertChannels = new Dictionary<int, string>();
@@ -136,6 +137,9 @@ public static class DawProject
             insertTracks.Add(Track(name, "audio", ch, skipped));
             if (skipped.Count > 0) notes.Add($"{name}: left out {string.Join(", ", skipped)}");
         }
+
+        foreach (var c in song.Channels.Where(c => c.AudioClips.Count > 0))
+            notes.Add($"{c.Name}: its audio clips in the playlist aren't carried over to DAWproject yet");
 
         // Instrument tracks, with a clip for each FL pattern clip the channel plays in.
         var lanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("timeUnit", "beats"));
