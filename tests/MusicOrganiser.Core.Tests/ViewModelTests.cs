@@ -52,6 +52,31 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void OpensOnThePagePickedInSettings()
+    {
+        _db.AddRoot(_root);
+        var first = Main();
+        Assert.Same(first.Projects, first.SelectedNav.Page);   // nothing picked yet
+
+        first.Settings.StartPage = "Sound Lab";
+        var next = Main();
+        Assert.Same(next.Sounds, next.SelectedNav.Page);
+    }
+
+    [Fact]
+    public void CanOpenOnTheLastPageUsed()
+    {
+        _db.AddRoot(_root);
+        var main = Main();
+        main.Settings.StartPage = SettingsViewModel.LastPageChoice;
+        main.SelectedNav = main.Nav.First(n => n.Page == main.Plugins);
+
+        var next = Main();
+        Assert.Same(next.Plugins, next.SelectedNav.Page);
+        Assert.Equal(SettingsViewModel.LastPageChoice, next.Settings.StartPage);
+    }
+
+    [Fact]
     public async Task SettingsKeepsTheAppsOwnCopyOfTheBitwigTemplate()
     {
         var data = Path.Combine(_root, "data");

@@ -64,7 +64,7 @@ public sealed partial class MainViewModel : ObservableObject
             new("Samples", "", Samples),
             new("Settings", "", Settings),
         ];
-        _selectedNav = Nav[0];
+        _selectedNav = StartPage();
         Projects.Reload();
 
         // First run: send people to Settings to add their project folders.
@@ -72,6 +72,17 @@ public sealed partial class MainViewModel : ObservableObject
         else _ = ScanAsync(false);
         Live.Start();
     }
+
+    /// <summary>The page the app opens on: the one picked in Settings, or the last one used, or Projects.</summary>
+    NavItem StartPage()
+    {
+        var choice = _db.GetSetting(SettingsViewModel.StartPageKey) ?? "Projects";
+        var title = choice == SettingsViewModel.LastPageChoice ? _db.GetSetting(LastPageKey) : choice;
+        return Nav.FirstOrDefault(n => n.Title == title) ?? Nav[0];
+    }
+
+    /// <summary>The page showing when the app was last used, for "Last page I used" in Settings.</summary>
+    public const string LastPageKey = "last_page";
 
     public void ShowProjects() => SelectedNav = Nav.First(n => n.Page == Projects);
 
@@ -88,6 +99,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSelectedNavChanged(NavItem value)
     {
+        _db.SetSetting(LastPageKey, value.Title);
         // The MO Probes running now are followed only while Settings shows them.
         if (value.Page != Settings)
         {

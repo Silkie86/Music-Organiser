@@ -15,7 +15,7 @@ tools/screenshots/shoot.sh /tmp/shots path/to/projects
 SCREEN=1920x1080 WAIT=15 NO_BUILD=1 tools/screenshots/shoot.sh /tmp/shots
 ```
 
-Output: `1-projects`, `2-project-selected`, `3-sound-lab`, `4-plugins`, `5-samples`, `6-settings` (.png), plus `app.log`.
+Output: `1-projects`, `2-project-selected`, `3-sound-lab`, `4-plugins`, `5-samples`, `6-settings`, then `7-` and `8-settings-more` further down (.png), plus `app.log`.
 
 How it works, so you can extend it:
 - The library lives in a temp folder (HOME and XDG_DATA_HOME point there). The project folder is copied and nine

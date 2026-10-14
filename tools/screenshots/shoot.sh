@@ -63,3 +63,6 @@ i=1
 for page in 3-sound-lab 4-plugins 5-samples 6-settings; do
   nav $i; shot "$page" 2; i=$((i + 1))
 done
+# The rest of Settings, a screen further down.
+xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1590 990; shot 7-settings-more
+xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1590 990; shot 8-settings-more

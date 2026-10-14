@@ -37,6 +37,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>What's wrong with the template, where it came from, or what Edit in Bitwig did.</summary>
     [ObservableProperty] string _bitwigTemplateNote = "";
     [ObservableProperty] bool _stepsUntilNextNote;
+
+    /// <summary>Which page the app opens on: a page's title, or <see cref="LastPageChoice"/>.</summary>
+    public const string StartPageKey = "start_page";
+    public const string LastPageChoice = "Last page I used";
+    public static IReadOnlyList<string> StartPageChoices { get; } =
+        ["Projects", "Sound Lab", "Plugins", "Samples", "Settings", LastPageChoice];
+    [ObservableProperty] string _startPage;
     [ObservableProperty] string _sampleIndexText = "";
     public string LibraryLocation => _db.FilePath;
 
@@ -68,6 +75,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _bitwigTemplate = BitwigTemplateStore.Find(db, main.DataFolder) ?? "";
         _bitwigTemplateNote = TemplateNote(_bitwigTemplate);
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
+        _startPage = db.GetSetting(StartPageKey) is { } start && StartPageChoices.Contains(start) ? start : "Projects";
         UpdateSampleIndexText();
         var watch = main.Live.Watch;
         Probe = new ProbeReportsViewModel(folder: dataFolder is null ? null : Path.Combine(dataFolder, "probe"),
@@ -298,6 +306,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         try { return Core.Export.BitwigProject.TemplateProblem(File.ReadAllBytes(template)); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Couldn't read it: {e.Message}"; }
     }
+
+    partial void OnStartPageChanged(string value) => _db.SetSetting(StartPageKey, value);
 
     partial void OnStepsUntilNextNoteChanged(bool value) =>
         _db.SetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey, value ? "1" : "0");

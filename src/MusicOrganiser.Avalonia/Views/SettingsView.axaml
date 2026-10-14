@@ -107,6 +107,15 @@
 
             <Border Classes="card settingsCard">
                 <StackPanel>
+                    <TextBlock Text="When the app opens" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro" Text="The page you land on each time you start Music Organiser." />
+                    <ComboBox ItemsSource="{x:Static vm:SettingsViewModel.StartPageChoices}" SelectedItem="{Binding StartPage}"
+                              HorizontalAlignment="Left" MinWidth="240" />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
                     <TextBlock Text="Exports" Classes="sectionHeader" />
                     <TextBlock Classes="cardIntro" Text="Where MIDI, presets and kits are saved. Each project gets its own folder inside." />
                     <DockPanel>
