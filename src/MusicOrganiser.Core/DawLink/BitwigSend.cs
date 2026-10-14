@@ -326,7 +326,8 @@ public static class BitwigSend
 
     /// <summary>
     /// Bitwig files to look for a device's ID in: the presets in Bitwig's user folder, then those in the sound
-    /// packages Bitwig installed, with Drum Machine presets first.
+    /// packages Bitwig installed, with Drum Machine presets first. The folders are only searched once the list
+    /// is read.
     /// </summary>
     public static IEnumerable<string> BitwigPresets(CancellationToken ct = default)
     {
@@ -337,7 +338,8 @@ public static class BitwigSend
             : Path.Combine(home, ".BitwigStudio", "installed-packages");
         var found = Parallelism.FindFiles([.. BitwigPreset.DefaultFolders(), packages],
             f => f.EndsWith(".bwpreset", StringComparison.OrdinalIgnoreCase), (name, _) => name.StartsWith('.'), ct: ct);
-        return found.OrderBy(f => f.Contains(DrumMachine, StringComparison.OrdinalIgnoreCase) ? 0 : 1);
+        foreach (var file in found.OrderBy(f => f.Contains(DrumMachine, StringComparison.OrdinalIgnoreCase) ? 0 : 1))
+            yield return file;
     }
 
     static void CheckChanges(BitwigLink link)

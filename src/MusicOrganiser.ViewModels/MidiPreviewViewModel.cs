@@ -227,7 +227,6 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
     internal async Task SendToBitwig(IReadOnlyList<MidiChannelRow> rows)
     {
         if (rows.Count == 0 || IsSending) return;
-        Stop();
         IsSending = true;
         using var cancel = new CancellationTokenSource();
         _sending = cancel;
