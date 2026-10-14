@@ -65,6 +65,31 @@ jobs:
           python -c "import ast, sys; ast.parse(open(sys.argv[1], encoding='utf-8').read(), feature_version=(3, 9))" extensions/fl-studio/device_MusicOrganiser.py
           python -m unittest discover -s extensions/fl-studio/test -v
 
+  # The Bitwig extension (Java): built and tested with Maven, which gets Bitwig's API from Bitwig's own
+  # repository (maven.bitwig.com). Each run keeps MusicOrganiser.bwextension as a download.
+  bitwig-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: extensions/bitwig-java/pom.xml
+      # For ParityTest, which runs the JavaScript script beside the extension and compares their answers.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build and test
+        working-directory: extensions/bitwig-java
+        run: mvn -B package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: music-organiser-bitwig-extension
+          path: extensions/bitwig-java/target/MusicOrganiser.bwextension
+          if-no-files-found: error
+
   # The native tools (C++): the plugin scanner and the probe plugin as CLAP, VST3 and (macOS) AU.
   # Tested by hosting the probe and scanning it. Each run keeps the built tools as a download.
   native:

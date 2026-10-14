@@ -1,0 +1,1850 @@
+package org.musicorganiser.bitwig;
+
+import com.bitwig.extension.api.PlatformType;
+import com.bitwig.extension.callback.ConnectionEstablishedCallback;
+import com.bitwig.extension.callback.DataReceivedCallback;
+import com.bitwig.extension.callback.DirectParameterDisplayedValueChangedCallback;
+import com.bitwig.extension.callback.DirectParameterNameChangedCallback;
+import com.bitwig.extension.callback.DirectParameterNormalizedValueChangedCallback;
+import com.bitwig.extension.callback.NoArgsCallback;
+import com.bitwig.extension.callback.StringArrayValueChangedCallback;
+import com.bitwig.extension.controller.api.Action;
+import com.bitwig.extension.controller.api.ActionCategory;
+import com.bitwig.extension.controller.api.Application;
+import com.bitwig.extension.controller.api.BooleanValue;
+import com.bitwig.extension.controller.api.ClipLauncherSlot;
+import com.bitwig.extension.controller.api.ClipLauncherSlotBank;
+import com.bitwig.extension.controller.api.ControllerHost;
+import com.bitwig.extension.controller.api.CursorRemoteControlsPage;
+import com.bitwig.extension.controller.api.CursorTrack;
+import com.bitwig.extension.controller.api.Device;
+import com.bitwig.extension.controller.api.DeviceBank;
+import com.bitwig.extension.controller.api.DirectParameterValueDisplayObserver;
+import com.bitwig.extension.controller.api.DoubleValue;
+import com.bitwig.extension.controller.api.DrumPad;
+import com.bitwig.extension.controller.api.DrumPadBank;
+import com.bitwig.extension.controller.api.EnumValue;
+import com.bitwig.extension.controller.api.InsertionPoint;
+import com.bitwig.extension.controller.api.IntegerValue;
+import com.bitwig.extension.controller.api.LastClickedParameter;
+import com.bitwig.extension.controller.api.MasterRecorder;
+import com.bitwig.extension.controller.api.Parameter;
+import com.bitwig.extension.controller.api.PinnableCursorDevice;
+import com.bitwig.extension.controller.api.PopupBrowser;
+import com.bitwig.extension.controller.api.Preferences;
+import com.bitwig.extension.controller.api.Project;
+import com.bitwig.extension.controller.api.RemoteConnection;
+import com.bitwig.extension.controller.api.RemoteControl;
+import com.bitwig.extension.controller.api.RemoteSocket;
+import com.bitwig.extension.controller.api.SettableBeatTimeValue;
+import com.bitwig.extension.controller.api.SettableBooleanValue;
+import com.bitwig.extension.controller.api.SettableColorValue;
+import com.bitwig.extension.controller.api.SettableIntegerValue;
+import com.bitwig.extension.controller.api.SettableStringValue;
+import com.bitwig.extension.controller.api.SoloValue;
+import com.bitwig.extension.controller.api.SpecificBitwigDevice;
+import com.bitwig.extension.controller.api.StringArrayValue;
+import com.bitwig.extension.controller.api.StringValue;
+import com.bitwig.extension.controller.api.TimeSignatureValue;
+import com.bitwig.extension.controller.api.Track;
+import com.bitwig.extension.controller.api.TrackBank;
+import com.bitwig.extension.controller.api.Transport;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.regex.Pattern;
+
+/**
+ * A stand-in for the parts of Bitwig's controller API the extension uses, so it can be run and checked without
+ * Bitwig: a port of the JavaScript script's stand-in (extensions/bitwig/test/fake-bitwig.js), made from Bitwig's
+ * own interfaces with java.lang.reflect.Proxy. Like Bitwig, reading a value that init didn't mark as interested
+ * fails, and changes the extension asks for happen a little later (on the stand-in's clock), reaching the extension
+ * bit by bit, as Bitwig's do. Everything happens on the test's thread, as everything in Bitwig happens on its
+ * controller thread.
+ *
+ * Each part of Bitwig here is a plain class whose methods are named as the API's are; {@link Stand} makes it the
+ * API's interface. Calling anything a stand-in doesn't have fails and names it, so a test shows when the extension
+ * starts to use more of Bitwig than this covers.
+ *
+ * Besides the project (tracks, tempo, actions...), the {@link Model} says what Bitwig would make of things the app
+ * inserts (files, presets, plugins and knobs by name, a Drum Machine), as the JavaScript stand-in's model does,
+ * and what's new to the extension: tracks' IDs, a device's remote controls page, the last clicked parameter, the
+ * master recorder, and parts of the API that fail, as in a Bitwig that changed.
+ */
+final class FakeBitwig {
+    static final String SAMPLER = Link.SAMPLER;
+    static final String NOTE_TRANSPOSE = Link.NOTE_TRANSPOSE;
+    private static final Pattern AUDIO = Pattern.compile("\\.(wav|aiff?|flac|mp3|ogg)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern PRESET = Pattern.compile("\\.(bwpreset|vstpreset|fxb|fxp)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MIDI = Pattern.compile("\\.midi?$", Pattern.CASE_INSENSITIVE);
+    /** The cursor device when it shows a device by itself (with show()), or none yet: sync leaves it alone. */
+    private static final DeviceSpec ALONE = new DeviceSpec("(shown by itself)");
+
+    final Model model;
+    final FakeClock clock = new FakeClock();
+    /** What the extension asked Bitwig to do: insertions, selections, actions run, a new track, the recorder. */
+    final List<List<Object>> calls = new ArrayList<>();
+    /** What the extension wrote to Bitwig's console: errors, and other lines. */
+    final List<String> errors = new ArrayList<>();
+    final List<String> printed = new ArrayList<>();
+    /** The notifications it showed in Bitwig. */
+    final List<String> popups = new ArrayList<>();
+    final State state;
+    final Link link;
+
+    // The project, as Bitwig reports it.
+    final Value projectName;
+    final Value engine;
+    final Value modified;
+    final Param tempo;
+    final Value signature;
+    final Value playing = new Value(SettableBooleanValue.class, false);
+    final Value position = new Value(SettableBeatTimeValue.class, 0.0);
+    final Value browserOpen = new Value(BooleanValue.class, false);
+    /** "Let the app make changes", once init has asked for it. */
+    Value changes;
+
+    final List<FakeTrack> trackItems = new ArrayList<>();
+    Bank tracks;
+    final FakeTrack cursorTrack;
+    final CursorDevice cursorDevice;
+    /** The pad list the cursor device made, once it has. */
+    Pads pads;
+    private int padScroll;
+    final LastClicked lastClicked = new LastClicked();
+    final Recorder recorder = new Recorder();
+    /** The parameter last clicked in Bitwig, once one has been. */
+    private Knob clicked;
+    /** The clip slots each track in the bank has: the scenes the extension asked for. */
+    private int bankScenes;
+
+    /** What's selected: a track (its index, or -1), the device on it, and the device whose pads the pad list shows. */
+    private int cursorIndex = -1;
+    private DeviceSpec cursorSpec = ALONE;
+    private DeviceSpec padsFrom;
+
+    private final Map<String, DeviceSpec> builtIn = new HashMap<>();
+    private final List<Stand> actions = new ArrayList<>();
+    private ConnectionEstablishedCallback connect;
+    final Stand host;
+
+    /** The project as the stand-in keeps it: a test can change it, then refresh(). */
+    static final class State {
+        final List<TrackSpec> tracks = new ArrayList<>();
+        int scenes;
+        /** What Bitwig says the track count is while a new track is on its way, else null. */
+        Integer count;
+    }
+
+    private FakeBitwig(Model model, Path reports) {
+        this.model = model;
+        state = new State();
+        for (TrackSpec t : model.tracks) state.tracks.add(t.copy());
+        state.scenes = model.scenes;
+        padScroll = model.padScroll;
+        projectName = new Value(StringValue.class, model.project);
+        engine = new Value(BooleanValue.class, model.engine);
+        modified = new Value(BooleanValue.class, model.modified);
+        tempo = new Param(Parameter.class, model.tempo, "");
+        signature = new Value(TimeSignatureValue.class, model.timeSignature);
+        builtIn.put(SAMPLER, device("Sampler").id(SAMPLER).kind("note_to_audio").param("TRANSPOSE", 0));
+        builtIn.put(NOTE_TRANSPOSE, device("Note Transpose").id(NOTE_TRANSPOSE).kind("note_to_note").param("COARSE", 0));
+        if (model.drumMachine != null) builtIn.put(model.drumMachine, device("Drum Machine").id(model.drumMachine).kind("note_to_audio").drum());
+        for (ActionSpec a : model.actions) actions.add(action(a));
+
+        cursorDevice = new CursorDevice();
+        cursorTrack = new FakeTrack(-1);
+        host = new Host();
+        link = new Link((ControllerHost) host.api, new Reports(reports, clock), clock);
+    }
+
+    /**
+     * Starts the extension in a stand-in Bitwig with the given project, writing its reports in `reports`, and
+     * returns handles to poke at it.
+     */
+    static FakeBitwig start(Model model, Path reports) {
+        FakeBitwig bitwig = new FakeBitwig(model, reports);
+        bitwig.link.init();
+
+        // Fill in the project after init, as Bitwig does.
+        bitwig.sync();
+        bitwig.cursorTrack.load(new TrackSpec(model.selectedTrack == null ? "" : model.selectedTrack, null));
+        bitwig.cursorTrack.present.v = model.selectedTrack != null;
+        for (int i = 0; i < bitwig.state.tracks.size(); i++) {
+            if (bitwig.state.tracks.get(i).name.equals(model.selectedTrack)) {
+                bitwig.cursorIndex = i;
+                bitwig.sync();
+                break;
+            }
+        }
+        return bitwig;
+    }
+
+    /** Turns "Let the app make changes" on or off, as in Bitwig's settings. */
+    void allowChanges(boolean on) {
+        changes.set(on);
+    }
+
+    /** Tells the extension about changes a test made to `state` itself. */
+    void refresh() {
+        sync();
+    }
+
+    /** Clicks a parameter in Bitwig: the extension hears of it a moment later. */
+    void click(Knob knob) {
+        later(20, () -> clicked = knob);
+    }
+
+    /** The track the extension's bank shows at `index`. */
+    FakeTrack track(int index) {
+        return trackItems.get(index);
+    }
+
+    // ---- The world: what happens in Bitwig ----
+
+    /** Makes a change a moment from now, then tells the extension, as Bitwig does. */
+    void later(long ms, Runnable change) {
+        clock.schedule(() -> {
+            change.run();
+            sync();
+        }, ms);
+    }
+
+    private TrackSpec trackSpec(int index) {
+        return index >= 0 && index < state.tracks.size() ? state.tracks.get(index) : null;
+    }
+
+    private TrackSpec cursorSpec() {
+        return trackSpec(cursorIndex);
+    }
+
+    private void selectTrack(FakeTrack track) {
+        later(20, () -> {
+            TrackSpec spec = trackSpec(track.index);
+            if (spec == null || cursorIndex == track.index) return;
+            cursorIndex = track.index;
+            cursorSpec = spec.devices.isEmpty() ? null : spec.devices.get(0);
+        });
+    }
+
+    private void selectDevice(FakeDevice device) {
+        FakeTrack owner = null;
+        for (FakeTrack t : trackItems)
+            if (t.devices != null && t.devices.items.contains(device)) owner = t;
+        if (owner == null) return;
+        int t = owner.index;
+        int index = owner.devices.items.indexOf(device);
+        later(20, () -> {
+            TrackSpec track = trackSpec(t);
+            DeviceSpec spec = track != null && index < track.devices.size() ? track.devices.get(index) : null;
+            if (spec == null) return;
+            cursorIndex = t;
+            cursorSpec = spec;
+        });
+        // The pads follow a moment after the device.
+        clock.schedule(() -> {
+            padsFrom = cursorSpec;
+            sync();
+        }, 60);
+    }
+
+    private DeviceSpec padDevice() {
+        DeviceSpec d = padsFrom;
+        return d != null && d.drum ? d : null;
+    }
+
+    private PadSpec padAt(int index) {
+        DeviceSpec d = padDevice();
+        return d != null && d.pads != null ? d.pads.get(padScroll + index) : null;
+    }
+
+    /** Something inserted into track `t`'s chain: what Bitwig would make of it, if anything. */
+    private void insert(int t, String at, String method, Object arg) {
+        String key = String.valueOf(arg);
+        DeviceSpec spec;
+        switch (method) {
+            case "insertFile":
+                spec = model.files.get(key);
+                if (spec == null && AUDIO.matcher(key).find()) spec = builtIn.get(SAMPLER).copy().preset(baseName(key));
+                if (spec == null && model.presets && PRESET.matcher(key).find()) {
+                    String name = baseName(key);
+                    int cut = name.indexOf(" - ");
+                    String plugin = cut < 0 ? name : name.substring(0, cut);
+                    String preset = cut < 0 ? "" : name.substring(cut + 3);
+                    spec = device(plugin).preset(preset.isEmpty() ? plugin : preset).plugin().kind("note_to_audio");
+                }
+                break;
+            case "insertBitwigDevice":
+                spec = builtIn.get(key);
+                break;
+            default:
+                String format = method.equals("insertVST3Device") ? "VST3" : method.equals("insertVST2Device") ? "VST2" : "CLAP";
+                spec = model.plugins.get(format + ":" + key);
+        }
+        if (spec == null) return;
+        if (spec.knobs == null && model.knobs.containsKey(spec.name)) spec = spec.copy().knobs(model.knobs.get(spec.name));
+        TrackSpec track = state.tracks.get(t);
+        DeviceSpec made = spec.copy();
+        later(40, () -> {
+            if (at.equals("start")) track.devices.add(0, made);
+            else track.devices.add(made);
+        });
+    }
+
+    private void createInstrumentTrack(int position) {
+        calls.add(Arrays.asList("createInstrumentTrack", position));
+        // The count changes first; the track itself shows up a moment later, after the last main track.
+        later(30, () -> state.count = state.tracks.size() + 1);
+        later(60, () -> {
+            state.count = null;
+            int main = -1;
+            for (int i = 0; i < state.tracks.size() && main < 0; i++) {
+                String type = state.tracks.get(i).type;
+                if ("Effect".equals(type) || "Master".equals(type)) main = i;
+            }
+            int at = main < 0 ? state.tracks.size() : main;
+            int instruments = 0;
+            for (TrackSpec t : state.tracks)
+                if (t.type == null || t.type.isEmpty() || t.type.equals("Instrument")) instruments++;
+            state.tracks.add(at, new TrackSpec("Inst " + (instruments + 1), "Instrument"));
+            if (cursorIndex >= 0 && cursorIndex >= at) cursorIndex++;
+            if (model.browserOnNewTrack) browserOpen.v = true;
+        });
+    }
+
+    /** Tells the extension how things are now, as Bitwig's observers do. */
+    private void sync() {
+        if (tracks == null) return;   // the extension couldn't make its track bank: nothing to tell it
+        tracks.count.v = state.count == null ? state.tracks.size() : state.count;
+        for (int i = 0; i < trackItems.size(); i++) trackItems.get(i).load(trackSpec(i));
+        TrackSpec selected = cursorSpec();
+        if (selected != null) {
+            cursorTrack.present.v = true;
+            cursorTrack.title.v = selected.name;
+        }
+        DeviceSpec device = cursorSpec;
+        if (device != ALONE) {
+            cursorDevice.load(device);
+            cursorDevice.where.v = device != null && selected != null ? selected.devices.indexOf(device) : -1;
+            cursorDevice.drum.v = device != null && device.drum;
+            cursorDevice.follow(device);
+        }
+        cursorDevice.showPage();
+        if (pads != null) {
+            DeviceSpec from = padDevice();
+            pads.scroll.v = padScroll;
+            for (int i = 0; i < pads.items.size(); i++) {
+                Pad pad = (Pad) pads.items.get(i);
+                PadSpec p = from != null && from.pads != null ? from.pads.get(padScroll + i) : null;
+                pad.present.v = p != null;
+                pad.title.v = p != null ? p.name : "";
+                pad.chain.count.v = p != null ? p.devices.size() : 0;
+            }
+        }
+        lastClicked.parameter.show(clicked);
+        recorder.active.v = recorder.recording;
+    }
+
+    // ---- Talking to the extension as the app does ----
+
+    /** Connects as the app would, and returns a way to send requests and read what comes back. */
+    App connect() {
+        return new App();
+    }
+
+    /** A connection from the app. Requests go in through the extension's receive callback; replies come out of send. */
+    final class App {
+        final List<Map<String, Object>> received = new ArrayList<>();
+        private int read;
+        private DataReceivedCallback receive;
+        private NoArgsCallback disconnect;
+        /** Whether the connection has broken without Bitwig noticing: sending on it fails. */
+        private boolean broken;
+
+        private App() {
+            Stand connection = new Stand(RemoteConnection.class) {
+                void setReceiveCallback(DataReceivedCallback callback) {
+                    receive = callback;
+                }
+
+                void setDisconnectCallback(NoArgsCallback callback) {
+                    disconnect = callback;
+                }
+
+                void send(byte[] bytes) {
+                    if (broken) throw new IllegalStateException("The connection to the app is broken.");
+                    received.add(message(bytes));
+                }
+            };
+            connect.connectionEstablished((RemoteConnection) connection.api);
+        }
+
+        /** Messages that arrived since the last call. */
+        List<Map<String, Object>> take() {
+            List<Map<String, Object>> fresh = new ArrayList<>(received.subList(read, received.size()));
+            read = received.size();
+            return fresh;
+        }
+
+        /** Sends a request (a map, written as JSON, or text as it is) as Bitwig would hand it over: UTF-8 bytes. */
+        void send(Object request) {
+            String text = request instanceof String ? (String) request : Json.write(request);
+            receive.dataReceived(text.getBytes(StandardCharsets.UTF_8));
+        }
+
+        /** Sends a request and returns the one reply to it. */
+        Map<String, Object> ask(Object request) {
+            send(request);
+            return only(take());
+        }
+
+        /** Sends a request, lets the stand-in's clock run (for changes that wait) and returns the reply. */
+        Map<String, Object> waitFor(Object request) {
+            return waitFor(request, 10000);
+        }
+
+        Map<String, Object> waitFor(Object request, long ms) {
+            send(request);
+            clock.advance(ms);
+            return only(take());
+        }
+
+        void close() {
+            disconnect.call();
+        }
+
+        /** Breaks the connection without Bitwig noticing, so the extension's next send fails. */
+        void breakConnection() {
+            broken = true;
+        }
+
+        private Map<String, Object> only(List<Map<String, Object>> fresh) {
+            if (fresh.size() != 1) throw new AssertionError("expected one reply, got " + Json.write(fresh));
+            return fresh.get(0);
+        }
+    }
+
+    /** A message from the extension: plain ASCII JSON ending in a newline, as the app reads it. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> message(byte[] bytes) {
+        for (byte b : bytes)
+            if (b < 0) throw new AssertionError("expected ASCII bytes, got " + (b & 0xff));
+        String text = new String(bytes, StandardCharsets.US_ASCII);
+        if (!text.endsWith("\n") || text.indexOf('\n') != text.length() - 1 || text.indexOf('\r') >= 0)
+            throw new AssertionError("expected one line of JSON ending in a newline, got " + text);
+        Object parsed = Json.parse(text);
+        if (!(parsed instanceof Map)) throw new AssertionError("expected a JSON object, got " + text);
+        return (Map<String, Object>) parsed;
+    }
+
+    // ---- What the project is made of ----
+
+    /** What the stand-in Bitwig has open, and what it makes of things the app inserts. */
+    static final class Model {
+        String project = "Untitled";
+        double tempo = 120;
+        String timeSignature = "4/4";
+        boolean modified;
+        /** Whether Bitwig's audio engine is on (the master recorder only records when it is). */
+        boolean engine = true;
+        /** The selected track's name, or null when none is selected. */
+        String selectedTrack;
+        final List<TrackSpec> tracks = new ArrayList<>();
+        final List<ActionSpec> actions = new ArrayList<>();
+        /** A file's path, and the device it loads (a preset). */
+        final Map<String, DeviceSpec> files = new HashMap<>();
+        /** Whether any preset file loads, as the plugin its name starts with ("Serum - Lead.vstpreset"). */
+        boolean presets;
+        /** "VST3:<id>", "VST2:<number>" or "CLAP:<id>", and the device that plugin is. */
+        final Map<String, DeviceSpec> plugins = new HashMap<>();
+        /** A device's name ("Serum"), and the knobs it has when the app inserts it. */
+        final Map<String, List<Knob>> knobs = new HashMap<>();
+        /** The UUID that adds a Drum Machine here (Bitwig's own isn't known). */
+        String drumMachine;
+        /** How many scenes the project has. */
+        int scenes = 8;
+        /** Where the pad list starts. */
+        int padScroll;
+        /** Whether a new track opens Bitwig's browser. */
+        boolean browserOnNewTrack;
+        /** The port Bitwig gives the link when 19791 is taken, or 0 when it isn't. */
+        int portInUse;
+        /** The Bitwig version and API version the host reports (the script's stand-in reports the same). */
+        String version = "6.1.2";
+        int api = 25;
+        /** Methods of Bitwig's host that fail here, as in a Bitwig that doesn't have them. */
+        final Set<String> broken = new HashSet<>();
+
+        Model tracks(TrackSpec... list) {
+            tracks.addAll(Arrays.asList(list));
+            return this;
+        }
+    }
+
+    static final class TrackSpec {
+        String name;
+        /** Instrument, Audio, Group, Effect or Master; null for an instrument track. */
+        String type;
+        boolean group;
+        boolean mute;
+        float[] colour;
+        Double volume;
+        String volumeText;
+        /** The ID Bitwig keeps the track under, or null where Bitwig hasn't said. */
+        String id;
+        final List<DeviceSpec> devices = new ArrayList<>();
+        /** Each clip slot's clip (the file it came from), or null where the slot is empty. */
+        final List<String> slots = new ArrayList<>();
+
+        TrackSpec(String name, String type) {
+            this.name = name;
+            this.type = type;
+        }
+
+        TrackSpec group() {
+            group = true;
+            return this;
+        }
+
+        TrackSpec colour(float r, float g, float b) {
+            colour = new float[] {r, g, b};
+            return this;
+        }
+
+        TrackSpec volume(double value, String text) {
+            volume = value;
+            volumeText = text;
+            return this;
+        }
+
+        TrackSpec id(String id) {
+            this.id = id;
+            return this;
+        }
+
+        TrackSpec slots(String... clips) {
+            slots.addAll(Arrays.asList(clips));
+            return this;
+        }
+
+        /** A fresh copy, as the stand-in project keeps it. */
+        TrackSpec copy() {
+            TrackSpec t = new TrackSpec(name, type);
+            t.group = group;
+            t.mute = mute;
+            t.colour = colour == null ? null : colour.clone();
+            t.volume = volume;
+            t.volumeText = volumeText;
+            t.id = id;
+            for (DeviceSpec d : devices) t.devices.add(d.copy());
+            t.slots.addAll(slots);
+            return t;
+        }
+    }
+
+    static final class DeviceSpec {
+        String name;
+        String preset;
+        boolean plugin;
+        /** Bitwig's word for what it does (note_to_audio...); null for audio_to_audio. */
+        String kind;
+        boolean enabled = true;
+        /** The ID of a Bitwig device (the Sampler's, say). */
+        String id;
+        /** A Bitwig device's own parameters by ID (TRANSPOSE, COARSE), which the extension can set without selecting it. */
+        Map<String, Double> params;
+        /** Whether it's a Drum Machine, and what's on its pads, by note. */
+        boolean drum;
+        Map<Integer, PadSpec> pads;
+        /** The parameters the extension sees once the device is selected. */
+        List<Knob> knobs;
+        /** The remote controls page Bitwig shows for it: its name, and the knobs on it (by ID). */
+        String page;
+        List<String> controls;
+        /** The sample a Sampler plays. */
+        String sample;
+
+        DeviceSpec(String name) {
+            this.name = name;
+        }
+
+        DeviceSpec preset(String preset) {
+            this.preset = preset;
+            return this;
+        }
+
+        DeviceSpec plugin() {
+            plugin = true;
+            return this;
+        }
+
+        DeviceSpec kind(String kind) {
+            this.kind = kind;
+            return this;
+        }
+
+        DeviceSpec disabled() {
+            enabled = false;
+            return this;
+        }
+
+        DeviceSpec id(String id) {
+            this.id = id;
+            return this;
+        }
+
+        DeviceSpec param(String param, double value) {
+            if (params == null) params = new LinkedHashMap<>();
+            params.put(param, value);
+            return this;
+        }
+
+        DeviceSpec drum() {
+            drum = true;
+            return this;
+        }
+
+        DeviceSpec knobs(List<Knob> list) {
+            knobs = new ArrayList<>(list);
+            return this;
+        }
+
+        DeviceSpec knobs(Knob... list) {
+            return knobs(Arrays.asList(list));
+        }
+
+        DeviceSpec page(String name, String... ids) {
+            page = name;
+            controls = Arrays.asList(ids);
+            return this;
+        }
+
+        /** A copy through and through, as Bitwig makes a new device of what's inserted. */
+        DeviceSpec copy() {
+            DeviceSpec d = new DeviceSpec(name);
+            d.preset = preset;
+            d.plugin = plugin;
+            d.kind = kind;
+            d.enabled = enabled;
+            d.id = id;
+            d.params = params == null ? null : new LinkedHashMap<>(params);
+            d.drum = drum;
+            if (pads != null) {
+                d.pads = new LinkedHashMap<>();
+                for (Map.Entry<Integer, PadSpec> e : pads.entrySet()) d.pads.put(e.getKey(), e.getValue().copy());
+            }
+            if (knobs != null) {
+                d.knobs = new ArrayList<>();
+                for (Knob k : knobs) d.knobs.add(k.copy());
+            }
+            d.page = page;
+            d.controls = controls == null ? null : new ArrayList<>(controls);
+            d.sample = sample;
+            return d;
+        }
+    }
+
+    /** One of a device's parameters as the extension sees it once the device is selected. */
+    static final class Knob {
+        final String id;
+        final String name;
+        double value;
+        /** The text Bitwig shows, or null for a parameter whose text never comes. */
+        String display;
+        /** Whether it stays put when set. */
+        boolean locked;
+        // What Bitwig says of it as a remote control or the last clicked parameter.
+        int steps = -1;
+        String[] stepNames = new String[0];
+        double origin;
+        boolean automated;
+
+        Knob(String id, String name, double value, String display) {
+            this.id = id;
+            this.name = name;
+            this.value = value;
+            this.display = display;
+        }
+
+        Knob steps(String... names) {
+            steps = names.length;
+            stepNames = names.clone();
+            return this;
+        }
+
+        Knob origin(double origin) {
+            this.origin = origin;
+            return this;
+        }
+
+        Knob automated() {
+            automated = true;
+            return this;
+        }
+
+        Knob copy() {
+            Knob k = new Knob(id, name, value, display);
+            k.locked = locked;
+            k.steps = steps;
+            k.stepNames = stepNames.clone();
+            k.origin = origin;
+            k.automated = automated;
+            return k;
+        }
+    }
+
+    static final class PadSpec {
+        String name;
+        final List<DeviceSpec> devices = new ArrayList<>();
+
+        PadSpec(String name) {
+            this.name = name;
+        }
+
+        PadSpec copy() {
+            PadSpec p = new PadSpec(name);
+            for (DeviceSpec d : devices) p.devices.add(d.copy());
+            return p;
+        }
+    }
+
+    record ActionSpec(String id, String name, String category, String menu) {}
+
+    static TrackSpec track(String name, String type, DeviceSpec... devices) {
+        TrackSpec t = new TrackSpec(name, type);
+        t.devices.addAll(Arrays.asList(devices));
+        return t;
+    }
+
+    static DeviceSpec device(String name) {
+        return new DeviceSpec(name);
+    }
+
+    static Knob knob(String id, String name, double value, String display) {
+        return new Knob(id, name, value, display);
+    }
+
+    static ActionSpec action(String id, String name, String category) {
+        return new ActionSpec(id, name, category, null);
+    }
+
+    private static String baseName(String file) {
+        String name = file.replace('\\', '/');
+        name = name.substring(name.lastIndexOf('/') + 1);
+        return name.replaceFirst("\\.[^.]*$", "");
+    }
+
+    private static String formatParam(String param, double v) {
+        return param.equals("COARSE") ? (v > 0 ? "+" : "") + Json.number(v) + " st"
+                                      : (v >= 0 ? "+" : "") + String.format(java.util.Locale.ROOT, "%.2f", v) + " st";
+    }
+
+    // ---- The parts of Bitwig ----
+
+    /**
+     * A part of the stand-in Bitwig. `api` is it as Bitwig's interfaces, and a call on that goes to this object's
+     * method with the same name and number of arguments (a stand-in passed in arrives as itself). A stand-in
+     * returned is handed over as its `api`, and a number as the type the API's method returns.
+     */
+    abstract static class Stand implements InvocationHandler {
+        private static final ClassValue<Map<Method, Optional<Method>>> FOUND = new ClassValue<>() {
+            @Override
+            protected Map<Method, Optional<Method>> computeValue(Class<?> type) {
+                return new ConcurrentHashMap<>();
+            }
+        };
+
+        final Object api;
+
+        Stand(Class<?>... types) {
+            api = Proxy.newProxyInstance(FakeBitwig.class.getClassLoader(), types, this);
+        }
+
+        /** Runs before each call: a part of Bitwig that fails can throw here. */
+        void calling(Method method) {}
+
+        @Override
+        public final Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            if (method.getDeclaringClass() == Object.class) {
+                switch (method.getName()) {
+                    case "equals": return proxy == args[0];
+                    case "hashCode": return System.identityHashCode(proxy);
+                    default: return "stand-in " + getClass().getSimpleName();
+                }
+            }
+            calling(method);
+            Method mine = FOUND.get(getClass()).computeIfAbsent(method, m -> Optional.ofNullable(find(getClass(), m))).orElse(null);
+            if (mine == null)
+                throw new UnsupportedOperationException("The stand-in Bitwig has no " + method.getDeclaringClass().getSimpleName() + "."
+                                                        + method.getName() + " (asked of " + getClass().getName() + ").");
+            Object[] given = args == null ? new Object[0] : args.clone();
+            for (int i = 0; i < given.length; i++) given[i] = unwrap(given[i]);
+            try {
+                return returned(method.getReturnType(), mine.invoke(this, given));
+            } catch (InvocationTargetException e) {
+                throw e.getCause();
+            }
+        }
+
+        private static Method find(Class<?> type, Method wanted) {
+            for (Class<?> c = type; c != Stand.class && c != Object.class; c = c.getSuperclass()) {
+                for (Method m : c.getDeclaredMethods()) {
+                    if (!m.getName().equals(wanted.getName()) || m.getParameterCount() != wanted.getParameterCount()) continue;
+                    if (m.isSynthetic() || Modifier.isStatic(m.getModifiers())) continue;
+                    m.setAccessible(true);
+                    return m;
+                }
+            }
+            return null;
+        }
+
+        private static Object returned(Class<?> type, Object result) {
+            if (result instanceof Stand) return ((Stand) result).api;
+            if (type == boolean.class) return (Boolean) result;
+            if (type == int.class) return ((Number) result).intValue();
+            if (type == long.class) return ((Number) result).longValue();
+            if (type == double.class) return ((Number) result).doubleValue();
+            if (type == float.class) return ((Number) result).floatValue();
+            return result;
+        }
+
+        /** The stand-in behind one of Bitwig's objects, or the value itself if it isn't one. */
+        static Object unwrap(Object value) {
+            if (value != null && Proxy.isProxyClass(value.getClass()) && Proxy.getInvocationHandler(value) instanceof Stand) {
+                return Proxy.getInvocationHandler(value);
+            }
+            return value;
+        }
+    }
+
+    /** A value the extension reads. Its set() goes through `onSet`, when given, so it can take effect later. */
+    static class Value extends Stand {
+        Object v;
+        boolean interested;
+        private final Consumer<Object> onSet;
+        /** Where a value Bitwig keeps up to date by itself comes from (the recorder's duration), else null. */
+        Supplier<Object> live;
+
+        Value(Class<?> type, Object v) {
+            this(type, v, null);
+        }
+
+        Value(Class<?> type, Object v, Consumer<Object> onSet) {
+            super(type);
+            this.v = v;
+            this.onSet = onSet;
+        }
+
+        void markInterested() {
+            interested = true;
+        }
+
+        Object get() {
+            if (!interested) throw new IllegalStateException("read a value that wasn't marked as interested");
+            return live != null ? live.get() : v;
+        }
+
+        void set(Object value) {
+            if (onSet != null) onSet.accept(value);
+            else v = value;
+        }
+    }
+
+    /** A parameter: its value, its text as Bitwig shows it ("-6.0 dB"), and what else Bitwig says of it. */
+    static class Param extends Value {
+        final Value display;
+        final Value present = new Value(BooleanValue.class, false);
+        final Value title = new Value(SettableStringValue.class, "");
+        final Value steps = new Value(IntegerValue.class, -1);
+        final Value stepNames = new Value(StringArrayValue.class, new String[0]);
+        final Value origin = new Value(DoubleValue.class, 0.0);
+        final Value automated = new Value(BooleanValue.class, false);
+
+        Param(Class<?> type, double v, String display) {
+            super(type, v);
+            this.display = new Value(StringValue.class, display);
+        }
+
+        Object getRaw() {
+            return get();
+        }
+
+        Value displayedValue() {
+            return display;
+        }
+
+        Value exists() {
+            return present;
+        }
+
+        Value name() {
+            return title;
+        }
+
+        Value discreteValueCount() {
+            return steps;
+        }
+
+        Value discreteValueNames() {
+            return stepNames;
+        }
+
+        Value getOrigin() {
+            return origin;
+        }
+
+        Value hasAutomation() {
+            return automated;
+        }
+
+        /** Shows a knob (or none), as a remote control or the last clicked parameter does. */
+        void show(Knob knob) {
+            present.v = knob != null;
+            title.v = knob == null ? "" : knob.name;
+            v = knob == null ? 0.0 : knob.value;
+            display.v = knob == null || knob.display == null ? "" : knob.display;
+            steps.v = knob == null ? -1 : knob.steps;
+            stepNames.v = knob == null ? new String[0] : knob.stepNames.clone();
+            origin.v = knob == null ? 0.0 : knob.origin;
+            automated.v = knob != null && knob.automated;
+        }
+    }
+
+    static final class Colour extends Stand {
+        float r;
+        float g;
+        float b;
+        private boolean interested;
+        private final Consumer<float[]> onSet;
+
+        Colour(Consumer<float[]> onSet) {
+            super(SettableColorValue.class);
+            this.onSet = onSet;
+        }
+
+        void markInterested() {
+            interested = true;
+        }
+
+        private void checkInterested() {
+            if (!interested) throw new IllegalStateException("read a colour that wasn't marked as interested");
+        }
+
+        float red() {
+            checkInterested();
+            return r;
+        }
+
+        float green() {
+            checkInterested();
+            return g;
+        }
+
+        float blue() {
+            checkInterested();
+            return b;
+        }
+
+        void set(float red, float green, float blue) {
+            onSet.accept(new float[] {red, green, blue});
+        }
+    }
+
+    static class Bank extends Stand {
+        final List<? extends Stand> items;
+        final Value count = new Value(IntegerValue.class, 0);
+
+        Bank(Class<?> type, List<? extends Stand> items) {
+            super(type);
+            this.items = items;
+        }
+
+        Stand getItemAt(int index) {
+            return items.get(index);
+        }
+
+        Value itemCount() {
+            return count;
+        }
+    }
+
+    /** Logs an insertion point's calls, and hands each to `act` (if given) to carry out. */
+    final class Point extends Stand {
+        private final String where;
+        private final BiConsumer<String, Object> act;
+
+        Point(String where, BiConsumer<String, Object> act) {
+            super(InsertionPoint.class);
+            this.where = where;
+            this.act = act;
+        }
+
+        void insertVST3Device(String id) {
+            called("insertVST3Device", id);
+        }
+
+        void insertVST2Device(int id) {
+            called("insertVST2Device", id);
+        }
+
+        void insertCLAPDevice(String id) {
+            called("insertCLAPDevice", id);
+        }
+
+        void insertBitwigDevice(UUID id) {
+            called("insertBitwigDevice", id);
+        }
+
+        void insertFile(String path) {
+            called("insertFile", path);
+        }
+
+        private void called(String method, Object arg) {
+            calls.add(where == null ? Arrays.asList(method, arg) : Arrays.asList(method, arg, where));
+            if (act != null) act.accept(method, arg);
+        }
+    }
+
+    /** A parameter of a specific Bitwig device: it exists while the device it looks at is that device. */
+    static final class SpecificParam extends Param {
+        private final FakeDevice owner;
+        final String id;
+        final String param;
+
+        SpecificParam(FakeDevice owner, String id, String param) {
+            super(Parameter.class, 0, "");
+            this.owner = owner;
+            this.id = id;
+            this.param = param;
+        }
+
+        void setRaw(double value) {
+            owner.setParam(id, param, value);
+        }
+    }
+
+    class FakeDevice extends Stand {
+        DeviceSpec spec;
+        final List<SpecificParam> specifics = new ArrayList<>();
+        final Value present = new Value(BooleanValue.class, false);
+        final Value title = new Value(StringValue.class, "");
+        final Value presetName = new Value(StringValue.class, "");
+        final Value isPlugin = new Value(BooleanValue.class, false);
+        final Value deviceType = new Value(EnumValue.class, "");
+        final Value isEnabled = new Value(SettableBooleanValue.class, true);
+
+        FakeDevice() {
+            this(Device.class);
+        }
+
+        FakeDevice(Class<?> type) {
+            super(type);
+        }
+
+        void load(DeviceSpec spec) {
+            this.spec = spec;
+            present.v = spec != null;
+            title.v = spec != null ? spec.name : "";
+            presetName.v = spec != null && spec.preset != null ? spec.preset : "";
+            isPlugin.v = spec != null && spec.plugin;
+            deviceType.v = spec == null ? "" : spec.kind == null ? "audio_to_audio" : spec.kind;
+            isEnabled.v = spec == null || spec.enabled;
+            for (SpecificParam p : specifics) {
+                boolean mine = spec != null && p.id.equals(spec.id);
+                p.present.v = mine;
+                p.v = mine && spec.params != null ? spec.params.getOrDefault(p.param, 0.0) : 0.0;
+                p.display.v = mine ? formatParam(p.param, (Double) p.v) : "";
+            }
+        }
+
+        Value exists() {
+            return present;
+        }
+
+        Value name() {
+            return title;
+        }
+
+        Value presetName() {
+            return presetName;
+        }
+
+        Value isPlugin() {
+            return isPlugin;
+        }
+
+        Value deviceType() {
+            return deviceType;
+        }
+
+        Value isEnabled() {
+            return isEnabled;
+        }
+
+        Stand createSpecificBitwigDevice(UUID id) {
+            FakeDevice owner = this;
+            return new Stand(SpecificBitwigDevice.class) {
+                Stand createParameter(String param) {
+                    SpecificParam p = new SpecificParam(owner, id.toString(), param);
+                    specifics.add(p);
+                    return p;
+                }
+            };
+        }
+
+        /** Bitwig keeps a value in the parameter's range; the Sampler's real range isn't known, so ±48 stands in. */
+        void setParam(String id, String param, double value) {
+            DeviceSpec device = spec;
+            later(20, () -> {
+                if (device == null || !id.equals(device.id)) return;
+                if (device.params == null) device.params = new LinkedHashMap<>();
+                device.params.put(param, Math.max(-48, Math.min(48, param.equals("COARSE") ? Math.round(value) : value)));
+            });
+        }
+    }
+
+    /** The device selected in Bitwig, with Bitwig's "direct parameter" observers and its remote controls. */
+    final class CursorDevice extends FakeDevice {
+        /** The selected device's parameters. */
+        List<Knob> params = new ArrayList<>();
+        /** The parameters whose texts the extension asks for, or null for none. */
+        String[] observed;
+        final List<FakeDevice> selected = new ArrayList<>();
+        final List<List<Object>> setCalls = new ArrayList<>();
+        final Value where = new Value(IntegerValue.class, -1);
+        final Value drum = new Value(BooleanValue.class, false);
+        private StringArrayValueChangedCallback idObserver;
+        private DirectParameterNameChangedCallback nameObserver;
+        private DirectParameterNormalizedValueChangedCallback valueObserver;
+        private DirectParameterDisplayedValueChangedCallback displayObserver;
+        private boolean following;
+        private DeviceSpec followed;
+        Page page;
+
+        CursorDevice() {
+            super(PinnableCursorDevice.class);
+        }
+
+        void addDirectParameterIdObserver(StringArrayValueChangedCallback callback) {
+            idObserver = callback;
+        }
+
+        void addDirectParameterNameObserver(int maxChars, DirectParameterNameChangedCallback callback) {
+            nameObserver = callback;
+        }
+
+        void addDirectParameterNormalizedValueObserver(DirectParameterNormalizedValueChangedCallback callback) {
+            valueObserver = callback;
+        }
+
+        Stand addDirectParameterValueDisplayObserver(int maxChars, DirectParameterDisplayedValueChangedCallback callback) {
+            displayObserver = callback;
+            return new Stand(DirectParameterValueDisplayObserver.class) {
+                void setObservedParameterIds(String[] ids) {
+                    observed = ids;
+                    if (ids == null) return;
+                    // Bitwig sends the texts a moment later; parameters without one never answer.
+                    clock.schedule(() -> {
+                        if (observed != ids) return;
+                        List<String> wanted = Arrays.asList(ids);
+                        for (Knob p : params)
+                            if (p.display != null && wanted.contains(p.id)) displayObserver.directParameterDisplayedValueChanged(p.id, p.display);
+                    }, 30);
+                }
+            };
+        }
+
+        /** Selects a device in "Bitwig" that isn't on any track: its parameters arrive through the observers. */
+        void show(DeviceSpec spec, Knob... knobs) {
+            cursorSpec = ALONE;
+            following = false;
+            load(spec);
+            where.v = spec != null ? 0 : -1;
+            drum.v = spec != null && spec.drum;
+            announce(Arrays.asList(knobs));
+            showPage();
+        }
+
+        /**
+         * Bitwig's direct parameters for the device on a track the cursor is on now: the knobs its spec has, or
+         * none. Only a different device announces them again.
+         */
+        void follow(DeviceSpec spec) {
+            if (following && spec == followed) return;
+            following = true;
+            followed = spec;
+            announce(spec != null && spec.knobs != null ? spec.knobs : List.of());
+        }
+
+        private void announce(List<Knob> knobs) {
+            params = knobs;
+            if (idObserver == null) return;   // the extension didn't watch them
+            String[] ids = new String[knobs.size()];
+            for (int i = 0; i < ids.length; i++) ids[i] = knobs.get(i).id;
+            idObserver.valueChanged(ids);
+            for (Knob p : knobs) {
+                nameObserver.directParameterNameChanged(p.id, p.name);
+                valueObserver.directParameterNormalizedValueChanged(p.id, p.value);
+            }
+        }
+
+        /** The remote controls page shows the knobs the device's spec puts there. */
+        void showPage() {
+            if (page == null) return;
+            List<Knob> on = new ArrayList<>();
+            if (spec != null && spec.controls != null)
+                for (String id : spec.controls)
+                    for (Knob k : params)
+                        if (k.id.equals(id)) on.add(k);
+            page.show(spec == null || spec.page == null ? "" : spec.page, on);
+        }
+
+        Value position() {
+            return where;
+        }
+
+        Value hasDrumPads() {
+            return drum;
+        }
+
+        Stand createDrumPadBank(int n) {
+            pads = new Pads(n);
+            return pads;
+        }
+
+        Stand createCursorRemoteControlsPage(int n) {
+            page = new Page(n);
+            return page;
+        }
+
+        void selectDevice(FakeDevice device) {
+            selected.add(device);
+            FakeBitwig.this.selectDevice(device);
+        }
+
+        /** The value changes a moment later, and Bitwig tells the extension, as for a knob turned by hand. A locked knob stays put. */
+        void setDirectParameterValueNormalized(String id, Number value, Number resolution) {
+            setCalls.add(Arrays.asList(id, value.longValue(), resolution.longValue()));
+            Knob knob = null;
+            for (Knob k : params)
+                if (k.id.equals(id)) knob = k;
+            if (knob == null || knob.locked) return;
+            Knob turned = knob;
+            later(20, () -> {
+                turned.value = value.doubleValue() / (resolution.doubleValue() - 1);
+                if (turned.display != null) turned.display = Math.round(turned.value * 100) + "%";
+                valueObserver.directParameterNormalizedValueChanged(id, turned.value);
+            });
+        }
+    }
+
+    /** A remote controls page: the controls Bitwig shows for the selected device. */
+    static final class Page extends Stand {
+        final Value title = new Value(StringValue.class, "");
+        final List<Param> controls = new ArrayList<>();
+
+        Page(int n) {
+            super(CursorRemoteControlsPage.class);
+            for (int i = 0; i < n; i++) controls.add(new Param(RemoteControl.class, 0, ""));
+        }
+
+        Value getName() {
+            return title;
+        }
+
+        Param getParameter(int index) {
+            return controls.get(index);
+        }
+
+        void show(String name, List<Knob> knobs) {
+            title.v = name;
+            for (int i = 0; i < controls.size(); i++) controls.get(i).show(i < knobs.size() ? knobs.get(i) : null);
+        }
+    }
+
+    final class Pad extends Stand {
+        final int index;
+        final Value present = new Value(BooleanValue.class, false);
+        final Value title;
+        final Bank chain = new Bank(DeviceBank.class, List.of());
+        final Point point;
+
+        Pad(int index) {
+            super(DrumPad.class);
+            this.index = index;
+            title = new Value(SettableStringValue.class, "", name -> later(20, () -> {
+                PadSpec pad = padAt(index);
+                if (pad != null) pad.name = (String) name;
+            }));
+            point = new Point("pad " + index, (method, arg) -> {
+                DeviceSpec device = padDevice();
+                if (!method.equals("insertFile") || !AUDIO.matcher((String) arg).find() || device == null) return;
+                later(40, () -> {
+                    int note = padScroll + index;
+                    if (note >= 128) return;
+                    if (device.pads == null) device.pads = new LinkedHashMap<>();
+                    device.pads.computeIfAbsent(note, n -> new PadSpec(baseName((String) arg)));
+                    DeviceSpec sampler = builtIn.get(SAMPLER).copy();
+                    sampler.sample = (String) arg;
+                    device.pads.get(note).devices.add(sampler);
+                });
+            });
+        }
+
+        Value exists() {
+            return present;
+        }
+
+        Value name() {
+            return title;
+        }
+
+        Bank createDeviceBank(int n) {
+            return chain;
+        }
+
+        Point insertionPoint() {
+            return point;
+        }
+    }
+
+    final class Pads extends Bank {
+        boolean indication = true;
+        final Value scroll = new Value(SettableIntegerValue.class, padScroll,
+                                       v -> later(20, () -> padScroll = Math.max(0, Math.min(127, ((Number) v).intValue()))));
+
+        Pads(int n) {
+            super(DrumPadBank.class, new ArrayList<Pad>());
+            @SuppressWarnings("unchecked")
+            List<Pad> list = (List<Pad>) items;
+            for (int i = 0; i < n; i++) list.add(new Pad(i));
+        }
+
+        void setIndication(boolean on) {
+            indication = on;
+        }
+
+        Value scrollPosition() {
+            return scroll;
+        }
+    }
+
+    final class Slot extends Stand {
+        final Value present = new Value(BooleanValue.class, false);
+        final Value content = new Value(BooleanValue.class, false);
+        private final int track;
+        private final int scene;
+
+        Slot(int track, int scene) {
+            super(ClipLauncherSlot.class);
+            this.track = track;
+            this.scene = scene;
+        }
+
+        Value exists() {
+            return present;
+        }
+
+        Value hasContent() {
+            return content;
+        }
+
+        Point replaceInsertionPoint() {
+            return new Point("track " + track + " slot " + scene, (method, arg) -> {
+                if (!method.equals("insertFile") || !MIDI.matcher((String) arg).find()) return;
+                TrackSpec at = state.tracks.get(track);
+                later(40, () -> {
+                    while (at.slots.size() <= scene) at.slots.add(null);
+                    at.slots.set(scene, (String) arg);
+                    state.scenes = Math.max(state.scenes, scene + 1);
+                });
+            });
+        }
+    }
+
+    /** A track in the bank (index 0 up), or the cursor track (index -1). */
+    final class FakeTrack extends Stand {
+        final int index;
+        final Value present = new Value(BooleanValue.class, false);
+        final Value title;
+        final Value trackType = new Value(StringValue.class, "");
+        final Value isGroup = new Value(BooleanValue.class, false);
+        final Value isActivated = new Value(SettableBooleanValue.class, true);
+        final Value mute = new Value(SettableBooleanValue.class, false);
+        final Value solo = new Value(SoloValue.class, false);
+        final Value arm = new Value(SettableBooleanValue.class, false);
+        final Value channelId = new Value(StringValue.class, "");
+        final Colour colour;
+        final Param volume = new Param(Parameter.class, 0.79, "0.0 dB");
+        final Param pan = new Param(Parameter.class, 0.5, "C");
+        Bank devices;
+        Bank slots;
+        Value isCursor;
+        private final Point start;
+        private final Point end;
+
+        FakeTrack(int index) {
+            super(index < 0 ? CursorTrack.class : Track.class);
+            this.index = index;
+            title = new Value(SettableStringValue.class, "", whenSet((spec, v) -> spec.name = (String) v));
+            colour = new Colour(whenSet((spec, rgb) -> spec.colour = (float[]) rgb));
+            start = index < 0 ? null : chain("start");
+            end = index < 0 ? new Point(null, null) : chain("end");
+        }
+
+        /** What setting one of the track's values does: it changes the project's track a moment later. */
+        private <T> Consumer<T> whenSet(BiConsumer<TrackSpec, Object> apply) {
+            return v -> later(20, () -> {
+                TrackSpec spec = index < 0 ? cursorSpec() : trackSpec(index);
+                if (spec != null) apply.accept(spec, v);
+            });
+        }
+
+        private Point chain(String at) {
+            return new Point("track " + index + " " + at, (method, arg) -> insert(index, at, method, arg));
+        }
+
+        void load(TrackSpec spec) {
+            present.v = spec != null;
+            if (isCursor != null) isCursor.v = index >= 0 && cursorIndex == index;
+            if (spec == null) return;
+            title.v = spec.name;
+            trackType.v = spec.type == null ? "Instrument" : spec.type;
+            isGroup.v = spec.group;
+            mute.v = spec.mute;
+            channelId.v = spec.id == null ? "" : spec.id;
+            if (spec.colour != null) {
+                colour.r = spec.colour[0];
+                colour.g = spec.colour[1];
+                colour.b = spec.colour[2];
+            }
+            if (spec.volume != null) {
+                volume.v = spec.volume;
+                volume.display.v = spec.volumeText;
+            }
+            if (devices != null) {
+                for (int i = 0; i < devices.items.size(); i++)
+                    ((FakeDevice) devices.items.get(i)).load(i < spec.devices.size() ? spec.devices.get(i) : null);
+                devices.count.v = spec.devices.size();
+            }
+            if (slots != null) {
+                for (int s = 0; s < slots.items.size(); s++) {
+                    Slot slot = (Slot) slots.items.get(s);
+                    slot.present.v = s < state.scenes;
+                    slot.content.v = s < spec.slots.size() && spec.slots.get(s) != null;
+                }
+            }
+        }
+
+        Value exists() {
+            return present;
+        }
+
+        Value name() {
+            return title;
+        }
+
+        Value trackType() {
+            return trackType;
+        }
+
+        Value isGroup() {
+            return isGroup;
+        }
+
+        Value isActivated() {
+            return isActivated;
+        }
+
+        Value mute() {
+            return mute;
+        }
+
+        Value solo() {
+            return solo;
+        }
+
+        Value arm() {
+            return arm;
+        }
+
+        Value channelId() {
+            return channelId;
+        }
+
+        Colour color() {
+            return colour;
+        }
+
+        Param volume() {
+            return volume;
+        }
+
+        Param pan() {
+            return pan;
+        }
+
+        Bank createDeviceBank(int n) {
+            List<FakeDevice> list = new ArrayList<>();
+            for (int i = 0; i < n; i++) list.add(new FakeDevice());
+            devices = new Bank(DeviceBank.class, list);
+            return devices;
+        }
+
+        Value createEqualsValue(Object other) {
+            if (other != cursorTrack) throw new IllegalStateException("expected a comparison with the cursor track");
+            isCursor = new Value(BooleanValue.class, false);
+            return isCursor;
+        }
+
+        Point startOfDeviceChainInsertionPoint() {
+            return start;
+        }
+
+        Point endOfDeviceChainInsertionPoint() {
+            return end;
+        }
+
+        Bank clipLauncherSlotBank() {
+            List<Slot> list = new ArrayList<>();
+            for (int s = 0; s < bankScenes; s++) list.add(new Slot(index, s));
+            slots = new Bank(ClipLauncherSlotBank.class, list);
+            return slots;
+        }
+
+        // The cursor track's own.
+
+        void selectChannel(FakeTrack track) {
+            calls.add(Arrays.asList("selectChannel", track));
+            selectTrack(track);
+        }
+
+        CursorDevice createCursorDevice() {
+            return cursorDevice;
+        }
+    }
+
+    /** The parameter last clicked in Bitwig. */
+    final class LastClicked extends Stand {
+        final Param parameter = new Param(Parameter.class, 0, "");
+        final Value locked = new Value(SettableBooleanValue.class, false);
+
+        LastClicked() {
+            super(LastClickedParameter.class);
+        }
+
+        Param parameter() {
+            return parameter;
+        }
+
+        Value isLocked() {
+            return locked;
+        }
+    }
+
+    /** Bitwig's master recorder: it records once the audio engine is on, and counts how long it has. */
+    final class Recorder extends Stand {
+        final Value active = new Value(BooleanValue.class, false);
+        final Value duration = new Value(IntegerValue.class, 0);
+        boolean recording;
+        private long startedAt;
+        private long recorded;
+
+        Recorder() {
+            super(MasterRecorder.class);
+            duration.live = () -> (int) (recording ? clock.now - startedAt : recorded);
+        }
+
+        Value isActive() {
+            return active;
+        }
+
+        Value duration() {
+            return duration;
+        }
+
+        void start() {
+            calls.add(List.of("startRecording"));
+            later(20, () -> {
+                if (recording || !(Boolean) engine.v) return;
+                recording = true;
+                startedAt = clock.now;
+            });
+        }
+
+        void stop() {
+            calls.add(List.of("stopRecording"));
+            later(20, () -> {
+                if (!recording) return;
+                recording = false;
+                recorded = clock.now - startedAt;
+            });
+        }
+    }
+
+    private Stand action(ActionSpec a) {
+        return new Stand(Action.class) {
+            String getId() {
+                return a.id();
+            }
+
+            String getName() {
+                return a.name();
+            }
+
+            String getMenuItemText() {
+                return a.menu() != null ? a.menu() : a.name();
+            }
+
+            Stand getCategory() {
+                if (a.category() == null) return null;
+                return new Stand(ActionCategory.class) {
+                    String getName() {
+                        return a.category();
+                    }
+                };
+            }
+
+            void invoke() {
+                calls.add(Arrays.asList("invoke", a.id()));
+            }
+        };
+    }
+
+    /** Bitwig itself, as the extension's ControllerHost. */
+    final class Host extends Stand {
+        private final Stand application = new Stand(Application.class) {
+            Value projectName() {
+                return projectName;
+            }
+
+            Value hasActiveEngine() {
+                return engine;
+            }
+
+            Action[] getActions() {
+                Action[] list = new Action[actions.size()];
+                for (int i = 0; i < list.length; i++) list[i] = (Action) actions.get(i).api;
+                return list;
+            }
+
+            Stand getAction(String id) {
+                for (Stand a : actions)
+                    if (((Action) a.api).getId().equals(id)) return a;
+                return null;
+            }
+
+            void createInstrumentTrack(int position) {
+                FakeBitwig.this.createInstrumentTrack(position);
+            }
+        };
+
+        private final Stand project = new Stand(Project.class) {
+            Value isModified() {
+                return modified;
+            }
+        };
+
+        private final Stand transport = new Stand(Transport.class) {
+            Param tempo() {
+                return tempo;
+            }
+
+            Value timeSignature() {
+                return signature;
+            }
+
+            Value isPlaying() {
+                return playing;
+            }
+
+            Value getPosition() {
+                return position;
+            }
+        };
+
+        private final Stand browser = new Stand(PopupBrowser.class) {
+            Value exists() {
+                return browserOpen;
+            }
+
+            void cancel() {
+                calls.add(List.of("cancelBrowser"));
+                browserOpen.v = false;
+            }
+        };
+
+        Host() {
+            super(ControllerHost.class);
+        }
+
+        @Override
+        void calling(Method method) {
+            // As in a Bitwig without this part of the API: Java's error for a method the host doesn't have.
+            if (model.broken.contains(method.getName()))
+                throw new AbstractMethodError("The stand-in Bitwig has no " + method.getName() + ", as asked.");
+        }
+
+        Stand createApplication() {
+            return application;
+        }
+
+        Stand getProject() {
+            return project;
+        }
+
+        Stand createTransport() {
+            return transport;
+        }
+
+        Bank createTrackBank(int n, int sends, int scenes, boolean flat) {
+            if (!flat) throw new IllegalStateException("expected a flat track list");
+            bankScenes = scenes;
+            for (int i = 0; i < n; i++) trackItems.add(new FakeTrack(i));
+            tracks = new Bank(TrackBank.class, trackItems);
+            return tracks;
+        }
+
+        FakeTrack createCursorTrack(String id, String name, int sends, int scenes, boolean follow) {
+            if (!follow) throw new IllegalStateException("expected a cursor that follows the selection");
+            return cursorTrack;
+        }
+
+        Stand createPopupBrowser() {
+            return browser;
+        }
+
+        Stand getPreferences() {
+            return new Stand(Preferences.class) {
+                Value getBooleanSetting(String label, String category, boolean initial) {
+                    changes = new Value(SettableBooleanValue.class, initial);
+                    return changes;
+                }
+            };
+        }
+
+        Stand createRemoteConnection(String name, int port) {
+            return new Stand(RemoteSocket.class) {
+                void setClientConnectCallback(ConnectionEstablishedCallback callback) {
+                    connect = callback;
+                }
+
+                int getPort() {
+                    return model.portInUse != 0 ? model.portInUse : port;
+                }
+            };
+        }
+
+        LastClicked createLastClickedParameter(String id, String name) {
+            return lastClicked;
+        }
+
+        Recorder createMasterRecorder() {
+            return recorder;
+        }
+
+        void showPopupNotification(String text) {
+            popups.add(text);
+        }
+
+        void println(String text) {
+            printed.add(text);
+        }
+
+        void errorln(String text) {
+            errors.add(text);
+        }
+
+        String getHostProduct() {
+            return "Bitwig Studio";
+        }
+
+        String getHostVersion() {
+            return model.version;
+        }
+
+        int getHostApiVersion() {
+            return model.api;
+        }
+
+        PlatformType getPlatformType() {
+            return PlatformType.WINDOWS;
+        }
+
+        void scheduleTask(Runnable task, long ms) {
+            clock.schedule(task, ms);
+        }
+    }
+
+    /** The stand-in's clock: time passes only when a test says so, and scheduled tasks run as it does. */
+    static final class FakeClock extends Clock {
+        /** When the stand-in's time starts (UTC), which names the report files. */
+        static final Instant START = Instant.parse("2026-10-14T09:52:42Z");
+        long now;
+        private final List<Task> tasks = new ArrayList<>();
+        private long added;
+
+        void schedule(Runnable task, long ms) {
+            tasks.add(new Task(now + ms, added++, task));
+        }
+
+        /** Lets `ms` pass, running each task when its time comes (in the order they were scheduled, for the same time). */
+        void advance(long ms) {
+            long end = now + ms;
+            while (true) {
+                Task next = null;
+                for (Task t : tasks)
+                    if (next == null || t.at < next.at || (t.at == next.at && t.order < next.order)) next = t;
+                if (next == null || next.at > end) break;
+                tasks.remove(next);
+                now = next.at;
+                next.run.run();
+            }
+            now = end;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return START.plusMillis(now);
+        }
+
+        @Override
+        public long millis() {
+            return START.toEpochMilli() + now;
+        }
+
+        private record Task(long at, long order, Runnable run) {}
+    }
+}
