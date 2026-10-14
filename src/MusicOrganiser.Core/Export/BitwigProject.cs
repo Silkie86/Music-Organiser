@@ -36,6 +36,20 @@ public static class BitwigProject
     const int Vst3 = 0x728, Vst2 = 0x1a5;                 // plugin device classes
     const int AudioEffect = 0, Instrument = 2;            // device kinds (field 0x9d)
 
+    /// <summary>Why a project can't be the template (for example "The Bitwig template needs a VST2 instrument track"), or null when it can.</summary>
+    public static string? TemplateProblem(byte[] template)
+    {
+        try
+        {
+            _ = new Template(template);
+            return null;
+        }
+        catch (Exception e) when (e is InvalidDataException or ArgumentException or IndexOutOfRangeException or EndOfStreamException)
+        {
+            return e.Message.StartsWith("The Bitwig template", StringComparison.Ordinal) ? e.Message : $"The Bitwig template couldn't be read ({e.Message})";
+        }
+    }
+
     /// <summary>Reads what Bitwig records about a sample, or null when the file can't be read.</summary>
     public static SampleFile? ReadSample(string path)
     {
