@@ -74,9 +74,10 @@ public sealed partial class FlStudioReader : IProjectReader
         }
     }
 
-    static Flp Load(string path)
+    static Flp Load(string path) => Load(File.ReadAllBytes(path));
+
+    static Flp Load(byte[] raw)
     {
-        var raw = File.ReadAllBytes(path);
         if (raw.Length < 22 || Encoding.ASCII.GetString(raw, 0, 4) != "FLhd")
             throw new InvalidDataException("Not an FL Studio project (missing FLhd header)");
         var headerLen = BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(4));

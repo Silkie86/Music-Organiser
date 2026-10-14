@@ -18,6 +18,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The field registry: what the app knows about each DAW's file format (see Formats/FormatRegistry.cs). -->
+    <EmbeddedResource Include="Formats\Registry\*.json" LogicalName="MusicOrganiser.Formats.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The scripts that link the app with Bitwig and FL Studio, copied next to the app; Settings installs them in each DAW. -->
     <None Include="..\..\extensions\bitwig\MusicOrganiser.control.js" Link="Extensions\Bitwig\MusicOrganiser.control.js" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\extensions\fl-studio\device_MusicOrganiser.py" Link="Extensions\FL Studio\device_MusicOrganiser.py" CopyToOutputDirectory="PreserveNewest" />
