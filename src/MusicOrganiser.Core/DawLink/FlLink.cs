@@ -165,7 +165,11 @@ public sealed class FlLink
                     foreach (var m in messages) midi.Send(m);
                 }, ct);
                 while (waiting.Left(Timeout) is { } left)
+                {
+                    // Once cancelled, the delay finishes at once, so without this the loop would spin until the timeout.
+                    ct.ThrowIfCancellationRequested();
                     if (await Task.WhenAny(waiting.Done, Task.Delay(left, ct)) == waiting.Done) return Result(Parse(await waiting.Done));
+                }
                 ct.ThrowIfCancellationRequested();
                 throw new DawLinkException(waiting.Started ? PartAnswer : Explain ? FlSetup.WhyNotAnswering() : NotRunning);
             }

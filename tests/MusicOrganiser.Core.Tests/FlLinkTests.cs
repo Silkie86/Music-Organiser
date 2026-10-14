@@ -73,6 +73,16 @@ public class FlLinkTests
     }
 
     [Fact]
+    public async Task StopsWaitingAsSoonAsARequestIsCancelled()
+    {
+        var link = new FlLink(new QuietPort()) { Timeout = TimeSpan.FromSeconds(30) };
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => link.HelloAsync(cancel.Token));
+        Assert.True(waited.Elapsed < TimeSpan.FromSeconds(5), $"It took {waited.Elapsed} to stop.");
+    }
+
+    [Fact]
     public void WritesAndReadsTheLinksMessages()
     {
         var text = "{\"cmd\":\"hello\",\"pad\":\"" + new string('a', 1100) + "\"}";
