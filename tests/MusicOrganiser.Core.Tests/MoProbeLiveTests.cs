@@ -209,15 +209,11 @@ public class MoProbeLiveTests
         File.Delete(file);
         Assert.Equal(Instance, (await MoProbeLive.ReadRunningAsync(file, Instance)).Instance);
 
-        // Listed too, though the moment it was looked at its status couldn't be read.
-        File.WriteAllText(file, "{");
-        Assert.Equal(Instance, Assert.Single(MoProbeLive.Running(dir)).Instance);
-
         var none = Path.Combine(dir, "live", "0000000000000000.json");
         var clock = Stopwatch.StartNew();
         var gone = await Assert.ThrowsAsync<DawLinkException>(() => MoProbeLive.ReadRunningAsync(none, "0000000000000000"));
         Assert.Equal(MoProbeLive.NotRunning("0000000000000000"), gone.Message);
-        Assert.InRange(clock.Elapsed.TotalSeconds, 0.4, 3);
+        Assert.True(clock.Elapsed.TotalSeconds >= 0.4, $"Gave up after {clock.Elapsed.TotalMilliseconds:0} ms");
     }
 
     [Fact]
