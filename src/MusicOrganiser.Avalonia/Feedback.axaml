@@ -14,7 +14,7 @@
         <Setter Property="Cursor" Value="Wait" />
     </Style>
     <Style Selector="Button.busy /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="Foreground" Value="#59ECEDF0" />
+        <Setter Property="Foreground" Value="{DynamicResource FaintBrush}" />
     </Style>
 
     <!-- The spinner: a turning arc, wherever the app is waiting on something. It only turns while it shows. -->
@@ -39,7 +39,7 @@
         <Setter Property="Background" Value="{DynamicResource SurfaceRaisedBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource StrokeBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
         <Setter Property="Padding" Value="14,12,10,12" />
         <Setter Property="BoxShadow" Value="0 10 30 0 #80000000" />
     </Style>
@@ -47,7 +47,7 @@
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="Padding" Value="8,4" />
         <Setter Property="MinHeight" Value="28" />
-        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="VerticalAlignment" Value="Top" />

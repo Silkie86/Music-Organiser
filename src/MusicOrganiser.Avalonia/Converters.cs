@@ -161,3 +161,12 @@ public sealed class HexStroke : IValueConverter
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
+
+/// <summary>A number as even corners.</summary>
+public sealed class Radius : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        new global::Avalonia.CornerRadius(value is double d ? d : 0);
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}

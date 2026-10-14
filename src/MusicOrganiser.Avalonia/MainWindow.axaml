@@ -22,9 +22,9 @@
         <!-- The rail: the places to go, always in the same spot. Settings sits at the bottom, below the DAW lights. -->
         <Border Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,0,1,0">
             <DockPanel Margin="0,18,0,14">
-                <Border DockPanel.Dock="Top" Width="40" Height="40" CornerRadius="12" Margin="0,0,0,18"
+                <Border DockPanel.Dock="Top" Width="40" Height="40" CornerRadius="{DynamicResource RadiusL}" Margin="0,0,0,18"
                         Background="{StaticResource AccentBrush}" ToolTip.Tip="Music Organiser">
-                    <Path Data="{StaticResource NavIcon.Samples}" Classes="navIcon" Stroke="{StaticResource AppBackgroundBrush}" StrokeThickness="2.2" />
+                    <Path Data="{StaticResource NavIcon.Samples}" Classes="navIcon" Stroke="{StaticResource OnAccentBrush}" StrokeThickness="2.2" />
                 </Border>
 
                 <!-- Scanning: one button; its tooltip says when the library was last brought up to date. -->
@@ -114,15 +114,15 @@
                             <Panel Width="26" Height="26" VerticalAlignment="Top">
                                 <Arc Classes="spinner" Width="20" Height="20" IsVisible="{Binding IsRunning}" />
                                 <Border Classes="toastIcon" CornerRadius="13" Background="{StaticResource OkBrush}" IsVisible="{Binding IsDone}">
-                                    <Path Data="M7,13.5 L11,17 L19,9" Stroke="{StaticResource AppBackgroundBrush}" StrokeThickness="2.4"
+                                    <Path Data="M7,13.5 L11,17 L19,9" Stroke="{StaticResource InkBrush}" StrokeThickness="2.4"
                                           StrokeLineCap="Round" StrokeJoin="Round" Width="26" Height="26" Stretch="None" Margin="-3,-3,0,0" />
                                 </Border>
                                 <Border Classes="toastIcon" CornerRadius="13" Background="{StaticResource MissingBrush}" IsVisible="{Binding IsFailed}">
-                                    <TextBlock Text="!" FontWeight="Bold" FontSize="15" Foreground="{StaticResource AppBackgroundBrush}"
+                                    <TextBlock Text="!" FontWeight="Bold" FontSize="15" Foreground="{StaticResource InkBrush}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </Border>
                                 <Border Classes="toastIcon" CornerRadius="13" Background="{StaticResource FaintBrush}" IsVisible="{Binding IsStopped}">
-                                    <Border Width="8" Height="8" CornerRadius="2" Background="{StaticResource AppBackgroundBrush}"
+                                    <Border Width="8" Height="8" CornerRadius="2" Background="{StaticResource InkBrush}"
                                             HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </Border>
                             </Panel>

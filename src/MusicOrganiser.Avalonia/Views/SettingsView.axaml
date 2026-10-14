@@ -32,7 +32,7 @@
         <Style Selector="ListBox.themes ListBoxItem">
             <Setter Property="Padding" Value="10" />
             <Setter Property="Margin" Value="0,0,10,10" />
-            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
             <Setter Property="BorderThickness" Value="2" />
             <Setter Property="BorderBrush" Value="Transparent" />
             <Setter Property="VerticalContentAlignment" Value="Top" />
@@ -68,7 +68,7 @@
                             <DataTemplate x:DataType="vm:AppTheme">
                                 <StackPanel Width="176" Spacing="8">
                                     <!-- A tiny window in the theme's colours: rail, a card, a selected row and its accent. -->
-                                    <Border Height="96" CornerRadius="10" ClipToBounds="True" BorderThickness="1"
+                                    <Border Height="96" CornerRadius="{Binding PreviewRadius, Converter={StaticResource Radius}}" ClipToBounds="True" BorderThickness="1"
                                             Background="{Binding Background, Converter={StaticResource HexBrush}}"
                                             BorderBrush="{Binding Stroke, Converter={StaticResource HexBrush}}">
                                         <Grid ColumnDefinitions="22,*">

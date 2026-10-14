@@ -5,11 +5,18 @@ using MusicOrganiser.Core.Library;
 namespace MusicOrganiser.ViewModels;
 
 /// <summary>
-/// One look for the whole app: its colours (as #RRGGBB) and fonts. <see cref="AccentText"/> is the text on accent-coloured
-/// buttons, dark on a light accent. <see cref="Font"/> names one of <see cref="AppearanceViewModel.Fonts"/>.
+/// One look for the whole app: its colours (as #RRGGBB), font and shape. <see cref="AccentText"/> is the text on
+/// accent-coloured buttons, dark on a light accent. <see cref="Font"/> names one of <see cref="AppearanceViewModel.Fonts"/>.
+/// <see cref="Light"/> themes are dark text on a light background (menus and boxes follow); <see cref="Square"/> ones have
+/// square corners, like hardware.
 /// </summary>
 public sealed record AppTheme(string Name, string Description, string Background, string Sidebar, string Surface, string SurfaceRaised,
-                              string Stroke, string Hover, string Text, string Muted, string Faint, string Accent, string AccentText, string Font);
+                              string Stroke, string Hover, string Text, string Muted, string Faint, string Accent, string AccentText, string Font,
+                              bool Light = false, bool Square = false)
+{
+    /// <summary>The theme preview's corners.</summary>
+    public double PreviewRadius => Square ? 1 : 10;
+}
 
 /// <summary>An accent colour to pick, or the theme's own when <see cref="Colour"/> is empty.</summary>
 public sealed record AccentChoice(string Name, string Colour);
@@ -28,7 +35,8 @@ public sealed partial class AppearanceViewModel : ObservableObject
     public const string PlexFont = "IBM Plex";
     public const string SpaceFont = "Space (retro)";
     public const string InterFont = "Inter";
-    public static IReadOnlyList<string> Fonts { get; } = [ThemeFont, PlexFont, SpaceFont, InterFont];
+    public const string MonoFont = "Mono (all)";
+    public static IReadOnlyList<string> Fonts { get; } = [ThemeFont, PlexFont, SpaceFont, InterFont, MonoFont];
 
     public static IReadOnlyList<AppTheme> Themes { get; } =
     [
@@ -40,6 +48,20 @@ public sealed partial class AppearanceViewModel : ObservableObject
             "#0B0F1C", "#0F1424", "#131A2D", "#1A223A", "#252F4A", "#1C2541", "#E6ECF8", "#93A0BF", "#5E6A88", "#4FB3FF", "#06121F", PlexFont),
         new("Graphite", "Neutral greys with a mint accent: no colour cast at all.",
             "#121212", "#171717", "#1D1D1D", "#252525", "#323232", "#2A2A2A", "#F0F0F0", "#A3A3A3", "#6E6E6E", "#3DDC97", "#06180F", PlexFont),
+        new("Paper", "Light: warm paper and ink with a vermilion accent, like a printed track sheet. For daytime.",
+            "#F4F1EA", "#EAE5D9", "#FBF9F4", "#FFFFFF", "#DCD4C3", "#ECE6DA", "#1F1B16", "#5F574B", "#958B7B", "#D9480F", "#FFFFFF", PlexFont,
+            Light: true),
+        new("Hardware", "Square corners, black panels and signal orange, like a drum machine's front.",
+            "#161616", "#0F0F0F", "#1E1E1E", "#272727", "#383838", "#2C2C2C", "#EDEDED", "#9C9C9C", "#666666", "#FF6A13", "#140800", PlexFont,
+            Square: true),
+        new("Terminal", "Green phosphor on black, mono type everywhere, square corners. An 80s computer screen.",
+            "#040804", "#060C06", "#0A120A", "#0F1A0F", "#1D331F", "#122214", "#B6FFC0", "#63B871", "#3A6E45", "#39FF7A", "#021006", MonoFont,
+            Square: true),
+        new("Synthwave", "Deep purple night with hot pink: neon, but still calm enough to work in.",
+            "#140A22", "#1A0D2C", "#1F1036", "#2A1647", "#3D2263", "#2F1A50", "#F6EBFF", "#B99CD8", "#7B5F9B", "#FF3EA5", "#FFFFFF", SpaceFont),
+        new("High contrast", "Pure black, white text and bright yellow, as clear as possible.",
+            "#000000", "#000000", "#0A0A0A", "#141414", "#7A7A7A", "#262626", "#FFFFFF", "#E0E0E0", "#B0B0B0", "#FFD400", "#000000", PlexFont,
+            Square: true),
     ];
 
     public static IReadOnlyList<AccentChoice> Accents { get; } =

@@ -48,13 +48,23 @@ public static class Appearance
                                     "DataGridRowSelectedUnfocusedBackgroundBrush", "DataGridRowSelectedHoveredUnfocusedBackgroundBrush" })
             Recolour(app, key, accent);
 
-        // Fluent's own accent (selected items, ticks, accent buttons) and the text on accent buttons.
-        if (app.Styles.OfType<FluentTheme>().FirstOrDefault() is { } fluent &&
-            fluent.Palettes.TryGetValue(ThemeVariant.Dark, out var palette))
+        // Light or dark for Fluent's own controls (boxes, menus, switches), with the theme's accent (selected items, ticks).
+        var variant = t.Light ? ThemeVariant.Light : ThemeVariant.Dark;
+        if (app.Styles.OfType<FluentTheme>().FirstOrDefault() is { } fluent && fluent.Palettes.TryGetValue(variant, out var palette))
         {
             palette.Accent = accent;
             palette.RegionColor = Color.Parse(t.Background);
         }
+        app.RequestedThemeVariant = variant;
+
+        // Corners: round, or square for the hardware-style themes.
+        var (s, m, l, pill, control, overlay) = t.Square ? (1.0, 2.0, 3.0, 3.0, 1.0, 2.0) : (6.0, 10.0, 14.0, 17.0, 4.0, 8.0);
+        app.Resources["RadiusS"] = new CornerRadius(s);
+        app.Resources["RadiusM"] = new CornerRadius(m);
+        app.Resources["RadiusL"] = new CornerRadius(l);
+        app.Resources["RadiusPill"] = new CornerRadius(pill);
+        app.Resources["ControlCornerRadius"] = new CornerRadius(control);
+        app.Resources["OverlayCornerRadius"] = new CornerRadius(overlay);
         Recolour(app, "OnAccentBrush", a.AccentText);
 
         // Fonts: words, titles, and numbers that should line up.
@@ -62,6 +72,7 @@ public static class Appearance
         {
             AppearanceViewModel.SpaceFont => ($"{Fonts}#Space Grotesk", $"{Fonts}#Space Mono", $"{Fonts}#Space Mono"),
             AppearanceViewModel.InterFont => ("fonts:Inter#Inter", "fonts:Inter#Inter", $"{Fonts}#IBM Plex Mono"),
+            AppearanceViewModel.MonoFont => ($"{Fonts}#IBM Plex Mono", $"{Fonts}#IBM Plex Mono", $"{Fonts}#IBM Plex Mono"),
             _ => ($"{Fonts}#IBM Plex Sans", $"{Fonts}#IBM Plex Sans", $"{Fonts}#IBM Plex Mono"),
         };
         app.Resources["ContentControlThemeFontFamily"] = new FontFamily(text);

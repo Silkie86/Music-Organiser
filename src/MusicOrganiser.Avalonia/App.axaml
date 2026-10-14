@@ -32,6 +32,7 @@
         <local:PercentAngle x:Key="PercentAngle" />
         <local:HexBrush x:Key="HexBrush" />
         <local:HexStroke x:Key="HexStroke" />
+        <local:Radius x:Key="Radius" />
         <!-- The font (Solomon's pick): IBM Plex Sans for words and titles, Plex Mono for numbers that should line up, like a
              hardware display. Space Grotesk and Space Mono are built in too, for the Retro theme. -->
         <FontFamily x:Key="ContentControlThemeFontFamily">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans</FontFamily>
@@ -51,6 +52,14 @@
         <SolidColorBrush x:Key="AccentSoftBrush" Color="#338B7CF6" />
         <!-- Text on accent-coloured buttons: white, or dark on a light accent (Settings › Appearance). -->
         <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFFFF" />
+        <!-- Dark text on bright DAW colours and status dots: the same in every theme. -->
+        <SolidColorBrush x:Key="InkBrush" Color="#FF101114" />
+        <SolidColorBrush x:Key="TroubleBorderBrush" Color="#4DF0616D" />
+        <!-- Corners, from Settings › Appearance: round, or square for the hardware-style themes. -->
+        <CornerRadius x:Key="RadiusS">6</CornerRadius>
+        <CornerRadius x:Key="RadiusM">10</CornerRadius>
+        <CornerRadius x:Key="RadiusL">14</CornerRadius>
+        <CornerRadius x:Key="RadiusPill">17</CornerRadius>
 
         <!-- Tables: no black header bar, soft violet for the selected row and no box around the clicked cell. -->
         <SolidColorBrush x:Key="DataGridColumnHeaderBackgroundBrush" Color="Transparent" />
@@ -93,6 +102,7 @@
             <!-- Fluent's own blue (or the Windows accent colour) becomes the app's violet: selected items, ticks, main buttons. -->
             <FluentTheme.Palettes>
                 <ColorPaletteResources x:Key="Dark" Accent="#FF8B7CF6" RegionColor="#FF101114" />
+                <ColorPaletteResources x:Key="Light" Accent="#FFD9480F" RegionColor="#FFF4F1EA" />
             </FluentTheme.Palettes>
         </FluentTheme>
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
@@ -132,12 +142,12 @@
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
             <Setter Property="Padding" Value="16" />
         </Style>
         <!-- A small rounded label: DAW, status, "2 plugins missing". -->
         <Style Selector="Border.pill">
-            <Setter Property="CornerRadius" Value="9" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
             <Setter Property="Padding" Value="8,1,8,2" />
             <Setter Property="HorizontalAlignment" Value="Left" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -174,7 +184,7 @@
             <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
         </Style>
         <Style Selector="ListBoxItem">
-            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusS}" />
         </Style>
 
         <!-- The "Filters" switch in a page header that shows or hides the filter panel. -->
@@ -198,7 +208,7 @@
             <Setter Property="Height" Value="58" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="10,2" />
-            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
@@ -223,7 +233,7 @@
             <Setter Property="Width" Value="44" />
             <Setter Property="Height" Value="44" />
             <Setter Property="Padding" Value="0" />
-            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -250,7 +260,7 @@
 
         <!-- A handle for dragging something out into a DAW, e.g. "Drag kit". -->
         <Style Selector="Border.dragChip">
-            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
             <Setter Property="Padding" Value="12,5,12,6" />
             <Setter Property="Margin" Value="0,0,8,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -288,19 +298,19 @@
             <Setter Property="MinHeight" Value="34" />
             <Setter Property="Padding" Value="14,0" />
             <Setter Property="Margin" Value="0,0,8,6" />
-            <Setter Property="CornerRadius" Value="17" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusPill}" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
             <Setter Property="BorderThickness" Value="1.5" />
-            <Setter Property="Foreground" Value="#FFC9CBD2" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         </Style>
         <Style Selector="ListBox.chips ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
             <Setter Property="BorderThickness" Value="1.5" />
-            <Setter Property="CornerRadius" Value="17" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusPill}" />
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
         </Style>
         <Style Selector="ListBox.chips ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
@@ -321,7 +331,7 @@
         <Style Selector="TextBox.bigSearch">
             <Setter Property="Height" Value="52" />
             <Setter Property="FontSize" Value="16" />
-            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Padding" Value="6,0,12,0" />
         </Style>
@@ -337,7 +347,7 @@
             <Setter Property="FontFamily" Value="{DynamicResource TitleFont}" />
             <Setter Property="FontSize" Value="12.5" />
             <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Foreground" Value="#FFC9CBD2" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Margin" Value="0,10,0,4" />
         </Style>

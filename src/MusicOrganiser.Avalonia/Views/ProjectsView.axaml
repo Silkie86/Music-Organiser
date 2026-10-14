@@ -85,7 +85,7 @@
 
         <!-- The list: two lines per song, a stripe in its DAW's colour, grouped by when it was saved. -->
         <DockPanel Grid.Row="2">
-            <Border DockPanel.Dock="Top" Padding="12,8" Margin="0,0,0,8" CornerRadius="8"
+            <Border DockPanel.Dock="Top" Padding="12,8" Margin="0,0,0,8" CornerRadius="{DynamicResource RadiusM}"
                     Background="{StaticResource AccentFaintBrush}" IsVisible="{Binding HasIdFilter}">
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Content="Show all" Command="{Binding ClearFiltersCommand}" />
@@ -112,7 +112,7 @@
                                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" Margin="12,0,0,0" VerticalAlignment="Center"
                                                 IsVisible="{Binding HasMissing}" ToolTip.Tip="{Binding MissingText, StringFormat='{}{0} missing'}">
                                         <Ellipse Width="7" Height="7" Fill="{StaticResource MissingBrush}" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding MissingCount}" FontSize="12" FontFamily="{DynamicResource NumberFont}" Foreground="#FFF0838D" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding MissingCount}" FontSize="12" FontFamily="{DynamicResource NumberFont}" Foreground="{StaticResource MissingBrush}" VerticalAlignment="Center" />
                                     </StackPanel>
                                     <TextBlock DockPanel.Dock="Right" Text="{Binding OpenIn}" FontSize="11" Margin="12,0,0,0" VerticalAlignment="Center"
                                                Foreground="{StaticResource OkBrush}"

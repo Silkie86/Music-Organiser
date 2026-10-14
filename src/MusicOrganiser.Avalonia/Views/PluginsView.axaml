@@ -9,7 +9,7 @@
     <UserControl.Styles>
         <!-- A quiet selection, so the faint ID and path stay readable. -->
         <Style Selector="ListBox.copies ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
-            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
         </Style>
         <Style Selector="ListBox.copies ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="{StaticResource HoverBrush}" />

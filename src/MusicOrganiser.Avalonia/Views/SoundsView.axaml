@@ -24,7 +24,7 @@
         <!-- Header -->
         <DockPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
-                <Border VerticalAlignment="Center" Margin="0,0,12,0" Padding="12,8" CornerRadius="8" Width="300"
+                <Border VerticalAlignment="Center" Margin="0,0,12,0" Padding="12,8" CornerRadius="{DynamicResource RadiusM}" Width="300"
                         Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1"
                         IsVisible="{Binding IsBusy}">
                     <StackPanel>
@@ -42,7 +42,7 @@
                 <TextBlock Text="{Binding Summary}" Classes="pageSubtitle" />
             </StackPanel>
         </DockPanel>
-        <Border Grid.Row="1" Margin="0,12,0,0" Padding="12,8" CornerRadius="8" Background="{StaticResource AccentFaintBrush}"
+        <Border Grid.Row="1" Margin="0,12,0,0" Padding="12,8" CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource AccentFaintBrush}"
                 IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
             <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12.5" />
         </Border>
@@ -171,7 +171,7 @@
                                 <StackPanel Margin="20,18,20,20">
                                     <TextBlock Text="{Binding Selected.Name}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
                                     <TextBlock Text="{Binding Selected.Path}" Classes="muted" FontSize="12" />
-                                    <Border Height="84" Margin="0,12,0,4" CornerRadius="8" Background="{StaticResource SurfaceRaisedBrush}">
+                                    <Border Height="84" Margin="0,12,0,4" CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource SurfaceRaisedBrush}">
                                         <views:WaveformView Peaks="{Binding Selected.Analysis.Waveform}" Duration="{Binding WaveSeconds}"
                                                             Position="{Binding PlayPosition}" SeekCommand="{Binding SeekCommand}" Margin="8" />
                                     </Border>
@@ -247,7 +247,7 @@
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="sys:String">
-                                                <Border Margin="0,0,4,4" Padding="8,2,2,2" CornerRadius="10" Background="{StaticResource SurfaceRaisedBrush}">
+                                                <Border Margin="0,0,4,4" Padding="8,2,2,2" CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource SurfaceRaisedBrush}">
                                                     <StackPanel Orientation="Horizontal">
                                                         <TextBlock Text="{Binding}" VerticalAlignment="Center" />
                                                         <Button Content="✕" Padding="4,0" Margin="4,0,0,0" Background="Transparent"
@@ -469,7 +469,7 @@
                                 <ItemsControl ItemsSource="{Binding Disagreements}" views:FileDrag.Source="{Binding}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:Disagreement">
-                                            <Border Classes="row" Padding="8,6" CornerRadius="6" Margin="0,1">
+                                            <Border Classes="row" Padding="8,6" CornerRadius="{DynamicResource RadiusS}" Margin="0,1">
                                                 <DockPanel>
                                                     <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
                                                             Background="Transparent"
