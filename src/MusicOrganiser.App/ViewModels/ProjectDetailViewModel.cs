@@ -16,6 +16,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public const string ExportFolderKey = "export_folder";
     /// <summary>The Bitwig project that FL Studio projects are converted with.</summary>
     public const string BitwigTemplateKey = "bitwig_template";
+    /// <summary>"1" when FL's steps on a Sampler play until the next note or the clip end, not until their sample ends.</summary>
+    public const string StepsUntilNextNoteKey = "bitwig_steps_until_next_note";
     public static string DawExeKey(string daw) => $"daw_exe:{daw}";
 
     readonly LibraryDb _db;
@@ -180,7 +182,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         try
         {
             var path = Item.Path;
-            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template)));
+            var untilNextNote = _db.GetSetting(StepsUntilNextNoteKey) == "1";
+            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote));
             if (_db.GetSetting(DawExeKey("Bitwig Studio")) is { Length: > 0 } exe && File.Exists(exe))
                 Shell.OpenWith(file, exe);
             else

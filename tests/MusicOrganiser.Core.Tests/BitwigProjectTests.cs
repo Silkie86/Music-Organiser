@@ -148,6 +148,19 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void StepsCanPlayUntilTheNextNoteOrTheClipEndInsteadOfStoppingWithTheirSample()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir()));
+        var doc = Decode(BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
+            p => p.EndsWith("Kick 01.wav") ? new BitwigProject.SampleFile(1234, Md5, 48000, 2, 0.25) : Snare(p),
+            stepsUntilNextNote: true).Bytes);
+        Assert.Null(doc.BodyError);
+        // The 0.25 s kick no longer cuts them short (0.58 beats): the third step lasts until beat 4½, the last to the bar's end.
+        Assert.All(Clips(doc.Root!.Obj(0x4dd)!.List(0x4de).ToList()[1]), clip =>
+            Assert.Equal([(0.0, 1.0), (1.0, 1.0), (2.0, 1.5), (3.5, 0.5)], Notes(clip).Select(n => (n.Num(0x2af)!.Value, n.Num(0x26)!.Value))));
+    }
+
+    [Fact]
     public void StepsOnAPitchedSampleLastAsLongAsTheSampleDoesAtThatPitch()
     {
         // A 0.25 s kick (0.58 beats at 140 bpm) with its root at C5 and its pitch knob down a semitone: steps an

@@ -23,6 +23,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] string? _selectedPluginFolder;
     [ObservableProperty] string _exportFolder = "";
     [ObservableProperty] string _bitwigTemplate = "";
+    [ObservableProperty] bool _stepsUntilNextNote;
     [ObservableProperty] string _sampleIndexText = "";
     public string LibraryLocation => _db.FilePath;
 
@@ -38,6 +39,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             Daws.Add(new DawSetting(db, r.Daw, string.Join(", ", r.Extensions)));
         _exportFolder = db.GetSetting(ProjectDetailViewModel.ExportFolderKey) ?? "";
         _bitwigTemplate = db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) ?? "";
+        _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
         UpdateSampleIndexText();
     }
 
@@ -119,6 +121,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         db.SetSetting(ProjectDetailViewModel.BitwigTemplateKey, dialog.FileName);
         return dialog.FileName;
     }
+
+    partial void OnStepsUntilNextNoteChanged(bool value) =>
+        _db.SetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey, value ? "1" : "0");
 
     [RelayCommand]
     void ChooseBitwigTemplate()

@@ -132,6 +132,9 @@
                         <ui:TextBox Text="{Binding BitwigTemplate, Mode=OneWay}" IsReadOnly="True"
                                     PlaceholderText="Asked for the first time you convert" />
                     </DockPanel>
+                    <CheckBox Content="Steps play until the next note or the end of the clip" IsChecked="{Binding StepsUntilNextNote}" Margin="0,12,0,0" />
+                    <TextBlock Style="{StaticResource Muted}" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                               Text="Notes from FL's step sequencer have no length. Plugin tracks always play them until the next note on the same key or the end of the clip. On a Sampler they also stop where the sample ends, unless this is ticked." />
                 </StackPanel>
             </Border>
 

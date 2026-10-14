@@ -60,7 +60,11 @@ public static class BitwigProject
 
     /// <param name="template">A project saved by Bitwig with the tracks described above.</param>
     /// <param name="readSample">Reads a sample's details; <see cref="ReadSample"/> unless given.</param>
-    public static Result FromFl(FlSong song, byte[] template, Func<string, SampleFile?>? readSample = null)
+    /// <param name="stepsUntilNextNote">
+    /// Steps from FL's step sequencer on a Sampler last until the next note on their key or the end of their
+    /// clip, as on a plugin track. Otherwise they also end when their sample does.
+    /// </param>
+    public static Result FromFl(FlSong song, byte[] template, Func<string, SampleFile?>? readSample = null, bool stepsUntilNextNote = false)
     {
         readSample ??= ReadSample;
         var t = new Template(template);
@@ -140,7 +144,7 @@ public static class BitwigProject
                 track = t.Copy(t.SamplerTrack);
                 var info = readSample(c.Sample);
                 devices.Add(Sampler(Chain(track).Single(), c, info, notes));
-                if (info is { Seconds: > 0 })
+                if (info is { Seconds: > 0 } && !stepsUntilNextNote)
                     sampleLength = key => SampleTicks(info.Seconds, key - c.RootKey + c.PitchCents / 100.0, song.Tempo, song.Ppq);
             }
             else
