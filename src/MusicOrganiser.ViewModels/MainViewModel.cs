@@ -67,7 +67,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSelectedNavChanged(NavItem value)
     {
-        if (value.Page == Settings) _ = Settings.RefreshLinksAsync();
+        if (value.Page != Settings) return;
+        _ = Settings.RefreshLinksAsync();
+        _ = Settings.Probe.RefreshAsync();
     }
 
     public void RefreshAll()

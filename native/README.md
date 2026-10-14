@@ -121,6 +121,11 @@ vendor "Music Organiser". Put one on a track, save, and:
 On macOS the folders are `/Library/Audio/Plug-Ins/CLAP`, `VST3` and `Components`; on Linux `~/.clap`
 and `~/.vst3`. Then rescan plugins in the DAW.
 
+**Reading its reports.** The app's Settings has an MO Probe card: whether the probe is installed, and its
+newest reports (the DAW and its version, the format, the track, and how many saves, notes and knob
+moves). `formatlab probe "My song.flp"` finds the probe's saved state inside a project, with its knob
+values, and says which save of which report wrote it (see `tools/README.md`).
+
 **Following one probe across sessions.** The identity in the state survives save and load, and a
 `label` can be set by whoever writes the state (for the app's round-trip check of the Bitwig
 writer: put a probe with a known label on each track, open the project in Bitwig, press play, and

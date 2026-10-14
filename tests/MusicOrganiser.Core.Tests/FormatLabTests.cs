@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Formats;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Core.Tests;
 
@@ -299,7 +300,7 @@ public class MoProbeTests
     const string Instance = "2E044C2E5009EFCE";
 
     // As the probe writes them (from a run of native/mo-probe's test host), with the save made on track "Bass".
-    static readonly string[] SavingRun =
+    internal static readonly string[] SavingRun =
     [
         """{"t":"2026-10-14T06:35:17.528Z","event":"create","n":1,"instance":"2E044C2E5009EFCE","plugin":"org.musicorganiser.probe.instrument","probeVersion":"1.0.0","host":"Bitwig Studio","hostVendor":"Bitwig GmbH","hostVersion":"6.1.3","hostUrl":"","hostClap":"1.2.6","os":"windows","format":"CLAP","binary":"C:\\Program Files\\Common Files\\CLAP\\MO Probe.clap"}""",
         """{"t":"2026-10-14T06:35:17.528Z","event":"track","n":2,"instance":"2E044C2E5009EFCE","name":"Bass","color":"#4080C0","alpha":255,"return":false,"bus":false,"master":false}""",
@@ -312,7 +313,7 @@ public class MoProbeTests
         """{"t":"2026-10-14T06:35:19.000Z","event":"note-on","n":12,"key":6""",   // the DAW quit mid-line
     ];
 
-    static string Report(string dir, string name, IEnumerable<string> lines)
+    internal static string Report(string dir, string name, IEnumerable<string> lines)
     {
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, name);
@@ -475,5 +476,35 @@ public class FormatLabCommandTests
         var unknown = Run("explode");
         Assert.Equal(2, unknown.Code);
         Assert.Contains("there's no command \"explode\"", unknown.Err);
+    }
+}
+
+public class ProbeReportsViewModelTests
+{
+    [Fact]
+    public async Task ListsTheNewestReportsAndSaysWhetherTheProbeIsInstalled()
+    {
+        var dir = Fixtures.TempDir();
+        var reports = Path.Combine(dir, "probe");
+        var plugins = Path.Combine(dir, "CLAP");
+        Directory.CreateDirectory(plugins);
+        var vm = new ProbeReportsViewModel(reports, () => [plugins]);
+        await vm.RefreshAsync();
+        Assert.Empty(vm.Reports);
+        Assert.StartsWith("MO Probe isn't in your plugin folders", vm.Status);
+
+        File.WriteAllBytes(Path.Combine(plugins, "MO Probe.clap"), [0]);
+        Directory.CreateDirectory(Path.Combine(plugins, "MO Probe.vst3"));   // a bundle, as on a Mac
+        await vm.RefreshAsync();
+        Assert.Equal("MO Probe is installed (CLAP, VST3). Put it on a track in your DAW, and its reports show here.", vm.Status);
+
+        MoProbeTests.Report(reports, "20261014T063517Z-instrument-2E044C2E.jsonl", MoProbeTests.SavingRun);
+        MoProbeTests.Report(reports, "20261014T070000Z-effect-0000ABCD.jsonl", [MoProbeTests.SavingRun[0].Replace("probe.instrument", "probe.effect")]);
+        await vm.RefreshAsync();
+        Assert.Equal(2, vm.Reports.Count);
+        Assert.StartsWith("MO Probe is installed (CLAP, VST3). Its newest reports:", vm.Status);
+        var saved = vm.Reports.Single(r => r.Title == "MO Probe Instrument");
+        Assert.Equal("Bitwig Studio 6.1.3 · CLAP · on “Bass” · 1 save · 1 note · 1 knob move", saved.Summary);
+        Assert.Equal("MO Probe Effect, still open", vm.Reports.Single(r => r.File.Contains("effect")).Title);
     }
 }

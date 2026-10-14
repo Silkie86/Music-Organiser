@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
 using MusicOrganiser.Core.DawLink;
+using MusicOrganiser.Core.Formats;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
 
@@ -34,6 +35,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>The scripts that let the app ask Bitwig and FL Studio what they show.</summary>
     public IReadOnlyList<DawLinkSetting> Links { get; }
 
+    /// <summary>MO Probe, the test plugin: whether it's installed, and its reports.</summary>
+    public ProbeReportsViewModel Probe { get; }
+
     /// <summary>What Set up both did: a line for each DAW.</summary>
     [ObservableProperty] string _setUpResult = "";
     [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SetUpBothCommand))] bool _settingUp;
@@ -52,6 +56,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _bitwigTemplate = db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) ?? "";
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
         UpdateSampleIndexText();
+        Probe = new ProbeReportsViewModel(pluginFolders: () => PluginFolders.Concat(MoProbe.InstallFolders()).Distinct());
         var flPort = new FlPortSetting(db);
         var watch = main.Live.Watch;
         Links =

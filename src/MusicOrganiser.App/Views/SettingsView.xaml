@@ -208,6 +208,36 @@
             </Border>
 
             <Border Style="{StaticResource SettingsCard}">
+                <StackPanel DataContext="{Binding Probe}">
+                    <TextBlock Text="MO Probe" Style="{StaticResource CardTitle}" />
+                    <TextBlock Style="{StaticResource CardIntro}"
+                               Text="A test plugin for learning how each DAW saves things. Put it on a track and use it: it reports what the DAW tells it, and Format Lab finds its knobs and saved settings in the project file." />
+                    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8" />
+                    <ItemsControl ItemsSource="{Binding Reports}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:ProbeReportRow}">
+                                <DockPanel Margin="0,0,0,8">
+                                    <ui:Button DockPanel.Dock="Right" Content="Show" Padding="9,3" FontSize="12" VerticalAlignment="Center"
+                                               Command="{Binding RevealCommand}" ToolTip="Shows the report file" />
+                                    <StackPanel Margin="0,0,8,0">
+                                        <TextBlock>
+                                            <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text="{Binding When, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <WrapPanel Margin="0,6,0,0">
+                        <ui:Button Content="Refresh" Icon="{ui:SymbolIcon ArrowSync24}" Command="{Binding RefreshCommand}" Margin="0,0,6,0" />
+                        <ui:Button Content="Open reports folder" Icon="{ui:SymbolIcon FolderOpen24}" Command="{Binding OpenFolderCommand}" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource SettingsCard}">
                 <StackPanel>
                     <TextBlock Text="Your library" Style="{StaticResource CardTitle}" />
                     <TextBlock Style="{StaticResource Muted}" FontSize="12.5">

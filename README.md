@@ -73,6 +73,7 @@ Hot Reload works for most changes while the app is running.
 - `src/MusicOrganiser.App` – the Windows (WPF) app: XAML views, Fluent styling with WPF-UI, NAudio playback, and `Platform/WpfUi.cs`.
 - `native` – C++ tools, built with CMake: the plugin scanner (`mo-scan`) and **MO Probe**, a test plugin (CLAP, VST3, AU) that reports what a DAW does with it, for working out project formats. See `native/README.md`.
 - `extensions` – the Bitwig controller script and FL Studio MIDI script that link the app with the DAWs, each tested in a stand-in DAW. See `extensions/README.md`.
+- `src/MusicOrganiser.Core/Formats` and `tools` – **Format Lab** (`formatlab tree`, `diff`, `find`, `census`, `probe`), for working out how each DAW saves things, and the field registry of what the app knows about each format. See `tools/README.md`.
 - `tests/MusicOrganiser.Core.Tests` – xUnit tests using small generated project files. Run with `dotnet test`.
 
 Your library lives in `%LOCALAPPDATA%\MusicOrganiser\library.db`.

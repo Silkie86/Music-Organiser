@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using MusicOrganiser.Core.Parsers;
 
 namespace MusicOrganiser.Core.Formats;
 
@@ -27,6 +28,29 @@ public static class MoProbe
     ];
 
     public static string KnobName(int id) => Knobs.FirstOrDefault(k => k.Id == id).Name ?? $"knob {id}";
+
+    /// <summary>
+    /// The probe's formats in <paramref name="pluginFolders"/>: "CLAP", "VST3" and "AU", for each that's there.
+    /// (On a Mac each is a bundle, so a folder; on Windows the CLAP is a file.)
+    /// </summary>
+    public static IReadOnlyList<string> Installed(IEnumerable<string> pluginFolders)
+    {
+        var found = new List<string>();
+        var folders = pluginFolders.ToList();
+        foreach (var (file, format) in new[] { ("MO Probe.clap", "CLAP"), ("MO Probe.vst3", "VST3"), ("MO Probe.component", "AU") })
+            if (folders.Any(f => Path.Exists(Path.Combine(f, file)))) found.Add(format);
+        return found;
+    }
+
+    /// <summary>Where native/README.md says to put the probe: the usual plugin folders, and on Windows the per-user ones too.</summary>
+    public static IEnumerable<string> InstallFolders()
+    {
+        foreach (var f in PluginCatalog.DefaultFolders()) yield return f;
+        if (!OperatingSystem.IsWindows()) yield break;
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify);
+        yield return Path.Combine(local, "Programs", "Common", "CLAP");
+        yield return Path.Combine(local, "Programs", "Common", "VST3");
+    }
 
     /// <summary>Where the probe writes its reports: the app's data folder (as the probe works it out on each system).</summary>
     public static string ReportFolder =>
