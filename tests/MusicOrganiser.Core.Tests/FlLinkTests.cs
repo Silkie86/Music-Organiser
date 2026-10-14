@@ -77,9 +77,74 @@ public class FlLinkTests
         Assert.Equal(FlLink.NotRunning, FlSetup.WhyNotAnswering(null, null));
         Assert.Equal(FlLink.NotRunning, FlSetup.WhyNotAnswering(true, null));
         Assert.Equal(FlLink.NotRunning, FlSetup.WhyNotAnswering(null, ["Music Organiser"]));
+        // With Windows' MIDI system chosen, Install makes the port.
+        Assert.Equal(FlSetup.NoWindowsPort, FlSetup.WhyNotAnswering(true, ["Digitakt II"], FlMidiPort.WindowsMidi));
+        Assert.Equal(FlSetup.NotPicked, FlSetup.WhyNotAnswering(true, ["Music Organiser"], FlMidiPort.WindowsMidi));
+        Assert.Equal(FlSetup.NotOpen, FlSetup.WhyNotAnswering(false, [], FlMidiPort.WindowsMidi));
 
         if (OperatingSystem.IsWindows()) Assert.NotNull(FlSetup.MidiInputs());
         else Assert.Null(FlSetup.MidiInputs());
+        Assert.Equal(OperatingSystem.IsWindows(), FlSetup.IsLoopMidiInstalled() is not null);
+    }
+
+    [Fact]
+    public void ReadsWhatWindowsMidiSystemSays()
+    {
+        static WindowsMidiResult Read(string output, string errors = "") => WindowsMidiPort.Read(output, errors);
+
+        Assert.Equal(new WindowsMidiResult(true, WindowsMidiPort.Made, "made"), Read("""{"step":"made","saved":true,"message":""}"""));
+        Assert.Equal(new WindowsMidiResult(false, WindowsMidiPort.Ready, "ready"), Read("""{"step":"ready"}"""));
+        Assert.Equal(new WindowsMidiResult(false, WindowsMidiPort.NoApi, "no-api"), Read("""{"step":"no-api"}"""));
+        Assert.Equal(new WindowsMidiResult(false, WindowsMidiPort.Legacy, "legacy"), Read("""{"step":"legacy"}"""));
+        Assert.Equal(new WindowsMidiResult(false, WindowsMidiPort.NoLoopback, "no-loopback"), Read("""{"step":"no-loopback"}"""));
+        Assert.Equal(new WindowsMidiResult(false, WindowsMidiPort.SavedNotShowing, "exists"), Read("""{"step":"exists"}"""));
+
+        // Made, but not saved: there's a port until the PC restarts.
+        var unsaved = Read("""{"message":"Access denied","saved":false,"step":"made"}""");
+        Assert.True(unsaved.HasPort);
+        Assert.Equal("Made a MIDI port called Music Organiser with Windows' MIDI system, but Windows couldn't save it, so it goes " +
+                     "when the PC restarts, and Install has to make it again. Windows said: Access denied.", unsaved.Message);
+
+        // Windows' own words, escaped by Windows PowerShell (an apostrophe as \u0027, other letters as the script escapes them).
+        Assert.Equal(new WindowsMidiResult(false, "Windows' MIDI system couldn't make the port. Windows said: A loopback with " +
+                                                  "that id can't be made twice. Choose loopMIDI instead.", "failed"),
+                     Read("""{"message":"A loopback with that id can\u0027t be made twice.","step":"failed"}"""));
+        Assert.Equal("Something went wrong making the port with Windows' MIDI system. Windows said: Zugriff verweigert (ü). " +
+                     "Choose loopMIDI instead.", Read("""{"message":"Zugriff verweigert (\u00fc)","step":"error"}""").Message);
+        Assert.Equal("error", Read("""{"step":"what-now"}""").Step);
+
+        // PowerShell's other output comes before the answer, and only the answer counts.
+        Assert.True(Read("WARNING: something\r\n{\"step\":\"made\",\"saved\":true}\r\n").HasPort);
+        // No answer: whatever Windows PowerShell said instead, without its own bookkeeping.
+        var none = Read("", "#< CLIXML\r\nThe term 'x' is not recognized\r\nAt line:1 char:1");
+        Assert.Equal((false, "unreadable"), (none.HasPort, none.Step));
+        Assert.Equal(WindowsMidiPort.NoAnswer + " It said: The term 'x' is not recognized. Choose loopMIDI instead.", none.Message);
+        Assert.Equal("unreadable", Read("{not json", "").Step);
+    }
+
+    [Fact]
+    public async Task AsksWindowsMidiSystemWithoutMakingAPort()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Equal(new WindowsMidiResult(false, WindowsMidiPort.OnlyWindows, "not-windows"), await WindowsMidiPort.CheckAsync());
+            Assert.Equal(new WindowsMidiResult(false, WindowsMidiPort.OnlyWindows, "not-windows"), await WindowsMidiPort.MakeAsync());
+            return;
+        }
+        // On Windows, run the real script in Windows PowerShell, stopping before it would make anything: it has to
+        // run, find Windows' API or say it isn't there, and answer in a way the app reads.
+        var check = await WindowsMidiPort.RunScriptAsync(make: false);
+        Assert.Contains(check.Step, new[] { "ready", "no-api", "legacy", "no-loopback", "exists" });
+        Assert.False(check.HasPort);
+    }
+
+    [Fact]
+    public void TheWindowsMidiScriptNamesBothEnds()
+    {
+        Assert.Contains("$port = 'Music Organiser'", WindowsMidiPort.Script);
+        Assert.Contains($"$spare = '{WindowsMidiPort.SpareEnd}'", WindowsMidiPort.Script);
+        // The spare end mustn't look like the port FL Studio wants.
+        Assert.False(FlSetup.HasOurPort([WindowsMidiPort.SpareEnd]));
     }
 
     [Fact]

@@ -82,6 +82,39 @@ public class ViewModelTests : IDisposable
         Assert.Equal(["Bitwig Studio", "FL Studio"], settings.Links.Select(l => l.Daw));
         Assert.All(settings.Links, l => Assert.Matches("^(Not installed|Installed)", l.Status));
         Assert.Equal([false, true], settings.Links.Select(l => l.CanChooseFolder));
+        // Only FL Studio needs a MIDI port, and only Windows offers two ways to make it.
+        Assert.Equal([false, OperatingSystem.IsWindows()], settings.Links.Select(l => l.CanChoosePort));
+        Assert.Null(settings.Links[0].MidiPort);
+    }
+
+    [Fact]
+    public void SettingsChoosesHowFlStudiosPortIsMade()
+    {
+        var before = FlSetup.Port;
+        try
+        {
+            var fl = new MainViewModel(_db, _sounds).Settings.Links.Single(l => l.Daw == "FL Studio");
+            var port = fl.MidiPort!;
+            Assert.Equal((0, FlMidiPort.LoopMidi, FlMidiPort.LoopMidi), (port.Choice, port.Port, FlSetup.Port));
+            Assert.Contains(OperatingSystem.IsMacOS() ? "IAC Driver" : "loopMIDI", fl.Steps);
+            var changed = new List<string?>();
+            fl.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+            port.Choice = 1;
+            // Check connection's advice follows the choice, and it's remembered.
+            Assert.Equal((FlMidiPort.WindowsMidi, FlMidiPort.WindowsMidi, "windows"), (port.Port, FlSetup.Port, _db.GetSetting(FlPortSetting.Key)));
+            Assert.Contains(nameof(DawLinkSetting.Steps), changed);
+            if (!OperatingSystem.IsMacOS()) Assert.Contains("Install also makes a port called Music Organiser", fl.Steps);
+            Assert.Equal(1, new MainViewModel(_db, _sounds).Settings.Links[1].MidiPort!.Choice);
+
+            port.Choice = 0;
+            Assert.Equal((FlMidiPort.LoopMidi, "loopmidi"), (FlSetup.Port, _db.GetSetting(FlPortSetting.Key)));
+            if (!OperatingSystem.IsWindows()) Assert.False(fl.ShowGetLoopMidi);
+        }
+        finally
+        {
+            FlSetup.Port = before;
+        }
     }
 
     [Fact]

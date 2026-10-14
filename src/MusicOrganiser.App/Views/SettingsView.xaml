@@ -155,8 +155,26 @@
                                     <TextBlock Text="{Binding Status}" Margin="18,4,0,0" TextWrapping="Wrap" />
                                     <TextBlock Text="{Binding Steps}" Margin="18,4,0,0" TextWrapping="Wrap" FontSize="12.5"
                                                Foreground="{StaticResource MutedBrush}" />
+                                    <StackPanel Margin="18,10,0,0" Visibility="{Binding CanChoosePort, Converter={StaticResource BoolToVisibility}}">
+                                        <TextBlock Text="The MIDI port for the script" FontSize="12.5" Margin="0,0,0,6" />
+                                        <RadioButton MinWidth="0" Margin="0,0,0,4"
+                                                     IsChecked="{Binding MidiPort.Choice, Converter={StaticResource IndexToBool}, ConverterParameter=0}">
+                                            <TextBlock TextWrapping="Wrap" FontSize="12.5"
+                                                       Text="loopMIDI: a free app you install, then make the port in. Works on any Windows." />
+                                        </RadioButton>
+                                        <RadioButton MinWidth="0"
+                                                     IsChecked="{Binding MidiPort.Choice, Converter={StaticResource IndexToBool}, ConverterParameter=1}">
+                                            <TextBlock TextWrapping="Wrap" FontSize="12.5"
+                                                       Text="Windows' own MIDI system: Install makes the port, with nothing else to install. Needs Windows 11 25H2 or later, fully updated." />
+                                        </RadioButton>
+                                        <TextBlock Text="{Binding MidiPort.Note}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                   Visibility="{Binding MidiPort.Note, Converter={StaticResource NullToVisibility}}" />
+                                    </StackPanel>
                                     <WrapPanel Margin="18,10,0,0">
                                         <ui:Button Content="Install" Icon="{ui:SymbolIcon ArrowDownload24}" Command="{Binding InstallCommand}" Margin="0,0,6,0" />
+                                        <ui:Button Content="Get loopMIDI" Icon="{ui:SymbolIcon Globe24}" Command="{Binding MidiPort.GetLoopMidiCommand}" Margin="0,0,6,0"
+                                                   Visibility="{Binding ShowGetLoopMidi, Converter={StaticResource BoolToVisibility}}"
+                                                   ToolTip="Opens loopMIDI's page in your browser, to download it" />
                                         <ui:Button Content="Choose folder…" Command="{Binding ChooseFolderCommand}" Margin="0,0,6,0"
                                                    Visibility="{Binding CanChooseFolder, Converter={StaticResource BoolToVisibility}}"
                                                    ToolTip="Pick FL Studio's user data folder, if it's somewhere the app didn't find" />

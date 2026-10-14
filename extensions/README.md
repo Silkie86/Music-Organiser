@@ -22,16 +22,28 @@ In the app: **Settings → DAW links → Install**, for each DAW. The scripts sh
   Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
 - **FL Studio**: `Settings\Hardware\Music Organiser` in FL Studio's user data folder (normally
   `Documents\Image-Line\FL Studio`). The app also finds user data folders elsewhere from where your FL
-  projects are, and **Choose folder…** points it at one. Then restart FL Studio and, in Options → MIDI
-  settings, set a MIDI input's Controller type to Music Organiser. FL Studio only runs a script for a MIDI
-  input, so with none to spare, make a port called Music Organiser with
-  [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) on Windows, or the IAC Driver (Audio
-  MIDI Setup) on a Mac.
+  projects are, and **Choose folder…** points it at one. FL Studio only runs a script for a MIDI input, so
+  the script needs one, though it never uses MIDI. A port called Music Organiser gets the script by itself
+  after a restart of FL Studio; otherwise, set an input's Controller type to Music Organiser in Options →
+  MIDI settings. On Windows, Settings offers two ways to make that port:
+  - **loopMIDI**: [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html), a free app, makes it
+    (type Music Organiser under *New port-name* and press +). Works on any Windows; loopMIDI has to be
+    running for the port to be there. Settings says whether loopMIDI is installed, and **Get loopMIDI**
+    opens its page.
+  - **Windows' own MIDI system**: Install also makes the port, with Windows MIDI Services, so there's
+    nothing else to install: a saved loopback pair, *Music Organiser* and *Organiser link (spare end)*,
+    which Windows makes again after a restart (`Core/DawLink/WindowsMidiPort.cs`). Apps can only make one
+    through Windows' own API, which Windows 11 25H2 gets with an update expected late in November 2026
+    (24H2 never gets it). The app calls it through Windows PowerShell, so it needs nothing extra to build,
+    and when picking this way, Settings checks whether this PC can make the port and says why not if it
+    can't.
+
+  On a Mac, the IAC Driver (Audio MIDI Setup) makes the port.
 
 Settings says when an installed copy is older than the app's, and Install updates it. **Check connection**
 asks the DAW to answer. When FL Studio doesn't, the app says which part is missing, on Windows: FL Studio
-isn't open, there's no MIDI port called Music Organiser, or there is one but FL Studio isn't running the
-script for it (`Core/DawLink/FlSetup.cs`).
+isn't open, there's no MIDI port called Music Organiser (and how to make one, the way chosen in Settings),
+or there is one but FL Studio isn't running the script for it (`Core/DawLink/FlSetup.cs`).
 
 ## Changes
 
@@ -166,6 +178,13 @@ FL Studio:
 - [ ] The window title's wording (Check with FL Studio finds the project name in it).
 - [ ] `mixer.getCurrentTempo()` gives BPM or thousandths of one (the script handles both).
 - [ ] A loopMIDI port called Music Organiser gets the script by itself (`supportedDevices`).
+- [ ] loopMIDI installs as `Tobias Erichsen\loopMIDI\loopMIDI.exe` in Program Files (x86) or Program Files
+      (or runs as `loopMIDI`), which is how Settings tells whether it's installed.
+- [ ] Windows' MIDI system (from the late-November 2026 update for Windows 11 25H2): Windows PowerShell
+      finds its API (`Windows.Devices.Midi2`, as Microsoft documents it), Install makes and saves the pair,
+      the pair comes back after a restart, and FL Studio sees the A end with "Music Organiser" in its name
+      (and gives it the script by itself). Whether saving needs administrator rights (if it does, the port
+      lasts until a restart, and the app says so).
 - [ ] FL Studio runs as `FL64.exe` (or `FL.exe`), which is how Check connection tells whether it's open.
 - [ ] Opening files and the standard library work in each FL Studio version's Python.
 - [ ] Every user data folder has Settings, Presets and Projects in it (how the app finds them).

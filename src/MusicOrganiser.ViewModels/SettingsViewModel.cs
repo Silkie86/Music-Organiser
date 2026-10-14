@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MusicOrganiser.Core;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
@@ -47,15 +48,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         _bitwigTemplate = db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) ?? "";
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
         UpdateSampleIndexText();
+        var flPort = new FlPortSetting(db);
         Links =
         [
-            new DawLinkSetting("Bitwig Studio", BitwigSteps, () => DawScripts.Bitwig(), CheckBitwig),
-            new DawLinkSetting("FL Studio", FlSteps, () => FlScript(db), CheckFlStudio, new FolderChoice(
+            new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.Bitwig(), CheckBitwig),
+            new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), CheckFlStudio, new FolderChoice(
                 "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
                 DawScripts.IsFlUserData,
                 "That isn't FL Studio's user data folder: it has Settings, Presets and Projects folders in it. " +
                 "FL Studio shows where it is in Options > File settings.",
-                f => db.SetSetting(FlUserDataKey, f))),
+                f => db.SetSetting(FlUserDataKey, f)), flPort),
         ];
     }
 
@@ -64,12 +66,19 @@ public sealed partial class SettingsViewModel : ObservableObject
         "If it isn't in the list, restart Bitwig." +
         (OperatingSystem.IsWindows() ? " If Windows asks whether Bitwig may use the network, you can say no: the app only talks to it on this PC." : "");
 
-    static string FlSteps =>
-        "Then restart FL Studio. FL Studio only runs scripts for MIDI inputs, so the script needs one, though it never uses MIDI: " +
-        "in Options > MIDI settings, pick an input and set its Controller type to Music Organiser. " +
-        (OperatingSystem.IsMacOS()
-            ? "With no input to spare, turn on the IAC Driver in Audio MIDI Setup and add a port called Music Organiser."
-            : "With no input to spare, make one called Music Organiser in loopMIDI (free); FL Studio should then pick the script for it by itself.");
+    static string FlSteps(FlMidiPort port) =>
+        OperatingSystem.IsMacOS()
+            ? "Then restart FL Studio. FL Studio only runs scripts for MIDI inputs, so the script needs one, though it never uses MIDI: " +
+              "in Options > MIDI settings, pick an input and set its Controller type to Music Organiser. " +
+              "With no input to spare, turn on the IAC Driver in Audio MIDI Setup and add a port called Music Organiser."
+            : "FL Studio only runs scripts for MIDI inputs, so the script needs one, though it never uses MIDI. " +
+              (port == FlMidiPort.WindowsMidi
+                  ? "Install also makes a port called Music Organiser with Windows' own MIDI system. Then restart FL Studio, and it " +
+                    "should pick the script for that port by itself. If it doesn't, set the port's Controller type to Music Organiser " +
+                    "in Options > MIDI settings."
+                  : "Make a port called Music Organiser in loopMIDI (free), then restart FL Studio, and it should pick the script for " +
+                    "that port by itself. If it doesn't, or you'd rather use an input you have, set its Controller type to Music " +
+                    "Organiser in Options > MIDI settings.");
 
     /// <summary>The FL Studio script, for every FL Studio user data folder: chosen here, in Documents, or holding FL projects.</summary>
     static DawScript FlScript(LibraryDb db) => DawScripts.FlStudio(DawScripts.FlUserDataFolders(
@@ -222,29 +231,120 @@ public sealed partial class DawSetting : ObservableObject
 /// <param name="Save">Remembers the folder.</param>
 public sealed record FolderChoice(string Prompt, Func<string, bool> IsRight, string Wrong, Action<string> Save);
 
+/// <summary>
+/// How the MIDI port FL Studio runs the script for gets made, on Windows: by hand in loopMIDI, a free app, or by
+/// Install, with Windows' own MIDI system. (A Mac has a port maker built in: the IAC Driver.)
+/// </summary>
+public sealed partial class FlPortSetting : ObservableObject
+{
+    public const string Key = "fl_midi_port";
+    public const string MakeInLoopMidi = "loopMIDI is installed: make a port called Music Organiser in it, by typing the name " +
+                                         "under New port-name and pressing +.";
+    public const string GetLoopMidiFirst = "loopMIDI isn't installed. Get it with the Get loopMIDI button, then make a port " +
+                                           "called Music Organiser in it.";
+    public const string Checking = "Checking whether this PC can make the port…";
+    public const string Making = "Making the port with Windows' MIDI system…";
+
+    readonly LibraryDb _db;
+
+    /// <summary>The choice, as an index for the radio buttons: 0 loopMIDI, 1 Windows' MIDI system.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Port))] int _choice;
+    /// <summary>Where the port stands: whether there's one, or what it takes.</summary>
+    [ObservableProperty] string _note = "";
+    /// <summary>Whether loopMIDI is the choice, but there's neither loopMIDI nor a port.</summary>
+    [ObservableProperty] bool _needsLoopMidi;
+
+    public FlPortSetting(LibraryDb db)
+    {
+        _db = db;
+        _choice = db.GetSetting(Key) == "windows" ? 1 : 0;
+        FlSetup.Port = Port;
+    }
+
+    public FlMidiPort Port => Choice == 1 ? FlMidiPort.WindowsMidi : FlMidiPort.LoopMidi;
+
+    partial void OnChoiceChanged(int value)
+    {
+        _db.SetSetting(Key, value == 1 ? "windows" : "loopmidi");
+        FlSetup.Port = Port;
+        _ = RefreshAsync();
+    }
+
+    /// <summary>Looks at where the port stands, without changing anything. Settings calls it each time it opens.</summary>
+    public Task RefreshAsync() => UpdateAsync(make: false);
+
+    /// <summary>After Install: makes the port with Windows' MIDI system, when that's the choice, and says where it stands.</summary>
+    public Task SetUpAsync() => UpdateAsync(make: true);
+
+    async Task UpdateAsync(bool make)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var port = Port;
+        try
+        {
+            if (port == FlMidiPort.WindowsMidi)
+            {
+                NeedsLoopMidi = false;
+                Note = make ? Making : Checking;
+                var result = make ? await WindowsMidiPort.MakeAsync() : await WindowsMidiPort.CheckAsync();
+                if (Port == port) Note = result.Message;   // unless the choice changed meanwhile
+            }
+            else
+            {
+                var there = await Task.Run(() => FlSetup.MidiInputs() is { } inputs && FlSetup.HasOurPort(inputs));
+                var installed = there || await Task.Run(FlSetup.IsLoopMidiInstalled) == true;
+                if (Port != port) return;
+                NeedsLoopMidi = !installed;
+                Note = there ? FlSetup.PortThere : installed ? MakeInLoopMidi : GetLoopMidiFirst;
+            }
+        }
+        catch (Exception e)
+        {
+            if (Port == port) Note = $"Couldn't look at this PC's MIDI ports: {e.Message}";
+        }
+    }
+
+    [RelayCommand]
+    void GetLoopMidi() => Shell.OpenUrl(FlSetup.LoopMidiUrl);
+}
+
 /// <summary>The link with one DAW: its script, installed into the DAW's own folder, and whether the DAW answers.</summary>
 public sealed partial class DawLinkSetting : ObservableObject
 {
+    readonly Func<string> _steps;
     readonly Func<DawScript> _script;
     readonly Func<Task<string>> _check;
     readonly FolderChoice? _folder;
 
     public string Daw { get; }
     /// <summary>What to do in the DAW once the script is installed.</summary>
-    public string Steps { get; }
+    public string Steps => _steps();
     public bool CanChooseFolder => _folder is not null;
+    /// <summary>For FL Studio: how the MIDI port it runs the script for is made.</summary>
+    public FlPortSetting? MidiPort { get; }
+    /// <summary>Whether to offer the choice of how the port is made: for FL Studio, on Windows.</summary>
+    public bool CanChoosePort => MidiPort is not null && OperatingSystem.IsWindows();
+    public bool ShowGetLoopMidi => CanChoosePort && MidiPort!.NeedsLoopMidi;
     /// <summary>Whether the script is installed, and where.</summary>
     [ObservableProperty] string _status = "";
     /// <summary>What happened when installing or checking.</summary>
     [ObservableProperty] string _result = "";
 
-    public DawLinkSetting(string daw, string steps, Func<DawScript> script, Func<Task<string>> check, FolderChoice? folder = null)
+    public DawLinkSetting(string daw, Func<string> steps, Func<DawScript> script, Func<Task<string>> check,
+                          FolderChoice? folder = null, FlPortSetting? midiPort = null)
     {
         Daw = daw;
-        Steps = steps;
+        _steps = steps;
         _script = script;
         _check = check;
         _folder = folder;
+        MidiPort = midiPort;
+        if (midiPort is not null)
+            midiPort.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(FlPortSetting.Port)) OnPropertyChanged(nameof(Steps));
+                if (e.PropertyName == nameof(FlPortSetting.NeedsLoopMidi)) OnPropertyChanged(nameof(ShowGetLoopMidi));
+            };
     }
 
     public async Task RefreshAsync()
@@ -257,6 +357,7 @@ public sealed partial class DawLinkSetting : ObservableObject
         {
             Status = $"Couldn't look for the script: {e.Message}";
         }
+        if (MidiPort is not null) await MidiPort.RefreshAsync();
     }
 
     string Describe(DawScript script) => script.State switch
@@ -282,6 +383,8 @@ public sealed partial class DawLinkSetting : ObservableObject
             var update = script.State != ScriptState.NotInstalled;
             await Task.Run(script.Install);
             Result = update ? $"Updated. Restart {Daw} to load the new version." : $"Installed. Now set it up in {Daw} as described above.";
+            // The port shows how it stands with the choice above it.
+            if (MidiPort is not null) await MidiPort.SetUpAsync();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
