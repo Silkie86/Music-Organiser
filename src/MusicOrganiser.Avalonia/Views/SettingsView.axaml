@@ -120,7 +120,7 @@
                 <StackPanel>
                     <TextBlock Text="FL Studio to Bitwig" Classes="sectionHeader" />
                     <TextBlock Classes="cardIntro"
-                               Text="Open in Bitwig builds each converted song from a template: a project saved in Bitwig with a Sampler track, a VST3 synth with a Note Transpose before it and a clip of notes, and a VST2 synth. Its tracks are copied and filled in, and its own tracks are left out. The app keeps its own copy of the template, so it always knows where it is. To change it, use Edit in Bitwig and save." />
+                               Text="Open in Bitwig builds each converted song from a template: a project saved in Bitwig with a Sampler track, a VST3 synth with a Note Transpose before it and a clip of notes, a VST2 synth, and an audio track with an audio clip on it (not in a group) for FL Studio's audio clips. Its tracks are copied and filled in, and its own tracks are left out. The app keeps its own copy of the template, so it always knows where it is. To change it, use Edit in Bitwig and save." />
                     <DockPanel>
                         <Button DockPanel.Dock="Right" Content="Replace…" Command="{Binding ChooseBitwigTemplateCommand}" Margin="6,0,0,0"
                                 ToolTip.Tip="Copy another Bitwig project in as the template" />
