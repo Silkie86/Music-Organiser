@@ -157,7 +157,8 @@ final class Link {
 
     /** Changes that wait for Bitwig, run one at a time in the order they were asked for. */
     private final Deque<Job> jobs = new ArrayDeque<>();
-    private boolean jobRunning;
+    /** The change running now, if any: each of its steps after a wait checks it may still go ahead. */
+    private Job currentJob;
 
     /** What init made of each part of Bitwig's API, for the self-check. */
     private final List<Feature> features = new ArrayList<>();
@@ -499,10 +500,10 @@ final class Link {
         try {
             Command command = cmd instanceof String ? commands.get(cmd) : null;
             if (map == null || command == null) throw new LinkError("Unknown command: " + Json.js(cmd));
-            if (command.changes() && !changesSetting.get()) throw new LinkError(CHANGES_OFF);
+            checkAllowed(map, command.changes());
             if (command.job() != null) {
-                jobs.add(new Job(ask, map, command.job()));
-                if (!jobRunning) nextJob();
+                jobs.add(new Job(ask, map, command.job(), command.changes()));
+                if (currentJob == null) nextJob();
             } else {
                 command.run().run(ask, map);
             }
@@ -511,10 +512,28 @@ final class Link {
         }
     }
 
+    /**
+     * Refuses a request that may not go ahead now. A request that carries `onlyIn` (a project's name) only goes ahead
+     * while Bitwig has that project open, and a change only while "Let the app make changes" is on. This is checked
+     * when a request arrives, when a change starts (it may have waited behind others) and before each step of a change
+     * after a wait, since the track bank, the cursor track and the cursor device follow whichever project is in front,
+     * and someone may bring their own to the front, or turn changes off, meanwhile.
+     */
+    private void checkAllowed(Map<String, Object> request, boolean changes) {
+        Object only = field(request, "onlyIn");
+        if (!absent(only)) {
+            if (!(only instanceof String)) throw new LinkError("onlyIn has to be a project's name.");
+            String open = str(app.projectName().get());
+            if (!open.equals(only))
+                throw new LinkError("Bitwig has \"" + open + "\" open, not \"" + only + "\", so the link stopped before changing anything there.");
+        }
+        if (changes && !changesSetting.get()) throw new LinkError(CHANGES_OFF);
+    }
+
     /** Runs the next change waiting, if any. */
     private void nextJob() {
         Job job = jobs.poll();
-        jobRunning = job != null;
+        currentJob = job;
         if (job == null) return;
         Finish finish = new Finish() {
             private boolean finished;
@@ -527,7 +546,24 @@ final class Link {
                 nextJob();
             }
         };
-        attempt(() -> job.run().run(job.request(), finish), finish);
+        attempt(() -> {
+            checkAllowed(job.request(), job.changes());
+            job.run().run(job.request(), finish);
+        }, finish);
+    }
+
+    /**
+     * Before a step of the change running now that comes after a wait: stops the change (with an error for `attempt`
+     * to hand to its finish) unless it may still go ahead. Every step after a wait goes through waitFor or settle,
+     * which call this, so nothing a change does after a wait can reach another project.
+     */
+    private void carryOn(Job job) {
+        if (job != null) checkAllowed(job.request(), job.changes());
+    }
+
+    /** The change running now, or null (the tests' stand-in Bitwig watches for it). */
+    Job runningJob() {
+        return currentJob;
     }
 
     /** Runs one step of a change, ending the change with an error if the step fails. */
@@ -549,14 +585,18 @@ final class Link {
 
     /**
      * Bitwig makes changes after the extension returns, and tells it a moment later, so a change waits: `test`
-     * is checked every 50 ms until it's true or `ms` have passed, and `then` gets whether it came true.
+     * is checked every 50 ms until it's true or `ms` have passed, and `then` gets whether it came true. Each time,
+     * the change stops instead if it may no longer go ahead (see carryOn).
      */
     private void waitFor(BooleanSupplier test, long ms, Then then, Finish finish) {
         long start = clock.millis();
+        Job job = currentJob;
         Runnable check = new Runnable() {
             @Override
             public void run() {
+                if (job != currentJob) return;   // a step left over from a change that has ended does nothing
                 attempt(() -> {
+                    carryOn(job);
                     boolean ok = test.getAsBoolean();
                     if (ok || clock.millis() - start >= ms) then.run(ok);
                     else host.scheduleTask(this, 50);
@@ -568,17 +608,21 @@ final class Link {
 
     /**
      * Waits until what `look` sees stops changing (the same three times running), since Bitwig reports a change
-     * bit by bit, then hands it to `then`.
+     * bit by bit, then hands it to `then`. Each time, the change stops instead if it may no longer go ahead (see
+     * carryOn).
      */
     private <T> void settle(Supplier<T> look, Consumer<T> then, Finish finish) {
         long start = clock.millis();
+        Job job = currentJob;
         Runnable check = new Runnable() {
             private String last;
             private int same;
 
             @Override
             public void run() {
+                if (job != currentJob) return;   // a step left over from a change that has ended does nothing
                 attempt(() -> {
+                    carryOn(job);
                     T seen = look.get();
                     String text = Json.write(seen);
                     same = text.equals(last) ? same + 1 : 0;
@@ -651,6 +695,8 @@ final class Link {
         m.put("modified", project.isModified().get());
         m.put("engine", app.hasActiveEngine().get());
         m.put("changes", changesSetting.get());
+        // This link honours a request's onlyIn (see checkAllowed).
+        m.put("onlyIn", true);
         // Additions in link version 3. ("engine" already says whether Bitwig's audio engine is on.)
         m.put("runtime", "java");
         m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
@@ -669,6 +715,7 @@ final class Link {
             m.put("api", host.getHostApiVersion());
             m.put("platform", str(host.getPlatformType()));
             m.put("port", port);
+            m.put("onlyIn", true);
             m.put("runtime", "java");
             m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
             m.put("error", failure(e) + " Ask for a selftest to see what's wrong.");
@@ -1498,7 +1545,8 @@ final class Link {
         }
     }
 
-    record Job(Ask ask, Map<String, Object> request, JobRun run) {}
+    /** A change that waits for Bitwig, and whether it needs changes turned on. */
+    record Job(Ask ask, Map<String, Object> request, JobRun run, boolean changes) {}
 
     record Tuning(Parameter sampler, Parameter transpose) {}
 

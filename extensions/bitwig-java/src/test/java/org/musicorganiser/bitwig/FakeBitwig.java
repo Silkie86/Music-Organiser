@@ -72,6 +72,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -150,6 +151,13 @@ final class FakeBitwig {
     private ConnectionEstablishedCallback connect;
     final Stand host;
 
+    /** Projects a test asked to bring to the front part way through a change (see switchDuring). */
+    private final List<Switch> switches = new ArrayList<>();
+    /** The change last seen waiting for Bitwig. */
+    private Link.Job lastJob;
+
+    private record Switch(String cmd, BooleanSupplier when, String project) {}
+
     /** The project as the stand-in keeps it: a test can change it, then refresh(). */
     static final class State {
         final List<TrackSpec> tracks = new ArrayList<>();
@@ -215,6 +223,34 @@ final class FakeBitwig {
     /** Clicks a parameter in Bitwig: the extension hears of it a moment later. */
     void click(Knob knob) {
         later(20, () -> clicked = knob);
+    }
+
+    /**
+     * Brings another project to the front part way through the next change asked for with `cmd` ("newtrack",
+     * "pads"...), as if someone did it in Bitwig meanwhile: once the extension, running that change, first waits for
+     * Bitwig. Only the project's name changes: the tracks the stand-in shows from then on stand for that project's, as
+     * Bitwig's track bank follows the project in front.
+     */
+    void switchDuring(String cmd, String project) {
+        switches.add(new Switch(cmd, null, project));
+    }
+
+    /** As {@link #switchDuring(String, String)}, at the change's first wait after `when` comes true (say, once samples are dropped on pads). */
+    void switchDuring(String cmd, BooleanSupplier when, String project) {
+        switches.add(new Switch(cmd, when, project));
+    }
+
+    /** The extension has just started to wait for Bitwig: switches the project if a test asked for it at this point of the change running. */
+    private void waiting() {
+        Link.Job job = link.runningJob();
+        if (job == null) return;
+        boolean first = job != lastJob;
+        lastJob = job;
+        for (Switch s : new ArrayList<>(switches)) {
+            if (!s.cmd().equals(job.request().get("cmd")) || !(s.when() != null ? s.when().getAsBoolean() : first)) continue;
+            switches.remove(s);
+            projectName.v = s.project();
+        }
     }
 
     /** The track the extension's bank shows at `index`. */
@@ -1795,6 +1831,7 @@ final class FakeBitwig {
 
         void scheduleTask(Runnable task, long ms) {
             clock.schedule(task, ms);
+            waiting();
         }
     }
 

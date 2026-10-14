@@ -5,7 +5,9 @@
 //   node run-script.js <path to fake-bitwig.js>  < [{ "model": {...}, "steps": [...] }, ...]
 //
 // A step is one of: { "send": <request, sent as JSON> }, { "raw": "<text, sent as it is>" },
-// { "advance": <ms> }, { "allowChanges": true }, { "show": { "device": {...}, "knobs": [...] } }, { "close": true }.
+// { "advance": <ms> }, { "allowChanges": true }, { "show": { "device": {...}, "knobs": [...] } }, { "close": true },
+// { "project": "<name>" } (another project comes to the front now) and { "switchDuring": "<cmd>", "project": "<name>" }
+// (it comes to the front once the next change asked for with that command first waits for Bitwig).
 "use strict";
 
 const { startBitwig } = require(process.argv[2]);
@@ -26,6 +28,8 @@ process.stdin.on("end", () => {
       else if ("allowChanges" in step) bitwig.allowChanges(step.allowChanges);
       else if ("show" in step) bitwig.cursorDevice.show(step.show.device, step.show.knobs);
       else if ("close" in step) app.close();
+      else if ("switchDuring" in step) bitwig.switchDuring(step.switchDuring, step.project);
+      else if ("project" in step) bitwig.app.name.v = step.project;
       else throw new Error("Unknown step " + JSON.stringify(step));
       out.push(app.take());
     }

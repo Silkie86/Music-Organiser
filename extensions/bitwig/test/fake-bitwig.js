@@ -547,6 +547,22 @@ function startBitwig(model = {}) {
   let connect = null;
   let defined = null;
   let api = null;
+  /** Projects a test asked to bring to the front part way through a change (see switchDuring), and the change last seen waiting. */
+  const during = [];
+  let lastJob = null;
+
+  /** The script has just started to wait for Bitwig: switches the project if a test asked for it at this point of the change running. */
+  function waiting() {
+    const job = context.currentJob;   // the script's own: the change it's running, if any
+    if (!job) return;
+    const first = job !== lastJob;
+    lastJob = job;
+    for (const d of during.slice()) {
+      if (d.cmd !== job.request.cmd || !(d.when ? d.when() : first)) continue;
+      during.splice(during.indexOf(d), 1);
+      app.name.v = d.project;
+    }
+  }
 
   /** Tells the script how things are now, as Bitwig's observers do. */
   function sync() {
@@ -608,7 +624,10 @@ function startBitwig(model = {}) {
     getHostVersion: () => "6.1.2",
     getHostApiVersion: () => 25,
     getPlatformType: () => "WINDOWS",
-    scheduleTask: (fn, ms) => clock.schedule(fn, ms),
+    scheduleTask: (fn, ms) => {
+      clock.schedule(fn, ms);
+      waiting();
+    },
   };
 
   const sandbox = {
@@ -641,6 +660,14 @@ function startBitwig(model = {}) {
     allowChanges(on) { changes.set(on); },
     /** Tells the script about changes a test made to `state` itself. */
     refresh() { sync(); },
+    /**
+     * Brings another project to the front part way through the next change asked for with `cmd` ("newtrack",
+     * "pads"...), as if someone did it in Bitwig meanwhile: once the script, running that change, first waits
+     * for Bitwig, or, with `when`, at its first wait after `when()` comes true (say, once samples are dropped
+     * on pads). Only the project's name changes: the tracks the stand-in shows from then on stand for that
+     * project's, as Bitwig's track bank follows the project in front.
+     */
+    switchDuring(cmd, project, when) { during.push({ cmd, project, when }); },
     /** Hands the script a connection, as Bitwig does when the app connects. */
     attach(connection) { connect(connection); },
     /** Connects as the app would, and returns a way to send requests and read what comes back. */

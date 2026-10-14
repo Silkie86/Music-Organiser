@@ -15,6 +15,7 @@ import static org.musicorganiser.bitwig.Messages.obj;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -150,6 +151,30 @@ class NewerApiTest {
         assertEquals(List.of(List.of("startRecording"), List.of("stopRecording")), bitwig.calls);
         assertEquals("Tell the recorder to \"start\", \"stop\" or give its \"status\", not rewind.",
                      error(app.ask(obj("id", 8, "cmd", "recorder", "do", "rewind"))));
+    }
+
+    @Test
+    @DisplayName("starts the recorder only in the project the request names, and not once another comes to the front")
+    void usesTheRecorderOnlyInTheProjectNamed() {
+        start(LinkTest.song());
+        bitwig.allowChanges(true);
+        assertEquals(LinkTest.elsewhere("Night Drive", "MO Live Test"),
+                     error(app.ask(obj("id", 1, "cmd", "recorder", "do", "start", "onlyIn", "MO Live Test"))));
+        assertEquals(List.of(), bitwig.calls);
+
+        // Asked while Night Drive is open, but another project comes to the front before it starts (behind a new track).
+        app.send(obj("id", 2, "cmd", "newtrack", "name", "Lead", "onlyIn", "Night Drive"));
+        app.send(obj("id", 3, "cmd", "recorder", "do", "start", "onlyIn", "Night Drive"));
+        bitwig.clock.advance(10);
+        bitwig.projectName.v = "My Song";
+        bitwig.clock.advance(10000);
+        assertEquals(List.of(LinkTest.elsewhere("My Song", "Night Drive"), LinkTest.elsewhere("My Song", "Night Drive")),
+                     app.take().stream().map(Messages::error).collect(Collectors.toList()));
+        assertEquals(List.of(List.of("createInstrumentTrack", -1)), bitwig.calls);
+
+        bitwig.projectName.v = "Night Drive";
+        assertJson(obj("active", true, "duration", 30),
+                   app.waitFor(obj("id", 4, "cmd", "recorder", "do", "start", "onlyIn", "Night Drive"), 50).get("result"));
     }
 
     @Test

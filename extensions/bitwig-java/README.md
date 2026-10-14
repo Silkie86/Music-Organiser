@@ -83,6 +83,11 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   once it has started or stopped with `active` and `duration` (in milliseconds).
 - `selftest`: runs the self-check, writes it to the reports folder and answers with it, plus `file`.
 
+Not new to version 3, since the script does it too: any request can carry `onlyIn`, a project's name, and the
+link refuses it, or stops a change part way, unless Bitwig has that project open; `hello` says `onlyIn: true`.
+The live tests use it to keep their changes in their own project (see
+[the extensions README](../README.md#only-in-one-project)).
+
 ## Code
 
 `src/main/java/org/musicorganiser/bitwig`:

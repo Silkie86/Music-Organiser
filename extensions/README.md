@@ -112,7 +112,7 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 
 | Command | Asks for | Result |
 |---|---|---|
-| `hello` | | `link` (this protocol's version: 3 from the extension, 2 from the script), `product`, `version`, `api`, `platform`, `port`, `project`, `modified`, `engine` (whether Bitwig's audio engine is on), `changes`. Version 3 adds `runtime` (`"java"`) and `extension` (its version). |
+| `hello` | | `link` (this protocol's version: 3 from the extension, 2 from the script), `product`, `version`, `api`, `platform`, `port`, `project`, `modified`, `engine` (whether Bitwig's audio engine is on), `changes`, `onlyIn` (`true`: the link honours a request's `onlyIn`, [below](#only-in-one-project)). Version 3 adds `runtime` (`"java"`) and `extension` (its version). |
 | `project` | | `name`, `modified`, `tempo`, `timeSignature`, `playing`, `position`, `trackCount`, `tracks`: the first 128 tracks in Bitwig's flat list, each with `index`, `name`, `type`, `group`, `color`, `active`, `mute`, `solo`, `arm`, `volume`, `pan` (as shown, with `volumeValue` and `panValue` from 0 to 1), `deviceCount` and the first 16 `devices` (`name`, `preset`, `kind`, `plugin`, `enabled`). Version 3 adds each track's `id`, the ID Bitwig keeps it under, once Bitwig has said. |
 | `device` | | The selected device: `track`, `device` (or null), `drumPads` (whether it has a Drum Machine's pads) and every parameter as `id` (what Bitwig saves it under), `name`, `value` (0 to 1) and `display` ("-6.0 dB"). Waits up to 2 seconds for the display texts. Version 3 adds the device's remote controls on the page Bitwig shows (`page`, and `controls` with `index`, `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated` and `param`), and gives a parameter that is one of those controls the same `steps` (-1 for continuous), `stepNames`, `origin` and `automated`: see [below](#link-version-3). |
 | `actions` | | Every Bitwig action: `id`, `name`, `category`, `menu` |
@@ -131,6 +131,20 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 ✎ needs changes turned on. (3) only in link version 3, the extension. `insert` with a track, `newtrack`,
 `clip`, `pads`, `transpose` and `recorder` wait for Bitwig to make the change (up to 5 seconds for each
 step), and run one at a time in the order sent. In the app this is `Core/DawLink/BitwigLink.cs`.
+
+### Only in one project
+
+Any request can carry `onlyIn`, a project's name. The link then refuses it unless Bitwig has exactly that
+project open, with `Bitwig has "<open>" open, not "<onlyIn>", so the link stopped before changing anything
+there.` A change that waits for Bitwig checks again when it starts (it may have waited behind others) and
+before each of its steps after a wait, and stops with that error, since Bitwig's track bank, selected track
+and selected device follow whichever project is in front: without this, a new track asked for in one project
+could be named, coloured or selected in another that came to the front meanwhile. At the same points it checks
+again that *Let the app make changes* is still on. An `onlyIn` that isn't text is refused (`onlyIn has to be a
+project's name.`); null, or none, means no check. The live tests send it with every request that changes or
+selects something, so a run only ever changes its own test project (see
+[Only in a project made for them](#only-in-a-project-made-for-them)). Both the script and the extension do
+it, and say so with `onlyIn: true` in their hello.
 
 ### Link version 3
 
@@ -271,12 +285,15 @@ for the Drum Machine, which may mean reading Bitwig's presets for its ID, and 5 
 ### Only in a project made for them
 
 A run only changes anything while Bitwig lets the app make changes **and** the open project's name starts
-with “MO Live Test” (capitals or not). It asks Bitwig again just before every change it sends (the link's
-`BeforeChange`), so if another project comes to the front part way, even in the middle of a test, that
-change isn't sent and nothing more is changed for the rest of the run. Otherwise every test that would
-change something is Skipped, saying why and what to do, and only Link runs: your own projects are never
-touched. A knob check that's stopped, or runs out of time, still reports the turns it made and any knob it
-couldn't set back.
+with “MO Live Test” (capitals or not), and only in the one test project open when it starts. It asks Bitwig
+again just before every change or selection it sends (the link's `BeforeChange`), and sends each with that
+project's name as `onlyIn` ([Only in one project](#only-in-one-project)), so the script or extension stops a
+change part way if another project comes to the front while Bitwig makes it. Either way nothing more is
+changed for the rest of the run, and the test says it stopped part way. A script or extension too old to
+say `onlyIn: true` in its hello isn't trusted with changes: the run says to install it again. Otherwise
+every test that would change something is Skipped, saying why and what to do, and only Link runs: your own
+projects are never touched. A knob check that's stopped, or runs out of time, still reports the turns it
+made and any knob it couldn't set back.
 
 To make the test project, once: in Bitwig, make a new project and save it as “MO Live Test” (in Bitwig's
 Projects folder, or in one of the app's project folders), then turn on *Let the app make changes*

@@ -85,11 +85,13 @@ var deviceWaitStart = 0;
  * @typedef {function(any, string=): void} Finish
  */
 /**
- * Changes that wait for Bitwig, run one at a time in the order they were asked for.
- * @type {{ client: Client, id: any, request: any, run: function(any, Finish): void }[]}
+ * A change that waits for Bitwig, and whether it needs changes turned on.
+ * @typedef {{ client: Client, id: any, request: any, run: function(any, Finish): void, changes: boolean }} Job
  */
+/** Changes that wait for Bitwig, run one at a time in the order they were asked for. @type {Job[]} */
 var jobs = [];
-var jobRunning = false;
+/** The change running now, if any: each of its steps after a wait checks it may still go ahead. @type {Job} */
+var currentJob = null;
 
 function init() {
     app = host.createApplication();
@@ -291,10 +293,10 @@ function handle(client, text) {
         if (!request || typeof request.cmd !== "string" || !has(commands, request.cmd))
             throw new LinkError("Unknown command: " + (request ? request.cmd : request));
         var command = commands[request.cmd];
-        if (command.changes && !changesSetting.get()) throw new LinkError(CHANGES_OFF);
+        checkAllowed(request, !!command.changes);
         if (command.job) {
-            jobs.push({ client: client, id: id, request: request, run: command.job });
-            if (!jobRunning) nextJob();
+            jobs.push({ client: client, id: id, request: request, run: command.job, changes: !!command.changes });
+            if (!currentJob) nextJob();
         } else {
             command.run(client, id, request);
         }
@@ -303,10 +305,30 @@ function handle(client, text) {
     }
 }
 
+/**
+ * Refuses a request that may not go ahead now. A request that carries `onlyIn` (a project's name) only goes
+ * ahead while Bitwig has that project open, and a change only while "Let the app make changes" is on. This is
+ * checked when a request arrives, when a change starts (it may have waited behind others) and before each step
+ * of a change after a wait, since the track bank, the cursor track and the cursor device follow whichever
+ * project is in front, and someone may bring their own to the front, or turn changes off, meanwhile.
+ * @param {any} request
+ * @param {boolean} changes whether it changes something
+ */
+function checkAllowed(request, changes) {
+    var only = request.onlyIn;
+    if (only !== undefined && only !== null) {
+        if (typeof only !== "string") throw new LinkError("onlyIn has to be a project's name.");
+        var open = str(app.projectName().get());
+        if (open !== only)
+            throw new LinkError("Bitwig has \"" + open + "\" open, not \"" + only + "\", so the link stopped before changing anything there.");
+    }
+    if (changes && !changesSetting.get()) throw new LinkError(CHANGES_OFF);
+}
+
 /** Runs the next change waiting, if any. */
 function nextJob() {
     var job = jobs.shift();
-    jobRunning = !!job;
+    currentJob = job || null;
     if (!job) return;
     var finished = false;
     /** @type {Finish} */
@@ -316,7 +338,20 @@ function nextJob() {
         reply(job.client, job.id, result, error);
         nextJob();
     }
-    attempt(function () { job.run(job.request, finish); }, finish);
+    attempt(function () {
+        checkAllowed(job.request, job.changes);
+        job.run(job.request, finish);
+    }, finish);
+}
+
+/**
+ * Before a step of the change running now that comes after a wait: stops the change (with an error for
+ * `attempt` to hand to its finish) unless it may still go ahead. Every step after a wait goes through
+ * `waitFor` or `settle`, which call this, so nothing a change does after a wait can reach another project.
+ * @param {Job} job the change the step belongs to
+ */
+function carryOn(job) {
+    if (job) checkAllowed(job.request, job.changes);
 }
 
 /**
@@ -340,7 +375,7 @@ function failure(e) {
 /**
  * Bitwig makes changes after the script returns, and tells the script a moment later, so a change
  * waits: `test` is checked every 50 ms until it's true or `ms` have passed, and `then` gets whether it
- * came true.
+ * came true. Each time, the change stops instead if it may no longer go ahead (see carryOn).
  * @param {function(): any} test
  * @param {number} ms
  * @param {function(boolean): void} then
@@ -348,8 +383,11 @@ function failure(e) {
  */
 function waitFor(test, ms, then, finish) {
     var start = Date.now();
+    var job = currentJob;
     function check() {
+        if (job !== currentJob) return;   // a step left over from a change that has ended does nothing
         attempt(function () {
+            carryOn(job);
             var ok = !!test();
             if (ok || Date.now() - start >= ms) then(ok);
             else host.scheduleTask(check, 50);
@@ -360,7 +398,8 @@ function waitFor(test, ms, then, finish) {
 
 /**
  * Waits until what `look` sees stops changing (the same three times running), since Bitwig reports a
- * change bit by bit, then hands it to `then`.
+ * change bit by bit, then hands it to `then`. Each time, the change stops instead if it may no longer go
+ * ahead (see carryOn).
  * @param {function(): any} look
  * @param {function(any): void} then
  * @param {Finish} finish
@@ -369,8 +408,11 @@ function settle(look, then, finish) {
     var start = Date.now();
     var last = null;
     var same = 0;
+    var job = currentJob;
     function check() {
+        if (job !== currentJob) return;   // a step left over from a change that has ended does nothing
         attempt(function () {
+            carryOn(job);
             var seen = look();
             var text = JSON.stringify(seen);
             same = text === last ? same + 1 : 0;
@@ -429,7 +471,9 @@ function hello() {
         project: str(app.projectName().get()),
         modified: !!project.isModified().get(),
         engine: !!app.hasActiveEngine().get(),
-        changes: !!changesSetting.get()
+        changes: !!changesSetting.get(),
+        // This link honours a request's onlyIn (see checkAllowed).
+        onlyIn: true
     };
 }
 

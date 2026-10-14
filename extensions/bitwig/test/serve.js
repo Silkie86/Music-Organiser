@@ -7,6 +7,13 @@
 // "value": 0.25}} moves a knob of the MO Probe on that track as if the probe turned it itself. It prints
 // "ok" once the change is made.
 //
+// {"switchDuring": "newtrack", "project": "Night Drive"} brings another project to the front part way
+// through a change instead of now: the next time a change asked for with that command (newtrack, insert,
+// clip, pads, transpose) is running and the script starts to wait for Bitwig the first time, the open
+// project's name becomes "Night Drive", as if someone brought their own project to the front just after
+// the change began. Only the name changes (the tracks the stand-in shows then stand for that project's).
+// It prints "ok" at once, when the line is read.
+//
 // Like Bitwig, the project has unsaved changes once anything in it changes, until the Save action runs.
 //
 //   node serve.js [--raw] [--events]
@@ -170,7 +177,9 @@ process.stdin.on("data", (chunk) => {
     typed = typed.slice(end + 1);
     if (!line) continue;
     const change = JSON.parse(line);
-    if ("project" in change) bitwig.app.name.v = change.project;
+    // With switchDuring, "project" is the one that comes to the front later, part way through the change.
+    if ("switchDuring" in change) bitwig.switchDuring(change.switchDuring, change.project);
+    else if ("project" in change) bitwig.app.name.v = change.project;
     if ("modified" in change) bitwig.project.modified.v = !!change.modified;
     if ("presets" in change) model.presets = change.presets;
     if ("changes" in change) bitwig.allowChanges(!!change.changes);

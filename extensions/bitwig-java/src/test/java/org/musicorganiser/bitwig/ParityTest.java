@@ -85,6 +85,8 @@ class ParityTest {
             else if (step.containsKey("show")) bitwig.cursorDevice.show(device(map(Messages.at(step, "show", "device"))),
                                                                          knobs((List<?>) Messages.at(step, "show", "knobs")).toArray(new Knob[0]));
             else if (step.containsKey("close")) app.close();
+            else if (step.containsKey("switchDuring")) bitwig.switchDuring((String) step.get("switchDuring"), (String) step.get("project"));
+            else if (step.containsKey("project")) bitwig.projectName.v = step.get("project");
             else throw new IllegalArgumentException("Unknown step " + Json.write(step));
             out.add(app.take());
         }
@@ -161,6 +163,16 @@ class ParityTest {
 
     static Map<String, Object> show(Map<String, Object> device, Object... knobs) {
         return obj("show", obj("device", device, "knobs", list(knobs)));
+    }
+
+    /** Another project comes to the front now. */
+    static Map<String, Object> project(String name) {
+        return obj("project", name);
+    }
+
+    /** Another project comes to the front once the next change asked for with `cmd` first waits for Bitwig. */
+    static Map<String, Object> switchDuring(String cmd, String name) {
+        return obj("switchDuring", cmd, "project", name);
     }
 
     /** A request for each value of one field, the others as given: a field's odd values, in one go. */
@@ -358,6 +370,70 @@ class ParityTest {
             filling.add(advance(10000));
         }
         runs.add(new Run("clips, pads and pitch", studio(), filling));
+
+        // Only in the project a request names (onlyIn): checked as it arrives, as a change starts and before each step
+        // of a change after a wait.
+        List<Map<String, Object>> only = new ArrayList<>();
+        // Changes are off: reads go ahead only in the project named, and a change says what's wrong first.
+        only.addAll(each(obj("id", 1, "cmd", "hello"), "onlyIn", "Night Drive", "night drive", "Night Drive ", "", "Café ☕ 𝄞", null,
+                         5, 0, -0.0, true, false, list("Night Drive"), list(), obj(), MISSING));
+        only.addAll(each(obj("id", 2, "cmd", "newtrack", "name", "Lead"), "onlyIn", "Night Drive", "Elsewhere", 5, null));
+        only.add(allowChanges());
+        for (String cmd : new String[] {"set", "insert", "action", "newtrack", "clip", "pads", "transpose", "select", "project", "device",
+                                        "actions", "hello", "explode"})
+            only.addAll(each(obj("id", cmd, "cmd", cmd), "onlyIn", "Elsewhere", 5));
+        // In the project named, a change goes ahead as it does without onlyIn.
+        for (Map<String, Object> request : List.of(
+                obj("id", 3, "cmd", "newtrack", "name", "Lead", "color", "#ff8000", "onlyIn", "Night Drive"),
+                obj("id", 4, "cmd", "insert", "track", 1, "kind", "bitwig", "device", DRUM_MACHINE, "onlyIn", "Night Drive"),
+                obj("id", 5, "cmd", "pads", "track", 1, "device", 0, "pads", list(obj("note", 36, "path", "C:\\Kit\\Kick.wav", "name", "Kick")),
+                    "onlyIn", "Night Drive"),
+                obj("id", 6, "cmd", "select", "track", 0, "onlyIn", "Night Drive"),
+                obj("id", 7, "cmd", "clip", "track", 0, "path", "C:\\MIDI\\Bass.mid", "onlyIn", "Night Drive"))) {
+            only.add(send(request));
+            only.add(advance(10000));
+        }
+        // Another project comes to the front just after a new track is asked for: that change stops, and the next one,
+        // sent after, is refused as it arrives.
+        only.add(switchDuring("newtrack", "My Song"));
+        only.add(send(obj("id", 8, "cmd", "newtrack", "name", "Two", "color", "#00ff00", "onlyIn", "Night Drive")));
+        only.add(send(obj("id", 9, "cmd", "clip", "track", 0, "path", "C:\\MIDI\\Bass 2.mid", "onlyIn", "Night Drive")));
+        only.add(advance(10000));
+        // Changes that waited their turn don't start once it's in front, but one that names no project does.
+        only.add(project("Night Drive"));
+        only.add(send(obj("id", 10, "cmd", "newtrack", "name", "Three", "onlyIn", "Night Drive")));
+        only.add(send(obj("id", 11, "cmd", "clip", "track", 0, "path", "C:\\MIDI\\Bass 3.mid", "onlyIn", "Night Drive")));
+        only.add(send(obj("id", 12, "cmd", "transpose", "track", 1, "device", 0, "semitones", 2, "onlyIn", "Night Drive")));
+        only.add(send(obj("id", 13, "cmd", "clip", "track", 0, "path", "C:\\MIDI\\Bass 4.mid")));
+        only.add(advance(10));
+        only.add(project("My Song"));
+        only.add(advance(10000));
+        // It comes to the front at each step of a new track and of filling pads, until the change is done.
+        for (int ms = 40; ms <= 340; ms += 50) {
+            only.add(project("Night Drive"));
+            only.add(send(obj("id", 14, "cmd", "newtrack", "name", "Track " + ms, "color", "#0000ff", "onlyIn", "Night Drive")));
+            only.add(advance(ms));
+            only.add(project("My Song"));
+            only.add(advance(10000));
+        }
+        for (int ms = 40; ms <= 440; ms += 50) {
+            only.add(project("Night Drive"));
+            only.add(send(obj("id", 15, "cmd", "pads", "track", 1, "device", 0,
+                              "pads", list(obj("note", 40 + ms / 50, "path", "C:\\Kit\\Tom " + ms + ".wav", "name", "Tom " + ms)), "onlyIn", "Night Drive")));
+            only.add(advance(ms));
+            only.add(project("My Song"));
+            only.add(advance(10000));
+        }
+        // Changes are turned off part way through one, with another waiting its turn.
+        only.add(project("Night Drive"));
+        only.add(send(obj("id", 16, "cmd", "newtrack", "name", "Four", "onlyIn", "Night Drive")));
+        only.add(send(obj("id", 17, "cmd", "newtrack", "name", "Five")));
+        only.add(advance(10));
+        only.add(obj("allowChanges", false));
+        only.add(advance(10000));
+        only.add(allowChanges());
+        only.add(send(obj("id", 18, "cmd", "project")));
+        runs.add(new Run("only in the project asked for", studio(), only));
 
         Map<String, Object> elsewhere = song();
         elsewhere.put("portInUse", 50123);

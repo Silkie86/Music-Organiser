@@ -106,6 +106,7 @@ class LinkTest {
         assertEquals("hello", hello.get("event"));
         assertJson(obj("link", 3, "product", "Bitwig Studio", "version", "6.1.2", "api", 25, "platform", "WINDOWS", "port", 19791,
                        "project", "Night Drive", "modified", false, "engine", true, "changes", false,
+                       "onlyIn", true,   // it honours a request's onlyIn
                        // Link version 3: which link this is.
                        "runtime", "java", "extension", "3.0"),
                    hello.get("result"));
@@ -599,6 +600,196 @@ class LinkTest {
         bitwig.clock.advance(20000);
         assertJson(list(obj("id", 1, "ok", true, "result", obj("index", 1, "name", "One"))), app.take());
         assertJson(list(obj("id", 1, "ok", true, "result", obj("index", 2, "name", "Two"))), second.take());
+    }
+
+    // ---- Only in the project asked for ----
+
+    /** The answer to a request that names one project (onlyIn) while Bitwig has another open. */
+    static String elsewhere(String open, String asked) {
+        return "Bitwig has \"" + open + "\" open, not \"" + asked + "\", so the link stopped before changing anything there.";
+    }
+
+    /** Each track as [name, colour], to see nothing was renamed or coloured. */
+    private List<List<Object>> looks() {
+        return bitwig.state.tracks.stream().map(t -> Arrays.<Object>asList(t.name, t.colour == null ? null : Arrays.toString(t.colour)))
+                                  .collect(Collectors.toList());
+    }
+
+    /** The tracks as they look after a new track was stopped part way: Bitwig's own new track, nothing renamed or coloured. */
+    private static List<List<Object>> untouched() {
+        return List.of(Arrays.asList("Bass", null), Arrays.asList("Inst 2", null), Arrays.asList("Reverb", null), Arrays.asList("Master", null));
+    }
+
+    /** A request with an id and an onlyIn added. */
+    private static Map<String, Object> with(Map<String, Object> request, Object id, Object onlyIn) {
+        Map<String, Object> m = obj("id", id);
+        m.putAll(request);
+        m.put("onlyIn", onlyIn);
+        return m;
+    }
+
+    @Test
+    @DisplayName("makes a change only in the project the request names")
+    void makesAChangeOnlyInTheProjectNamed() {
+        studio();
+        assertJson(obj("id", 1, "ok", true, "result", obj("index", 1, "name", "Lead")),
+                   app.waitFor(obj("id", 1, "cmd", "newtrack", "name", "Lead", "color", "#ff8000", "onlyIn", "Night Drive")));
+        assertEquals(true, app.ask(obj("id", 2, "cmd", "select", "track", 0, "onlyIn", "Night Drive")).get("ok"));
+        assertEquals("#ff8000", at(app.ask(obj("id", 3, "cmd", "project", "onlyIn", "Night Drive")), "result", "tracks", 1, "color"));
+        // null is the same as no onlyIn: no check.
+        assertJson(obj("slot", 0), app.waitFor(obj("id", 4, "cmd", "clip", "track", 0, "path", "C:\\MIDI\\Bass.mid", "onlyIn", null)).get("result"));
+        assertEquals("C:\\MIDI\\Bass.mid", bitwig.state.tracks.get(0).slots.get(0));
+    }
+
+    @Test
+    @DisplayName("refuses a request meant for another project, and changes nothing")
+    void refusesARequestForAnotherProject() {
+        studio();
+        for (Map<String, Object> request : List.of(
+                obj("cmd", "newtrack", "name", "Lead"),
+                obj("cmd", "insert", "track", 0, "kind", "file", "path", "C:\\Samples\\Pluck.wav"),
+                obj("cmd", "insert", "kind", "vst3", "plugin", "805ECA49563E43EA8119369F0ED6096D"),
+                obj("cmd", "clip", "track", 0, "path", "C:\\MIDI\\Bass.mid"),
+                obj("cmd", "pads", "track", 0, "device", 0, "pads", list(obj("note", 36, "path", "C:\\Kit\\Kick.wav"))),
+                obj("cmd", "transpose", "track", 0, "device", 0, "semitones", 2),
+                obj("cmd", "set", "param", "p", "value", 0.5),
+                obj("cmd", "action", "action", "Save"),
+                obj("cmd", "recorder", "do", "start"),
+                obj("cmd", "select", "track", 0, "device", 0),
+                obj("cmd", "project"))) {
+            assertJson(obj("id", 1, "ok", false, "error", elsewhere("Night Drive", "MO Live Test")), app.waitFor(with(request, 1, "MO Live Test")));
+        }
+        // The name has to be the same exactly.
+        assertEquals(elsewhere("Night Drive", "night drive"), error(app.ask(obj("id", 2, "cmd", "select", "track", 0, "onlyIn", "night drive"))));
+        // An onlyIn that isn't a project's name is refused too.
+        for (Object onlyIn : list(5, true, obj(), list("Night Drive")))
+            assertJson(obj("id", 3, "ok", false, "error", "onlyIn has to be a project's name."), app.ask(obj("id", 3, "cmd", "newtrack", "onlyIn", onlyIn)));
+        bitwig.clock.advance(10000);
+        assertEquals(List.of(), bitwig.calls);
+        assertEquals(List.of(), bitwig.cursorDevice.setCalls);
+        assertEquals(List.of(Arrays.asList("Bass", null), Arrays.asList("Reverb", null), Arrays.asList("Master", null)), looks());
+    }
+
+    @Test
+    @DisplayName("stops a new track part way when another project comes to the front, and the next change still runs")
+    void stopsANewTrackWhenAnotherProjectComesToTheFront() {
+        studio(m -> m.browserOnNewTrack = true);
+        // Just after Bitwig is asked for the track, someone brings their own project to the front.
+        bitwig.switchDuring("newtrack", "My Song");
+        assertJson(obj("id", 1, "ok", false, "error", elsewhere("My Song", "Night Drive")),
+                   app.waitFor(obj("id", 1, "cmd", "newtrack", "name", "Lead", "color", "#ff8000", "onlyIn", "Night Drive")));
+        // The tracks Bitwig shows now are My Song's (the stand-in keeps one project, so the track Bitwig had just added
+        // shows there too): none is renamed or coloured, the selection stays put, and Bitwig's browser is left alone.
+        assertEquals(untouched(), looks());
+        assertEquals(List.of(), bitwig.calls.stream().filter(c -> !c.get(0).equals("createInstrumentTrack")).collect(Collectors.toList()));
+        assertEquals("Bass", at(app.ask(obj("id", 2, "cmd", "device")), "result", "track"));
+
+        // Back in Night Drive, the next change goes ahead.
+        bitwig.projectName.v = "Night Drive";
+        assertJson(obj("index", 2, "name", "Pad"), app.waitFor(obj("id", 3, "cmd", "newtrack", "name", "Pad", "onlyIn", "Night Drive")).get("result"));
+    }
+
+    @Test
+    @DisplayName("stops a new track before naming it when another project comes to the front while the track listing settles")
+    void stopsANewTrackWhileTheListingSettles() {
+        studio(m -> m.browserOnNewTrack = true);
+        // Bitwig shows the new track, and while the extension waits for the listing to stop changing, just before it
+        // names, colours and selects the track and closes Bitwig's browser, someone brings their own project to the front.
+        bitwig.switchDuring("newtrack", () -> bitwig.state.tracks.stream().anyMatch(t -> t.name.equals("Inst 2")), "My Song");
+        assertJson(obj("id", 1, "ok", false, "error", elsewhere("My Song", "Night Drive")),
+                   app.waitFor(obj("id", 1, "cmd", "newtrack", "name", "Lead", "color", "#ff8000", "onlyIn", "Night Drive")));
+        assertEquals(untouched(), looks());
+        assertEquals(List.of("createInstrumentTrack"), bitwig.calls.stream().map(c -> c.get(0)).collect(Collectors.toList()),
+                     "nothing selected and the browser not closed");
+        assertEquals(true, bitwig.browserOpen.v);
+        assertEquals("Bass", at(app.ask(obj("id", 2, "cmd", "device")), "result", "track"));
+
+        bitwig.projectName.v = "Night Drive";
+        assertJson(obj("index", 2, "name", "Pad"), app.waitFor(obj("id", 3, "cmd", "newtrack", "name", "Pad", "onlyIn", "Night Drive")).get("result"));
+    }
+
+    @Test
+    @DisplayName("stops filling pads when another project comes to the front while the samples load")
+    void stopsFillingPadsWhenAnotherProjectComesToTheFront() {
+        studio();
+        app.waitFor(obj("id", 1, "cmd", "insert", "track", 0, "at", "start", "kind", "bitwig", "device", DRUM_MACHINE));
+        bitwig.switchDuring("pads", () -> bitwig.calls.stream().anyMatch(c -> c.get(0).equals("insertFile") && c.size() > 2
+                                                                              && String.valueOf(c.get(2)).startsWith("pad ")), "My Song");
+        List<Object> kit = list(obj("note", 36, "path", "C:\\Kit\\Kick.wav", "name", "Big Kick"), obj("note", 38, "path", "C:\\Kit\\Snare.wav", "name", "Big Snare"));
+        assertJson(obj("id", 2, "ok", false, "error", elsewhere("My Song", "Night Drive")),
+                   app.waitFor(obj("id", 2, "cmd", "pads", "track", 0, "device", 0, "pads", kit, "onlyIn", "Night Drive")));
+        // The samples were on their way when the project changed; the pads keep the names Bitwig gave them.
+        Map<Integer, FakeBitwig.PadSpec> pads = bitwig.state.tracks.get(0).devices.get(0).pads;
+        assertEquals(List.of(List.of(36, "Kick"), List.of(38, "Snare")),
+                     pads.entrySet().stream().map(e -> List.<Object>of(e.getKey(), e.getValue().name)).collect(Collectors.toList()));
+
+        bitwig.projectName.v = "Night Drive";
+        assertJson(obj("filled", list(40), "skipped", list(), "failed", list()),
+                   app.waitFor(obj("id", 3, "cmd", "pads", "track", 0, "device", 0, "pads", list(obj("note", 40, "path", "C:\\Kit\\Tom.wav", "name", "Low Tom")),
+                                   "onlyIn", "Night Drive")).get("result"));
+        assertEquals("Low Tom", pads.get(40).name);
+    }
+
+    @Test
+    @DisplayName("stops filling pads before dropping the samples when another project comes to the front while the pads catch up")
+    void stopsFillingPadsWhileThePadsCatchUp() {
+        // The pad list starts at note 36, so the extension first moves it down to note 0.
+        studio(m -> m.padScroll = 36);
+        app.waitFor(obj("id", 1, "cmd", "insert", "track", 0, "at", "start", "kind", "bitwig", "device", DRUM_MACHINE));
+        // The Drum Machine is selected and its pads start from note 0, and while the extension waits for the pads to
+        // catch up, just before it drops the samples on them, someone brings their own project to the front.
+        bitwig.switchDuring("pads", () -> Boolean.TRUE.equals(bitwig.cursorDevice.drum.v) && ((Number) bitwig.pads.scroll.v).intValue() == 0,
+                            "My Song");
+        List<Object> kit = list(obj("note", 36, "path", "C:\\Kit\\Kick.wav", "name", "Big Kick"), obj("note", 38, "path", "C:\\Kit\\Snare.wav", "name", "Big Snare"));
+        assertJson(obj("id", 2, "ok", false, "error", elsewhere("My Song", "Night Drive")),
+                   app.waitFor(obj("id", 2, "cmd", "pads", "track", 0, "device", 0, "pads", kit, "onlyIn", "Night Drive")));
+        assertEquals(List.of(), bitwig.calls.stream().filter(c -> c.size() > 2 && String.valueOf(c.get(2)).startsWith("pad "))
+                                            .collect(Collectors.toList()), "no sample dropped on a pad");
+        assertNull(bitwig.state.tracks.get(0).devices.get(0).pads);
+
+        bitwig.projectName.v = "Night Drive";
+        assertJson(obj("filled", list(40), "skipped", list(), "failed", list()),
+                   app.waitFor(obj("id", 3, "cmd", "pads", "track", 0, "device", 0, "pads", list(obj("note", 40, "path", "C:\\Kit\\Tom.wav", "name", "Low Tom")),
+                                   "onlyIn", "Night Drive")).get("result"));
+        assertEquals("Low Tom", bitwig.state.tracks.get(0).devices.get(0).pads.get(40).name);
+    }
+
+    @Test
+    @DisplayName("doesn't start a change that waited its turn once another project is in front")
+    void doesntStartAQueuedChangeInAnotherProject() {
+        studio();
+        app.send(obj("id", 1, "cmd", "newtrack", "name", "One", "onlyIn", "Night Drive"));
+        app.send(obj("id", 2, "cmd", "clip", "track", 0, "path", "C:\\MIDI\\Bass.mid", "onlyIn", "Night Drive"));
+        app.send(obj("id", 3, "cmd", "pads", "track", 0, "device", 0, "pads", list(obj("note", 36, "path", "C:\\Kit\\Kick.wav")), "onlyIn", "Night Drive"));
+        assertEquals(List.of(), app.take(), "they wait their turn");
+        bitwig.clock.advance(10);
+        bitwig.projectName.v = "My Song";
+        bitwig.clock.advance(20000);
+        List<Object> refused = new ArrayList<>();
+        for (int id = 1; id <= 3; id++) refused.add(obj("id", id, "ok", false, "error", elsewhere("My Song", "Night Drive")));
+        assertJson(refused, app.take());
+        assertEquals(List.of("createInstrumentTrack"), bitwig.calls.stream().map(c -> c.get(0)).collect(Collectors.toList()),
+                     "only what the first asked before the change");
+        assertEquals(List.of(), bitwig.state.tracks.get(0).slots);
+
+        bitwig.projectName.v = "Night Drive";
+        assertJson(obj("slot", 0), app.waitFor(obj("id", 4, "cmd", "clip", "track", 0, "path", "C:\\MIDI\\Bass.mid", "onlyIn", "Night Drive")).get("result"));
+    }
+
+    @Test
+    @DisplayName("stops a change part way when changes are turned off meanwhile")
+    void stopsAChangeWhenChangesAreTurnedOff() {
+        studio();
+        app.send(obj("id", 1, "cmd", "newtrack", "name", "Lead", "color", "#ff8000"));
+        app.send(obj("id", 2, "cmd", "newtrack", "name", "Pad"));   // waits its turn
+        bitwig.clock.advance(10);
+        bitwig.allowChanges(false);
+        bitwig.clock.advance(20000);
+        List<Map<String, Object>> replies = app.take();
+        assertJson(list(list(1, false), list(2, false)), replies.stream().map(r -> list(r.get("id"), r.get("ok"))).collect(Collectors.toList()));
+        for (Map<String, Object> reply : replies) assertMatches(CHANGES_OFF, error(reply));
+        assertEquals(untouched(), looks());
+        assertEquals(List.of("createInstrumentTrack"), bitwig.calls.stream().map(c -> c.get(0)).collect(Collectors.toList()));
     }
 
     // ---- Helpers ----
