@@ -1,6 +1,8 @@
 using System.Collections;
 using System.ComponentModel;
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
 using MusicOrganiser.ViewModels;
 using Xunit;
@@ -80,6 +82,68 @@ public class ViewModelTests : IDisposable
         Assert.Equal(["Bitwig Studio", "FL Studio"], settings.Links.Select(l => l.Daw));
         Assert.All(settings.Links, l => Assert.Matches("^(Not installed|Installed)", l.Status));
         Assert.Equal([false, true], settings.Links.Select(l => l.CanChooseFolder));
+    }
+
+    [Fact]
+    public async Task MidiWindowSendsChannelsToBitwig()
+    {
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        if (bitwig is null) return;
+        var port = BitwigLink.Port;
+        BitwigLink.Port = bitwig.Port;
+        try
+        {
+            var path = Path.Combine(_root, "Night Drive.flp");
+            var midi = new MidiPreviewViewModel(Readers.For(path)!, path, "Night Drive", Path.Combine(_root, "Exports"), 128, _db);
+            await midi.LoadAsync();
+            await midi.SendAllToBitwigCommand.ExecuteAsync(null);
+
+            // Each channel says how it came across, and the window sums up.
+            Assert.Equal("Sent 3 channels to Bitwig, each on a new track named after it. 2 didn't come across whole: each says what under its name.",
+                         midi.Message);
+            Assert.Equal([
+                ("Lead", "In Bitwig: Serum with the project's settings, and its notes as a clip."),
+                ("Kick", @"In Bitwig: its notes, as a clip. Its sample isn't at C:\Samples\Drums\Kick 01.wav."),
+                ("Bass", "In Bitwig: its notes, as a clip. 3x Osc is one of FL Studio's own plugins, which Bitwig can't load."),
+            ], midi.Channels.Select(r => (r.Name, r.Sent)));
+            using var link = await BitwigLink.ConnectAsync();
+            Assert.Equal(["Drums", "Kick", "Bass", "Lead", "Kick", "Bass", "Master"], (await link.ProjectAsync()).Tracks.Select(t => t.Name));
+        }
+        finally { BitwigLink.Port = port; }
+    }
+
+    [Fact]
+    public async Task KitGoesOnADrumMachineInBitwig()
+    {
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        if (bitwig is null) return;
+        var port = BitwigLink.Port;
+        BitwigLink.Port = bitwig.Port;
+        try
+        {
+            // The stand-in's Drum Machine ID, as if the app had found it in a Bitwig project.
+            _db.SetSetting(KitViewModel.DrumMachineKey, "d7d7d7d7-0000-4000-8000-000000000001");
+            var kit = new MainViewModel(_db, _sounds).Sounds.Kit;
+            foreach (var (slot, file) in kit.Slots.Take(4).Zip(["Kick 01.wav", "Snare 02.wav", "Clap.wav", "Hat.wav"]))
+                slot.Slot.Sound = new Sound { Path = Path.Combine(_root, file) };
+            kit.Seed = 42;
+            await kit.SendToBitwigCommand.ExecuteAsync(null);
+
+            Assert.Equal("Kit #42 is on a Drum Machine on a new track in Bitwig: Kick on C1, Snare on D1, Clap on D#1, Closed hat on F#1.",
+                         kit.Status);
+            using var link = await BitwigLink.ConnectAsync();
+            var track = (await link.ProjectAsync()).Tracks.Single(t => t.Name == "Kit #42");
+            Assert.Equal("Drum Machine", track.Devices.Single().Name);
+
+            // Until the app finds the ID in Bitwig's files, a kit goes on the Drum Machine selected in Bitwig
+            // (now the one above), leaving pads that have sounds alone.
+            _db.SetSetting(KitViewModel.DrumMachineKey, "");
+            kit.Slots[5].Slot.Sound = new Sound { Path = Path.Combine(_root, "Bongo.wav") };
+            await kit.SendToBitwigCommand.ExecuteAsync(null);
+            Assert.Equal("Kit #42 is on the Drum Machine selected in Bitwig: Percussion on C#1. The pads for Kick (C1), Snare (D1), " +
+                         "Clap (D#1), Closed hat (F#1) already had sounds, so they were left alone.", kit.Status);
+        }
+        finally { BitwigLink.Port = port; }
     }
 
     sealed class HeadlessUi : IPlatformUi

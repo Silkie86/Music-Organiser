@@ -2,15 +2,19 @@ using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Export;
+using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins;
 using MusicOrganiser.Core.Sounds;
 
 namespace MusicOrganiser.ViewModels;
 
 /// <summary>
 /// The MIDI popup: every channel (or track) with notes, what plays it, and a mini piano roll you
-/// can listen to and click along. Channels drag out as MIDI files, one or several at a time.
+/// can listen to and click along. Channels drag out as MIDI files, one or several at a time, or go
+/// straight into the project open in Bitwig.
 /// </summary>
 public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSource, IDisposable
 {
@@ -20,31 +24,37 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
     readonly string _path;
     readonly string _exportRoot;
     readonly double? _tempo;
+    readonly LibraryDb? _db;
     readonly IAudioPlayer _player = Ui.Current.CreateAudioPlayer();
     readonly IUiTimer _clock;
     readonly Dictionary<string, MidiRender.Result> _renders = [];
     IReadOnlyList<MidiChannelRow> _sounding = [];
     string? _playingKey;
+    CancellationTokenSource? _sending;
 
     public string Title { get; }
     [ObservableProperty] IReadOnlyList<MidiChannelRow> _channels = [];
     [ObservableProperty] string _summary = "Reading MIDI…";
     [ObservableProperty] string _message = "";
-    [ObservableProperty] bool _hasChannels;
+    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SendAllToBitwigCommand))] bool _hasChannels;
     [ObservableProperty] bool _isPlayingAll;
-    [ObservableProperty] bool _isPreparing;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsBusy))] bool _isPreparing;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsBusy))] bool _isSending;
+    public bool IsBusy => IsPreparing || IsSending;
 
     /// <summary>Drag handle for every channel as one multi-track MIDI file.</summary>
     public IFileDragSource AsOneFile { get; }
 
     double Tempo => _tempo is > 10 and < 1000 ? _tempo.Value : 120;
 
-    public MidiPreviewViewModel(IProjectReader reader, string path, string title, string exportRoot, double? tempo)
+    /// <param name="db">The library, for the plugins the plugin scan found, which Bitwig loads by their IDs.</param>
+    public MidiPreviewViewModel(IProjectReader reader, string path, string title, string exportRoot, double? tempo, LibraryDb? db = null)
     {
         _reader = reader;
         _path = path;
         _exportRoot = exportRoot;
         _tempo = tempo;
+        _db = db;
         Title = title;
         AsOneFile = new OneFileDrag(this);
         _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), Tick);
@@ -167,6 +177,7 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
     public void Dispose()
     {
         Stop();
+        _sending?.Cancel();
         _player.Dispose();
     }
 
@@ -194,6 +205,86 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
             Shell.Reveal(file);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Export failed: {e.Message}"; }
+    }
+
+    // ---- Sending to Bitwig ----
+
+    /// <summary>
+    /// Puts every channel into the project open in Bitwig, each on a new track named after it: its sample in a
+    /// Sampler or its plugin with the settings the project saved, and its notes as a clip.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanSendAll))]
+    Task SendAllToBitwig() => SendToBitwig(Channels);
+
+    bool CanSendAll() => HasChannels && !IsSending;
+
+    partial void OnIsSendingChanged(bool value)
+    {
+        SendAllToBitwigCommand.NotifyCanExecuteChanged();
+        foreach (var r in Channels) r.SendToBitwigCommand.NotifyCanExecuteChanged();
+    }
+
+    internal async Task SendToBitwig(IReadOnlyList<MidiChannelRow> rows)
+    {
+        if (rows.Count == 0 || IsSending) return;
+        Stop();
+        IsSending = true;
+        using var cancel = new CancellationTokenSource();
+        _sending = cancel;
+        var sent = 0;
+        try
+        {
+            Message = "Connecting to Bitwig…";
+            using var link = await BitwigLink.ConnectAsync(ct: cancel.Token);
+            var presets = await Task.Run(() =>
+            {
+                try { return _reader.ExtractPresets(_path); }
+                catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException) { return []; }
+            }, cancel.Token);
+            var settings = rows.Select(r => BitwigSend.PresetFor(r.Channel, presets)).ToList();
+            // Presets saved in Bitwig turn the project's plugin settings into Bitwig presets; only needed for plugins.
+            var templates = settings.Any(p => p is { Native: false })
+                ? await Task.Run(PresetsViewModel.BitwigTemplates, cancel.Token)
+                : new Dictionary<string, BitwigPreset.Template>();
+            var files = new BitwigSend.Files(_path, _exportRoot, _tempo, templates);
+            foreach (var (row, preset) in rows.Zip(settings))
+            {
+                Message = rows.Count == 1 ? $"Sending {row.Name} to Bitwig…" : $"Sending {sent + 1} of {rows.Count} to Bitwig: {row.Name}…";
+                var c = row.Channel;
+                IReadOnlyList<ScannedPlugin> installed = c.SamplePath.Length == 0 && c.Plugin.Length > 0 && _db is not null
+                    ? _db.ScannedPluginsNamed(c.Plugin) : [];
+                var result = await BitwigSend.ChannelAsync(link, c, preset, installed, files, cancel.Token);
+                row.Sent = Describe(result);
+                row.SentWhole = result.Problems.Count == 0;
+                sent++;
+            }
+            var rough = rows.Count(r => !r.SentWhole);
+            Message = rows.Count == 1 ? $"{rows[0].Name} is on a new track in Bitwig." +
+                                        (rough == 0 ? "" : " Not everything came across: it says what under its name.")
+                : $"Sent {rows.Count} channels to Bitwig, each on a new track named after it." +
+                  (rough == 0 ? "" : $" {rough} didn't come across whole: each says what under its name.");
+        }
+        catch (DawLinkException e) { Message = sent == 0 ? e.Message : $"Sent {sent} of {rows.Count}, then: {e.Message}"; }
+        catch (OperationCanceledException) { }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Sending to Bitwig failed: {e.Message}"; }
+        finally
+        {
+            _sending = null;
+            IsSending = false;
+        }
+    }
+
+    /// <summary>What a channel's row says once it's in Bitwig: what plays it there, and what didn't come across.</summary>
+    static string Describe(BitwigSend.SentChannel sent)
+    {
+        var what = (sent.Instrument.Length > 0, sent.Clip) switch
+        {
+            (true, true) => $"In Bitwig: {sent.Instrument}, and its notes as a clip.",
+            (true, false) => $"In Bitwig: {sent.Instrument}.",
+            (false, true) => "In Bitwig: its notes, as a clip.",
+            _ => "In Bitwig as an empty track.",
+        };
+        return string.Join(" ", [what, .. sent.Problems.Select(p => char.ToUpperInvariant(p[0]) + p[1..] + (p.EndsWith('.') ? "" : "."))]);
     }
 
     static DragCard Card(MidiChannelRow r) => new(r.Name, r.Details, Glyphs.Midi);
@@ -238,6 +329,10 @@ public sealed partial class MidiChannelRow(MidiChannel channel, long songEnd, in
     /// <summary>Where playback is, in song ticks, or -1 when this channel isn't sounding.</summary>
     [ObservableProperty] double _position = -1;
     [ObservableProperty] bool _isPlaying;
+    /// <summary>What happened when it was last sent to Bitwig, or empty.</summary>
+    [ObservableProperty] string _sent = "";
+    /// <summary>Whether everything came across the last time it was sent to Bitwig.</summary>
+    [ObservableProperty] bool _sentWhole;
 
     [RelayCommand]
     Task Play() => owner.Toggle(this);
@@ -247,4 +342,10 @@ public sealed partial class MidiChannelRow(MidiChannel channel, long songEnd, in
 
     [RelayCommand]
     void Export() => owner.Export(this);
+
+    /// <summary>Puts this channel on a new track in the project open in Bitwig.</summary>
+    [RelayCommand(CanExecute = nameof(CanSend))]
+    Task SendToBitwig() => owner.SendToBitwig([this]);
+
+    bool CanSend() => !owner.IsSending;
 }

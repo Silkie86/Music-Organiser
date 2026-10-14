@@ -4,6 +4,7 @@ using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Sounds;
@@ -420,6 +421,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Message = $"Saved {Path.GetFileName(file)}";
     }
 
+    internal LibraryDb Db => _db;
+
     internal string ExportFolder()
     {
         var f = _db.GetSetting(ProjectDetailViewModel.ExportFolderKey);
@@ -707,6 +710,91 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
         var cards = pads.Select(p => new DragCard(p.Name, p.SoundName, Glyphs.Kit)).ToList();
         Status = $"Exported to {folder}";
         return new DragPayload(files, cards, $"Kit of {files.Count} pads", Numbered: true);
+    }
+
+    // ---- Sending to Bitwig ----
+
+    /// <summary>Bitwig's ID for its Drum Machine, once the app has found it in Bitwig's own files.</summary>
+    public const string DrumMachineKey = "bitwig_drum_machine";
+    /// <summary>
+    /// Set when no Bitwig file had a Drum Machine in it, or the ID found didn't give one, so kits go on the
+    /// selected Drum Machine until the app restarts.
+    /// </summary>
+    bool _useSelected;
+
+    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SendToBitwigCommand))] bool _isSending;
+
+    /// <summary>
+    /// Puts the kit on a Drum Machine in the project open in Bitwig: a new one on a new track, each sound on the
+    /// pad General MIDI drum parts use (kick on C1, snare on D1, closed hat on F#1). Until the app has learned the
+    /// Drum Machine's ID from Bitwig's files, the kit goes on the Drum Machine selected in Bitwig instead.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanSend))]
+    async Task SendToBitwig()
+    {
+        var pads = BitwigSend.KitPads(Slots.Where(s => s.Slot.Sound is not null)
+            .Select(s => new BitwigSend.KitSound(s.Name, s.Slot.Types.FirstOrDefault() ?? "", s.Slot.Sound!.Path)));
+        if (pads.Count == 0)
+        {
+            Status = "Roll a kit first.";
+            return;
+        }
+        IsSending = true;
+        Status = "Sending the kit to Bitwig…";
+        try
+        {
+            using var link = await BitwigLink.ConnectAsync();
+            var db = parent.Db;
+            var id = await Task.Run(() => DrumMachineId(db));
+            var name = Seed > 0 ? $"Kit #{Seed}" : "Kit";
+            var kit = await BitwigSend.KitAsync(link, name, pads, id);
+            if (!kit.DrumMachine)
+            {
+                db.SetSetting(DrumMachineKey, "");
+                _useSelected = true;
+                Status = "Bitwig didn't add a Drum Machine to the new track. Add one to a track yourself, select it, and send the kit again.";
+                return;
+            }
+            Status = Describe(kit, name);
+        }
+        catch (DawLinkException e) { Status = e.Message; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Status = $"Sending to Bitwig failed: {e.Message}"; }
+        finally { IsSending = false; }
+    }
+
+    bool CanSend() => !IsSending;
+
+    /// <summary>
+    /// The Drum Machine's ID: as saved, or found in a Bitwig file that has one (a project in the library, the
+    /// template, then Bitwig presets), or null to use the Drum Machine selected in Bitwig.
+    /// </summary>
+    Guid? DrumMachineId(LibraryDb db)
+    {
+        if (Guid.TryParse(db.GetSetting(DrumMachineKey), out var known)) return known;
+        if (_useSelected) return null;
+        var used = db.ProjectsUsingPlugin(BitwigSend.DrumMachine).ToHashSet();
+        var projects = db.Projects().Where(p => used.Contains(p.Id) && p.Daw == "Bitwig Studio" && !p.FileMissing)
+                         .OrderByDescending(p => p.Modified).Select(p => p.Path);
+        var template = db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) is { Length: > 0 } t ? [t] : Array.Empty<string>();
+        if (BitwigSend.FindDeviceId(BitwigSend.DrumMachine, projects.Concat(template).Concat(BitwigSend.BitwigPresets())) is not { } id)
+        {
+            _useSelected = true;
+            return null;
+        }
+        db.SetSetting(DrumMachineKey, id.ToString());
+        return id;
+    }
+
+    /// <summary>Where the kit went and which sound is on which pad, with Bitwig's note names.</summary>
+    static string Describe(BitwigSend.SentKit kit, string name)
+    {
+        static string On(IEnumerable<BitwigPad> pads) => string.Join(", ", pads.Select(p => $"{p.Name} on {DawProject.NoteName(p.Note)}"));
+        static string Named(IEnumerable<BitwigPad> pads) => string.Join(", ", pads.Select(p => $"{p.Name} ({DawProject.NoteName(p.Note)})"));
+        var where = kit.Track is null ? "the Drum Machine selected in Bitwig" : "a Drum Machine on a new track in Bitwig";
+        var parts = new List<string> { kit.Filled.Count > 0 ? $"{name} is on {where}: {On(kit.Filled)}." : $"Nothing went on {where}." };
+        if (kit.Skipped.Count > 0) parts.Add($"The pads for {Named(kit.Skipped)} already had sounds, so they were left alone.");
+        if (kit.Failed.Count > 0) parts.Add($"Bitwig didn't load {Named(kit.Failed)}.");
+        return string.Join(" ", parts);
     }
 }
 

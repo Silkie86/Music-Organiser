@@ -10,7 +10,9 @@
         <DockPanel DockPanel.Dock="Bottom" Margin="16,8,16,16">
             <Button DockPanel.Dock="Right" Content="Export all channels" Classes="accent"
                     Command="{Binding ExportAllCommand}" IsEnabled="{Binding HasChannels}" />
-            <ProgressBar DockPanel.Dock="Left" IsIndeterminate="True" Width="60" Margin="0,0,8,0" IsVisible="{Binding IsPreparing}" />
+            <Button DockPanel.Dock="Right" Content="Send all to Bitwig" Margin="0,0,8,0" Command="{Binding SendAllToBitwigCommand}"
+                    ToolTip.Tip="Put every channel on its own new track in the project open in Bitwig: its sample or plugin, the settings saved for it, and its notes as a clip" />
+            <ProgressBar DockPanel.Dock="Left" IsIndeterminate="True" Width="60" Margin="0,0,8,0" IsVisible="{Binding IsBusy}" />
             <TextBlock Text="{Binding Message}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0"
                        Foreground="{StaticResource MutedBrush}" />
         </DockPanel>
@@ -32,7 +34,7 @@
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:MidiChannelRow">
-                    <Grid ColumnDefinitions="Auto,190,*,Auto">
+                    <Grid ColumnDefinitions="Auto,190,*,Auto" RowDefinitions="Auto,Auto">
                         <Button Command="{Binding PlayCommand}" Padding="9,5" Margin="2,0,10,0" VerticalAlignment="Center"
                                 ToolTip.Tip="Listen to this channel">
                             <Panel>
@@ -49,8 +51,15 @@
                         </StackPanel>
                         <views:NoteRoll Grid.Column="2" Height="48" Channel="{Binding Channel}" SongEnd="{Binding SongEnd}"
                                         Position="{Binding Position}" SeekCommand="{Binding SeekCommand}" />
-                        <Button Grid.Column="3" Content="Export" Margin="8,0,0,0" VerticalAlignment="Center"
-                                Command="{Binding ExportCommand}" ToolTip.Tip="Save just this channel as a MIDI file" />
+                        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                            <Button Content="Export" Command="{Binding ExportCommand}" ToolTip.Tip="Save just this channel as a MIDI file" />
+                            <Button Content="To Bitwig" Margin="6,0,0,0" Command="{Binding SendToBitwigCommand}"
+                                    ToolTip.Tip="Put this channel on a new track in the project open in Bitwig: its sample or plugin, the settings saved for it, and its notes as a clip" />
+                        </StackPanel>
+                        <!-- What happened when it went to Bitwig. -->
+                        <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding Sent}" FontSize="12"
+                                   TextWrapping="Wrap" Margin="0,4,0,2" Foreground="{StaticResource MutedBrush}"
+                                   IsVisible="{Binding Sent, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                     </Grid>
                 </DataTemplate>
             </ListBox.ItemTemplate>

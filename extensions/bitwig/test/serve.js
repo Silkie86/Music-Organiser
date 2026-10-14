@@ -12,6 +12,10 @@ const raw = process.argv.includes("--raw");
 const bitwig = startBitwig({
   project: "Night Drive",
   tempo: 124,
+  // What the app can send in: any preset file, one plugin by its ID, and a Drum Machine (the stand-in's ID).
+  presets: true,
+  plugins: { "VST3:805ECA49563E43EA8119369F0ED6096D": { name: "Serum", plugin: true, kind: "note_to_audio" } },
+  drumMachine: "d7d7d7d7-0000-4000-8000-000000000001",
   tracks: [
     { name: "Drums", type: "Group", group: true, devices: [] },
     { name: "Kick", type: "Audio", devices: [{ name: "EQ+" }] },

@@ -362,9 +362,12 @@
                         <DockPanel>
                             <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                 <Button Content="Roll a kit" Classes="accent" Command="{Binding RollCommand}" Margin="0,0,8,0" />
-                                <Button Content="Export kit" Command="{Binding ExportCommand}" Margin="0,0,12,0" />
-                                <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Classes="muted" />
+                                <Button Content="Export kit" Command="{Binding ExportCommand}" Margin="0,0,8,0" />
+                                <Button Content="Send to Bitwig" Command="{Binding SendToBitwigCommand}"
+                                        ToolTip.Tip="Put the kit on a Drum Machine in the project open in Bitwig, on a new track: kick on C1, snare on D1, closed hat on F#1, and the rest on the free pads" />
                             </WrapPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="{Binding Status}" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8"
+                                       IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <ItemsControl ItemsSource="{Binding Slots}">
                                     <ItemsControl.ItemTemplate>

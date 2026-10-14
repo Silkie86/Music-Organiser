@@ -501,7 +501,7 @@ public sealed partial class FlStudioReader : IProjectReader
             .Select(ch => new MidiChannel(names.GetValueOrDefault(ch, $"Channel {ch + 1}"), sources.GetValueOrDefault(ch, ""), flp.Ppq,
                                           notes[ch],
                                           plugins.GetValueOrDefault(ch, ""), samples.GetValueOrDefault(ch, ""),
-                                          roots.GetValueOrDefault(ch, DefaultRoot), pitches.GetValueOrDefault(ch)))
+                                          roots.GetValueOrDefault(ch, DefaultRoot), pitches.GetValueOrDefault(ch)) { Channel = ch })
             .ToList();
     }
 
@@ -652,6 +652,7 @@ public sealed partial class FlStudioReader : IProjectReader
                             presets.Add(WrapperPreset(f, state, name, plugin) with
                             {
                                 Kind = onChannel ? PluginKind.Instrument : PluginKind.Effect,
+                                Channel = onChannel ? channel : null,
                             });
                     }
                     else if (pendingInternal.Length > 0)
@@ -661,6 +662,7 @@ public sealed partial class FlStudioReader : IProjectReader
                         {
                             Kind = onChannel || NativeGenerators.Contains(pendingInternal) ? PluginKind.Instrument : PluginKind.Effect,
                             Native = true,
+                            Channel = onChannel ? channel : null,
                         });
                     }
                     pendingInternal = "";

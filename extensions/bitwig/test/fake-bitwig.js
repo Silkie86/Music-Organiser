@@ -1,6 +1,7 @@
 // A stand-in for the parts of Bitwig's controller API the Music Organiser script uses, so the script
 // can be run and checked without Bitwig. Like Bitwig, reading a value that init() didn't mark as
-// interested fails.
+// interested fails, and changes the script asks for happen a little later (on the stand-in's clock),
+// reaching the script bit by bit, as Bitwig's do.
 "use strict";
 
 const fs = require("node:fs");
@@ -8,11 +9,17 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const SCRIPT = path.join(__dirname, "..", "MusicOrganiser.control.js");
+const SAMPLER = "468bc14b-b2e7-45a1-9666-e83117fe404e";
+const NOTE_TRANSPOSE = "0815cd9e-3a31-4429-a268-dabd952a3b68";
+const AUDIO = /\.(wav|aiff?|flac|mp3|ogg)$/i;
+const PRESET = /\.(bwpreset|vstpreset|fxb|fxp)$/i;
 
+/** A value the script reads. The script's set() goes through `onSet`, when given, so it can take effect later. */
 class Value {
-  constructor(v) {
+  constructor(v, onSet) {
     this.v = v;
     this.interested = false;
+    this.onSet = onSet;
   }
   markInterested() {
     this.interested = true;
@@ -22,7 +29,8 @@ class Value {
     return this.v;
   }
   set(v) {
-    this.v = v;
+    if (this.onSet) this.onSet(v);
+    else this.v = v;
   }
 }
 
@@ -40,8 +48,8 @@ class Parameter extends Value {
 }
 
 class Colour {
-  constructor(r, g, b) {
-    Object.assign(this, { r, g, b, interested: false });
+  constructor(r, g, b, onSet) {
+    Object.assign(this, { r, g, b, interested: false, onSet });
   }
   markInterested() {
     this.interested = true;
@@ -52,6 +60,7 @@ class Colour {
   red() { this.check(); return this.r; }
   green() { this.check(); return this.g; }
   blue() { this.check(); return this.b; }
+  set(r, g, b) { this.onSet([r, g, b]); }
 }
 
 class Bank {
@@ -67,21 +76,53 @@ class Bank {
   }
 }
 
+/** Logs an insertion point's calls, and hands each to `act` (if given) to carry out. */
+function insertionPoint(calls, where, act) {
+  const point = {};
+  for (const m of ["insertVST3Device", "insertVST2Device", "insertCLAPDevice", "insertBitwigDevice", "insertFile"])
+    point[m] = (arg) => {
+      calls.push(where ? [m, arg, where] : [m, arg]);
+      if (act) act(m, arg);
+    };
+  return point;
+}
+
+/** A parameter of a specific Bitwig device: it exists while the device it looks at is that device. */
+class SpecificParam extends Parameter {
+  constructor(owner, id, param) {
+    super(0, "");
+    Object.assign(this, { owner, id, param });
+    this.present = new Value(false);
+  }
+  exists() { return this.present; }
+  setRaw(v) { this.owner.setParam(this.id, this.param, v); }
+}
+
 class Device {
-  constructor() {
+  constructor(world) {
+    this.world = world;
+    this.spec = null;
+    this.specifics = [];
     this.values = {
       exists: new Value(false), name: new Value(""), presetName: new Value(""),
       isPlugin: new Value(false), deviceType: new Value(""), isEnabled: new Value(true),
     };
   }
   load(spec) {
+    this.spec = spec || null;
     const v = this.values;
-    v.exists.set(!!spec);
-    v.name.set(spec ? spec.name : "");
-    v.presetName.set(spec ? spec.preset || "" : "");
-    v.isPlugin.set(!!(spec && spec.plugin));
-    v.deviceType.set(spec ? spec.kind || "audio_to_audio" : "");
-    v.isEnabled.set(!spec || spec.enabled !== false);
+    v.exists.v = !!spec;
+    v.name.v = spec ? spec.name : "";
+    v.presetName.v = spec ? spec.preset || "" : "";
+    v.isPlugin.v = !!(spec && spec.plugin);
+    v.deviceType.v = spec ? spec.kind || "audio_to_audio" : "";
+    v.isEnabled.v = !spec || spec.enabled !== false;
+    for (const p of this.specifics) {
+      const mine = !!spec && spec.id === p.id;
+      p.present.v = mine;
+      p.v = mine ? (spec.params || {})[p.param] || 0 : 0;
+      p.display.v = mine ? formatParam(p.param, p.v) : "";
+    }
   }
   exists() { return this.values.exists; }
   name() { return this.values.name; }
@@ -89,18 +130,41 @@ class Device {
   isPlugin() { return this.values.isPlugin; }
   deviceType() { return this.values.deviceType; }
   isEnabled() { return this.values.isEnabled; }
+  createSpecificBitwigDevice(id) {
+    const key = typeof id === "string" ? id : id.uuid;
+    return { createParameter: (param) => {
+      const p = new SpecificParam(this, key, param);
+      this.specifics.push(p);
+      return p;
+    } };
+  }
+  /** Bitwig keeps a value in the parameter's range; the Sampler's real range isn't known, so ±48 stands in. */
+  setParam(id, param, v) {
+    const spec = this.spec;
+    this.world.later(20, () => {
+      if (!spec || spec.id !== id) return;
+      spec.params = spec.params || {};
+      spec.params[param] = Math.max(-48, Math.min(48, param === "COARSE" ? Math.round(v) : v));
+    });
+  }
+}
+
+function formatParam(param, v) {
+  return param === "COARSE" ? `${v > 0 ? "+" : ""}${v} st` : `${v >= 0 ? "+" : ""}${v.toFixed(2)} st`;
 }
 
 /** The device selected in Bitwig, with Bitwig's "direct parameter" observers. */
 class CursorDevice extends Device {
-  constructor(clock) {
-    super();
-    this.clock = clock;
+  constructor(world) {
+    super(world);
+    this.clock = world.clock;
     this.params = [];
     this.observed = undefined;
     this.observedHistory = [];
     this.selected = [];
     this.setCalls = [];
+    this.where = new Value(-1);
+    this.drum = new Value(false);
   }
   addDirectParameterIdObserver(cb) { this.idObserver = cb; }
   addDirectParameterNameObserver(maxChars, cb) { this.nameObserver = cb; }
@@ -122,9 +186,12 @@ class CursorDevice extends Device {
       },
     };
   }
-  /** Selects a device in "Bitwig": its parameters arrive through the observers. */
+  /** Selects a device in "Bitwig" that isn't on any track: its parameters arrive through the observers. */
   show(spec, params) {
+    this.world.cursor.device = undefined;
     this.load(spec);
+    this.where.v = spec ? 0 : -1;
+    this.drum.v = !!(spec && spec.drum);
     this.params = params || [];
     this.idObserver(this.params.map((p) => p.id));
     for (const p of this.params) {
@@ -132,35 +199,103 @@ class CursorDevice extends Device {
       this.valueObserver(p.id, p.value);
     }
   }
-  selectDevice(device) { this.selected.push(device); }
+  position() { return this.where; }
+  hasDrumPads() { return this.drum; }
+  createDrumPadBank(n) {
+    this.world.pads = new DrumPadBank(this.world, n);
+    return this.world.pads;
+  }
+  selectDevice(device) {
+    this.selected.push(device);
+    this.world.selectDevice(device);
+  }
   setDirectParameterValueNormalized(id, value, resolution) { this.setCalls.push([id, value, resolution]); }
 }
 
+class DrumPad {
+  constructor(world, index) {
+    this.world = world;
+    this.index = index;
+    this.present = new Value(false);
+    this.title = new Value("", (name) => world.later(20, () => {
+      const pad = world.padAt(index);
+      if (pad) pad.name = name;
+    }));
+    this.chain = new Bank([]);
+    this.point = insertionPoint(world.calls, `pad ${index}`, (m, arg) => {
+      const device = world.padDevice();
+      if (m !== "insertFile" || !AUDIO.test(arg) || !device) return;
+      world.later(40, () => {
+        const note = world.padScroll + index;
+        if (note >= 128) return;
+        device.pads = device.pads || {};
+        if (!device.pads[note]) device.pads[note] = { name: baseName(arg), devices: [] };
+        device.pads[note].devices.push({ name: "Sampler", id: SAMPLER, kind: "note_to_audio", sample: arg });
+      });
+    });
+  }
+  exists() { return this.present; }
+  name() { return this.title; }
+  createDeviceBank() { return this.chain; }
+  insertionPoint() { return this.point; }
+}
+
+class DrumPadBank extends Bank {
+  constructor(world, n) {
+    super(Array.from({ length: n }, (_, i) => new DrumPad(world, i)));
+    this.indication = true;
+    this.scroll = new Value(world.padScroll, (v) => world.later(20, () => { world.padScroll = Math.max(0, Math.min(127, v)); }));
+  }
+  setIndication(on) { this.indication = on; }
+  scrollPosition() { return this.scroll; }
+}
+
 class Track {
-  constructor() {
+  constructor(world, index) {
+    this.world = world;
+    this.index = index;
+    const later = (apply) => (v) => world.later(20, () => {
+      const spec = index === null ? world.cursorSpec() : world.state.tracks[index];
+      if (spec) apply(spec, v);
+    });
     this.values = {
-      exists: new Value(false), name: new Value(""), trackType: new Value(""), isGroup: new Value(false),
-      isActivated: new Value(true), mute: new Value(false), solo: new Value(false), arm: new Value(false),
+      exists: new Value(false), name: new Value("", later((s, v) => { s.name = v; })), trackType: new Value(""),
+      isGroup: new Value(false), isActivated: new Value(true), mute: new Value(false), solo: new Value(false),
+      arm: new Value(false),
     };
-    this.colour = new Colour(0, 0, 0);
+    this.colour = new Colour(0, 0, 0, later((s, rgb) => { s.colour = rgb; }));
     this.vol = new Parameter(0.79, "0.0 dB");
     this.panning = new Parameter(0.5, "C");
     this.devices = null;
+    this.slots = null;
+    this.isCursor = null;
+    if (index === null) return;
+    const chain = (at) => insertionPoint(world.calls, `track ${index} ${at}`, (m, arg) => world.insert(index, at, m, arg));
+    this.start = chain("start");
+    this.end = chain("end");
   }
   load(spec) {
     const v = this.values;
-    v.exists.set(!!spec);
+    v.exists.v = !!spec;
+    if (this.isCursor) this.isCursor.v = this.index !== null && this.world.cursor.track === this.index;
     if (!spec) return;
-    v.name.set(spec.name);
-    v.trackType.set(spec.type || "Instrument");
-    v.isGroup.set(!!spec.group);
-    v.mute.set(!!spec.mute);
+    v.name.v = spec.name;
+    v.trackType.v = spec.type || "Instrument";
+    v.isGroup.v = !!spec.group;
+    v.mute.v = !!spec.mute;
     if (spec.colour) [this.colour.r, this.colour.g, this.colour.b] = spec.colour;
     if (spec.volume) [this.vol.v, this.vol.display.v] = spec.volume;
-    if (!this.devices) return;
-    const devices = spec.devices || [];
-    this.devices.items.forEach((d, i) => d.load(devices[i]));
-    this.devices.count.set(devices.length);
+    if (this.devices) {
+      const devices = spec.devices || [];
+      this.devices.items.forEach((d, i) => d.load(devices[i]));
+      this.devices.count.v = devices.length;
+    }
+    if (this.slots) {
+      this.slots.items.forEach((slot, s) => {
+        slot.present.v = s < this.world.state.scenes;
+        slot.content.v = !!(spec.slots || [])[s];
+      });
+    }
   }
   exists() { return this.values.exists; }
   name() { return this.values.name; }
@@ -174,12 +309,61 @@ class Track {
   volume() { return this.vol; }
   pan() { return this.panning; }
   createDeviceBank(n) {
-    this.devices = new Bank(Array.from({ length: n }, () => new Device()));
+    this.devices = new Bank(Array.from({ length: n }, () => new Device(this.world)));
     return this.devices;
+  }
+  createEqualsValue(other) {
+    if (other !== this.world.cursorTrack) throw new Error("expected a comparison with the cursor track");
+    this.isCursor = new Value(false);
+    return this.isCursor;
+  }
+  startOfDeviceChainInsertionPoint() { return this.start; }
+  endOfDeviceChainInsertionPoint() { return this.end; }
+  clipLauncherSlotBank() {
+    const world = this.world;
+    const t = this.index;
+    this.slots = new Bank(Array.from({ length: world.scenes }, (_, s) => ({
+      present: new Value(false),
+      content: new Value(false),
+      exists() { return this.present; },
+      hasContent() { return this.content; },
+      replaceInsertionPoint: () => insertionPoint(world.calls, `track ${t} slot ${s}`, (m, arg) => {
+        if (m !== "insertFile" || !/\.midi?$/i.test(arg)) return;
+        const at = world.state.tracks[t];
+        world.later(40, () => {
+          at.slots = at.slots || [];
+          at.slots[s] = { file: arg };
+          world.state.scenes = Math.max(world.state.scenes, s + 1);
+        });
+      }),
+    })));
+    return this.slots;
   }
 }
 
-/** Runs the script in a fake Bitwig with the given project, and returns handles to poke at it. */
+/** A fresh copy of a track as the stand-in project keeps it. */
+function trackState(spec) {
+  return {
+    ...spec,
+    devices: (spec.devices || []).map((d) => ({ ...d })),
+    slots: (spec.slots || []).slice(),
+  };
+}
+
+function baseName(file) {
+  return path.basename(file.replace(/\\/g, "/")).replace(/\.[^.]*$/, "");
+}
+
+/**
+ * Runs the script in a fake Bitwig with the given project, and returns handles to poke at it.
+ *
+ * Besides the project (tracks, tempo, actions...), `model` can say what Bitwig would make of things the
+ * app inserts: `files` (path -> the device a preset loads), `presets` (true to load any preset file, as
+ * the plugin its name starts with: "Serum - Lead.vstpreset"), `plugins` ("VST3:<id>", "VST2:<number>",
+ * "CLAP:<id>" -> the device), `drumMachine` (the UUID that adds a Drum Machine here), `scenes` (how many
+ * scenes the project has), `padScroll` (where the pad list starts) and `browserOnNewTrack` (whether a new
+ * track opens Bitwig's browser).
+ */
 function startBitwig(model = {}) {
   const clock = {
     now: 0,
@@ -201,6 +385,90 @@ function startBitwig(model = {}) {
   const calls = [];
   const errors = [];
   const popups = [];
+  const state = { tracks: (model.tracks || []).map(trackState), scenes: model.scenes === undefined ? 8 : model.scenes, count: null };
+  const builtIn = {
+    [SAMPLER]: { name: "Sampler", id: SAMPLER, kind: "note_to_audio", params: { TRANSPOSE: 0 } },
+    [NOTE_TRANSPOSE]: { name: "Note Transpose", id: NOTE_TRANSPOSE, kind: "note_to_note", params: { COARSE: 0 } },
+  };
+  if (model.drumMachine) builtIn[model.drumMachine] = { name: "Drum Machine", id: model.drumMachine, kind: "note_to_audio", drum: true };
+  const browser = { open: new Value(false), exists() { return this.open; }, cancel() { calls.push(["cancelBrowser"]); this.open.v = false; } };
+
+  const world = {
+    clock, calls, state,
+    scenes: 0,
+    pads: null,
+    padScroll: model.padScroll || 0,
+    /**
+     * What's selected: a track's index and the device on it (null for none, undefined for one shown by
+     * itself with show()), and the device whose pads the pad list shows.
+     */
+    cursor: { track: null, device: undefined, padsFrom: null },
+    cursorTrack: null,
+    /** Makes a change a moment from now, then tells the script, as Bitwig does. */
+    later(ms, change) {
+      clock.schedule(() => {
+        change();
+        sync();
+      }, ms);
+    },
+    cursorSpec() { return world.cursor.track === null ? null : state.tracks[world.cursor.track]; },
+    selectTrack(track) {
+      world.later(20, () => {
+        const spec = track.index === null ? null : state.tracks[track.index];
+        if (!spec || world.cursor.track === track.index) return;
+        world.cursor.track = track.index;
+        world.cursor.device = spec.devices[0] || null;
+      });
+    },
+    selectDevice(device) {
+      const owner = tracks.items.find((t) => t.devices && t.devices.items.includes(device));
+      if (!owner) return;
+      const index = owner.devices.items.indexOf(device);
+      world.later(20, () => {
+        const spec = state.tracks[owner.index] && state.tracks[owner.index].devices[index];
+        if (!spec) return;
+        world.cursor.track = owner.index;
+        world.cursor.device = spec;
+      });
+      // The pads follow a moment after the device.
+      clock.schedule(() => {
+        world.cursor.padsFrom = world.cursor.device;
+        sync();
+      }, 60);
+    },
+    padDevice() {
+      const d = world.cursor.padsFrom;
+      return d && d.drum ? d : null;
+    },
+    padAt(index) {
+      const d = world.padDevice();
+      return d && d.pads ? d.pads[world.padScroll + index] : null;
+    },
+    /** Something inserted into track `t`'s chain: what Bitwig would make of it, if anything. */
+    insert(t, at, method, arg) {
+      let spec = null;
+      if (method === "insertFile") {
+        spec = (model.files || {})[arg] || (AUDIO.test(arg) ? { ...builtIn[SAMPLER], preset: baseName(arg) } : null);
+        if (!spec && model.presets && PRESET.test(arg)) {
+          const [plugin, ...name] = baseName(arg).split(" - ");
+          spec = { name: plugin, preset: name.join(" - ") || plugin, plugin: true, kind: "note_to_audio" };
+        }
+      }
+      else if (method === "insertBitwigDevice") spec = builtIn[typeof arg === "string" ? arg : arg.uuid];
+      else {
+        const format = { insertVST3Device: "VST3", insertVST2Device: "VST2", insertCLAPDevice: "CLAP" }[method];
+        spec = (model.plugins || {})[`${format}:${arg}`];
+      }
+      if (!spec) return;
+      const track = state.tracks[t];
+      world.later(40, () => {
+        const device = JSON.parse(JSON.stringify(spec));
+        if (at === "start") track.devices.unshift(device);
+        else track.devices.push(device);
+      });
+    },
+  };
+
   const actions = (model.actions || []).map((a) => ({
     getId: () => a.id, getName: () => a.name, getMenuItemText: () => a.menu || a.name,
     getCategory: () => (a.category ? { getName: () => a.category } : null),
@@ -213,6 +481,20 @@ function startBitwig(model = {}) {
     hasActiveEngine() { return this.engine; },
     getActions: () => actions,
     getAction: (id) => actions.find((a) => a.getId() === id) || null,
+    createInstrumentTrack(position) {
+      calls.push(["createInstrumentTrack", position]);
+      // The count changes first; the track itself shows up a moment later, after the last main track.
+      world.later(30, () => { state.count = state.tracks.length + 1; });
+      world.later(60, () => {
+        state.count = null;
+        const main = state.tracks.findIndex((t) => t.type === "Effect" || t.type === "Master");
+        const at = main < 0 ? state.tracks.length : main;
+        const instruments = state.tracks.filter((t) => (t.type || "Instrument") === "Instrument").length;
+        state.tracks.splice(at, 0, trackState({ name: `Inst ${instruments + 1}`, type: "Instrument" }));
+        if (world.cursor.track !== null && world.cursor.track >= at) world.cursor.track++;
+        if (model.browserOnNewTrack) browser.open.v = true;
+      });
+    },
   };
   const project = { modified: new Value(!!model.modified), isModified() { return this.modified; } };
   const transport = {
@@ -225,19 +507,48 @@ function startBitwig(model = {}) {
     isPlaying() { return this.playing; },
     getPosition() { return this.position; },
   };
-  const insertionPoint = {};
-  for (const m of ["insertVST3Device", "insertVST2Device", "insertCLAPDevice", "insertBitwigDevice", "insertFile"])
-    insertionPoint[m] = (arg) => calls.push([m, arg]);
-  const cursorDevice = new CursorDevice(clock);
-  const cursorTrack = new Track();
-  cursorTrack.selectChannel = (track) => calls.push(["selectChannel", track]);
+  const cursorDevice = new CursorDevice(world);
+  const cursorTrack = new Track(world, null);
+  world.cursorTrack = cursorTrack;
+  cursorTrack.selectChannel = (track) => {
+    calls.push(["selectChannel", track]);
+    world.selectTrack(track);
+  };
   cursorTrack.createCursorDevice = () => cursorDevice;
-  cursorTrack.endOfDeviceChainInsertionPoint = () => insertionPoint;
+  const cursorPoint = insertionPoint(calls);
+  cursorTrack.endOfDeviceChainInsertionPoint = () => cursorPoint;
   let tracks = null;
   let changes = null;
   let connect = null;
   let defined = null;
   let api = null;
+
+  /** Tells the script how things are now, as Bitwig's observers do. */
+  function sync() {
+    tracks.count.v = state.count === null ? state.tracks.length : state.count;
+    tracks.items.forEach((t, i) => t.load(state.tracks[i]));
+    const selected = world.cursorSpec();
+    if (selected) {
+      cursorTrack.values.exists.v = true;
+      cursorTrack.values.name.v = selected.name;
+    }
+    const device = world.cursor.device;
+    if (device !== undefined) {
+      cursorDevice.load(device);
+      cursorDevice.where.v = device && selected ? selected.devices.indexOf(device) : -1;
+      cursorDevice.drum.v = !!(device && device.drum);
+    }
+    if (world.pads) {
+      const from = world.padDevice();
+      world.pads.scroll.v = world.padScroll;
+      world.pads.items.forEach((pad, i) => {
+        const p = from && from.pads ? from.pads[world.padScroll + i] : null;
+        pad.present.v = !!p;
+        pad.title.v = p ? p.name : "";
+        pad.chain.count.v = p ? p.devices.length : 0;
+      });
+    }
+  }
 
   const host = {
     defineController: (...args) => { defined = args; },
@@ -247,13 +558,15 @@ function startBitwig(model = {}) {
     createTransport: () => transport,
     createTrackBank(n, sends, scenes, flat) {
       if (!flat) throw new Error("expected a flat track list");
-      tracks = new Bank(Array.from({ length: n }, () => new Track()));
+      world.scenes = scenes;
+      tracks = new Bank(Array.from({ length: n }, (_, i) => new Track(world, i)));
       return tracks;
     },
     createCursorTrack: (id, name, sends, scenes, follow) => {
       if (!follow) throw new Error("expected a cursor that follows the selection");
       return cursorTrack;
     },
+    createPopupBrowser: () => browser,
     getPreferences: () => ({
       getBooleanSetting(label, category, initial) {
         changes = new Value(initial);
@@ -285,17 +598,23 @@ function startBitwig(model = {}) {
   context.init();
 
   // Fill in the project after init(), as Bitwig does.
-  const trackSpecs = model.tracks || [];
-  tracks.items.forEach((t, i) => t.load(trackSpecs[i]));
-  tracks.count.set(trackSpecs.length);
+  sync();
   cursorTrack.load({ name: model.selectedTrack || "", devices: [] });
-  cursorTrack.values.exists.set(model.selectedTrack !== undefined);
+  cursorTrack.values.exists.v = model.selectedTrack !== undefined;
+  const selectedIndex = state.tracks.findIndex((t) => t.name === model.selectedTrack);
+  if (selectedIndex >= 0) {
+    world.cursor.track = selectedIndex;
+    sync();
+  }
 
   return {
-    clock, calls, errors, popups, tracks, cursorTrack, cursorDevice, app, project, context,
+    clock, calls, errors, popups, tracks, cursorTrack, cursorDevice, app, project, context, state, browser,
     get api() { return api; },
     get defined() { return defined; },
+    get pads() { return world.pads; },
     allowChanges(on) { changes.set(on); },
+    /** Tells the script about changes a test made to `state` itself. */
+    refresh() { sync(); },
     /** Hands the script a connection, as Bitwig does when the app connects. */
     attach(connection) { connect(connection); },
     /** Connects as the app would, and returns a way to send requests and read what comes back. */
@@ -334,10 +653,18 @@ function startBitwig(model = {}) {
           if (fresh.length !== 1) throw new Error(`expected one reply, got ${JSON.stringify(fresh)}`);
           return fresh[0];
         },
+        /** Sends a request, lets the stand-in's clock run (for changes that wait) and returns the reply. */
+        wait(request, ms = 10000) {
+          this.send(request);
+          clock.advance(ms);
+          const fresh = this.take();
+          if (fresh.length !== 1) throw new Error(`expected one reply, got ${JSON.stringify(fresh)}`);
+          return fresh[0];
+        },
         close() { disconnect(); },
       };
     },
   };
 }
 
-module.exports = { startBitwig, SCRIPT };
+module.exports = { startBitwig, SCRIPT, SAMPLER, NOTE_TRANSPOSE };

@@ -396,6 +396,8 @@
                         <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <ui:Button Content="Roll a kit" Appearance="Primary" Icon="{ui:SymbolIcon ArrowShuffle24}" Command="{Binding RollCommand}" Margin="0,0,8,0" />
                             <ui:Button Content="Export kit" Icon="{ui:SymbolIcon FolderArrowRight24}" Command="{Binding ExportCommand}" Margin="0,0,8,0" />
+                            <ui:Button Content="Send to Bitwig" Icon="{ui:SymbolIcon Send24}" Command="{Binding SendToBitwigCommand}" Margin="0,0,8,0"
+                                       ToolTip="Put the kit on a Drum Machine in the project open in Bitwig, on a new track: kick on C1, snare on D1, closed hat on F#1, and the rest on the free pads" />
                             <Border Style="{StaticResource DragChip}" views:FileDrag.Source="{Binding}"
                                     views:FileDrag.AllOf="{Binding ElementName=KitSlots}" Margin="0,0,12,0"
                                     ToolTip="Drag the whole kit into your DAW or sampler, pads in order (exported with the options on the right)">
@@ -404,8 +406,9 @@
                                     <TextBlock Text="Drag kit" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
-                            <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Style="{StaticResource Muted}" />
                         </WrapPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding Status}" Style="{StaticResource Muted}" Margin="0,0,0,8"
+                                   Visibility="{Binding Status, Converter={StaticResource NullToVisibility}}" />
                         <ItemsControl x:Name="KitSlots" ItemsSource="{Binding Slots}" views:FileDrag.Source="{Binding}">
                             <ItemsControl.Template>
                                 <ControlTemplate TargetType="ItemsControl">

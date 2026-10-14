@@ -30,7 +30,8 @@ public sealed record BitwigTrack(int Index, string Name, string Type, bool Group
 public sealed record BitwigDevice(int Index, string Name, string Preset, string Kind, bool Plugin, bool Enabled);
 
 /// <summary>The device selected in Bitwig, with every parameter Bitwig lists for it.</summary>
-public sealed record BitwigSelection(string Track, BitwigDevice? Device, IReadOnlyList<BitwigParam> Params);
+/// <param name="DrumPads">Whether it has drum pads (a Drum Machine).</param>
+public sealed record BitwigSelection(string Track, BitwigDevice? Device, IReadOnlyList<BitwigParam> Params, bool DrumPads = false);
 
 /// <param name="Id">The ID Bitwig keeps the parameter under, e.g. "CONTENTS/PID3e8" for a plugin's parameter 1000.</param>
 /// <param name="Value">0 to 1, or null when Bitwig can't read it.</param>
@@ -38,6 +39,19 @@ public sealed record BitwigSelection(string Track, BitwigDevice? Device, IReadOn
 public sealed record BitwigParam(string Id, string Name, double? Value, string? Display);
 
 public sealed record BitwigAction(string Id, string Name, string Category, string Menu);
+
+/// <summary>What Bitwig added to a track's chain. Added is false when it ignored the plugin, device or file.</summary>
+/// <param name="Index">Where the new device is in the chain.</param>
+public sealed record BitwigInserted(bool Added, int? Index, BitwigDevice? Device);
+
+/// <summary>A sample for a Drum Machine pad: the MIDI note the pad plays on, and the name to give the pad.</summary>
+public sealed record BitwigPad(int Note, string Path, string Name = "");
+
+/// <summary>The pads (by note) that got their sample, that already had something on them, and that Bitwig didn't fill.</summary>
+public sealed record BitwigPadsFilled(IReadOnlyList<int> Filled, IReadOnlyList<int> Skipped, IReadOnlyList<int> Failed);
+
+/// <summary>A pitch Bitwig set: on which device, in semitones, and as Bitwig shows it ("-3.50 st").</summary>
+public sealed record BitwigPitch(string Device, double Value, string Display);
 
 /// <summary>
 /// Talks to Bitwig Studio through the Music Organiser controller script
@@ -47,6 +61,10 @@ public sealed record BitwigAction(string Id, string Name, string Category, strin
 public sealed class BitwigLink : IDisposable
 {
     public const int DefaultPort = 19791;
+    /// <summary>The script version this app talks to. Version 1 scripts can be read but can't take tracks, clips or kits.</summary>
+    public const int LinkVersion = 2;
+    public const string OldScript = "Bitwig has an older copy of the Music Organiser script. Install it again from Settings > DAW links " +
+                                    "(Bitwig picks up the new one by itself), then try again.";
     public const string NotRunning = "Bitwig isn't answering. Check that Bitwig Studio is open, with the Music Organiser " +
                                      "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link).";
     const int MaxMessage = 64 << 20;
@@ -66,6 +84,15 @@ public sealed class BitwigLink : IDisposable
     /// <summary>How long to wait for each answer. Reading a big plugin's parameters can take a couple of seconds.</summary>
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// How long to wait for a change that Bitwig makes and the script waits to see: a new track, a device, a
+    /// clip, a kit. The script gives up on each step after 5 seconds, and a kit has a few.
+    /// </summary>
+    public TimeSpan ChangeTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>The port the app connects on when not told one: the script's, or a stand-in Bitwig's in tests.</summary>
+    public static int Port { get; set; } = DefaultPort;
+
     /// <summary>What Bitwig said when the link connected.</summary>
     public BitwigHello Hello { get; private set; } = null!;
 
@@ -80,8 +107,9 @@ public sealed class BitwigLink : IDisposable
     }
 
     /// <summary>Connects to the Bitwig script and waits for its greeting.</summary>
-    public static async Task<BitwigLink> ConnectAsync(int port = DefaultPort, TimeSpan? timeout = null, CancellationToken ct = default)
+    public static async Task<BitwigLink> ConnectAsync(int? port = null, TimeSpan? timeout = null, CancellationToken ct = default)
     {
+        var at = port ?? Port;
         var limit = timeout ?? TimeSpan.FromSeconds(3);
         TcpClient? tcp = null;
         Exception? failure = null;
@@ -93,7 +121,7 @@ public sealed class BitwigLink : IDisposable
                 attempt = new TcpClient(address.AddressFamily) { NoDelay = true };
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(limit);
-                await attempt.ConnectAsync(address, port, cts.Token);
+                await attempt.ConnectAsync(address, at, cts.Token);
                 tcp = attempt;
                 break;
             }
@@ -116,7 +144,7 @@ public sealed class BitwigLink : IDisposable
         catch (TimeoutException)
         {
             link.Dispose();
-            throw new DawLinkException($"Something answered on port {port}, but not the Music Organiser script in Bitwig.");
+            throw new DawLinkException($"Something answered on port {at}, but not the Music Organiser script in Bitwig.");
         }
         catch
         {
@@ -160,16 +188,8 @@ public sealed class BitwigLink : IDisposable
     /// Adds a plugin at the end of the selected track's chain, by the ID the plugin scanner reads: a VST3
     /// class ID, a CLAP ID or a VST2 ID (four letters or a number). Bitwig ignores IDs it doesn't know.
     /// </summary>
-    public Task InsertPluginAsync(string format, string id, CancellationToken ct = default)
-    {
-        JsonNode plugin = format.ToUpperInvariant() switch
-        {
-            "VST3" or "CLAP" => id,
-            "VST2" => Vst2Id(id) ?? throw new ArgumentException($"Not a VST2 plugin ID: {id}", nameof(id)),
-            _ => throw new ArgumentException($"Bitwig can't insert {format} plugins by ID.", nameof(format)),
-        };
-        return RequestAsync(new() { ["cmd"] = "insert", ["kind"] = format.ToLowerInvariant(), ["plugin"] = plugin }, ct);
-    }
+    public Task InsertPluginAsync(string format, string id, CancellationToken ct = default) =>
+        RequestAsync(new() { ["cmd"] = "insert", ["kind"] = format.ToLowerInvariant(), ["plugin"] = PluginId(format, id) }, ct);
 
     /// <summary>Adds a VST2 plugin by its ID as a number (the scanner's uniqueId), which is never ambiguous.</summary>
     public Task InsertVst2Async(int uniqueId, CancellationToken ct = default) =>
@@ -186,6 +206,85 @@ public sealed class BitwigLink : IDisposable
     /// <summary>Runs one of Bitwig's actions by its ID, e.g. to save the project.</summary>
     public Task RunActionAsync(string id, CancellationToken ct = default) =>
         RequestAsync(new() { ["cmd"] = "action", ["action"] = id }, ct);
+
+    // Sending things in (link version 2): these wait for Bitwig to make each change.
+
+    /// <summary>
+    /// Adds an instrument track after the project's last track (before the effect tracks), names it and selects
+    /// it. Returns its index in <see cref="BitwigProject.Tracks"/>, which the methods below take.
+    /// </summary>
+    /// <param name="color">"#rrggbb", or null for Bitwig's choice.</param>
+    public async Task<int> NewTrackAsync(string name, string? color = null, CancellationToken ct = default) =>
+        Parse<NewTrack>(await ChangeAsync(new() { ["cmd"] = "newtrack", ["name"] = name, ["color"] = color }, ct)).Index;
+
+    /// <summary>
+    /// Adds a file to a track's chain, as if it were dropped there: a preset (.bwpreset, .vstpreset...) loads its
+    /// device, and a sample loads into a new Sampler.
+    /// </summary>
+    public Task<BitwigInserted> InsertFileAsync(int track, string path, bool atStart = false, CancellationToken ct = default) =>
+        InsertOnAsync(track, atStart, new() { ["kind"] = "file", ["path"] = path }, ct);
+
+    /// <summary>Adds one of Bitwig's own devices to a track's chain, by the ID Bitwig saves it under.</summary>
+    public Task<BitwigInserted> InsertBitwigDeviceAsync(int track, Guid id, bool atStart = false, CancellationToken ct = default) =>
+        InsertOnAsync(track, atStart, new() { ["kind"] = "bitwig", ["device"] = id.ToString() }, ct);
+
+    /// <summary>Adds a plugin to a track's chain by the ID the plugin scanner reads (see <see cref="InsertPluginAsync(string, string, CancellationToken)"/>).</summary>
+    public Task<BitwigInserted> InsertPluginAsync(int track, string format, string id, bool atStart = false, CancellationToken ct = default) =>
+        InsertOnAsync(track, atStart, new() { ["kind"] = format.ToLowerInvariant(), ["plugin"] = PluginId(format, id) }, ct);
+
+    /// <summary>Adds a VST2 plugin to a track's chain by its ID as a number.</summary>
+    public Task<BitwigInserted> InsertVst2Async(int track, int uniqueId, bool atStart = false, CancellationToken ct = default) =>
+        InsertOnAsync(track, atStart, new() { ["kind"] = "vst2", ["plugin"] = uniqueId }, ct);
+
+    /// <summary>Puts a MIDI file in a track's clip launcher slot (the first empty one unless given), and returns the slot.</summary>
+    public async Task<int> AddClipAsync(int track, string path, int? slot = null, CancellationToken ct = default) =>
+        Parse<AddedClip>(await ChangeAsync(new() { ["cmd"] = "clip", ["track"] = track, ["path"] = path, ["slot"] = slot }, ct)).Slot;
+
+    /// <summary>
+    /// Puts samples on a Drum Machine's pads, leaving pads that already have something on them alone. The Drum
+    /// Machine is <paramref name="device"/> on <paramref name="track"/> (which this selects), or else the device
+    /// selected in Bitwig.
+    /// </summary>
+    public async Task<BitwigPadsFilled> FillPadsAsync(IReadOnlyList<BitwigPad> pads, int? track = null, int? device = null,
+                                                      CancellationToken ct = default)
+    {
+        var list = new JsonArray();
+        foreach (var p in pads) list.Add(new JsonObject { ["note"] = p.Note, ["path"] = p.Path, ["name"] = p.Name.Length > 0 ? p.Name : null });
+        return Parse<BitwigPadsFilled>(await ChangeAsync(
+            new() { ["cmd"] = "pads", ["track"] = track, ["device"] = device, ["pads"] = list }, ct));
+    }
+
+    /// <summary>
+    /// Sets the pitch of a Sampler (its Transpose, which can be a fraction of a semitone) or a Note Transpose (whole
+    /// semitones), one of the first two devices on a track. Returns what Bitwig set, which a device's range may limit.
+    /// </summary>
+    public async Task<BitwigPitch> TransposeAsync(int track, int device, double semitones, CancellationToken ct = default) =>
+        Parse<BitwigPitch>(await ChangeAsync(
+            new() { ["cmd"] = "transpose", ["track"] = track, ["device"] = device, ["semitones"] = semitones }, ct));
+
+    async Task<BitwigInserted> InsertOnAsync(int track, bool atStart, JsonObject request, CancellationToken ct)
+    {
+        request["cmd"] = "insert";
+        request["track"] = track;
+        if (atStart) request["at"] = "start";
+        return Parse<BitwigInserted>(await ChangeAsync(request, ct));
+    }
+
+    Task<JsonElement> ChangeAsync(JsonObject request, CancellationToken ct)
+    {
+        if (Hello.Link < LinkVersion) throw new DawLinkException(OldScript);
+        return RequestAsync(request, ct, ChangeTimeout);
+    }
+
+    static JsonNode PluginId(string format, string id) => format.ToUpperInvariant() switch
+    {
+        "VST3" or "CLAP" => id,
+        "VST2" => Vst2Id(id) ?? throw new ArgumentException($"Not a VST2 plugin ID: {id}", nameof(id)),
+        _ => throw new ArgumentException($"Bitwig can't insert {format} plugins by ID.", nameof(format)),
+    };
+
+    sealed record NewTrack(int Index, string Name);
+    sealed record AddedClip(int Slot);
 
     /// <summary>
     /// A VST2 ID as a number, read the way the plugin scanner writes it: four printable characters are the
@@ -211,7 +310,7 @@ public sealed class BitwigLink : IDisposable
         }
     }
 
-    async Task<JsonElement> RequestAsync(JsonObject request, CancellationToken ct)
+    async Task<JsonElement> RequestAsync(JsonObject request, CancellationToken ct, TimeSpan? timeout = null)
     {
         var id = Interlocked.Increment(ref _lastId);
         request["id"] = id;
@@ -221,7 +320,7 @@ public sealed class BitwigLink : IDisposable
         {
             if (!_open) throw new DawLinkException("The connection to Bitwig is closed.");
             await SendAsync(Encoding.UTF8.GetBytes(request.ToJsonString()), ct);
-            return await answer.Task.WaitAsync(Timeout, ct);
+            return await answer.Task.WaitAsync(timeout ?? Timeout, ct);
         }
         catch (TimeoutException)
         {

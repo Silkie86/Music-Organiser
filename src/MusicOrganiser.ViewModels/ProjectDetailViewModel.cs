@@ -40,7 +40,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public string OlderSavesHeader => $"Older saves ({Item.OlderSaves.Count})";
     public bool CanExtractMidi => Detail?.CanExtractMidi == true && !Item.FileMissing;
     public bool CanExtractPresets => Detail?.CanExtractPresets == true && !Item.FileMissing;
-    public string MidiNote => "See each channel's notes and what plays them, and export them as MIDI" +
+    public string MidiNote => "See each channel's notes and what plays them, export them as MIDI, or send them to Bitwig" +
                               (Item.Daw == "Studio One" ? " (experimental for Studio One)" : "");
     public string PluginHeader => $"Plugins ({Plugins.Count}{(Item.MissingPlugins > 0 ? $", {Item.MissingPlugins} missing" : "")})";
     public string SampleHeader => $"Samples ({Samples.Count}{(Item.MissingSamples > 0 ? $", {Item.MissingSamples} missing" : "")})";
@@ -149,7 +149,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     void ShowMidi()
     {
         if (Readers.For(Item.Path) is not { } reader) return;
-        Ui.Current.ShowMidi(new MidiPreviewViewModel(reader, Item.Path, Item.Name, ExportRoot, Item.Tempo));
+        Ui.Current.ShowMidi(new MidiPreviewViewModel(reader, Item.Path, Item.Name, ExportRoot, Item.Tempo, _db));
     }
 
     public bool IsFlStudio => Item.Daw == "FL Studio";

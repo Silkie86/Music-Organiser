@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const acorn = require("acorn");
-const { startBitwig, SCRIPT } = require("./fake-bitwig");
+const { startBitwig, SCRIPT, SAMPLER, NOTE_TRANSPOSE } = require("./fake-bitwig");
 
 const CHANGES_OFF = /Changes are turned off/;
 
@@ -51,7 +51,7 @@ test("says hello when the app connects", () => {
   const [hello] = app.take();
   assert.equal(hello.event, "hello");
   assert.deepEqual(hello.result, {
-    link: 1, product: "Bitwig Studio", version: "6.1.2", api: 25, platform: "WINDOWS", port: 19791,
+    link: 2, product: "Bitwig Studio", version: "6.1.2", api: 25, platform: "WINDOWS", port: 19791,
     project: "Night Drive", modified: false, engine: true, changes: false,
   });
   assert.deepEqual(app.ask({ id: 1, cmd: "hello" }), { id: 1, ok: true, result: hello.result });
@@ -131,7 +131,7 @@ test("says when no device is selected", () => {
   const bitwig = startBitwig(song);
   const app = bitwig.connect();
   app.take();
-  assert.deepEqual(app.ask({ id: 3, cmd: "device" }).result, { track: "Bass", device: null, params: [] });
+  assert.deepEqual(app.ask({ id: 3, cmd: "device" }).result, { track: "Bass", device: null, params: [], drumPads: false });
 });
 
 test("forgets parameters of the previous device", () => {
@@ -154,6 +154,10 @@ test("changes nothing until changes are allowed in Bitwig", () => {
     { id: 1, cmd: "set", param: "p", value: 0.5 },
     { id: 2, cmd: "insert", kind: "vst3", plugin: "x" },
     { id: 3, cmd: "action", action: "Save" },
+    { id: 4, cmd: "newtrack", name: "Lead" },
+    { id: 5, cmd: "clip", track: 1, path: "C:\\Lead.mid" },
+    { id: 6, cmd: "pads", pads: [{ note: 36, path: "C:\\Kick.wav" }] },
+    { id: 7, cmd: "transpose", track: 1, device: 0, semitones: 2 },
   ]) {
     const reply = app.ask(request);
     assert.equal(reply.ok, false);
@@ -257,4 +261,176 @@ test("stops sending to an app that disconnected", () => {
   bitwig.clock.advance(100);
   assert.deepEqual(app.take(), []);
   assert.deepEqual(bitwig.errors, []);
+});
+
+// ---- Sending things into Bitwig ----
+
+const DRUM_MACHINE = "d7d7d7d7-0000-4000-8000-000000000001";   // the stand-in's; Bitwig's own isn't known
+
+/** A project with effect tracks and changes allowed, ready for the app to send things into. */
+function studio(extra = {}) {
+  const bitwig = startBitwig({
+    project: "Night Drive",
+    java: true,
+    drumMachine: DRUM_MACHINE,
+    selectedTrack: "Bass",
+    tracks: [
+      { name: "Bass", type: "Instrument", devices: [{ name: "Serum", plugin: true, kind: "note_to_audio" }] },
+      { name: "Reverb", type: "Effect", devices: [{ name: "Reverb" }] },
+      { name: "Master", type: "Master", devices: [] },
+    ],
+    files: { "C:\\Presets\\Lead.bwpreset": { name: "Serum", preset: "Lead", plugin: true, kind: "note_to_audio" } },
+    plugins: { "VST3:805ECA49563E43EA8119369F0ED6096D": { name: "Serum", plugin: true, kind: "note_to_audio" } },
+    ...extra,
+  });
+  bitwig.allowChanges(true);
+  const app = bitwig.connect();
+  app.take();
+  return { bitwig, app };
+}
+
+test("adds a named, coloured instrument track after the main tracks and selects it", () => {
+  const { bitwig, app } = studio();
+  const reply = app.wait({ id: 1, cmd: "newtrack", name: "Lead", color: "#ff8000" });
+  assert.deepEqual(reply, { id: 1, ok: true, result: { index: 1, name: "Lead" } });
+  const tracks = app.ask({ id: 2, cmd: "project" }).result.tracks;
+  assert.deepEqual(tracks.map((t) => [t.name, t.type]), [["Bass", "Instrument"], ["Lead", "Instrument"], ["Reverb", "Effect"], ["Master", "Master"]]);
+  assert.equal(tracks[1].color, "#ff8000");
+  assert.deepEqual(bitwig.calls.filter((c) => c[0] === "selectChannel").map((c) => c[1]), [bitwig.tracks.getItemAt(1)]);
+  assert.equal(app.ask({ id: 3, cmd: "device" }).result.track, "Lead");
+
+  // Without a name, the track keeps Bitwig's.
+  assert.deepEqual(app.wait({ id: 4, cmd: "newtrack" }).result, { index: 2, name: "Inst 3" });
+  assert.match(app.ask({ id: 5, cmd: "newtrack", color: "orange" }).error, /#rrggbb/);
+  assert.match(app.ask({ id: 6, cmd: "newtrack", name: 7 }).error, /name is text/);
+});
+
+test("closes Bitwig's browser if a new track opens it", () => {
+  const { bitwig, app } = studio({ browserOnNewTrack: true });
+  assert.equal(app.wait({ id: 1, cmd: "newtrack", name: "Lead" }).ok, true);
+  assert.deepEqual(bitwig.calls.filter((c) => c[0] === "cancelBrowser"), [["cancelBrowser"]]);
+});
+
+test("says when Bitwig adds a track where the app can't see it", () => {
+  const full = Array.from({ length: 128 }, (_, i) => ({ name: `Track ${i + 1}`, devices: [] }));
+  const { app } = studio({ tracks: full });
+  assert.match(app.wait({ id: 1, cmd: "newtrack", name: "Lead" }).error, /past the first 128 tracks/);
+});
+
+test("inserts onto a given track and says whether Bitwig added a device", () => {
+  const { bitwig, app } = studio();
+  const sample = app.wait({ id: 1, cmd: "insert", track: 0, kind: "file", path: "C:\\Samples\\Pluck.wav" });
+  assert.deepEqual(sample.result, {
+    added: true, index: 1,
+    device: { index: 1, name: "Sampler", preset: "Pluck", kind: "note_to_audio", plugin: false, enabled: true },
+  });
+  const first = app.wait({ id: 2, cmd: "insert", track: 0, at: "start", kind: "bitwig", device: NOTE_TRANSPOSE });
+  assert.deepEqual([first.result.added, first.result.index, first.result.device.name], [true, 0, "Note Transpose"]);
+  assert.deepEqual(bitwig.state.tracks[0].devices.map((d) => d.name), ["Note Transpose", "Serum", "Sampler"]);
+
+  const preset = app.wait({ id: 3, cmd: "insert", track: 2, kind: "file", path: "C:\\Presets\\Lead.bwpreset" });
+  assert.deepEqual([preset.result.device.name, preset.result.device.preset], ["Serum", "Lead"]);
+
+  // Bitwig ignores what it can't use, so after waiting the answer says nothing was added.
+  const unknown = app.wait({ id: 4, cmd: "insert", track: 0, kind: "vst3", plugin: "00000000000000000000000000000000" });
+  assert.deepEqual(unknown.result, { added: false, index: null, device: null });
+  assert.match(app.ask({ id: 5, cmd: "insert", track: 9, kind: "file", path: "x.wav" }).error, /no track 9/);
+  assert.match(app.ask({ id: 6, cmd: "insert", track: 0, at: "middle", kind: "file", path: "x.wav" }).error, /"start" or the "end"/);
+  assert.match(app.ask({ id: 7, cmd: "insert", at: "start", kind: "file", path: "x.wav" }).error, /Say which track/);
+});
+
+test("sets the pitch of a Sampler or a Note Transpose at the start of a track", () => {
+  const { bitwig, app } = studio();
+  app.wait({ id: 1, cmd: "newtrack", name: "Pluck" });
+  app.wait({ id: 2, cmd: "insert", track: 1, kind: "file", path: "C:\\Samples\\Pluck.wav" });
+  assert.deepEqual(app.wait({ id: 3, cmd: "transpose", track: 1, device: 0, semitones: -3.5 }).result,
+                   { device: "Sampler", value: -3.5, display: "-3.50 st" });
+  assert.equal(bitwig.state.tracks[1].devices[0].params.TRANSPOSE, -3.5);
+
+  app.wait({ id: 4, cmd: "insert", track: 0, at: "start", kind: "bitwig", device: NOTE_TRANSPOSE });
+  assert.deepEqual(app.wait({ id: 5, cmd: "transpose", track: 0, device: 0, semitones: 7 }).result,
+                   { device: "Note Transpose", value: 7, display: "+7 st" });
+  // What Bitwig ends up with comes back, whatever was asked for.
+  assert.equal(app.wait({ id: 6, cmd: "transpose", track: 0, device: 0, semitones: 60 }).result.value, 48);
+
+  assert.match(app.wait({ id: 7, cmd: "transpose", track: 0, device: 1, semitones: 2 }).error, /neither a Sampler nor a Note Transpose/);
+  assert.match(app.ask({ id: 8, cmd: "transpose", track: 0, device: 2, semitones: 2 }).error, /first 2 devices/);
+  assert.match(app.ask({ id: 9, cmd: "transpose", track: 1, device: 0, semitones: "up" }).error, /how many semitones/);
+});
+
+test("puts a MIDI file in the track's first empty clip slot", () => {
+  const { bitwig, app } = studio({ scenes: 2 });
+  bitwig.state.tracks[0].slots = [{ file: "old.mid" }];
+  bitwig.refresh();
+  assert.deepEqual(app.wait({ id: 1, cmd: "clip", track: 0, path: "C:\\MIDI\\Bass.mid" }).result, { slot: 1 });
+  // With the project's scenes full, the next clip starts a new scene.
+  assert.deepEqual(app.wait({ id: 2, cmd: "clip", track: 0, path: "C:\\MIDI\\Bass 2.mid" }).result, { slot: 2 });
+  assert.deepEqual(bitwig.state.tracks[0].slots.map((c) => c.file), ["old.mid", "C:\\MIDI\\Bass.mid", "C:\\MIDI\\Bass 2.mid"]);
+  assert.deepEqual(bitwig.calls.filter((c) => /slot/.test(c[2] || "")).map((c) => c[2]), ["track 0 slot 1", "track 0 slot 2"]);
+
+  assert.match(app.ask({ id: 3, cmd: "clip", track: 0, slot: 0, path: "C:\\MIDI\\x.mid" }).error, /already has a clip/);
+  assert.match(app.ask({ id: 4, cmd: "clip", track: 0, slot: 8, path: "C:\\MIDI\\x.mid" }).error, /first 8 clip slots/);
+  assert.match(app.wait({ id: 5, cmd: "clip", track: 0, path: "C:\\notes.txt" }).error, /didn't make a clip/);
+  bitwig.state.scenes = 8;
+  bitwig.state.tracks[0].slots = Array.from({ length: 8 }, () => ({ file: "x.mid" }));
+  bitwig.refresh();
+  assert.match(app.ask({ id: 6, cmd: "clip", track: 0, path: "C:\\MIDI\\y.mid" }).error, /clip slots are full/);
+});
+
+test("fills a new Drum Machine's empty pads, from the lowest note", () => {
+  const { bitwig, app } = studio({ padScroll: 36 });
+  app.wait({ id: 1, cmd: "newtrack", name: "Kit #7" });
+  const machine = app.wait({ id: 2, cmd: "insert", track: 1, kind: "bitwig", device: DRUM_MACHINE });
+  assert.equal(machine.result.device.name, "Drum Machine");
+
+  const pads = [
+    { note: 36, path: "C:\\Kit\\Kick.wav", name: "Kick" },
+    { note: 38, path: "C:\\Kit\\Snare.wav", name: "Snare" },
+    { note: 42, path: "C:\\Kit\\notes.txt", name: "Closed hat" },
+  ];
+  const reply = app.wait({ id: 3, cmd: "pads", track: 1, device: 0, pads });
+  assert.deepEqual(reply.result, { filled: [36, 38], skipped: [], failed: [42] });
+  assert.equal(bitwig.pads.indication, false, "doesn't light up the pads in Bitwig");
+  const filled = bitwig.state.tracks[1].devices[0].pads;
+  assert.deepEqual(Object.keys(filled), ["36", "38"]);
+  assert.deepEqual([filled[36].name, filled[36].devices[0].sample], ["Kick", "C:\\Kit\\Kick.wav"]);
+
+  // A pad with something on it is left alone.
+  const again = app.wait({ id: 4, cmd: "pads", track: 1, device: 0, pads: [{ note: 36, path: "C:\\Kit\\Kick 2.wav" }, { note: 37, path: "C:\\Kit\\Rim.wav" }] });
+  assert.deepEqual(again.result, { filled: [37], skipped: [36], failed: [] });
+  assert.equal(filled[36].devices.length, 1);
+});
+
+test("fills the selected Drum Machine, and says when the selected device isn't one", () => {
+  const { bitwig, app } = studio();
+  app.wait({ id: 1, cmd: "insert", track: 0, at: "start", kind: "bitwig", device: DRUM_MACHINE });
+  app.wait({ id: 2, cmd: "select", track: 0, device: 0 });
+  assert.equal(app.wait({ id: 3, cmd: "device" }).result.drumPads, true);
+  assert.deepEqual(app.wait({ id: 4, cmd: "pads", pads: [{ note: 40, path: "C:\\Kit\\Snare 2.wav" }] }).result,
+                   { filled: [40], skipped: [], failed: [] });
+  assert.deepEqual(Object.keys(bitwig.state.tracks[0].devices[0].pads), ["40"]);
+
+  app.wait({ id: 5, cmd: "select", track: 0, device: 1 });
+  assert.match(app.wait({ id: 6, cmd: "pads", pads: [{ note: 41, path: "C:\\Kit\\Tom.wav" }] }).error, /selected device isn't a Drum Machine/);
+  assert.match(app.wait({ id: 7, cmd: "pads", track: 0, device: 1, pads: [{ note: 41, path: "C:\\Kit\\Tom.wav" }] }).error,
+               /Device 1 on track 0 isn't a Drum Machine/);
+  for (const [pads, error] of [
+    [[], /No pads given/],
+    [[{ note: 128, path: "a.wav" }], /from 0 to 127/],
+    [[{ note: 36, path: "a.wav" }, { note: 36, path: "b.wav" }], /Two samples for note 36/],
+    [[{ note: 36 }], /No sample given/],
+  ])
+    assert.match(app.ask({ id: 8, cmd: "pads", pads }).error, error);
+});
+
+test("makes changes one at a time, in the order asked", () => {
+  const { bitwig, app } = studio();
+  app.send({ id: 1, cmd: "newtrack", name: "One" });
+  app.send({ id: 2, cmd: "newtrack", name: "Two" });
+  app.send({ id: 3, cmd: "project" });   // reading doesn't wait for changes
+  const [project] = app.take();
+  assert.equal(project.id, 3);
+  bitwig.clock.advance(20000);
+  const replies = app.take();
+  assert.deepEqual(replies.map((r) => [r.id, r.result.index, r.result.name]), [[1, 1, "One"], [2, 2, "Two"]]);
 });

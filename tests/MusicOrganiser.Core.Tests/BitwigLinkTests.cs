@@ -159,7 +159,7 @@ public class BitwigLinkTests
     }
 
     /// <summary>extensions/bitwig/test/serve.js, run with Node.js.</summary>
-    sealed class ScriptServer : IDisposable
+    internal sealed class ScriptServer : IDisposable
     {
         readonly Process _node;
         public int Port { get; }
