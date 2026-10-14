@@ -195,6 +195,32 @@ public class MoProbeLiveTests
     }
 
     [Fact]
+    public async Task AStatusBeingReplacedJustThenIsntTheProbeStopping()
+    {
+        var dir = Fixtures.TempDir();
+        await using var probe = new FakeProbe(dir);
+        var file = Assert.Single(MoProbeLive.Running(dir)).File;
+
+        // As on Windows, where the status can't be opened for the instant the probe swaps in a new one.
+        File.Delete(file);
+        var pong = await MoProbeLive.SendAsync(Instance, ProbeCommand.Ping(), dir);
+        Assert.Equal("pong", pong.Event);
+
+        File.Delete(file);
+        Assert.Equal(Instance, (await MoProbeLive.ReadRunningAsync(file, Instance)).Instance);
+
+        // Listed too, though the moment it was looked at its status couldn't be read.
+        File.WriteAllText(file, "{");
+        Assert.Equal(Instance, Assert.Single(MoProbeLive.Running(dir)).Instance);
+
+        var none = Path.Combine(dir, "live", "0000000000000000.json");
+        var clock = Stopwatch.StartNew();
+        var gone = await Assert.ThrowsAsync<DawLinkException>(() => MoProbeLive.ReadRunningAsync(none, "0000000000000000"));
+        Assert.Equal(MoProbeLive.NotRunning("0000000000000000"), gone.Message);
+        Assert.InRange(clock.Elapsed.TotalSeconds, 0.4, 3);
+    }
+
+    [Fact]
     public async Task SaysWhenAProbeIsntRunningOrDoesntAnswer()
     {
         var dir = Fixtures.TempDir();
