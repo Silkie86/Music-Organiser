@@ -359,7 +359,7 @@ public class LearningTests
     [Fact]
     public void Organiser_learns_types_suggests_and_builds_kits()
     {
-        var root = Directory.CreateTempSubdirectory().FullName;
+        var root = Fixtures.SoundsDir();
         var samples = Path.Combine(root, "Samples");
         Directory.CreateDirectory(Path.Combine(samples, "Pack A", "Kicks"));
         Directory.CreateDirectory(Path.Combine(samples, "Pack A", "Hats"));
@@ -426,7 +426,7 @@ public class LearningTests
     [Fact]
     public void Unplugged_sample_drive_keeps_its_sounds()
     {
-        var root = Directory.CreateTempSubdirectory().FullName;
+        var root = Fixtures.SoundsDir();
         var drive = Path.Combine(root, "External");
         var local = Path.Combine(root, "Local");
         Directory.CreateDirectory(drive);
@@ -456,7 +456,7 @@ public class LearningTests
     {
         // The Avalonia app reads only WAV and AIFF; on Windows it shares the sound library with the WPF app,
         // which also reads MP3 and the rest. Its scan mustn't forget those.
-        var root = Directory.CreateTempSubdirectory().FullName;
+        var root = Fixtures.SoundsDir();
         var samples = Path.Combine(root, "Samples");
         Directory.CreateDirectory(samples);
         Synth.Write(Path.Combine(samples, "Hat.wav"), Synth.Hat(2));
@@ -480,7 +480,7 @@ public class LearningTests
     [Fact]
     public void Learns_your_own_tags()
     {
-        var root = Directory.CreateTempSubdirectory().FullName;
+        var root = Fixtures.SoundsDir();
         var samples = Path.Combine(root, "Samples");
         Directory.CreateDirectory(samples);
         for (var i = 0; i < 10; i++)
