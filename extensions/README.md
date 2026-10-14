@@ -23,8 +23,9 @@ the app doesn't find on this computer, makes FL Studio's MIDI port the way chose
 each link and says what's left to do. Each DAW also has its own **Install** button. The scripts ship next
 to the app (`Extensions` in its folder), and installing copies them where the DAW looks:
 
-- **Bitwig**: `Controller Scripts\Music Organiser` in Bitwig's user folder, normally `Documents\Bitwig Studio`
-  (on Linux, `~/Bitwig Studio`). A PC can have more than one (Windows may keep Documents in OneDrive), and
+- **Bitwig**: the extension, `MusicOrganiser.bwextension`, into `Extensions` in Bitwig's user folder, normally
+  `Documents\Bitwig Studio` (on Linux, `~/Bitwig Studio`), taking out the script if it's there; or, when the app
+  was built without a JDK and so has no extension, the script, into `Controller Scripts\Music Organiser`. A PC can have more than one (Windows may keep Documents in OneDrive), and
   only Bitwig knows which it uses (Settings → Locations), so the app installs into every Bitwig Studio
   folder it finds in a Documents folder until **Choose folder…** points it at one; then only that one.
   Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.

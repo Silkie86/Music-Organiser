@@ -65,12 +65,13 @@ public class DawScriptTests
         var script = Path.Combine(user, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js");
         Assert.True(File.Exists(script));
 
-        // Without a built extension next to the app, Settings keeps installing the script.
-        Assert.Equal("MusicOrganiser.control.js", DawScripts.BitwigLink([user]).FileName);
-
+        // Without a built extension (the app was built without a JDK), Settings keeps installing the script.
         var built = Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension");
+        Assert.Equal("MusicOrganiser.control.js", DawScripts.BitwigLink([user], built).FileName);
+
         File.WriteAllBytes(built, [0x50, 0x4B, 3, 4, 1, 2, 3]);
-        var extension = DawScripts.BitwigExtension([user], built);
+        var extension = DawScripts.BitwigLink([user], built);
+        Assert.Equal("MusicOrganiser.bwextension", extension.FileName);
         Assert.True(extension.Binary);
         Assert.Equal(ScriptState.NotInstalled, extension.State);
         extension.Install();

@@ -8,9 +8,6 @@ publish/
 native/build/
 native/out/
 
-# The Bitwig extension's Maven build folder
-extensions/bitwig-java/target/
-
 # Node.js packages for the extension checks
 node_modules/
 __pycache__/

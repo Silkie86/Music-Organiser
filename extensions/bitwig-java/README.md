@@ -26,7 +26,10 @@ when the extension runs, so nothing of Bitwig's goes in the extension or the rep
 
 ## Installing
 
-Copy `MusicOrganiser.bwextension` into `Extensions` in Bitwig's user folder (normally
+The app does it: building the app also builds the extension when a JDK is installed (on Windows,
+`winget install Microsoft.OpenJDK.21`; see `MusicOrganiser.BitwigExtension.targets`), and then **Install** in
+Settings → DAW links → Bitwig Studio puts the extension in place of the script. By hand: copy
+`MusicOrganiser.bwextension` into `Extensions` in Bitwig's user folder (normally
 `Documents\Bitwig Studio\Extensions`; on Linux `~/Bitwig Studio/Extensions`), and take
 `Controller Scripts\Music Organiser` out of that folder if the JavaScript script is there. Bitwig picks the
 extension up by itself (restart Bitwig if it doesn't). If the controller isn't added yet: Settings → Controllers → Add controller →

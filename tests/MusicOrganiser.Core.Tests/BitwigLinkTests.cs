@@ -34,6 +34,9 @@ public class BitwigLinkTests
     {
         using var link = await BitwigLink.ConnectAsync(port);
         Assert.Equal(("Bitwig Studio", "6.1.2", "Night Drive", true), (link.Hello.Product, link.Hello.Version, link.Hello.Project, link.Hello.Changes));
+        // The stand-in runs the script; the extension says so in its hello.
+        Assert.Equal("the Music Organiser script", link.Hello.Answering);
+        Assert.Equal("the Music Organiser extension 3.0", (link.Hello with { Link = 3, Runtime = "java", Extension = "3.0" }).Answering);
 
         var project = await link.ProjectAsync();
         Assert.Equal(["Drums", "Kick", "Bass", "Master"], project.Tracks.Select(t => t.Name));

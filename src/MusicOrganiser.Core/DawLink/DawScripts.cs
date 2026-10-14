@@ -113,8 +113,9 @@ public static class DawScripts
     }
 
     /// <summary>Bitwig's link: the extension when the build made it (it needs a JDK), else the script.</summary>
-    public static DawScript BitwigLink(IReadOnlyList<string>? userFolders = null) =>
-        BitwigExtension(userFolders) is var extension && File.Exists(extension.Source) ? extension : Bitwig(userFolders);
+    /// <param name="extension">The built extension (the one next to the app unless given).</param>
+    public static DawScript BitwigLink(IReadOnlyList<string>? userFolders = null, string? extension = null) =>
+        BitwigExtension(userFolders, extension) is var built && File.Exists(built.Source) ? built : Bitwig(userFolders);
 
     /// <summary>Bitwig's usual user folder: Documents\Bitwig Studio (on Linux, ~/Bitwig Studio).</summary>
     public static string BitwigUserFolder => BitwigPreset.DefaultFolders()[0];

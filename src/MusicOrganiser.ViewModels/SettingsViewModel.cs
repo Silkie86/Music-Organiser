@@ -130,7 +130,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     static async Task<string> CheckBitwig(DawWatch watch)
     {
         using var link = await watch.ConnectBitwigAsync();
-        return $"Connected to {link.Hello.Product} {link.Hello.Version}, with “{link.Hello.Project}” open.";
+        return $"Connected to {link.Hello.Product} {link.Hello.Version} through {link.Hello.Answering}, with “{link.Hello.Project}” open.";
     }
 
     static async Task<string> CheckFlStudio(DawWatch watch)

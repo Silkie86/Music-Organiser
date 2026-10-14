@@ -30,7 +30,7 @@
   <Target Name="MoBuildBitwigExtension" Condition="'$(MoBuildBitwig)' == 'true' and '$(DesignTimeBuild)' != 'true'"
           Inputs="@(MoBitwigSource)" Outputs="$(MoBitwigBuilt)">
     <Message Importance="high" Text="Building the Bitwig extension (extensions/bitwig-java). This only happens when it isn't built yet or its code changed." />
-    <!-- The tests run in CI; here the build only packages it. Its output goes to target/build.log for when it fails. -->
+    <!-- The tests run in CI; here the build only packages it. Its output goes to build.log, for when it fails. -->
     <Exec Condition="'$(OS)' == 'Windows_NT'" WorkingDirectory="$(MoBitwigDir)"
           Command="&quot;$(MoBitwigDir)mvnw.cmd&quot; -B -q -DskipTests package &gt; build.log 2&gt;&amp;1"
           IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">

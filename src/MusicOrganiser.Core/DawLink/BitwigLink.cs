@@ -11,8 +11,15 @@ namespace MusicOrganiser.Core.DawLink;
 
 /// <summary>What the Bitwig script says when the app connects.</summary>
 /// <param name="Changes">Whether "Let the app make changes" is on in the controller's settings in Bitwig.</param>
+/// <param name="Runtime">"java" when the Bitwig extension answers (link version 3); null for the script.</param>
+/// <param name="Extension">The extension's version, when it's the extension.</param>
 public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
-                                 string Project, bool Modified, bool Engine, bool Changes);
+                                 string Project, bool Modified, bool Engine, bool Changes, string? Runtime = null,
+                                 string? Extension = null)
+{
+    /// <summary>What answers in Bitwig: the extension or the script.</summary>
+    public string Answering => Runtime == "java" ? $"the Music Organiser extension {Extension}".TrimEnd() : "the Music Organiser script";
+}
 
 /// <summary>The project open in Bitwig, as Bitwig shows it.</summary>
 /// <param name="TrackCount">Every track in the project; <see cref="Tracks"/> holds the first 128.</param>
