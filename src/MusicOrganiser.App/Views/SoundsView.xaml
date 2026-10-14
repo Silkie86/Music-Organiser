@@ -113,7 +113,7 @@
                             </ui:TextBox>
                         </DockPanel>
                         <Border Style="{StaticResource Card}" Padding="8,10,8,8">
-                        <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
+                        <DataGrid x:Name="SoundGrid" ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
                                   IsReadOnly="True" SelectionMode="Extended" views:FileDrag.Source="{Binding}"
                                   EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizingWhenGrouping="True">
                             <DataGrid.InputBindings>

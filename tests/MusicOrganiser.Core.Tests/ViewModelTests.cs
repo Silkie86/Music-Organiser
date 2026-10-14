@@ -150,6 +150,39 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void AutoplayPlaysTheSoundYouPickButNotOnesTheListSelectsByItself()
+    {
+        var played = new List<string>();
+        var player = new Recorder(played);
+        ((HeadlessUi)Ui.Current).Player = () => player;
+        var lab = new MainViewModel(_db, _sounds).Sounds;
+        var (kick, snare) = (new Sound { Path = "kick.wav" }, new Sound { Path = "snare.wav" });
+
+        lab.Selected = kick;
+        lab.PlayPicked();
+        Assert.Empty(played);   // off by default
+
+        lab.AutoPlay = true;
+        lab.Selected = snare;   // as when a sort or filter moves the selection
+        Assert.Empty(played);
+        lab.PlayPicked();       // a click on the row, or arrowing onto it
+        lab.PlayPicked();       // clicking it again while it plays doesn't restart it
+        Assert.Equal(["snare.wav"], played);
+        Assert.Equal(0, snare.Plays);   // a preview isn't a play Rediscover learns from...
+
+        lab.AuditionCommand.Execute(null);   // ...until you double-click it, which keeps it going
+        lab.AuditionCommand.Execute(null);
+        Assert.Equal(["snare.wav"], played);
+        Assert.Equal(1, snare.Plays);
+
+        player.Stop();          // it finished; clicking the selected row plays it again
+        lab.PlayPicked();
+        Assert.Equal(["snare.wav", "snare.wav"], played);
+
+        Assert.True(new MainViewModel(_db, _sounds).Sounds.AutoPlay);
+    }
+
+    [Fact]
     public async Task KitGoesOnADrumMachineInBitwig()
     {
         using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
@@ -431,7 +464,8 @@ public class ViewModelTests : IDisposable
     {
         public IItemsView CreateView(IList items) => new ListView(items);
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
-        public IAudioPlayer CreateAudioPlayer() => new Silence();
+        public Func<IAudioPlayer> Player { get; set; } = () => new Silence();
+        public IAudioPlayer CreateAudioPlayer() => Player();
         public Task<string?> PickFolder(string title) => Task.FromResult<string?>(null);
         public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult<string?>(null);
         public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);
@@ -457,6 +491,18 @@ public class ViewModelTests : IDisposable
     {
         public void Start() { }
         public void Stop() { }
+    }
+
+    sealed class Recorder(List<string> played) : IAudioPlayer
+    {
+        public event Action? Stopped { add { } remove { } }
+        public string? Playing { get; private set; }
+        public double? Position => Playing is null ? null : 0;
+        public void Seek(double seconds) { }
+        public void Play(string path, double startSeconds = 0) { played.Add(path); Playing = path; }
+        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) { played.Add(key); Playing = key; }
+        public void Stop() => Playing = null;
+        public void Dispose() { }
     }
 
     sealed class Silence : IAudioPlayer

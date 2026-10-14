@@ -99,7 +99,7 @@
                             </TextBox>
                         </DockPanel>
                         <Border Classes="card" Padding="8,10,8,8">
-                            <DataGrid ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" SelectedItem="{Binding Selected}"
+                            <DataGrid x:Name="SoundGrid" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" SelectedItem="{Binding Selected}"
                                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" CanUserSortColumns="True"
                                       GridLinesVisibility="None" Background="Transparent"
                                       DoubleTapped="OnGridDoubleTapped" KeyDown="OnGridKeyDown">
