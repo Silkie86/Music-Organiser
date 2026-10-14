@@ -463,6 +463,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     internal LibraryDb Db => _db;
+    internal string DataFolder => _main.DataFolder;
 
     internal string ExportFolder()
     {
@@ -816,7 +817,7 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
         var used = db.ProjectsUsingPlugin(BitwigSend.DrumMachine).ToHashSet();
         var projects = db.Projects().Where(p => used.Contains(p.Id) && p.Daw == "Bitwig Studio" && !p.FileMissing)
                          .OrderByDescending(p => p.Modified).Select(p => p.Path);
-        var template = db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) is { Length: > 0 } t ? [t] : Array.Empty<string>();
+        var template = BitwigTemplateStore.Find(db, parent.DataFolder) is { } t ? [t] : Array.Empty<string>();
         if (BitwigSend.FindDeviceId(BitwigSend.DrumMachine, projects.Concat(template).Concat(BitwigSend.BitwigPresets())) is not { } id)
         {
             _useSelected = true;

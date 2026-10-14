@@ -163,16 +163,17 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     [RelayCommand]
     async Task OpenInBitwig()
     {
-        var template = _db.GetSetting(BitwigTemplateKey);
-        if (template is not { Length: > 0 } || !File.Exists(template))
+        var template = BitwigTemplateStore.Find(_db, _main.DataFolder);
+        if (template is null)
         {
-            template = await SettingsViewModel.PickBitwigTemplate(_db);
+            (template, var problem) = await SettingsViewModel.PickBitwigTemplate(_db, _main.DataFolder);
             if (template is null)
             {
-                Message = "Converting needs a Bitwig template: a project saved in Bitwig with a Sampler track, a VST3 synth " +
-                          "with a Note Transpose before it and a clip of notes, and a VST2 synth. Pick it in Settings or try again.";
+                Message = problem ?? "Converting needs a Bitwig template: a project saved in Bitwig with a Sampler track, a VST3 synth " +
+                                     "with a Note Transpose before it and a clip of notes, and a VST2 synth. Pick it in Settings or try again.";
                 return;
             }
+            _main.Settings.TemplateChanged(template);
         }
         Message = "Converting for Bitwig…";
         try
@@ -180,10 +181,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             var path = Item.Path;
             var untilNextNote = _db.GetSetting(StepsUntilNextNoteKey) == "1";
             var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote));
-            if (_db.GetSetting(DawExeKey("Bitwig Studio")) is { Length: > 0 } exe && File.Exists(exe))
-                Shell.OpenWith(file, exe);
-            else
-                Shell.Open(file);
+            OpenWithBitwig(_db, file);
             Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig." +
                       (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
                                                  $"{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more, listed in the notes saved next to it" : "")}.");
@@ -193,6 +191,15 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             Message = $"{e.Message}. Pick another template in Settings.";
         }
         catch (Exception e) { Message = $"Converting for Bitwig failed: {e.Message}"; }
+    }
+
+    /// <summary>Opens a Bitwig project with the Bitwig chosen in Settings, or whatever opens .bwproject files.</summary>
+    internal static void OpenWithBitwig(LibraryDb db, string file)
+    {
+        if (db.GetSetting(DawExeKey("Bitwig Studio")) is { Length: > 0 } exe && File.Exists(exe))
+            Shell.OpenWith(file, exe);
+        else
+            Shell.Open(file);
     }
 
     /// <summary>Converts an FL Studio project to a DAWproject file Bitwig can open, and shows it.</summary>

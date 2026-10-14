@@ -120,11 +120,17 @@
                 <StackPanel>
                     <TextBlock Text="FL Studio to Bitwig" Classes="sectionHeader" />
                     <TextBlock Classes="cardIntro"
-                               Text="Open in Bitwig builds each converted song from a project you saved in Bitwig: one with a Sampler track, a VST3 synth with a Note Transpose before it and a clip of notes, and a VST2 synth. Its tracks are copied and filled in, and its own tracks are left out." />
+                               Text="Open in Bitwig builds each converted song from a template: a project saved in Bitwig with a Sampler track, a VST3 synth with a Note Transpose before it and a clip of notes, and a VST2 synth. Its tracks are copied and filled in, and its own tracks are left out. The app keeps its own copy of the template, so it always knows where it is. To change it, use Edit in Bitwig and save." />
                     <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Choose…" Command="{Binding ChooseBitwigTemplateCommand}" Margin="6,0,0,0" />
+                        <Button DockPanel.Dock="Right" Content="Replace…" Command="{Binding ChooseBitwigTemplateCommand}" Margin="6,0,0,0"
+                                ToolTip.Tip="Copy another Bitwig project in as the template" />
+                        <Button DockPanel.Dock="Right" Content="Show file" Command="{Binding ShowBitwigTemplateCommand}" Margin="6,0,0,0" />
+                        <Button DockPanel.Dock="Right" Content="Edit in Bitwig" Command="{Binding EditBitwigTemplateCommand}" Margin="6,0,0,0"
+                                ToolTip.Tip="Open the app's copy of the template in Bitwig, to change it and save" />
                         <TextBox Text="{Binding BitwigTemplate, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Asked for the first time you convert" />
                     </DockPanel>
+                    <TextBlock Text="{Binding BitwigTemplateNote}" Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                               IsVisible="{Binding BitwigTemplateNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                     <CheckBox Content="Steps play until the next note or the end of the clip" IsChecked="{Binding StepsUntilNextNote}" Margin="0,12,0,0" />
                     <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
                                Text="Notes from FL's step sequencer have no length. Plugin tracks always play them until the next note on the same key or the end of the clip. On a Sampler they also stop where the sample ends, unless this is ticked." />

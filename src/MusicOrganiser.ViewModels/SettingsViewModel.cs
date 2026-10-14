@@ -31,7 +31,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] string? _selectedSampleFolder;
     [ObservableProperty] string? _selectedPluginFolder;
     [ObservableProperty] string _exportFolder = "";
-    [ObservableProperty] string _bitwigTemplate = "";
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(EditBitwigTemplateCommand), nameof(ShowBitwigTemplateCommand))]
+    string _bitwigTemplate = "";
+    /// <summary>What's wrong with the template, where it came from, or what Edit in Bitwig did.</summary>
+    [ObservableProperty] string _bitwigTemplateNote = "";
     [ObservableProperty] bool _stepsUntilNextNote;
     [ObservableProperty] string _sampleIndexText = "";
     public string LibraryLocation => _db.FilePath;
@@ -61,7 +65,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         foreach (var r in Readers.All)
             Daws.Add(new DawSetting(db, r.Daw, string.Join(", ", r.Extensions)));
         _exportFolder = db.GetSetting(ProjectDetailViewModel.ExportFolderKey) ?? "";
-        _bitwigTemplate = db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) ?? "";
+        _bitwigTemplate = BitwigTemplateStore.Find(db, main.DataFolder) ?? "";
+        _bitwigTemplateNote = TemplateNote(_bitwigTemplate);
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
         UpdateSampleIndexText();
         var watch = main.Live.Watch;
@@ -254,13 +259,41 @@ public sealed partial class SettingsViewModel : ObservableObject
         _db.SetList(Scanner.PluginFoldersKey, PluginFolders);
     }
 
-    /// <summary>Asks for the Bitwig project FL Studio projects are converted with, and remembers it.</summary>
-    public static async Task<string?> PickBitwigTemplate(LibraryDb db)
+    /// <summary>
+    /// Asks for the Bitwig project FL Studio projects are converted with and keeps a copy of it (see
+    /// <see cref="BitwigTemplateStore"/>). Returns the app's copy, or why that project can't be the template.
+    /// </summary>
+    public static async Task<(string? Template, string? Problem)> PickBitwigTemplate(LibraryDb db, string dataFolder)
     {
         if (await Ui.Current.PickFile("Choose the Bitwig template (Sampler track, VST3 synth with Note Transpose and a clip, VST2 synth)",
-                "Bitwig projects", "bwproject") is not { } file) return null;
-        db.SetSetting(ProjectDetailViewModel.BitwigTemplateKey, file);
-        return file;
+                "Bitwig projects", "bwproject") is not { } file) return (null, null);
+        try
+        {
+            var raw = await File.ReadAllBytesAsync(file);
+            if (Core.Export.BitwigProject.TemplateProblem(raw) is { } problem) return (null, $"{Path.GetFileNameWithoutExtension(file)} can't be the template. {problem}.");
+            return (BitwigTemplateStore.Keep(db, file, dataFolder), null);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return (null, $"Couldn't copy {Path.GetFileName(file)}: {e.Message}");
+        }
+    }
+
+    /// <summary>Under the template's path: what's missing from it, or where it was copied from.</summary>
+    string TemplateNote(string template)
+    {
+        if (template.Length == 0) return "";
+        try
+        {
+            if (Core.Export.BitwigProject.TemplateProblem(File.ReadAllBytes(template)) is { } problem)
+                return problem.Contains(" needs ", StringComparison.Ordinal)
+                    ? $"{problem}. Add it with Edit in Bitwig, or Replace the template with another project."
+                    : $"{problem}. Replace it with another project.";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Couldn't read it: {e.Message}"; }
+        return _db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) is { Length: > 0 } from && from != template
+            ? $"The app's own copy, taken from {from}."
+            : "";
     }
 
     partial void OnStepsUntilNextNoteChanged(bool value) =>
@@ -269,8 +302,37 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     async Task ChooseBitwigTemplate()
     {
-        if (await PickBitwigTemplate(_db) is { } f) BitwigTemplate = f;
+        var (template, problem) = await PickBitwigTemplate(_db, _main.DataFolder);
+        if (template is not null) TemplateChanged(template);
+        else if (problem is not null) BitwigTemplateNote = problem;
     }
+
+    /// <summary>Shows the template the app now uses (after Replace, or the first conversion asked for one).</summary>
+    public void TemplateChanged(string template)
+    {
+        BitwigTemplate = template;
+        BitwigTemplateNote = TemplateNote(template);
+    }
+
+    /// <summary>Looks at the template again when Settings is shown, since it may have been changed in Bitwig.</summary>
+    public void RefreshTemplate() => TemplateChanged(BitwigTemplateStore.Find(_db, _main.DataFolder) ?? "");
+
+    bool HasBitwigTemplate() => File.Exists(BitwigTemplate);
+
+    /// <summary>Opens the app's copy of the template in Bitwig, to change it there and save.</summary>
+    [RelayCommand(CanExecute = nameof(HasBitwigTemplate))]
+    void EditBitwigTemplate()
+    {
+        try
+        {
+            ProjectDetailViewModel.OpenWithBitwig(_db, BitwigTemplate);
+            BitwigTemplateNote = "Opening the template in Bitwig. Change it there and save it, and the next conversion uses it.";
+        }
+        catch (Exception e) { BitwigTemplateNote = $"Couldn't open it in Bitwig: {e.Message}"; }
+    }
+
+    [RelayCommand(CanExecute = nameof(HasBitwigTemplate))]
+    void ShowBitwigTemplate() => Shell.Reveal(BitwigTemplate);
 
     [RelayCommand]
     async Task ChooseExportFolder()

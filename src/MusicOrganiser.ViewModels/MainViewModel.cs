@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.LiveTests;
 using MusicOrganiser.Core.Plugins;
 using MusicOrganiser.Core.Sounds;
 
@@ -16,6 +17,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>The native plugin scanner (mo-scan), if it was built.</summary>
     public PluginScanner PluginScanner { get; }
+
+    /// <summary>The app's data folder (tests use one of their own), where it also keeps its Bitwig template.</summary>
+    public string DataFolder { get; }
 
     public ProjectsViewModel Projects { get; }
     public PluginsViewModel Plugins { get; }
@@ -43,6 +47,7 @@ public sealed partial class MainViewModel : ObservableObject
                          string? dataFolder = null)
     {
         _db = db;
+        DataFolder = dataFolder ?? LiveReports.DataFolder;
         PluginScanner = pluginScanner ?? new();
         _scanner = new Scanner(db);
         Live = new LiveDawsViewModel(db, this, watch ?? new DawWatch());
@@ -80,6 +85,7 @@ public sealed partial class MainViewModel : ObservableObject
             Settings.Probe.StopLive();
             return;
         }
+        Settings.RefreshTemplate();
         _ = Settings.RefreshLinksAsync();
         _ = Settings.Probe.RefreshAsync();
         Settings.Probe.StartLive();

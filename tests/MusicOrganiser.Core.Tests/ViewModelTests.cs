@@ -52,6 +52,66 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsKeepsTheAppsOwnCopyOfTheBitwigTemplate()
+    {
+        var data = Path.Combine(_root, "data");
+        var picked = Path.Combine(Directory.CreateDirectory(Path.Combine(_root, "Bitwig", "template")).FullName, "template.bwproject");
+        File.WriteAllBytes(picked, Fixtures.BitwigTemplate());
+
+        // A template picked before the app kept its own is copied in the first time the app looks.
+        _db.SetSetting(ProjectDetailViewModel.BitwigTemplateKey, picked);
+        var settings = Main().Settings;
+        var kept = BitwigTemplateStore.PathIn(data);
+        Assert.Equal(kept, settings.BitwigTemplate);
+        Assert.Equal(File.ReadAllBytes(picked), File.ReadAllBytes(kept));
+        Assert.Equal($"The app's own copy, taken from {picked}.", settings.BitwigTemplateNote);
+        Assert.True(settings.EditBitwigTemplateCommand.CanExecute(null));
+
+        // Moving or deleting the original doesn't lose it.
+        File.Delete(picked);
+        Assert.Equal(kept, Main().Settings.BitwigTemplate);
+
+        // Replace refuses a project that can't be the template, and keeps the one it has.
+        var ui = (HeadlessUi)Ui.Current;
+        var before = File.ReadAllBytes(kept);
+        var song = Directory.GetFiles(_root, "*.bwproject", SearchOption.AllDirectories).First(f => f != kept);
+        ui.PickedFile = song;
+        await settings.ChooseBitwigTemplateCommand.ExecuteAsync(null);
+        Assert.Equal(kept, settings.BitwigTemplate);
+        Assert.StartsWith($"{Path.GetFileNameWithoutExtension(song)} can't be the template. The Bitwig template", settings.BitwigTemplateNote);
+        Assert.Equal(before, File.ReadAllBytes(kept));
+
+        // ...and copies in one that can, over the app's copy.
+        var other = Path.Combine(_root, "other.bwproject");
+        File.WriteAllBytes(other, Fixtures.BitwigTemplate(automationLane: false));
+        ui.PickedFile = other;
+        await settings.ChooseBitwigTemplateCommand.ExecuteAsync(null);
+        Assert.Equal(kept, settings.BitwigTemplate);
+        Assert.Equal(File.ReadAllBytes(other), File.ReadAllBytes(kept));
+        Assert.Equal(other, _db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey));
+        Assert.False(File.Exists(kept + ".part"));
+    }
+
+    [Fact]
+    public void SettingsSaysWhatTheBitwigTemplateIsMissing()
+    {
+        var data = Path.Combine(_root, "data");
+        Directory.CreateDirectory(Path.GetDirectoryName(BitwigTemplateStore.PathIn(data))!);
+        File.Copy(Directory.GetFiles(_root, "*.bwproject", SearchOption.AllDirectories).First(), BitwigTemplateStore.PathIn(data));
+        var settings = Main().Settings;
+        Assert.Matches("^The Bitwig template needs .+\\. Add it with Edit in Bitwig, or Replace the template with another project\\.$",
+                       settings.BitwigTemplateNote);
+
+        // With no template yet, there's nothing to open or show.
+        File.Delete(BitwigTemplateStore.PathIn(data));
+        settings.RefreshTemplate();
+        Assert.Equal("", settings.BitwigTemplate);
+        Assert.Equal("", settings.BitwigTemplateNote);
+        Assert.False(settings.EditBitwigTemplateCommand.CanExecute(null));
+        Assert.False(settings.ShowBitwigTemplateCommand.CanExecute(null));
+    }
+
+    [Fact]
     public void ProjectsListFiltersByDaw()
     {
         _db.AddRoot(_root);
@@ -646,7 +706,8 @@ public class ViewModelTests : IDisposable
         public Func<IAudioPlayer> Player { get; set; } = () => new Silence();
         public IAudioPlayer CreateAudioPlayer() => Player();
         public Task<string?> PickFolder(string title) => Task.FromResult<string?>(null);
-        public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult<string?>(null);
+        public string? PickedFile { get; set; }
+        public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult(PickedFile);
         public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);
         public Task<string?> PickSaveFile(string fileName, string filterName, string extension, string? initialFolder) => Task.FromResult<string?>(null);
         public Task<bool> Confirm(string message, string title) => Task.FromResult(false);
