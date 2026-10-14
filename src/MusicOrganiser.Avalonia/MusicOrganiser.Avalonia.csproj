@@ -34,7 +34,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The app's font, Space Grotesk and Space Mono (SIL Open Font License, in the OFL files), built in so it looks the same on every system. -->
+    <!-- The app's fonts, built in so they look the same on every system: IBM Plex, and Space Grotesk and Space Mono for the Retro theme (all SIL Open Font License, in the OFL files). -->
     <AvaloniaResource Include="Assets\Fonts\*.ttf" />
   </ItemGroup>
 

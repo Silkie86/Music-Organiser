@@ -12,7 +12,7 @@ static class Program
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            .WithInterFont()   // for characters Space Grotesk doesn't have
+            .WithInterFont()   // for characters IBM Plex doesn't have
             .With(new FontManagerOptions { DefaultFamilyName = App.TextFont })
             .LogToTrace();
 }

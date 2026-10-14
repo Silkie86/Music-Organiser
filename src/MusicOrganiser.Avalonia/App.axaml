@@ -30,10 +30,11 @@
         <local:DawChipText x:Key="DawChipText" />
         <local:NotAny x:Key="NotAny" />
         <local:PercentAngle x:Key="PercentAngle" />
-        <!-- The font, a little retro: Space Grotesk for words, Space Mono for titles and for numbers that should line up. -->
-        <FontFamily x:Key="ContentControlThemeFontFamily">avares://MusicOrganiser.Avalonia/Assets/Fonts#Space Grotesk</FontFamily>
-        <FontFamily x:Key="NumberFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#Space Mono</FontFamily>
-        <FontFamily x:Key="TitleFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#Space Mono</FontFamily>
+        <!-- The font (Solomon's pick): IBM Plex Sans for words and titles, Plex Mono for numbers that should line up, like a
+             hardware display. Space Grotesk and Space Mono are built in too, for the Retro theme. -->
+        <FontFamily x:Key="ContentControlThemeFontFamily">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans</FontFamily>
+        <FontFamily x:Key="NumberFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Mono</FontFamily>
+        <FontFamily x:Key="TitleFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans</FontFamily>
         <local:BoolToStar x:Key="BoolToStar" />
         <local:Stars x:Key="Stars" />
         <local:NonZero x:Key="NonZero" />
