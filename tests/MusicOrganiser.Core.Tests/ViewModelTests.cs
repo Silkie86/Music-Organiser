@@ -85,7 +85,8 @@ public class ViewModelTests : IDisposable
         await settings.RefreshLinksAsync();
         Assert.Equal(["Bitwig Studio", "FL Studio"], settings.Links.Select(l => l.Daw));
         Assert.All(settings.Links, l => Assert.Matches("^(Not installed|Installed)", l.Status));
-        Assert.Equal([false, true], settings.Links.Select(l => l.CanChooseFolder));
+        // Both DAWs can have more than one user folder, so either can be pointed at the right one.
+        Assert.Equal([true, true], settings.Links.Select(l => l.CanChooseFolder));
         // Only FL Studio needs a MIDI port, and only Windows offers two ways to make it.
         Assert.Equal([false, OperatingSystem.IsWindows()], settings.Links.Select(l => l.CanChoosePort));
         Assert.Null(settings.Links[0].MidiPort);

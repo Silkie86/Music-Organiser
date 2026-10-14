@@ -14,6 +14,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 {
     /// <summary>FL Studio's user data folder, when it was chosen here.</summary>
     public const string FlUserDataKey = "fl_user_data";
+    public const string BitwigUserKey = "bitwig_user_folder";
 
     readonly LibraryDb _db;
     readonly MainViewModel _main;
@@ -61,8 +62,13 @@ public sealed partial class SettingsViewModel : ObservableObject
         var watch = main.Live.Watch;
         Links =
         [
-            new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.Bitwig(), () => CheckBitwig(watch),
-                               found: () => Directory.Exists(DawScripts.BitwigUserFolder)),
+            new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.Bitwig(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey))),
+                               () => CheckBitwig(watch), new FolderChoice(
+                "Choose Bitwig's user folder (the Bitwig Studio folder Bitwig shows in Settings > Locations)",
+                DawScripts.IsBitwigUserFolder,
+                "That doesn't look like Bitwig's user folder: it's called Bitwig Studio, with Library or Projects folders in it. " +
+                "Bitwig shows where it is in Settings > Locations.",
+                f => db.SetSetting(BitwigUserKey, f), "From now on Install puts the script there, and nowhere else.")),
             new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), () => CheckFlStudio(watch), new FolderChoice(
                 "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
                 DawScripts.IsFlUserData,
@@ -266,7 +272,9 @@ public sealed partial class DawSetting : ObservableObject
 /// <param name="IsRight">Whether a folder is the right kind.</param>
 /// <param name="Wrong">What to say when it isn't.</param>
 /// <param name="Save">Remembers the folder.</param>
-public sealed record FolderChoice(string Prompt, Func<string, bool> IsRight, string Wrong, Action<string> Save);
+/// <param name="Chosen">What to say once a folder is chosen.</param>
+public sealed record FolderChoice(string Prompt, Func<string, bool> IsRight, string Wrong, Action<string> Save,
+                                  string Chosen = "Install puts the script there too.");
 
 /// <summary>
 /// How the MIDI port FL Studio runs the script for gets made, on Windows: by hand in loopMIDI, a free app, or by
@@ -442,7 +450,7 @@ public sealed partial class DawLinkSetting : ObservableObject
         if (await ChooseFolderAsync())
         {
             await RefreshAsync();
-            Result = "Install puts the script there too.";
+            Result = _folder!.Chosen;
         }
     }
 

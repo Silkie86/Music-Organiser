@@ -61,12 +61,41 @@ public static class DawScripts
     public static string Shipped(string daw, string file) => Path.Combine(AppContext.BaseDirectory, "Extensions", daw, file);
 
     /// <summary>The Bitwig controller script, for Controller Scripts in Bitwig's user folder.</summary>
-    public static DawScript Bitwig(string? userFolder = null) =>
-        new("Bitwig Studio", Shipped("Bitwig", "MusicOrganiser.control.js"),
-            [Path.Combine(userFolder ?? BitwigUserFolder, "Controller Scripts", "Music Organiser")]);
+    public static DawScript Bitwig(string userFolder) => Bitwig([userFolder]);
 
-    /// <summary>Bitwig's user folder: Documents\Bitwig Studio (on Linux, ~/Bitwig Studio).</summary>
+    /// <summary>The Bitwig controller script, for Controller Scripts in each of these user folders (<see cref="BitwigUserFolders"/>).</summary>
+    public static DawScript Bitwig(IReadOnlyList<string>? userFolders = null) =>
+        new("Bitwig Studio", Shipped("Bitwig", "MusicOrganiser.control.js"),
+            (userFolders ?? BitwigUserFolders()).Select(f => Path.Combine(f, "Controller Scripts", "Music Organiser")).ToList());
+
+    /// <summary>Bitwig's usual user folder: Documents\Bitwig Studio (on Linux, ~/Bitwig Studio).</summary>
     public static string BitwigUserFolder => BitwigPreset.DefaultFolders()[0];
+
+    /// <summary>
+    /// Bitwig's user folders: the one picked in the app, or else every Bitwig Studio folder in a Documents folder. A PC
+    /// can have more than one (Windows may keep Documents in OneDrive, and an older one at home), and only Bitwig knows
+    /// which it uses (Settings > Locations), so without a choice the script goes in each.
+    /// </summary>
+    public static IReadOnlyList<string> BitwigUserFolders(string? chosen = null)
+    {
+        if (chosen is { Length: > 0 }) return [chosen];
+        IEnumerable<string> documents = [Path.GetDirectoryName(BitwigUserFolder)!];
+        if (!OperatingSystem.IsLinux())
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            documents = documents.Append(Path.Combine(home, "Documents"))
+                .Concat(new[] { "OneDrive", "OneDriveConsumer", "OneDriveCommercial" }
+                    .Select(Environment.GetEnvironmentVariable).OfType<string>().Where(d => d.Length > 0)
+                    .Select(d => Path.Combine(d, "Documents")));
+        }
+        return documents.Where(d => d.Length > 0).Select(d => Path.Combine(d, "Bitwig Studio"))
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists).ToList();
+    }
+
+    /// <summary>Bitwig's user folder has Library, Projects or Extensions folders in it, or is called Bitwig Studio.</summary>
+    public static bool IsBitwigUserFolder(string folder) =>
+        Path.GetFileName(folder.TrimEnd('\\', '/')).Equals("Bitwig Studio", StringComparison.OrdinalIgnoreCase) ||
+        new[] { "Library", "Projects", "Extensions", "Controller Scripts" }.Any(d => Directory.Exists(Path.Combine(folder, d)));
 
     /// <summary>The FL Studio script, for Settings\Hardware in each of FL Studio's user data folders.</summary>
     public static DawScript FlStudio(IReadOnlyList<string> userDataFolders) =>

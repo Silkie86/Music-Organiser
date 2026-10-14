@@ -32,6 +32,32 @@ public class DawScriptTests
     }
 
     [Fact]
+    public void PutsTheBitwigScriptInTheChosenUserFolder()
+    {
+        // Documents in OneDrive and an older one at home can both have a Bitwig Studio folder; Bitwig uses one.
+        var root = Fixtures.TempDir();
+        var chosen = Path.Combine(root, "OneDrive", "Documents", "Bitwig Studio");
+        var other = Path.Combine(root, "Documents", "Bitwig Studio");
+        Directory.CreateDirectory(Path.Combine(chosen, "Library"));
+        Directory.CreateDirectory(Path.Combine(other, "Projects"));
+        Assert.Equal([chosen], DawScripts.BitwigUserFolders(chosen));
+        Assert.True(DawScripts.IsBitwigUserFolder(chosen));
+        Assert.True(DawScripts.IsBitwigUserFolder(Path.Combine(root, "Music")) is false);
+        Directory.CreateDirectory(Path.Combine(root, "Music", "Projects"));
+        Assert.True(DawScripts.IsBitwigUserFolder(Path.Combine(root, "Music")));   // moved and renamed, with its folders
+
+        DawScripts.Bitwig(DawScripts.BitwigUserFolders(chosen)).Install();
+        Assert.True(File.Exists(Path.Combine(chosen, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js")));
+        Assert.False(Directory.Exists(Path.Combine(other, "Controller Scripts")));
+
+        // With no choice, every Bitwig Studio folder found (only ones that are there).
+        var both = DawScripts.Bitwig([chosen, other]);
+        both.Install();
+        Assert.Equal(2, both.InstalledIn.Count);
+        Assert.All(DawScripts.BitwigUserFolders(), f => Assert.True(Directory.Exists(f)));
+    }
+
+    [Fact]
     public void KeepsTheFlStudioChangesSettingWhenUpdating()
     {
         var data = FlUserData(Fixtures.TempDir());
