@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Media;
 
 namespace MusicOrganiser.Avalonia;
 
@@ -11,6 +12,7 @@ static class Program
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            .WithInterFont()
+            .WithInterFont()   // for characters IBM Plex doesn't have
+            .With(new FontManagerOptions { DefaultFamilyName = App.TextFont })
             .LogToTrace();
 }

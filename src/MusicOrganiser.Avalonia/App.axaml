@@ -30,6 +30,9 @@
         <local:DawChipText x:Key="DawChipText" />
         <local:NotAny x:Key="NotAny" />
         <local:PercentAngle x:Key="PercentAngle" />
+        <!-- The font: IBM Plex Sans for words, Plex Mono for numbers that should line up (dates, counts), like a hardware display. -->
+        <FontFamily x:Key="ContentControlThemeFontFamily">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans</FontFamily>
+        <FontFamily x:Key="NumberFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Mono</FontFamily>
         <local:BoolToStar x:Key="BoolToStar" />
         <local:Stars x:Key="Stars" />
         <local:NonZero x:Key="NonZero" />

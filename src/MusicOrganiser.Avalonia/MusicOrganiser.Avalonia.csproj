@@ -34,6 +34,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The app's font, IBM Plex (SIL Open Font License, in OFL.txt), built in so it looks the same on every system. -->
+    <AvaloniaResource Include="Assets\Fonts\*.ttf" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="MusicOrganiser.Avalonia.Tests" />
   </ItemGroup>
 
