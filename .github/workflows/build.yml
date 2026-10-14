@@ -1,8 +1,17 @@
 name: Build
 
+# GitHub's free Actions minutes for a private repo go quickly (a Windows minute counts as two, a Mac minute as ten),
+# so each push to a pull request runs once (not again for the push itself), a newer push stops the run it replaces,
+# and the Mac jobs run only on main and when started by hand (Actions > Build > Run workflow): Windows comes first.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -22,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["windows-latest", "ubuntu-latest"]' || '["windows-latest", "ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
