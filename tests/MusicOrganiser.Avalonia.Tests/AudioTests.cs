@@ -98,6 +98,23 @@ public sealed class AudioTests : IDisposable
         Assert.Equal(0.1f + (0.2f + 0.3f) * 0.7071f, buffer[1], 3);
     }
 
+    [Fact]
+    public void A_64_bit_float_wav_streams()
+    {
+        var path = Path.Combine(_dir, "double.wav");
+        using (var writer = new WaveFileWriter(path, WaveFormat.CreateCustomFormat(WaveFormatEncoding.IeeeFloat, 8000, 1, 64000, 8, 64)))
+            for (var n = 0; n < 8000; n++) writer.Write(BitConverter.GetBytes((double)Sample(n, 0)), 0, 8);
+        using var source = PcmSource.Open(path, 600);
+        var buffer = new float[2];
+
+        source.SeekTo(0.5);
+        source.Read(buffer);
+
+        Assert.IsType<StreamSource>(source);
+        Assert.Equal(Sample(4000, 0), buffer[0], 5);
+        Assert.Equal(Sample(4001, 0), buffer[1], 5);
+    }
+
     [AvaloniaFact]
     public void A_long_file_starts_at_once_and_plays_past_ten_minutes()
     {

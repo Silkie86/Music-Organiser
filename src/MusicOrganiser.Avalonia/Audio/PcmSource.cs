@@ -28,7 +28,7 @@ abstract class PcmSource : IDisposable
     /// </summary>
     public static PcmSource Open(string path, double maxSecondsInMemory)
     {
-        if (TryStream(path) is { } stream) return new StreamSource(stream);
+        if (TryStream(path) is { } stream) return stream;
         AudioData audio;
         try { audio = AudioFile.Read(path, maxSecondsInMemory); }
         catch (Exception e) when (e is NotSupportedException or InvalidDataException && OperatingSystem.IsWindows() &&
@@ -39,7 +39,7 @@ abstract class PcmSource : IDisposable
         return new MemorySource(audio.Channels, audio.SampleRate);
     }
 
-    static WaveStream? TryStream(string path)
+    static StreamSource? TryStream(string path)
     {
         var ext = Path.GetExtension(path).ToLowerInvariant();
         WaveStream? reader = null;
@@ -56,10 +56,10 @@ abstract class PcmSource : IDisposable
             switch (reader.WaveFormat.Encoding)
             {
                 case WaveFormatEncoding.Pcm or WaveFormatEncoding.IeeeFloat:
-                    return reader;
+                    return new StreamSource(reader);   // throws for sizes NAudio can't convert (12-bit, say)
                 // Most 24-bit and multichannel WAVs: plain PCM or float behind a longer header.
                 case WaveFormatEncoding.Extensible when Plain(reader.WaveFormat) is { } plain:
-                    return new Relabelled(reader, plain);
+                    return new StreamSource(new Relabelled(reader, plain));
                 default:
                     reader.Dispose();
                     return null;
