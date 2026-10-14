@@ -45,12 +45,14 @@ public static class Exporter
     /// An FL Studio project as a native Bitwig project, built from <paramref name="template"/> (a project
     /// Bitwig saved; see <see cref="BitwigProject"/>). It's saved as Song/Song.bwproject, the layout Bitwig
     /// expects, so it opens without asking for a project folder. What couldn't come across is returned and
-    /// saved next to it as "... - not carried over.txt".
+    /// saved next to it as "... - not carried over.txt". With <paramref name="stepsUntilNextNote"/>, steps on a
+    /// Sampler don't end with their sample (see <see cref="BitwigProject.FromFl"/>).
     /// </summary>
-    public static (string File, IReadOnlyList<string> LeftOut) BitwigFromFl(string project, string exportRoot, byte[] template)
+    public static (string File, IReadOnlyList<string> LeftOut) BitwigFromFl(string project, string exportRoot, byte[] template,
+                                                                            bool stepsUntilNextNote = false)
     {
         var name = TextScan.SafeFileName(Path.GetFileNameWithoutExtension(project));
-        var result = BitwigProject.FromFl(Readers.FlStudio.ReadSong(project), template);
+        var result = BitwigProject.FromFl(Readers.FlStudio.ReadSong(project), template, stepsUntilNextNote: stepsUntilNextNote);
         var dir = Path.Combine(OutDir(exportRoot, project, "Bitwig"), name);
         Directory.CreateDirectory(dir);
         var file = Path.Combine(dir, name + ".bwproject");

@@ -26,7 +26,16 @@ public sealed record FlChannel(int Index, string Name, FlPlugin? Instrument, str
 {
     /// <summary>The channel's part of each pattern clip in the playlist, muted ones and muted notes included.</summary>
     public IReadOnlyList<FlClip> Clips { get; init; } = [];
+
+    /// <summary>The channel's volume envelope (ADSR), when it's switched on.</summary>
+    public FlEnvelope? VolumeEnvelope { get; init; }
 }
+
+/// <summary>
+/// An envelope in FL's own knob units: times from 100 to 65536 (how FL turns them into seconds isn't worked
+/// out yet), and the sustain level from 0 to 1.
+/// </summary>
+public sealed record FlEnvelope(int Delay, int Attack, int Hold, int Decay, double Sustain, int Release);
 
 /// <summary>
 /// One pattern placed in the playlist, as one channel plays it: where it starts and how long it is (song
@@ -58,6 +67,7 @@ public sealed partial class FlStudioReader
     const int EvChannelInsert = 22;             // BYTE: the mixer insert a channel is routed to (older versions)
     const int EvChannelRoute = 104;             // WORD: the mixer insert a channel is routed to (seen from FL 20 to 25)
     const int EvRootNote = 135;                 // DWORD: the channel's root key as a MIDI note; absent when it's C5 (60)
+    const int EvEnvelope = Data + 10;           // 218: an envelope and LFO, one each for pan, volume, mod X, mod Y, pitch
     const int EvChannelLevels = Data + 11;      // 219: i32 pan (0..12800), volume (0..12800), pitch in cents
     const int EvAutomationLink = Data + 19;     // 227: which control an automation clip moves
     const int EvAutomationPoints = Data + 26;   // 234: an automation clip's points
@@ -84,6 +94,8 @@ public sealed partial class FlStudioReader
         var effects = new SortedDictionary<int, List<FlPlugin>>();
         var roots = new Dictionary<int, int>();
         var levels = new Dictionary<int, (double Pan, double Volume, int Pitch)>();
+        var envelopes = new Dictionary<int, int>();
+        var volumeEnvelopes = new Dictionary<int, FlEnvelope>();
         var types = new Dictionary<int, int>();
         var curves = new Dictionary<int, List<FlPoint>>();
         var links = new List<(int Clip, uint Target)>();
@@ -114,6 +126,11 @@ public sealed partial class FlStudioReader
                 case EvRootNote when channel is not null && !inMixer && e.Int <= 127: roots[channel.Value] = (int)e.Int; break;
                 case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span) is { } lv:
                     levels[channel.Value] = lv;
+                    break;
+                case EvEnvelope when channel is not null && !inMixer:
+                    // The second of a channel's envelopes is its volume's.
+                    if (envelopes.GetValueOrDefault(channel.Value) == 1 && Envelope(e.Payload.Span) is { } env) volumeEnvelopes[channel.Value] = env;
+                    envelopes[channel.Value] = envelopes.GetValueOrDefault(channel.Value) + 1;
                     break;
                 case EvAutomationPoints when channel is not null && !inMixer: curves[channel.Value] = AutomationPoints(e.Payload.Span); break;
                 case EvAutomationLink when e.Payload.Length >= 12:
@@ -168,7 +185,11 @@ public sealed partial class FlStudioReader
                 var placed = clips.GetValueOrDefault(ch) ?? [];
                 return new FlChannel(ch, names.GetValueOrDefault(ch, $"Channel {ch + 1}"), instruments.GetValueOrDefault(ch),
                                      samples.GetValueOrDefault(ch, ""), routes.GetValueOrDefault(ch), Audible(placed),
-                                     roots.GetValueOrDefault(ch, DefaultRoot), lv.Pitch, lv.Volume, lv.Pan) { Clips = placed };
+                                     roots.GetValueOrDefault(ch, DefaultRoot), lv.Pitch, lv.Volume, lv.Pan)
+                {
+                    Clips = placed,
+                    VolumeEnvelope = volumeEnvelopes.GetValueOrDefault(ch),
+                };
             })
             .ToList();
         var automation = PlaceAutomation(links, curves, names, playlist, flp.Ppq);
@@ -184,6 +205,19 @@ public sealed partial class FlStudioReader
         : (Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d) / LevelsFull, 0, 1),
            Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[4..]) / LevelsFull, 0, 1),
            Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[8..]), -4800, 4800));
+
+    /// <summary>
+    /// An envelope (event 218, 68 bytes), or null when it's switched off: i32 flags, i32 on, then i32 delay,
+    /// attack, hold, decay, sustain (0..128) and release, then the LFO and the curves. The layout is PyFLP's;
+    /// FL's defaults match it, but no real file with an envelope switched on has been checked yet.
+    /// </summary>
+    static FlEnvelope? Envelope(ReadOnlySpan<byte> d)
+    {
+        if (d.Length < 32 || BinaryPrimitives.ReadInt32LittleEndian(d[4..]) == 0) return null;
+        var v = new int[8];
+        for (var i = 0; i < v.Length; i++) v[i] = BinaryPrimitives.ReadInt32LittleEndian(d[(i * 4)..]);
+        return new FlEnvelope(v[2], v[3], v[4], v[5], Math.Clamp(v[6] / 128.0, 0, 1), v[7]);
+    }
 
     /// <summary>
     /// An automation clip's points (event 234): a 21-byte header with the count at 17, then 24 bytes

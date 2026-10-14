@@ -117,6 +117,18 @@ public static class Fixtures
     }
 
     /// <summary>A channel's levels (event 219): pan and volume out of 12800, pitch in cents.</summary>
+    /// <summary>
+    /// A channel envelope (event 218) as FL 25 writes it, FL's defaults unless given: flags, on, delay, attack,
+    /// hold, decay, sustain (0..128), release, then the LFO and the curves.
+    /// </summary>
+    public static byte[] Envelope(bool on = false, int attack = 20000, int sustain = 50, int release = 20000)
+    {
+        int[] v = [4, on ? 1 : 0, 100, attack, 20000, 30000, sustain, release, 0, 100, 20000, 0, 32950, 0, 0, 0, -101];
+        var b = new byte[v.Length * 4];
+        for (var i = 0; i < v.Length; i++) BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(i * 4), v[i]);
+        return b;
+    }
+
     public static byte[] Levels(int pan, int volume, int pitchCents)
     {
         var b = new byte[24];
@@ -286,7 +298,8 @@ public static class Fixtures
     /// <summary>
     /// Like Solomon's FL 25 test of mutes and steps: pattern "Beat" has a sampler "Snare" playing two half-beat
     /// notes, the second muted in the piano roll, and a sampler "Kick" with four steps from the step sequencer
-    /// (no length) on beats 1, 2, 3 and 4½. It's in the playlist in bar 1, then again in bar 2, muted.
+    /// (no length) on beats 1, 2, 3 and 4½. It's in the playlist in bar 1, then again in bar 2, muted. The kick's
+    /// volume envelope is on (attack 2000, sustain 25%, release 40000); only the snare's pan envelope is.
     /// </summary>
     public static string FlStudio25MutesAndSteps(string dir)
     {
@@ -297,7 +310,10 @@ public static class Fixtures
             .Data(224, [.. Note(0, 0, 48, 72, 100), .. Note(96, 0, 48, 72, 100, muted: true),
                         .. Note(0, 1, 0, 60, 100), .. Note(96, 1, 0, 60, 100), .. Note(192, 1, 0, 60, 100), .. Note(336, 1, 0, 60, 100)])
             .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare").Text(196, @"C:\Samples\Snare 01.wav")
+            .Data(218, Envelope(on: true)).Data(218, Envelope()).Data(218, Envelope()).Data(218, Envelope()).Data(218, Envelope())
             .Word(64, 1).Byte(21, 0).Text(201, "").Text(203, "Kick").Text(196, @"C:\Samples\Kick 01.wav")
+            .Data(218, Envelope()).Data(218, Envelope(on: true, attack: 2000, sustain: 32, release: 40000))
+            .Data(218, Envelope()).Data(218, Envelope()).Data(218, Envelope())
             .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384, muted: true)]);
         var path = Path.Combine(dir, "Mutes and steps.flp");
         File.WriteAllBytes(path, b.Build());

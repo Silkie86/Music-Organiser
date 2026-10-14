@@ -125,9 +125,11 @@ public class BitwigProjectTests
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir()));
         // The kick's sample lasts 0.25 s: 0.58 beats at 140 bpm.
-        var doc = Decode(BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
-            p => p.EndsWith("Kick 01.wav") ? new BitwigProject.SampleFile(1234, Md5, 48000, 2, 0.25) : Snare(p)).Bytes);
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
+            p => p.EndsWith("Kick 01.wav") ? new BitwigProject.SampleFile(1234, Md5, 48000, 2, 0.25) : Snare(p));
+        var doc = Decode(result.Bytes);
         Assert.Null(doc.BodyError);
+        Assert.Equal(["Kick: its volume envelope (ADSR) isn't carried over yet, so it plays without one"], result.Notes);
         var tracks = doc.Root!.Obj(0x4dd)!.List(0x4de).ToList();
 
         // One clip per placement: the pattern in bar 1, then muted in bar 2; the snare's second note muted in both.
@@ -143,6 +145,36 @@ public class BitwigProjectTests
         Assert.Equal(2, kick.Count);
         Assert.Equal([(0.0, 56 / 96.0), (1.0, 56 / 96.0), (2.0, 56 / 96.0), (3.5, 0.5)],
                      Notes(kick[0]).Select(n => (n.Num(0x2af)!.Value, n.Num(0x26)!.Value)));
+    }
+
+    [Fact]
+    public void StepsCanPlayUntilTheNextNoteOrTheClipEndInsteadOfStoppingWithTheirSample()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir()));
+        var doc = Decode(BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
+            p => p.EndsWith("Kick 01.wav") ? new BitwigProject.SampleFile(1234, Md5, 48000, 2, 0.25) : Snare(p),
+            stepsUntilNextNote: true).Bytes);
+        Assert.Null(doc.BodyError);
+        // The 0.25 s kick no longer cuts them short (0.58 beats): the third step lasts until beat 4½, the last to the bar's end.
+        Assert.All(Clips(doc.Root!.Obj(0x4dd)!.List(0x4de).ToList()[1]), clip =>
+            Assert.Equal([(0.0, 1.0), (1.0, 1.0), (2.0, 1.5), (3.5, 0.5)], Notes(clip).Select(n => (n.Num(0x2af)!.Value, n.Num(0x26)!.Value))));
+    }
+
+    [Fact]
+    public void StepsOnAPitchedSampleLastAsLongAsTheSampleDoesAtThatPitch()
+    {
+        // A 0.25 s kick (0.58 beats at 140 bpm) with its root at C5 and its pitch knob down a semitone: steps an
+        // octave above the root play it twice as fast, an octave below half as fast.
+        var steps = new NoteEvent[] { new(0, 1, 73, 100, Step: true), new(0, 1, 49, 100, Step: true) };
+        var kick = new FlChannel(0, "Kick", null, @"C:\Samples\Kick 01.wav", 0, steps, PitchCents: -100)
+        {
+            Clips = [new FlClip("Beat", 0, 384, steps)],
+        };
+        var doc = Decode(BitwigProject.FromFl(new FlSong("", 96, 140, [kick], [], []), Fixtures.BitwigTemplate(),
+            _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 0.25)).Bytes);
+        var lanes = Clips(doc.Root!.Obj(0x4dd)!.List(0x4de).Single()).Single().Obj(0x2ae9)!.Obj(0x10e9)!.Obj(0x49c)!.List(0x18cb);
+        Assert.Equal([(73.0, 28 / 96.0), (49.0, 112 / 96.0)],
+                     lanes.Select(l => (l.Num(0xee)!.Value, l.List(0x21f).Single().Num(0x26)!.Value)).OrderByDescending(n => n.Item1));
     }
 
     [Fact]

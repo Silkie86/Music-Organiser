@@ -151,10 +151,19 @@ public class DawProjectTests
     }
 
     [Fact]
+    public void ReadsAChannelsVolumeEnvelopeWhenItsOn()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir()));
+        Assert.Null(song.Channels[0].VolumeEnvelope);   // the snare's pan envelope is on, not its volume one
+        Assert.Equal(new FlEnvelope(100, 2000, 20000, 30000, 0.25, 40000), song.Channels[1].VolumeEnvelope);
+    }
+
+    [Fact]
     public void WritesEachFlClipAsADawProjectClipWithMutedOnesSwitchedOff()
     {
         var dir = Fixtures.TempDir();
-        var (file, _, _) = Exporter.DawProjectFromFl(Fixtures.FlStudio25MutesAndSteps(dir), Path.Combine(dir, "out"));
+        var (file, notes, _) = Exporter.DawProjectFromFl(Fixtures.FlStudio25MutesAndSteps(dir), Path.Combine(dir, "out"));
+        Assert.Contains("Kick: its volume envelope (ADSR) isn't carried over yet, so it plays without one", notes);
         var (project, zip) = Open(file);
         using (zip)
         {
