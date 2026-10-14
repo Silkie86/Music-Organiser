@@ -201,19 +201,84 @@ public class MoProbeLiveTests
         await using var probe = new FakeProbe(dir);
         var file = Assert.Single(MoProbeLive.Running(dir)).File;
 
-        // As on Windows, where the status can't be opened for the instant the probe swaps in a new one.
-        File.Delete(file);
+        var back = GoneForAMoment(file);
         var pong = await MoProbeLive.SendAsync(Instance, ProbeCommand.Ping(), dir);
         Assert.Equal("pong", pong.Event);
+        back.Join();
 
-        File.Delete(file);
+        back = GoneForAMoment(file);
         Assert.Equal(Instance, (await MoProbeLive.ReadRunningAsync(file, Instance)).Instance);
+        back.Join();
 
         var none = Path.Combine(dir, "live", "0000000000000000.json");
         var clock = Stopwatch.StartNew();
         var gone = await Assert.ThrowsAsync<DawLinkException>(() => MoProbeLive.ReadRunningAsync(none, "0000000000000000"));
         Assert.Equal(MoProbeLive.NotRunning("0000000000000000"), gone.Message);
         Assert.True(clock.Elapsed.TotalSeconds >= 0.4, $"Gave up after {clock.Elapsed.TotalMilliseconds:0} ms");
+    }
+
+    [Fact]
+    public async Task AStatusUnreadableOnceAfterAPauseIsntTheProbeStopping()
+    {
+        var dir = Fixtures.TempDir();
+        var file = Status(Path.Combine(dir, "live"), Instance, DateTimeOffset.UtcNow.AddMinutes(1));   // can't go stale however slow the run
+        Thread? back = null;
+        // The first look takes longer than a probe may go missing (a busy computer, or a slow check), and the status
+        // is being swapped just as the wait reads it again.
+        var (shown, _) = await MoProbeLive.UntilAsync(Instance, _ =>
+        {
+            if (back is not null) return true;
+            back = GoneForAMoment(file, 700);
+            Thread.Sleep(600);
+            return false;
+        }, dir);
+        Assert.True(shown);
+        back!.Join();
+    }
+
+    [Fact]
+    public async Task AProbeThatStopsAsTimeRunsOutIsSaidToHaveStopped()
+    {
+        var dir = Fixtures.TempDir();
+        var file = Status(Path.Combine(dir, "live"), Instance, DateTimeOffset.UtcNow.AddMinutes(1));
+        var gone = await Assert.ThrowsAsync<DawLinkException>(() => MoProbeLive.UntilAsync(Instance, _ =>
+        {
+            File.Delete(file);   // its DAW closed while the check ran past the time allowed
+            Thread.Sleep(400);
+            return false;
+        }, dir, TimeSpan.FromMilliseconds(300)));
+        Assert.Equal(MoProbeLive.NotRunning(Instance), gone.Message);
+    }
+
+    /// <summary>
+    /// Takes a probe's status away, as Windows does for the instant the probe swaps in a new one, and puts it back on a
+    /// thread of its own: the stand-in probe's next write waits on the thread pool, which a busy test run can hold up for
+    /// longer than a probe may go missing.
+    /// </summary>
+    static Thread GoneForAMoment(string file, int ms = 100)
+    {
+        byte[] status;
+        while (true)
+        {
+            try
+            {
+                status = File.ReadAllBytes(file);
+                File.Delete(file);
+                break;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Thread.Sleep(5); }   // being swapped just then
+        }
+        var back = new Thread(() =>
+        {
+            Thread.Sleep(ms);
+            while (!File.Exists(file))
+            {
+                try { File.WriteAllBytes(file, status); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Thread.Sleep(5); }
+            }
+        }) { IsBackground = true };
+        back.Start();
+        return back;
     }
 
     [Fact]

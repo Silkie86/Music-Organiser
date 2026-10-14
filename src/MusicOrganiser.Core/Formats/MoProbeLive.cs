@@ -267,7 +267,7 @@ public sealed record MoProbeLive
         var file = StatusFile(instance, reportFolder);
         var limit = timeout ?? DefaultWait;
         var waited = Stopwatch.StartNew();
-        var seen = TimeSpan.Zero;
+        TimeSpan? missing = null;   // since when the status couldn't be read
         MoProbeLive? last = null;
         while (true)
         {
@@ -275,11 +275,15 @@ public sealed record MoProbeLive
             {
                 if (status.Gone(DateTimeOffset.UtcNow)) throw new DawLinkException(NotRunning(instance));
                 last = status;
-                seen = waited.Elapsed;
+                missing = null;
                 if (shown(status)) return (true, status);
             }
-            else if (waited.Elapsed - seen > Missing) throw new DawLinkException(NotRunning(instance));
-            if (waited.Elapsed >= limit && last is not null) return (false, last);
+            // Gone for a while, not just unreadable once after a pause (a busy computer, or a slow check): on Windows
+            // the status can't be read for the instant the probe swaps in a new one.
+            else if (waited.Elapsed - (missing ??= waited.Elapsed) > Missing) throw new DawLinkException(NotRunning(instance));
+            // Out of time; but a status that can't be read now gets the rest of its moment first, so a probe that stopped
+            // is said to have stopped, not to have not answered.
+            if (waited.Elapsed >= limit && last is not null && missing is null && Read(file) is not null) return (false, last);
             await Task.Delay(Poll, ct);
         }
     }
