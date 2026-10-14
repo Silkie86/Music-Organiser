@@ -291,15 +291,18 @@ void Live::run()
     }
 
     auto lastWrite = clock::now() - 1s;
+    bool due = true;
     for (;;)
     {
         try
         {
-            // Straight after commands, so a ping or a knob change shows at once.
-            if (readCommands() || clock::now() - lastWrite >= 500ms)
+            // Straight after commands, so a ping or a knob change shows at once. When the status
+            // couldn't be replaced (a reader had it open), the next pass, 100 ms on, tries again.
+            if (readCommands()) due = true;
+            if (due || clock::now() - lastWrite >= 500ms)
             {
-                writeStatus();
-                lastWrite = clock::now();
+                due = !writeStatus();
+                if (!due) lastWrite = clock::now();
             }
         }
         catch (...)
@@ -386,9 +389,9 @@ bool Live::readCommands()
 
 /// Writes the status to a temporary file and renames it over the old one, so a reader never sees
 /// half of it. While a reader has it open Windows won't replace it; then it's next time.
-void Live::writeStatus()
+bool Live::writeStatus()
 {
-    if (statusFile_.empty()) return;
+    if (statusFile_.empty()) return true;
     std::vector<char> buf(16384);
     Line line(buf.data(), buf.size());
     status_(line);
@@ -398,14 +401,15 @@ void Live::writeStatus()
     auto tmp = fs::path(statusFile_) += ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) return;
+        if (!out) return false;
         out.write(text.data(), static_cast<std::streamsize>(text.size()));
-        if (!out.flush()) return;
+        if (!out.flush()) return false;
     }
     // The command folder first, so it's there as soon as anyone can see the status.
     std::error_code ec;
     fs::create_directories(inbox_, ec);
     fs::rename(tmp, statusFile_, ec);
+    return !ec;
 }
 
 } // namespace probe

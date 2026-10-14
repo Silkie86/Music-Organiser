@@ -66,7 +66,7 @@ private:
     void run();
     void clearStale();
     bool readCommands();
-    void writeStatus();
+    bool writeStatus();   // false when it couldn't, so it's tried again soon
 };
 
 } // namespace probe

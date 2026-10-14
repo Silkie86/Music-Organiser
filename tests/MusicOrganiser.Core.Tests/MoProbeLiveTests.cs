@@ -508,7 +508,8 @@ sealed class FakeProbe : IAsyncDisposable
                     since.Restart();
                 }
             }
-            catch (IOException) { }   // a reader had something open: next time
+            // A reader had the status open: Windows won't replace it then (Access denied), so next time, as the probe does.
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             try { await Task.Delay(5, _stop.Token); }
             catch (OperationCanceledException) { }
         }
