@@ -159,6 +159,51 @@ public class DawProjectTests
     }
 
     [Fact]
+    public void ReadsAudioClipsInThePlaylistWithTheirStretchAndPitch()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25AudioClips(Fixtures.TempDir()));
+        var audio = song.Channels.Where(c => c.AudioClips.Count > 0).ToList();
+        Assert.Equal(["Drop", "Drop stretched", "Drop stretched up", "Drop trimmed up", "Drop resampled"], audio.Select(c => c.Name));
+        Assert.All(audio, c => Assert.Equal(@"C:\Samples\Drop.wav", c.Sample));
+        Assert.Equal([new FlAudioClip(0, 6144)], audio[0].AudioClips);
+        Assert.Equal([new FlAudioClip(30720, 3072, From: 16)], audio[3].AudioClips);   // trimmed: from 16 s of the sample
+        Assert.Equal([new FlAudioClip(33792, 3072, Muted: true)], audio[4].AudioClips);
+        Assert.Equal([new FlStretch(1, 0, 1), new FlStretch(2, 0, 1), new FlStretch(2, 300, 1), new FlStretch(1, 300, 1),
+                      new FlStretch(2, 0, FlStretch.Resample, Reversed: true)], audio.Select(c => c.Stretch));
+
+        // The automation clip in the playlist moves the first one's volume; it isn't an audio clip itself.
+        Assert.DoesNotContain(song.Channels, c => c.Name == "Drop - Volume");
+        Assert.Equal((1, FlControl.Volume), (song.Automation.Single().Channel, song.Automation.Single().Control));
+        Assert.Empty(song.Channels.Single(c => c.Name == "Kick").AudioClips);
+    }
+
+    [Fact]
+    public void AnAutomatedAudioClipChannelIsntASamplerInADawProject()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25AudioClips(Fixtures.TempDir()));
+        var result = DawProject.FromFl(song, "Audio clips");
+        Assert.DoesNotContain(result.Setup, s => s.StartsWith("Drop:"));
+        Assert.Contains("Drop: its audio clips in the playlist aren't carried over to DAWproject yet", result.Notes);
+        Assert.Contains("Drop - Volume: automation left out (what it moves isn't converted)", result.Notes);
+    }
+
+    [Fact]
+    public void WorksOutHowLongAndHowHighFlPlaysAStretchedSample()
+    {
+        // FL's stretch modes keep pitch and length apart.
+        var stretched = new FlStretch(2, 300, Mode: 1);
+        Assert.Equal((64.0, 3.0), (stretched.PlayedSeconds(32, 120), stretched.Semitones(32, 64)));
+        // Resampling to twice as long plays it an octave lower; 12 semitones up as well, it's as long and high as recorded.
+        var resampled = new FlStretch(2, 0, FlStretch.Resample);
+        Assert.Equal((64.0, -12.0), (resampled.PlayedSeconds(32, 120), resampled.Semitones(32, 64)));
+        var up = new FlStretch(2, 1200, FlStretch.Resample);
+        Assert.Equal(32, up.PlayedSeconds(32, 120), 6);
+        Assert.Equal(0, up.Semitones(32, 32), 6);
+        // Time stretches it to a length first, 768 a bar: 2 bars at 120 bpm is 4 seconds, and Mul doubles that.
+        Assert.Equal(8, new FlStretch(2, 0, 1, Time: 1536).PlayedSeconds(32, 120), 6);
+    }
+
+    [Fact]
     public void WritesEachFlClipAsADawProjectClipWithMutedOnesSwitchedOff()
     {
         var dir = Fixtures.TempDir();

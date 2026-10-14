@@ -554,6 +554,23 @@ public sealed partial class FlStudioReader : IProjectReader
         return clips;
     }
 
+    /// <summary>
+    /// Audio clips in the playlist (the first arrangement), by channel: items whose index is a channel rather than a
+    /// pattern. An audio clip's start offset is in milliseconds of the sample, as FL 25 saves it (a clip trimmed to
+    /// start halfway through a 32 second sample says 16000).
+    /// </summary>
+    static Dictionary<int, List<FlAudioClip>> PlaceAudioClips(ReadOnlyMemory<byte>? playlist, IReadOnlySet<int> channels)
+    {
+        var clips = new Dictionary<int, List<FlAudioClip>>();
+        if (playlist is not { } pl) return clips;
+        foreach (var i in PlaylistItems(pl.Span).Where(i => i.Index < PatternBase && channels.Contains(i.Index) && i.Length > 0).OrderBy(i => i.At))
+        {
+            if (!clips.TryGetValue(i.Index, out var list)) clips[i.Index] = list = new();
+            list.Add(new FlAudioClip(i.At, i.Length, i.Offset / 1000, i.Muted));
+        }
+        return clips;
+    }
+
     /// <summary>What plays of a channel's clips: the notes, less muted ones and those in muted clips, in song ticks.</summary>
     static List<NoteEvent> Audible(IEnumerable<FlClip> clips) =>
         clips.Where(c => !c.Muted)
@@ -562,9 +579,14 @@ public sealed partial class FlStudioReader : IProjectReader
 
     /// <summary>
     /// A clip in the playlist, in ticks. <see cref="Index"/> above 20480 is a pattern (index - 20480); otherwise a
-    /// channel's clip. A muted clip has bit 0x2000 set in the flags at 18.
+    /// channel's clip. A muted clip has bit 0x2000 set in the flags at 18. <see cref="Offset"/> is where the clip
+    /// starts in what it plays: ticks into a pattern, milliseconds into an audio clip's sample.
     /// </summary>
-    readonly record struct PlaylistItem(int Index, long At, long Length, long From, bool Muted);
+    readonly record struct PlaylistItem(int Index, long At, long Length, double Offset, bool Muted)
+    {
+        /// <summary>Where a pattern clip starts in its pattern, in ticks.</summary>
+        public long From => (long)Offset;
+    }
 
     /// <summary>
     /// Clips in the playlist. FL 9 onwards writes 32-byte items (60 from FL 21, 80 from FL 25, 88 from FL 26):
@@ -590,11 +612,11 @@ public sealed partial class FlStudioReader : IProjectReader
         return items;
     }
 
-    /// <summary>A clip's start offset in ticks, written as a float or an integer depending on FL's version; none is 0.</summary>
-    static long ItemOffset(ReadOnlySpan<byte> d)
+    /// <summary>A clip's start offset, written as a float or an integer depending on FL's version; none is 0.</summary>
+    static double ItemOffset(ReadOnlySpan<byte> d)
     {
         var f = BinaryPrimitives.ReadSingleLittleEndian(d);
-        if (f >= 1 && f < 1e9) return (long)f;
+        if (f >= 1 && f < 1e9) return f;
         var i = BinaryPrimitives.ReadInt32LittleEndian(d);
         return i is > 0 and < 1_000_000_000 ? i : 0;
     }

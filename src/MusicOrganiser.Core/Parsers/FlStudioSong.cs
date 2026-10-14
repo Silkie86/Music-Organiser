@@ -29,6 +29,41 @@ public sealed record FlChannel(int Index, string Name, FlPlugin? Instrument, str
 
     /// <summary>The channel's volume envelope (ADSR), when it's switched on.</summary>
     public FlEnvelope? VolumeEnvelope { get; init; }
+
+    /// <summary>An audio clip channel's clips in the playlist, muted ones included, in order.</summary>
+    public IReadOnlyList<FlAudioClip> AudioClips { get; init; } = [];
+
+    /// <summary>How the channel stretches and pitches its sample (its time stretching knobs), and whether it plays it backwards.</summary>
+    public FlStretch Stretch { get; init; } = new();
+}
+
+/// <summary>
+/// An audio clip in the playlist: where it starts and how long it plays (song ticks), and where in the sample it
+/// starts playing, in seconds of the sample as recorded (0 when it plays from the start).
+/// </summary>
+public sealed record FlAudioClip(long Start, long Length, double From = 0, bool Muted = false);
+
+/// <summary>
+/// A channel's time stretching. The sample plays <paramref name="Multiplier"/> times as long (FL's Mul knob) and
+/// <paramref name="PitchCents"/> higher (its Pitch knob); <paramref name="Time"/> (its Time knob, 0 when off) stretches it
+/// to a length first, in FL's units of 768 a bar. <paramref name="Mode"/> is how: in <see cref="Resample"/> the
+/// pitch and length change together, like speeding up a record; the other modes keep them apart.
+/// </summary>
+public sealed record FlStretch(double Multiplier = 1, int PitchCents = 0, int Mode = FlStretch.Resample, int Time = 0, bool Reversed = false)
+{
+    public const int Resample = 0;
+    const double TimePerBeat = 192;
+
+    /// <summary>How many seconds a sample <paramref name="seconds"/> long plays for at <paramref name="tempo"/>.</summary>
+    public double PlayedSeconds(double seconds, double tempo)
+    {
+        var length = (Time > 0 && tempo > 0 ? Time / TimePerBeat * 60 / tempo : seconds) * Multiplier;
+        return Mode == Resample ? length / Math.Pow(2, PitchCents / 1200.0) : length;
+    }
+
+    /// <summary>How many semitones higher than recorded a sample <paramref name="seconds"/> long sounds when it plays for <paramref name="played"/> seconds.</summary>
+    public double Semitones(double seconds, double played) =>
+        Mode == Resample ? (seconds > 0 && played > 0 ? -12 * Math.Log2(played / seconds) : PitchCents / 100.0) : PitchCents / 100.0;
 }
 
 /// <summary>
@@ -65,8 +100,10 @@ public sealed record FlSong(string Title, int Ppq, double Tempo, IReadOnlyList<F
 public sealed partial class FlStudioReader
 {
     const int EvChannelInsert = 22;             // BYTE: the mixer insert a channel is routed to (older versions)
+    const int EvChannelFx = 70;                 // WORD: sample flags; 0x2 plays it backwards (PyFLP's reading, not yet seen in a save)
     const int EvChannelRoute = 104;             // WORD: the mixer insert a channel is routed to (seen from FL 20 to 25)
     const int EvRootNote = 135;                 // DWORD: the channel's root key as a MIDI note; absent when it's C5 (60)
+    const int EvChannelParams = Data + 7;       // 215: the sampler's settings, its time stretching among them
     const int EvEnvelope = Data + 10;           // 218: an envelope and LFO, one each for pan, volume, mod X, mod Y, pitch
     const int EvChannelLevels = Data + 11;      // 219: i32 pan (0..12800), volume (0..12800), pitch in cents
     const int EvAutomationLink = Data + 19;     // 227: which control an automation clip moves
@@ -97,6 +134,8 @@ public sealed partial class FlStudioReader
         var envelopes = new Dictionary<int, int>();
         var volumeEnvelopes = new Dictionary<int, FlEnvelope>();
         var types = new Dictionary<int, int>();
+        var stretches = new Dictionary<int, FlStretch>();
+        var reversed = new HashSet<int>();
         var curves = new Dictionary<int, List<FlPoint>>();
         var links = new List<(int Clip, uint Target)>();
         var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
@@ -133,6 +172,12 @@ public sealed partial class FlStudioReader
                     envelopes[channel.Value] = envelopes.GetValueOrDefault(channel.Value) + 1;
                     break;
                 case EvAutomationPoints when channel is not null && !inMixer: curves[channel.Value] = AutomationPoints(e.Payload.Span); break;
+                case EvChannelParams when channel is not null && !inMixer && Stretch(e.Payload.Span) is { } stretch:
+                    stretches[channel.Value] = stretch;
+                    break;
+                case EvChannelFx when channel is not null && !inMixer:
+                    if ((e.Int & 0x2) != 0) reversed.Add(channel.Value); else reversed.Remove(channel.Value);
+                    break;
                 case EvAutomationLink when e.Payload.Length >= 12:
                     links.Add((BinaryPrimitives.ReadUInt16LittleEndian(e.Payload.Span[2..]), BinaryPrimitives.ReadUInt32LittleEndian(e.Payload.Span[8..])));
                     break;
@@ -177,6 +222,7 @@ public sealed partial class FlStudioReader
         }
 
         var clips = PlaceClips(flp, rawNotes, playlist, order.ToHashSet(), patternNames);
+        var audioClips = PlaceAudioClips(playlist, order.Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation).ToHashSet());
         var channels = order
             .Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation)
             .Select(ch =>
@@ -189,6 +235,8 @@ public sealed partial class FlStudioReader
                 {
                     Clips = placed,
                     VolumeEnvelope = volumeEnvelopes.GetValueOrDefault(ch),
+                    AudioClips = audioClips.GetValueOrDefault(ch) ?? [],
+                    Stretch = (stretches.GetValueOrDefault(ch) ?? new FlStretch()) with { Reversed = reversed.Contains(ch) },
                 };
             })
             .ToList();
@@ -205,6 +253,20 @@ public sealed partial class FlStudioReader
         : (Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d) / LevelsFull, 0, 1),
            Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[4..]) / LevelsFull, 0, 1),
            Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[8..]), -4800, 4800));
+
+    /// <summary>
+    /// A channel's time stretching, from its sampler settings (event 215, 168 bytes in FL 25): i32 Time at 96, the
+    /// pitch in cents at 100, the multiplier at 104 (2 to the power raw / 10000, so 10000 is twice as long) and the
+    /// mode at 108 (-1 stretch, 0 resample, 1 and up FL's stretch engines). The multiplier, pitch and mode are checked
+    /// against an FL 25 save; Time is PyFLP's reading.
+    /// </summary>
+    static FlStretch? Stretch(ReadOnlySpan<byte> d)
+    {
+        if (d.Length < 112) return null;
+        var (time, cents, multiplier, mode) = (BinaryPrimitives.ReadInt32LittleEndian(d[96..]), BinaryPrimitives.ReadInt32LittleEndian(d[100..]),
+                                               BinaryPrimitives.ReadInt32LittleEndian(d[104..]), BinaryPrimitives.ReadInt32LittleEndian(d[108..]));
+        return new FlStretch(Math.Pow(2, Math.Clamp(multiplier, -100000, 100000) / 10000.0), Math.Clamp(cents, -4800, 4800), mode, Math.Max(time, 0));
+    }
 
     /// <summary>
     /// An envelope (event 218, 68 bytes), or null when it's switched off: i32 flags, i32 on, then i32 delay,
