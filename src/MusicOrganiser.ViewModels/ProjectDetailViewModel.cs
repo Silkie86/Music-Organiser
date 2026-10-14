@@ -164,6 +164,23 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public bool IsFlStudio => Item.Daw == "FL Studio";
 
     /// <summary>
+    /// The big button (and Enter or a double-click in the list): open the project in its DAW, except FL Studio projects,
+    /// which go to Bitwig, since that's where Solomon takes them. Opening one in FL Studio is in the ⋯ menu.
+    /// </summary>
+    [RelayCommand]
+    Task OpenMain()
+    {
+        if (IsFlStudio) return OpenInBitwig();
+        OpenInDaw();
+        return Task.CompletedTask;
+    }
+
+    public string OpenMainText => IsFlStudio ? "Open in Bitwig" : $"Open in {Item.Daw}";
+    public string OpenMainTip => IsFlStudio
+        ? "Convert this FL Studio project into a Bitwig project and open it (Enter does the same in the list). Open in FL Studio is in the ⋯ menu."
+        : "Open the newest save in its DAW (Enter does the same in the list)";
+
+    /// <summary>
     /// Converts an FL Studio project into a native Bitwig project and opens it in Bitwig. The first time,
     /// it asks for the Bitwig project to build from (see <see cref="BitwigProject"/>).
     /// </summary>

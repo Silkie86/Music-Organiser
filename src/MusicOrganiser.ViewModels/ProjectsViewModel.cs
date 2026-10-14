@@ -175,7 +175,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     }
 
     [RelayCommand]
-    void OpenSelected() => Detail?.OpenInDawCommand.Execute(null);
+    void OpenSelected() => Detail?.OpenMainCommand.Execute(null);
 
     /// <summary>The project files themselves, e.g. into Explorer or a DAW that imports them.</summary>
     public DragPayload? MakeDrag(IReadOnlyList<object> items)

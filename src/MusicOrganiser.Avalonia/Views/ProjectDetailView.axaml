@@ -117,11 +117,11 @@
             <TextBlock Text="{Binding Item.DetailsLine}" FontSize="13" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" TextWrapping="Wrap" />
 
             <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,18,0,0">
-                <Button Classes="accent bigAction" Command="{Binding OpenInDawCommand}" HorizontalAlignment="Stretch"
-                        ToolTip.Tip="Open the newest save in its DAW (Enter does the same in the list)">
+                <Button Classes="accent bigAction" Command="{Binding OpenMainCommand}" HorizontalAlignment="Stretch"
+                        ToolTip.Tip="{Binding OpenMainTip}">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <Path Data="M7,4 L20,12 L7,20 Z" Fill="{StaticResource AppBackgroundBrush}" Width="13" Height="13" Stretch="Uniform" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding Item.Daw, StringFormat='Open in {0}'}" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding OpenMainText}" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
                 <Button Grid.Column="1" Classes="squareAction" Command="{Binding RevealCommand}" ToolTip.Tip="Show in folder">
@@ -135,11 +135,11 @@
                     </StackPanel>
                     <Button.Flyout>
                         <MenuFlyout Placement="BottomEdgeAlignedRight">
+                            <MenuItem Header="Open in FL Studio" Command="{Binding OpenInDawCommand}" IsVisible="{Binding IsFlStudio}"
+                                      ToolTip.Tip="Open the newest save in FL Studio itself" />
                             <MenuItem Header="MIDI…" Command="{Binding ShowMidiCommand}" IsEnabled="{Binding CanExtractMidi}" ToolTip.Tip="{Binding MidiNote}" />
                             <MenuItem Header="Presets…" Command="{Binding ShowPresetsCommand}" IsEnabled="{Binding CanExtractPresets}"
                                       ToolTip.Tip="See the plugin settings saved in this project and export them as presets" />
-                            <MenuItem Header="Open in Bitwig" Command="{Binding OpenInBitwigCommand}" IsVisible="{Binding IsFlStudio}"
-                                      ToolTip.Tip="Convert this FL Studio project into a Bitwig project and open it" />
                             <MenuItem Header="Save as DAWproject" Command="{Binding ExportToBitwigCommand}" IsVisible="{Binding IsFlStudio}"
                                       ToolTip.Tip="Convert this FL Studio project into a DAWproject file, the open format Bitwig and Studio One import" />
                             <MenuItem Header="{Binding CheckWithDawText}" Command="{Binding CheckWithDawCommand}" IsVisible="{Binding CanCheckWithDaw}"
