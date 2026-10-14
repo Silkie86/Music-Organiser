@@ -74,7 +74,8 @@ sealed partial class DragPreview : Window
             });
         Content = root;
 
-        _follow = new DispatcherTimer(TimeSpan.FromMilliseconds(15), DispatcherPriority.Render, (_, _) => FollowCursor());
+        _follow = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(15) };
+        _follow.Tick += (_, _) => FollowCursor();
     }
 
     Control Card(DragCard card, int? number)

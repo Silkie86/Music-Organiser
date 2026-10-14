@@ -150,9 +150,19 @@ sealed class AvaloniaItemsView(IList items) : IItemsView
     public IEnumerator GetEnumerator() => ((IEnumerable)Inner).GetEnumerator();
 }
 
-sealed class AvaloniaTimer(TimeSpan interval, Action tick) : IUiTimer
+sealed class AvaloniaTimer : IUiTimer
 {
-    readonly DispatcherTimer _timer = new(interval, DispatcherPriority.Render, (_, _) => tick());
+    readonly DispatcherTimer _timer;
+
+    public AvaloniaTimer(TimeSpan interval, Action tick)
+    {
+        // Made stopped, as in the Windows app, so it only runs from Start(). (The constructor that
+        // takes the handler starts the timer straight away.)
+        _timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = interval };
+        _timer.Tick += (_, _) => tick();
+    }
+
+    internal bool IsRunning => _timer.IsEnabled;
 
     public void Start() => _timer.Start();
     public void Stop() => _timer.Stop();

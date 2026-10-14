@@ -220,6 +220,15 @@
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
             <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
         </Style>
+        <!-- Columns can be widened and moved, as in the Windows app (Avalonia's grid allows neither by default). -->
+        <Style Selector="DataGrid">
+            <Setter Property="CanUserResizeColumns" Value="True" />
+            <Setter Property="CanUserReorderColumns" Value="True" />
+        </Style>
+        <!-- Grouped lists show how many are in each group, e.g. "FL Studio 214". -->
+        <Style Selector="DataGridRowGroupHeader">
+            <Setter Property="IsItemCountVisible" Value="True" />
+        </Style>
         <Style Selector="ComboBox">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
         </Style>

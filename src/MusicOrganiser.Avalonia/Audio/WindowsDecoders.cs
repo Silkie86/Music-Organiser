@@ -7,8 +7,8 @@ namespace MusicOrganiser.Avalonia.Audio;
 /// <summary>
 /// Windows' own decoders, as the WPF app uses them. Media Foundation lets the Sound Lab and the
 /// player read MP3, FLAC, M4A, OGG, WMA and AAC (WAV and AIFF are read by the Sound Lab itself),
-/// and Windows' audio codecs let the player play WAVs that aren't plain PCM (ADPCM, µ-law, A-law,
-/// GSM), as old drum-machine packs often are. On a Mac or Linux those files are listed but can't be
+/// and Windows' audio codecs let the player play WAVs the Sound Lab can't read (ADPCM, µ-law, A-law,
+/// GSM, as old drum-machine packs often are, and 64-bit float). On a Mac or Linux those files are listed but can't be
 /// played or analysed yet.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -20,9 +20,18 @@ static class WindowsDecoders
             AudioFile.Register(ext, (path, maxSeconds) => Decode(new MediaFoundationReader(path), maxSeconds));
     }
 
-    /// <summary>A WAV in a compressed format, converted to PCM by Windows' codecs.</summary>
-    public static AudioData ReadCompressedWav(string path, double maxSeconds) =>
-        Decode(WaveFormatConversionStream.CreatePcmStream(new WaveFileReader(path)), maxSeconds);
+    /// <summary>A WAV the Sound Lab can't read: compressed ones are converted to PCM by Windows' codecs.</summary>
+    public static AudioData ReadWav(string path, double maxSeconds)
+    {
+        var reader = new WaveFileReader(path);
+        if (reader.WaveFormat.Encoding is WaveFormatEncoding.Pcm or WaveFormatEncoding.IeeeFloat) return Decode(reader, maxSeconds);
+        try { return Decode(WaveFormatConversionStream.CreatePcmStream(reader), maxSeconds); }
+        catch
+        {
+            reader.Dispose();
+            throw;
+        }
+    }
 
     static AudioData Decode(WaveStream stream, double maxSeconds)
     {
