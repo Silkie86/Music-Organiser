@@ -101,7 +101,8 @@ public class ViewModelTests : IDisposable
             var fl = new MainViewModel(_db, _sounds).Settings.Links.Single(l => l.Daw == "FL Studio");
             var port = fl.MidiPort!;
             Assert.Equal((0, FlMidiPort.LoopMidi, FlMidiPort.LoopMidi), (port.Choice, port.Port, FlSetup.Port));
-            Assert.Contains(OperatingSystem.IsMacOS() ? "IAC Driver" : "loopMIDI", fl.Steps);
+            // On a Mac the app has no MIDI yet, so Settings says the link is Windows only for now.
+            Assert.Contains(OperatingSystem.IsMacOS() ? "only does on Windows" : "loopMIDI", fl.Steps);
             var changed = new List<string?>();
             fl.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
 
