@@ -4,7 +4,14 @@
              xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.ProjectsView"
              x:DataType="vm:ProjectsViewModel">
-    <Grid RowDefinitions="Auto,*" ColumnDefinitions="Auto,*,12,400">
+    <Grid RowDefinitions="Auto,*">
+        <!-- The splitter can't squeeze the list or the selected project's panel to nothing. -->
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" MinWidth="420" />
+            <ColumnDefinition Width="12" />
+            <ColumnDefinition Width="400" MinWidth="320" />
+        </Grid.ColumnDefinitions>
         <!-- Header -->
         <DockPanel Grid.ColumnSpan="4" Margin="0,0,0,18">
 <ToggleButton x:Name="FiltersToggle" DockPanel.Dock="Right" Classes="filters" IsChecked="True" Margin="10,0,0,0"

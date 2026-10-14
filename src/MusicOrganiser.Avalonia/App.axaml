@@ -1,6 +1,7 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="using:MusicOrganiser.Avalonia"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.App"
              RequestedThemeVariant="Dark">
     <Application.Resources>
@@ -224,6 +225,8 @@
         <Style Selector="DataGrid">
             <Setter Property="CanUserResizeColumns" Value="True" />
             <Setter Property="CanUserReorderColumns" Value="True" />
+            <!-- ...but not squeezed narrower than they were made: the list scrolls sideways instead. -->
+            <Setter Property="views:ColumnFloor.Enabled" Value="True" />
         </Style>
         <!-- Grouped lists show how many are in each group, e.g. "FL Studio 214". -->
         <Style Selector="DataGridRowGroupHeader">
