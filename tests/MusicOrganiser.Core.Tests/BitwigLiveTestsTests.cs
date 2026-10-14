@@ -458,7 +458,7 @@ public class BitwigLiveTestsTests
         Assert.Equal(1, closed.Code);
         Assert.Contains("Ctrl+C stops them", closed.Err);
         var lines = closed.Out.Split(Environment.NewLine);
-        Assert.Matches(@"^  ✗ Link › Hello \(\d.*\): " + BitwigLink.NotRunning[..20], lines[0]);
+        Assert.Matches(@"^  ✗ Link › Hello( \([^)]+\))?: " + BitwigLink.NotRunning[..20], lines[0]);   // no time when under half a millisecond
         Assert.Matches(@"^  – Link › Project listing( \(.+\))?: Bitwig isn't answering \(see Link › Hello\), so this wasn't tried\.$", lines[1]);
         Assert.Matches(@"^  – Link › Selected device( \(.+\))?$", lines[2]);   // the same reason again is said once
         Assert.Contains(Environment.NewLine + Environment.NewLine + "0 passed, 1 failed, ", closed.Out);
@@ -475,7 +475,7 @@ public class BitwigLiveTestsTests
         // report folder given is reached.
         var run = await FormatLab("live", "bitwig", "--port", bitwig.Port.ToString(CultureInfo.InvariantCulture), "--reports", Path.Combine(dir, "night"));
         Assert.True(run.Code == 0, run.Out + run.Err);
-        Assert.Matches(@"(?m)^  ✓ Link › Hello \(", run.Out);
+        Assert.Matches(@"(?m)^  ✓ Link › Hello( \([^)]+\))?\r?$", run.Out);
         Assert.Matches(@"(?m)^  – Changes › Changes allowed( \(.+\))?: Bitwig has “Night Drive” open, so the run changed nothing", run.Out);
         Assert.Matches(@"(?m)^  – Changes › New track( \(.+\))?\r?$", run.Out);
         Assert.DoesNotContain("✗", run.Out);
