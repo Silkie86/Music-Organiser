@@ -18,6 +18,9 @@ public sealed partial class ProjectItem : ObservableObject
         _p = p;
         _song = song;
         OlderSaves = olderSaves ?? [];
+        var saves = OlderSaves.Prepend(p).ToList();
+        Made = SongVersions.FirstMade(saves);
+        Runs = SongVersions.Runs(saves);
         _status = p.Status;
         _rating = p.Rating;
         _favourite = p.Favourite;
@@ -40,19 +43,34 @@ public sealed partial class ProjectItem : ObservableObject
     public string Folder => _p.Folder;
     public string FolderName => System.IO.Path.GetFileName(_p.Folder);
     public DateTime Modified => _p.Modified;
+    /// <summary>
+    /// When the song was first made: its oldest save, or the date its file records, whichever is earlier. The list is
+    /// grouped and sorted by this, so re-saving an old song in a newer DAW leaves it where it was.
+    /// </summary>
+    public DateTime Made { get; }
+    /// <summary>The song's working periods, oldest first; each one's last save can be opened (see <see cref="SongVersions.Runs"/>).</summary>
+    public IReadOnlyList<SaveRun> Runs { get; }
+    public bool HasRuns => Runs.Count > 1;
+    /// <summary>The newest run, when it's a rework: quite different from how the song first ended up.</summary>
+    public SaveRun? Rework => Runs.Count > 1 && Runs[^1].Reworked ? Runs[^1] : null;
     public int Year => _p.Modified.Year;
     public string MonthGroup => _p.Modified.ToString("yyyy · MMMM");
-    /// <summary>The list's time heading: "This week", "This month", "Earlier in 2026", then one per year.</summary>
-    public string WhenGroup => WhenGroupFor(_p.Modified, DateTime.Now);
-    /// <summary>"3 Aug" this year, "3 Aug 2019" before.</summary>
-    public string ShortDate => _p.Modified.Year == DateTime.Now.Year ? _p.Modified.ToString("d MMM") : _p.Modified.ToString("d MMM yyyy");
-    /// <summary>The row's second line: "FL Studio · 140 BPM · G minor · 77 saves", leaving out what isn't known.</summary>
+    /// <summary>The list's time heading, by when the song was first made: "This week", "This month", "Earlier in 2026", then one per year.</summary>
+    public string WhenGroup => WhenGroupFor(Made, DateTime.Now);
+    /// <summary>When it was first made: "3 Aug" this year, "3 Aug 2019" before.</summary>
+    public string ShortDate => Made.Year == DateTime.Now.Year ? Made.ToString("d MMM") : Made.ToString("d MMM yyyy");
+    /// <summary>The date's tooltip, saying which date it is and when it was last saved.</summary>
+    public string DateTip => Made.Date == Modified.Date
+        ? $"Made {Made:d MMM yyyy}"
+        : $"First made {Made:d MMM yyyy}. Last saved {Modified:d MMM yyyy}.";
+    /// <summary>The row's second line: "FL Studio · 140 BPM · G minor · 77 saves · reworked 2024", leaving out what isn't known.</summary>
     public string DetailsLine => string.Join(" · ", new[]
     {
         Daw,
         Tempo is { } t ? $"{t:0.##} BPM" : null,
         Key.Length == 0 ? null : Key,
         SaveCount > 1 ? $"{SaveCount} saves" : null,
+        Rework is { } r ? $"reworked {r.End.Year}" : null,
     }.OfType<string>());
     public int MissingCount => _p.MissingPlugins + _p.MissingSamples;
 
@@ -148,7 +166,7 @@ public sealed partial class ProjectItem : ObservableObject
         Notes.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         Daw.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         Key.Equals(text, StringComparison.OrdinalIgnoreCase) ||
-        (text.Length == 4 && int.TryParse(text, out var year) && year == Year) ||
+        (text.Length == 4 && int.TryParse(text, out var year) && (year == Year || year == Made.Year)) ||
         Tags.Any(t => t.Contains(text, StringComparison.OrdinalIgnoreCase)) ||
         PluginNames.Any(p => p.Contains(text, StringComparison.OrdinalIgnoreCase));
 }

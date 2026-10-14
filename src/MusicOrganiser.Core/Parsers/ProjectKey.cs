@@ -7,6 +7,9 @@ namespace MusicOrganiser.Core.Parsers;
 /// against the major and minor key profiles. Drums, one-note parts and sample channels are left out; a sample plays at
 /// its own pitch, which the notes alone don't tell.
 /// </summary>
+/// <summary>What a project's notes say: its key ("" for no clear key), how many notes play, and how many bars they run.</summary>
+public sealed record SongNotes(string Key, int Notes, int Bars);
+
 public static class ProjectKey
 {
     /// <summary>Below this, the notes don't point clearly enough at one key (see <see cref="MusicTheory.EstimateKey"/>).</summary>
@@ -41,15 +44,26 @@ public static class ProjectKey
     }
 
     /// <summary>Reads the project's notes and works out its key: "" when it has no clear key, null when it can't be read.</summary>
-    public static string? Detect(string path)
+    public static string? Detect(string path) => Read(path)?.Key;
+
+    /// <summary>
+    /// The project's key ("" when there's no clear one), how many notes play in it (drums too) and how many bars long
+    /// its notes run; null when its notes can't be read. One read gives all three.
+    /// </summary>
+    public static SongNotes? Read(string path)
     {
         if (Readers.For(path) is not { } reader) return null;
-        try { return Estimate(reader.ExtractChannels(path))?.Name ?? ""; }
-        catch (Exception)   // the key is a bonus: notes that can't be read never stop a scan
+        try { return Summarise(reader.ExtractChannels(path)); }
+        catch (Exception)   // these are a bonus: notes that can't be read never stop a scan
         {
             return null;
         }
     }
+
+    public static SongNotes Summarise(IReadOnlyList<MidiChannel> channels) => new(
+        Estimate(channels)?.Name ?? "",
+        channels.Sum(c => c.Notes.Count(n => !n.Muted)),
+        channels.Count == 0 ? 0 : channels.Max(c => c.Bars));
 
     static bool IsPitched(MidiChannel ch) =>
         ch.SamplePath.Length == 0 && !NotPitched.Contains(ch.Plugin) && ch.Kind is not ("Drums" or "Hits" or "");

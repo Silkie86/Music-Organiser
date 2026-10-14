@@ -83,8 +83,11 @@ public sealed class Scanner(LibraryDb db)
             var hardware = info.Plugins.Select(p => p.Name).Concat(info.Hardware)
                                .Select(PluginCatalog.ElektronDevice)
                                .OfType<string>().Distinct().Order().ToList();
-            var key = info.CanExtractMidi ? ProjectKey.Detect(path) : "";
-            return new(path, fi.Length, mtime, info, null, samples, hardware) { DetectedKey = key };
+            var notes = info.CanExtractMidi ? ProjectKey.Read(path) : new SongNotes("", -1, -1);
+            return new(path, fi.Length, mtime, info, null, samples, hardware)
+            {
+                DetectedKey = notes?.Key, NoteCount = notes?.Notes ?? -1, LengthBars = notes?.Bars ?? -1,
+            };
         }
         catch (Exception e)   // one unreadable file must never stop a scan
         {

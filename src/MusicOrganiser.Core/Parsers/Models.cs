@@ -64,6 +64,8 @@ public sealed class ProjectInfo
     /// <summary>External instruments the project talks to (e.g. Bitwig's HW Instrument devices).</summary>
     public List<string> Hardware { get; } = new();
     public Dictionary<string, string> Details { get; } = new();
+    /// <summary>When the project was first made, as the project file itself records it (FL Studio keeps this through every re-save).</summary>
+    public DateTime? Created { get; set; }
     public List<string> Warnings { get; } = new();
     public bool CanExtractMidi { get; set; }
     public bool CanExtractPresets { get; set; }

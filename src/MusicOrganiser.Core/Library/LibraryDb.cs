@@ -66,6 +66,10 @@ public sealed partial class LibraryDb : IDisposable
         Exec(Schema);
         Exec(PluginScanSchema);
         AddColumn("projects", "detected_key", "TEXT");
+        AddColumn("projects", "created", "INTEGER");
+        AddColumn("projects", "note_count", "INTEGER");
+        AddColumn("projects", "length_bars", "INTEGER");
+        AddColumn("projects", "track_count", "INTEGER");
     }
 
     /// <summary>A column added after the first release: libraries made before it get it here.</summary>
@@ -149,9 +153,11 @@ public sealed partial class LibraryDb : IDisposable
 
     // ---- indexing ----------------------------------------------------------------
 
-    /// <remarks>A project whose key hasn't been worked out yet (read before the app could) counts as changed, so the next scan reads it again.</remarks>
+    /// <remarks>
+    /// A project read before the app knew its key, notes and length counts as changed, so the next scan reads it again.
+    /// </remarks>
     public Dictionary<string, (long Mtime, long Size)> KnownFiles() =>
-        Query("SELECT path, mtime, size, detected_key IS NULL AS unkeyed FROM projects",
+        Query("SELECT path, mtime, size, (detected_key IS NULL OR note_count IS NULL) AS unkeyed FROM projects",
               r => (Path: (string)r["path"], Mtime: Long(r, "unkeyed") == 1 ? -1 : Long(r, "mtime"), Size: Long(r, "size")))
             .ToDictionary(x => x.Path, x => (x.Mtime, x.Size), StringComparer.OrdinalIgnoreCase);
 
@@ -160,6 +166,10 @@ public sealed partial class LibraryDb : IDisposable
     {
         /// <summary>The key its notes point to, "" for none, or null when the notes couldn't be read.</summary>
         public string? DetectedKey { get; init; }
+        /// <summary>How many notes play in it, or -1 when unknown.</summary>
+        public int NoteCount { get; init; } = -1;
+        /// <summary>How many bars its notes run, or -1 when unknown.</summary>
+        public int LengthBars { get; init; } = -1;
     }
 
     public void Upsert(IndexedFile f) => UpsertMany([f]);
@@ -189,21 +199,25 @@ public sealed partial class LibraryDb : IDisposable
         var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
         using (var cmd = Cmd("""
             INSERT INTO projects (path, name, daw, folder, size, mtime, tempo, version, title, confidence,
-                                  can_midi, can_presets, info, error, file_missing, hardware, detected_key)
+                                  can_midi, can_presets, info, error, file_missing, hardware, detected_key,
+                                  created, note_count, length_bars, track_count)
             VALUES ($path, $name, $daw, $folder, $size, $mtime, $tempo, $version, $title, $conf,
-                    $midi, $presets, $info, $error, 0, $hw, $key)
+                    $midi, $presets, $info, $error, 0, $hw, $key, $created, $notes, $bars, $tracks)
             ON CONFLICT(path) DO UPDATE SET name=excluded.name, daw=excluded.daw, folder=excluded.folder,
                 size=excluded.size, mtime=excluded.mtime, tempo=excluded.tempo, version=excluded.version,
                 title=excluded.title, confidence=excluded.confidence, can_midi=excluded.can_midi,
                 can_presets=excluded.can_presets, info=excluded.info, error=excluded.error, file_missing=0,
-                hardware=excluded.hardware, detected_key=excluded.detected_key
+                hardware=excluded.hardware, detected_key=excluded.detected_key, created=excluded.created,
+                note_count=excluded.note_count, length_bars=excluded.length_bars, track_count=excluded.track_count
             """,
             ("$path", f.Path), ("$name", Path.GetFileNameWithoutExtension(f.Path)),
             ("$daw", info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown"), ("$folder", Path.GetDirectoryName(f.Path)),
             ("$size", f.Size), ("$mtime", f.Mtime), ("$tempo", info?.Tempo), ("$version", info?.Version),
             ("$title", info?.Title), ("$conf", (int)(info?.Confidence ?? Confidence.Catalogue)),
             ("$midi", info?.CanExtractMidi == true ? 1 : 0), ("$presets", info?.CanExtractPresets == true ? 1 : 0),
-            ("$info", infoJson), ("$error", f.Error), ("$hw", string.Join(", ", f.Hardware)), ("$key", f.DetectedKey ?? "")))
+            ("$info", infoJson), ("$error", f.Error), ("$hw", string.Join(", ", f.Hardware)), ("$key", f.DetectedKey ?? ""),
+            ("$created", info?.Created is { } made ? new DateTimeOffset(made).ToUnixTimeSeconds() : null),
+            ("$notes", f.NoteCount), ("$bars", f.LengthBars), ("$tracks", info?.Tracks.Count ?? -1)))
         {
             cmd.Transaction = tx;
             cmd.ExecuteNonQuery();
@@ -441,6 +455,10 @@ public sealed partial class LibraryDb : IDisposable
         Rating = (int)Long(r, "rating"), Favourite = Long(r, "favourite") == 1,
         MusicalKey = Str(r, "musical_key"), Notes = Str(r, "notes"),
         DetectedKey = HasCol(r, "detected_key") ? Str(r, "detected_key") : "",
+        Created = HasCol(r, "created") && r["created"] is long made ? DateTimeOffset.FromUnixTimeSeconds(made).LocalDateTime : null,
+        NoteCount = HasCol(r, "note_count") && r["note_count"] is long notes ? (int)notes : -1,
+        LengthBars = HasCol(r, "length_bars") && r["length_bars"] is long bars ? (int)bars : -1,
+        TrackCount = HasCol(r, "track_count") && r["track_count"] is long tracks ? (int)tracks : -1,
     };
 
     static bool HasCol(SqliteDataReader r, string name)

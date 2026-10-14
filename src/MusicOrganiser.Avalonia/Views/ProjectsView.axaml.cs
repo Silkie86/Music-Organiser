@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
@@ -16,6 +17,44 @@ public partial class ProjectsView : UserControl
         // catch it on the way down: Enter opens the project, as in the Windows app.
         Grid.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         Search.AddHandler(KeyDownEvent, OnSearchKeyDown, RoutingStrategies.Tunnel);
+        Grid.AddHandler(PointerPressedEvent, OnGridPointerPressed, RoutingStrategies.Tunnel);
+    }
+
+    // A right-click selects the song under the pointer first, so its menu is about that song.
+    void OnGridPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(Grid).Properties.IsRightButtonPressed || Vm is not { } vm) return;
+        if ((e.Source as Visual)?.FindAncestorOfType<DataGridRow>(includeSelf: true)?.DataContext is ProjectItem item && vm.Selected != item)
+            vm.Selected = item;
+    }
+
+    // The right-click menu follows the selected song. A menu with nothing in it doesn't open, so it's filled as the
+    // selection changes (a right-click selects first), not when it opens.
+    ProjectsViewModel? _watched;
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        if (_watched is not null) _watched.PropertyChanged -= OnVmChanged;
+        _watched = Vm;
+        if (_watched is not null) _watched.PropertyChanged += OnVmChanged;
+        FillRowMenu();
+    }
+
+    void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ProjectsViewModel.Detail)) FillRowMenu();
+    }
+
+    void FillRowMenu()
+    {
+        if (Grid.ContextFlyout is not MenuFlyout menu) return;
+        if (Vm?.Detail is { } detail) OpenMenu.Fill(menu.Items, detail, row: true);
+        else
+        {
+            menu.Items.Clear();
+            menu.Items.Add(new MenuItem { Header = "Pick a song first", IsEnabled = false });
+        }
     }
 
     TopLevel? _top;

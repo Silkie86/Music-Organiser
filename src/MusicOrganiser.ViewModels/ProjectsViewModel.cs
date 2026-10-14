@@ -19,7 +19,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     public static IReadOnlyList<string> StatusChoices => Statuses.All;
     public static IReadOnlyList<int> RatingChoices { get; } = [0, 1, 2, 3, 4, 5];
     public static IReadOnlyList<string> GroupChoices { get; } =
-        ["When saved", "No grouping", "DAW", "Status", "Folder", "Month modified", "Year modified", "Elektron box", "Rating"];
+        ["When made", "No grouping", "DAW", "Status", "Folder", "Month modified", "Year modified", "Elektron box", "Rating"];
 
     public ObservableCollection<string> DawFilters { get; } = new();
     public ObservableCollection<string> StatusFilters { get; } = new();
@@ -35,7 +35,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     [ObservableProperty] bool _onlyMissing;
     [ObservableProperty] bool _hideArchived = true;
     [ObservableProperty] bool _groupSaves = true;
-    [ObservableProperty] string _groupBy = "When saved";
+    [ObservableProperty] string _groupBy = "When made";
     [ObservableProperty] string _countText = "";
 
     /// <summary>Set from the Plugins or Samples screens: only projects with these ids.</summary>
@@ -52,7 +52,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         _main = main;
         View = Ui.Current.CreateView(Items);
         View.Filter = o => o is ProjectItem p && Filter(p);
-        View.SortBy(nameof(ProjectItem.Modified), ListSortDirection.Descending);
+        View.SortBy(nameof(ProjectItem.Made), ListSortDirection.Descending);
         OnGroupByChanged(GroupBy);
     }
 
@@ -124,7 +124,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     {
         var prop = value switch
         {
-            "When saved" => nameof(ProjectItem.WhenGroup),
+            "When made" => nameof(ProjectItem.WhenGroup),
             "DAW" => nameof(ProjectItem.Daw),
             "Status" => nameof(ProjectItem.Status),
             "Folder" => nameof(ProjectItem.FolderName),

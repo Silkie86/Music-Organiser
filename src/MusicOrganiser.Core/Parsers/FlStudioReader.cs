@@ -31,6 +31,7 @@ public sealed partial class FlStudioReader : IProjectReader
     const int EvPatternNotes = Data + 16;       // 224: 24-byte note records
     const int EvInsertFlags = Data + 28;        // 236: starts each mixer insert (0 is the master)
     const int EvInsertName = Text + 12;         // 204: an insert's name, just before the flags that start it
+    const int EvProjectTime = Data + 29;        // 237: when the project was made and how long it has been open, as two Delphi dates
 
     // Fruity Wrapper (VST host) state: u32 version (8, 10, 12 in FL 25), then records of (u32 id, u64 size, data).
     const int VstKind = 50, VstFourCc = 51, VstClassId = 52;
@@ -182,6 +183,10 @@ public sealed partial class FlStudioReader : IProjectReader
                 case EvMixerSlot or EvInsertFlags: inMixer = true; break;
                 case EvSamplePath: info.Samples.Add(ResolveSamplePath(flp.Str(e), path)); break;
                 case EvPatternNotes: notes += e.Payload.Length / 24; break;
+                case EvProjectTime when e.Payload.Length >= 16:
+                    (info.Created, var spent) = ProjectTime(e.Payload.Span);
+                    if (spent is { } time) info.Details["Time spent"] = time;
+                    break;
                 case EvPluginName or EvChannelNameOld when channel is not null && !inMixer:
                     channelNames.TryAdd(channel.Value, flp.Str(e));
                     break;
@@ -225,6 +230,23 @@ public sealed partial class FlStudioReader : IProjectReader
         info.Details["Notes"] = notes.ToString();
         return info.Dedupe();
     }
+
+    /// <summary>
+    /// Event 237: the day the project was first made (a Delphi date: days since 30 Dec 1899) and how long FL Studio has
+    /// had it open, in days. Saving again, even in a newer FL Studio, keeps the date. Out-of-range dates are left out.
+    /// </summary>
+    public static (DateTime? Created, string? Spent) ProjectTime(ReadOnlySpan<byte> payload)
+    {
+        var made = BitConverter.ToDouble(payload[..8]);
+        var open = BitConverter.ToDouble(payload[8..16]);
+        DateTime? created = double.IsFinite(made) && made > 35_000 && made < 80_000   // 1995 to 2119
+            ? DateTime.SpecifyKind(new DateTime(1899, 12, 30).AddDays(made), DateTimeKind.Local) : null;
+        string? spent = double.IsFinite(open) && open > 0 && open < 3650 ? Duration(TimeSpan.FromDays(open)) : null;
+        return (created, spent);
+    }
+
+    static string Duration(TimeSpan t) =>
+        t.TotalHours >= 1 ? $"{(int)t.TotalHours} h {t.Minutes} min" : $"{Math.Max(1, (int)t.TotalMinutes)} min";
 
     /// <summary>
     /// FL writes paths under its user data folder as %FLStudioUserData%\..., which is the

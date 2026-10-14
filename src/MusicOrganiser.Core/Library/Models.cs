@@ -42,6 +42,12 @@ public sealed class ProjectSummary
     public string MusicalKey { get; set; } = "";
     /// <summary>The key the project's notes point to (drums left out), or "" when they don't point to one.</summary>
     public string DetectedKey { get; init; } = "";
+    /// <summary>When the project was first made, as its file records it (FL Studio does), or null.</summary>
+    public DateTime? Created { get; init; }
+    /// <summary>How many notes play in it, how many bars they run, and how many channels or tracks it has; -1 when unknown.</summary>
+    public int NoteCount { get; init; } = -1;
+    public int LengthBars { get; init; } = -1;
+    public int TrackCount { get; init; } = -1;
     public string Notes { get; set; } = "";
 }
 

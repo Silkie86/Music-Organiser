@@ -45,6 +45,28 @@ public class ViewModelTests : IDisposable
         new(_db, _sounds, watch, pluginScanner, Path.Combine(_root, "data"));
 
     [Fact]
+    public void A_song_sits_under_the_year_it_was_first_made_and_shows_its_rework()
+    {
+        ProjectSummary Save(string name, DateTime saved, int notes, string[] plugins) => new()
+        {
+            Name = name, Path = $"/music/{name}.flp", Daw = "FL Studio", Folder = "/music", Modified = saved,
+            NoteCount = notes, LengthBars = 32, TrackCount = 4, PluginNames = plugins,
+        };
+        var newest = Save("Didums_77", DateTime.Now.AddDays(-1), 400, ["Serum 2", "Vital"]);
+        var item = new ProjectItem(_db, newest, "Didums", [Save("Didums_12", new(2019, 2, 2), 120, ["Serum"])]);
+
+        Assert.Equal("2019", item.WhenGroup);
+        Assert.Equal("2 Feb 2019", item.ShortDate);
+        Assert.EndsWith($"2 saves · reworked {newest.Modified.Year}", item.DetailsLine);
+
+        var detail = new ProjectDetailViewModel(_db, item, Main());
+        Assert.True(detail.HasOpenChoices);
+        Assert.Equal([$"{newest.Modified.Year} rework (newest) · Didums_77 · {newest.Modified:d MMM yyyy}", "2019 original · Didums_12 · 2 Feb 2019"],
+                     detail.RunChoices.Select(r => r.Header));
+        Assert.StartsWith("First made 2 Feb 2019 · saved ", detail.DatesText);
+    }
+
+    [Fact]
     public void Appearance_is_remembered_and_light_accents_get_dark_text()
     {
         var look = new AppearanceViewModel(_db);

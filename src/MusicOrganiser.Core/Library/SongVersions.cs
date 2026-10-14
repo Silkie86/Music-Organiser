@@ -6,6 +6,22 @@ namespace MusicOrganiser.Core.Library;
 public sealed record SongGroup(string Song, ProjectSummary Latest, IReadOnlyList<ProjectSummary> Older);
 
 /// <summary>
+/// One working period on a song: saves less than <see cref="SongVersions.RunGapMonths"/> months apart. <see cref="Last"/> is the save
+/// it ended on, which is what gets opened. <see cref="Reworked"/>: it's quite different from how the song first ended up,
+/// not just saved again (see <see cref="SongVersions.IsReworked"/>).
+/// </summary>
+public sealed record SaveRun(ProjectSummary Last, DateTime Start, DateTime End, int Saves, bool First, bool Reworked)
+{
+    /// <summary>"2019 original", "2024 rework", or "2023 re-save" for a run that only saved it again.</summary>
+    public string Label => $"{End.Year} {(First ? "original" : Reworked ? "rework" : "re-save")}";
+    /// <summary>"Didums_77 · 3 Aug 2024 · 12 saves".</summary>
+    public string Details => string.Join(" · ", new[]
+    {
+        Last.Name, End.ToString("d MMM yyyy"), Saves == 1 ? null : $"{Saves} saves",
+    }.OfType<string>());
+}
+
+/// <summary>
 /// Groups numbered saves of the same song. FL Studio's "Save new version" names them
 /// Song_2, Song_3 …, and plenty of people number saves that way by hand in any DAW.
 /// </summary>
@@ -21,6 +37,65 @@ public static partial class SongVersions
         return m.Success && m.Groups[1].Value.Trim().Length > 0
             ? (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Value))
             : (name, 1);
+    }
+
+    /// <summary>A gap this long between two saves (Solomon's pick: 3 months) starts a new run.</summary>
+    public const int RunGapMonths = 3;
+
+    /// <summary>
+    /// When the song was first made: its oldest save, or the date its file records (FL Studio keeps it through
+    /// re-saves), whichever is earlier. Re-saving an old project in a newer DAW doesn't make it new.
+    /// </summary>
+    public static DateTime FirstMade(IEnumerable<ProjectSummary> saves)
+    {
+        var dates = saves.SelectMany(s => s.Created is { } c && c.Year >= 1995 ? new[] { s.Modified, c } : [s.Modified]).ToList();
+        return dates.Count == 0 ? DateTime.MinValue : dates.Min();
+    }
+
+    /// <summary>
+    /// The saves split into working periods, oldest first: a gap of <see cref="RunGapMonths"/> months or more
+    /// between two saves starts a new one. Moved files are left out, since they can't be opened.
+    /// </summary>
+    public static IReadOnlyList<SaveRun> Runs(IEnumerable<ProjectSummary> saves)
+    {
+        var ordered = saves.Where(s => !s.FileMissing).OrderBy(s => s.Modified).ThenBy(s => Split(s.Name).Number).ToList();
+        var runs = new List<List<ProjectSummary>>();
+        foreach (var save in ordered)
+        {
+            if (runs.Count == 0 || save.Modified >= runs[^1][^1].Modified.AddMonths(RunGapMonths)) runs.Add([]);
+            runs[^1].Add(save);
+        }
+        var original = runs.Count > 0 ? runs[0][^1] : null;
+        return runs.Select((r, i) => new SaveRun(r[^1], r[0].Modified, r[^1].Modified, r.Count, i == 0,
+                                                 i > 0 && IsReworked(original!, r[^1]))).ToList();
+    }
+
+    /// <summary>
+    /// Whether <paramref name="later"/> is quite different from <paramref name="earlier"/>, not just saved again
+    /// (Solomon's rules): plugins added or removed (a newer version of the same one, such as Serum 2 for Serum, doesn't
+    /// count), channels added or removed, the number of notes changed by more than a fifth, or more than 8 bars longer or
+    /// shorter. What isn't known about either save is left out.
+    /// </summary>
+    public static bool IsReworked(ProjectSummary earlier, ProjectSummary later)
+    {
+        var before = earlier.PluginNames.Select(PluginFamily).ToHashSet();
+        var after = later.PluginNames.Select(PluginFamily).ToHashSet();
+        if (!before.SetEquals(after)) return true;
+        if (earlier.TrackCount >= 0 && later.TrackCount >= 0 && earlier.TrackCount != later.TrackCount) return true;
+        if (earlier.NoteCount >= 0 && later.NoteCount >= 0 && Math.Abs(later.NoteCount - earlier.NoteCount) * 5 > Math.Max(earlier.NoteCount, 1))
+            return true;
+        return earlier.LengthBars >= 0 && later.LengthBars >= 0 && Math.Abs(later.LengthBars - earlier.LengthBars) > 8;
+    }
+
+    [GeneratedRegex(@"(\s*\((x64|x86|64-?bit|32-?bit|vst3?|clap|au)\)|[\s_-]+(x64|x86|64-?bit|32-?bit|vst3?)|[\s_-]*v?\d+(\.\d+)*)$", RegexOptions.IgnoreCase)]
+    private static partial Regex VersionTail();
+
+    /// <summary>A plugin's name without its version or format: "Serum 2" and "Serum (x64)" are both "serum".</summary>
+    public static string PluginFamily(string name)
+    {
+        var n = name.Trim();
+        while (VersionTail().Replace(n, "").Trim() is { Length: > 0 } shorter && shorter != n) n = shorter;
+        return n.ToLowerInvariant();
     }
 
     /// <summary>Saves of the same song share a key: same folder, same DAW, same name before the number.</summary>

@@ -106,7 +106,7 @@
                 <Border Classes="pill" Margin="0,0,8,0" Background="{StaticResource OkSoftBrush}" IsVisible="{Binding IsLive}">
                     <TextBlock Text="{Binding LiveText}" Classes="pillText" Foreground="{StaticResource OkBrush}" />
                 </Border>
-                <TextBlock Text="{Binding Item.Modified, StringFormat='Saved {0:d MMM yyyy}'}" Foreground="{StaticResource MutedBrush}"
+                <TextBlock Text="{Binding DatesText}" Foreground="{StaticResource MutedBrush}"
                            FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <TextBlock Text="{Binding SavesText}" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"
                            TextWrapping="Wrap" IsVisible="{Binding HasOlderSaves}" />
@@ -117,13 +117,27 @@
             <TextBlock Text="{Binding Item.DetailsLine}" FontSize="13" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" TextWrapping="Wrap" />
 
             <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,18,0,0">
-                <Button Classes="accent bigAction" Command="{Binding OpenMainCommand}" HorizontalAlignment="Stretch"
-                        ToolTip.Tip="{Binding OpenMainTip}">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <Path Data="M7,4 L20,12 L7,20 Z" Fill="{StaticResource OnAccentBrush}" Width="13" Height="13" Stretch="Uniform" VerticalAlignment="Center" />
-                        <TextBlock Text="{Binding OpenMainText}" VerticalAlignment="Center" />
-                    </StackPanel>
-                </Button>
+                <!-- A split button: the big part opens the newest save; the arrow lists the other ways and older versions. -->
+                <Border CornerRadius="{DynamicResource RadiusL}" ClipToBounds="True">
+                    <Grid ColumnDefinitions="*,Auto,Auto">
+                        <Button Classes="accent bigAction" CornerRadius="0" Command="{Binding OpenMainCommand}" HorizontalAlignment="Stretch"
+                                ToolTip.Tip="{Binding OpenMainTip}">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <Path Data="M7,4 L20,12 L7,20 Z" Fill="{StaticResource OnAccentBrush}" Width="13" Height="13" Stretch="Uniform" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding OpenMainText}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Border Grid.Column="1" Width="1" Background="{StaticResource OnAccentBrush}" Opacity="0.25" IsVisible="{Binding HasOpenChoices}" />
+                        <Button Grid.Column="2" x:Name="OpenChoices" Classes="accent bigAction" CornerRadius="0" Width="46" Padding="0"
+                                IsVisible="{Binding HasOpenChoices}" ToolTip.Tip="{Binding OpenChoicesTip}">
+                            <Path Data="M6,9 L12,15 L18,9" Stroke="{StaticResource OnAccentBrush}" StrokeThickness="2.2" StrokeLineCap="Round"
+                                  StrokeJoin="Round" Width="13" Height="13" Stretch="Uniform" />
+                            <Button.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight" />
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+                </Border>
                 <Button Grid.Column="1" Classes="squareAction" Command="{Binding RevealCommand}" ToolTip.Tip="Show in folder">
                     <Path Data="{StaticResource NavIcon.Projects}" Classes="navIcon" />
                 </Button>
@@ -135,8 +149,6 @@
                     </StackPanel>
                     <Button.Flyout>
                         <MenuFlyout Placement="BottomEdgeAlignedRight">
-                            <MenuItem Header="Open in FL Studio" Command="{Binding OpenInDawCommand}" IsVisible="{Binding IsFlStudio}"
-                                      ToolTip.Tip="Open the newest save in FL Studio itself" />
                             <MenuItem Header="MIDI…" Command="{Binding ShowMidiCommand}" IsEnabled="{Binding CanExtractMidi}" ToolTip.Tip="{Binding MidiNote}" />
                             <MenuItem Header="Presets…" Command="{Binding ShowPresetsCommand}" IsEnabled="{Binding CanExtractPresets}"
                                       ToolTip.Tip="See the plugin settings saved in this project and export them as presets" />
