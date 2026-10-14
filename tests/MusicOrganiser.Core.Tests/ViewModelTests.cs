@@ -45,6 +45,31 @@ public class ViewModelTests : IDisposable
         new(_db, _sounds, watch, pluginScanner, Path.Combine(_root, "data"));
 
     [Fact]
+    public void Appearance_is_remembered_and_light_accents_get_dark_text()
+    {
+        var look = new AppearanceViewModel(_db);
+        Assert.Equal("Studio", look.Theme.Name);
+        Assert.Equal("#FFFFFF", look.AccentText);
+
+        look.Theme = AppearanceViewModel.Themes.Single(t => t.Name == "Retro");
+        Assert.Equal(AppearanceViewModel.SpaceFont, look.FontName);   // the theme's own font
+        look.Accent = AppearanceViewModel.Accents.Single(a => a.Name == "Amber");
+        look.Size = 110;
+        look.LessMotion = true;
+
+        var again = new AppearanceViewModel(_db);
+        Assert.Equal("Retro", again.Theme.Name);
+        Assert.Equal("#F2A03D", again.AccentColour);
+        Assert.True(AppearanceViewModel.IsLight(again.AccentColour));
+        Assert.NotEqual("#FFFFFF", again.AccentText);
+        Assert.Equal(110, again.Size);
+        Assert.True(again.LessMotion);
+
+        again.ResetCommand.Execute(null);
+        Assert.Equal("Studio", new AppearanceViewModel(_db).Theme.Name);
+    }
+
+    [Fact]
     public async Task Activity_cards_show_a_job_start_progress_and_finish_then_go()
     {
         var feed = new ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero };

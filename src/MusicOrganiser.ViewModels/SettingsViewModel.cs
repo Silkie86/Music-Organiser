@@ -61,10 +61,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// The app's data folder, where MO Probe's reports and the live tests' reports are: %LOCALAPPDATA%\MusicOrganiser unless
     /// given (tests give one of their own, so opening Settings never reaches the real one).
     /// </param>
+    /// <summary>The theme, accent, font, size and motion.</summary>
+    public AppearanceViewModel Appearance { get; }
+
     public SettingsViewModel(LibraryDb db, MainViewModel main, string? dataFolder = null)
     {
         _db = db;
         _main = main;
+        Appearance = new AppearanceViewModel(db);
         foreach (var r in db.Roots()) ProjectFolders.Add(r);
         foreach (var f in db.GetList(Scanner.SampleFoldersKey)) SampleFolders.Add(f);
         var plugins = db.GetList(Scanner.PluginFoldersKey);

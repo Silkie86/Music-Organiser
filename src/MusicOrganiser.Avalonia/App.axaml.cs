@@ -30,7 +30,9 @@ public partial class App : Application
             _soundDb = new SoundLibrary(SoundLibrary.DefaultPath);
             _sounds = new SoundOrganiser(_soundDb);
             var main = new MainViewModel(_db, _sounds);
-            desktop.MainWindow = new MainWindow { DataContext = main };
+            var window = new MainWindow { DataContext = main };
+            desktop.MainWindow = window;
+            Views.Appearance.Follow(main.Settings.Appearance, window.Scaler);
             desktop.Exit += (_, _) =>
             {
                 main.Shutdown();

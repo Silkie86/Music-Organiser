@@ -144,3 +144,20 @@ public sealed class PercentAngle : IValueConverter
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
+
+/// <summary>"#RRGGBB" as a brush, for previews of a theme's colours; an empty string draws nothing.</summary>
+public sealed class HexBrush : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is string { Length: > 0 } hex && Color.TryParse(hex, out var c) ? new SolidColorBrush(c) : Brushes.Transparent;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>An outline only for the "Theme's own" swatch, which has no colour of its own to fill it.</summary>
+public sealed class HexStroke : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value is string { Length: > 0 } ? 0.0 : 1.5;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}

@@ -16,6 +16,8 @@
         <DataTemplate DataType="vm:SamplesViewModel"><views:SamplesView /></DataTemplate>
     </Window.DataTemplates>
 
+    <!-- Settings › Appearance › Size scales everything in here. -->
+    <LayoutTransformControl x:Name="Scaler">
     <Grid ColumnDefinitions="84,*">
         <!-- The rail: the places to go, always in the same spot. Settings sits at the bottom, below the DAW lights. -->
         <Border Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,0,1,0">
@@ -146,4 +148,5 @@
             </ItemsControl.ItemTemplate>
         </ItemsControl>
     </Grid>
+    </LayoutTransformControl>
 </Window>

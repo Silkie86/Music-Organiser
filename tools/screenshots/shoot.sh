@@ -80,6 +80,10 @@ xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool 
 # The search box with text in it, showing its clear (X) button.
 nav 0; sleep 1; xdotool key ctrl+f; sleep 0.3; xdotool type --delay 40 "test 2026"; xdotool mousemove 1430 892; shot 9-projects-search
 xdotool key ctrl+a BackSpace
+# Settings › Appearance: pick the Retro theme, see Projects in it, then go back to Studio for the rest.
+nav 4; sleep 1; xdotool mousemove 445 290 click 1 mousemove 1430 892; shot 11a-retro-settings 1
+nav 0; sleep 1; xdotool mousemove 500 220 click 1 mousemove 1430 892; shot 11b-retro-projects 1
+nav 4; sleep 1; xdotool mousemove 235 290 click 1 mousemove 1430 892; nav 0; sleep 1
 # A project's Presets window (a separate window, so it is photographed on its own), pointer on the first row.
 xdotool mousemove 500 220 click 1; sleep 1; xdotool mousemove 1358 287 click 1; sleep 1
 import -window root "$OUT/10a-more-menu.png"

@@ -30,6 +30,8 @@
         <local:DawChipText x:Key="DawChipText" />
         <local:NotAny x:Key="NotAny" />
         <local:PercentAngle x:Key="PercentAngle" />
+        <local:HexBrush x:Key="HexBrush" />
+        <local:HexStroke x:Key="HexStroke" />
         <!-- The font (Solomon's pick): IBM Plex Sans for words and titles, Plex Mono for numbers that should line up, like a
              hardware display. Space Grotesk and Space Mono are built in too, for the Retro theme. -->
         <FontFamily x:Key="ContentControlThemeFontFamily">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans</FontFamily>
@@ -47,6 +49,8 @@
         <SolidColorBrush x:Key="OkSoftBrush" Color="#264ACB8B" />
         <SolidColorBrush x:Key="HoverBrush" Color="#FF24252C" />
         <SolidColorBrush x:Key="AccentSoftBrush" Color="#338B7CF6" />
+        <!-- Text on accent-coloured buttons: white, or dark on a light accent (Settings › Appearance). -->
+        <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFFFF" />
 
         <!-- Tables: no black header bar, soft violet for the selected row and no box around the clicked cell. -->
         <SolidColorBrush x:Key="DataGridColumnHeaderBackgroundBrush" Color="Transparent" />
@@ -92,10 +96,11 @@
             </FluentTheme.Palettes>
         </FluentTheme>
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+        <StyleInclude Source="/Feedback.axaml" />
         <StyleInclude Source="/Motion.axaml" />
 
         <Style Selector="TextBlock.pageTitle">
-            <Setter Property="FontFamily" Value="{StaticResource TitleFont}" />
+            <Setter Property="FontFamily" Value="{DynamicResource TitleFont}" />
             <Setter Property="FontSize" Value="26" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -329,7 +334,7 @@
         </Style>
         <Style Selector="DataGrid.songs DataGridRowGroupHeader">
             <Setter Property="IsPropertyNameVisible" Value="False" />
-            <Setter Property="FontFamily" Value="{StaticResource TitleFont}" />
+            <Setter Property="FontFamily" Value="{DynamicResource TitleFont}" />
             <Setter Property="FontSize" Value="12.5" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Foreground" Value="#FFC9CBD2" />
@@ -346,6 +351,9 @@
         <!-- Grouped lists show how many are in each group, e.g. "FL Studio 214". -->
         <Style Selector="DataGridRowGroupHeader">
             <Setter Property="IsItemCountVisible" Value="True" />
+        </Style>
+        <Style Selector="Button.accent /template/ ContentPresenter#PART_ContentPresenter, Button.accent:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.accent:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Foreground" Value="{StaticResource OnAccentBrush}" />
         </Style>
         <Style Selector="ComboBox">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
