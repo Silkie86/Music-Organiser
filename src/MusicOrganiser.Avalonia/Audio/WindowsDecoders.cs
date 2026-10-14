@@ -14,11 +14,19 @@ namespace MusicOrganiser.Avalonia.Audio;
 [SupportedOSPlatform("windows")]
 static class WindowsDecoders
 {
+    static readonly string[] Extensions = [".mp3", ".flac", ".m4a", ".ogg", ".wma", ".aac"];
+
     public static void Register()
     {
-        foreach (var ext in new[] { ".mp3", ".flac", ".m4a", ".ogg", ".wma", ".aac" })
+        foreach (var ext in Extensions)
             AudioFile.Register(ext, (path, maxSeconds) => Decode(new MediaFoundationReader(path), maxSeconds));
     }
+
+    /// <summary>True for the extensions Media Foundation reads here (".mp3" and so on).</summary>
+    public static bool Handles(string extension) => Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Opens one of those files to play as it goes, rather than decoding it all first.</summary>
+    public static WaveStream Open(string path) => new MediaFoundationReader(path);
 
     /// <summary>A WAV the Sound Lab can't read: compressed ones are converted to PCM by Windows' codecs.</summary>
     public static AudioData ReadWav(string path, double maxSeconds)
