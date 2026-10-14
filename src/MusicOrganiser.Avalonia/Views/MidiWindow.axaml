@@ -36,7 +36,7 @@
                     ToolTip.Tip="Drag into your DAW as a single multi-track MIDI file">
                 <TextBlock Text="Drag as one file" />
             </Border>
-            <TextBlock Text="Or drag any channel. Ctrl or Shift picks several." VerticalAlignment="Center"
+            <TextBlock Text="{x:Static views:Keys.PickSeveralChannels}" VerticalAlignment="Center"
                        FontSize="12" Foreground="{StaticResource MutedBrush}" />
         </WrapPanel>
 
