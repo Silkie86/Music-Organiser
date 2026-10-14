@@ -167,7 +167,7 @@
                                         <views:WaveformView Peaks="{Binding Selected.Analysis.Waveform}" Duration="{Binding WaveSeconds}"
                                                             Position="{Binding PlayPosition}" SeekCommand="{Binding SeekCommand}" Margin="8" />
                                     </Border>
-                                    <TextBlock Text="Click the waveform to play from any point." Classes="muted" FontSize="11.5" Margin="0,0,0,10" />
+                                    <TextBlock Text="Click the waveform to play from any point. Drag the sound from the list into your DAW." TextWrapping="Wrap" Classes="muted" FontSize="11.5" Margin="0,0,0,10" />
                                     <WrapPanel>
                                         <Button Content="Play" Classes="accent" Command="{Binding PlayCommand}" Margin="0,0,6,6" />
                                         <Button Content="☆" Command="{Binding ToggleFavouriteCommand}" ToolTip.Tip="Favourite" Margin="0,0,6,6" />
