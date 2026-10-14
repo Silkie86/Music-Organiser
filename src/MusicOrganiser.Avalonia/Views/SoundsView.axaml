@@ -109,7 +109,7 @@
                         <Border Classes="card" Padding="8,10,8,8">
                             <DataGrid x:Name="SoundGrid" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" SelectedItem="{Binding Selected}"
                                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" CanUserSortColumns="True"
-                                      GridLinesVisibility="None" Background="Transparent"
+                                      GridLinesVisibility="None" Background="Transparent" views:FileDrag.Source="{Binding}"
                                       DoubleTapped="OnGridDoubleTapped" KeyDown="OnGridKeyDown">
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Header="" Width="32" SortMemberPath="Favourite">
@@ -268,7 +268,7 @@
                                     </DockPanel>
 
                                     <TextBlock Text="Sounds like this" Classes="sectionHeader" Margin="0,12,0,4" />
-                                    <ItemsControl ItemsSource="{Binding Similar}">
+                                    <ItemsControl ItemsSource="{Binding Similar}" views:FileDrag.Source="{Binding}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="snd:SimilarSound">
                                                 <DockPanel Margin="0,1">
@@ -317,7 +317,8 @@
                                         <TextBlock Text="Find sounds you've forgotten" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,4" />
                                         <TextBlock Text="Pick a type and how adventurous to be, then press Shuffle." Classes="muted" TextAlignment="Center" />
                                     </StackPanel>
-                                    <ListBox ItemsSource="{Binding Suggestions}" Background="Transparent" SelectionMode="Multiple">
+                                    <ListBox ItemsSource="{Binding Suggestions}" Background="Transparent" SelectionMode="Multiple"
+                                             views:FileDrag.Source="{Binding Parent}">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate x:DataType="snd:Suggestion">
                                                 <DockPanel Margin="0,2">
@@ -373,13 +374,17 @@
                             <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                 <Button Content="Roll a kit" Classes="accent" Command="{Binding RollCommand}" Margin="0,0,8,0" />
                                 <Button Content="Export kit" Command="{Binding ExportCommand}" Margin="0,0,8,0" />
-                                <Button Content="Send to Bitwig" Command="{Binding SendToBitwigCommand}"
+                                <Button Content="Send to Bitwig" Command="{Binding SendToBitwigCommand}" Margin="0,0,8,0"
                                         ToolTip.Tip="Put the kit on a Drum Machine in the project open in Bitwig, on a new track: kick on C1, snare on D1, closed hat on F#1, and the rest on the free pads" />
+                                <Border Classes="dragChip" views:FileDrag.Source="{Binding}" views:FileDrag.AllOf="{Binding #KitSlots}"
+                                        ToolTip.Tip="Drag the whole kit into your DAW or sampler, pads in order (exported with the options on the right)">
+                                    <TextBlock Text="Drag kit" />
+                                </Border>
                             </WrapPanel>
                             <TextBlock DockPanel.Dock="Top" Text="{Binding Status}" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8"
                                        IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                <ItemsControl ItemsSource="{Binding Slots}">
+                                <ItemsControl x:Name="KitSlots" ItemsSource="{Binding Slots}" views:FileDrag.Source="{Binding}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:KitSlotItem">
                                             <Border Classes="card" Margin="0,0,0,8" Padding="14,10">
@@ -461,7 +466,7 @@
                                            Classes="muted" Margin="0,4,0,10" />
                                 <TextBlock Text="Nothing to check right now." Foreground="{StaticResource FaintBrush}" FontSize="12"
                                            IsVisible="{Binding Disagreements.Count, Converter={StaticResource Zero}}" />
-                                <ItemsControl ItemsSource="{Binding Disagreements}">
+                                <ItemsControl ItemsSource="{Binding Disagreements}" views:FileDrag.Source="{Binding}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:Disagreement">
                                             <Border Classes="row" Padding="8,6" CornerRadius="6" Margin="0,1">

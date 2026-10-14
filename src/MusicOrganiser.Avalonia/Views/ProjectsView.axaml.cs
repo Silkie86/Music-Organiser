@@ -10,7 +10,10 @@ public partial class ProjectsView : UserControl
 
     ProjectsViewModel? Vm => DataContext as ProjectsViewModel;
 
-    void OnDoubleTapped(object? sender, TappedEventArgs e) => Vm?.OpenSelectedCommand.Execute(null);
+    void OnDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (e.IsOnRow()) Vm?.OpenSelectedCommand.Execute(null);
+    }
 
     void OnKeyDown(object? sender, KeyEventArgs e)
     {

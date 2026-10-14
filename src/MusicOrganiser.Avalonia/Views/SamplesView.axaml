@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:MusicOrganiser.ViewModels"
              xmlns:lib="using:MusicOrganiser.Core.Library"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.SamplesView"
              x:DataType="vm:SamplesViewModel">
     <Grid RowDefinitions="Auto,*,Auto">
@@ -19,7 +20,8 @@
         <Border Grid.Row="1" Classes="card" Padding="8,10,8,8">
             <DataGrid ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" SelectedItem="{Binding Selected}"
                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" CanUserSortColumns="True"
-                      GridLinesVisibility="None" Background="Transparent" DoubleTapped="OnDoubleTapped">
+                      GridLinesVisibility="None" Background="Transparent" DoubleTapped="OnDoubleTapped"
+                      views:FileDrag.Source="{Binding}">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="Sample" Width="*" SortMemberPath="Path">
                         <DataGridTemplateColumn.CellTemplate>
@@ -55,7 +57,7 @@
                 <TextBlock Text="{Binding MatchMessage}" Margin="0,8,0,0"
                            IsVisible="{Binding MatchMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                 <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding Matches}">
+                    <ItemsControl ItemsSource="{Binding Matches}" views:FileDrag.Source="{Binding}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="lib:Match">
                                 <DockPanel Margin="0,2">

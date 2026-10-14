@@ -19,7 +19,7 @@
 
         <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Margin="16,12,16,8" Foreground="{StaticResource MutedBrush}" />
 
-        <!-- Listen to the whole song. Dragging channels out into a DAW isn't on this version yet. -->
+        <!-- Listen to the whole song, or drag channels out into a DAW. -->
         <WrapPanel DockPanel.Dock="Top" Margin="16,0,16,10" IsVisible="{Binding HasChannels}">
             <Button Command="{Binding PlayAllCommand}" Margin="0,0,12,0" Padding="10,5"
                     ToolTip.Tip="Hear every channel together. Click along any channel to jump.">
@@ -28,10 +28,20 @@
                     <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAll}" />
                 </Panel>
             </Button>
+            <Border Classes="dragChip" views:FileDrag.Source="{Binding}" views:FileDrag.AllOf="{Binding #ChannelList}"
+                    ToolTip.Tip="Drag into your DAW: one MIDI file per channel, landing as tracks in this order">
+                <TextBlock Text="Drag all as tracks" />
+            </Border>
+            <Border Classes="dragChip" views:FileDrag.Source="{Binding AsOneFile}" views:FileDrag.AllOf="{Binding #ChannelList}"
+                    ToolTip.Tip="Drag into your DAW as a single multi-track MIDI file">
+                <TextBlock Text="Drag as one file" />
+            </Border>
+            <TextBlock Text="Or drag any channel. Ctrl or Shift picks several." VerticalAlignment="Center"
+                       FontSize="12" Foreground="{StaticResource MutedBrush}" />
         </WrapPanel>
 
-        <ListBox ItemsSource="{Binding Channels}" SelectionMode="Multiple" Margin="12,0,8,0" Background="Transparent"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+        <ListBox x:Name="ChannelList" ItemsSource="{Binding Channels}" SelectionMode="Multiple" Margin="12,0,8,0" Background="Transparent"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}">
             <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:MidiChannelRow">
                     <Grid ColumnDefinitions="Auto,190,*,Auto" RowDefinitions="Auto,Auto">

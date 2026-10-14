@@ -7,7 +7,8 @@ namespace MusicOrganiser.Avalonia.Audio;
 
 /// <summary>
 /// Plays one sound at a time for auditioning, through OpenAL Soft on Windows, macOS and Linux.
-/// Files are decoded by the Sound Lab's own reader (WAV and AIFF), up to ten minutes.
+/// Files are decoded by the Sound Lab's own reader (WAV and AIFF, plus MP3, FLAC and the rest on
+/// Windows through <see cref="WindowsDecoders"/>), up to ten minutes.
 /// </summary>
 public sealed unsafe class OpenAlPlayer : IAudioPlayer
 {
@@ -75,7 +76,12 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
 
     public void Play(string path, double startSeconds = 0)
     {
-        var audio = AudioFile.Read(path, MaxSeconds);
+        AudioData audio;
+        try { audio = AudioFile.Read(path, MaxSeconds); }
+        catch (NotSupportedException) when (OperatingSystem.IsWindows() && Path.GetExtension(path).Equals(".wav", StringComparison.OrdinalIgnoreCase))
+        {
+            audio = WindowsDecoders.ReadCompressedWav(path, MaxSeconds);
+        }
         Start(audio.Channels, audio.SampleRate, path, startSeconds);
     }
 
@@ -86,6 +92,7 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
     {
         Stop();
         var al = Al;
+        if (channels.Length > 2) channels = DownmixToStereo(channels);
         var stereo = channels.Length > 1;
         var frames = channels[0].Length;
         var pcm = new short[frames * (stereo ? 2 : 1)];
@@ -104,6 +111,24 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
         al.SourcePlay(_source);
         _playing = key;
         Parallelism.AudioPlaying = true;
+    }
+
+    /// <summary>
+    /// Folds channels past the first two (centre, surrounds, LFE) into left and right, so nothing in a
+    /// quad or 5.1 file goes silent: OpenAL here only takes mono or stereo.
+    /// </summary>
+    internal static float[][] DownmixToStereo(float[][] channels)
+    {
+        const float Share = 0.7071f;   // -3 dB into each side
+        var left = (float[])channels[0].Clone();
+        var right = (float[])channels[1].Clone();
+        for (var c = 2; c < channels.Length; c++)
+            for (var f = 0; f < left.Length; f++)
+            {
+                left[f] += channels[c][f] * Share;
+                right[f] += channels[c][f] * Share;
+            }
+        return [left, right];
     }
 
     static short ToShort(float v) => (short)Math.Clamp(v * 32767f, -32768f, 32767f);

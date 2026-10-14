@@ -19,7 +19,10 @@ public partial class SoundsView : UserControl
         SoundGrid.AddHandler(KeyUpEvent, OnGridKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
     }
 
-    void OnGridDoubleTapped(object? sender, TappedEventArgs e) => (DataContext as SoundsViewModel)?.AuditionCommand.Execute(null);
+    void OnGridDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (e.IsOnRow()) (DataContext as SoundsViewModel)?.AuditionCommand.Execute(null);
+    }
 
     // Space plays the selected sound, as in the Windows app.
     void OnGridKeyDown(object? sender, KeyEventArgs e)
