@@ -30,9 +30,10 @@
         <local:DawChipText x:Key="DawChipText" />
         <local:NotAny x:Key="NotAny" />
         <local:PercentAngle x:Key="PercentAngle" />
-        <!-- The font: IBM Plex Sans for words, Plex Mono for numbers that should line up (dates, counts), like a hardware display. -->
-        <FontFamily x:Key="ContentControlThemeFontFamily">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans</FontFamily>
-        <FontFamily x:Key="NumberFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Mono</FontFamily>
+        <!-- The font, a little retro: Space Grotesk for words, Space Mono for titles and for numbers that should line up. -->
+        <FontFamily x:Key="ContentControlThemeFontFamily">avares://MusicOrganiser.Avalonia/Assets/Fonts#Space Grotesk</FontFamily>
+        <FontFamily x:Key="NumberFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#Space Mono</FontFamily>
+        <FontFamily x:Key="TitleFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#Space Mono</FontFamily>
         <local:BoolToStar x:Key="BoolToStar" />
         <local:Stars x:Key="Stars" />
         <local:NonZero x:Key="NonZero" />
@@ -93,6 +94,7 @@
         <StyleInclude Source="/Motion.axaml" />
 
         <Style Selector="TextBlock.pageTitle">
+            <Setter Property="FontFamily" Value="{StaticResource TitleFont}" />
             <Setter Property="FontSize" Value="26" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -326,7 +328,8 @@
         </Style>
         <Style Selector="DataGrid.songs DataGridRowGroupHeader">
             <Setter Property="IsPropertyNameVisible" Value="False" />
-            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontFamily" Value="{StaticResource TitleFont}" />
+            <Setter Property="FontSize" Value="12.5" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Foreground" Value="#FFC9CBD2" />
             <Setter Property="Background" Value="Transparent" />

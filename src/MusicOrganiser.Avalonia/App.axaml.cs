@@ -14,8 +14,8 @@ public partial class App : Application
     SoundLibrary? _soundDb;
     SoundOrganiser? _sounds;
 
-    /// <summary>The app's font: IBM Plex Sans, built into the app (Assets/Fonts).</summary>
-    public const string TextFont = "avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans";
+    /// <summary>The app's font: Space Grotesk, built into the app (Assets/Fonts).</summary>
+    public const string TextFont = "avares://MusicOrganiser.Avalonia/Assets/Fonts#Space Grotesk";
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
