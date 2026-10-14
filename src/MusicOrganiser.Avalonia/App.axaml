@@ -92,6 +92,21 @@
         <Style Selector="DataGridColumnHeader">
             <Setter Property="Padding" Value="8,0,0,0" />
         </Style>
+        <!-- A handle for dragging something out into a DAW, e.g. "Drag kit". -->
+        <Style Selector="Border.dragChip">
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Padding" Value="12,5,12,6" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="SizeAll" />
+        </Style>
+        <Style Selector="Border.dragChip:pointerover">
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
+        </Style>
         <Style Selector="ComboBox">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
         </Style>

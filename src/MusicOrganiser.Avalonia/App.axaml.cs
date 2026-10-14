@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Sounds;
 using MusicOrganiser.ViewModels;
@@ -19,7 +20,9 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            Dispatcher.UIThread.UnhandledException += OnUnhandled;
             Ui.Current = new AvaloniaUi();
+            if (OperatingSystem.IsWindows()) Audio.WindowsDecoders.Register();
             _db = new LibraryDb(LibraryDb.DefaultPath);
             _soundDb = new SoundLibrary(SoundLibrary.DefaultPath);
             _sounds = new SoundOrganiser(_soundDb);
@@ -34,5 +37,17 @@ public partial class App : Application
             };
         }
         base.OnFrameworkInitializationCompleted();
+    }
+
+    bool _showingError;
+
+    /// <summary>Keeps the app alive and says what went wrong rather than vanishing.</summary>
+    async void OnUnhandled(object? sender, DispatcherUnhandledExceptionEventArgs e)
+    {
+        e.Handled = true;
+        if (_showingError || (ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow is not { IsVisible: true } owner) return;
+        _showingError = true;
+        try { await new ConfirmWindow(e.Exception.Message, "Music Organiser", okOnly: true).ShowDialog(owner); }
+        finally { _showingError = false; }
     }
 }

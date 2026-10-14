@@ -58,7 +58,7 @@
                 <DataGrid x:Name="Grid" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" SelectedItem="{Binding Selected}"
                           AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" CanUserReorderColumns="True"
                           CanUserSortColumns="True" GridLinesVisibility="None" Background="Transparent"
-                          DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">
+                          DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown" views:FileDrag.Source="{Binding}">
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="" Width="34" SortMemberPath="Favourite">
                             <DataGridTemplateColumn.CellTemplate>

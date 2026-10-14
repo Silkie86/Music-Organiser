@@ -24,6 +24,7 @@ jobs:
       # MoBuildNative: also build the plugin scanner the way Visual Studio does when you press F5.
       - run: dotnet build MusicOrganiser.sln -c Release -p:MoBuildNative=true
       - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release --no-build
+      - run: dotnet test tests/MusicOrganiser.Avalonia.Tests -c Release --no-build
 
   # Core (readers, writers, library, Sound Lab), the shared view models and the Avalonia app
   # must keep building, and the tests passing, on macOS and Linux.
@@ -39,7 +40,8 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release
-      - run: dotnet build src/MusicOrganiser.Avalonia -c Release
+      # Builds the Avalonia app too, and runs its tests without a screen.
+      - run: dotnet test tests/MusicOrganiser.Avalonia.Tests -c Release
 
   # The DAW scripts: the Bitwig controller script, type-checked against Bitwig's API and run in a stand-in
   # Bitwig, and the FL Studio script, run in a stand-in FL Studio. (The app's own tests above also talk to

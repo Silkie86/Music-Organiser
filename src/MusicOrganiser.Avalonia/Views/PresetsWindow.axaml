@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:MusicOrganiser.ViewModels"
+        xmlns:views="using:MusicOrganiser.Avalonia.Views"
         x:Class="MusicOrganiser.Avalonia.Views.PresetsWindow"
         x:DataType="vm:PresetsViewModel"
         Title="{Binding Title, StringFormat='Presets in {0}'}" Width="680" Height="600" MinWidth="480" MinHeight="360"
@@ -40,7 +41,7 @@
         <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Margin="16,4,16,8" Foreground="{StaticResource MutedBrush}" />
 
         <ListBox ItemsSource="{Binding Presets}" SelectionMode="Multiple" Margin="12,0,8,0" Background="Transparent"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}">
             <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:PresetRow">
                     <DockPanel ToolTip.Tip="{Binding LoadHint}">
