@@ -301,8 +301,9 @@ public class MoProbeLiveTests
 public class ProbeKnobCheckTests
 {
     const string Instance = "1683A80113A64904";
-    // The stand-in probe writes its status every 20 milliseconds, not every half second.
-    static readonly TimeSpan Quick = TimeSpan.FromMilliseconds(400), Settle = TimeSpan.FromMilliseconds(30);
+    // The stand-in probe writes its status every 20 milliseconds, not every half second, so turns settle quickly. The wait
+    // for an answer stays as long as the app's own: on a busy CI runner the stand-in can take more than half a second.
+    static readonly TimeSpan Quick = ProbeKnobCheck.DefaultWait, Settle = TimeSpan.FromMilliseconds(30);
 
     [Fact]
     public async Task PassesWhenTheDawSpreadsValuesEvenly()
