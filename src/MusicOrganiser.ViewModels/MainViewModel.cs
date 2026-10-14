@@ -88,11 +88,45 @@ public sealed partial class MainViewModel : ObservableObject
     Task FullRescan() => ScanAsync(true);
 
     [RelayCommand]
-    void CancelScan() => _scanCts?.Cancel();
-
-    public async Task ScanAsync(bool full, bool plugins = true, bool samples = false)
+    void CancelScan()
     {
-        if (IsScanning) return;
+        _scanCts?.Cancel();
+        DropQueuedScan();
+    }
+
+    // A scan asked for while another is running (say, adding a folder during the startup scan)
+    // runs straight after it instead of being dropped.
+    (bool Full, bool Plugins, bool Samples)? _queuedScan;
+    TaskCompletionSource? _queuedScanDone;
+
+    public Task ScanAsync(bool full, bool plugins = true, bool samples = false)
+    {
+        if (!IsScanning) return RunScanAsync(full, plugins, samples);
+        var q = _queuedScan ?? default;
+        _queuedScan = (q.Full || full, q.Plugins || plugins, q.Samples || samples);
+        return (_queuedScanDone ??= new TaskCompletionSource()).Task;
+    }
+
+    void DropQueuedScan()
+    {
+        var done = _queuedScanDone;
+        _queuedScan = null;
+        _queuedScanDone = null;
+        done?.TrySetResult();
+    }
+
+    async Task RunQueuedScanAsync()
+    {
+        if (_queuedScan is not { } next) return;
+        var done = _queuedScanDone;
+        _queuedScan = null;
+        _queuedScanDone = null;
+        try { await RunScanAsync(next.Full, next.Plugins, next.Samples); }
+        finally { done?.TrySetResult(); }
+    }
+
+    async Task RunScanAsync(bool full, bool plugins, bool samples)
+    {
         IsScanning = true;
         _scanCts = new CancellationTokenSource();
         var ct = _scanCts.Token;
@@ -144,6 +178,7 @@ public sealed partial class MainViewModel : ObservableObject
             ScanPercent = 0;
             RefreshAll();
         }
+        await RunQueuedScanAsync();
     }
 }
 

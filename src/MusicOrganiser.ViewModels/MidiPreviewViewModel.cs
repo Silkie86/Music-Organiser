@@ -29,6 +29,7 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
     readonly IAudioPlayer _player = Ui.Current.CreateAudioPlayer();
     readonly IUiTimer _clock;
     readonly Dictionary<string, MidiRender.Result> _renders = [];
+    int _listenRequest;
     IReadOnlyList<MidiChannelRow> _sounding = [];
     string? _playingKey;
     CancellationTokenSource? _sending;
@@ -110,6 +111,8 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
     {
         if (rows.Count == 0) return;
         Stop();
+        // Stop() bumps this, so a later click, a stop or closing the window wins over a render still going.
+        var request = _listenRequest;
         if (!_renders.TryGetValue(key, out var render))
         {
             IsPreparing = true;
@@ -124,10 +127,11 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
             }
             catch (Exception e) when (e is IOException or OutOfMemoryException)
             {
-                Message = $"Couldn't play it: {e.Message}";
+                if (request == _listenRequest) Message = $"Couldn't play it: {e.Message}";
                 return;
             }
-            finally { IsPreparing = false; }
+            finally { if (request == _listenRequest) IsPreparing = false; }
+            if (request != _listenRequest) return;
         }
         try { _player.Play(render.Audio, MidiRender.Rate, key, from); }
         catch (Exception e)
@@ -166,6 +170,8 @@ public sealed partial class MidiPreviewViewModel : ObservableObject, IFileDragSo
 
     void Stop()
     {
+        _listenRequest++;
+        IsPreparing = false;
         _clock.Stop();
         if (_playingKey is not null && _player.Playing == _playingKey) _player.Stop();
         _playingKey = null;

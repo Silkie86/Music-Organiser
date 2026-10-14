@@ -160,7 +160,8 @@ public static partial class PluginCatalog
         foreach (var folder in folders.Where(Directory.Exists))
         {
             IEnumerable<string> entries;
-            try { entries = Directory.EnumerateFileSystemEntries(folder, "*", SearchOption.AllDirectories); }
+            // One locked subfolder (e.g. a vendor's licence folder) mustn't hide every other plugin in this folder.
+            try { entries = Directory.EnumerateFileSystemEntries(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 }); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
             try
             {

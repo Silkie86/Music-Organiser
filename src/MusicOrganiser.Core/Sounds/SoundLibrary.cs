@@ -171,10 +171,10 @@ public sealed class SoundLibrary : IDisposable
     public void SetClap(long id, float[] v) => Exec("UPDATE sounds SET clap = $c WHERE id = $id", ("$c", ToBlob(v)), ("$id", id));
 
     /// <summary>Forgets samples that are no longer in your sample folders.</summary>
-    public int RemoveMissing(IReadOnlySet<string> present)
+    public int RemoveMissing(IReadOnlySet<string> present, Func<string, bool>? keep = null)
     {
         var gone = Query("SELECT id, path FROM sounds", r => ((long)r["id"], (string)r["path"]))
-            .Where(t => !present.Contains(t.Item2)).Select(t => t.Item1).ToList();
+            .Where(t => !present.Contains(t.Item2) && keep?.Invoke(t.Item2) != true).Select(t => t.Item1).ToList();
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();

@@ -128,16 +128,19 @@ public sealed class SoundOrganiser : IDisposable
 
     // ---- scanning ----------------------------------------------------------------------
 
-    public static List<string> FindAudio(IEnumerable<string> folders, CancellationToken ct = default) =>
+    public static List<string> FindAudio(IEnumerable<string> folders, CancellationToken ct = default,
+                                         ConcurrentBag<string>? unreadable = null) =>
         Parallelism.FindFiles(folders,
             f => AudioFile.CanRead(f) && !System.IO.Path.GetFileName(f).StartsWith("._"),
-            (name, _) => name.StartsWith('.') || name.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase), ct: ct);
+            (name, _) => name.StartsWith('.') || name.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase), ct: ct,
+            unreadable: unreadable);
 
     /// <summary>Analyses new and changed sounds in your sample folders. Fast: signal analysis only.</summary>
     public int Scan(IReadOnlyList<string> folders, IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
     {
         progress?.Report(new("Finding sounds", 0, 0));
-        var files = FindAudio(folders, ct);
+        var unreadable = new ConcurrentBag<string>();
+        var files = FindAudio(folders, ct, unreadable);
         var known = Library.KnownFiles();
         var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
             .Select(f =>
@@ -181,7 +184,12 @@ public sealed class SoundOrganiser : IDisposable
             }
         });
         Flush();
-        Library.RemoveMissing(files.ToHashSet(StringComparer.OrdinalIgnoreCase));
+        // A folder on an unplugged drive (or one that couldn't be read this time) keeps its sounds,
+        // tags and deep listening; only files that are really gone are forgotten.
+        var keep = folders.Where(f => !Directory.Exists(f)).Concat(unreadable)
+            .Select(d => System.IO.Path.EndsInDirectorySeparator(d) ? d : d + System.IO.Path.DirectorySeparatorChar).ToList();
+        Library.RemoveMissing(files.ToHashSet(StringComparer.OrdinalIgnoreCase),
+            p => keep.Any(k => p.StartsWith(k, StringComparison.OrdinalIgnoreCase)));
         Reload();
         UpdateTypes(progress);
         return todo.Count;
