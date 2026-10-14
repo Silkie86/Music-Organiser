@@ -1,6 +1,6 @@
 """
-Runs the FL Studio script in a stand-in FL Studio (fake_fl.py) and talks to it the way the app does:
-a request file in, a response file out.  python -m unittest discover -s extensions/fl-studio/test
+Runs the FL Studio script in a stand-in FL Studio (fake_fl.py) and talks to it the way the app does: SysEx
+messages in on its MIDI input, and out through its MIDI output.  python -m unittest discover -s extensions/fl-studio/test
 """
 import io
 import json
@@ -10,7 +10,31 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 
-from fake_fl import SCRIPT, Clock, compile_script, load_script, night_drive
+from fake_fl import SCRIPT, Clock, SysEx, load_script, night_drive
+
+HEAD = bytes([0xF0, 0x7D, 0x4D, 0x4F])
+
+
+def frame(kind, request_id, text, size=512):
+    """The link's messages for this text, built from what extensions/README.md says, not from the script."""
+    parts = max(1, -(-len(text) // size))
+    return [HEAD + bytes([kind, request_id & 127, request_id >> 7 & 127, request_id >> 14 & 127,
+                          part & 127, part >> 7, parts & 127, parts >> 7]) + text[part * size:(part + 1) * size] + b"\xF7"
+            for part in range(parts)]
+
+
+def unframe(messages):
+    """(id, text) from the messages of one answer, checking each one."""
+    ids, texts = set(), {}
+    for m in messages:
+        assert m[:4] == HEAD and m[-1] == 0xF7 and all(b < 128 for b in m[4:-1]), m
+        assert m[4] == 2, "answers are kind 2"
+        ids.add(m[5] | m[6] << 7 | m[7] << 14)
+        part, parts = m[8] | m[9] << 7, m[10] | m[11] << 7
+        assert parts == len(messages) and part not in texts and len(m) <= 512 + 13
+        texts[part] = m[12:-1]
+    assert len(ids) == 1
+    return ids.pop(), b"".join(texts[p] for p in range(len(texts)))
 
 
 class Link:
@@ -19,10 +43,9 @@ class Link:
     def __init__(self, studio, changes=False):
         self.studio = studio
         self.installed = tempfile.mkdtemp()   # the script's folder in FL Studio's Settings/Hardware
-        self.folder = tempfile.mkdtemp()      # the link's folder, where requests and answers go
         self.printed = io.StringIO()
         with redirect_stdout(self.printed):
-            self.script = load_script(studio, self.installed, self.folder)
+            self.script = load_script(studio, self.installed)
         self.script.LET_THE_APP_MAKE_CHANGES = changes
         self.clock = Clock()
         self.script.time = self.clock
@@ -30,39 +53,37 @@ class Link:
 
     def close(self):
         shutil.rmtree(self.installed, ignore_errors=True)
-        shutil.rmtree(self.folder, ignore_errors=True)
 
-    def send(self, request, raw=None):
-        path = os.path.join(self.folder, "request.json")
-        with open(path, "wb") as f:
-            f.write(raw if raw is not None else json.dumps(request).encode("utf-8"))
+    def send(self, request, raw=None, kind=1, request_id=None):
+        """Sends a request into the script's MIDI input, and returns whether it said the messages were its own."""
+        text = raw if raw is not None else json.dumps(request).encode("ascii")
+        handled = True
+        for message in frame(kind, request["id"] if request_id is None else request_id, text):
+            event = SysEx(message)
+            with redirect_stdout(self.printed):
+                self.script.OnSysEx(event)
+            handled = handled and event.handled
+        return handled
 
-    def idle(self, seconds=None):
-        """FL Studio's idle call, once the script's polling time has come round."""
-        self.clock.now += self.script.POLL_SECONDS if seconds is None else seconds
-        self.script.OnIdle()
+    def idle(self, times=1):
+        for _ in range(times):
+            self.script.OnIdle()
 
-    def answers(self):
-        return sorted(n for n in os.listdir(self.folder) if n.startswith("response-"))
+    def take(self):
+        """Everything the script has sent, as it went out over FL Studio's idle calls."""
+        self.idle(100)
+        sent, self.studio.sent = self.studio.sent, []
+        return sent
 
     def ask(self, request):
         """Sends a request and returns the one reply to it."""
         self.last += 1
         request = dict({"id": self.last, "sent": self.clock.now}, **request)
         self.send(request)
-        self.idle()
-        path = os.path.join(self.folder, "response-" + str(request["id"]) + ".json")
-        with open(path, "rb") as f:
-            data = f.read()
-        os.remove(path)
-        self.assert_ascii(data)
-        reply = json.loads(data)
-        assert reply["id"] == request["id"]
+        reply_id, text = unframe(self.take())
+        reply = json.loads(text)
+        assert reply["id"] == reply_id == request["id"]
         return reply
-
-    @staticmethod
-    def assert_ascii(data):
-        assert all(b < 128 for b in data), "replies should be plain ASCII"
 
     def result(self, request):
         reply = self.ask(request)
@@ -73,22 +94,6 @@ class Link:
         reply = self.ask(request)
         assert not reply["ok"], reply
         return reply["error"]
-
-
-class LinkFolder(unittest.TestCase):
-    """The script and the app agree on the link's folder, wherever FL Studio keeps its own files."""
-
-    def setUp(self):
-        self.script = compile_script(night_drive())
-
-    def test_uses_local_app_data_on_windows(self):
-        local = "C:\\Users\\Solomon\\AppData\\Local"
-        self.assertEqual(self.script.link_folder("win32", {"LOCALAPPDATA": local}, "C:\\Users\\Solomon"),
-                         os.path.join(local, "MusicOrganiser", "FL Studio link"))
-
-    def test_uses_application_support_on_a_mac(self):
-        self.assertEqual(self.script.link_folder("darwin", {}, "/Users/solomon"),
-                         os.path.join("/Users/solomon", "Library", "Application Support", "MusicOrganiser", "FL Studio link"))
 
 
 class ScriptFile(unittest.TestCase):
@@ -108,6 +113,12 @@ class ScriptFile(unittest.TestCase):
         with open(SCRIPT, "rb") as f:
             f.read().decode("ascii")
 
+    def test_never_opens_files(self):
+        # FL Studio stops scripts opening files ("SystemError: <class '_io.FileIO'> returned NULL").
+        with open(SCRIPT, encoding="utf-8") as f:
+            source = f.read()
+        self.assertNotIn("open(", source)
+
 
 class LinkTests(unittest.TestCase):
     def link(self, studio=None, changes=False):
@@ -118,13 +129,14 @@ class LinkTests(unittest.TestCase):
     def test_says_where_fl_studio_loaded_it_from_without_file(self):
         link = self.link()
         self.assertEqual(link.result({"cmd": "hello"})["script"], os.path.abspath(link.installed))
-        self.assertIn("Music Organiser link 1 is on, through " + link.folder, link.printed.getvalue())
+        self.assertIn("Music Organiser link 2 is on", link.printed.getvalue())
+        self.assertNotIn("no MIDI output", link.printed.getvalue())
 
     def test_says_hello(self):
         link = self.link()
         hello = link.result({"cmd": "hello"})
         self.assertEqual(hello["product"], "FL Studio")
-        self.assertEqual((hello["link"], hello["api"], hello["changes"]), (1, 37, False))
+        self.assertEqual((hello["link"], hello["api"], hello["changes"]), (2, 37, False))
         self.assertEqual(hello["version"], "Producer Edition v25.1.6 [build 4997]")
         self.assertEqual(hello["title"], "Night Drive - FL Studio 2025")
         self.assertEqual(hello["modified"], False)
@@ -238,57 +250,96 @@ class LinkTests(unittest.TestCase):
     def test_ignores_what_isnt_a_request(self):
         link = self.link()
         for raw in [b"not json", b"[1, 2]", b'{"cmd": "hello"}', b'{"id": "seven", "cmd": "hello"}']:
-            link.send(None, raw=raw)
-            link.idle()
-            self.assertFalse(os.path.exists(os.path.join(link.folder, "request.json")))
-            self.assertEqual(link.answers(), [])
+            self.assertTrue(link.send({"id": 1}, raw=raw))
+            self.assertEqual(link.take(), [])
+
+    def test_leaves_other_sysex_messages_alone(self):
+        link = self.link()
+        for message in [bytes([0xF0, 0x43, 0x10, 0x4C, 0x00, 0xF7]), HEAD + bytes([1, 1, 0, 0, 0, 0]) + b"\xF7",
+                        frame(1, 1, b"{}")[0][:-1] + b"\x80\xF7"]:
+            event = SysEx(message)
+            link.script.OnSysEx(event)
+            self.assertFalse(event.handled)
+        self.assertEqual(link.take(), [])
+
+    def test_ignores_its_own_answers_coming_back_round(self):
+        # On a loopback port, what the script sends out comes back in on its input too.
+        link = self.link()
+        self.assertTrue(link.send({"id": 4, "cmd": "hello", "sent": link.clock.now}, kind=2))
+        self.assertEqual(link.take(), [])
 
     def test_ignores_a_request_the_app_gave_up_on(self):
         link = self.link()
         link.send({"id": 5, "cmd": "hello", "sent": link.clock.now - 60})
-        link.idle()
-        self.assertEqual(link.answers(), [])
+        self.assertEqual(link.take(), [])
         self.assertEqual(link.ask({"cmd": "hello"})["ok"], True)
 
-    def test_looks_for_requests_every_fifth_of_a_second(self):
+    def test_takes_a_request_in_several_messages(self):
         link = self.link()
-        link.send({"id": 1, "cmd": "hello", "sent": link.clock.now})
+        text = json.dumps({"id": 7, "sent": link.clock.now, "cmd": "hello", "padding": "x" * 1200}).encode("ascii")
+        messages = frame(1, 7, text)
+        self.assertEqual(len(messages), 3)
+        for m in messages[:2]:
+            link.script.OnSysEx(SysEx(m))
+        self.assertEqual(link.take(), [])
+        link.script.OnSysEx(SysEx(messages[2]))
+        reply_id, answer = unframe(link.take())
+        self.assertEqual((reply_id, json.loads(answer)["ok"]), (7, True))
+
+    def test_sends_a_long_answer_a_few_messages_at_a_time(self):
+        link = self.link()
+        link.send({"id": 9, "sent": link.clock.now, "cmd": "params", "channel": 1, "from": 4000, "midi": True})
+        each = link.script.PARTS_PER_IDLE
+        self.assertEqual(len(link.studio.sent), each)
         link.idle()
-        link.send({"id": 2, "cmd": "hello", "sent": link.clock.now})
-        link.idle(0.02)
-        self.assertEqual(link.answers(), ["response-1.json"])
-        link.idle(0.2)
-        self.assertEqual(link.answers(), ["response-1.json", "response-2.json"])
+        self.assertEqual(len(link.studio.sent), 2 * each)
+        sent = link.take()
+        self.assertGreater(len(sent), 2 * each)
+        reply_id, text = unframe(sent)
+        page = json.loads(text)["result"]
+        self.assertEqual((reply_id, page["params"][0]["name"]), (9, "MIDI CC #0"))
+
+    def test_a_new_request_drops_what_is_left_of_the_last_answer(self):
+        link = self.link()
+        link.send({"id": 1, "sent": link.clock.now, "cmd": "params", "channel": 1, "from": 4000, "midi": True})
+        link.studio.sent = []
+        reply = link.ask({"cmd": "hello"})
+        self.assertTrue(reply["ok"])
+
+    def test_says_when_it_has_no_midi_output_to_answer_through(self):
+        studio = night_drive()
+        studio.output = False
+        link = self.link(studio)
+        self.assertIn("no MIDI output to answer through", link.printed.getvalue())
+        link.printed = io.StringIO()
+        for i in range(2):
+            link.send({"id": 20 + i, "cmd": "hello", "sent": link.clock.now})
+        self.assertEqual(link.take(), [])
+        self.assertEqual(link.printed.getvalue().count("give the Music Organiser output the same Port number"), 1)
+        studio.output = True
+        self.assertTrue(link.result({"cmd": "hello"})["link"])
 
     def test_keeps_names_intact_in_plain_ascii(self):
         link = self.link()
         p = link.result({"cmd": "project"})
         self.assertEqual(p["channels"][3]["name"], "Café pad")
 
-    def test_answers_a_request_written_with_a_byte_order_mark(self):
-        link = self.link()
-        link.send(None, raw=b'\xef\xbb\xbf{"id": 3, "cmd": "hello"}')
-        link.idle()
-        self.assertEqual(link.answers(), ["response-3.json"])
-
-    def test_stays_quiet_without_file_access(self):
+    def test_stays_quiet_without_its_standard_library(self):
         link = self.link()
         link.script.json = None
         link.script.OnDeInit()
         printed = io.StringIO()
         with redirect_stdout(printed):
             link.script.OnInit()
-        self.assertIn("can't read or write files", printed.getvalue())
+        self.assertIn("can't read the app's requests", printed.getvalue())
         link.send({"id": 1, "cmd": "hello", "sent": link.clock.now})
-        link.idle()
-        self.assertEqual(link.answers(), [])
+        self.assertEqual(link.take(), [])
 
     def test_does_nothing_once_fl_studio_lets_it_go(self):
         link = self.link()
         link.script.OnDeInit()
         link.send({"id": 1, "cmd": "hello", "sent": link.clock.now})
-        link.idle()
-        self.assertTrue(os.path.exists(os.path.join(link.folder, "request.json")))
+        self.assertEqual(link.take(), [])
 
 
 if __name__ == "__main__":

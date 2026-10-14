@@ -14,8 +14,9 @@ public enum FlMidiPort
 
 /// <summary>
 /// Works out why FL Studio isn't answering, from what this computer shows: whether FL Studio is open, and its
-/// MIDI inputs. FL Studio only runs a script as the controller type of a MIDI input, so the script needs one even
-/// though it never uses MIDI: any input will do, and FL Studio picks the script by itself for one called Music Organiser.
+/// MIDI inputs. FL Studio only runs a script as the controller type of a MIDI input, and the app talks to the script
+/// through that port (<see cref="FlMidi"/>), so it has to be one the app can send into, like a loopMIDI port. FL
+/// Studio picks the script by itself for a port called Music Organiser.
 /// </summary>
 public static class FlSetup
 {
@@ -27,16 +28,17 @@ public static class FlSetup
     public static FlMidiPort Port { get; set; } = FlMidiPort.LoopMidi;
 
     public const string NotOpen = "FL Studio doesn't seem to be open. Open it, then try again.";
-    public const string NoPort = "FL Studio is open, but the Music Organiser script isn't running. FL Studio only runs scripts for " +
-                                 "MIDI inputs, and there's no MIDI port called Music Organiser. Make one in loopMIDI (free; it has to " +
-                                 "be running for the port to be there), or set a spare input's Controller type to Music Organiser in " +
-                                 "Options > MIDI settings.";
-    public const string NoWindowsPort = "FL Studio is open, but the Music Organiser script isn't running. FL Studio only runs scripts " +
-                                        "for MIDI inputs, and there's no MIDI port called Music Organiser. Press Install for FL Studio " +
-                                        "in Settings > DAW links to make one with Windows' MIDI system, then restart FL Studio.";
-    public const string NotPicked = "FL Studio is open and there's a Music Organiser MIDI port, but the script isn't running for it. " +
-                                    "In FL Studio's Options > MIDI settings, check that the port is enabled and its Controller type " +
-                                    "is Music Organiser. If you've just installed the script, restart FL Studio first.";
+    public const string NoPort = "FL Studio is open, but there's no MIDI port called Music Organiser, which the app and the script " +
+                                 "talk through. Make one in loopMIDI (free; it has to be running for the port to be there), then " +
+                                 "restart FL Studio.";
+    public const string NoWindowsPort = "FL Studio is open, but there's no MIDI port called Music Organiser, which the app and the " +
+                                        "script talk through. Press Install for FL Studio in Settings > DAW links to make one with " +
+                                        "Windows' MIDI system, then restart FL Studio.";
+    public const string NotPicked = "FL Studio is open and there's a Music Organiser MIDI port, but the script isn't answering on it. " +
+                                    "In FL Studio's Options > MIDI settings, check that the Music Organiser input is enabled with " +
+                                    "Controller type Music Organiser, and give the Music Organiser output the same Port number as " +
+                                    "the input: the script answers through it. If you've just installed or updated the script, " +
+                                    "restart FL Studio first.";
 
     public const string PortThere = "There's a MIDI port called Music Organiser already, so FL Studio should pick the script for it by itself.";
 
@@ -86,17 +88,31 @@ public static class FlSetup
     }
 
     /// <summary>The names of this computer's MIDI inputs, as FL Studio sees them. Null off Windows, or if Windows can't say.</summary>
-    public static IReadOnlyList<string>? MidiInputs()
+    public static IReadOnlyList<string>? MidiInputs() => MidiPorts(inputs: true)?.Where(n => n.Length > 0).ToList();
+
+    /// <summary>
+    /// The names of this computer's MIDI inputs or outputs, in Windows' order, so each one's place is the number
+    /// Windows opens it by (empty for one Windows couldn't describe). Null off Windows, or if Windows can't say.
+    /// </summary>
+    public static List<string>? MidiPorts(bool inputs)
     {
         if (!OperatingSystem.IsWindows()) return null;
         try
         {
             var names = new List<string>();
-            var count = midiInGetNumDevs();
+            var count = inputs ? midiInGetNumDevs() : midiOutGetNumDevs();
             for (uint i = 0; i < count; i++)
             {
-                var caps = new MidiInCaps();
-                if (midiInGetDevCapsW(i, ref caps, (uint)Marshal.SizeOf<MidiInCaps>()) == 0) names.Add(caps.Name);
+                if (inputs)
+                {
+                    var caps = new MidiInCaps();
+                    names.Add(midiInGetDevCapsW(i, ref caps, (uint)Marshal.SizeOf<MidiInCaps>()) == 0 ? caps.Name : "");
+                }
+                else
+                {
+                    var caps = new MidiOutCaps();
+                    names.Add(midiOutGetDevCapsW(i, ref caps, (uint)Marshal.SizeOf<MidiOutCaps>()) == 0 ? caps.Name : "");
+                }
             }
             return names;
         }
@@ -116,7 +132,21 @@ public static class FlSetup
         public uint Support;
     }
 
+    /// <summary>Windows' MIDIOUTCAPSW.</summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct MidiOutCaps
+    {
+        public ushort Manufacturer, Product;
+        public uint DriverVersion;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Name;
+        public ushort Technology, Voices, Notes, ChannelMask;
+        public uint Support;
+    }
+
     [DllImport("winmm.dll")] static extern uint midiInGetNumDevs();
     [DllImport("winmm.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     static extern uint midiInGetDevCapsW(nuint device, ref MidiInCaps caps, uint size);
+    [DllImport("winmm.dll")] static extern uint midiOutGetNumDevs();
+    [DllImport("winmm.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    static extern uint midiOutGetDevCapsW(nuint device, ref MidiOutCaps caps, uint size);
 }

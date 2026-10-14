@@ -63,7 +63,7 @@ public class DawWatchTests
         using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
         if (fl is null || bitwig is null) return;
         var bitwigOpen = true;
-        using var watch = new DawWatch(bitwig.Port, fl.Folder, flOpen: () => true, bitwigOpen: () => bitwigOpen) { Retry = TimeSpan.Zero };
+        using var watch = new DawWatch(bitwig.Port, fl, flOpen: () => true, bitwigOpen: () => bitwigOpen) { Retry = TimeSpan.Zero };
 
         var states = await PollUntil(watch, s => s.All(d => d.Answering));
         Assert.Equal([

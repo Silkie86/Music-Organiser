@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using MusicOrganiser.Core.DawLink;
@@ -15,14 +16,17 @@ public class FlLinkTests
     {
         using var fl = ScriptRunner.Start();
         if (fl is null) return;
-        var link = new FlLink(fl.Folder);
+        var link = new FlLink(fl);
 
         var hello = await link.HelloAsync();
         Assert.Equal(("FL Studio", 37, "Night Drive - FL Studio 2025", true), (hello.Product, hello.Api, hello.Title, hello.Changes));
         Assert.Equal("Producer Edition v25.1.6 [build 4997]", hello.Version);
         Assert.True(File.Exists(Path.Combine(hello.Script!, FlLink.Script)));
 
+        // The project comes back in several messages.
+        var sent = fl.Heard;
         var project = await link.ProjectAsync();
+        Assert.True(fl.Heard - sent > 1);
         Assert.Equal(124, project.Tempo);
         Assert.Equal(["Kick", "Bass", "Chops", "Café pad"], project.Channels.Select(c => c.Name));
         Assert.Equal(("Serum", 4240, 2), (project.Channels[1].Plugin, project.Channels[1].Params, project.Channels[1].Mixer));
@@ -42,26 +46,71 @@ public class FlLinkTests
         // FL Studio's own words come back as the error.
         var e = await Assert.ThrowsAsync<DawLinkException>(() => link.ParamsAsync(FlPlugin.OnChannel(0)));
         Assert.Equal("There's no plugin on channel 0.", e.Message);
-
-        // Each request and its answer are cleared away.
-        Assert.Empty(Directory.GetFiles(fl.Folder));
     }
 
     [Fact]
     public async Task SaysWhenFlStudioIsntAnswering()
     {
-        var folder = Path.Combine(Fixtures.TempDir(), "FL Studio link");
-        var link = new FlLink(folder) { Timeout = TimeSpan.FromMilliseconds(300) };
+        var port = new QuietPort();
+        var link = new FlLink(port) { Timeout = TimeSpan.FromMilliseconds(300) };
         // Which part of the setup is missing, as far as this computer can tell (see the next test).
         var why = FlSetup.WhyNotAnswering();
         var e = await Assert.ThrowsAsync<DawLinkException>(() => link.HelloAsync());
         Assert.Equal(why, e.Message);
+        var asked = FlMessages.Read(port.Sent.Single())!;
+        Assert.Equal((FlMessages.Request, 0, 1), (asked.Kind, asked.Part, asked.Parts));
 
-        File.WriteAllText(Path.Combine(folder, "response-12.json"), """{"id":12,"ok":true,"result":{}}""");   // from an earlier run
+        // An answer to an earlier request, and other SysEx messages, aren't taken for this one's.
+        port.Answer = id => [.. FlMessages.Write(FlMessages.Answer, (id + 1) % FlMessages.Ids, """{"id":0,"ok":true,"result":{}}"""),
+                             [0xF0, 0x43, 0x10, 0x4C, 0x00, 0xF7]];
         e = await Assert.ThrowsAsync<DawLinkException>(() => link.HelloAsync());
         Assert.Equal(why, e.Message);
-        // Nothing is left for FL Studio to answer later.
-        Assert.Empty(Directory.GetFiles(folder));
+
+        // Part of an answer, and then nothing.
+        port.Answer = id => [FlMessages.Write(FlMessages.Answer, id, $$$"""{"id":{{{id}}},"ok":true,"result":{"link":2,"pad":"{{{new string('x', 600)}}}"}}""")[0]];
+        e = await Assert.ThrowsAsync<DawLinkException>(() => link.HelloAsync());
+        Assert.Equal(FlLink.PartAnswer, e.Message);
+    }
+
+    [Fact]
+    public void WritesAndReadsTheLinksMessages()
+    {
+        var text = "{\"cmd\":\"hello\",\"pad\":\"" + new string('a', 1100) + "\"}";
+        var messages = FlMessages.Write(FlMessages.Request, 0x1FFFFF, text);
+        Assert.Equal(3, messages.Count);
+        Assert.All(messages, m => Assert.True(m[0] == 0xF0 && m[^1] == 0xF7 && m.Skip(1).SkipLast(1).All(b => b < 0x80)));
+        Assert.Equal([0xF0, 0x7D, 0x4D, 0x4F, 1, 0x7F, 0x7F, 0x7F, 2, 0, 3, 0], messages[2][..12]);
+        Assert.Equal(12 + FlMessages.PartBytes + 1, messages[0].Length);
+
+        var answer = new FlAnswer(0x1FFFFF);
+        Assert.Null(answer.Take(FlMessages.Read(messages[0])!));   // a request isn't an answer
+        var parts = FlMessages.Write(FlMessages.Answer, 0x1FFFFF, text).Select(m => FlMessages.Read(m)!).ToList();
+        Assert.Null(answer.Take(parts[2]));
+        Assert.Null(answer.Take(parts[0]));
+        Assert.True(answer.Started);
+        Assert.Equal(text, answer.Take(parts[1]));
+
+        // Someone else's SysEx, and broken ones, aren't the link's.
+        Assert.Null(FlMessages.Read([0xF0, 0x43, 0x10, 0x4C, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF7]));
+        Assert.Null(FlMessages.Read(messages[0][..^1]));
+        Assert.Null(FlMessages.Read([.. messages[0][..20], 0x80, 0xF7]));
+        Assert.Throws<ArgumentException>(() => FlMessages.Write(FlMessages.Request, 1, "Café"));
+        Assert.Throws<ArgumentOutOfRangeException>(() => FlMessages.Write(FlMessages.Request, FlMessages.Ids, "{}"));
+    }
+
+    /// <summary>A MIDI port nothing answers on, unless told what to send back.</summary>
+    internal sealed class QuietPort : IFlMidi
+    {
+        public List<byte[]> Sent { get; } = [];
+        public Func<int, IEnumerable<byte[]>>? Answer { get; set; }
+        public event Action<byte[]>? Received;
+
+        public void Send(byte[] message)
+        {
+            Sent.Add(message);
+            if (Answer is { } answer && FlMessages.Read(message) is { } m)
+                foreach (var back in answer(m.Id)) Received?.Invoke(back);
+        }
     }
 
     [Fact]
@@ -190,23 +239,32 @@ public class FlLinkTests
     public void ReadsWhichProjectFlStudioHasOpen(string title, string name, bool shows) =>
         Assert.Equal(shows, FlCheck.ShowsProject(title, name));
 
-    /// <summary>extensions/fl-studio/test/serve.py, run with Python in a folder of its own.</summary>
-    internal sealed class ScriptRunner : IDisposable
+    /// <summary>
+    /// extensions/fl-studio/test/serve.py, run with Python: the FL Studio script in a stand-in FL Studio, in place of the
+    /// Music Organiser MIDI port.
+    /// </summary>
+    internal sealed class ScriptRunner : IFlMidi, IDisposable
     {
         readonly Process _python;
-        public string Folder { get; }
+        readonly BlockingCollection<string> _lines = [];
+        readonly object _writing = new();
+        int _heard;
 
-        ScriptRunner(Process python, string folder)
+        ScriptRunner(Process python)
         {
             _python = python;
-            Folder = folder;
+            new Thread(Listen) { IsBackground = true }.Start();
         }
+
+        public event Action<byte[]>? Received;
+
+        /// <summary>How many messages the script has sent.</summary>
+        public int Heard => Volatile.Read(ref _heard);
 
         public static ScriptRunner? Start()
         {
             var script = Fixtures.RepoFile(Path.Combine("extensions", "fl-studio", "test", "serve.py"));
             if (script is null) return null;
-            var folder = Fixtures.TempDir();
             foreach (var python in OperatingSystem.IsWindows() ? ["python", "python3"] : new[] { "python3", "python" })
             {
                 var psi = new ProcessStartInfo(python)
@@ -218,12 +276,11 @@ public class FlLinkTests
                     CreateNoWindow = true,
                 };
                 psi.ArgumentList.Add(script);
-                psi.ArgumentList.Add(folder);
                 psi.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
                 Process p;
                 try { p = Process.Start(psi)!; }
                 catch (Win32Exception) { continue; }   // not installed under this name
-                if (p.StandardOutput.ReadLine() == "ready") return new ScriptRunner(p, folder);
+                if (p.StandardOutput.ReadLine() == "ready") return new ScriptRunner(p);
                 p.WaitForExit(10_000);
                 var error = p.StandardError.ReadToEnd();
                 p.Dispose();
@@ -234,16 +291,43 @@ public class FlLinkTests
             return null;
         }
 
+        /// <summary>A message into the script's MIDI input.</summary>
+        public void Send(byte[] message) => Write("sysex " + Convert.ToHexString(message));
+
         /// <summary>
         /// Changes the stand-in as if done in FL Studio: {"title": "Other Song - FL Studio 2025", "modified": 1}, or
         /// {"knob": [channel, param, value]}.
         /// </summary>
         public void Change(string json)
         {
-            _python.StandardInput.WriteLine(json);
-            _python.StandardInput.Flush();
-            var line = _python.StandardOutput.ReadLine();
+            Write(json);
+            if (!_lines.TryTake(out var line, TimeSpan.FromSeconds(10))) throw new InvalidOperationException("serve.py didn't answer.");
             if (line != "ok") throw new InvalidOperationException($"serve.py said: {line}");
+        }
+
+        void Write(string line)
+        {
+            lock (_writing)
+            {
+                _python.StandardInput.WriteLine(line);
+                _python.StandardInput.Flush();
+            }
+        }
+
+        // What the script sends goes to whoever's listening; anything else is serve.py's answer to a change.
+        void Listen()
+        {
+            while (_python.StandardOutput.ReadLine() is { } line)
+            {
+                if (!line.StartsWith("sysex ", StringComparison.Ordinal))
+                {
+                    _lines.Add(line);
+                    continue;
+                }
+                Interlocked.Increment(ref _heard);
+                Received?.Invoke(Convert.FromHexString(line.AsSpan(6)));
+            }
+            _lines.CompleteAdding();
         }
 
         public void Dispose()
@@ -255,8 +339,6 @@ public class FlLinkTests
             }
             catch (InvalidOperationException) { }
             _python.Dispose();
-            try { Directory.Delete(Folder, true); }
-            catch (IOException) { }
         }
     }
 }

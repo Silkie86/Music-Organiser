@@ -105,17 +105,15 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     static string FlSteps(FlMidiPort port) =>
         OperatingSystem.IsMacOS()
-            ? "Then restart FL Studio. FL Studio only runs scripts for MIDI inputs, so the script needs one, though it never uses MIDI: " +
-              "in Options > MIDI settings, pick an input and set its Controller type to Music Organiser. " +
-              "With no input to spare, turn on the IAC Driver in Audio MIDI Setup and add a port called Music Organiser."
-            : "FL Studio only runs scripts for MIDI inputs, so the script needs one, though it never uses MIDI. " +
+            ? "On a Mac the app can't talk to FL Studio's script yet: they talk over MIDI, which the app only does on Windows so far."
+            : "FL Studio only runs scripts for MIDI inputs, and the app and the script talk to each other over that port. " +
               (port == FlMidiPort.WindowsMidi
                   ? "Install also makes a port called Music Organiser with Windows' own MIDI system. Then restart FL Studio, and it " +
-                    "should pick the script for that port by itself. If it doesn't, set the port's Controller type to Music Organiser " +
-                    "in Options > MIDI settings."
+                    "should pick the script for that port by itself. "
                   : "Make a port called Music Organiser in loopMIDI (free), then restart FL Studio, and it should pick the script for " +
-                    "that port by itself. If it doesn't, or you'd rather use an input you have, set its Controller type to Music " +
-                    "Organiser in Options > MIDI settings.");
+                    "that port by itself. ") +
+              "In Options > MIDI settings, check that the Music Organiser input's Controller type is Music Organiser, and give the " +
+              "Music Organiser output the same Port number as the input, so the script can answer.";
 
     /// <summary>The FL Studio script, for every FL Studio user data folder: chosen here, in Documents, or holding FL projects.</summary>
     static DawScript FlScript(LibraryDb db) => DawScripts.FlStudio(DawScripts.FlUserDataFolders(

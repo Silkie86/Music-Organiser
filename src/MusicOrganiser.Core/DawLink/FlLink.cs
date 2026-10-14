@@ -46,36 +46,36 @@ public sealed record FlPlugin(int? Channel = null, int? Track = null, int? Slot 
 }
 
 /// <summary>
-/// Talks to FL Studio through the Music Organiser script (extensions/fl-studio/device_MusicOrganiser.py), with
-/// files in a folder of the app's: the app writes request.json, and the script answers in response-&lt;id&gt;.json.
-/// The script looks for a request five times a second.
+/// Talks to FL Studio through the Music Organiser script (extensions/fl-studio/device_MusicOrganiser.py), in SysEx
+/// messages on the Music Organiser MIDI port (<see cref="FlMessages"/>): FL Studio doesn't let scripts open files or
+/// connect to anything, but they can send and receive MIDI. The app sends a request into the port, and the script
+/// answers through FL Studio's Music Organiser MIDI output.
 /// </summary>
 public sealed class FlLink
 {
     public const string Script = "device_MusicOrganiser.py";
     public const string NotRunning = "FL Studio isn't answering. Check that FL Studio is open, that the Music Organiser script " +
-                                     "is installed (Settings), and that it's the controller type of a MIDI input in FL Studio " +
-                                     "(Options > MIDI settings).";
-    static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(25);
+                                     "is installed (Settings), that it's the controller type of the Music Organiser MIDI input in " +
+                                     "FL Studio (Options > MIDI settings), and that the Music Organiser output there has the same " +
+                                     "Port number as the input.";
+    public const string OnlyWindows = "The app can only reach FL Studio on Windows so far: it talks to FL Studio's script over MIDI, " +
+                                      "which it doesn't do on this system yet.";
+    public const string PartAnswer = "FL Studio started answering, but not all of its answer came through. Try again.";
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    // One request at a time from the whole app: there's only one request file, whichever screen is asking.
+    // One request at a time from the whole app: the script answers one at a time, and drops what's left of an
+    // answer when another request comes in.
     static readonly SemaphoreSlim One = new(1, 1);
     // Starts somewhere new each time, so an answer left over from an earlier run is never taken for this one's.
-    int _lastId = Random.Shared.Next(1, 1 << 30);
+    static int _lastId = Random.Shared.Next(FlMessages.Ids);
 
-    /// <param name="folder">Where requests and answers go: <see cref="DefaultFolder"/>, which the script also uses.</param>
-    public FlLink(string? folder = null) => Folder = folder ?? DefaultFolder;
+    readonly IFlMidi? _midi;
 
-    /// <summary>
-    /// The link's folder in the app's data folder (AppData\Local on Windows, Library/Application Support on a Mac):
-    /// somewhere the app and the script both know, wherever FL Studio keeps its own files.
-    /// </summary>
-    public static string DefaultFolder => Path.Combine(OperatingSystem.IsMacOS()
-        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Application Support")
-        : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicOrganiser", "FL Studio link");
+    /// <param name="midi">The port to talk through: the Music Organiser MIDI port unless given (the tests use the
+    /// script itself, in a stand-in FL Studio).</param>
+    public FlLink(IFlMidi? midi = null) => _midi = midi;
 
-    public string Folder { get; }
+    /// <summary>How long to wait for FL Studio's answer, from the request or the last part of the answer to come in.</summary>
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
@@ -150,37 +150,29 @@ public sealed class FlLink
         await One.WaitAsync(ct);
         try
         {
-            Directory.CreateDirectory(Folder);
-            var id = ++_lastId;
+            var midi = _midi ?? Port() ?? throw new DawLinkException(Explain ? FlSetup.WhyNotAnswering() : NotRunning);
+            var id = Interlocked.Increment(ref _lastId) & (FlMessages.Ids - 1);
             request["id"] = id;
             request["sent"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
-            ClearAnswers();
-
-            // Written aside and moved into place, so the script never reads half a request.
-            var asked = Path.Combine(Folder, "request.json");
-            var temp = Path.Combine(Folder, "request.tmp");
-            await File.WriteAllTextAsync(temp, request.ToJsonString(), ct);
-            File.Move(temp, asked, overwrite: true);
-
-            var answer = Path.Combine(Folder, $"response-{id}.json");
-            var waited = Stopwatch.StartNew();
+            var waiting = new Waiting(id);
+            midi.Received += waiting.Take;
             try
             {
-                while (true)
+                // Default JSON escapes every letter outside plain ASCII, which is all the messages carry.
+                var messages = FlMessages.Write(FlMessages.Request, id, request.ToJsonString());
+                await Task.Run(() =>
                 {
-                    if (File.Exists(answer) && await ReadAsync(answer, ct) is { } reply) return Result(reply);
-                    if (waited.Elapsed >= Timeout) break;
-                    await Task.Delay(Poll, ct);
-                }
+                    foreach (var m in messages) midi.Send(m);
+                }, ct);
+                while (waiting.Left(Timeout) is { } left)
+                    if (await Task.WhenAny(waiting.Done, Task.Delay(left, ct)) == waiting.Done) return Result(Parse(await waiting.Done));
+                ct.ThrowIfCancellationRequested();
+                throw new DawLinkException(waiting.Started ? PartAnswer : Explain ? FlSetup.WhyNotAnswering() : NotRunning);
             }
-            catch (OperationCanceledException)
+            finally
             {
-                TryDelete(asked);
-                throw;
+                midi.Received -= waiting.Take;
             }
-            if (!File.Exists(asked)) throw new DawLinkException("FL Studio took the request but didn't answer in time.");
-            TryDelete(asked);
-            throw new DawLinkException(Explain ? FlSetup.WhyNotAnswering() : NotRunning);
         }
         finally
         {
@@ -188,15 +180,12 @@ public sealed class FlLink
         }
     }
 
-    static async Task<JsonElement?> ReadAsync(string path, CancellationToken ct)
+    /// <summary>The Music Organiser MIDI port, or null when there isn't one.</summary>
+    static IFlMidi? Port() =>
+        OperatingSystem.IsWindows() ? FlMidi.Shared() : throw new DawLinkException(OnlyWindows);
+
+    static JsonElement Parse(string text)
     {
-        string text;
-        try
-        {
-            text = await File.ReadAllTextAsync(path, ct);
-        }
-        catch (IOException) { return null; }   // still being moved into place; read it next time
-        TryDelete(path);
         try
         {
             using var doc = JsonDocument.Parse(text);
@@ -213,16 +202,33 @@ public sealed class FlLink
             ? error.GetString()! : "FL Studio's answer didn't say what happened.");
     }
 
-    /// <summary>Removes answers no one is waiting for any more (to requests that took too long).</summary>
-    void ClearAnswers()
+    /// <summary>One request's answer coming in, in parts, on the port's own thread.</summary>
+    sealed class Waiting(int id)
     {
-        foreach (var old in Directory.EnumerateFiles(Folder, "response-*")) TryDelete(old);
-    }
+        readonly FlAnswer _answer = new(id);
+        readonly TaskCompletionSource<string> _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        long _heard = Stopwatch.GetTimestamp();
 
-    static void TryDelete(string path)
-    {
-        try { File.Delete(path); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        public Task<string> Done => _done.Task;
+
+        public bool Started
+        {
+            get { lock (_answer) return _answer.Started; }
+        }
+
+        public void Take(byte[] message)
+        {
+            if (FlMessages.Read(message) is not { Kind: FlMessages.Answer } m || m.Id != id) return;
+            lock (_answer)
+            {
+                Volatile.Write(ref _heard, Stopwatch.GetTimestamp());
+                if (_answer.Take(m) is { } text) _done.TrySetResult(text);
+            }
+        }
+
+        /// <summary>How much longer to wait: the timeout runs from the request or the last part of the answer.</summary>
+        public TimeSpan? Left(TimeSpan timeout) =>
+            timeout - Stopwatch.GetElapsedTime(Volatile.Read(ref _heard)) is { } left && left > TimeSpan.Zero ? left : null;
     }
 
     sealed record ParamPage(string Plugin, int Count, IReadOnlyList<FlParam> Params, int? Next);

@@ -256,7 +256,7 @@ public class ViewModelTests : IDisposable
     [Fact]
     public async Task SidebarSaysWhenNoDawIsOpen()
     {
-        using var watch = new DawWatch(ClosedPort(), Fixtures.TempDir(), flOpen: () => false, bitwigOpen: () => false) { Retry = TimeSpan.Zero };
+        using var watch = new DawWatch(ClosedPort(), new FlLinkTests.QuietPort(), flOpen: () => false, bitwigOpen: () => false) { Retry = TimeSpan.Zero };
         var main = new MainViewModel(_db, _sounds, watch);
         // (A look at FL Studio is skipped while another request to it is under way, as in other tests running alongside.)
         await PollUntil(main.Live, () => main.Live.Rows.All(r => r.Text != "Not connected"));
@@ -279,7 +279,7 @@ public class ViewModelTests : IDisposable
         ScanFixtures();
         bitwig.Change("""{"project": "Loop Idea"}""");
         fl.Change("""{"modified": 1}""");
-        using var watch = new DawWatch(bitwig.Port, fl.Folder, flOpen: () => true, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
+        using var watch = new DawWatch(bitwig.Port, fl, flOpen: () => true, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
         var main = new MainViewModel(_db, _sounds, watch);
         await PollUntil(main.Live, () => main.Live.Rows.All(r => r.Answering));
 
@@ -307,7 +307,7 @@ public class ViewModelTests : IDisposable
         if (fl is null) return;
         ScanFixtures();
         fl.Change("""{"modified": 1}""");
-        using var watch = new DawWatch(ClosedPort(), fl.Folder, flOpen: () => true, bitwigOpen: () => false) { Retry = TimeSpan.Zero };
+        using var watch = new DawWatch(ClosedPort(), fl, flOpen: () => true, bitwigOpen: () => false) { Retry = TimeSpan.Zero };
         var main = new MainViewModel(_db, _sounds, watch);
         await PollUntil(main.Live, () => main.Live.IsAnswering(DawState.FlStudio));
 
@@ -331,7 +331,7 @@ public class ViewModelTests : IDisposable
         fl.Change("""{"channels": [["Lead", "Serum"], ["Kick", null], ["Bass", "3x Osc"]]}""");
         fl.Change("""{"knob": [0, 3, 0.9]}""");
         fl.Change("""{"modified": 1}""");
-        using var watch = new DawWatch(bitwig.Port, fl.Folder, flOpen: () => true, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
+        using var watch = new DawWatch(bitwig.Port, fl, flOpen: () => true, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
         var main = new MainViewModel(_db, _sounds, watch);
         await PollUntil(main.Live, () => main.Live.Rows.All(r => r.Answering));
 

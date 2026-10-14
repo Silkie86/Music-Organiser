@@ -8,10 +8,10 @@ the mixer and the plugins, and each plugin's parameters. The app uses this to ch
 files and to learn what plugin settings mean.
 
 FL Studio runs the script once it's the controller type of a MIDI input (Options > MIDI settings). A MIDI
-input called "Music Organiser" (for example a loopMIDI port) gets it by itself. The app and the script talk
-through files in the app's data folder (MusicOrganiser/FL Studio link, in AppData/Local on Windows and
-Library/Application Support on a Mac): the app writes request.json, and the script answers in
-response-<id>.json.
+input called "Music Organiser" (for example a loopMIDI port) gets it by itself. FL Studio doesn't let scripts
+open files or connect to anything, so the app and the script talk in SysEx messages on that MIDI port: the
+app sends a request into the port, and the script answers through the Music Organiser MIDI output, which
+needs the same Port number as the input in FL Studio's MIDI settings.
 
 Nothing in the project changes unless LET_THE_APP_MAKE_CHANGES below is True.
 """
@@ -20,6 +20,7 @@ Nothing in the project changes unless LET_THE_APP_MAKE_CHANGES below is True.
 LET_THE_APP_MAKE_CHANGES = False
 
 import channels
+import device
 import general
 import mixer
 import plugins
@@ -30,12 +31,11 @@ try:
     import os
     import sys
     import time
-except ImportError:  # a Python without its standard library can't read or write the request files
+except ImportError:  # a Python without its standard library can't read the app's requests
     json = None
 
-LINK_VERSION = 1
+LINK_VERSION = 2
 SCRIPT = "device_MusicOrganiser.py"
-POLL_SECONDS = 0.2    # how often to look for a request
 STALE_SECONDS = 15    # a request older than this is one the app gave up on
 PAGE_SECONDS = 0.04   # how long one list of parameters may take, so FL Studio never stalls
 SLOTS = 10            # effect slots on each mixer track
@@ -43,55 +43,68 @@ VST_PARAMS = 4096     # VST plugins list 4240 parameters: their own 4096, then M
 CHANGES_OFF = ("Changes are off. To let the app change FL Studio, set LET_THE_APP_MAKE_CHANGES = True in "
                "device_MusicOrganiser.py (in FL Studio's Settings, Hardware, Music Organiser folder), then "
                "reload the script.")
+NO_OUTPUT = ("Music Organiser: the app asked something, but the script has no MIDI output to answer through. In "
+             "Options > MIDI settings, give the Music Organiser output the same Port number as the Music Organiser "
+             "input.")
+
+# The messages: F0, 7D (the maker ID MIDI keeps for non-commercial use), "MO", then whether it's a request (1)
+# or an answer (2), the request's id in three 7-bit bytes, this part's number and how many parts there are in
+# two 7-bit bytes each (lowest first), then up to PART_BYTES of the JSON text, which is plain ASCII, and F7.
+HEAD = bytes([0xF0, 0x7D, 0x4D, 0x4F])
+REQUEST, ANSWER = 1, 2
+PART_BYTES = 512
+PARTS_PER_IDLE = 8    # answer messages sent each time FL Studio calls OnIdle, so a long answer doesn't flood the port
 
 
 class LinkError(Exception):
     """A problem with a request, told to the app in these words."""
 
 
-_link = None     # the folder requests and answers go through, while the link is on
+_on = False
 _script = None   # the folder FL Studio loaded the script from
-_next_poll = 0.0
+_incoming = None  # the request coming in: [id, parts, the parts so far]
+_outgoing = []    # answer messages still to send
+_told = False     # said there's no MIDI output to answer through
 
 
 def OnInit():
-    global _link, _script
+    global _on, _script, _told
     if json is None:
-        print("Music Organiser: this FL Studio's Python can't read or write files, which the link needs.")
+        print("Music Organiser: this FL Studio's Python can't read the app's requests, which the link needs.")
         return
+    _on, _told = True, False
     _script = script_folder()
-    _link = link_folder()
-    print("Music Organiser link " + str(LINK_VERSION) + " is on, through " + _link)
+    print("Music Organiser link " + str(LINK_VERSION) + " is on: the app's requests come in on this MIDI port.")
+    if not device.isAssigned():
+        print(NO_OUTPUT.replace("the app asked something, but ", ""))
 
 
 def OnDeInit():
-    global _link
-    _link = None
+    global _on, _incoming
+    _on, _incoming = False, None
+    del _outgoing[:]
+
+
+def OnSysEx(event):
+    """A request from the app, in one message or several."""
+    message = read_message(bytes(event.sysex))
+    if message is None:
+        return  # someone else's
+    event.handled = True
+    kind, request_id, part, parts, text = message
+    if not _on or kind != REQUEST:
+        return  # answers come back round to this input on a loopback port
+    data = take_part(request_id, part, parts, text)
+    if data is None:
+        return
+    reply = answer(data, time.time())
+    if reply is not None:
+        send(reply)
 
 
 def OnIdle():
-    global _next_poll
-    if _link is None:
-        return
-    now = time.time()
-    if now < _next_poll:
-        return
-    _next_poll = now + POLL_SECONDS
-    poll(now)
-
-
-def link_folder(platform=None, environ=None, home=None):
-    """The app's data folder for the link, the same wherever FL Studio keeps its own files."""
-    platform = platform or sys.platform
-    environ = os.environ if environ is None else environ
-    home = home or os.path.expanduser("~")
-    if platform == "win32":
-        base = environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
-    elif platform == "darwin":
-        base = os.path.join(home, "Library", "Application Support")
-    else:
-        base = environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
-    return os.path.join(base, "MusicOrganiser", "FL Studio link")
+    if _outgoing:
+        flush()
 
 
 def script_folder():
@@ -111,24 +124,65 @@ def script_folder():
     return None
 
 
-def poll(now):
-    """Answers the app's request, if there is one."""
-    path = os.path.join(_link, "request.json")
-    if not os.path.exists(path):
+# The messages
+
+def read_message(data):
+    """(kind, id, part, parts, text) from one of the link's messages, or None for any other SysEx message."""
+    if len(data) < 13 or data[:4] != HEAD or data[-1] != 0xF7 or any(b > 0x7F for b in data[4:-1]):
+        return None
+    request_id = data[5] | data[6] << 7 | data[7] << 14
+    part, parts = data[8] | data[9] << 7, data[10] | data[11] << 7
+    if part >= parts:
+        return None
+    return data[4], request_id, part, parts, data[12:-1]
+
+
+def messages(kind, request_id, text):
+    """The messages that carry this text, PART_BYTES at a time."""
+    parts = max(1, (len(text) + PART_BYTES - 1) // PART_BYTES)
+    found = []
+    for part in range(parts):
+        found.append(HEAD + bytes([kind, request_id & 0x7F, request_id >> 7 & 0x7F, request_id >> 14 & 0x7F,
+                                   part & 0x7F, part >> 7 & 0x7F, parts & 0x7F, parts >> 7 & 0x7F])
+                     + text[part * PART_BYTES:(part + 1) * PART_BYTES] + b"\xF7")
+    return found
+
+
+def take_part(request_id, part, parts, text):
+    """Keeps a part of a request, and returns the whole request once every part is in."""
+    global _incoming
+    if _incoming is None or _incoming[0] != request_id or _incoming[1] != parts:
+        _incoming = [request_id, parts, {}]  # the app only asks one thing at a time
+    _incoming[2][part] = text
+    if len(_incoming[2]) < parts:
+        return None
+    got = _incoming[2]
+    _incoming = None
+    return b"".join(got[p] for p in range(parts))
+
+
+def send(reply):
+    """Sends a reply to the app: the first messages now, the rest as FL Studio calls OnIdle."""
+    global _told
+    if not device.isAssigned():
+        if not _told:
+            print(NO_OUTPUT)
+            _told = True
         return
+    _told = False
     try:
-        with open(path, "rb") as f:
-            data = f.read()
-        os.remove(path)
-    except OSError:  # gone already: the app stopped waiting and took it back
-        return
-    reply = answer(data, now)
-    if reply is None:
-        return
-    try:
-        write(reply)
-    except OSError as e:
-        print("Music Organiser: couldn't answer the app (" + str(e) + ")")
+        text = json.dumps(reply, ensure_ascii=True, allow_nan=False)
+    except ValueError as e:
+        text = json.dumps({"id": reply["id"], "ok": False, "error": "FL Studio's answer couldn't be sent: " + str(e)})
+    # The app asks one thing at a time, so whatever is left of an earlier answer is one it stopped waiting for.
+    _outgoing[:] = messages(ANSWER, reply["id"], text.encode("ascii"))
+    flush()
+
+
+def flush():
+    for message in _outgoing[:PARTS_PER_IDLE]:
+        device.midiOutSysex(message)
+    del _outgoing[:PARTS_PER_IDLE]
 
 
 def answer(data, now):
@@ -137,7 +191,7 @@ def answer(data, now):
         request = json.loads(data.decode("utf-8-sig"))
     except ValueError:
         return None
-    if not isinstance(request, dict) or not is_whole(request.get("id")):
+    if not isinstance(request, dict) or not is_whole(request.get("id")) or not 0 <= request["id"] < 1 << 21:
         return None
     sent = request.get("sent")
     if is_number(sent) and now - sent > STALE_SECONDS:
@@ -156,18 +210,6 @@ def answer(data, now):
         reply["ok"] = False
         reply["error"] = "FL Studio couldn't answer (" + type(e).__name__ + ": " + str(e) + ")"
     return reply
-
-
-def write(reply):
-    """Writes a reply where the app looks for it, all at once."""
-    name = os.path.join(_link, "response-" + str(reply["id"]) + ".json")
-    try:
-        text = json.dumps(reply, ensure_ascii=True, allow_nan=False)
-    except ValueError as e:
-        text = json.dumps({"id": reply["id"], "ok": False, "error": "FL Studio's answer couldn't be sent: " + str(e)})
-    with open(name + ".tmp", "w", encoding="ascii") as f:
-        f.write(text)
-    os.replace(name + ".tmp", name)
 
 
 # Commands

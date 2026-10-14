@@ -52,6 +52,9 @@ class Studio:
         self.mixer = list(mixer)   # (name, {slot: Plugin}) for each track, master first
         self.group = list(range(len(self.channels))) if group is None else list(group)
         self.broken = None         # a function name that fails, as FL Studio does when a call isn't allowed
+        self.output = True         # whether the script's MIDI input has an output with the same port number
+        self.sent = []             # the SysEx messages the script sent through that output
+        self.on_send = None        # called with each one too, if set
 
     def check(self, name):
         if self.broken == name:
@@ -150,6 +153,18 @@ class Studio:
         def getProgTitle():
             return studio.title
 
+        def isAssigned():
+            return studio.output
+
+        def midiOutSysex(message, /):
+            if not studio.output:
+                raise TypeError("no output port")
+            message = bytes(message)
+            assert message[0] == 0xF0 and message[-1] == 0xF7, "FL Studio sends whole SysEx messages"
+            studio.sent.append(message)
+            if studio.on_send:
+                studio.on_send(message)
+
         found = {}
         for name, functions in {
             "channels": [channelCount, getChannelName, getChannelType, getTargetFxTrack, getChannelIndex],
@@ -158,6 +173,7 @@ class Studio:
             "mixer": [trackCount, getTrackName, isTrackPluginValid, getCurrentTempo],
             "general": [getVersion, getChangedFlag],
             "ui": [ui_getVersion, getProgTitle],
+            "device": [isAssigned, midiOutSysex],
         }.items():
             module = types.ModuleType(name)
             for f in functions:
@@ -176,17 +192,23 @@ def compile_script(studio, path=SCRIPT):
     return script
 
 
-def load_script(studio, folder, link):
+class SysEx:
+    """The event FL Studio hands OnSysEx: the whole message, F0 to F7."""
+
+    def __init__(self, data):
+        self.sysex = bytes(data)
+        self.handled = False
+
+
+def load_script(studio, folder):
     """
     Loads the script as FL Studio does: installed in `folder`, which is on the module path while it starts.
-    Its requests go through `link` rather than the app's real data folder. Returns the script's module,
-    after OnInit.
+    Returns the script's module, after OnInit.
     """
     shutil.copy(SCRIPT, folder)
     sys.path.insert(0, folder)
     try:
         script = compile_script(studio, os.path.join(folder, os.path.basename(SCRIPT)))
-        script.link_folder = lambda: link
         script.OnInit()
     finally:
         sys.path.remove(folder)

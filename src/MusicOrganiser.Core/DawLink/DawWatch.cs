@@ -71,13 +71,13 @@ public sealed class DawWatch : IDisposable
     DawState _lastFl = new(DawState.FlStudio, false);
 
     /// <param name="bitwigPort">Where Bitwig's script listens: <see cref="BitwigLink.Port"/> unless given (tests use a stand-in).</param>
-    /// <param name="flFolder">FL Studio's link folder: <see cref="FlLink.DefaultFolder"/> unless given.</param>
+    /// <param name="flMidi">The port FL Studio's script talks on: the Music Organiser MIDI port unless given (tests use the script in a stand-in).</param>
     /// <param name="flOpen">Whether FL Studio is open, or null if the app can't tell: <see cref="FlSetup.IsFlStudioOpen"/> unless given.</param>
     /// <param name="bitwigOpen">Whether Bitwig is open, or null if the app can't tell: any program called Bitwig… unless given.</param>
-    public DawWatch(int? bitwigPort = null, string? flFolder = null, Func<bool?>? flOpen = null, Func<bool?>? bitwigOpen = null)
+    public DawWatch(int? bitwigPort = null, IFlMidi? flMidi = null, Func<bool?>? flOpen = null, Func<bool?>? bitwigOpen = null)
     {
         BitwigPort = bitwigPort;
-        FlFolder = flFolder ?? FlLink.DefaultFolder;
+        FlMidi = flMidi;
         _flOpen = flOpen ?? FlSetup.IsFlStudioOpen;
         _bitwigOpen = bitwigOpen ?? IsBitwigOpen;
     }
@@ -85,14 +85,14 @@ public sealed class DawWatch : IDisposable
     /// <summary>The port Bitwig's script is asked on, or null for <see cref="BitwigLink.Port"/>.</summary>
     public int? BitwigPort { get; }
 
-    /// <summary>The folder FL Studio's script answers in.</summary>
-    public string FlFolder { get; }
+    /// <summary>The port FL Studio's script talks on, or null for the Music Organiser MIDI port.</summary>
+    public IFlMidi? FlMidi { get; }
 
     /// <summary>How long a DAW that isn't answering is left before it's asked again.</summary>
     public TimeSpan Retry { get; set; } = TimeSpan.FromSeconds(6);
 
-    /// <summary>A link to FL Studio, through the folder this watches.</summary>
-    public FlLink Fl() => new(FlFolder);
+    /// <summary>A link to FL Studio, through the port this watches.</summary>
+    public FlLink Fl() => new(FlMidi);
 
     /// <summary>A new connection to Bitwig's script, on the port this watches.</summary>
     public Task<BitwigLink> ConnectBitwigAsync(CancellationToken ct = default) => BitwigLink.ConnectAsync(BitwigPort, ct: ct);
@@ -158,7 +158,7 @@ public sealed class DawWatch : IDisposable
         {
             try
             {
-                var hello = await new FlLink(FlFolder) { Timeout = TimeSpan.FromSeconds(1.5), Explain = false }.HelloAsync(ct);
+                var hello = await new FlLink(FlMidi) { Timeout = TimeSpan.FromSeconds(1.5), Explain = false }.HelloAsync(ct);
                 _flMissed = 0;
                 return _lastFl = new(DawState.FlStudio, true, true, $"FL Studio {hello.Version}", DawState.FlProjectName(hello.Title),
                                      hello.Title, hello.Modified, hello.Changes);

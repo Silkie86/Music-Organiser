@@ -26,10 +26,11 @@ to the app (`Extensions` in its folder), and installing copies them where the DA
   Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
 - **FL Studio**: `Settings\Hardware\Music Organiser` in FL Studio's user data folder (normally
   `Documents\Image-Line\FL Studio`). The app also finds user data folders elsewhere from where your FL
-  projects are, and **Choose folder…** points it at one. FL Studio only runs a script for a MIDI input, so
-  the script needs one, though it never uses MIDI. A port called Music Organiser gets the script by itself
-  after a restart of FL Studio; otherwise, set an input's Controller type to Music Organiser in Options →
-  MIDI settings. On Windows, Settings offers two ways to make that port:
+  projects are, and **Choose folder…** points it at one. FL Studio only runs a script for a MIDI input, and
+  the app and the script talk over that port, so it has to be one the app can send into: a port called
+  Music Organiser, which gets the script by itself after a restart of FL Studio. In Options → MIDI settings,
+  the Music Organiser output needs the same Port number as the input, since the script answers through it.
+  On Windows, Settings offers two ways to make that port:
   - **loopMIDI**: [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html), a free app, makes it
     (type Music Organiser under *New port-name* and press +). Works on any Windows; loopMIDI has to be
     running for the port to be there. Settings says whether loopMIDI is installed, and **Get loopMIDI**
@@ -145,12 +146,20 @@ app this is `Core/DawLink/BitwigLink.cs`.
 `device_MusicOrganiser.py`, for FL Studio's MIDI scripting (Python 3.12 in FL Studio 2024 and later; the
 script keeps to 3.9's syntax for FL Studio 21). Plain ASCII, since FL Studio reads its first lines itself.
 
-FL Studio's Python is stripped down and can't be counted on for network connections, so the app and
-the script talk through files in
-`MusicOrganiser/FL Studio link` in the app's data folder (`%LOCALAPPDATA%` on Windows,
-`~/Library/Application Support` on a Mac). The app writes `request.json` (written aside and moved into
-place); the script looks for it five times a second, removes it and writes `response-<id>.json` the same
-way. The app gives up after 5 seconds, and the script ignores requests sent more than 15 seconds ago.
+FL Studio doesn't let scripts open files (`open` fails with "SystemError: <class '_io.FileIO'> returned NULL
+without setting an exception") or connect to anything, but they can send and receive MIDI, so the app and
+the script talk in SysEx messages on the Music Organiser MIDI port. The app sends a request into the port;
+FL Studio hands it to the script's `OnSysEx`, and the script answers through FL Studio's Music Organiser
+MIDI output (`device.midiOutSysex`), which is why that output needs the same Port number as the input.
+With loopMIDI, both ends hear everything on the port, so each side leaves the other kind of message alone.
+With Windows' own loopback pair, the app uses the spare end (`Core/DawLink/FlMidi.cs`, through WinMM).
+
+Each message is `F0 7D 4D 4F`, then the kind (`01` a request, `02` an answer), the request's id in three
+7-bit bytes, the part's number and how many parts there are in two 7-bit bytes each (lowest first), up to
+512 bytes of the JSON text (plain ASCII), and `F7` (`Core/DawLink/FlMessages.cs`). The script sends a long
+answer 8 messages at a time, each time FL Studio calls `OnIdle`, and drops what's left of one when another
+request comes in. The app gives up 5 seconds after its request or the last part of the answer, and the
+script ignores requests sent more than 15 seconds ago.
 
 Requests are `{"id": 1, "sent": <Unix time in seconds>, "cmd": "...", ...}`, and answers are as for
 Bitwig. A plugin is named by `channel` (its place in the whole channel rack, from 0) or by mixer `track`
@@ -177,7 +186,8 @@ python -m unittest discover -s extensions/fl-studio/test
 ```
 
 The app's own tests (`dotnet test`) also talk to both scripts end to end through `test/serve.js` and
-`test/serve.py`, when Node.js and Python are installed; without them those tests return early. Each line
+`test/serve.py` (which stands in for the MIDI port: `sysex <hex>` lines in and out), when Node.js and
+Python are installed; without them those tests return early. Each line
 of JSON on their input changes the stand-in as if done in the DAW (another project, unsaved changes, the
 channels in FL Studio's rack, a knob), which is how the tests follow saves and copy knobs. They never
 reach a real DAW, its folders, or this computer's MIDI ports. CI runs all of it.
@@ -229,5 +239,9 @@ FL Studio:
       (and gives it the script by itself). Whether saving needs administrator rights (if it does, the port
       lasts until a restart, and the app says so).
 - [ ] FL Studio runs as `FL64.exe` (or `FL.exe`), which is how Check connection tells whether it's open.
-- [ ] Opening files and the standard library work in each FL Studio version's Python.
+- [x] Scripts can't open files (FL Studio 25, 2026-10-14), so the link talks over MIDI instead.
+- [ ] `OnSysEx` gets the app's messages whole, `device.midiOutSysex` sends answers out of the output with
+      the input's Port number, and `device.isAssigned()` says whether there is one.
+- [ ] loopMIDI and Windows' MIDI system pass SysEx messages of about 525 bytes, 8 at a time, intact, and
+      let the app and FL Studio have the port open together.
 - [ ] Every user data folder has Settings, Presets and Projects in it (how the app finds them).
