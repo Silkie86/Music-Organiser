@@ -78,9 +78,10 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
     {
         AudioData audio;
         try { audio = AudioFile.Read(path, MaxSeconds); }
-        catch (NotSupportedException) when (OperatingSystem.IsWindows() && Path.GetExtension(path).Equals(".wav", StringComparison.OrdinalIgnoreCase))
+        catch (Exception e) when (e is NotSupportedException or InvalidDataException && OperatingSystem.IsWindows() &&
+                                  Path.GetExtension(path).Equals(".wav", StringComparison.OrdinalIgnoreCase))
         {
-            audio = WindowsDecoders.ReadCompressedWav(path, MaxSeconds);
+            audio = WindowsDecoders.ReadWav(path, MaxSeconds);
         }
         Start(audio.Channels, audio.SampleRate, path, startSeconds);
     }

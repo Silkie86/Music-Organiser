@@ -3,6 +3,7 @@
              xmlns:vm="using:MusicOrganiser.ViewModels"
              xmlns:lib="using:MusicOrganiser.Core.Library"
              xmlns:plugins="using:MusicOrganiser.Core.Plugins"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.PluginsView"
              x:DataType="vm:PluginsViewModel">
     <UserControl.Styles>
@@ -107,7 +108,7 @@
         </Border>
 
         <Border Classes="card" Padding="8,10,8,8">
-            <DataGrid ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" SelectedItem="{Binding Selected}"
+            <DataGrid ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" CanUserSortColumns="True"
                       GridLinesVisibility="None" Background="Transparent" DoubleTapped="OnDoubleTapped">
                 <DataGrid.Columns>

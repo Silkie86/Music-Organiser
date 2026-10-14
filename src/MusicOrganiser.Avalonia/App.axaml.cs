@@ -39,15 +39,23 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    bool _showingError;
+    readonly List<string> _errors = [];
 
-    /// <summary>Keeps the app alive and says what went wrong rather than vanishing.</summary>
+    /// <summary>
+    /// Keeps the app alive and says what went wrong rather than vanishing. Errors that happen while
+    /// one is on screen are shown after it, once each.
+    /// </summary>
     async void OnUnhandled(object? sender, DispatcherUnhandledExceptionEventArgs e)
     {
         e.Handled = true;
-        if (_showingError || (ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow is not { IsVisible: true } owner) return;
-        _showingError = true;
-        try { await new ConfirmWindow(e.Exception.Message, "Music Organiser", okOnly: true).ShowDialog(owner); }
-        finally { _showingError = false; }
+        if (_errors.Contains(e.Exception.Message)) return;
+        _errors.Add(e.Exception.Message);
+        if (_errors.Count > 1) return;   // already showing one; this one waits its turn
+        while (_errors.Count > 0)
+        {
+            if ((ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow is { IsVisible: true } owner)
+                await new ConfirmWindow(_errors[0], "Music Organiser", okOnly: true).ShowDialog(owner);
+            _errors.RemoveAt(0);
+        }
     }
 }

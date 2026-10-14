@@ -31,7 +31,8 @@ sealed class ConfirmWindow : Window
         {
             Margin = new Thickness(20),
             Spacing = 16,
-            Children = { new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap }, buttons },
+            // Selectable, so an error or a path can be copied (Ctrl+C), as from a Windows message box.
+            Children = { new SelectableTextBlock { Text = message, TextWrapping = TextWrapping.Wrap }, buttons },
         };
     }
 }

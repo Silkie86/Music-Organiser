@@ -8,5 +8,8 @@ public partial class PluginsView : UserControl
 {
     public PluginsView() => InitializeComponent();
 
-    void OnDoubleTapped(object? sender, TappedEventArgs e) => (DataContext as PluginsViewModel)?.ShowProjectsCommand.Execute(null);
+    void OnDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (e.IsOnRow()) (DataContext as PluginsViewModel)?.ShowProjectsCommand.Execute(null);
+    }
 }
