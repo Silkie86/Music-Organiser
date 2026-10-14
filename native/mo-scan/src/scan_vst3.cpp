@@ -155,7 +155,8 @@ void writeParams(Json& j, Vst::IEditController* ctrl)
             .num("default", info.defaultNormalizedValue)
             .num("value", value)
             .num("plainMin", ctrl->normalizedParamToPlain(info.id, 0))
-            .num("plainMax", ctrl->normalizedParamToPlain(info.id, 1));
+            .num("plainMax", ctrl->normalizedParamToPlain(info.id, 1))
+            .num("plainDefault", ctrl->normalizedParamToPlain(info.id, info.defaultNormalizedValue));
         Vst::String128 text{};
         if (ctrl->getParamStringByValue(info.id, value, text) == kResultOk) j.str("text", str128(text));
         j.integer("unit", info.unitId)
@@ -306,6 +307,7 @@ bool scanVst3(const std::filesystem::path& path, const Options& opt, std::string
         PClassInfo info{};
         if (factory->getClassInfo(i, &info) != kResultOk) continue;
         if (std::strncmp(info.category, kVstAudioEffectClass, sizeof info.category) != 0) continue;
+        if (!opt.wanted(classId(info.cid))) continue;
 
         std::string vendor = factoryVendor, version, sub;
         PClassInfo2 info2{};

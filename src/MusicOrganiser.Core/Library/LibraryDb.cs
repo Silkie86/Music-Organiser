@@ -64,6 +64,7 @@ public sealed partial class LibraryDb : IDisposable
         _conn = new SqliteConnection($"Data Source={path}");
         _conn.Open();
         Exec(Schema);
+        Exec(PluginScanSchema);
     }
 
     public void Dispose() => _conn.Dispose();

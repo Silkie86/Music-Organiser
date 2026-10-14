@@ -1,16 +1,38 @@
 // mo-scan: loads one plugin file and prints what's inside as JSON lines, one per plugin.
 // The app runs it once per plugin with a timeout, so a plugin that crashes or hangs only ends this process.
 //
-//   mo-scan [--no-params] [--state] [--format clap|vst3|vst2] <plugin path>
+//   mo-scan [--no-params] [--state] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>
 //   mo-scan --version
 #include "json.h"
 #include "module.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+namespace mo {
+
+bool Options::wanted(const std::string& id) const
+{
+    if (only.empty() || only == id) return true;
+    // VST3 class IDs are hex, so their case doesn't matter. CLAP and VST2 IDs are compared exactly.
+    if (only.size() != 32 || id.size() != 32) return false;
+    for (size_t i = 0; i < id.size(); i++)
+    {
+        auto a = static_cast<unsigned char>(only[i]), b = static_cast<unsigned char>(id[i]);
+        if (!std::isxdigit(a) || std::tolower(a) != std::tolower(b)) return false;
+    }
+    return true;
+}
+
+} // namespace mo
 
 namespace {
 
@@ -39,12 +61,13 @@ int run(const std::vector<std::filesystem::path>& args)
         }
         if (a == "--no-params") opt.params = false;
         else if (a == "--state") opt.state = true;
+        else if (a == "--only" && i + 1 < args.size()) opt.only = args[++i].u8string();
         else if (a == "--format" && i + 1 < args.size()) format = lower(args[++i].u8string());
         else paths.push_back(args[i]);
     }
     if (paths.empty())
     {
-        std::fprintf(stderr, "usage: mo-scan [--no-params] [--state] [--format clap|vst3|vst2] <plugin path>\n");
+        std::fprintf(stderr, "usage: mo-scan [--no-params] [--state] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>\n");
         return 64;
     }
 
@@ -74,6 +97,12 @@ int run(const std::vector<std::filesystem::path>& args)
 #ifdef _WIN32
 int wmain(int argc, wchar_t** argv)
 {
+    // A plugin that crashes or can't find a DLL must not leave a Windows error box open: the
+    // process should just end, so the app can note the failure and move on.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+#ifdef _MSC_VER
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     std::vector<std::filesystem::path> args(argv + 1, argv + argc);
     return run(args);
 }

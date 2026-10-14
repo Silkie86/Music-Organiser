@@ -10,13 +10,16 @@ with CMake, and CI builds and tests them on all three.
 
 ## Building
 
-The app builds these for you: building `MusicOrganiser.App` (or the Avalonia app) runs CMake on this
-folder the first time and whenever these sources change, then copies `mo-scan` next to the app. That
-needs CMake and a C++ compiler. In Visual Studio 2026 that's the **Desktop development with C++**
-workload (Visual Studio Installer → Modify). Without it the app still builds and runs; it just can't
-scan plugins.
+The app builds the scanner for you: building `MusicOrganiser.App` (or the Avalonia app, or the tests)
+runs `build-scanner.cmd` (Windows) or `build-scanner.sh` (Mac, Linux) the first time and whenever
+the scanner's code changes, then copies `mo-scan` next to the app. That needs CMake and a C++
+compiler. In Visual Studio 2026 that's the **Desktop development with C++** workload (Visual Studio
+Installer → Modify), which includes CMake; on a Mac, Xcode's command line tools and CMake. Without
+them the app still builds and runs, with a build warning, and just can't read plugin details. What
+went wrong is in `native/out/app/build.log`. `-p:MoBuildNative=false` turns this off; on CI it's off
+unless asked for (the Windows build job asks).
 
-By hand:
+By hand, everything including the probe and the tests:
 
 ```
 cmake -S native -B native/build
@@ -41,7 +44,7 @@ code; it picks up `CMakePresets.json`.
 ## mo-scan
 
 ```
-mo-scan [--no-params] [--state] [--format clap|vst3|vst2] <plugin path>
+mo-scan [--no-params] [--state] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>
 mo-scan --version
 ```
 
@@ -61,14 +64,20 @@ like Waves holds many):
   replaces guessing by name.
 - **params** has every parameter: ID, name, units, range, default and current value, the value as
   the plugin shows it, and flags (automatable, stepped, list, hidden, bypass).
+- `--no-params` only lists the plugins in the file. CLAP and VST3 plugins aren't even started, and a
+  VST2 shell's plugins are listed without opening each one, so this is quick. The app reads every
+  plugin file this way in the background, and a plugin's parameters only when you ask.
+- `--only <id>` reads one plugin from the file, e.g. one from a Waves shell.
 - `--state` adds the plugin's default state (base64), for working out how its settings are stored.
+  (Scanning the probe with `--state` writes a probe report, since saving its state counts as using it.)
 - A plugin that can't be loaded gives `{"path":..., "error":"..."}` and exit code 2. A 32-bit
   VST2 says so.
 
 Plugins print all sorts of things; that goes to stderr, so stdout is only JSON. The app runs
-`mo-scan` once per plugin file with a timeout, so a plugin that crashes or hangs only takes the
-scanner down, not the app. Plugins aren't unloaded at the end because many crash when they are; the
-process just exits.
+`mo-scan` once per plugin file (four at a time) with a 30-second limit, so a plugin that crashes or
+hangs only takes the scanner down, not the app. On Windows the scanner turns off the system's crash
+and missing-DLL boxes, so a bad plugin can't leave one waiting. Plugins aren't unloaded at the end
+because many crash when they are; the process just exits.
 
 VST2: Steinberg no longer licenses the VST2 SDK, so the scanner declares the few structures a host
 needs from the binary interface itself (`scan_vst2.cpp`). AU (macOS) scanning is still to do.
@@ -123,9 +132,11 @@ compare the reported notes with what the song should play).
 native/
   CMakeLists.txt          top level; MO_PROBE_WRAPPERS option
   CMakePresets.json       for Visual Studio's Open Folder
-  MusicOrganiser.Native.targets   builds this from the .NET projects
+  MusicOrganiser.Native.targets   builds the scanner from the .NET projects (imported by Core)
+  build-scanner.cmd/.sh   what that runs: the scanner only, into out/app
   mo-scan/src/            scanner: main, CLAP, VST3, VST2, loading libraries, JSON
   mo-probe/src/           probe: plugin, report writer, entry point
-  tests/                  probe_test.cpp (hosts the probe), check_scan.cmake (scans it)
+  tests/                  probe_test.cpp (hosts the probe), check_scan.cmake (scans it),
+                          fake_vst2.cpp + check_vst2.cmake (a stand-in VST2 shell)
   third_party/            CLAP headers, VST3 pluginterfaces (MIT)
 ```

@@ -1,0 +1,177 @@
+using System.Diagnostics;
+using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Plugins;
+
+namespace MusicOrganiser.Core.Tests;
+
+/// <summary>
+/// The app's side of the native plugin scanner: reading its output, running it with a time limit,
+/// and keeping what it found. native/tests covers the scanner itself.
+/// </summary>
+public class PluginScannerTests : IDisposable
+{
+    readonly string _root = Fixtures.TempDir();
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+    }
+
+    // Lines as mo-scan prints them (from the MO Probe and the fake VST2 shell in native/tests).
+    const string ClapLine = """{"format":"CLAP","path":"/p/MO Probe.clap","id":"org.musicorganiser.probe.effect","name":"MO Probe Effect","vendor":"Music Organiser","version":"1.0.0","kind":"effect","features":["audio-effect","utility","stereo"],"audioIn":2,"audioOut":2,"noteIn":1,"noteOut":0,"params":[{"id":1003,"name":"MO Frequency","module":"Probe","min":20,"max":20000,"default":440,"value":440,"text":"440.0 Hz","stepped":false,"automatable":true,"hidden":false,"readOnly":false,"bypass":false},{"id":1004,"name":"MO Steps","module":"Probe","min":0,"max":7,"default":3,"value":3,"text":"3","stepped":true,"automatable":true,"hidden":false,"readOnly":false,"bypass":false},{"id":1008,"name":"MO Bypass","module":"","min":0,"max":1,"default":0,"value":0,"text":"Off","stepped":true,"automatable":true,"hidden":true,"readOnly":false,"bypass":true}]}""";
+    const string Vst3Line = """{"format":"VST3","path":"/p/MO Probe.vst3","id":"805ECA49563E43EA8119369F0ED6096D","name":"MO Probe Effect","vendor":"Music Organiser","version":"1.0.0","kind":"effect","features":["Fx","Tools"],"audioIn":2,"audioOut":2,"noteIn":1,"noteOut":0,"params":[{"id":1002,"name":"MO Gain","shortName":"Gain","units":"dB","steps":0,"default":0.8333,"value":0.8333,"plainMin":-60,"plainMax":12,"plainDefault":0,"text":"0.0","unit":0,"automatable":true,"readOnly":false,"list":false,"hidden":false,"bypass":false,"program":false}]}""";
+    const string ShellLine = """{"shell":"WaveShell1-VST 15.0","format":"VST2","path":"C:\\VST\\WaveShell1-VST 15.0.dll","id":"MoB2","uniqueId":1299137074,"name":"L2 Stereo","vendor":"Waves"}""";
+    const string ErrorLine = """{"path":"C:\\VST\\Old.dll","error":"32-bit plugin: this scanner is 64-bit"}""";
+
+    [Fact]
+    public void ReadsTheScannersLines()
+    {
+        var clap = ScannedPlugin.Parse(ClapLine)!;
+        Assert.Equal(("CLAP", "org.musicorganiser.probe.effect", "MO Probe Effect", "Music Organiser", "effect"),
+                     (clap.Format, clap.Id, clap.Name, clap.Vendor, clap.Kind));
+        Assert.Equal((2, 2, 1), (clap.AudioIn, clap.AudioOut, clap.NoteIn));
+        var freq = clap.Params![0];
+        Assert.Equal((1003L, 20.0, 20000.0, 440.0, 0), (freq.Id, freq.Min, freq.Max, freq.Default, freq.Steps));
+        Assert.Equal("440.0 Hz", freq.Display);
+        Assert.Equal(7, clap.Params[1].Steps);
+        Assert.True(clap.Params[2].Bypass && clap.Params[2].Hidden);
+
+        // VST3 gives its range and default in the parameter's own units separately from 0-1.
+        var gain = ScannedPlugin.Parse(Vst3Line)!.Params!.Single();
+        Assert.Equal((-60.0, 12.0, 0.0), (gain.Min, gain.Max, gain.Default));
+        Assert.Equal("0.0 dB", gain.Display);
+        Assert.Equal("-60 to 12 dB, starts at 0", gain.Range);
+
+        // A plugin in a Waves-style shell, listed without loading it: no parameters yet.
+        var shell = ScannedPlugin.Parse(ShellLine)!;
+        Assert.Equal(("VST2", "MoB2", "L2 Stereo", "WaveShell1-VST 15.0"), (shell.Format, shell.Id, shell.Name, shell.Shell));
+        Assert.Null(shell.Params);
+
+        Assert.Null(ScannedPlugin.Parse(ErrorLine));
+        Assert.Equal("32-bit plugin: this scanner is 64-bit", ScannedPlugin.FileError(ErrorLine));
+        Assert.Null(ScannedPlugin.FileError(ClapLine));
+        Assert.Null(ScannedPlugin.Parse("not json"));
+    }
+
+    [Fact]
+    public async Task RunsTheScannerAndKeepsItsJsonOnly()
+    {
+        var scanner = new PluginScanner(FakeScanner("ok", [ClapLine, Vst3Line], stderr: "a chatty plugin"));
+        var scan = await scanner.ScanAsync(Path.Combine(_root, "MO Probe.clap"));
+        Assert.Equal("", scan.Error);
+        Assert.Equal(["CLAP", "VST3"], scan.Plugins.Select(p => p.Format));
+    }
+
+    [Fact]
+    public async Task SaysWhenAPluginCrashesTheScanner()
+    {
+        var scanner = new PluginScanner(FakeScanner("crash", [], exitCode: 3, stderr: "boom"));
+        var scan = await scanner.ScanAsync(Path.Combine(_root, "Crashy.vst3"));
+        Assert.Empty(scan.Plugins);
+        Assert.Contains("crashed", scan.Error);
+        Assert.Contains("boom", scan.Error);
+
+        // The scanner's own error line wins over its exit code.
+        scanner = new PluginScanner(FakeScanner("fail", [ErrorLine], exitCode: 2));
+        Assert.Equal("32-bit plugin: this scanner is 64-bit", (await scanner.ScanAsync(@"C:\VST\Old.dll")).Error);
+    }
+
+    [Fact]
+    public async Task StopsAScanThatHangs()
+    {
+        var scanner = new PluginScanner(FakeScanner("hang", [], hang: true)) { Timeout = TimeSpan.FromSeconds(1) };
+        var clock = Stopwatch.StartNew();
+        var scan = await scanner.ScanAsync(Path.Combine(_root, "Stuck.clap"));
+        Assert.Contains("didn't finish", scan.Error);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(15), $"took {clock.Elapsed}");
+    }
+
+    [Fact]
+    public async Task ReadsEachPluginFileOnceUntilItChanges()
+    {
+        var folder = Path.Combine(_root, "VST3");
+        var bundle = Path.Combine(folder, "WaveShell1-VST3 15.0.vst3", "Contents", "x86_64-win");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "WaveShell1-VST3 15.0.vst3"), "code");
+        File.WriteAllText(Path.Combine(folder, "Serum.clap"), "code");
+        File.WriteAllText(Path.Combine(folder, "Diva.component"), "an Audio Unit: not read by the scanner");
+
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        db.SetList(Scanner.PluginFoldersKey, [folder]);
+        var lib = new Scanner(db);
+        lib.ScanInstalledPlugins(out var toRead);
+        Assert.Equal(["Serum.clap", "WaveShell1-VST3 15.0.vst3"], toRead.Select(Path.GetFileName).Order());
+
+        // The shell holds plugins named nothing like its file; once read, they count as installed.
+        var waves = Path.Combine(folder, "WaveShell1-VST3 15.0.vst3");
+        var scanner = new PluginScanner(FakeScanner("shell", [
+            ShellLine.Replace("C:\\\\VST\\\\WaveShell1-VST 15.0.dll", waves.Replace("\\", "\\\\")),
+            ShellLine.Replace("C:\\\\VST\\\\WaveShell1-VST 15.0.dll", waves.Replace("\\", "\\\\")).Replace("MoB2", "MoC3").Replace("L2 Stereo", "CLA-76 Stereo"),
+        ]));
+        await lib.ReadPluginFilesAsync(scanner, toRead.Where(p => p.EndsWith(".vst3")).ToList());
+        db.SavePluginScan(new PluginFileScan(Path.Combine(folder, "Serum.clap"), [], "no clap_entry"), PluginScanner.Stamp(Path.Combine(folder, "Serum.clap")));
+
+        lib.ScanInstalledPlugins(out toRead);
+        Assert.Empty(toRead);
+        Assert.Contains("CLA-76 Stereo", db.InstalledNames());
+        Assert.Equal((2, 2, 1), db.PluginScanCounts());
+
+        // A project's name with the vendor in front still finds it.
+        var found = db.ScannedPluginsNamed("Waves L2 Stereo");
+        Assert.Equal(["MoB2"], found.Select(p => p.Id));
+
+        // Reading a plugin's parameters replaces its stored line.
+        db.SaveScannedPlugin(found[0] with { Json = ClapLine.Replace("org.musicorganiser.probe.effect", "MoB2") });
+        Assert.NotNull(db.ScannedPluginsNamed("L2 Stereo")[0].Params);
+
+        // A changed file is read again; a removed one is forgotten.
+        File.AppendAllText(Path.Combine(folder, "Serum.clap"), " updated");
+        Directory.Delete(Path.Combine(folder, "WaveShell1-VST3 15.0.vst3"), true);
+        lib.ScanInstalledPlugins(out toRead);
+        Assert.Equal(["Serum.clap"], toRead.Select(Path.GetFileName));
+        Assert.Empty(db.ScannedPluginsNamed("L2 Stereo"));
+        Assert.DoesNotContain("CLA-76 Stereo", db.InstalledNames());
+    }
+
+    [Fact]
+    public async Task TheRealScannerRunsWhenItsBuilt()
+    {
+        // mo-scan is built and copied next to the tests on a computer with CMake and a C++ compiler
+        // (not on CI, apart from the Windows build). Elsewhere there's nothing to check here.
+        if (PluginScanner.Find() is not { } exe) return;
+        var notAPlugin = Path.Combine(_root, "Not a plugin.clap");
+        File.WriteAllText(notAPlugin, "not a plugin");
+        var scan = await new PluginScanner(exe).ScanAsync(notAPlugin);
+        Assert.Empty(scan.Plugins);
+        Assert.NotEqual("", scan.Error);
+        Assert.DoesNotContain("crashed", scan.Error);
+    }
+
+    /// <summary>A stand-in for mo-scan: a script that prints the given lines (or hangs, or fails).</summary>
+    string FakeScanner(string name, string[] lines, int exitCode = 0, string stderr = "", bool hang = false)
+    {
+        string path;
+        if (OperatingSystem.IsWindows())
+        {
+            path = Path.Combine(_root, name + ".cmd");
+            var cmd = new List<string> { "@echo off" };
+            if (stderr.Length > 0) cmd.Add($"echo {stderr} 1>&2");
+            cmd.AddRange(lines.Select(l => "echo " + l.Replace("%", "%%").Replace("^", "^^").Replace("&", "^&").Replace("<", "^<").Replace(">", "^>").Replace("|", "^|")));
+            if (hang) cmd.Add("ping -n 60 127.0.0.1 >nul");
+            cmd.Add($"exit /b {exitCode}");
+            File.WriteAllLines(path, cmd);
+        }
+        else
+        {
+            path = Path.Combine(_root, name + ".sh");
+            var sh = new List<string> { "#!/bin/sh" };
+            if (stderr.Length > 0) sh.Add($"echo '{stderr}' >&2");
+            sh.AddRange(lines.Select(l => "printf '%s\\n' '" + l.Replace("'", "'\\''") + "'"));
+            if (hang) sh.Add("sleep 60");
+            sh.Add($"exit {exitCode}");
+            File.WriteAllLines(path, sh);
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        return path;
+    }
+}

@@ -17,4 +17,7 @@
     <None Include="Sounds\Models\NOTICE-basic-pitch.txt" Link="Models\NOTICE-basic-pitch.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The plugin scanner (C++), built with CMake and copied next to the app. -->
+  <Import Project="..\..\native\MusicOrganiser.Native.targets" />
+
 </Project>

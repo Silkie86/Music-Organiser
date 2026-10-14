@@ -200,21 +200,30 @@ bool scanVst2(const std::filesystem::path& path, const Options& opt, std::string
 
     if (e->dispatcher(e, effGetPlugCategory, 0, 0, nullptr, 0) == kPlugCategShell)
     {
-        // A shell (e.g. Waves) holds many plugins: list them, then open each one by its ID.
+        // A shell (e.g. Waves) holds many plugins. List them; open each one by its ID only when its
+        // parameters or state are wanted, since opening hundreds takes minutes.
         std::vector<std::pair<int32_t, std::string>> subs;
         for (int guard = 0; guard < 4096; guard++)
         {
             char name[1024] = {};
             auto id = static_cast<int32_t>(e->dispatcher(e, effShellGetNextPlugin, 0, 0, name, 0));
             if (id == 0) break;
-            subs.emplace_back(id, cleanUtf8(name, sizeof name - 1));
+            if (opt.wanted(fourCC(id))) subs.emplace_back(id, cleanUtf8(name, sizeof name - 1));
         }
+        std::string vendor = ask(e, effGetVendorString);
         e->dispatcher(e, effClose, 0, 0, nullptr, 0);
         for (auto& [id, name] : subs)
         {
-            g_currentId = id;
             Json j;
             j.begin().str("shell", path.stem().u8string());
+            if (!opt.params && !opt.state)
+            {
+                j.str("format", "VST2").str("path", path.u8string()).str("id", fourCC(id)).integer("uniqueId", id)
+                    .str("name", name).str("vendor", vendor);
+                emit(j.end());
+                continue;
+            }
+            g_currentId = id;
             if (AEffect* sub = open(entry))
             {
                 writePlugin(j, path, sub, opt, name);

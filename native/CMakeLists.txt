@@ -7,17 +7,20 @@
 # -DMO_PROBE_WRAPPERS=ON also builds the probe as VST3 (and AU on macOS) with clap-wrapper,
 # which downloads clap-wrapper and the full VST3 SDK with git.
 cmake_minimum_required(VERSION 3.21)
+# macOS only; it has to be set before project().
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Oldest macOS to support")
 project(MusicOrganiserNative VERSION 1.0.0 LANGUAGES C CXX)
 
 option(MO_PROBE_WRAPPERS "Also build the probe as VST3 (and AU on macOS) with clap-wrapper (needs git and internet)" OFF)
+if(APPLE AND MO_PROBE_WRAPPERS)
+  # clap-wrapper's Mac parts are Objective-C++.
+  enable_language(OBJC OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Everything may end up inside a plugin (a shared library), including clap-wrapper's static parts.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-if(APPLE)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Oldest macOS to support")
-endif()
 if(MSVC)
   # Self-contained binaries: no Visual C++ runtime to install alongside them.
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -69,4 +72,20 @@ if(BUILD_TESTING)
       COMMAND ${CMAKE_COMMAND} -DSCANNER=$<TARGET_FILE:mo-scan> "-DPLUGIN=${probe_vst3}" -DFORMAT=VST3
               -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_scan.cmake)
   endif()
+
+  # VST2: a stand-in shell plugin, since there are no real VST2 plugins on the build machines.
+  add_library(fake-vst2 MODULE tests/fake_vst2.cpp)
+  set_target_properties(fake-vst2 PROPERTIES PREFIX "" OUTPUT_NAME "Fake Shell" C_VISIBILITY_PRESET hidden
+                        CXX_VISIBILITY_PRESET hidden LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/test-plugins/$<0:>)
+  if(WIN32)
+    set_target_properties(fake-vst2 PROPERTIES SUFFIX ".dll")
+  else()
+    set_target_properties(fake-vst2 PROPERTIES SUFFIX ".so")
+  endif()
+  if(MSVC)
+    target_compile_definitions(fake-vst2 PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+  add_test(NAME scan-vst2-shell
+    COMMAND ${CMAKE_COMMAND} -DSCANNER=$<TARGET_FILE:mo-scan> -DPLUGIN=$<TARGET_FILE:fake-vst2>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_vst2.cmake)
 endif()

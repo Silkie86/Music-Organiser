@@ -6,7 +6,9 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
 #else
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -18,14 +20,17 @@ void takeStdout()
 {
     // Plugins print all sorts to stdout. Keep the real stdout for our JSON and send theirs to stderr.
     std::fflush(stdout);
+    // Helper processes a plugin starts mustn't inherit our stdout either: the app reads it to the end.
 #ifdef _WIN32
     int saved = _dup(_fileno(stdout));
     _dup2(_fileno(stderr), _fileno(stdout));
+    if (saved >= 0) SetHandleInformation(reinterpret_cast<HANDLE>(_get_osfhandle(saved)), HANDLE_FLAG_INHERIT, 0);
     g_out = _fdopen(saved, "w");
     _setmode(saved, _O_BINARY);
 #else
     int saved = dup(fileno(stdout));
     dup2(fileno(stderr), fileno(stdout));
+    if (saved >= 0) fcntl(saved, F_SETFD, FD_CLOEXEC);
     g_out = fdopen(saved, "w");
 #endif
     if (!g_out) g_out = stderr;

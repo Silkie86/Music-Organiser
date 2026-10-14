@@ -149,6 +149,14 @@ public static partial class PluginCatalog
     public static HashSet<string> Scan(IEnumerable<string> folders)
     {
         var names = new HashSet<string>(AlwaysKnown, StringComparer.OrdinalIgnoreCase);
+        names.UnionWith(ScanFiles(folders).Select(p => p.Name));
+        return names;
+    }
+
+    /// <summary>Every plugin file under the given folders, with its format.</summary>
+    public static List<InstalledPlugin> ScanFiles(IEnumerable<string> folders)
+    {
+        var found = new Dictionary<string, InstalledPlugin>(StringComparer.OrdinalIgnoreCase);
         foreach (var folder in folders.Where(Directory.Exists))
         {
             IEnumerable<string> entries;
@@ -163,13 +171,13 @@ public static partial class PluginCatalog
                     if (TextScan.IsPluginPath(e))
                     {
                         var name = TextScan.PluginNameFromPath(e);
-                        if (name.Length >= 3) names.Add(name);
+                        if (name.Length >= 3) found.TryAdd(Path.GetFullPath(e), new(name, TextScan.PluginFormatFromPath(e), e));
                     }
                 }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
-        return names;
+        return found.Values.ToList();
     }
 
     static readonly string[] BundleExtensions = [".vst3", ".component", ".clap", ".vst"];
@@ -177,3 +185,6 @@ public static partial class PluginCatalog
     static bool InsideBundle(string path) =>
         BundleExtensions.Any(b => path.Contains(b + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
 }
+
+/// <summary>A plugin file on this PC (or in a friend's list): its name, format and where it lives.</summary>
+public sealed record InstalledPlugin(string Name, string Format, string Path = "");

@@ -12,7 +12,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: dotnet build MusicOrganiser.sln -c Release
+      # MoBuildNative: also build the plugin scanner the way Visual Studio does when you press F5.
+      - run: dotnet build MusicOrganiser.sln -c Release -p:MoBuildNative=true
       - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release --no-build
 
   # Core (readers, writers, library, Sound Lab), the shared view models and the Avalonia app

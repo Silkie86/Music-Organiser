@@ -151,7 +151,7 @@ bool scanClap(const std::filesystem::path& path, const Options& opt, std::string
     for (uint32_t i = 0, n = factory->get_plugin_count(factory); i < n; i++)
     {
         auto d = factory->get_plugin_descriptor(factory, i);
-        if (!d) continue;
+        if (!d || !d->id || !opt.wanted(d->id)) continue;
         std::vector<std::string> features;
         for (auto f = d->features; f && *f; f++) features.emplace_back(cleanUtf8(*f, 256));
 

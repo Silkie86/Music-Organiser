@@ -12,6 +12,9 @@ struct Options
 {
     bool params = true;
     bool state = false;
+    /// Only this plugin from the file (its ID as printed), e.g. one plugin from a Waves shell.
+    std::string only;
+    bool wanted(const std::string& id) const;
 };
 
 /// Redirects the plugins' own stdout to stderr, keeping stdout for our JSON lines.

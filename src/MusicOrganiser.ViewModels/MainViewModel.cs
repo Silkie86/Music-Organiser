@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Plugins;
 using MusicOrganiser.Core.Sounds;
 
 namespace MusicOrganiser.ViewModels;
@@ -11,6 +12,9 @@ public sealed partial class MainViewModel : ObservableObject
     readonly LibraryDb _db;
     readonly Scanner _scanner;
     CancellationTokenSource? _scanCts;
+
+    /// <summary>The native plugin scanner (mo-scan), if it was built.</summary>
+    public PluginScanner PluginScanner { get; } = new();
 
     public ProjectsViewModel Projects { get; }
     public PluginsViewModel Plugins { get; }
@@ -82,6 +86,7 @@ public sealed partial class MainViewModel : ObservableObject
         });
         try
         {
+            IReadOnlyList<string> pluginFiles = [];
             await Task.Run(() =>
             {
                 // Sample folders are indexed alongside the projects; the projects need the plugin list first.
@@ -89,11 +94,23 @@ public sealed partial class MainViewModel : ObservableObject
                 if (plugins)
                 {
                     ((IProgress<ScanProgress>)progress).Report(new("Checking installed plugins", 0, 0, ""));
-                    _scanner.ScanInstalledPlugins();
+                    _scanner.ScanInstalledPlugins(out pluginFiles);
                 }
                 _scanner.ScanProjects(progress, full, ct);
                 sampling.GetAwaiter().GetResult();
             }, ct);
+
+            // New or updated plugin files: read what's inside them with the native scanner. That can take
+            // a minute the first time, so show the projects first.
+            if (pluginFiles.Count > 0 && PluginScanner.Available)
+            {
+                RefreshAll();
+                await Task.Run(async () =>
+                {
+                    await _scanner.ReadPluginFilesAsync(PluginScanner, pluginFiles, progress, ct);
+                    _scanner.ScanInstalledPlugins();   // now knowing every plugin inside them
+                }, ct);
+            }
             ScanStatus = $"Library up to date · {DateTime.Now:HH:mm}";
         }
         catch (OperationCanceledException)
