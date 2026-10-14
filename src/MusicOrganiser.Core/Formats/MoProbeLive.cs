@@ -115,7 +115,7 @@ public sealed record MoProbeLive
             {
                 if (f.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                 {
-                    var status = Read(f.FullName);
+                    var status = Read(f.FullName) ?? (at - f.LastWriteTimeUtc <= Stale ? ReadAgain(f.FullName) : null);
                     var written = status?.Time ?? new DateTimeOffset(f.LastWriteTimeUtc, TimeSpan.Zero);
                     if (status is not null && at - written <= Stale) running.Add(status);
                     else if (at - written > Forgotten) Forget(f.FullName);
@@ -224,7 +224,7 @@ public sealed record MoProbeLive
                                                   CancellationToken ct = default)
     {
         // Only what it writes from now on can be the answer, so a long report isn't read from the start.
-        var status = Read(StatusFile(instance, reportFolder)) ?? throw new DawLinkException(NotRunning(instance));
+        var status = await ReadRunningAsync(StatusFile(instance, reportFolder), instance, ct);
         var tail = status.Report.Length > 0 ? new ReportTail(status.ReportFile, Length(status.ReportFile)) : null;
         var id = Send(instance, command, reportFolder);
         return await AnswerAsync(instance, id, reportFolder, timeout, tail, ct);
@@ -280,6 +280,33 @@ public sealed record MoProbeLive
             }
             else if (waited.Elapsed - seen > Missing) throw new DawLinkException(NotRunning(instance));
             if (waited.Elapsed >= limit && last is not null) return (false, last);
+            await Task.Delay(Poll, ct);
+        }
+    }
+
+    /// <summary>A fresh status that couldn't be read may be being swapped for a new one just then (on Windows): a few more tries.</summary>
+    static MoProbeLive? ReadAgain(string file)
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            Thread.Sleep(Poll / 2);
+            if (Read(file) is { } status) return status;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Reads a running probe's status, giving it a moment if it can't be read just then: on Windows the file can't be
+    /// opened for the instant the probe swaps in a new one, which isn't the probe stopping.
+    /// </summary>
+    /// <exception cref="DawLinkException">The probe isn't running.</exception>
+    public static async Task<MoProbeLive> ReadRunningAsync(string file, string instance, CancellationToken ct = default)
+    {
+        var waited = Stopwatch.StartNew();
+        while (true)
+        {
+            if (Read(file) is { } status) return status;
+            if (waited.Elapsed > Missing) throw new DawLinkException(NotRunning(instance));
             await Task.Delay(Poll, ct);
         }
     }

@@ -250,7 +250,7 @@ public static class ProbeKnobCheck
     {
         var timing = new Timing(wait ?? DefaultWait, settle ?? DefaultSettle);
         var title = probe.Name + (probe.Track.Length > 0 ? $" on “{probe.Track}”" : "");
-        var start = MoProbeLive.Read(probe.File) ?? throw new DawLinkException(MoProbeLive.NotRunning(probe.Instance));
+        var start = await MoProbeLive.ReadRunningAsync(probe.File, probe.Instance, ct);
         var pairs = Pair(await daw.KnobsAsync(ct));
         var lines = new List<KnobCheckLine>();
         var notes = new List<string>();
