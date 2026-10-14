@@ -93,6 +93,35 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void TheBitwigTemplateSavedLastIsUsed()
+    {
+        var data = Path.Combine(_root, "data");
+        var picked = Path.Combine(_root, "template.bwproject");
+        File.WriteAllBytes(picked, Fixtures.BitwigTemplate(automationLane: false));
+        // Kept read-only so it isn't saved over by accident: the app's copy can still be saved and replaced.
+        File.SetAttributes(picked, FileAttributes.ReadOnly);
+        _db.SetSetting(ProjectDetailViewModel.BitwigTemplateKey, picked);
+        var kept = BitwigTemplateStore.Find(_db, data);
+        Assert.Equal(BitwigTemplateStore.PathIn(data), kept);
+        Assert.False(File.GetAttributes(kept!).HasFlag(FileAttributes.ReadOnly));
+
+        // The original changed and saved again (opened from Bitwig's recent projects) is copied in again.
+        File.SetAttributes(picked, FileAttributes.Normal);
+        var saved = Fixtures.BitwigTemplate();
+        File.WriteAllBytes(picked, saved);
+        File.SetLastWriteTimeUtc(picked, File.GetLastWriteTimeUtc(kept!).AddMinutes(1));
+        Assert.Equal(kept, BitwigTemplateStore.Find(_db, data));
+        Assert.Equal(saved, File.ReadAllBytes(kept!));
+
+        // The app's copy changed after that (Edit in Bitwig) is kept.
+        var edited = Fixtures.BitwigTemplate(automationLane: false);
+        File.WriteAllBytes(kept!, edited);
+        File.SetLastWriteTimeUtc(kept!, File.GetLastWriteTimeUtc(picked).AddMinutes(1));
+        Assert.Equal(kept, BitwigTemplateStore.Find(_db, data));
+        Assert.Equal(edited, File.ReadAllBytes(kept!));
+    }
+
+    [Fact]
     public void SettingsSaysWhatTheBitwigTemplateIsMissing()
     {
         var data = Path.Combine(_root, "data");

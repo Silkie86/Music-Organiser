@@ -77,6 +77,15 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void ShowSettings() => SelectedNav = Nav.First(n => n.Page == Settings);
 
+    /// <summary>
+    /// The window is in front again, perhaps after the template was changed in Bitwig: Settings, if it's showing,
+    /// looks at the template again.
+    /// </summary>
+    public void WindowActivated()
+    {
+        if (SelectedNav?.Page == Settings) Settings.RefreshTemplate();
+    }
+
     partial void OnSelectedNavChanged(NavItem value)
     {
         // The MO Probes running now are followed only while Settings shows them.

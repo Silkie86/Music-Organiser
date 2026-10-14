@@ -282,18 +282,21 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>Under the template's path: what's missing from it, or where it was copied from.</summary>
     string TemplateNote(string template)
     {
-        if (template.Length == 0) return "";
-        try
-        {
-            if (Core.Export.BitwigProject.TemplateProblem(File.ReadAllBytes(template)) is { } problem)
-                return problem.Contains(" needs ", StringComparison.Ordinal)
-                    ? $"{problem}. Add it with Edit in Bitwig, or Replace the template with another project."
-                    : $"{problem}. Replace it with another project.";
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Couldn't read it: {e.Message}"; }
-        return _db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) is { Length: > 0 } from && from != template
+        if (Problem(template) is { } problem)
+            return problem.Contains(" needs ", StringComparison.Ordinal)
+                ? $"{problem}. Add it with Edit in Bitwig, or Replace the template with another project."
+                : $"{problem}. Replace it with another project.";
+        return template.Length > 0 && _db.GetSetting(ProjectDetailViewModel.BitwigTemplateKey) is { Length: > 0 } from && from != template
             ? $"The app's own copy, taken from {from}."
             : "";
+    }
+
+    /// <summary>Why the template can't be used, or null when it can (or there's none).</summary>
+    static string? Problem(string template)
+    {
+        if (template.Length == 0) return null;
+        try { return Core.Export.BitwigProject.TemplateProblem(File.ReadAllBytes(template)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Couldn't read it: {e.Message}"; }
     }
 
     partial void OnStepsUntilNextNoteChanged(bool value) =>
@@ -326,7 +329,10 @@ public sealed partial class SettingsViewModel : ObservableObject
         try
         {
             ProjectDetailViewModel.OpenWithBitwig(_db, BitwigTemplate);
-            BitwigTemplateNote = "Opening the template in Bitwig. Change it there and save it, and the next conversion uses it.";
+            // What's missing stays in view while it's added; it's checked again when the app is back in front.
+            BitwigTemplateNote = Problem(BitwigTemplate) is { } problem
+                ? $"{problem}. Opening the template in Bitwig: add that there and save it."
+                : "Opening the template in Bitwig. Change it there and save it, and the next conversion uses it.";
         }
         catch (Exception e) { BitwigTemplateNote = $"Couldn't open it in Bitwig: {e.Message}"; }
     }
