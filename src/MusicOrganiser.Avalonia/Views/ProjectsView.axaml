@@ -96,7 +96,7 @@
             <DataGrid x:Name="Grid" Classes="songs" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="None"
                       CanUserSortColumns="False" CanUserResizeColumns="False" CanUserReorderColumns="False"
-                      GridLinesVisibility="None" Background="Transparent" views:ColumnFloor.Enabled="False" RowHeight="64"
+                      GridLinesVisibility="None" Background="Transparent" views:ColumnFloor.Enabled="False" RowHeight="64" HorizontalScrollBarVisibility="Disabled"
                       DoubleTapped="OnDoubleTapped" views:FileDrag.Source="{Binding}">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Width="*">
@@ -134,13 +134,17 @@
         <!-- Selected project -->
         <Border Grid.Row="2" Grid.Column="2" Classes="card" Padding="0">
             <Grid>
-                <ContentControl Content="{Binding Detail}" IsVisible="{Binding Detail, Converter={x:Static ObjectConverters.IsNotNull}}">
-                    <ContentControl.ContentTemplate>
+                <!-- Another project's details cross-fade in, so the eye sees the panel change. -->
+                <TransitioningContentControl Content="{Binding Detail}" IsVisible="{Binding Detail, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <TransitioningContentControl.PageTransition>
+                        <CrossFade Duration="0:0:0.12" />
+                    </TransitioningContentControl.PageTransition>
+                    <TransitioningContentControl.ContentTemplate>
                         <DataTemplate x:DataType="vm:ProjectDetailViewModel">
                             <views:ProjectDetailView />
                         </DataTemplate>
-                    </ContentControl.ContentTemplate>
-                </ContentControl>
+                    </TransitioningContentControl.ContentTemplate>
+                </TransitioningContentControl>
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32"
                             IsVisible="{Binding Detail, Converter={x:Static ObjectConverters.IsNull}}">
                     <TextBlock Text="Pick a project" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,4" />

@@ -135,3 +135,12 @@ public sealed class NavIcon : IValueConverter
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
+
+/// <summary>A percentage as the sweep of a progress ring, in degrees.</summary>
+public sealed class PercentAngle : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is double d ? Math.Clamp(d, 0, 100) * 3.6 : 0.0;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}

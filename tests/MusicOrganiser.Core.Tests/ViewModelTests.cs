@@ -45,6 +45,42 @@ public class ViewModelTests : IDisposable
         new(_db, _sounds, watch, pluginScanner, Path.Combine(_root, "data"));
 
     [Fact]
+    public async Task Activity_cards_show_a_job_start_progress_and_finish_then_go()
+    {
+        var feed = new ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero };
+        var stopped = false;
+        var card = feed.Start("Scanning", cancel: () => stopped = true);
+        Assert.True(card.IsRunning);
+        Assert.True(card.CanCancel);
+        Assert.False(card.HasPercent);
+
+        card.Report(40, "4 of 10");
+        Assert.True(card.HasPercent);
+        Assert.Equal("4 of 10", card.Detail);
+        card.CancelCommand.Execute(null);
+        Assert.True(stopped);
+
+        card.Finish("Library up to date", "7 songs");
+        Assert.True(card.IsDone);
+        Assert.False(card.HasPercent);
+        await PollUntil(() => feed.Items.Count == 0);
+
+        // A failed job's card stays until it's read (three times as long), or closed.
+        feed.Linger = TimeSpan.FromMinutes(1);
+        var failed = feed.Failed("Scan failed", "Disk full");
+        Assert.True(failed.IsFailed);
+        Assert.Single(feed.Items);
+        failed.DismissCommand.Execute(null);
+        Assert.Empty(feed.Items);
+    }
+
+    static async Task PollUntil(Func<bool> done)
+    {
+        for (var i = 0; i < 100 && !done(); i++) await Task.Delay(20);
+        Assert.True(done());
+    }
+
+    [Fact]
     public void Project_search_matches_each_word_and_a_year()
     {
         var item = new ProjectItem(_db, new ProjectSummary

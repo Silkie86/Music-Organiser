@@ -52,9 +52,16 @@ public sealed class GridSelection
         if (grid.SelectedItem is { } item) Push(grid, item);
         else Dispatcher.UIThread.Post(() =>
         {
-            if (grid.SelectedItem is null) Push(grid, null);
+            if (grid.SelectedItem is not null) return;
+            // The view model's row is still in the list (a reload swapped in new rows, and the grid tried to pick the
+            // new one while its list was briefly empty): show it again rather than letting the selection go.
+            if (grid.GetValue(ItemProperty) is { } wanted && wanted != NotSet && Contains(grid, wanted)) grid.SelectedItem = wanted;
+            else Push(grid, null);
         });
     }
+
+    static bool Contains(DataGrid grid, object item) =>
+        grid.ItemsSource is System.Collections.IEnumerable rows && rows.Cast<object>().Contains(item);
 
     static void Push(DataGrid grid, object? item)
     {

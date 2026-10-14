@@ -32,10 +32,14 @@ public sealed partial class MainViewModel : ObservableObject
 
     public IReadOnlyList<NavItem> Nav { get; }
 
+    /// <summary>The activity cards: every job says when it starts, how far it has got and when it's done.</summary>
+    public ActivityFeed Activities { get; } = new();
+
     [ObservableProperty] NavItem _selectedNav;
     [ObservableProperty] bool _isScanning;
     [ObservableProperty] string _scanStatus = "";
     [ObservableProperty] double _scanPercent;
+    Activity? _scanCard;
 
     /// <param name="watch">How the DAWs are reached: their usual links unless given (tests use stand-ins).</param>
     /// <param name="pluginScanner">The plugin scanner: mo-scan where the build put it unless given (tests use a stand-in).</param>
@@ -171,21 +175,27 @@ public sealed partial class MainViewModel : ObservableObject
         _readingParameters = IsScanning = true;
         _scanCts = new CancellationTokenSource();
         var ct = _scanCts.Token;
+        _scanCard = Activities.Start("Reading plugin parameters", cancel: CancelScan);
         var progress = ProgressInStatus();
         try
         {
             var (read, failed) = await Task.Run(() => _scanner.ReadAllParametersAsync(PluginScanner, progress, ct), ct);
             ScanStatus = $"Parameters read for {read} plugin{(read == 1 ? "" : "s")}" +
                          (failed > 0 ? $"; {failed} couldn't be loaded" : "") + $" · {DateTime.Now:HH:mm}";
+            _scanCard.Finish("Plugin parameters read", $"{read} plugin{(read == 1 ? "" : "s")}" +
+                                                       (failed > 0 ? $", {failed} couldn't be loaded" : ""));
         }
         catch (OperationCanceledException)
         {
             ScanStatus = _parametersQueued ? "Reading parameters after this scan"   // making way for one
                 : "Stopped reading parameters; it carries on from there next time";
+            if (_parametersQueued) _scanCard.Stop("Paused reading parameters", "It carries on after this scan");
+            else _scanCard.Stop("Stopped reading parameters", "It carries on from there next time");
         }
         catch (Exception e)
         {
             ScanStatus = $"Reading parameters failed: {e.Message}";
+            _scanCard.Fail("Reading parameters failed", e.Message);
         }
         finally
         {
@@ -200,6 +210,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         ScanStatus = p.Total > 0 ? $"{p.Stage}: {p.Done} of {p.Total}" : p.Stage;
         ScanPercent = p.Total > 0 ? 100.0 * p.Done / p.Total : 0;
+        _scanCard?.Report(p.Total > 0 ? ScanPercent : -1, p.Total > 0 ? $"{p.Stage}: {p.Done:N0} of {p.Total:N0}" : p.Stage);
     });
 
     // A scan asked for while another is running (say, adding a folder during the startup scan)
@@ -256,6 +267,8 @@ public sealed partial class MainViewModel : ObservableObject
         IsScanning = true;
         _scanCts = new CancellationTokenSource();
         var ct = _scanCts.Token;
+        _scanCard = Activities.Start(full ? "Re-reading everything" : "Looking for new and changed projects", cancel: CancelScan);
+        var songsBefore = Projects.Items.Count;
         var progress = ProgressInStatus();
         try
         {
@@ -289,16 +302,24 @@ public sealed partial class MainViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             ScanStatus = "Scan stopped";
+            _scanCard.Stop("Scan stopped", "Rescan carries on from where it got to");
         }
         catch (Exception e)
         {
             ScanStatus = $"Scan failed: {e.Message}";
+            _scanCard.Fail("Scan failed", e.Message);
         }
         finally
         {
             IsScanning = false;
             ScanPercent = 0;
             RefreshAll();
+        }
+        if (_scanCard.IsRunning)
+        {
+            var added = Projects.Items.Count - songsBefore;
+            _scanCard.Finish("Library up to date",
+                added > 0 ? $"{added} new song{(added == 1 ? "" : "s")} · {Projects.Items.Count} in all" : $"{Projects.Items.Count} songs, nothing new");
         }
         await RunQueuedScanAsync();
     }

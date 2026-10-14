@@ -67,6 +67,9 @@ xdotool type --delay 40 "drum"; xdotool key Down; shot 0-type-on-open
 xdotool key ctrl+f; sleep 0.3; xdotool key Escape   # Ctrl+F back to the search box, Esc empties it
 nav 0; shot 1-projects
 xdotool mousemove 650 150 click 1; shot 2-project-selected
+# Feedback: a rescan from the rail, mid-way (ring, spinner, activity card) and just after (the card's tick).
+xdotool mousemove 42 863 click 1 mousemove 1430 892; shot 2a-scanning 0.05
+shot 2b-scan-done 2.5
 i=1
 for page in 3-sound-lab 4-plugins 5-samples 6-settings; do
   nav $i; shot "$page" 2; i=$((i + 1))

@@ -460,10 +460,12 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         var bpm = s.Bpm ?? 120;
         File.WriteAllBytes(file, MidiWriter.Write(NoteTranscriber.ToMidi(s.Name, Notes, bpm), bpm));
         Message = $"Saved {Path.GetFileName(file)}";
+        Activities.Done($"Saved {Path.GetFileName(file)}", $"{Notes.Count} notes", "Show file", () => Shell.Reveal(file));
     }
 
     internal LibraryDb Db => _db;
     internal string DataFolder => _main.DataFolder;
+    internal ActivityFeed Activities => _main.Activities;
 
     internal string ExportFolder()
     {
@@ -476,23 +478,29 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     // ---- long jobs ------------------------------------------------------------------
 
-    async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job)
+    /// <param name="done">The card's words once the job has finished, worked out then.</param>
+    async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null)
     {
         if (IsBusy) return;
         IsBusy = true;
         BusyText = label;
         _cts = new CancellationTokenSource();
+        var cts = _cts;
+        var card = Activities.Start(label, cancel: cts.Cancel);
         var progress = new Progress<SoundProgress>(p =>
         {
             BusyText = p.Total > 0 ? $"{p.Stage}: {p.Done:N0} of {p.Total:N0}" : p.Stage;
             BusyPercent = p.Total > 0 ? 100.0 * p.Done / p.Total : 0;
+            card.Report(p.Total > 0 ? BusyPercent : -1, BusyText);
         });
         try
         {
-            await Task.Run(() => job(progress, _cts.Token), _cts.Token);
+            await Task.Run(() => job(progress, cts.Token), cts.Token);
+            var (title, detail) = done?.Invoke() ?? ($"{label}: done", "");
+            card.Finish(title, detail);
         }
-        catch (OperationCanceledException) { Message = "Stopped"; }
-        catch (Exception e) { Message = $"{label} failed: {e.Message}"; }
+        catch (OperationCanceledException) { Message = "Stopped"; card.Stop($"{label}: stopped"); }
+        catch (Exception e) { Message = $"{label} failed: {e.Message}"; card.Fail($"{label} failed", e.Message); }
         finally
         {
             IsBusy = false;
@@ -511,7 +519,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             return;
         }
         var count = 0;
-        await RunAsync("Scanning sample folders", (p, ct) => count = Org.Scan(folders, p, ct));
+        await RunAsync("Scanning sample folders", (p, ct) => count = Org.Scan(folders, p, ct),
+                       () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"Analysed {count:N0} new or changed sounds"));
         if (count > 0) Message = $"Analysed {count:N0} new or changed sounds.";
     }
 
@@ -523,7 +532,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             Message = "Download the sound-understanding model first (Teach tab).";
             return;
         }
-        await RunAsync("Deep listening", (p, ct) => Org.DeepListen(p, ct));
+        await RunAsync("Deep listening", (p, ct) => Org.DeepListen(p, ct), () => ("Deep listening finished", "Searching by description now covers these sounds"));
     }
 
     [RelayCommand]
@@ -540,6 +549,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         DownloadSizeUnknown = true;
         DownloadPercent = BusyPercent = 0;
         _cts = new CancellationTokenSource();
+        var card = Activities.Start("Downloading the sound model", "Connecting to Hugging Face…", _cts.Cancel);
         try
         {
             var progress = new Progress<(string File, long Done, long? Total)>(p =>
@@ -550,13 +560,23 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
                 BusyText = $"Downloading model: {size}";
                 DownloadSizeUnknown = p.Total is not > 0;
                 DownloadPercent = BusyPercent = p.Total is > 0 ? 100.0 * p.Done / p.Total.Value : 0;
+                card.Report(p.Total is > 0 ? DownloadPercent : -1, $"File {index} of {ClapModel.Files.Length}: {size}");
             });
             await ClapModel.DownloadAsync(progress, ct: _cts.Token);
             Org.ResetClap();
             ModelMessage = "Downloaded and installed. Press Deep listen to let it hear your library.";
+            card.Finish("Sound model installed", "Press Deep listen to let it hear your library");
         }
-        catch (OperationCanceledException) { ModelMessage = "Download stopped. Press Download model to carry on from the file it was on."; }
-        catch (Exception e) { ModelMessage = $"Download failed: {e.Message}. Check the internet connection and try again."; }
+        catch (OperationCanceledException)
+        {
+            ModelMessage = "Download stopped. Press Download model to carry on from the file it was on.";
+            card.Stop("Download stopped", "It carries on from the file it was on");
+        }
+        catch (Exception e)
+        {
+            ModelMessage = $"Download failed: {e.Message}. Check the internet connection and try again.";
+            card.Fail("Download failed", e.Message);
+        }
         finally
         {
             IsBusy = IsDownloading = false;
@@ -566,7 +586,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     [RelayCommand]
-    async Task Retrain() => await RunAsync("Learning your sounds", (p, _) => Org.UpdateTypes(p));
+    async Task Retrain() => await RunAsync("Learning your sounds", (p, _) => Org.UpdateTypes(p), () => ("Learned from your labels", "Sound types are updated"));
 
     [RelayCommand]
     void Cancel() => _cts?.Cancel();
@@ -725,8 +745,13 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
             if (ExportKit() is not { } folder) return;
             Status = $"Exported to {folder}";
             Shell.Open(folder);
+            parent.Activities.Done("Kit exported", Path.GetFileName(folder), "Show", () => Shell.Open(folder));
         }
-        catch (Exception e) { Status = $"Export failed: {e.Message}"; }
+        catch (Exception e)
+        {
+            Status = $"Export failed: {e.Message}";
+            parent.Activities.Failed("Kit export failed", e.Message);
+        }
     }
 
     string? ExportKit()
@@ -783,6 +808,7 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
         }
         IsSending = true;
         Status = "Sending the kit to Bitwig…";
+        var card = parent.Activities.Start("Sending the kit to Bitwig", $"{pads.Count} pads");
         try
         {
             using var link = await BitwigLink.ConnectAsync();
@@ -795,12 +821,18 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
                 db.SetSetting(DrumMachineKey, "");
                 _useSelected = true;
                 Status = "Bitwig didn't add a Drum Machine to the new track. Add one to a track yourself, select it, and send the kit again.";
+                card.Fail("Bitwig didn't add a Drum Machine", "Add one to a track yourself, select it, and send the kit again.");
                 return;
             }
             Status = Describe(kit, name);
+            card.Finish($"{name} is in Bitwig", $"{pads.Count} pads on a Drum Machine");
         }
-        catch (DawLinkException e) { Status = e.Message; }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Status = $"Sending to Bitwig failed: {e.Message}"; }
+        catch (DawLinkException e) { Status = e.Message; card.Fail("Couldn't send the kit", e.Message); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Status = $"Sending to Bitwig failed: {e.Message}";
+            card.Fail("Sending to Bitwig failed", e.Message);
+        }
         finally { IsSending = false; }
     }
 

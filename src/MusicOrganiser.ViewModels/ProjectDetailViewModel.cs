@@ -125,11 +125,15 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         if (save is not null) Shell.Reveal(save.Path);
     }
 
+    /// <summary>The window's activity cards.</summary>
+    internal ActivityFeed Activities => _main.Activities;
+
     void Open(long id, string path, string daw)
     {
         if (!File.Exists(path))
         {
             Message = "This project file isn't where it used to be. Rescan to update the library.";
+            Activities.Failed("Can't find the project file", "It has moved or been deleted. Rescan to update the library.");
             return;
         }
         if (_db.GetSetting(DawExeKey(daw)) is { Length: > 0 } exe && File.Exists(exe))
@@ -137,11 +141,14 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         else
             Shell.Open(path);
         _db.MarkOpened(id);
-        Message = $"Opening {Path.GetFileNameWithoutExtension(path)} in {daw}…";
+        Message = "";
+        Activities.Done($"Opening {Path.GetFileNameWithoutExtension(path)}", $"Sent to {daw}. It opens there in a moment.");
     }
 
     [RelayCommand]
     void Reveal() => Shell.Reveal(Item.Path);
+
+    static string Things(int n) => n == 1 ? "1 thing" : $"{n} things";
 
     [RelayCommand]
     void CopyPath() => Ui.Current.CopyText(Item.Path);
@@ -176,7 +183,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             }
             _main.Settings.TemplateChanged(template);
         }
-        Message = "Converting for Bitwig…";
+        Message = "";
+        var card = Activities.Start($"Converting {Item.Name} for Bitwig");
         try
         {
             var path = Item.Path;
@@ -186,12 +194,20 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig." +
                       (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
                                                  $"{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more, listed in the notes saved next to it" : "")}.");
+            card.Finish($"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig",
+                        leftOut.Count == 0 ? "Converted. Everything carried over." : $"Converted. {Things(leftOut.Count)} not carried over (see the project panel).",
+                        "Show file", () => Shell.Reveal(file));
         }
         catch (InvalidDataException e) when (e.Message.StartsWith("The Bitwig template", StringComparison.Ordinal))
         {
             Message = $"{e.Message}. Pick another template in Settings.";
+            card.Fail("Converting for Bitwig failed", "The Bitwig template needs changing (see the project panel).");
         }
-        catch (Exception e) { Message = $"Converting for Bitwig failed: {e.Message}"; }
+        catch (Exception e)
+        {
+            Message = $"Converting for Bitwig failed: {e.Message}";
+            card.Fail("Converting for Bitwig failed", e.Message);
+        }
     }
 
     /// <summary>Opens a Bitwig project with the Bitwig chosen in Settings, or whatever opens .bwproject files.</summary>
@@ -207,7 +223,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     [RelayCommand]
     async Task ExportToBitwig()
     {
-        Message = "Converting for Bitwig…";
+        Message = "";
+        var card = Activities.Start($"Saving {Item.Name} as DAWproject");
         try
         {
             var path = Item.Path;
@@ -221,8 +238,13 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
                       }) +
                       (leftOut.Count == 0 ? "" : $" Not carried over yet: {string.Join("; ", leftOut.Take(4))}{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more" : "")}.");
             Shell.Reveal(file);
+            card.Finish($"Saved {Path.GetFileName(file)}", "In Bitwig, use File > Open and pick it.", "Show file", () => Shell.Reveal(file));
         }
-        catch (Exception e) { Message = $"Converting for Bitwig failed: {e.Message}"; }
+        catch (Exception e)
+        {
+            Message = $"Converting for Bitwig failed: {e.Message}";
+            card.Fail("Converting for Bitwig failed", e.Message);
+        }
     }
 
     public bool IsBitwig => Item.Daw == "Bitwig Studio";
@@ -266,6 +288,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     async Task CheckAsync(bool quiet)
     {
         var daw = IsFlStudio ? "FL Studio" : "Bitwig";
+        var card = quiet ? null : Activities.Start($"Checking with {daw}", "Comparing what the app read with what the DAW shows");
         if (!quiet)
         {
             CheckLines = [];
@@ -286,14 +309,18 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             }
             CheckLines = quiet ? [new(CheckResult.Note, $"{daw} has this project open, so the app checked it there by itself."), .. lines] : lines;
             if (!quiet) Message = "";
+            var differ = lines.Count(l => l.Result == CheckResult.Different);
+            card?.Finish($"Checked with {daw}", differ == 0 ? "Everything matches" : $"{Things(differ)} differ (listed in the project panel)");
         }
         catch (DawLinkException e)
         {
             if (!quiet) Message = e.Message;
+            card?.Fail($"Couldn't check with {daw}", e.Message);
         }
         catch (Exception e)
         {
             if (!quiet) Message = $"Checking with {daw} failed: {e.Message}";
+            card?.Fail($"Checking with {daw} failed", e.Message);
         }
     }
 
@@ -310,7 +337,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     async Task ExportPluginPreset(PluginRow? row)
     {
         if (row is null || Readers.For(Item.Path) is not { } reader) return;
-        Message = $"Exporting {row.Name}…";
+        Message = "";
+        var card = Activities.Start($"Exporting {row.Name}");
         try
         {
             var path = Item.Path;
@@ -323,14 +351,21 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             if (result.Files.Count == 0)
             {
                 Message = $"This project has no saved state for {row.Name}.";
+                card.Fail($"Nothing to export for {row.Name}", "This project has no saved state for it.");
                 return;
             }
             Message = PresetsViewModel.ExportSummary(result, blobs, templates);
             var best = result.Files.FirstOrDefault(f => f.EndsWith(".bwpreset", StringComparison.OrdinalIgnoreCase)) ?? result.Files[0];
             if (result.Files.Count <= 2) Shell.Reveal(Path.Combine(result.Folder, best));
             else Shell.Open(result.Folder);
+            card.Finish($"Exported {row.Name}", result.Files.Count == 1 ? "1 file" : $"{result.Files.Count} files",
+                        "Show", () => Shell.Open(result.Folder));
         }
-        catch (Exception e) { Message = $"Preset export failed: {e.Message}"; }
+        catch (Exception e)
+        {
+            Message = $"Preset export failed: {e.Message}";
+            card.Fail("Preset export failed", e.Message);
+        }
     }
 
     [RelayCommand]
@@ -426,6 +461,7 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
         if (!await Ui.Current.Confirm($"Copy\n{candidate}\n\ninto the project folder as\n{FileName}?", "Recover sample")) return;
         File.Copy(candidate, target);
         MatchMessage = "Copied. Your DAW will find it next time the project opens.";
+        owner.Activities.Done($"Copied {FileName} into the project folder", "Your DAW will find it next time the project opens.");
         owner.Reindex();
     }
 }

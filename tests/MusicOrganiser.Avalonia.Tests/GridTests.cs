@@ -122,6 +122,23 @@ public sealed partial class GridTests
     }
 
     [AvaloniaFact]
+    public void A_refresh_keeps_the_selected_row_when_the_list_is_grouped()
+    {
+        var (_, grid, view, vm) = LinkedGrid();
+        view.GroupDescriptions.Add(new DataGridPathGroupDescription(nameof(Row.Name)));
+        Dispatcher.UIThread.RunJobs();
+        vm.Selected = Named(view, "Snare");
+        Dispatcher.UIThread.RunJobs();
+        vm.Picks.Clear();
+
+        view.Refresh();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(vm.Picks);
+        Assert.Equal(Named(view, "Snare"), grid.SelectedItem);
+    }
+
+    [AvaloniaFact]
     public void Filtering_out_the_selected_row_moves_the_view_model_with_the_grid()
     {
         var (_, grid, view, vm) = LinkedGrid();

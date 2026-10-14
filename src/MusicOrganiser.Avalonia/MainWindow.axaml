@@ -27,10 +27,16 @@
 
                 <!-- Scanning: one button; its tooltip says when the library was last brought up to date. -->
                 <StackPanel DockPanel.Dock="Bottom" HorizontalAlignment="Center" Spacing="6" Margin="0,10,0,0">
-                    <ProgressBar Width="44" Height="4" MinWidth="0" Value="{Binding ScanPercent}" IsVisible="{Binding IsScanning}" />
+                    <!-- While scanning: a ring that fills as it goes, around a stop square. -->
                     <Button Classes="railButton" Command="{Binding CancelScanCommand}" IsVisible="{Binding IsScanning}"
-                            ToolTip.Tip="{Binding ScanStatus}">
-                        <TextBlock Text="Stop" FontSize="11" FontWeight="SemiBold" />
+                            ToolTip.Tip="{Binding ScanStatus, StringFormat='{}{0}&#10;Click to stop.'}">
+                        <Panel Width="30" Height="30">
+                            <Arc Classes="ringTrack" Width="30" Height="30" />
+                            <Arc Classes="ring" Width="30" Height="30" SweepAngle="{Binding ScanPercent, Converter={StaticResource PercentAngle}}" />
+                            <Arc Classes="spinner" Width="22" Height="22" Opacity="0.6" />
+                            <Border Width="8" Height="8" CornerRadius="2" Background="{StaticResource TextBrush}"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Panel>
                     </Button>
                     <Button Classes="railButton" Command="{Binding RescanCommand}" IsVisible="{Binding !IsScanning}"
                             ToolTip.Tip="{Binding ScanStatus, StringFormat='{}{0}&#10;Click to look for new and changed projects. Right-click to re-read everything.'}">
@@ -86,7 +92,58 @@
             </DockPanel>
         </Border>
 
-        <!-- Page -->
-        <ContentControl Grid.Column="1" Margin="32,24,32,20" Content="{Binding SelectedNav.Page}" />
+        <!-- Page: a new one fades in. -->
+        <TransitioningContentControl Grid.Column="1" Margin="32,24,32,20" Content="{Binding SelectedNav.Page}">
+            <TransitioningContentControl.PageTransition>
+                <CrossFade Duration="0:0:0.16" />
+            </TransitioningContentControl.PageTransition>
+        </TransitioningContentControl>
+
+        <!-- Activity cards, bottom right: what's running, how far it has got, and what just finished. -->
+        <ItemsControl Grid.Column="1" ItemsSource="{Binding Activities.Items}" Width="380" Margin="0,0,24,20"
+                      HorizontalAlignment="Right" VerticalAlignment="Bottom" ZIndex="10">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel Spacing="10" /></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:Activity">
+                    <Border Classes="toast" Classes.leaving="{Binding IsLeaving}">
+                        <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
+                            <Panel Width="26" Height="26" VerticalAlignment="Top">
+                                <Arc Classes="spinner" Width="20" Height="20" IsVisible="{Binding IsRunning}" />
+                                <Border Classes="toastIcon" CornerRadius="13" Background="{StaticResource OkBrush}" IsVisible="{Binding IsDone}">
+                                    <Path Data="M7,13.5 L11,17 L19,9" Stroke="{StaticResource AppBackgroundBrush}" StrokeThickness="2.4"
+                                          StrokeLineCap="Round" StrokeJoin="Round" Width="26" Height="26" Stretch="None" Margin="-3,-3,0,0" />
+                                </Border>
+                                <Border Classes="toastIcon" CornerRadius="13" Background="{StaticResource MissingBrush}" IsVisible="{Binding IsFailed}">
+                                    <TextBlock Text="!" FontWeight="Bold" FontSize="15" Foreground="{StaticResource AppBackgroundBrush}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <Border Classes="toastIcon" CornerRadius="13" Background="{StaticResource FaintBrush}" IsVisible="{Binding IsStopped}">
+                                    <Border Width="8" Height="8" CornerRadius="2" Background="{StaticResource AppBackgroundBrush}"
+                                            HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </Panel>
+                            <StackPanel Grid.Column="1" Margin="12,1,8,0" Spacing="2" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Title}" FontSize="13.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
+                                           MaxLines="2" TextTrimming="CharacterEllipsis" IsVisible="{Binding HasDetail}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2" VerticalAlignment="Top">
+                                <Button Classes="toastButton primary" Content="{Binding ActionLabel}" Command="{Binding RunActionCommand}"
+                                        IsVisible="{Binding HasAction}" />
+                                <Button Classes="toastButton" Content="Stop" Command="{Binding CancelCommand}" IsVisible="{Binding CanCancel}" />
+                                <Button Classes="toastButton" Command="{Binding DismissCommand}" IsVisible="{Binding !IsRunning}"
+                                        ToolTip.Tip="Close">
+                                    <Path Data="M1,1 L9,9 M9,1 L1,9" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.6" StrokeLineCap="Round" />
+                                </Button>
+                            </StackPanel>
+                            <ProgressBar Grid.Row="1" Grid.ColumnSpan="3" Margin="38,10,6,0" Height="3" MinHeight="3"
+                                         Value="{Binding Percent}" IsVisible="{Binding HasPercent}" />
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
     </Grid>
 </Window>

@@ -29,6 +29,7 @@
         <local:NavDock x:Key="NavDock" />
         <local:DawChipText x:Key="DawChipText" />
         <local:NotAny x:Key="NotAny" />
+        <local:PercentAngle x:Key="PercentAngle" />
         <local:BoolToStar x:Key="BoolToStar" />
         <local:Stars x:Key="Stars" />
         <local:NonZero x:Key="NonZero" />
@@ -86,6 +87,7 @@
             </FluentTheme.Palettes>
         </FluentTheme>
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+        <StyleInclude Source="/Motion.axaml" />
 
         <Style Selector="TextBlock.pageTitle">
             <Setter Property="FontSize" Value="26" />
