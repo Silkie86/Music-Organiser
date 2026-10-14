@@ -22,7 +22,7 @@ public static class WindowsMidiPort
 {
     /// <summary>Windows 11 25H2. Microsoft only brings the API to 25H2 and later.</summary>
     public const int FirstBuild = 26200;
-    /// <summary>The pair's other end, which nothing uses. Named so it isn't taken for the port FL Studio wants.</summary>
+    /// <summary>The pair's other end, which the app talks through. Named so it isn't taken for the port FL Studio wants.</summary>
     public const string SpareEnd = "Organiser link (spare end)";
 
     public const string OnlyWindows = "Windows' MIDI system is only on Windows.";
@@ -191,7 +191,7 @@ public static class WindowsMidiPort
             $b = $definition::new()
             $b.Name = $spare
             $b.UniqueId = 'MusicOrganiserLinkB'
-            $b.Description = 'The other end of the Music Organiser port. Nothing uses it.'
+            $b.Description = 'The other end of the Music Organiser port, for the Music Organiser app'
             $pair = $creation::new($a, $b)
             $made = $loopbacks::CreateTransientLoopback($pair)
             if (-not $made.Success) { return @{ step = 'failed'; message = [string]$made.ErrorMessage } }

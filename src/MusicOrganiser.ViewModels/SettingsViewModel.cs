@@ -89,7 +89,7 @@ public sealed partial class SettingsViewModel : ObservableObject
                 DawScripts.IsBitwigUserFolder,
                 "That doesn't look like Bitwig's user folder: it's called Bitwig Studio, with Library or Projects folders in it. " +
                 "Bitwig shows where it is in Settings > Locations.",
-                f => db.SetSetting(BitwigUserKey, f), "From now on Install puts the script there, and nowhere else."),
+                f => db.SetSetting(BitwigUserKey, f), "From now on Install puts the link there, and nowhere else."),
                 liveTests: liveTests),
             new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), () => CheckFlStudio(watch), new FolderChoice(
                 "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
@@ -161,8 +161,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         (OperatingSystem.IsWindows() ? " If Windows asks whether Bitwig may use the network, you can say no: the app only talks to it on this PC." : "");
 
     static string FlSteps(FlMidiPort port) =>
-        OperatingSystem.IsMacOS()
-            ? "On a Mac the app can't talk to FL Studio's script yet: they talk over MIDI, which the app only does on Windows so far."
+        !OperatingSystem.IsWindows()
+            ? "The app can't talk to FL Studio's script on this computer yet: they talk over MIDI, which the app only does on Windows so far."
             : "FL Studio only runs scripts for MIDI inputs, and the app and the script talk to each other over that port. " +
               (port == FlMidiPort.WindowsMidi
                   ? "Install also makes a port called Music Organiser with Windows' own MIDI system. Then restart FL Studio, and it " +
@@ -392,7 +392,7 @@ public sealed record FolderChoice(string Prompt, Func<string, bool> IsRight, str
 
 /// <summary>
 /// How the MIDI port FL Studio runs the script for gets made, on Windows: by hand in loopMIDI, a free app, or by
-/// Install, with Windows' own MIDI system. (A Mac has a port maker built in: the IAC Driver.)
+/// Install, with Windows' own MIDI system.
 /// </summary>
 public sealed partial class FlPortSetting : ObservableObject
 {
@@ -600,22 +600,24 @@ public sealed partial class DawLinkSetting : ObservableObject
             return $"{Daw}: not found on this computer, so it was skipped.";
         }
         string done;
+        var what = "the script";   // or Bitwig's extension, when the app was built with it
         try
         {
             var (script, state) = await Task.Run(() => { var s = _script(); return (s, s.State); });
+            if (script.Binary) what = "the extension";
             if (state != ScriptState.Installed) await Task.Run(script.Install);
             done = state switch
             {
-                ScriptState.NotInstalled => "Installed the script.",
-                ScriptState.Outdated => $"Updated the script: restart {Daw} to load the new version.",
-                _ => "The script was already installed.",
+                ScriptState.NotInstalled => $"Installed {what}.",
+                ScriptState.Outdated => $"Updated {what}: restart {Daw} to load the new version.",
+                _ => $"{char.ToUpperInvariant(what[0])}{what[1..]} was already installed.",
             };
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Result = $"Couldn't install the script: {e.Message}";
+            Result = $"Couldn't install {what}: {e.Message}";
             await RefreshAsync();
-            return $"{Daw}: couldn't install the script, as it says below.";
+            return $"{Daw}: couldn't install {what}, as it says below.";
         }
         if (MidiPort is not null) await MidiPort.SetUpAsync();
         Result = $"{done} Asking {Daw}…";
@@ -630,7 +632,7 @@ public sealed partial class DawLinkSetting : ObservableObject
         catch (Exception e) { answer = $"Couldn't reach {Daw}: {e.Message}"; }
         Result = $"{done} {answer}";
         await RefreshAsync();
-        return answered ? $"✓ {Daw}: set up and answering." : $"{Daw}: the script is in place, but {Daw} isn't answering yet. What's left is below.";
+        return answered ? $"✓ {Daw}: set up and answering." : $"{Daw}: {what} is in place, but {Daw} isn't answering yet. What's left is below.";
     }
 
     partial void OnIsAnsweringChanged(bool value)

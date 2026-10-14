@@ -170,7 +170,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             if (template is null)
             {
                 Message = problem ?? "Converting needs a Bitwig template: a project saved in Bitwig with a Sampler track, a VST3 synth " +
-                                     "with a Note Transpose before it and a clip of notes, and a VST2 synth. Pick it in Settings or try again.";
+                                     "with a Note Transpose before it and a clip of notes, and a VST2 synth (and an audio track with an audio clip on it, " +
+                                     "for FL Studio's audio clips). Pick it in Settings or try again.";
                 return;
             }
             _main.Settings.TemplateChanged(template);

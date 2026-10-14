@@ -48,7 +48,7 @@ to the app (`Extensions` in its folder), and installing copies them where the DA
     and when picking this way, Settings checks whether this PC can make the port and says why not if it
     can't.
 
-  On a Mac, the IAC Driver (Audio MIDI Setup) makes the port.
+  On a Mac or Linux the app can't reach FL Studio yet: it only talks MIDI on Windows so far.
 
 Settings says when an installed copy is older than the app's, and Install updates it. **Check connection**
 asks the DAW to answer. When FL Studio doesn't, the app says which part is missing, on Windows: FL Studio

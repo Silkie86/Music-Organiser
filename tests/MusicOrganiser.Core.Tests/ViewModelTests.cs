@@ -263,8 +263,8 @@ public class ViewModelTests : IDisposable
             var fl = Main().Settings.Links.Single(l => l.Daw == "FL Studio");
             var port = fl.MidiPort!;
             Assert.Equal((0, FlMidiPort.LoopMidi, FlMidiPort.LoopMidi), (port.Choice, port.Port, FlSetup.Port));
-            // On a Mac the app has no MIDI yet, so Settings says the link is Windows only for now.
-            Assert.Contains(OperatingSystem.IsMacOS() ? "only does on Windows" : "loopMIDI", fl.Steps);
+            // Off Windows the app has no MIDI yet, so Settings says the link is Windows only for now.
+            Assert.Contains(OperatingSystem.IsWindows() ? "loopMIDI" : "only does on Windows", fl.Steps);
             var changed = new List<string?>();
             fl.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
 
@@ -272,7 +272,7 @@ public class ViewModelTests : IDisposable
             // Check connection's advice follows the choice, and it's remembered.
             Assert.Equal((FlMidiPort.WindowsMidi, FlMidiPort.WindowsMidi, "windows"), (port.Port, FlSetup.Port, _db.GetSetting(FlPortSetting.Key)));
             Assert.Contains(nameof(DawLinkSetting.Steps), changed);
-            if (!OperatingSystem.IsMacOS()) Assert.Contains("Install also makes a port called Music Organiser", fl.Steps);
+            if (OperatingSystem.IsWindows()) Assert.Contains("Install also makes a port called Music Organiser", fl.Steps);
             Assert.Equal(1, Main().Settings.Links[1].MidiPort!.Choice);
 
             port.Choice = 0;
