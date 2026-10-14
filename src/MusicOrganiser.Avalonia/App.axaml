@@ -6,17 +6,17 @@
              RequestedThemeVariant="Dark">
     <Application.Resources>
         <!-- Palette: the same dark studio look with one violet accent as the Windows app. -->
-        <Color x:Key="AccentColor">#FF8B7CF6</Color>
-        <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF101114" />
-        <SolidColorBrush x:Key="SidebarBrush" Color="#FF15161A" />
-        <SolidColorBrush x:Key="SurfaceBrush" Color="#FF1A1B20" />
-        <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="#FF212228" />
-        <SolidColorBrush x:Key="StrokeBrush" Color="#FF2A2C33" />
-        <SolidColorBrush x:Key="TextBrush" Color="#FFECEDF0" />
-        <SolidColorBrush x:Key="MutedBrush" Color="#FF9A9DA7" />
-        <SolidColorBrush x:Key="FaintBrush" Color="#FF676A74" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#FF8B7CF6" />
-        <SolidColorBrush x:Key="AccentFaintBrush" Color="#1A8B7CF6" />
+        <Color x:Key="AccentColor">#FF3DDC97</Color>
+        <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF121212" />
+        <SolidColorBrush x:Key="SidebarBrush" Color="#FF171717" />
+        <SolidColorBrush x:Key="SurfaceBrush" Color="#FF1D1D1D" />
+        <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="#FF252525" />
+        <SolidColorBrush x:Key="StrokeBrush" Color="#FF323232" />
+        <SolidColorBrush x:Key="TextBrush" Color="#FFF0F0F0" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#FFA3A3A3" />
+        <SolidColorBrush x:Key="FaintBrush" Color="#FF6E6E6E" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#FF3DDC97" />
+        <SolidColorBrush x:Key="AccentFaintBrush" Color="#1A3DDC97" />
         <SolidColorBrush x:Key="WarningBrush" Color="#FFF2B33D" />
         <SolidColorBrush x:Key="MissingBrush" Color="#FFF0616D" />
         <SolidColorBrush x:Key="MissingSoftBrush" Color="#26F0616D" />
@@ -48,12 +48,12 @@
         <local:Zero x:Key="Zero" />
         <SolidColorBrush x:Key="OkBrush" Color="#FF4ACB8B" />
         <SolidColorBrush x:Key="OkSoftBrush" Color="#264ACB8B" />
-        <SolidColorBrush x:Key="HoverBrush" Color="#FF24252C" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#338B7CF6" />
+        <SolidColorBrush x:Key="HoverBrush" Color="#FF2A2A2A" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#333DDC97" />
         <!-- Text on accent-coloured buttons: white, or dark on a light accent (Settings › Appearance). -->
-        <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFFFF" />
+        <SolidColorBrush x:Key="OnAccentBrush" Color="#FF06180F" />
         <!-- Dark text on bright DAW colours and status dots: the same in every theme. -->
-        <SolidColorBrush x:Key="InkBrush" Color="#FF101114" />
+        <SolidColorBrush x:Key="InkBrush" Color="#FF121212" />
         <SolidColorBrush x:Key="TroubleBorderBrush" Color="#4DF0616D" />
         <!-- Corners, from Settings › Appearance: round, or square for the hardware-style themes. -->
         <CornerRadius x:Key="RadiusS">6</CornerRadius>
@@ -63,16 +63,16 @@
 
         <!-- Tables: no black header bar, soft violet for the selected row and no box around the clicked cell. -->
         <SolidColorBrush x:Key="DataGridColumnHeaderBackgroundBrush" Color="Transparent" />
-        <SolidColorBrush x:Key="DataGridColumnHeaderForegroundBrush" Color="#FF9A9DA7" />
-        <SolidColorBrush x:Key="DataGridColumnHeaderHoveredBackgroundBrush" Color="#FF24252C" />
-        <SolidColorBrush x:Key="DataGridColumnHeaderPressedBackgroundBrush" Color="#FF2A2C33" />
+        <SolidColorBrush x:Key="DataGridColumnHeaderForegroundBrush" Color="#FFA3A3A3" />
+        <SolidColorBrush x:Key="DataGridColumnHeaderHoveredBackgroundBrush" Color="#FF2A2A2A" />
+        <SolidColorBrush x:Key="DataGridColumnHeaderPressedBackgroundBrush" Color="#FF323232" />
         <SolidColorBrush x:Key="DataGridScrollBarsSeparatorBackground" Color="Transparent" />
         <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="Transparent" />
-        <Color x:Key="DataGridRowHoveredBackgroundColor">#FF24252C</Color>
-        <SolidColorBrush x:Key="DataGridRowSelectedBackgroundBrush" Color="#FF8B7CF6" />
-        <SolidColorBrush x:Key="DataGridRowSelectedHoveredBackgroundBrush" Color="#FF8B7CF6" />
-        <SolidColorBrush x:Key="DataGridRowSelectedUnfocusedBackgroundBrush" Color="#FF8B7CF6" />
-        <SolidColorBrush x:Key="DataGridRowSelectedHoveredUnfocusedBackgroundBrush" Color="#FF8B7CF6" />
+        <Color x:Key="DataGridRowHoveredBackgroundColor">#FF2A2A2A</Color>
+        <SolidColorBrush x:Key="DataGridRowSelectedBackgroundBrush" Color="#FF3DDC97" />
+        <SolidColorBrush x:Key="DataGridRowSelectedHoveredBackgroundBrush" Color="#FF3DDC97" />
+        <SolidColorBrush x:Key="DataGridRowSelectedUnfocusedBackgroundBrush" Color="#FF3DDC97" />
+        <SolidColorBrush x:Key="DataGridRowSelectedHoveredUnfocusedBackgroundBrush" Color="#FF3DDC97" />
         <x:Double x:Key="DataGridRowSelectedBackgroundOpacity">0.22</x:Double>
         <x:Double x:Key="DataGridRowSelectedHoveredBackgroundOpacity">0.28</x:Double>
         <x:Double x:Key="DataGridRowSelectedUnfocusedBackgroundOpacity">0.16</x:Double>
@@ -101,7 +101,7 @@
         <FluentTheme>
             <!-- Fluent's own blue (or the Windows accent colour) becomes the app's violet: selected items, ticks, main buttons. -->
             <FluentTheme.Palettes>
-                <ColorPaletteResources x:Key="Dark" Accent="#FF8B7CF6" RegionColor="#FF101114" />
+                <ColorPaletteResources x:Key="Dark" Accent="#FF3DDC97" RegionColor="#FF121212" />
                 <ColorPaletteResources x:Key="Light" Accent="#FFD9480F" RegionColor="#FFF4F1EA" />
             </FluentTheme.Palettes>
         </FluentTheme>

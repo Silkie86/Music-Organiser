@@ -38,16 +38,17 @@ public sealed partial class AppearanceViewModel : ObservableObject
     public const string MonoFont = "Mono (all)";
     public static IReadOnlyList<string> Fonts { get; } = [ThemeFont, PlexFont, SpaceFont, InterFont, MonoFont];
 
+    /// <summary>The themes; the first is the default (Solomon's pick) and what Back to normal returns to.</summary>
     public static IReadOnlyList<AppTheme> Themes { get; } =
     [
-        new("Studio", "Dark grey with a violet accent: the app's own look.",
+        new("Graphite", "Neutral greys with a mint accent: no colour cast at all. The app's own look.",
+            "#121212", "#171717", "#1D1D1D", "#252525", "#323232", "#2A2A2A", "#F0F0F0", "#A3A3A3", "#6E6E6E", "#3DDC97", "#06180F", PlexFont),
+        new("Studio", "Dark grey with a violet accent.",
             "#101114", "#15161A", "#1A1B20", "#212228", "#2A2C33", "#24252C", "#ECEDF0", "#9A9DA7", "#676A74", "#8B7CF6", "#FFFFFF", PlexFont),
         new("Retro", "Warm brown and cream with amber, like old studio gear. Typewriter titles.",
             "#17130F", "#1E1914", "#241E18", "#2D261E", "#3B3227", "#332A21", "#F3E7D0", "#B9A98D", "#7F725D", "#F2A03D", "#1A1208", SpaceFont),
         new("Midnight", "Deep blue-black with a cool blue accent, easy on the eyes at night.",
             "#0B0F1C", "#0F1424", "#131A2D", "#1A223A", "#252F4A", "#1C2541", "#E6ECF8", "#93A0BF", "#5E6A88", "#4FB3FF", "#06121F", PlexFont),
-        new("Graphite", "Neutral greys with a mint accent: no colour cast at all.",
-            "#121212", "#171717", "#1D1D1D", "#252525", "#323232", "#2A2A2A", "#F0F0F0", "#A3A3A3", "#6E6E6E", "#3DDC97", "#06180F", PlexFont),
         new("Paper", "Light: warm paper and ink with a vermilion accent, like a printed track sheet. For daytime.",
             "#F4F1EA", "#EAE5D9", "#FBF9F4", "#FFFFFF", "#DCD4C3", "#ECE6DA", "#1F1B16", "#5F574B", "#958B7B", "#D9480F", "#FFFFFF", PlexFont,
             Light: true),

@@ -48,8 +48,8 @@ public class ViewModelTests : IDisposable
     public void Appearance_is_remembered_and_light_accents_get_dark_text()
     {
         var look = new AppearanceViewModel(_db);
-        Assert.Equal("Studio", look.Theme.Name);
-        Assert.Equal("#FFFFFF", look.AccentText);
+        Assert.Equal("Graphite", look.Theme.Name);
+        Assert.Equal("#06180F", look.AccentText);
 
         look.Theme = AppearanceViewModel.Themes.Single(t => t.Name == "Retro");
         Assert.Equal(AppearanceViewModel.SpaceFont, look.FontName);   // the theme's own font
@@ -66,7 +66,7 @@ public class ViewModelTests : IDisposable
         Assert.True(again.LessMotion);
 
         again.ResetCommand.Execute(null);
-        Assert.Equal("Studio", new AppearanceViewModel(_db).Theme.Name);
+        Assert.Equal("Graphite", new AppearanceViewModel(_db).Theme.Name);
     }
 
     [Fact]
