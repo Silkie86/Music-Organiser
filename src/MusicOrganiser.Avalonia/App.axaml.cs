@@ -23,9 +23,11 @@ public partial class App : Application
             _db = new LibraryDb(LibraryDb.DefaultPath);
             _soundDb = new SoundLibrary(SoundLibrary.DefaultPath);
             _sounds = new SoundOrganiser(_soundDb);
-            desktop.MainWindow = new MainWindow { DataContext = new MainViewModel(_db, _sounds) };
+            var main = new MainViewModel(_db, _sounds);
+            desktop.MainWindow = new MainWindow { DataContext = main };
             desktop.Exit += (_, _) =>
             {
+                main.Shutdown();
                 _sounds?.Dispose();
                 _soundDb?.Dispose();
                 _db?.Dispose();

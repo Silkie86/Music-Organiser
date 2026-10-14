@@ -151,7 +151,8 @@ public sealed partial class LiveDawsViewModel : ObservableObject
             {
                 if (waited < TimeSpan.FromSeconds(3)) continue;   // let the DAW finish writing it first
                 _saving.Remove(daw);
-                if (DateTime.UtcNow - _lastScan < ScanEvery || _main.IsScanning) continue;
+                // A scan running now finds it, but reading plugins' parameters doesn't: that makes way for the scan.
+                if (DateTime.UtcNow - _lastScan < ScanEvery || _main.IsScanning && !_main.IsReadingParameters) continue;
                 _lastScan = DateTime.UtcNow;
                 await _main.ScanAsync(false, plugins: false);
                 Match();

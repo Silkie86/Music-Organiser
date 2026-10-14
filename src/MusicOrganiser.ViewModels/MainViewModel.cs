@@ -15,7 +15,7 @@ public sealed partial class MainViewModel : ObservableObject
     CancellationTokenSource? _scanCts;
 
     /// <summary>The native plugin scanner (mo-scan), if it was built.</summary>
-    public PluginScanner PluginScanner { get; } = new();
+    public PluginScanner PluginScanner { get; }
 
     public ProjectsViewModel Projects { get; }
     public PluginsViewModel Plugins { get; }
@@ -34,9 +34,11 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] double _scanPercent;
 
     /// <param name="watch">How the DAWs are reached: their usual links unless given (tests use stand-ins).</param>
-    public MainViewModel(LibraryDb db, SoundOrganiser sounds, DawWatch? watch = null)
+    /// <param name="pluginScanner">The plugin scanner: mo-scan where the build put it unless given (tests use a stand-in).</param>
+    public MainViewModel(LibraryDb db, SoundOrganiser sounds, DawWatch? watch = null, PluginScanner? pluginScanner = null)
     {
         _db = db;
+        PluginScanner = pluginScanner ?? new();
         _scanner = new Scanner(db);
         Live = new LiveDawsViewModel(db, this, watch ?? new DawWatch());
         Projects = new ProjectsViewModel(db, this);
@@ -90,23 +92,37 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     void CancelScan()
     {
+        _parametersQueued = false;
         _scanCts?.Cancel();
         DropQueuedScan();
-        _parametersQueued = false;
+    }
+
+    /// <summary>
+    /// Stops scanning as the app closes, and ends the plugin scanner's processes there and then: a plugin still
+    /// loading, or waiting on its licence window, would otherwise outlive the app.
+    /// </summary>
+    public void Shutdown()
+    {
+        CancelScan();
+        PluginScanner.StopAll();
     }
 
     bool _readingParameters, _parametersQueued;
 
-    /// <summary>Reading every plugin's parameters is running, or will once the scan ends.</summary>
-    internal bool ReadingParameters => _readingParameters || _parametersQueued;
+    /// <summary>Reading every plugin's parameters is what's running now.</summary>
+    internal bool IsReadingParameters => _readingParameters;
+
+    /// <summary>Reading every plugin's parameters is running, or will once the scan running now ends.</summary>
+    internal bool ParametersReadPending => _readingParameters || _parametersQueued;
 
     /// <summary>
     /// Reads the parameters of every installed plugin that doesn't have them yet (the Plugins screen), with
-    /// the scan's progress and Stop button. Asked for during a scan, it starts when the scan ends.
+    /// the scan's progress and Stop button. Asked for during a scan, it starts when the scan ends; a scan asked
+    /// for while it runs goes first, and it carries on after.
     /// </summary>
     public Task ReadAllParametersAsync()
     {
-        if (_readingParameters || !PluginScanner.Available) return Task.CompletedTask;
+        if (ParametersReadPending || !PluginScanner.Available) return Task.CompletedTask;
         if (!IsScanning) return RunParametersAsync();
         _parametersQueued = true;
         return Task.CompletedTask;
@@ -126,7 +142,8 @@ public sealed partial class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            ScanStatus = "Stopped reading parameters; it carries on from there next time";
+            ScanStatus = _parametersQueued ? "Reading parameters after this scan"   // making way for one
+                : "Stopped reading parameters; it carries on from there next time";
         }
         catch (Exception e)
         {
@@ -157,6 +174,13 @@ public sealed partial class MainViewModel : ObservableObject
         if (!IsScanning) return RunScanAsync(full, plugins, samples);
         var q = _queuedScan ?? default;
         _queuedScan = (q.Full || full, q.Plugins || plugins, q.Samples || samples);
+        if (_readingParameters && !_parametersQueued)
+        {
+            // Reading every plugin's parameters can take an hour: it makes way for the scan (the plugins it was
+            // loading are read again) and carries on after it.
+            _parametersQueued = true;
+            _scanCts?.Cancel();
+        }
         return (_queuedScanDone ??= new TaskCompletionSource()).Task;
     }
 
@@ -172,11 +196,12 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (_queuedScan is not { } next)
         {
-            // Reading every plugin's parameters, asked for during the scan that just ended.
+            // Reading every plugin's parameters, asked for during the scan that just ended or paused for it. It runs
+            // on its own, so whoever waited for the scan isn't kept waiting for it too.
             if (_parametersQueued)
             {
                 _parametersQueued = false;
-                await RunParametersAsync();
+                if (_db.ParameterCounts().Left > 0) _ = RunParametersAsync();
             }
             return;
         }

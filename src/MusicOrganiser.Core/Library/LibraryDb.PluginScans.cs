@@ -51,9 +51,14 @@ public sealed partial class LibraryDb
         }
     }
 
-    /// <summary>Replaces one plugin's stored line, e.g. once its parameters have been read.</summary>
+    /// <summary>
+    /// Replaces one plugin's stored line, e.g. once its parameters have been read. A line without parameters (why
+    /// the plugin couldn't be loaded) never replaces one that has them, read meanwhile by another try.
+    /// </summary>
     public void SaveScannedPlugin(ScannedPlugin p) =>
-        Exec("UPDATE scanned_plugins SET json = $j WHERE path = $p AND id = $i", ("$j", p.Json), ("$p", p.Path), ("$i", p.Id));
+        Exec("UPDATE scanned_plugins SET json = $j WHERE path = $p AND id = $i" +
+             (p.Params is null ? " AND CASE WHEN json_valid(json) THEN coalesce(json_type(json, '$.params'), '') != 'array' ELSE 1 END" : ""),
+             ("$j", p.Json), ("$p", p.Path), ("$i", p.Id));
 
     // Still to read: no parameters yet, and no note that the scanner couldn't load it.
     const string ParametersToRead = """

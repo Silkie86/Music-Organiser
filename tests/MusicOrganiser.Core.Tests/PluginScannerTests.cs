@@ -87,6 +87,21 @@ public class PluginScannerTests : IDisposable
     }
 
     [Fact]
+    public async Task StopAllEndsTheScannersRunningNow()
+    {
+        var scanner = new PluginScanner(FakeScanner("hang", [], hang: true));   // 30 seconds before it would give up
+        var clock = Stopwatch.StartNew();
+        var scan = scanner.ScanAsync(Path.Combine(_root, "Stuck.clap"));
+        while (!scan.IsCompleted && clock.Elapsed < TimeSpan.FromSeconds(15))
+        {
+            scanner.StopAll();   // as the app closes (it may not have started yet)
+            await Task.Delay(50);
+        }
+        Assert.True(scan.IsCompleted, $"still running after {clock.Elapsed}");
+        Assert.Contains("crashed", (await scan).Error);
+    }
+
+    [Fact]
     public async Task ReadsEachPluginFileOnceUntilItChanges()
     {
         var folder = Path.Combine(_root, "VST3");
@@ -184,6 +199,10 @@ public class PluginScannerTests : IDisposable
         Assert.Null(broken.Params);
         Assert.Contains("crashed", db.ScannedPluginsNamed("Crashy Verb").Single().Error);
         Assert.Equal((2, 0), db.ParameterCounts());
+
+        // A try that failed doesn't wipe parameters another try read meanwhile.
+        db.SaveScannedPlugin(ScannedPlugin.Parse(Line("good", "Good Synth", error: "didn't finish within 30 seconds"))! with { Path = file });
+        Assert.Equal(["Cutoff", "Resonance"], db.ScannedPluginsNamed("Good Synth").Single().Params!.Select(p => p.Name));
 
         // Next time there's nothing left to read: the ones that failed wait for Read parameters on each.
         Assert.Equal((0, 0), await lib.ReadAllParametersAsync(scanner));

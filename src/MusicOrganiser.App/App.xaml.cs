@@ -13,6 +13,7 @@ public partial class App : Application
     LibraryDb? _db;
     SoundLibrary? _soundDb;
     SoundOrganiser? _sounds;
+    MainViewModel? _main;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -23,13 +24,14 @@ public partial class App : Application
         AudioPlayer.RegisterDecoders();
         _soundDb = new SoundLibrary(SoundLibrary.DefaultPath);
         _sounds = new SoundOrganiser(_soundDb);
-        var window = new MainWindow { DataContext = new MainViewModel(_db, _sounds) };
+        var window = new MainWindow { DataContext = _main = new MainViewModel(_db, _sounds) };
         MainWindow = window;
         window.Show();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _main?.Shutdown();
         _sounds?.Dispose();
         _soundDb?.Dispose();
         _db?.Dispose();

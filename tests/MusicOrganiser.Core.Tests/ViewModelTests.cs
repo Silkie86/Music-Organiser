@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins;
 using MusicOrganiser.Core.Sounds;
 using MusicOrganiser.ViewModels;
 using Xunit;
@@ -180,6 +181,77 @@ public class ViewModelTests : IDisposable
                          "Clap (D#1), Closed hat (F#1) already had sounds, so they were left alone.", kit.Status);
         }
         finally { BitwigLink.Port = port; }
+    }
+
+    [Fact]
+    public async Task AScanGoesBeforeReadingParametersWhichCarriesOnAfter()
+    {
+        var (asked, go) = (Directory.CreateDirectory(Path.Combine(_root, "asked")).FullName, Path.Combine(_root, "go"));
+        var main = new MainViewModel(_db, _sounds, pluginScanner: SlowPlugins(asked, go));
+        Assert.True(main.Plugins.CanReadAll);
+        var reading = main.ReadAllParametersAsync();
+        await Until(() => Directory.GetFiles(asked).Length == 2);   // both plugins loading, and taking their time
+        File.WriteAllText(go, "");
+
+        // A scan asked for now (a folder added, a new project saved in a DAW) doesn't wait behind the whole read...
+        var scan = main.ScanAsync(false, plugins: false);
+        Assert.Same(scan, await Task.WhenAny(scan, Task.Delay(TimeSpan.FromSeconds(20))));
+        await reading;
+
+        // ...which carries on after it, loading the two plugins it was loading again.
+        await Until(() => _db.ParameterCounts() == (2, 0) && !main.IsScanning);
+        Assert.All(new[] { "alpha", "beta" }, id => Assert.Equal(2, File.ReadAllLines(Path.Combine(asked, id)).Length));
+        Assert.StartsWith("Parameters read for 2 plugins", main.ScanStatus);
+        Assert.False(main.Plugins.CanReadAll);
+    }
+
+    [Fact]
+    public async Task ClosingTheAppEndsPluginsStillLoading()
+    {
+        var asked = Directory.CreateDirectory(Path.Combine(_root, "asked")).FullName;
+        var main = new MainViewModel(_db, _sounds, pluginScanner: SlowPlugins(asked, Path.Combine(_root, "go")));
+        var reading = main.ReadAllParametersAsync();
+        await Until(() => Directory.GetFiles(asked).Length == 2);
+
+        main.Shutdown();
+        Assert.Same(reading, await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(20))));
+        Assert.Equal((0, 2), _db.ParameterCounts());   // not kept as plugins that couldn't be loaded
+        Assert.StartsWith("Stopped reading parameters", main.ScanStatus);
+    }
+
+    /// <summary>
+    /// Two installed plugins, alpha and beta, without their parameters, and a stand-in for mo-scan that loads one by
+    /// ID: it adds a line to a file named after it in <paramref name="asked"/>, then takes a minute unless
+    /// <paramref name="go"/> exists, when it reports a Gain knob.
+    /// </summary>
+    PluginScanner SlowPlugins(string asked, string go)
+    {
+        var file = Path.Combine(_root, "Plugins.clap");
+        File.WriteAllText(file, "");
+        string Line(string id, bool knob)
+        {
+            var line = new Dictionary<string, object> { ["format"] = "CLAP", ["path"] = file, ["id"] = id, ["name"] = id, ["vendor"] = "Tests" };
+            if (knob) line["params"] = new[] { new { id = 0, name = "Gain", text = "0.5" } };
+            return System.Text.Json.JsonSerializer.Serialize(line);
+        }
+        _db.SavePluginScan(new PluginFileScan(file, [ScannedPlugin.Parse(Line("alpha", false))!, ScannedPlugin.Parse(Line("beta", false))!]),
+                           PluginScanner.Stamp(file));
+
+        string path;
+        if (OperatingSystem.IsWindows())
+        {
+            path = Path.Combine(_root, "slow.cmd");
+            File.WriteAllLines(path, ["@echo off", $">>\"{asked}\\%~2\" echo %~2", $"if exist \"{go}\" goto read", "ping -n 60 127.0.0.1 >nul", "exit /b 0",
+                                      ":read", "echo " + Line("@ID@", true).Replace("@ID@", "%~2")]);
+        }
+        else
+        {
+            path = Path.Combine(_root, "slow.sh");
+            File.WriteAllLines(path, ["#!/bin/sh", $"printf '%s\\n' \"$2\" >> '{asked}/'\"$2\"", $"if [ ! -e '{go}' ]; then sleep 60; exit 0; fi",
+                                      "printf '%s\\n' '" + Line("@ID@", true).Replace("@ID@", "'\"$2\"'") + "'"]);
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        return new PluginScanner(path);
     }
 
     [Fact]

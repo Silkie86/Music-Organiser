@@ -62,7 +62,7 @@ public sealed partial class PluginsViewModel : ObservableObject
                 : $"The plugin scanner has read {files} plugin files holding {plugins} plugins" +
                   (failed > 0 ? $"; {failed} couldn't be read." : ".") +
                   (read == 0 ? "" : left > 0 ? $" It has the parameters of {read}, with {left} to go." : $" It has the parameters of {read}.");
-            CanReadAll = left > 0 && !_main.ReadingParameters;
+            CanReadAll = left > 0 && !_main.ParametersReadPending;
         }
         LoadInstalled();
     }

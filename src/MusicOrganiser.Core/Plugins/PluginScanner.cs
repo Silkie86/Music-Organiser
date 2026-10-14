@@ -25,6 +25,7 @@ public sealed class PluginScanner
 
     public string? Executable { get; }
     public bool Available => Executable is not null;
+    readonly HashSet<Process> _running = [];
     /// <summary>How long one plugin file may take before the scanner is stopped.</summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(30);
 
@@ -70,6 +71,19 @@ public sealed class PluginScanner
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Ends every scanner process still running, e.g. as the app closes: a plugin stuck loading, or waiting on its
+    /// licence window, would otherwise outlive the app. Their scans return as if the plugin had crashed.
+    /// </summary>
+    public void StopAll()
+    {
+        Process[] running;
+        lock (_running) running = [.. _running];
+        foreach (var process in running)
+            try { process.Kill(entireProcessTree: true); }
+            catch (Exception e) when (e is InvalidOperationException or Win32Exception or NotSupportedException) { }
     }
 
     public static bool CanRead(string path) =>
@@ -141,6 +155,7 @@ public sealed class PluginScanner
         {
             return new(path, [], $"Couldn't run the plugin scanner: {e.Message}");
         }
+        lock (_running) _running.Add(process);
 
         var lines = new List<string>();
         var stdout = Task.Run(async () =>
@@ -163,6 +178,7 @@ public sealed class PluginScanner
                 catch (Exception e) when (e is InvalidOperationException or Win32Exception or NotSupportedException) { }
             }
         }
+        lock (_running) _running.Remove(process);
         // Everything mo-scan printed is in the pipe now. A helper process the plugin started may still
         // hold the pipe open, so don't wait long for its end.
         await Task.WhenAny(Task.WhenAll(stdout, stderr), Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
