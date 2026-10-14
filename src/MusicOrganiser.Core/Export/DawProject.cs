@@ -27,6 +27,9 @@ public static class DawProject
     /// <param name="Setup">Steps to finish in Bitwig: loading each Sampler's sample and setting its root key, and transposing plugins whose FL root key was moved.</param>
     public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<string> Setup);
 
+    /// <summary>What's said of a channel whose FL volume envelope is switched on.</summary>
+    internal const string EnvelopeLeftOut = "its volume envelope (ADSR) isn't carried over yet, so it plays without one";
+
     /// <summary>
     /// FL's channel volume knob (0..1, 0 dB at its default 78%) as a gain for a 0..2 linear fader.
     /// FL's curve isn't published; a square law keeps each channel's level relative to the default.
@@ -165,6 +168,7 @@ public static class DawProject
             var track = Track(c.Name, "notes", ch, skipped, todo);
             structure.Add(track);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
+            if (c.VolumeEnvelope is not null) notes.Add($"{c.Name}: {EnvelopeLeftOut}");
 
             var trackLanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("track", (string)track.Attribute("id")!));
             placed[c.Index] = (trackLanes, ch, device?.Name.LocalName is "Vst2Plugin" or "Vst3Plugin" ? device : null);

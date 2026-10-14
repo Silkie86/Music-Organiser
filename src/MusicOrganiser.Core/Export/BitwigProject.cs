@@ -171,6 +171,7 @@ public static class BitwigProject
                 t.AddClip(track, clip with { Notes = FlClips.Lengthen(clip.Notes, clip.Length, sampleLength) }, song.Ppq);
             tracks.Add(track);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
+            if (c.VolumeEnvelope is not null) notes.Add($"{c.Name}: {DawProject.EnvelopeLeftOut}");
         }
 
         // The master insert's effects on Bitwig's master.
