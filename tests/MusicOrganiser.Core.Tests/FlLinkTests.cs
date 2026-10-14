@@ -52,14 +52,34 @@ public class FlLinkTests
     {
         var folder = Path.Combine(Fixtures.TempDir(), "FL Studio link");
         var link = new FlLink(folder) { Timeout = TimeSpan.FromMilliseconds(300) };
+        // Which part of the setup is missing, as far as this computer can tell (see the next test).
+        var why = FlSetup.WhyNotAnswering();
         var e = await Assert.ThrowsAsync<DawLinkException>(() => link.HelloAsync());
-        Assert.Equal(FlLink.NotRunning, e.Message);
+        Assert.Equal(why, e.Message);
 
         File.WriteAllText(Path.Combine(folder, "response-12.json"), """{"id":12,"ok":true,"result":{}}""");   // from an earlier run
         e = await Assert.ThrowsAsync<DawLinkException>(() => link.HelloAsync());
-        Assert.Equal(FlLink.NotRunning, e.Message);
+        Assert.Equal(why, e.Message);
         // Nothing is left for FL Studio to answer later.
         Assert.Empty(Directory.GetFiles(folder));
+    }
+
+    [Fact]
+    public void SaysWhichPartOfTheFlStudioSetupIsMissing()
+    {
+        Assert.Equal(FlSetup.NotOpen, FlSetup.WhyNotAnswering(false, ["Music Organiser"]));
+        // FL Studio only runs the script for a MIDI input.
+        Assert.Equal(FlSetup.NoPort, FlSetup.WhyNotAnswering(true, []));
+        Assert.Equal(FlSetup.NoPort, FlSetup.WhyNotAnswering(true, ["Digitakt II", "loopMIDI Port"]));
+        Assert.Equal(FlSetup.NotPicked, FlSetup.WhyNotAnswering(true, ["Digitakt II", "Music Organiser"]));
+        Assert.Equal(FlSetup.NotPicked, FlSetup.WhyNotAnswering(true, ["music organiser (A)"]));
+        // Where the app can't tell, the general message.
+        Assert.Equal(FlLink.NotRunning, FlSetup.WhyNotAnswering(null, null));
+        Assert.Equal(FlLink.NotRunning, FlSetup.WhyNotAnswering(true, null));
+        Assert.Equal(FlLink.NotRunning, FlSetup.WhyNotAnswering(null, ["Music Organiser"]));
+
+        if (OperatingSystem.IsWindows()) Assert.NotNull(FlSetup.MidiInputs());
+        else Assert.Null(FlSetup.MidiInputs());
     }
 
     [Fact]

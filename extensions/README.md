@@ -29,7 +29,9 @@ In the app: **Settings → DAW links → Install**, for each DAW. The scripts sh
   MIDI Setup) on a Mac.
 
 Settings says when an installed copy is older than the app's, and Install updates it. **Check connection**
-asks the DAW to answer.
+asks the DAW to answer. When FL Studio doesn't, the app says which part is missing, on Windows: FL Studio
+isn't open, there's no MIDI port called Music Organiser, or there is one but FL Studio isn't running the
+script for it (`Core/DawLink/FlSetup.cs`).
 
 ## Changes
 
@@ -164,5 +166,6 @@ FL Studio:
 - [ ] The window title's wording (Check with FL Studio finds the project name in it).
 - [ ] `mixer.getCurrentTempo()` gives BPM or thousandths of one (the script handles both).
 - [ ] A loopMIDI port called Music Organiser gets the script by itself (`supportedDevices`).
+- [ ] FL Studio runs as `FL64.exe` (or `FL.exe`), which is how Check connection tells whether it's open.
 - [ ] Opening files and the standard library work in each FL Studio version's Python.
 - [ ] Every user data folder has Settings, Presets and Projects in it (how the app finds them).

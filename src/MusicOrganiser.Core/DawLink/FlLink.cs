@@ -170,7 +170,7 @@ public sealed class FlLink
             }
             if (!File.Exists(asked)) throw new DawLinkException("FL Studio took the request but didn't answer in time.");
             TryDelete(asked);
-            throw new DawLinkException(NotRunning);
+            throw new DawLinkException(FlSetup.WhyNotAnswering());
         }
         finally
         {

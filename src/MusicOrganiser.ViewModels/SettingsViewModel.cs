@@ -65,8 +65,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         (OperatingSystem.IsWindows() ? " If Windows asks whether Bitwig may use the network, you can say no: the app only talks to it on this PC." : "");
 
     static string FlSteps =>
-        "Then restart FL Studio. FL Studio runs a script for a MIDI input, so in Options > MIDI settings, pick an input and " +
-        "set its Controller type to Music Organiser. " +
+        "Then restart FL Studio. FL Studio only runs scripts for MIDI inputs, so the script needs one, though it never uses MIDI: " +
+        "in Options > MIDI settings, pick an input and set its Controller type to Music Organiser. " +
         (OperatingSystem.IsMacOS()
             ? "With no input to spare, turn on the IAC Driver in Audio MIDI Setup and add a port called Music Organiser."
             : "With no input to spare, make one called Music Organiser in loopMIDI (free); FL Studio should then pick the script for it by itself.");
