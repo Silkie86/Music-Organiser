@@ -55,8 +55,12 @@ WIN=$(xdotool search --name "Music Organiser" | head -1)
 xdotool windowmove "$WIN" 0 0; sleep 0.5
 
 shot() { sleep "${2:-1.5}"; import -window root "$OUT/$1.png"; echo "$OUT/$1.png"; }
-# Sidebar items are 36 px apart from y=91. Clicking moves the pointer away after, so no item looks hovered.
-nav() { xdotool mousemove 110 $((91 + $1 * 36)) click 1 mousemove 1590 990; }
+# Sidebar items are 36 px apart from y=91. Clicking moves the pointer away after, so no item looks hovered, but
+# keeps it inside the window: with no window manager, keys go to whichever window the pointer is over.
+nav() { xdotool mousemove 110 $((91 + $1 * 36)) click 1 mousemove 1430 892; }
+# The search box has the keyboard when the app opens: typing straight away searches; Down goes into the list.
+xdotool type --delay 40 "drum"; xdotool key Down; shot 0-type-on-open
+xdotool key ctrl+f; sleep 0.3; xdotool key Escape   # Ctrl+F back to the search box, Esc empties it
 nav 0; shot 1-projects
 xdotool mousemove 650 150 click 1; shot 2-project-selected
 i=1
@@ -64,10 +68,10 @@ for page in 3-sound-lab 4-plugins 5-samples 6-settings; do
   nav $i; shot "$page" 2; i=$((i + 1))
 done
 # The rest of Settings, a screen further down.
-xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1590 990; shot 7-settings-more
-xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1590 990; shot 8-settings-more
+xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1430 892; shot 7-settings-more
+xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1430 892; shot 8-settings-more
 # The search box with text in it, showing its clear (X) button.
-nav 0; sleep 1; xdotool mousemove 1130 49 click 1 type --delay 40 "test"; xdotool mousemove 1590 990; shot 9-projects-search
+nav 0; sleep 1; xdotool key ctrl+f; sleep 0.3; xdotool type --delay 40 "test 2026"; xdotool mousemove 1430 892; shot 9-projects-search
 xdotool key ctrl+a BackSpace
 # A project's Presets window (a separate window, so it is photographed on its own), pointer on the first row.
 xdotool mousemove 650 150 click 1; sleep 1; xdotool mousemove 1350 221 click 1; sleep 3

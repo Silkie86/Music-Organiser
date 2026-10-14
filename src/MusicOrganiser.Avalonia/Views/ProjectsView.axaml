@@ -21,8 +21,9 @@
                     <TextBlock Text="Filters" />
                 </StackPanel>
             </ToggleButton>
-            <TextBox Classes="clearButton" DockPanel.Dock="Right" Width="360" VerticalAlignment="Center"
-                     PlaceholderText="Search name, plugin, tag, notes…" Text="{Binding SearchText}" />
+            <TextBox x:Name="Search" Classes="clearButton" DockPanel.Dock="Right" Width="360" VerticalAlignment="Center"
+                     PlaceholderText="{x:Static views:Keys.SearchProjects}" Text="{Binding SearchText}"
+                     ToolTip.Tip="Several words find projects matching all of them, e.g. &quot;serum dark 2019&quot;. Down arrow goes to the list, Esc clears." />
             <StackPanel>
                 <TextBlock Text="Projects" Classes="pageTitle" />
                 <TextBlock Text="{Binding CountText}" Classes="pageSubtitle" />
@@ -96,6 +97,8 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="Modified" Width="114" SortMemberPath="Modified"
+                                            Binding="{Binding Modified, StringFormat='d MMM yyyy'}" x:DataType="vm:ProjectItem" />
                         <DataGridTemplateColumn Header="DAW" Width="110" SortMemberPath="Daw">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:ProjectItem">
@@ -107,7 +110,7 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="Missing" Width="150" SortMemberPath="HasMissing">
+                        <DataGridTemplateColumn Header="Missing" Width="170" SortMemberPath="HasMissing">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="vm:ProjectItem">
                                     <Border Classes="pill" Margin="8,0" Background="{StaticResource MissingSoftBrush}"
@@ -119,8 +122,6 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Modified" Width="114" SortMemberPath="Modified"
-                                            Binding="{Binding Modified, StringFormat='d MMM yyyy'}" x:DataType="vm:ProjectItem" />
                         <DataGridTextColumn Header="Status" Width="84" Binding="{Binding Status}" x:DataType="vm:ProjectItem" />
                         <DataGridTemplateColumn Header="Rating" Width="76" SortMemberPath="Rating">
                             <DataGridTemplateColumn.CellTemplate>

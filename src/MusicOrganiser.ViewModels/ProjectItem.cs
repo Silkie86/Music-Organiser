@@ -104,13 +104,23 @@ public sealed partial class ProjectItem : ObservableObject
         _db.SaveOrganisation(_p);
     }
 
-    /// <summary>Everything the search box matches against.</summary>
+    /// <summary>
+    /// Everything the search box matches against. Several words must each match something, in any order, so
+    /// "serum dark" finds a project using Serum with "dark" in its name or notes; a year such as 2019 also matches
+    /// projects last saved that year.
+    /// </summary>
     public bool Matches(string text) =>
+        MatchesWord(text) ||
+        text.Split(' ', StringSplitOptions.RemoveEmptyEntries) is { Length: > 1 } words && words.All(MatchesWord);
+
+    bool MatchesWord(string text) =>
         Name.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         FileName.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         Folder.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         Notes.Contains(text, StringComparison.OrdinalIgnoreCase) ||
+        Daw.Contains(text, StringComparison.OrdinalIgnoreCase) ||
         MusicalKey.Equals(text, StringComparison.OrdinalIgnoreCase) ||
+        (text.Length == 4 && int.TryParse(text, out var year) && year == Year) ||
         Tags.Any(t => t.Contains(text, StringComparison.OrdinalIgnoreCase)) ||
         PluginNames.Any(p => p.Contains(text, StringComparison.OrdinalIgnoreCase));
 }

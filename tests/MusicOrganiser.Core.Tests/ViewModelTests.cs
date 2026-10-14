@@ -45,6 +45,24 @@ public class ViewModelTests : IDisposable
         new(_db, _sounds, watch, pluginScanner, Path.Combine(_root, "data"));
 
     [Fact]
+    public void Project_search_matches_each_word_and_a_year()
+    {
+        var item = new ProjectItem(_db, new ProjectSummary
+        {
+            Path = "/music/Dark Roller_3.flp", Name = "Dark Roller_3", Daw = "FL Studio", Folder = "/music",
+            Modified = new DateTime(2019, 6, 1), PluginNames = ["Serum"], Tags = ["dnb"], MusicalKey = "F minor",
+        }, "Dark Roller");
+
+        Assert.True(item.Matches("roller"));
+        Assert.True(item.Matches("serum dark"));        // words in any order, each matching something different
+        Assert.True(item.Matches("dnb 2019"));
+        Assert.True(item.Matches("F minor"));            // the whole text still counts on its own
+        Assert.True(item.Matches("fl studio"));
+        Assert.False(item.Matches("serum 2020"));
+        Assert.False(item.Matches("serum bright"));
+    }
+
+    [Fact]
     public void FirstRunOpensSettings()
     {
         var main = Main();
