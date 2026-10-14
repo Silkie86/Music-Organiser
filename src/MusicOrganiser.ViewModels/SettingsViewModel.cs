@@ -5,6 +5,7 @@ using MusicOrganiser.Core;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Formats;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.LiveTests;
 using MusicOrganiser.Core.Parsers;
 
 namespace MusicOrganiser.ViewModels;
@@ -18,6 +19,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     readonly LibraryDb _db;
     readonly MainViewModel _main;
+    /// <summary>Where the live tests' reports go: reports\live in the app's data folder.</summary>
+    readonly string _liveReports;
 
     public ObservableCollection<string> ProjectFolders { get; } = new();
     public ObservableCollection<string> SampleFolders { get; } = new();
@@ -43,7 +46,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] string _setUpResult = "";
     [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SetUpBothCommand))] bool _settingUp;
 
-    public SettingsViewModel(LibraryDb db, MainViewModel main)
+    /// <param name="dataFolder">
+    /// The app's data folder, where MO Probe's reports and the live tests' reports are: %LOCALAPPDATA%\MusicOrganiser unless
+    /// given (tests give one of their own, so opening Settings never reaches the real one).
+    /// </param>
+    public SettingsViewModel(LibraryDb db, MainViewModel main, string? dataFolder = null)
     {
         _db = db;
         _main = main;
@@ -58,8 +65,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
         UpdateSampleIndexText();
         var watch = main.Live.Watch;
-        Probe = new ProbeReportsViewModel(pluginFolders: () => PluginFolders.Concat(MoProbe.InstallFolders()).Distinct(),
+        Probe = new ProbeReportsViewModel(folder: dataFolder is null ? null : Path.Combine(dataFolder, "probe"),
+                                          pluginFolders: () => PluginFolders.Concat(MoProbe.InstallFolders()).Distinct(),
                                           connectBitwig: watch.ConnectBitwigAsync);
+        _liveReports = dataFolder is null ? LiveReports.DefaultFolder : Path.Combine(dataFolder, "reports", "live");
+        var liveTests = new LiveTestsViewModel(BitwigLiveTests.Key, _liveReports, (folder, progress, ct) =>
+        {
+            // Settings' lists are read here, on the UI thread; the run itself goes on in the background.
+            var options = LiveTestOptions() with { ReportFolder = folder };
+            return Task.Run(() => BitwigLiveTests.RunAsync(options, progress, ct));
+        });
         var flPort = new FlPortSetting(db);
         Links =
         [
@@ -69,7 +84,8 @@ public sealed partial class SettingsViewModel : ObservableObject
                 DawScripts.IsBitwigUserFolder,
                 "That doesn't look like Bitwig's user folder: it's called Bitwig Studio, with Library or Projects folders in it. " +
                 "Bitwig shows where it is in Settings > Locations.",
-                f => db.SetSetting(BitwigUserKey, f), "From now on Install puts the script there, and nowhere else.")),
+                f => db.SetSetting(BitwigUserKey, f), "From now on Install puts the script there, and nowhere else."),
+                liveTests: liveTests),
             new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), () => CheckFlStudio(watch), new FolderChoice(
                 "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
                 DawScripts.IsFlUserData,
@@ -103,6 +119,34 @@ public sealed partial class SettingsViewModel : ObservableObject
     public void ShowLive(LiveDawsViewModel live)
     {
         foreach (var link in Links) link.ShowLive(live.State(link.Daw));
+    }
+
+    /// <summary>
+    /// What a live test run from here uses: the app's own way to Bitwig, MO Probe's report folder and the plugin folders
+    /// as Settings has them, Bitwig's user folder as chosen, the library's Bitwig projects (those with a Drum Machine
+    /// first, where the run looks for its ID) and what the app already knows: MO Probe's IDs as the plugin scanner read
+    /// them, and the Drum Machine's ID once Sound Lab has found it.
+    /// </summary>
+    public BitwigLiveOptions LiveTestOptions()
+    {
+        var plugins = PluginFolders.Concat(MoProbe.InstallFolders()).Distinct().ToList();
+        Guid? drumMachine = Guid.TryParse(_db.GetSetting(KitViewModel.DrumMachineKey), out var known) ? known : null;
+        return new BitwigLiveOptions
+        {
+            Connect = _main.Live.Watch.ConnectBitwigAsync,
+            ReportFolder = _liveReports,
+            ProbeFolder = Probe.Folder,
+            PluginFolders = () => plugins,
+            ScannedProbes = _db.ScannedPluginsNamed(BitwigLiveTests.ProbeName),
+            BitwigUserFolders = () => DawScripts.BitwigUserFolders(_db.GetSetting(BitwigUserKey)),
+            LibraryProjects = () =>
+            {
+                var drums = _db.ProjectsUsingPlugin(BitwigSend.DrumMachine).ToHashSet();
+                return _db.Projects().Where(p => p.Daw == BitwigLiveTests.Daw && !p.FileMissing)
+                          .OrderByDescending(p => drums.Contains(p.Id)).Select(p => p.Path).ToList();
+            },
+            DrumMachine = drumMachine is { } id ? _ => id : null,
+        };
     }
 
     static string BitwigSteps =>
@@ -373,6 +417,9 @@ public sealed partial class DawLinkSetting : ObservableObject
     /// <summary>Whether to offer the choice of how the port is made: for FL Studio, on Windows.</summary>
     public bool CanChoosePort => MidiPort is not null && OperatingSystem.IsWindows();
     public bool ShowGetLoopMidi => CanChoosePort && MidiPort!.NeedsLoopMidi;
+    /// <summary>For Bitwig: the live tests, which run through the link while Bitwig answers.</summary>
+    public LiveTestsViewModel? LiveTests { get; }
+    public bool HasLiveTests => LiveTests is not null;
     /// <summary>Whether the script is installed, and where.</summary>
     [ObservableProperty] string _status = "";
     /// <summary>What happened when installing or checking.</summary>
@@ -383,7 +430,8 @@ public sealed partial class DawLinkSetting : ObservableObject
 
     /// <param name="found">Whether the DAW is on this computer, for Set up both: unless given, whether the app found a folder for its script.</param>
     public DawLinkSetting(string daw, Func<string> steps, Func<DawScript> script, Func<Task<string>> check,
-                          FolderChoice? folder = null, FlPortSetting? midiPort = null, Func<bool>? found = null)
+                          FolderChoice? folder = null, FlPortSetting? midiPort = null, Func<bool>? found = null,
+                          LiveTestsViewModel? liveTests = null)
     {
         Daw = daw;
         _steps = steps;
@@ -392,6 +440,7 @@ public sealed partial class DawLinkSetting : ObservableObject
         _found = found ?? (() => script().Folders.Count > 0);
         _folder = folder;
         MidiPort = midiPort;
+        LiveTests = liveTests;
         if (midiPort is not null)
             midiPort.PropertyChanged += (_, e) =>
             {
@@ -411,6 +460,7 @@ public sealed partial class DawLinkSetting : ObservableObject
             Status = $"Couldn't look for the script: {e.Message}";
         }
         if (MidiPort is not null) await MidiPort.RefreshAsync();
+        if (LiveTests is not null) await LiveTests.RefreshAsync();
     }
 
     string Describe(DawScript script) => script.State switch
@@ -513,6 +563,11 @@ public sealed partial class DawLinkSetting : ObservableObject
         Result = $"{done} {answer}";
         await RefreshAsync();
         return answered ? $"✓ {Daw}: set up and answering." : $"{Daw}: the script is in place, but {Daw} isn't answering yet. What's left is below.";
+    }
+
+    partial void OnIsAnsweringChanged(bool value)
+    {
+        if (LiveTests is not null) LiveTests.Answering = value;
     }
 
     internal void ShowLive(DawState? state)

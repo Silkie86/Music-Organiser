@@ -231,9 +231,82 @@ of JSON on their input changes the stand-in as if done in the DAW (another proje
 channels in FL Studio's rack, a knob), which is how the tests follow saves and copy knobs. They never
 reach a real DAW, its folders, or this computer's MIDI ports. CI runs all of it.
 
+## Live tests
+
+The live tests try the Bitwig link against the real Bitwig, through the app's own code (the link,
+`BitwigSend`, `BitwigCheck`, the project reader and MO Probe's live link), and write a report of what worked
+and what Bitwig really did. They're the quick way to tick off the list below, and to see what a change to
+the script or the extension broke. Run them from **Settings → DAW links → Bitwig Studio → Run live tests**
+(it works while Bitwig is answering; **Stop** ends a run after the test running then, and **Open
+report** opens the newest report), or from a terminal with `formatlab live bitwig` (`tools/README.md`).
+In the app they're `Core/LiveTests/` (`BitwigLiveTests.cs`, run by `LiveRunner.cs`, reported by
+`LiveReports.cs`). FL Studio gets the same once its link works.
+
+What runs, in this order:
+
+- **Link**, which only reads, so it always runs: the hello (versions, `api`, `link` and whether it's the
+  script or the Java extension), the project listing, the selected device, the actions (Save among them),
+  and 20 hellos one after another for the round trip time. With the Java extension also the tracks' `id`,
+  the remote controls' `steps`, `stepNames`, `origin` and `automated` (Bitwig gives these only for remote
+  controls), `clicked`, and the extension's own `selftest`; with the script those are Skipped, saying they
+  need the extension.
+- **Changes**: a new track with a name and colour; the Sampler, Note Transpose and Drum Machine by ID; the
+  Sampler's and Note Transpose's pitch, read back; a sample into a Sampler; a MIDI clip; Drum Machine pads;
+  selecting a device, setting a parameter and reading it back (then setting it back); the master
+  recorder's status (Java only; it's never started); and, after Send, Save, then the unsaved changes clear.
+- **MO Probe**, as a CLAP and then as a VST3, each on a new track: it waits for the probe's live status,
+  pings it and labels it with the run's stamp (“MO Live Test 20261014T143012Z CLAP”, so its own report
+  can be matched with the run's), checks its knobs both ways (Failed when a knob doesn't move, or a stepped
+  knob lands on the wrong step, which BitwigSend relies on), and notes how Bitwig maps each knob as a table.
+  Skipped, saying how to get it, when MO Probe isn't installed.
+- **Send**: a sample channel with a root key, as an FL Studio project would have it, through BitwigSend,
+  then read back from Bitwig.
+- **Saved file**: the saved `.bwproject`, found among the library's projects or in Bitwig's Projects
+  folder, read with the app's reader and compared with what Bitwig lists (as Check with Bitwig does).
+
+Each test ends Passed, Failed, Skipped (saying why) or Noted (a finding that isn't a pass or a fail, like
+the knob table). One failing never stops the run, and each has its own time limit (30 seconds; 2 minutes
+for the Drum Machine, which may mean reading Bitwig's presets for its ID, and 5 for a knob check).
+
+### Only in a project made for them
+
+A run only changes anything while Bitwig lets the app make changes **and** the open project's name starts
+with “MO Live Test” (capitals or not). It asks Bitwig again just before every change it sends (the link's
+`BeforeChange`), so if another project comes to the front part way, even in the middle of a test, that
+change isn't sent and nothing more is changed for the rest of the run. Otherwise every test that would
+change something is Skipped, saying why and what to do, and only Link runs: your own projects are never
+touched. A knob check that's stopped, or runs out of time, still reports the turns it made and any knob it
+couldn't set back.
+
+To make the test project, once: in Bitwig, make a new project and save it as “MO Live Test” (in Bitwig's
+Projects folder, or in one of the app's project folders), then turn on *Let the app make changes*
+(Settings → Controllers → Music Organiser). Each run adds about six tracks named with the time it started
+(“Devices 143012”, “Kit 143012”…) and saves. The link can't delete tracks, so clear them out by hand now
+and then, or save a fresh “MO Live Test 2” (Bitwig lists only the first 128 tracks to the app). The
+samples and the MIDI file a run sends in are in `files` next to the reports, the same every run, so the
+project goes on playing them.
+
+### Reports
+
+Each run writes two files into `reports\live` in the app's data folder:
+`%LOCALAPPDATA%\MusicOrganiser\reports\live` on Windows (on a Mac, under `~/Library/Application Support`;
+on Linux, under `~/.local/share`). They're named by when the run started, in UTC:
+
+- `20261014T143012Z-bitwig.md`, to read: the counts, then each failure and note in full, then every test
+  by area with how long it took.
+- `20261014T143012Z-bitwig.json`, everything: the app's version and the system, Bitwig's hello as it came,
+  and each test's outcome, detail, timings and data (what Bitwig answered, each round trip, each knob turn).
+
+The newest 50 runs are kept. They're plain files so that anyone helping with the app can read them
+without running anything. That's how Claude reads them: it can read files on the PC but not run
+programs, so after a run it lists `%LOCALAPPDATA%\MusicOrganiser\reports\live`, reads the newest
+`-bitwig.md` (the names sort by time), and looks in the `.json` with the same stamp for the details of a
+test. MO Probe's own reports, in `probe` next to `reports`, carry the run's stamp in their label.
+
 ## Still to confirm in the real DAWs
 
-The stand-ins follow the APIs' documentation; these are the things only the DAWs themselves can show.
+The stand-ins follow the APIs' documentation; these are the things only the DAWs themselves can show. The
+live tests (above) check many of them in one go.
 
 Bitwig:
 

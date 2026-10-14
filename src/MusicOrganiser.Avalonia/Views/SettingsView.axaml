@@ -179,6 +179,24 @@
                                     </WrapPanel>
                                     <TextBlock Text="{Binding Result}" Margin="18,6,0,0" TextWrapping="Wrap" FontSize="12.5"
                                                IsVisible="{Binding Result, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                    <StackPanel Margin="18,14,0,0" IsVisible="{Binding HasLiveTests}">
+                                        <TextBlock Text="Live tests" FontSize="12.5" Margin="0,0,0,4" />
+                                        <TextBlock TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}"
+                                                   Text="Tries out what the app does with Bitwig, in the Bitwig open now, and writes a report. It only reads, unless Bitwig lets the app make changes and the open project's name starts with “MO Live Test”: then it adds a few tracks to that project and saves it, so your own projects are never touched." />
+                                        <WrapPanel Classes="buttons" Margin="0,10,0,0">
+                                            <Button Content="Run live tests" Command="{Binding LiveTests.RunCommand}"
+                                                    ToolTip.Tip="Runs the live tests while Bitwig is answering. They take about a minute, a few more with MO Probe installed." />
+                                            <Button Content="Stop" Command="{Binding LiveTests.StopCommand}" IsVisible="{Binding LiveTests.Running}"
+                                                    ToolTip.Tip="Stops after the test running now, which puts back anything it was in the middle of. The report is still written." />
+                                            <Button Content="Open report" Command="{Binding LiveTests.OpenReportCommand}"
+                                                    ToolTip.Tip="Opens the newest run's report. The reports are kept in reports/live in the app's data folder." />
+                                        </WrapPanel>
+                                        <TextBlock Text="{Binding LiveTests.ProgressLine}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                   Foreground="{StaticResource MutedBrush}"
+                                                   IsVisible="{Binding LiveTests.ProgressLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                        <TextBlock Text="{Binding LiveTests.Summary}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                   IsVisible="{Binding LiveTests.Summary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                    </StackPanel>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
