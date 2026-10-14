@@ -1,6 +1,6 @@
 # DAW extensions
 
-Two small scripts that run inside the DAWs, so the app can ask a DAW what it shows for the open project.
+Small programs that run inside the DAWs, so the app can ask a DAW what it shows for the open project.
 The app keeps up with both while they're open (see [Staying connected](#staying-connected)), and uses
 them to check how it reads project files (**Check with Bitwig** and **Check with FL Studio** on a project,
 which also run by themselves when the DAW has that project open), to send things into Bitwig (FL Studio
@@ -10,10 +10,11 @@ mean.
 
 | Folder | Runs in | How the app talks to it |
 |---|---|---|
-| `bitwig` | Bitwig Studio, as a controller script | TCP on port 19791, on this computer only |
-| `fl-studio` | FL Studio, as a MIDI controller script | Files in the app's data folder |
+| `bitwig-java` | Bitwig Studio, as a Java controller extension (`MusicOrganiser.bwextension`) | TCP on port 19791, on this computer only |
+| `bitwig` | Bitwig Studio, as a controller script: the extension's fallback, the same link in JavaScript | TCP on port 19791, on this computer only |
+| `fl-studio` | FL Studio, as a MIDI controller script | MIDI SysEx on the Music Organiser port |
 
-Neither changes anything in a project unless you turn that on (see [Changes](#changes)).
+None of them changes anything in a project unless you turn that on (see [Changes](#changes)).
 
 ## Installing
 
@@ -59,8 +60,8 @@ Reading is always allowed. Changing things needs your say-so in the DAW:
 
 - **Bitwig**: Settings → Controllers → Music Organiser → *Let the app make changes*. Then the app can add
   tracks, insert plugins, devices, presets and samples, put MIDI files in clip slots, fill a Drum
-  Machine's pads, set the pitch of a Sampler or Note Transpose, set the selected device's parameters, and
-  run actions such as Save.
+  Machine's pads, set the pitch of a Sampler or Note Transpose, set the selected device's parameters,
+  run actions such as Save, and (with the Java extension) start and stop Bitwig's master recorder.
 - **FL Studio**: set `LET_THE_APP_MAKE_CHANGES = True` near the top of `device_MusicOrganiser.py` (in the
   folder above) and reload the script. Then the app can set plugin parameters. Updating the script from
   Settings keeps this line as you set it.
@@ -88,21 +89,31 @@ gone after three missed looks in a row.
 
 ## Bitwig link
 
-`MusicOrganiser.control.js`, plain ES5 against Bitwig's controller API 18.
+Two builds of the same link, which talk to the app the same way:
 
-The script listens on port 19791 (`host.createRemoteConnection`). Each message is UTF-8 JSON with a
-4-byte big-endian length in front, which is how Bitwig's remote connections frame messages; the script
+- **`bitwig-java`**: a Java controller extension against Bitwig's controller API 23 (Bitwig 6.1 and later), built
+  with Maven into `MusicOrganiser.bwextension`, which goes in `Extensions` in Bitwig's user folder. It's a port
+  of the script, function by function, and adds what only an extension can do: Bitwig's newer API (link version
+  3 below) and reports it writes to files, with a self-check of every part of the API it uses (see
+  [its README](bitwig-java/README.md)).
+- **`bitwig`**: `MusicOrganiser.control.js`, plain ES5 against Bitwig's controller API 18: the fallback, kept as
+  it was (link version 2, without the version 3 additions).
+
+They're the same controller to Bitwig (the same ID), so only one should be installed at a time.
+
+The link listens on port 19791 (`host.createRemoteConnection`). Each message is UTF-8 JSON with a
+4-byte big-endian length in front, which is how Bitwig's remote connections frame messages; the link
 also ends each message with a newline, so the app reads them either way. Text outside ASCII is sent as
-`\u` escapes. When the app connects, the script greets it with `{"event": "hello", "result": {...}}`.
+`\u` escapes. When the app connects, the link greets it with `{"event": "hello", "result": {...}}`.
 
 Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, "result": ...}`, or
 `{"id": 1, "ok": false, "error": "..."}` with the reason in words the app shows as they are.
 
 | Command | Asks for | Result |
 |---|---|---|
-| `hello` | | `link` (this protocol's version, now 2), `product`, `version`, `api`, `platform`, `port`, `project`, `modified`, `engine`, `changes` |
-| `project` | | `name`, `modified`, `tempo`, `timeSignature`, `playing`, `position`, `trackCount`, `tracks`: the first 128 tracks in Bitwig's flat list, each with `index`, `name`, `type`, `group`, `color`, `active`, `mute`, `solo`, `arm`, `volume`, `pan` (as shown, with `volumeValue` and `panValue` from 0 to 1), `deviceCount` and the first 16 `devices` (`name`, `preset`, `kind`, `plugin`, `enabled`) |
-| `device` | | The selected device: `track`, `device` (or null), `drumPads` (whether it has a Drum Machine's pads) and every parameter as `id` (what Bitwig saves it under), `name`, `value` (0 to 1) and `display` ("-6.0 dB"). Waits up to 2 seconds for the display texts. |
+| `hello` | | `link` (this protocol's version: 3 from the extension, 2 from the script), `product`, `version`, `api`, `platform`, `port`, `project`, `modified`, `engine` (whether Bitwig's audio engine is on), `changes`. Version 3 adds `runtime` (`"java"`) and `extension` (its version). |
+| `project` | | `name`, `modified`, `tempo`, `timeSignature`, `playing`, `position`, `trackCount`, `tracks`: the first 128 tracks in Bitwig's flat list, each with `index`, `name`, `type`, `group`, `color`, `active`, `mute`, `solo`, `arm`, `volume`, `pan` (as shown, with `volumeValue` and `panValue` from 0 to 1), `deviceCount` and the first 16 `devices` (`name`, `preset`, `kind`, `plugin`, `enabled`). Version 3 adds each track's `id`, the ID Bitwig keeps it under, once Bitwig has said. |
+| `device` | | The selected device: `track`, `device` (or null), `drumPads` (whether it has a Drum Machine's pads) and every parameter as `id` (what Bitwig saves it under), `name`, `value` (0 to 1) and `display` ("-6.0 dB"). Waits up to 2 seconds for the display texts. Version 3 adds the device's remote controls on the page Bitwig shows (`page`, and `controls` with `index`, `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated` and `param`), and gives a parameter that is one of those controls the same `steps` (-1 for continuous), `stepNames`, `origin` and `automated`: see [below](#link-version-3). |
 | `actions` | | Every Bitwig action: `id`, `name`, `category`, `menu` |
 | `select` | `track` (its index in `project`), `device` (optional) | `{}` |
 | `set` ✎ | `param` (an `id` from `device`), `value` (0 to 1) | `{}` |
@@ -112,10 +123,28 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 | `pads` ✎ | `pads`, each with `note` (0 to 127), `path` and `name` (optional). Then `track` and `device` for a Drum Machine's place, or nothing for the selected device. | `filled`, `skipped` (pads that already had something on them, left alone) and `failed`, as notes. Each sample goes on its pad as if dropped there, in a Sampler. |
 | `transpose` ✎ | `track`, `device` (0 or 1), `semitones` | `device`, `value`, `display`. Sets a Sampler's Transpose (fractions allowed) or a Note Transpose's Coarse (whole semitones). |
 | `action` ✎ | `action` (an `id` from `actions`) | `{}` |
+| `clicked` (3) | | The parameter last clicked in Bitwig: `exists` (false until one is), `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated`, `locked` |
+| `recorder` ✎ (3) | `do`: `"start"`, `"stop"` or `"status"` (the default) | Bitwig's master recorder, once it has started or stopped: `active`, `duration` (milliseconds recorded) |
+| `selftest` (3) | | The self-check (see [the extension's README](bitwig-java/README.md#reports)), written to the reports folder, with `file` |
 
-✎ needs changes turned on. `insert` with a track, `newtrack`, `clip`, `pads` and `transpose` wait for
-Bitwig to make the change (up to 5 seconds for each step), and run one at a time in the order sent. In the
-app this is `Core/DawLink/BitwigLink.cs`.
+✎ needs changes turned on. (3) only in link version 3, the extension. `insert` with a track, `newtrack`,
+`clip`, `pads`, `transpose` and `recorder` wait for Bitwig to make the change (up to 5 seconds for each
+step), and run one at a time in the order sent. In the app this is `Core/DawLink/BitwigLink.cs`.
+
+### Link version 3
+
+The extension's additions are fields and commands the app can ignore, so the app talks to the script and the
+extension alike. Bitwig's API tells a parameter's steps (and their names), its origin (where its value rests:
+0.5 for a pan, 0 for a level) and whether it's automated only for a device's remote controls and the last
+clicked parameter, not for every parameter by its ID, and it doesn't say which parameter a remote control is.
+So `device` lists the remote controls of the page Bitwig shows for the selected device, and the link matches
+each to the one parameter with its name and value (`param`), whose entry then carries the same details.
+
+The extension also keeps reports in `%LOCALAPPDATA%\MusicOrganiser\reports\bitwig` (the app's data folder;
+see [its README](bitwig-java/README.md#reports) for macOS and Linux): a line for each command (but the app's
+regular hellos) in
+`<date>-link.jsonl`, and a self-check of each part of Bitwig's API it uses in `<time>-selfcheck.json`, written
+when Bitwig starts it and on `selftest`. A Bitwig problem in a real session can be read there afterwards.
 
 ### Sending into Bitwig
 
@@ -185,8 +214,14 @@ Each script runs in a stand-in DAW that copies the real API's calls and quirks:
 
 ```
 cd extensions/bitwig && npm ci && npm test            # type-checked against Bitwig's API, then run
+cd extensions/bitwig-java && ./mvnw package           # the extension's tests, then MusicOrganiser.bwextension
 python -m unittest discover -s extensions/fl-studio/test
 ```
+
+The extension needs a JDK (17 or later); `mvnw` (`mvnw.cmd` on Windows) fetches Maven itself, and Maven fetches
+Bitwig's API from Bitwig's own repository to build against. Its tests run it in a stand-in Bitwig made from
+Bitwig's own API, with every scenario of the script's tests, and, when Node.js is installed, compare its answers
+with the script's for the same requests (see [its README](bitwig-java/README.md#tests)).
 
 The app's own tests (`dotnet test`) also talk to both scripts end to end through `test/serve.js` and
 `test/serve.py` (which stands in for the MIDI port: `sysex <hex>` lines in and out), when Node.js and
@@ -202,6 +237,17 @@ The stand-ins follow the APIs' documentation; these are the things only the DAWs
 Bitwig:
 
 - [ ] Its remote connection puts the length in front of what the script sends (the app reads either way).
+- [ ] Bitwig loads `MusicOrganiser.bwextension` from `Extensions` as the same controller as the script (same
+      ID), keeping *Let the app make changes*, and says something sensible when both are installed.
+- [ ] The extension's remote connection, observers and insertion points behave as the script's did (the
+      extension makes the selected track's insertion point in init, where the script made it when asked).
+- [ ] The extension's first self-check, a second after Bitwig starts it, is all `ok`, and its reports land in
+      `%LOCALAPPDATA%\MusicOrganiser\reports\bitwig`.
+- [ ] A remote control's `name` matches its parameter's name from `device` (how `device` tells which
+      parameter has which steps, origin and automation), and `discreteValueNames` gives the names Bitwig shows.
+- [ ] `clicked` follows clicks on any parameter, and creating the last clicked parameter adds nothing unwanted
+      to Bitwig's menus.
+- [ ] The master recorder starts and stops from `recorder`, and `duration` is in milliseconds.
 - [ ] Parameter IDs from `device` look like `CONTENTS/PID3e8`, and `set` takes them back.
 - [ ] `insert` takes the scanner's VST3 class ID as Bitwig wants it, and a UUID for its own devices.
 - [ ] The words `type` and `kind` use (e.g. `Instrument`, `note_to_audio`).
