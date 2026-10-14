@@ -21,6 +21,13 @@
                        Text="Double-click a plugin to see the projects that use it. 'Installed' compares against the plugin folders in Settings." />
             <TextBlock FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        Text="{Binding ScannerNote}" />
+            <DockPanel Margin="0,8,0,0" Visibility="{Binding CanReadAll, Converter={StaticResource BoolToVisibility}}">
+                <ui:Button DockPanel.Dock="Left" Content="Read all parameters" Icon="{ui:SymbolIcon Options24}"
+                           Command="{Binding ReadAllParametersCommand}" />
+                <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="Loads each plugin whose parameters haven't been read, four at a time. Some show a licence window as they load. Stop in the sidebar pauses it, and it carries on from there next time." />
+            </DockPanel>
         </StackPanel>
 
         <!-- The selected plugin as installed: what the plugin scanner read from its file. -->

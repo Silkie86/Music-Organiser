@@ -92,7 +92,60 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _scanCts?.Cancel();
         DropQueuedScan();
+        _parametersQueued = false;
     }
+
+    bool _readingParameters, _parametersQueued;
+
+    /// <summary>Reading every plugin's parameters is running, or will once the scan ends.</summary>
+    internal bool ReadingParameters => _readingParameters || _parametersQueued;
+
+    /// <summary>
+    /// Reads the parameters of every installed plugin that doesn't have them yet (the Plugins screen), with
+    /// the scan's progress and Stop button. Asked for during a scan, it starts when the scan ends.
+    /// </summary>
+    public Task ReadAllParametersAsync()
+    {
+        if (_readingParameters || !PluginScanner.Available) return Task.CompletedTask;
+        if (!IsScanning) return RunParametersAsync();
+        _parametersQueued = true;
+        return Task.CompletedTask;
+    }
+
+    async Task RunParametersAsync()
+    {
+        _readingParameters = IsScanning = true;
+        _scanCts = new CancellationTokenSource();
+        var ct = _scanCts.Token;
+        var progress = ProgressInStatus();
+        try
+        {
+            var (read, failed) = await Task.Run(() => _scanner.ReadAllParametersAsync(PluginScanner, progress, ct), ct);
+            ScanStatus = $"Parameters read for {read} plugin{(read == 1 ? "" : "s")}" +
+                         (failed > 0 ? $"; {failed} couldn't be loaded" : "") + $" · {DateTime.Now:HH:mm}";
+        }
+        catch (OperationCanceledException)
+        {
+            ScanStatus = "Stopped reading parameters; it carries on from there next time";
+        }
+        catch (Exception e)
+        {
+            ScanStatus = $"Reading parameters failed: {e.Message}";
+        }
+        finally
+        {
+            _readingParameters = IsScanning = false;
+            ScanPercent = 0;
+            Plugins.Reload();
+        }
+        await RunQueuedScanAsync();
+    }
+
+    Progress<ScanProgress> ProgressInStatus() => new(p =>
+    {
+        ScanStatus = p.Total > 0 ? $"{p.Stage}: {p.Done} of {p.Total}" : p.Stage;
+        ScanPercent = p.Total > 0 ? 100.0 * p.Done / p.Total : 0;
+    });
 
     // A scan asked for while another is running (say, adding a folder during the startup scan)
     // runs straight after it instead of being dropped.
@@ -117,7 +170,16 @@ public sealed partial class MainViewModel : ObservableObject
 
     async Task RunQueuedScanAsync()
     {
-        if (_queuedScan is not { } next) return;
+        if (_queuedScan is not { } next)
+        {
+            // Reading every plugin's parameters, asked for during the scan that just ended.
+            if (_parametersQueued)
+            {
+                _parametersQueued = false;
+                await RunParametersAsync();
+            }
+            return;
+        }
         var done = _queuedScanDone;
         _queuedScan = null;
         _queuedScanDone = null;
@@ -130,11 +192,7 @@ public sealed partial class MainViewModel : ObservableObject
         IsScanning = true;
         _scanCts = new CancellationTokenSource();
         var ct = _scanCts.Token;
-        var progress = new Progress<ScanProgress>(p =>
-        {
-            ScanStatus = p.Total > 0 ? $"{p.Stage}: {p.Done} of {p.Total}" : p.Stage;
-            ScanPercent = p.Total > 0 ? 100.0 * p.Done / p.Total : 0;
-        });
+        var progress = ProgressInStatus();
         try
         {
             IReadOnlyList<string> pluginFiles = [];

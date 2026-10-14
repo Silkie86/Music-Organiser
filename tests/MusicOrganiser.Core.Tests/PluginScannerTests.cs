@@ -148,6 +148,53 @@ public class PluginScannerTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadsEveryPluginsParametersOnce()
+    {
+        var file = Path.Combine(_root, "Plugins.clap");
+        string Line(string id, string name, object? parameters = null, string? error = null) => System.Text.Json.JsonSerializer.Serialize(
+            new Dictionary<string, object?> { ["format"] = "CLAP", ["path"] = file, ["id"] = id, ["name"] = name, ["vendor"] = "Tests", ["params"] = parameters, ["error"] = error }
+                .Where(kv => kv.Value is not null).ToDictionary());
+        object[] Knobs(params string[] names) => names.Select((n, i) => (object)new { id = i, name = n, text = "0.5" }).ToArray();
+
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        db.SavePluginScan(new PluginFileScan(file, [.. new[] { Line("good", "Good Synth"), Line("broken", "Broken Delay"), Line("crashes", "Crashy Verb"),
+                                                               Line("done", "Done EQ", Knobs("Gain")) }.Select(l => ScannedPlugin.Parse(l)!)]),
+                          PluginScanner.Stamp(file));
+        Assert.Equal((1, 3), db.ParameterCounts());
+
+        // The scanner, asked for one plugin by ID: one loads, one can't be created, one crashes it.
+        var asked = Directory.CreateDirectory(Path.Combine(_root, "asked")).FullName;
+        int Asked(string id) => File.Exists(Path.Combine(asked, id)) ? File.ReadAllLines(Path.Combine(asked, id)).Length : 0;
+        var scanner = new PluginScanner(FakeScannerById(asked, new()
+        {
+            ["good"] = [Line("good", "Good Synth", Knobs("Cutoff", "Resonance"))],
+            ["broken"] = [Line("broken", "Broken Delay", error: "couldn't create the plugin")],
+        }, crashes: "crashes"));
+        var lib = new Scanner(db);
+        var reports = new Reports();
+        Assert.Equal((1, 2), await lib.ReadAllParametersAsync(scanner, reports));
+        Assert.Equal(["broken", "crashes", "good"], Directory.GetFiles(asked).Select(Path.GetFileName).Order());
+        Assert.All(new[] { "broken", "crashes", "good" }, id => Assert.Equal(1, Asked(id)));
+        Assert.All(reports.Seen, r => Assert.Equal(3, r.Total));
+        Assert.Contains(reports.Seen, r => r.Done == 3);
+
+        Assert.Equal(["Cutoff", "Resonance"], db.ScannedPluginsNamed("Good Synth").Single().Params!.Select(p => p.Name));
+        var broken = db.ScannedPluginsNamed("Broken Delay").Single();
+        Assert.Equal(("couldn't create the plugin", "Tests"), (broken.Error, broken.Vendor));
+        Assert.Null(broken.Params);
+        Assert.Contains("crashed", db.ScannedPluginsNamed("Crashy Verb").Single().Error);
+        Assert.Equal((2, 0), db.ParameterCounts());
+
+        // Next time there's nothing left to read: the ones that failed wait for Read parameters on each.
+        Assert.Equal((0, 0), await lib.ReadAllParametersAsync(scanner));
+        Assert.Equal(3, Directory.GetFiles(asked).Length);
+        Assert.All(new[] { "broken", "crashes", "good" }, id => Assert.Equal(1, Asked(id)));
+        var again = await scanner.ReadParametersAsync(broken);
+        Assert.Equal("couldn't create the plugin", again.Error);
+        Assert.Equal(2, Asked("broken"));
+    }
+
+    [Fact]
     public void SaysWhyTheScannerWasntBuilt()
     {
         // The app runs from src/<project>/bin/Debug/<framework> under the source folders; the build's log is in native/out/app.
@@ -166,6 +213,50 @@ public class PluginScannerTests : IDisposable
         // A build that worked leaves a log too.
         File.WriteAllLines(log, ["Using C:\\Program Files\\Microsoft Visual Studio\\18\\Community", "[3/3] Linking CXX executable bin\\mo-scan.exe"]);
         Assert.Null(PluginScanner.BuildProblem(app));
+    }
+
+    /// <summary>Progress as it's reported, without waiting for a UI thread.</summary>
+    sealed class Reports : IProgress<ScanProgress>
+    {
+        readonly List<ScanProgress> _seen = [];
+        public IReadOnlyList<ScanProgress> Seen { get { lock (_seen) return [.. _seen]; } }
+        public void Report(ScanProgress value) { lock (_seen) _seen.Add(value); }
+    }
+
+    /// <summary>
+    /// A stand-in for mo-scan run with --only &lt;id&gt;: it adds a line to a file named after each ID it's asked for in
+    /// <paramref name="asked"/> (one file each, as cmd can't append to one file from several at once), prints that
+    /// plugin's lines, and for <paramref name="crashes"/> exits as if the plugin crashed it.
+    /// </summary>
+    string FakeScannerById(string asked, Dictionary<string, string[]> lines, string crashes)
+    {
+        string path;
+        if (OperatingSystem.IsWindows())
+        {
+            path = Path.Combine(_root, "by-id.cmd");
+            var cmd = new List<string> { "@echo off", $">>\"{asked}\\%~2\" echo %~2", $"if \"%~2\"==\"{crashes}\" exit /b 3" };
+            var ids = lines.Keys.ToList();
+            cmd.AddRange(ids.Select((id, i) => $"if \"%~2\"==\"{id}\" goto id{i}"));
+            cmd.Add("exit /b 0");
+            for (var i = 0; i < ids.Count; i++)
+            {
+                cmd.Add($":id{i}");
+                cmd.AddRange(lines[ids[i]].Select(l => "echo " + l.Replace("%", "%%").Replace("^", "^^").Replace("&", "^&").Replace("<", "^<").Replace(">", "^>").Replace("|", "^|")));
+                cmd.Add("exit /b 0");
+            }
+            File.WriteAllLines(path, cmd);
+        }
+        else
+        {
+            path = Path.Combine(_root, "by-id.sh");
+            var sh = new List<string> { "#!/bin/sh", $"printf '%s\\n' \"$2\" >> '{asked}/'\"$2\"", $"if [ \"$2\" = '{crashes}' ]; then exit 3; fi", "case \"$2\" in" };
+            foreach (var (id, idLines) in lines)
+                sh.Add($"  '{id}') " + string.Join("; ", idLines.Select(l => "printf '%s\\n' '" + l.Replace("'", "'\\''") + "'")) + " ;;");
+            sh.Add("esac");
+            File.WriteAllLines(path, sh);
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        return path;
     }
 
     /// <summary>A stand-in for mo-scan: a script that prints the given lines (or hangs, or fails).</summary>

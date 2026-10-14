@@ -55,6 +55,27 @@ public sealed partial class LibraryDb
     public void SaveScannedPlugin(ScannedPlugin p) =>
         Exec("UPDATE scanned_plugins SET json = $j WHERE path = $p AND id = $i", ("$j", p.Json), ("$p", p.Path), ("$i", p.Id));
 
+    // Still to read: no parameters yet, and no note that the scanner couldn't load it.
+    const string ParametersToRead = """
+        CASE WHEN json_valid(json) THEN json_type(json, '$.params') IS NULL AND coalesce(json_extract(json, '$.error'), '') = '' ELSE 0 END
+        """;
+
+    /// <summary>
+    /// Installed plugins whose parameters haven't been read, leaving out the ones the scanner couldn't load
+    /// last time (Read parameters on one of those tries again).
+    /// </summary>
+    public IReadOnlyList<ScannedPlugin> PluginsWithoutParameters() =>
+        Query($"SELECT path, json FROM scanned_plugins WHERE {ParametersToRead} ORDER BY name, format, path",
+              r => ScannedPlugin.Parse(Str(r, "json")) is { } p ? p with { Path = Str(r, "path") } : null)
+            .OfType<ScannedPlugin>().ToList();
+
+    /// <summary>How many installed plugins have their parameters read, and how many are still to read.</summary>
+    public (int Read, int Left) ParameterCounts() => Query($"""
+        SELECT coalesce(SUM(CASE WHEN json_valid(json) THEN json_type(json, '$.params') = 'array' ELSE 0 END), 0) AS done,
+               coalesce(SUM({ParametersToRead}), 0) AS todo
+        FROM scanned_plugins
+        """, r => ((int)Long(r, "done"), (int)Long(r, "todo"))).First();
+
     /// <summary>Forgets files that are no longer in the plugin folders.</summary>
     public void ForgetPluginScans(IEnumerable<string> keep)
     {

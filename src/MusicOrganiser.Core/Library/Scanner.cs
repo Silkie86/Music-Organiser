@@ -168,7 +168,7 @@ public sealed class Scanner(LibraryDb db)
 
     /// <summary>
     /// Reads plugin files with the native scanner, four at a time, and stores the plugins inside each
-    /// one: exact ID, name, vendor, version and kind. Parameters are read later, one plugin at a time.
+    /// one: exact ID, name, vendor, version and kind. Parameters are read later (<see cref="ReadAllParametersAsync"/>).
     /// </summary>
     public async Task ReadPluginFilesAsync(PluginScanner scanner, IReadOnlyList<string> paths,
                                            IProgress<ScanProgress>? progress = null, CancellationToken ct = default)
@@ -181,6 +181,28 @@ public sealed class Scanner(LibraryDb db)
             db.SavePluginScan(scan, stamp);
             progress?.Report(new("Reading plugins", Interlocked.Increment(ref done), paths.Count, Path.GetFileName(path.TrimEnd('\\', '/'))));
         });
+    }
+
+    /// <summary>
+    /// Reads the parameters of every installed plugin that doesn't have them yet: each plugin is loaded in
+    /// the native scanner, four at a time. Stopped part way, it carries on from there next time. A plugin
+    /// that can't be loaded keeps why, and is left out after that.
+    /// </summary>
+    public async Task<(int Read, int Failed)> ReadAllParametersAsync(PluginScanner scanner, IProgress<ScanProgress>? progress = null,
+                                                                     CancellationToken ct = default)
+    {
+        var todo = db.PluginsWithoutParameters();
+        int done = 0, read = 0, failed = 0;
+        progress?.Report(new("Reading parameters", 0, todo.Count, ""));
+        await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, async (plugin, token) =>
+        {
+            var result = await scanner.ReadParametersAsync(plugin, token);
+            db.SaveScannedPlugin(result);
+            if (result.Params is null) Interlocked.Increment(ref failed);
+            else Interlocked.Increment(ref read);
+            progress?.Report(new("Reading parameters", Interlocked.Increment(ref done), todo.Count, plugin.Name));
+        });
+        return (read, failed);
     }
 
     /// <summary>Index audio files in your sample folders, so missing samples can be matched.</summary>

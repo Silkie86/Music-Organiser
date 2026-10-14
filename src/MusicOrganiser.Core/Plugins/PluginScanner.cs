@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace MusicOrganiser.Core.Plugins;
 
@@ -181,6 +183,36 @@ public sealed class PluginScanner
                     (detail.Length > 0 ? $": {detail}" : $" (code {process.ExitCode})");
         }
         return new(path, plugins, error);
+    }
+
+    /// <summary>
+    /// Loads one plugin to read its parameters. Returns it with them, or with why it couldn't be loaded, which is
+    /// kept with it so reading every plugin's parameters leaves it out next time.
+    /// </summary>
+    public async Task<ScannedPlugin> ReadParametersAsync(ScannedPlugin plugin, CancellationToken ct = default)
+    {
+        var scan = await ScanAsync(plugin.Path, parameters: true, only: plugin.Id, ct: ct);
+        var found = scan.Plugins.FirstOrDefault(p => p.Id == plugin.Id);
+        if (found?.Params is not null)
+            return plugin with { Params = found.Params, Error = found.Error, Json = found.Json, Kind = found.Kind.Length > 0 ? found.Kind : plugin.Kind,
+                                 Version = found.Version.Length > 0 ? found.Version : plugin.Version };
+        var why = found?.Error is { Length: > 0 } e ? e : scan.Error.Length > 0 ? scan.Error : "it didn't report its parameters";
+        return plugin with { Error = why, Json = WithError(plugin.Json, why) };
+    }
+
+    /// <summary>A scanner line with its "error" set.</summary>
+    static string WithError(string json, string error)
+    {
+        try
+        {
+            if (JsonNode.Parse(json) is JsonObject o)
+            {
+                o["error"] = error;
+                return o.ToJsonString();
+            }
+        }
+        catch (JsonException) { }
+        return json;
     }
 
     static string LastLine(string text)

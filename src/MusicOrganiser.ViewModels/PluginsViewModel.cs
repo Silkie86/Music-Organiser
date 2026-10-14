@@ -26,6 +26,8 @@ public sealed partial class PluginsViewModel : ObservableObject
     [ObservableProperty] InstalledPluginItem? _shownCopy;
     /// <summary>What the plugin scanner has read so far, or why it can't.</summary>
     [ObservableProperty] string _scannerNote = "";
+    /// <summary>Some installed plugins' parameters are still to read (Read all parameters).</summary>
+    [ObservableProperty] bool _canReadAll;
 
     public PluginsViewModel(LibraryDb db, MainViewModel main)
     {
@@ -55,11 +57,22 @@ public sealed partial class PluginsViewModel : ObservableObject
         else
         {
             var (files, plugins, failed) = _db.PluginScanCounts();
+            var (read, left) = _db.ParameterCounts();
             ScannerNote = files == 0 ? "The plugin scanner reads your plugin files after the next scan."
                 : $"The plugin scanner has read {files} plugin files holding {plugins} plugins" +
-                  (failed > 0 ? $"; {failed} couldn't be read." : ".");
+                  (failed > 0 ? $"; {failed} couldn't be read." : ".") +
+                  (read == 0 ? "" : left > 0 ? $" It has the parameters of {read}, with {left} to go." : $" It has the parameters of {read}.");
+            CanReadAll = left > 0 && !_main.ReadingParameters;
         }
         LoadInstalled();
+    }
+
+    /// <summary>Loads every installed plugin whose parameters haven't been read, to read them.</summary>
+    [RelayCommand]
+    Task ReadAllParameters()
+    {
+        CanReadAll = false;   // back when it ends, if any are left
+        return _main.ReadAllParametersAsync();
     }
 
     partial void OnSearchTextChanged(string value) => View?.Refresh();
@@ -161,18 +174,11 @@ public sealed partial class InstalledPluginItem : ObservableObject
         ParametersNote = "Loading the plugin…";
         try
         {
-            var scan = await _scanner.ScanAsync(Plugin.Path, parameters: true, only: Plugin.Id);
-            var found = scan.Plugins.FirstOrDefault(p => p.Id == Plugin.Id);
-            if (found?.Params is not null)
-            {
-                Plugin = Plugin with { Params = found.Params, Error = found.Error, Json = found.Json, Kind = found.Kind.Length > 0 ? found.Kind : Plugin.Kind,
-                                       Version = found.Version.Length > 0 ? found.Version : Plugin.Version };
-                await Task.Run(() => _db.SaveScannedPlugin(Plugin));
-                OnPropertyChanged(nameof(Details));
-                ShowParameters();
-            }
-            else
-                ParametersNote = $"The scanner couldn't load it: {(found?.Error is { Length: > 0 } e ? e : scan.Error.Length > 0 ? scan.Error : "it didn't report its parameters")}";
+            // Kept either way: its parameters, or why it couldn't be loaded.
+            Plugin = await _scanner.ReadParametersAsync(Plugin);
+            await Task.Run(() => _db.SaveScannedPlugin(Plugin));
+            OnPropertyChanged(nameof(Details));
+            ShowParameters();
         }
         finally
         {
