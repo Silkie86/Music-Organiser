@@ -152,6 +152,8 @@ public static class BitwigProject
         // Each channel's tracks: its instrument track first, if it has one, then its audio tracks.
         var placed = new Dictionary<int, (FlChannel Channel, List<BwObject> Tracks)>();
         var instruments = new Dictionary<int, (BwObject Device, FlPlugin Plugin)>();
+        // How many of each channel's tracks have their own copy of its insert's effects.
+        var effectCopies = new Dictionary<int, int>();
 
         // The VST effects of the FL insert a channel feeds, after what's on its track.
         void InsertEffects(FlChannel c, List<BwObject> devices, List<string> skipped)
@@ -159,7 +161,9 @@ public static class BitwigProject
             if (c.Insert <= 0 || !inserts.TryGetValue(c.Insert, out var insert)) return;
             var effects = Effects(insert, skipped);
             devices.AddRange(effects);
-            if (effects.Count > 0 && shared.Contains(c.Insert))
+            if (effects.Count == 0) return;
+            effectCopies[c.Index] = effectCopies.GetValueOrDefault(c.Index) + 1;
+            if (shared.Contains(c.Insert))
                 notes.Add($"{c.Name}: has its own copy of {InsertName(insert)}'s effects, which other channels also feed in FL Studio");
         }
 
@@ -231,7 +235,7 @@ public static class BitwigProject
             if (info is null)
                 notes.Add($"{c.Name}: couldn't read {c.Sample}, so Bitwig will ask where it is, and how far its clips are stretched is a guess");
             else if (info.Seconds <= 0)
-                notes.Add($"{c.Name}: couldn't tell how long {c.Sample} is, so how far its clips are stretched is a guess");
+                notes.Add($"{c.Name}: couldn't tell how long {c.Sample} is, so Bitwig will ask where it is, and how far its clips are stretched is a guess");
             if (c.Stretch.Reversed) notes.Add($"{c.Name}: plays its sample backwards in FL Studio; reverse its clips in Bitwig");
             if (c.PitchCents != 0)
                 notes.Add($"{c.Name}: its channel pitch knob ({c.PitchCents / 100.0:+0.##;-0.##} semitones) isn't carried over to its audio clips; " +
@@ -251,6 +255,9 @@ public static class BitwigProject
                           "that can be copied; it can't be in a group)");
             else if (audio.Contains(c)) own.AddRange(AudioClipTracks(c));
             if (own.Count == 0) continue;
+            if (effectCopies.GetValueOrDefault(c.Index) is var copies and > 1)
+                notes.Add($"{c.Name}: each of its {copies} tracks has its own copy of {InsertName(inserts[c.Insert])}'s effects, " +
+                          "which FL Studio runs once on all of them");
             tracks.AddRange(own);
             placed[c.Index] = (c, own);
         }
@@ -337,9 +344,10 @@ public static class BitwigProject
         var sample = zone?.Obj(0x4112)?.Obj(0x748);
         if (zone is null || sample is null || !SampleIs(sample, c.Sample, info)) throw new InvalidDataException("The template's Sampler has no sample in it");
         zone.Set(0x75c, (byte)Math.Clamp(c.RootKey, 0, 127), 0x01);
-        if (info is null)
+        if (info is not { Seconds: > 0 })
         {
-            notes.Add($"{c.Name}: couldn't read {c.Sample}, so Bitwig will ask where it is");
+            notes.Add(info is null ? $"{c.Name}: couldn't read {c.Sample}, so Bitwig will ask where it is"
+                                   : $"{c.Name}: couldn't tell how long {c.Sample} is, so Bitwig will ask where it is");
             return sampler;
         }
         zone.Set(0x75f, info.Seconds);
@@ -349,7 +357,8 @@ public static class BitwigProject
 
     /// <summary>
     /// Points a sample Bitwig saved (a Sampler's, or an audio clip's) at another file: its name, path, and what Bitwig
-    /// recognises it by. When the file couldn't be read, its MD5 is zeros and Bitwig asks where it is. False when
+    /// recognises it by. When the file couldn't be read, or how long it is couldn't be told, its MD5 is zeros, so
+    /// Bitwig asks where it is and reads it itself rather than trusting a made-up length. False when
     /// <paramref name="sample"/> isn't a sample.
     /// </summary>
     static bool SampleIs(BwObject sample, string path, SampleFile? info)
@@ -359,8 +368,9 @@ public static class BitwigProject
         sample.Set(0x129f, fileName);
         file.Set(0x512, fileName);
         file.Obj(0xd3b)?.Set(0x3b, path);
-        file.Obj(0x513)?.Set(0x16, info?.Md5 ?? new byte[16], 0x0d);
-        if (info is null) return true;
+        var known = info is { Seconds: > 0 };
+        file.Obj(0x513)?.Set(0x16, known ? info!.Md5 : new byte[16], 0x0d);
+        if (!known) return true;
         file.Set(0x17, info.Bytes, IntType(info.Bytes));
         sample.Set(0x94, info.Rate, IntType(info.Rate));
         sample.Set(0x95, info.Seconds);

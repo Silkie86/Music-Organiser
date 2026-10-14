@@ -379,19 +379,41 @@ public class BitwigProjectTests
     public void OverlappingAudioClipsGoOnTracksOfTheirOwnThatTheChannelsVolumeMoves()
     {
         // A riser placed twice, the second starting before the first ends (on another playlist track in FL), then again after both.
-        var riser = new FlChannel(1, "Riser", null, @"C:\Samples\Riser.wav", 0, [])
+        var riser = new FlChannel(1, "Riser", null, @"C:\Samples\Riser.wav", 2, [])
         {
             AudioClips = [new FlAudioClip(0, 384), new FlAudioClip(192, 384), new FlAudioClip(576, 96)],
             Stretch = new FlStretch(Mode: 1),
         };
         var volume = new FlAutomation("Riser - Volume", 1, FlControl.Volume, 0, [new FlPoint(0, 0), new FlPoint(4, 1)]);
-        var result = BitwigProject.FromFl(new FlSong("", 96, 120, [riser], [], [volume]), Fixtures.BitwigTemplate(),
+        var eq = new FlPlugin("Pro-Q 3", "FabFilter", "VST3", "72C4DB717A4D459AB97E51745D84B39D", new PresetBlob("Pro-Q 3", "Pro-Q 3", ".vstpreset", [4, 5]));
+        var result = BitwigProject.FromFl(new FlSong("", 96, 120, [riser], [new FlInsert(2, "Riser bus", [eq])], [volume]), Fixtures.BitwigTemplate(),
                                           _ => new BitwigProject.SampleFile(10, Md5, 44100, 2, 2));
         var tracks = Decode(result.Bytes).Root!.Obj(0x4dd)!.List(0x4de).ToList();
         Assert.Equal(["Riser", "Riser 2"], tracks.Select(t => t.Str(0x15b)));
+        // Each has its own copy of the insert's effects, which FL runs once on the riser's sum, and that's said.
+        Assert.All(tracks, t => Assert.Equal(["Pro-Q 3"], Chain(t).Select(d => Def(d).Str(0x9a))));
+        Assert.Contains("Riser: each of its 2 tracks has its own copy of Riser bus's effects, which FL Studio runs once on all of them", result.Notes);
         Assert.Equal([[0.0, 6.0], [2.0]], tracks.Select(t => Clips(t).Select(c => c.Num(0x2af)!.Value).ToArray()));
         Assert.All(tracks, t => Assert.Equal("Volume", t.Obj(0x2dc9)!.List(0x4ba).Single().Obj(0x2a3)!.Str(0x133a)));
         Assert.Contains("Riser: its audio clips overlap in FL Studio, so they're on 2 tracks", result.Notes);
+    }
+
+    [Fact]
+    public void ASamplersSampleTheAppCantDecodeIsLeftForBitwigToRead()
+    {
+        // Found, but in a format the app can't decode, so how long it is isn't known: rather than a made-up length and a
+        // zone that ends where it starts, Bitwig is asked where it is (an MD5 of zeros) and the template's zone is kept.
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var template = Decode(Fixtures.BitwigTemplate()).Objects.Single(o => o.Class == 0x210 && o.Obj(0x4112) is not null);
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
+                                          p => p.EndsWith("Snare 01.wav") ? new BitwigProject.SampleFile(1234, Md5, 48000, 2, 0) : null);
+        var zone = Param(Chain(Decode(result.Bytes).Root!.Obj(0x4dd)!.List(0x4de).First()).Single(), "SAMPLE").Obj(0x74c)!;
+        Assert.Equal((template.Num(0x75f), template.Num(0x761)), (zone.Num(0x75f), zone.Num(0x761)));
+        var file = zone.Obj(0x4112)!.Obj(0x748)!.Obj(0x129e)!;
+        var md5 = (BwBlob)file.Obj(0x513)![0x16]!;
+        Assert.Equal(new byte[16], result.Bytes[md5.Offset..(md5.Offset + md5.Length)]);
+        Assert.Equal(@"C:\Samples\Snare 01.wav", file.Obj(0xd3b)!.Str(0x3b));
+        Assert.Contains(@"Snare: couldn't tell how long C:\Samples\Snare 01.wav is, so Bitwig will ask where it is", result.Notes);
     }
 
     [Fact]
@@ -399,14 +421,14 @@ public class BitwigProjectTests
     {
         var song = new FlSong("", 96, 120,
         [
-            // A sample the app can't decode: Bitwig knows it by its MD5, but how long it is is a guess.
+            // A sample the app can't decode: Bitwig is asked where it is, and how long it is is a guess.
             new FlChannel(1, "Loop", null, @"C:\Samples\Loop.rx2", 0, [], PitchCents: 200) { AudioClips = [new FlAudioClip(0, 384)] },
             new FlChannel(2, "Lost", null, "", 0, []) { AudioClips = [new FlAudioClip(0, 384)] },
         ], [], []);
         var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => new BitwigProject.SampleFile(10, Md5, 44100, 2, 0));
         Assert.Equal(["Loop"], Decode(result.Bytes).Root!.Obj(0x4dd)!.List(0x4de).Select(t => t.Str(0x15b)));
         Assert.Equal((0, 4, 4, (4, 2), 0, 0, 4), Audio(Clips(Decode(result.Bytes).Root!.Obj(0x4dd)!.List(0x4de).Single()).Single()));
-        Assert.Equal([@"Loop: couldn't tell how long C:\Samples\Loop.rx2 is, so how far its clips are stretched is a guess",
+        Assert.Equal([@"Loop: couldn't tell how long C:\Samples\Loop.rx2 is, so Bitwig will ask where it is, and how far its clips are stretched is a guess",
                       "Loop: its channel pitch knob (+2 semitones) isn't carried over to its audio clips; the pitch in its time stretching is",
                       "Lost: its audio clips are left out (FL Studio didn't save which sample they play)"], result.Notes);
     }
