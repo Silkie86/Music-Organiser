@@ -154,6 +154,8 @@ public static class BitwigProject
         var instruments = new Dictionary<int, (BwObject Device, FlPlugin Plugin)>();
         // How many of each channel's tracks have their own copy of its insert's effects.
         var effectCopies = new Dictionary<int, int>();
+        // The playlist tracks that clips written here came from.
+        var written = new HashSet<int>();
 
         // The VST effects of the FL insert a channel feeds, after what's on its track.
         void InsertEffects(FlChannel c, List<BwObject> devices, List<string> skipped)
@@ -200,6 +202,7 @@ public static class BitwigProject
             Chain(track, devices);
             track.Set(0x15b, c.Name);
             Mixer(track, c);
+            written.UnionWith(c.Clips.Select(x => x.Track));
             foreach (var clip in FlClips.Of(c, song.Ppq))
                 t.AddClip(track, clip with { Notes = FlClips.Lengthen(clip.Notes, clip.Length, sampleLength) }, song.Ppq);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
@@ -229,6 +232,7 @@ public static class BitwigProject
                     lane = lanes.Count - 1;
                 }
                 t.AddAudioClip(lanes[lane].Track, c, clip, info, song.Tempo, song.Ppq);
+                written.Add(clip.Track);
                 lanes[lane] = (lanes[lane].Track, clip.Start + clip.Length);
             }
             if (lanes.Count > 1) notes.Add($"{c.Name}: its audio clips overlap in FL Studio, so they're on {lanes.Count} tracks");
@@ -258,9 +262,12 @@ public static class BitwigProject
             if (effectCopies.GetValueOrDefault(c.Index) is var copies and > 1)
                 notes.Add($"{c.Name}: each of its {copies} tracks has its own copy of {InsertName(inserts[c.Insert])}'s effects, " +
                           "which FL Studio runs once on all of them");
+            if (!c.Enabled) notes.Add($"{c.Name}: {DawProject.SwitchedOff(own.Count)}");
             tracks.AddRange(own);
             placed[c.Index] = (c, own);
         }
+
+        notes.AddRange(song.MutedTracks.Where(t => written.Contains(t.Number)).Select(DawProject.MutedTrack));
 
         // The master insert's effects on Bitwig's master.
         var masterSkipped = new List<string>();
@@ -368,9 +375,12 @@ public static class BitwigProject
         sample.Set(0x129f, fileName);
         file.Set(0x512, fileName);
         file.Obj(0xd3b)?.Set(0x3b, path);
-        var known = info is { Seconds: > 0 };
-        file.Obj(0x513)?.Set(0x16, known ? info!.Md5 : new byte[16], 0x0d);
-        if (!known) return true;
+        if (info is not { Seconds: > 0 })
+        {
+            file.Obj(0x513)?.Set(0x16, new byte[16], 0x0d);
+            return true;
+        }
+        file.Obj(0x513)?.Set(0x16, info.Md5, 0x0d);
         file.Set(0x17, info.Bytes, IntType(info.Bytes));
         sample.Set(0x94, info.Rate, IntType(info.Rate));
         sample.Set(0x95, info.Seconds);
@@ -396,12 +406,16 @@ public static class BitwigProject
     static long SampleTicks(double seconds, double semitones, double tempo, int ppq) =>
         (long)Math.Ceiling(seconds / Math.Pow(2, semitones / 12) * tempo / 60 * ppq - 1e-6);
 
-    /// <summary>Channel volume and pan on the track's mixer. Bitwig's fader holds the cube root of the gain.</summary>
+    /// <summary>
+    /// Channel volume and pan on the track's mixer, and its mute when the channel is switched off. Bitwig's fader holds
+    /// the cube root of the gain; its mute button is on when MUTE's value (0xd2) is 1.
+    /// </summary>
     static void Mixer(BwObject track, FlChannel c)
     {
         var mixer = track.Obj(0x165);
         mixer?.Obj(0x1a4)?.Set(0x2c8, Math.Cbrt(DawProject.Gain(c.Volume)));
         mixer?.Obj(0x1a5)?.Set(0x2c8, Math.Clamp((c.Pan - 0.5) * 2, -1, 1));
+        if (mixer?.Obj(0x1a6) is { } mute && (!c.Enabled || mute.Has(0xd2))) mute.Set(0xd2, (byte)(c.Enabled ? 0 : 1), 0x05);
     }
 
     static BwObject? Def(BwObject device) => device.Obj(0x197);

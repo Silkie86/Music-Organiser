@@ -435,6 +435,52 @@ public sealed partial class FlStudioReader : IProjectReader
     const int PatternBase = 20480;              // playlist item index above this = pattern (index - base)
 
     /// <summary>
+    /// The first arrangement's playlist tracks and which are muted. FL saves every track, used or not, after its
+    /// arrangement's playlist (500 from FL 12.9), so their count is how many the playlist has. A track's settings (event
+    /// 238, 70 bytes in FL 25 and 26) start with u32 its number from 1, colour and icon, then a byte at 12 that's 1 when
+    /// the track plays and 0 when it's muted.
+    /// </summary>
+    sealed class PlaylistTracks
+    {
+        const int EvArrangementNew = 99;        // WORD: starts an arrangement (FL 12.9 onwards); its name, playlist and tracks follow
+        const int EvTrackData = Data + 30;      // 238: a playlist track's settings
+        const int EvTrackName = Text + 47;      // 239: the track's name, after its settings (only when it was named)
+
+        readonly Dictionary<int, (FlTrack Track, bool Muted)> tracks = new();
+        int arrangements, last;
+
+        /// <summary>Takes in the event if it's one of the first arrangement's tracks (or starts an arrangement).</summary>
+        public void Read(Event e, Flp flp)
+        {
+            switch (e.Id)
+            {
+                case EvArrangementNew: arrangements++; break;
+                case EvTrackData when arrangements <= 1 && e.Payload.Length > 12:
+                    last = (int)e.Int;
+                    tracks[last] = (new FlTrack(last, ""), e.Payload.Span[12] == 0);
+                    break;
+                case EvTrackName when arrangements <= 1 && tracks.TryGetValue(last, out var t):
+                    tracks[last] = t with { Track = t.Track with { Name = flp.Str(e) } };
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// The track a clip is on, from the slot FL saves with it, which counts down from the first track (499 is track 1
+        /// of 500), and whether that track is muted.
+        /// </summary>
+        public (FlTrack Track, bool Muted)? At(int slot) =>
+            tracks.TryGetValue(tracks.Count - slot, out var t) ? t : null;
+
+        /// <summary>The number of the track a clip's slot is, or 0 when the file doesn't say.</summary>
+        public int Number(int slot) => At(slot)?.Track.Number ?? 0;
+    }
+
+    /// <summary>The playlist's clips, with those on a muted track muted too.</summary>
+    static List<PlaylistItem> PlaylistItems(ReadOnlySpan<byte> d, PlaylistTracks tracks) =>
+        PlaylistItems(d).Select(i => tracks.At(i.Slot) is { Muted: true } ? i with { Muted = true } : i).ToList();
+
+    /// <summary>
     /// Each channel's notes across the song. Patterns are placed where the playlist puts them
     /// (the first arrangement); a song with nothing in the playlist gets its patterns one after
     /// another, in pattern order.
@@ -452,6 +498,7 @@ public sealed partial class FlStudioReader : IProjectReader
         var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
         var patternNames = new Dictionary<int, string>();
         ReadOnlyMemory<byte>? playlist = null;
+        var tracks = new PlaylistTracks();
         int? channel = null, pattern = null;
         var inMixer = false;
         var channelHasPlugin = false;
@@ -459,6 +506,7 @@ public sealed partial class FlStudioReader : IProjectReader
 
         foreach (var e in flp.Events)
         {
+            tracks.Read(e, flp);
             switch (e.Id)
             {
                 case EvChannelNew:
@@ -510,7 +558,7 @@ public sealed partial class FlStudioReader : IProjectReader
             }
         }
 
-        var notes = PlaceClips(flp, rawNotes, playlist, order.ToHashSet(), patternNames)
+        var notes = PlaceClips(flp, rawNotes, playlist, tracks, order.ToHashSet(), patternNames)
             .Select(kv => (Channel: kv.Key, Notes: Audible(kv.Value))).Where(x => x.Notes.Count > 0)
             .ToDictionary(x => x.Channel, x => x.Notes);
 
@@ -525,10 +573,10 @@ public sealed partial class FlStudioReader : IProjectReader
     /// <summary>
     /// Each channel's clips across the song: one per pattern placed in the playlist (the first
     /// arrangement), holding the channel's notes in that part of the pattern, timed from the clip's
-    /// start. With nothing in the playlist, patterns play one after another.
+    /// start. With nothing in the playlist, patterns play one after another. Clips on a muted track are muted.
     /// </summary>
     static Dictionary<int, List<FlClip>> PlaceClips(Flp flp, List<(int Pattern, ReadOnlyMemory<byte> Data)> rawNotes,
-                                                    ReadOnlyMemory<byte>? playlist, IReadOnlySet<int> known,
+                                                    ReadOnlyMemory<byte>? playlist, PlaylistTracks tracks, IReadOnlySet<int> known,
                                                     IReadOnlyDictionary<int, string> patternNames)
     {
         var patterns = new SortedDictionary<int, List<(int Channel, NoteEvent Note)>>();
@@ -539,7 +587,7 @@ public sealed partial class FlStudioReader : IProjectReader
         }
 
         var clips = new Dictionary<int, List<FlClip>>();
-        void Place(int pat, long at, long from, long length, bool muted)
+        void Place(int pat, long at, long from, long length, bool muted, int track)
         {
             if (!patterns.TryGetValue(pat, out var pn)) return;
             foreach (var channel in pn.Where(x => x.Note.Start >= from && x.Note.Start < from + length).GroupBy(x => x.Channel))
@@ -547,13 +595,13 @@ public sealed partial class FlStudioReader : IProjectReader
                 var notes = channel.Select(x => x.Note with { Start = x.Note.Start - from, Length = Math.Min(x.Note.Length, from + length - x.Note.Start) })
                                    .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
                 if (!clips.TryGetValue(channel.Key, out var cl)) clips[channel.Key] = cl = new();
-                cl.Add(new FlClip(patternNames.GetValueOrDefault(pat, $"Pattern {pat}"), at, length, notes, muted));
+                cl.Add(new FlClip(patternNames.GetValueOrDefault(pat, $"Pattern {pat}"), at, length, notes, muted) { Track = track });
             }
         }
 
-        var items = playlist is { } pl ? PlaylistItems(pl.Span).Where(i => i.Index > PatternBase).ToList() : [];
+        var items = playlist is { } pl ? PlaylistItems(pl.Span, tracks).Where(i => i.Index > PatternBase).ToList() : [];
         if (items.Count > 0)
-            foreach (var i in items.OrderBy(i => i.At)) Place(i.Index - PatternBase, i.At, i.From, i.Length, i.Muted);
+            foreach (var i in items.OrderBy(i => i.At)) Place(i.Index - PatternBase, i.At, i.From, i.Length, i.Muted, tracks.Number(i.Slot));
         else
         {
             // Pattern mode: one pattern after another, each rounded up to whole bars.
@@ -564,7 +612,7 @@ public sealed partial class FlStudioReader : IProjectReader
                 if (pn.Count == 0) continue;
                 var end = pn.Max(x => x.Note.Start + x.Note.Length);
                 var length = Math.Max(bar, (end + bar - 1) / bar * bar);
-                Place(pat, at, 0, length, false);
+                Place(pat, at, 0, length, false, 0);
                 at += length;
             }
         }
@@ -576,14 +624,14 @@ public sealed partial class FlStudioReader : IProjectReader
     /// pattern. An audio clip's start offset is in milliseconds of the sample, as FL 25 saves it (a clip trimmed to
     /// start halfway through a 32 second sample says 16000).
     /// </summary>
-    static Dictionary<int, List<FlAudioClip>> PlaceAudioClips(ReadOnlyMemory<byte>? playlist, IReadOnlySet<int> channels)
+    static Dictionary<int, List<FlAudioClip>> PlaceAudioClips(ReadOnlyMemory<byte>? playlist, PlaylistTracks tracks, IReadOnlySet<int> channels)
     {
         var clips = new Dictionary<int, List<FlAudioClip>>();
         if (playlist is not { } pl) return clips;
-        foreach (var i in PlaylistItems(pl.Span).Where(i => i.Index < PatternBase && channels.Contains(i.Index) && i.Length > 0).OrderBy(i => i.At))
+        foreach (var i in PlaylistItems(pl.Span, tracks).Where(i => i.Index < PatternBase && channels.Contains(i.Index) && i.Length > 0).OrderBy(i => i.At))
         {
             if (!clips.TryGetValue(i.Index, out var list)) clips[i.Index] = list = new();
-            list.Add(new FlAudioClip(i.At, i.Length, i.Offset / 1000, i.Muted));
+            list.Add(new FlAudioClip(i.At, i.Length, i.Offset / 1000, i.Muted) { Track = tracks.Number(i.Slot) });
         }
         return clips;
     }
@@ -599,7 +647,7 @@ public sealed partial class FlStudioReader : IProjectReader
     /// channel's clip. A muted clip has bit 0x2000 set in the flags at 18. <see cref="Offset"/> is where the clip
     /// starts in what it plays: ticks into a pattern, milliseconds into an audio clip's sample.
     /// </summary>
-    readonly record struct PlaylistItem(int Index, long At, long Length, double Offset, bool Muted)
+    readonly record struct PlaylistItem(int Index, long At, long Length, double Offset, bool Muted, int Slot = 0)
     {
         /// <summary>Where a pattern clip starts in its pattern, in ticks.</summary>
         public long From => (long)Offset;
@@ -623,7 +671,8 @@ public sealed partial class FlStudioReader : IProjectReader
             for (var off = 0; off + size <= d.Length; off += size)
                 items.Add(new PlaylistItem(BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 6)..]), BinaryPrimitives.ReadUInt32LittleEndian(d[off..]),
                                            BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), ItemOffset(d[(off + 24)..]),
-                                           (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 0x2000) != 0));
+                                           (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 0x2000) != 0,
+                                           BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 12)..])));
             break;
         }
         return items;

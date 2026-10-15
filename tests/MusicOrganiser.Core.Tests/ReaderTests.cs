@@ -164,7 +164,36 @@ public class FlStudioTests
         Assert.Equal(a.Details, b.Details);
         Assert.Empty(a.Warnings);
         Assert.Equal(["Saved by an old FL Studio that garbled the start of its data; everything after it was read as usual."], b.Warnings);
-        Assert.Equal(1, Readers.FlStudio.ReadSong(Path.Combine(dir, "side.flp")).Channels.Single().Notes.Count);
+        Assert.Single(Readers.FlStudio.ReadSong(Path.Combine(dir, "side.flp")).Channels.Single().Notes);
+    }
+
+    [Fact]
+    public void ReadsMutedPlaylistTracksAndSwitchedOffChannels()
+    {
+        var path = Fixtures.FlStudio25MutedTracks(Fixtures.TempDir());
+        var song = Readers.FlStudio.ReadSong(path);
+
+        // Tracks 2 and 4 are muted in the first arrangement (the second's muted track 1 doesn't count), so what's on them
+        // is too: the pattern in bar 2 and the Acapella clips. Muted, they play nothing.
+        Assert.Equal([new FlTrack(2, "Acapellas"), new FlTrack(4, "")], song.MutedTracks);
+        var snare = song.Channels.Single(c => c.Name == "Snare");
+        Assert.Equal([(0L, false, 1), (384L, true, 2)], snare.Clips.Select(c => (c.Start, c.Muted, c.Track)));
+        Assert.Equal([0L], snare.Notes.Select(n => n.Start));
+        Assert.Equal([(true, 2), (true, 4)], song.Channels.Single(c => c.Name == "Acapella").AudioClips.Select(c => (c.Muted, c.Track)));
+        Assert.Equal([(false, 1), (false, 3)], song.Channels.Single(c => c.Name == "Vox").AudioClips.Select(c => (c.Muted, c.Track)));
+        Assert.Equal([0L], Readers.FlStudio.ExtractChannels(path).Single(c => c.Name == "Snare").Notes.Select(n => n.Start));
+
+        // The hat and the vox are switched off in the Channel Rack (the project's own event 0 before them isn't a channel's).
+        Assert.Equal([("Snare", true), ("Hat", false), ("Acapella", true), ("Vox", false)], song.Channels.Select(c => (c.Name, c.Enabled)));
+    }
+
+    [Fact]
+    public void LeavesOutAutomationClipsSwitchedOffInTheChannelRack()
+    {
+        Assert.Equal(["Snare - Channel volume", "Serum - Cutoff"],
+                     Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir())).Automation.Select(a => a.Name));
+        Assert.Equal(["Serum - Cutoff"],
+                     Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir(), volumeOff: true)).Automation.Select(a => a.Name));
     }
 
     [Fact]

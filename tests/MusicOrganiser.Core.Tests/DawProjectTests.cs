@@ -225,6 +225,27 @@ public class DawProjectTests
     }
 
     [Fact]
+    public void MutesSwitchedOffChannelsAndSwitchesOffClipsOnMutedPlaylistTracks()
+    {
+        var dir = Fixtures.TempDir();
+        var (file, notes, _) = Exporter.DawProjectFromFl(Fixtures.FlStudio25MutedTracks(dir), Path.Combine(dir, "out"));
+        Assert.Contains("Hat: switched off in FL Studio's Channel Rack, so its track is muted", notes);
+        Assert.Contains("Acapellas (playlist track 2): muted in FL Studio, so its clips are muted here too", notes);
+        // Audio clips aren't carried over to DAWproject, so nothing comes over from track 4 or the vox.
+        Assert.DoesNotContain(notes, n => n.StartsWith("Playlist track 4") || n.StartsWith("Vox: switched off"));
+        var (project, zip) = Open(file);
+        using (zip)
+        {
+            var tracks = project.Descendants("Track").Where(t => (string?)t.Attribute("contentType") == "notes").ToList();
+            Assert.Equal([("Snare", "false"), ("Hat", "true")],
+                         tracks.Select(t => ((string)t.Attribute("name")!, (string)t.Element("Channel")!.Element("Mute")!.Attribute("value")!)));
+            // Bar 2 is on the muted track, so it's switched off.
+            Assert.All(project.Descendants("Lanes").Where(l => l.Attribute("track") is not null), l =>
+                Assert.Equal(["true", "false"], l.Descendants("Clip").Select(c => (string?)c.Attribute("enable") ?? "true")));
+        }
+    }
+
+    [Fact]
     public void WritesADawProjectBitwigCanOpen()
     {
         var dir = Fixtures.TempDir();
