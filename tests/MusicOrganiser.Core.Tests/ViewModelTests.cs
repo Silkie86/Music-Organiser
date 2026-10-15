@@ -255,6 +255,39 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Projects_and_sounds_saved_while_the_app_is_open_are_taken_in_without_a_scan()
+    {
+        var quiet = (MainViewModel.ProjectWatchQuiet, SoundsViewModel.SampleWatchQuiet);
+        MainViewModel.ProjectWatchQuiet = SoundsViewModel.SampleWatchQuiet = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            var songs = Directory.CreateDirectory(Path.Combine(_root, "Songs")).FullName;
+            var lib = Directory.CreateDirectory(Path.Combine(_root, "Lib")).FullName;
+            _db.AddRoot(songs);
+            _db.SetList(Scanner.SampleFoldersKey, [lib]);
+            var main = Main();
+            await main.ScanAsync(false, plugins: false);
+            await Until(() => !main.Sounds.IsBusy);
+            Assert.Empty(main.Projects.Items);
+
+            // A song saved in a DAW, and a sound bounced into the sample folder (one in a hidden folder is left out).
+            Fixtures.FlStudioProject(songs, "Fresh Idea");
+            Synth.Write(Path.Combine(lib, "Bounce 01.wav"), Synth.Kick(1));
+            Directory.CreateDirectory(Path.Combine(lib, ".cache"));
+            Synth.Write(Path.Combine(lib, ".cache", "Temp.wav"), Synth.Kick(2));
+            await Until(() => main.Projects.Items.Any(i => i.Name == "Fresh Idea") && main.Sounds.Org.Sounds.Count == 1);
+            Assert.EndsWith("Bounce 01.wav", main.Sounds.Org.Sounds[0].Path);
+
+            // Deleted: the song stays listed, marked missing; the sound is forgotten.
+            File.Delete(Path.Combine(songs, "Fresh Idea.flp"));
+            File.Delete(Path.Combine(lib, "Bounce 01.wav"));
+            await Until(() => main.Projects.Items.Single().FileMissing && main.Sounds.Org.Sounds.Count == 0);
+            main.Shutdown();
+        }
+        finally { (MainViewModel.ProjectWatchQuiet, SoundsViewModel.SampleWatchQuiet) = quiet; }
+    }
+
+    [Fact]
     public void OpensOnThePagePickedInSettings()
     {
         _db.AddRoot(_root);

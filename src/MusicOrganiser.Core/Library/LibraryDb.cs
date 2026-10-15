@@ -391,6 +391,14 @@ public sealed partial class LibraryDb : IDisposable
         }
     }
 
+    /// <summary>A project file that has gone (deleted, or moved out of your folders): it stays listed, marked missing.</summary>
+    public bool MarkFileMissing(string path)
+    {
+        if (Exec("UPDATE projects SET file_missing = 1 WHERE path = $p AND file_missing = 0", ("$p", path)) == 0) return false;
+        ProjectsChanged();
+        return true;
+    }
+
     public void RemoveProject(long id)
     {
         if (Exec("DELETE FROM projects WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
@@ -473,6 +481,21 @@ public sealed partial class LibraryDb : IDisposable
             p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
         });
         if (gone.Count + added.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
+    }
+
+    /// <summary>The sample index brought up to date for files the sample folders' watcher saw change: there now, or gone.</summary>
+    public void UpdateSampleIndex(IEnumerable<string> paths)
+    {
+        var list = paths.Where(TextScan.IsAudioPath).ToList();
+        var gone = list.Where(f => !File.Exists(f)).ToList();
+        InBatches(gone, "DELETE FROM sample_index WHERE path = $p", ["$p"], (f, p) => p[0].Value = f);
+        InBatches(list.Except(gone), "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
+        {
+            p[0].Value = f;
+            p[1].Value = Path.GetFileName(f);
+            p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
+        });
+        if (list.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
     }
 
     /// <summary>Runs one statement for each item, a few thousand to a transaction, letting go of the database between them.</summary>

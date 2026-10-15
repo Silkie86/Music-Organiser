@@ -146,6 +146,37 @@ public sealed class Scanner(LibraryDb db)
         progress?.Report(new("Done", files.Count, files.Count, ""));
     }
 
+    /// <summary>
+    /// Brings the library up to date with project files the folder watcher saw change (<see cref="FolderWatch"/>): new
+    /// or changed ones are read, gone ones marked missing, and nothing else is looked at. Returns how many of each.
+    /// </summary>
+    public (int Read, int Gone) Update(IEnumerable<string> paths)
+    {
+        var roots = db.Roots();
+        var known = db.KnownFiles();
+        var read = new List<LibraryDb.IndexedFile>();
+        var gone = 0;
+        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!IsProjectFile(path) || IsIgnored(path, roots)) continue;
+            try
+            {
+                var fi = new FileInfo(path);
+                if (!fi.Exists)
+                {
+                    if (known.ContainsKey(path) && db.MarkFileMissing(path)) gone++;
+                    continue;
+                }
+                var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+                if (known.TryGetValue(path, out var k) && k.Mtime == mtime && k.Size == fi.Length) continue;   // already read
+                read.Add(Parallelism.Background(() => Analyse(path)));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // still being written, or locked: the next change or scan gets it
+        }
+        db.UpsertMany(read);
+        return (read.Count, gone);
+    }
+
     /// <summary>Refresh the list of plugins installed on this PC.</summary>
     public int ScanInstalledPlugins() => ScanInstalledPlugins(out _);
 

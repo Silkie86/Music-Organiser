@@ -76,7 +76,49 @@ public sealed partial class MainViewModel : ObservableObject
         // First run: send people to Settings to add their project folders.
         if (_db.Roots().Count == 0 && _db.GetList(Scanner.SampleFoldersKey).Count == 0) SelectedNav = Nav[^1];
         else _ = ScanAsync(false);
+        WatchProjectFolders();
         Live.Start();
+    }
+
+    FolderWatch? _projectWatch;
+
+    /// <summary>How long the project folders must be quiet before what changed is read (a DAW saves in several steps).</summary>
+    public static TimeSpan ProjectWatchQuiet { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// While the app is open, the project folders are watched: a project saved, added, moved or deleted is read (or
+    /// marked missing) a moment later, on its own, without walking every folder again. Called again when Settings
+    /// changes the folders.
+    /// </summary>
+    public void WatchProjectFolders()
+    {
+        _projectWatch?.Dispose();
+        _projectWatch = new FolderWatch(_db.Roots(), Scanner.IsProjectFile, c => _ = ProjectFilesChangedAsync(c), ProjectWatchQuiet);
+    }
+
+    async Task ProjectFilesChangedAsync(FolderWatch.Changes changes)
+    {
+        // Too much changed to name every file, or a scan is running that may already have passed them: walk the folders.
+        if (changes.Overflowed.Count > 0 || IsScanning)
+        {
+            await ScanAsync(false, plugins: false);
+            return;
+        }
+        try
+        {
+            var (read, gone) = await Task.Run(() => _scanner.Update(changes.Files));
+            if (read + gone == 0) return;
+            await RefreshAllAsync();
+            var name = Path.GetFileNameWithoutExtension(changes.Files.First());
+            Activities.Done(read + gone == 1 ? $"Updated {name}" : $"Updated {read + gone} projects",
+                            gone == 0 ? "Saved in their folders, so the app read them again"
+                                      : $"{(read > 0 ? $"{read} saved, " : "")}{gone} moved or deleted");
+            AppLog.Info("Watch", $"Project folders: {read} read, {gone} gone ({changes.Files.Count} changes seen)");
+        }
+        catch (Exception e)
+        {
+            AppLog.Info("Watch", $"Couldn't read changed projects: {e.Message}");
+        }
     }
 
     /// <summary>The page the app opens on: the one picked in Settings, or the last one used, or Projects.</summary>
@@ -191,6 +233,8 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public void Shutdown()
     {
+        _projectWatch?.Dispose();
+        Sounds.StopWatching();
         CancelScan();
         PluginScanner.StopAll();
     }

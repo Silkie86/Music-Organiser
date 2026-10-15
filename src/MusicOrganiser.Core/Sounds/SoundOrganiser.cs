@@ -204,6 +204,61 @@ public sealed class SoundOrganiser : IDisposable
     }
 
     /// <summary>
+    /// Brings the library up to date with sound files the folder watcher saw change (<see cref="MusicOrganiser.Core.Library.FolderWatch"/>):
+    /// new or changed ones are listened to, gone ones forgotten, and nothing else in the folders is looked at. Returns
+    /// how many changed.
+    /// </summary>
+    public int Update(IEnumerable<string> paths, IReadOnlyList<string> folders, IProgress<SoundProgress>? progress = null,
+                      CancellationToken ct = default)
+    {
+        static string Dir(string d) => System.IO.Path.EndsInDirectorySeparator(d) ? d : d + System.IO.Path.DirectorySeparatorChar;
+        var roots = folders.Select(Dir).ToList();
+        bool Listed(string path)
+        {
+            // As the scan finds them: under a sample folder, not in a hidden or __MACOSX folder, not a "._" shadow.
+            if (roots.FirstOrDefault(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase)) is not { } root) return false;
+            var parts = path[root.Length..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length > 0 && !parts[^1].StartsWith("._") && AudioFile.CanRead(path) &&
+                   !parts[..^1].Any(d => d.StartsWith('.') || d.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase));
+        }
+        var todo = new List<(string Path, long Size, long Mtime)>();
+        var gone = new List<string>();
+        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase).Where(Listed))
+        {
+            try
+            {
+                var fi = new FileInfo(path);
+                if (!fi.Exists) { gone.Add(path); continue; }
+                var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+                if (Library.KnownFile(path) is { } k && k.Mtime == mtime && k.Size == fi.Length) continue;
+                todo.Add((path, fi.Length, mtime));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // still being copied: the next change gets it
+        }
+        var results = new ConcurrentBag<SoundLibrary.Analysed>();
+        var done = 0;
+        Parallel.ForEach(todo, Parallelism.Options(ct), t =>
+        {
+            try
+            {
+                var analysis = Parallelism.Background(() => SoundAnalyzer.Analyse(t.Path));
+                results.Add(new(t.Path, t.Size, t.Mtime, analysis, null, null, SoundTypes.FromPath(t.Path)));
+            }
+            catch (Exception e)
+            {
+                results.Add(new(t.Path, t.Size, t.Mtime, null, $"{e.GetType().Name}: {e.Message}", null, SoundTypes.FromPath(t.Path)));
+            }
+            progress?.Report(new("Listening to new sounds", Interlocked.Increment(ref done), todo.Count));
+        });
+        Library.Save(results);
+        var removed = Library.Remove(gone);
+        if (results.Count + removed == 0) return 0;
+        Reload();
+        UpdateTypes(progress);
+        return results.Count + removed;
+    }
+
+    /// <summary>
     /// "Deep listening": runs CLAP over every sound that doesn't have an embedding yet.
     /// Slower (a fraction of a second per sound), resumable, and unlocks search by description.
     /// </summary>

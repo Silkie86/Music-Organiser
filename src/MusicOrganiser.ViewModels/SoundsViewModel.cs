@@ -155,8 +155,63 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     async Task StartAsync()
     {
         await ReloadAsync();
+        WatchSampleFolders();
         if (SampleFolders.Count > 0) await ScanAsync();
         else if (IsGalaxy) await MapGalaxyIfNeeded();
+    }
+
+    FolderWatch? _sampleWatch;
+    readonly HashSet<string> _changedSounds = new(StringComparer.OrdinalIgnoreCase);
+    bool _sampleFoldersOverflowed;
+
+    /// <summary>
+    /// How long the sample folders must be quiet before new sounds are listened to: a pack being unzipped or copied in
+    /// arrives as thousands of changes, and the sounds are taken in together once it's done.
+    /// </summary>
+    public static TimeSpan SampleWatchQuiet { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// While the app is open, the sample folders are watched: sounds added, changed or deleted there are taken in a
+    /// moment later, on their own, without walking 357,000 files again. Called again when Settings changes the folders.
+    /// </summary>
+    public void WatchSampleFolders()
+    {
+        _sampleWatch?.Dispose();
+        _sampleWatch = new FolderWatch(SampleFolders, AudioFile.CanRead, SampleFilesChanged, SampleWatchQuiet);
+    }
+
+    public void StopWatching() => _sampleWatch?.Dispose();
+
+    void SampleFilesChanged(FolderWatch.Changes changes)
+    {
+        _changedSounds.UnionWith(changes.Files);
+        _sampleFoldersOverflowed |= changes.Overflowed.Count > 0;
+        if (!IsBusy) _ = TakeInChangedSoundsAsync();   // otherwise once the job running now is done (see RunAsync)
+    }
+
+    /// <summary>Takes in what the sample folders' watcher saw change, or walks the folders when too much changed to name.</summary>
+    internal async Task TakeInChangedSoundsAsync()
+    {
+        if (_sampleFoldersOverflowed)
+        {
+            _sampleFoldersOverflowed = false;
+            _changedSounds.Clear();
+            await ScanAsync();
+            return;
+        }
+        if (_changedSounds.Count == 0) return;
+        var paths = _changedSounds.ToList();
+        _changedSounds.Clear();
+        var folders = SampleFolders;
+        var count = 0;
+        await RunAsync("Taking in new sounds", (p, ct) =>
+        {
+            count = Org.Update(paths, folders, p, ct);
+            if (_db.SampleIndexCount() > 0) _db.UpdateSampleIndex(paths);   // what Fix searches
+        },
+                       () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"{count:N0} new, changed or removed sounds"), always: false);
+        AppLog.Info("Watch", $"Sample folders: {count} sounds changed ({paths.Count} changes seen)");
+        if (count > 0) await MapGalaxyIfNeeded();
     }
 
     IReadOnlyList<string> SampleFolders => _db.GetList(Scanner.SampleFoldersKey);
@@ -894,6 +949,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             IsBusy = false;
             BusyPercent = 0;
             if (always || !ReferenceEquals(Items, Org.Sounds)) await ReloadAsync();
+            if (_changedSounds.Count > 0 || _sampleFoldersOverflowed) _ = TakeInChangedSoundsAsync();   // seen while this ran
         }
     }
 
