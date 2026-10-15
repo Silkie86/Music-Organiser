@@ -161,15 +161,38 @@ class RoutesTest {
         }
         assertEquals(List.of(), bitwig.calls, "nothing ran when the message and the press came back late");
 
-        // A message that comes back late while the link waits for a newer one: only the newer one runs.
-        app.send(save(2, "midi"));
-        bitwig.model.loopbackDelay = 5;
+        // A message that comes back late while the link waits for a newer one doesn't run the newer one: the link goes by the
+        // number in the message.
+        app.send(save(2, "midi"));   // back after LOOPBACK_WAIT + 500, once the link has given up on it
         bitwig.clock.advance(Link.LOOPBACK_WAIT + 50);
-        app.send(save(3, "midi"));
+        assertJson(list(obj("id", 2, "ok", true, "result", obj("project", "MO Live Test", "via", "midi", "ran", false))), app.take());
+        bitwig.model.loopbackDelay = 5000;
+        app.send(save(3, "midi"));   // still on its way when message 2 comes back
+        bitwig.clock.advance(600);
+        assertEquals(0, invoked("Save"), "message 2 came back while the link waited for message 3, and didn't run Save");
+        bitwig.clock.advance(Link.LOOPBACK_WAIT);
+        assertJson(list(obj("id", 3, "ok", true, "result", obj("project", "MO Live Test", "via", "midi", "ran", false))), app.take());
+        bitwig.clock.advance(10000);
+        assertEquals(0, invoked("Save"));
+
+        // Nor does the message the link sends itself as an app connects, to learn whether the loopback works.
+        app.send(save(4, "midi"));   // back after 5 s
+        bitwig.model.loopbackDelay = 5;
+        bitwig.midi.clear();
+        App other = bitwig.connect();
+        assertEquals("hello", other.take().get(0).get("event"));
+        bitwig.clock.advance(100);
+        assertEquals(1, bitwig.midi.stream().filter(m -> m.get(0).equals("sysex")).count(), "the connect sent a message of its own");
+        assertEquals(0, invoked("Save"), "the connect's message came back while the link waited for message 4, and didn't run Save");
+        bitwig.clock.advance(Link.LOOPBACK_WAIT);
+        assertJson(list(obj("id", 4, "ok", true, "result", obj("project", "MO Live Test", "via", "midi", "ran", false))), app.take());
+        bitwig.clock.advance(10000);
+        assertEquals(0, invoked("Save"));
+
+        // Its own message back in time, the link runs the command it waits for.
+        app.send(save(5, "midi"));
         bitwig.clock.advance(400);
-        assertJson(list(obj("id", 2, "ok", true, "result", obj("project", "MO Live Test", "via", "midi", "ran", false)),
-                        obj("id", 3, "ok", true, "result", obj("project", "MO Live Test", "via", "midi", "ran", true))),
-                   app.take());
+        assertJson(list(obj("id", 5, "ok", true, "result", obj("project", "MO Live Test", "via", "midi", "ran", true))), app.take());
         bitwig.clock.advance(10000);
         assertEquals(1, invoked("Save"));
 

@@ -43,8 +43,9 @@ link otherwise, while it carried them out for a controller's hardware button. To
 port called **Music Organiser Bitwig**, then in Bitwig, Settings → Controllers → Music Organiser, set both MIDI
 in and MIDI out to it. Bitwig can fill them in by itself when it finds the port (the extension offers it for
 auto-detection). Never use **Music Organiser**, the FL Studio link's port: FL Studio must never get what the
-Bitwig link sends itself. The rest of the link works without the loopback; the self-check and `hello`'s
-`loopback` say whether it works. See
+Bitwig link sends itself. The self-check and `hello`'s `loopback` say whether the loopback works. Whether
+Bitwig starts the extension at all with its MIDI in and out unassigned isn't known yet: it may not, which would
+stop the whole link, so set them after installing 3.7. See
 [Routes and the MIDI loopback](../README.md#routes-and-the-midi-loopback).
 
 ## Reports
@@ -177,7 +178,8 @@ the app connects.
   clip that was on the clipboard in the colour Bitwig rounded the mark to looks just the same), and a fresh
   colour for each arrange.
 - `RoutesTest`: the command routes: Save by every route, the MIDI each sends, a route that never comes back
-  (`ran: false`, and a late message or press doesn't run it), a Bitwig that honours commands only for hardware or
+  (`ran: false`, and a late message or press doesn't run it, nor does a stale message or the link's own ping that
+  comes back while a newer command waits), a Bitwig that honours commands only for hardware or
   only in SysEx, the callback each route runs in, an unknown route, `onlyIn` and changes checked again as a
   routed command runs, `hello`'s `loopback`, the self-check's detail, a Bitwig without MIDI ports, and `arrange`
   by the buttons, refused routes and no paste when the copy didn't run.

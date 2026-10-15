@@ -407,12 +407,17 @@ public class BitwigLiveTestsTests
         await using var java = new FakeJavaBitwig(RoutesHello()) { Answer = Answer };
         using var link = await BitwigLink.ConnectAsync(java.Port);
         var front = 0;
+        var saving = new List<DateTime>();
 
-        var verdict = await BitwigLiveTests.SaveByRoutesAsync(link, "Save", TimeSpan.FromMilliseconds(300), _ => null, () => { front++; return true; });
+        var verdict = await BitwigLiveTests.SaveByRoutesAsync(link, "Save", TimeSpan.FromMilliseconds(300), _ => null, () => { front++; return true; },
+                                                              saving: saving.Add);
 
         Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
         Assert.StartsWith("Bitwig saved “MO Live Test” when the link ran Save for a press of its own hardware button: its unsaved changes cleared ",
                           verdict.Detail);
+        // Told as each Save went out, the last being the one that worked, after the two routes that ran were waited for.
+        Assert.Equal(4, saving.Count);
+        Assert.True(saving[3] - saving[0] >= TimeSpan.FromMilliseconds(600), $"{saving[3] - saving[0]}");
         Assert.EndsWith(" after Save. The routes before it didn't work: Save run straight away (direct) and from Bitwig's flush (flush) left the " +
                         "unsaved changes; Save on the link's own MIDI message (midi) didn't run.", verdict.Detail);
         Assert.Equal(1, front);
@@ -503,6 +508,25 @@ public class BitwigLiveTestsTests
         Assert.Contains(", though its window was in front." + OnlyDirect + " Bitwig said the test project", verdict.Detail);
         Assert.DoesNotContain("loopMIDI", verdict.Detail);
         Assert.Equal("direct", (string?)verdict.Data!["attempts"]![0]!["via"]);
+    }
+
+    [Fact]
+    public void TimesTheSavedFileFromTheSaveThatWorked()
+    {
+        const string path = "/p/MO Live Test/MO Live Test.bwproject";
+        var first = new DateTime(2026, 10, 15, 12, 0, 0, DateTimeKind.Utc);
+        // Four routes were each waited for before the fifth saved: the file is timed from the Save that worked.
+        var worked = first.AddSeconds(61);
+        var found = BitwigLiveTests.FoundSaved(path, worked.AddMilliseconds(180), first, worked);
+        Assert.Equal((LiveOutcome.Passed, path + ", written 180 ms after Save ran."), (found.Outcome, found.Detail));
+        Assert.Equal(path, (string?)found.Data!["file"]);
+        // The first Save worked.
+        Assert.Equal(path + ", written 1.2 s after Save ran.", BitwigLiveTests.FoundSaved(path, first.AddMilliseconds(1200), first, first).Detail);
+        // A file system that keeps times to the nearest 2 seconds may put it a moment before.
+        Assert.Equal(path + ", written 0 ms after Save ran.", BitwigLiveTests.FoundSaved(path, worked.AddSeconds(-1.5), first, worked).Detail);
+        // Written well before the Save that worked went out: by an earlier route's Save, later than the run waited for it.
+        Assert.Equal(path + ", written 16.0 s after the run's first Save (the Save that worked went out 61.0 s after the first).",
+                     BitwigLiveTests.FoundSaved(path, first.AddSeconds(16), first, worked).Detail);
     }
 
     [Fact]
@@ -1167,6 +1191,130 @@ public class BitwigLiveTestsTests
         // Unless the run may no longer change the project: then the test stops there.
         await Assert.ThrowsAsync<DawLinkException>(() =>
             BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true, closed: () => Task.FromResult(true)));
+    }
+
+    /// <summary>
+    /// The extension 3.7's arrange answer by a route when a clip in the launcher clip's colour appeared on the track, but
+    /// Bitwig rounded the mark to one of its own colours, so the extension doesn't say it arranged the clip.
+    /// </summary>
+    static string RoundedAnswer(string? via)
+    {
+        var a = JsonNode.Parse(ArrangeAnswer(via, true, AllRan))!.AsObject();
+        a["arranged"] = false;
+        a["mark"] = JsonNode.Parse("""{"before":"#3366CC","asked":"#416DD9","got":"#4060D0","took":true,"exact":false}""");
+        a["pastedColor"] = "#4060D0";
+        return a.ToJsonString();
+    }
+
+    /// <summary>
+    /// What a route after one that pasted would answer: the clip that paste left selected on the track hides whether a new
+    /// one appeared.
+    /// </summary>
+    static string AfterAPaste(string? via)
+    {
+        var a = JsonNode.Parse(ArrangeAnswer(via, false, AllRan))!.AsObject();
+        a["beforePaste"] = JsonNode.Parse("""{"exists":true,"track":"Sample 143012"}""");
+        a["after"] = JsonNode.Parse("""{"exists":true,"track":"Sample 143012"}""");
+        a["pastedColor"] = "#4060D0";
+        return a.ToJsonString();
+    }
+
+    const string NotTried = " Bitwig's paste put something down by that route, so the link didn't try ";
+    const string LandsThere = ": another paste would land where this one did, and the clip this one left selected there would hide whether a new " +
+                              "one appeared.";
+
+    [Fact]
+    public async Task ClipToArrangerStopsAtTheFirstRouteWhosePastePutSomethingDown()
+    {
+        // Straight away, Bitwig pasted a clip in the launcher clip's colour, rounded to one of its own: the link can't be sure
+        // it's the run's clip, so the person is asked to look, and no other route is tried, as its paste would only go on top.
+        await using var java = new FakeJavaBitwig(ArrangingHello.Replace("\"3.6\"", "\"3.7\""), SevenEight);
+        java.Answer = request => (string)request["cmd"]! != "arrange" ? null
+            : (string?)request["via"] == "direct" ? RoundedAnswer("direct") : AfterAPaste((string?)request["via"]);
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+
+        var verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true);
+
+        Assert.Equal(["direct"], ArrangeRoutes(java));
+        Assert.Equal(LiveOutcome.Noted, verdict.Outcome);
+        Assert.StartsWith("A clip appeared in Bitwig's arranger on “Sample 143012” after the paste, in the colour the link gave the launcher clip in " +
+                          "slot 1, but Bitwig rounded that colour to one of its own", verdict.Detail);
+        Assert.EndsWith(" The link ran the copy, the paste and the focus actions straight away (direct)." + NotTried + "from Bitwig's flush (flush), " +
+                        "on the link's own MIDI message (midi), on a press of the link's own button, run by the link (buttonCode) and by the " +
+                        "link's own hardware button, run by Bitwig (button)" + LandsThere, verdict.Detail);
+        Assert.Equal(["- Straight away (direct): a clip appeared on the track, but the extension couldn't be sure it was the run's"], verdict.Lines);
+        Assert.Equal(("direct", true), ((string?)verdict.Data!["via"], (bool)verdict.Data["appeared"]!));
+        Assert.Single(verdict.Data["attempts"]!.AsArray());
+
+        // A later route the same: the routes before it are named, and the verdict is that route's, not a later one's.
+        java.Requests.Clear();
+        java.Answer = request => (string)request["cmd"]! != "arrange" ? null : (string?)request["via"] switch
+        {
+            "direct" or "flush" => ArrangeAnswer((string?)request["via"], false, AllRan),
+            "midi" => RoundedAnswer("midi"),
+            var via => AfterAPaste(via),
+        };
+        verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true);
+        Assert.Equal(["direct", "flush", "midi"], ArrangeRoutes(java));
+        Assert.Equal(LiveOutcome.Noted, verdict.Outcome);
+        Assert.EndsWith(" The link ran the copy, the paste and the focus actions on the link's own MIDI message (midi), after straight away (direct) " +
+                        "and from Bitwig's flush (flush) didn't put the clip there." + NotTried + "on a press of the link's own button, run by the " +
+                        "link (buttonCode) and by the link's own hardware button, run by Bitwig (button)" + LandsThere, verdict.Detail);
+        Assert.Equal(["- Straight away (direct): nothing appeared in the arranger",
+                      "- From Bitwig's flush (flush): nothing appeared in the arranger",
+                      "- On the link's own MIDI message (midi): a clip appeared on the track, but the extension couldn't be sure it was the run's"],
+                     verdict.Lines);
+        Assert.Equal("midi", (string?)verdict.Data!["via"]);
+
+        // Pasted into the clip launcher instead: Failed, saying so, and no other route tried.
+        java.Requests.Clear();
+        java.Answer = request =>
+        {
+            if ((string)request["cmd"]! != "arrange") return null;
+            var via = (string?)request["via"];
+            if (via != "flush") return ArrangeAnswer(via, false, AllRan);
+            var a = JsonNode.Parse(ArrangeAnswer(via, false, AllRan))!.AsObject();
+            a["launcherClipsAfter"] = 2;
+            return a.ToJsonString();
+        };
+        verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true);
+        Assert.Equal(["direct", "flush"], ArrangeRoutes(java));
+        Assert.Equal(LiveOutcome.Failed, verdict.Outcome);
+        Assert.StartsWith("Bitwig didn't put the clip into its arranger at bar 5 (beat 14) on “Sample 143012”: it pasted into the clip launcher " +
+                          "instead (“Sample 143012” has 2 clips there now, 1 before)", verdict.Detail);
+        Assert.Contains(" The link ran the copy, the paste and the focus actions from Bitwig's flush (flush), after straight away (direct) didn't " +
+                        "put the clip there." + NotTried + "on the link's own MIDI message (midi), ", verdict.Detail);
+        Assert.Equal("- From Bitwig's flush (flush): Bitwig pasted into the clip launcher instead", verdict.Lines[^1]);
+
+        // Pasted on another track: the same.
+        java.Requests.Clear();
+        java.Answer = request =>
+        {
+            if ((string)request["cmd"]! != "arrange") return null;
+            var a = JsonNode.Parse(ArrangeAnswer((string?)request["via"], false, AllRan))!.AsObject();
+            a["after"] = JsonNode.Parse("""{"exists":true,"track":"Bass"}""");
+            return a.ToJsonString();
+        };
+        verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true);
+        Assert.Equal(["direct"], ArrangeRoutes(java));
+        Assert.Contains("the clip selected in the arranger is on “Bass”, not “Sample 143012”", verdict.Detail);
+        Assert.Equal(["- Straight away (direct): the clip selected in the arranger is on “Bass” now, not the clip's track"], verdict.Lines);
+
+        // A paste that didn't run put nothing down, whatever the extension saw: the next route is tried.
+        java.Requests.Clear();
+        java.Answer = request =>
+        {
+            if ((string)request["cmd"]! != "arrange") return null;
+            var via = (string?)request["via"];
+            if (via == "buttonCode") return ArrangeAnswer(via, true, AllRan);
+            var a = JsonNode.Parse(ArrangeAnswer(via, false, """{"launcherFocus":true,"copy":true,"focus":true,"paste":false}"""))!.AsObject();
+            a["after"] = JsonNode.Parse("""{"exists":true,"track":"Bass"}""");
+            return a.ToJsonString();
+        };
+        verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true);
+        Assert.Equal(["direct", "flush", "midi", "buttonCode"], ArrangeRoutes(java));
+        Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
+        Assert.DoesNotContain(NotTried, verdict.Detail);
     }
 
     [Theory]

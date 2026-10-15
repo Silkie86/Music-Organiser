@@ -188,8 +188,12 @@ The last three need the loopback: in loopMIDI, add a port called **Music Organis
 Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it. Never set them to **Music
 Organiser**: that's the FL Studio link's port, and FL Studio must never get the notes and messages the Bitwig link
 sends itself. The extension asks Bitwig for one MIDI in and one MIDI out, only for the loopback, and offers the
-Music Organiser Bitwig port for both, so Bitwig can fill them in when it finds the port (auto-detection). The rest
-of the link works without them.
+Music Organiser Bitwig port for both, so Bitwig can fill them in when it finds the port (auto-detection).
+Nobody has checked yet whether Bitwig starts the extension with them unassigned
+([Still to confirm](#still-to-confirm-in-the-real-daws)): Bitwig stops a controller whose device goes away, so it
+may not start one whose ports aren't set, and then the whole link stops answering, not just the routes. Until
+that's known, set them after installing 3.7 (the app's *Bitwig isn't answering* message says so too). A Mac or
+Linux has no loopMIDI; a virtual MIDI port there (an IAC bus on a Mac) may do instead, which nobody has tried.
 
 A route other than `direct` has a second to come back (through Bitwig's flush, or the loopback). When it doesn't,
 the link drops it, so a message or press that turns up late never runs the command, and answers `ran: false`.
@@ -369,11 +373,13 @@ What runs, in this order:
   rounded that to one of its own (which other clips can have too), asking you to look and say which clip it is;
   else Failed, saying what Bitwig did instead, or the step it didn't go along with, and asking you to look at
   Bitwig's arranger and say what you see; from extension 3.7 it tries the copy, the paste and the focus actions
-  by each [route](#routes-and-the-midi-loopback) in turn, in Save's order (below), until one puts the clip there,
-  and a pass names that route, while a failure has a line for what each route did); Drum Machine pads;
-  selecting a device, setting a parameter and reading it back (then setting it back); the master recorder's
-  status (Java only; it's never started); and, after Send, Save, with Bitwig's window brought to the front
-  first (on Windows; the report says whether it got there, as `front`). Bitwig 6.1.3 ignored Save from the
+  by each [route](#routes-and-the-midi-loopback) in turn, in Save's order (below), until one puts the clip there
+  or its paste puts anything down (a clip on the track, whichever it is, one in the launcher, or one on another
+  track), since another paste would land in the same place, where the clip the last one left selected hides
+  whether a new one appeared; the verdict is that route's, naming it, with a line for what each route did);
+  Drum Machine pads; selecting a device, setting a parameter and reading it back (then setting it back); the
+  master recorder's status (Java only; it's never started); and, after Send, Save, with Bitwig's window brought
+  to the front first (on Windows; the report says whether it got there, as `front`). Bitwig 6.1.3 ignored Save from the
   link, so with extension 3.7 or later the run tries Save by each route in turn: `direct`, `flush`, `midi`,
   `buttonCode`, then `button`, each through the same checks as every change, until one clears the unsaved
   changes or writes the project's file within 15 seconds. A route that didn't run (nothing came back within a
@@ -484,7 +490,9 @@ Bitwig:
       extension's SysEx message comes back whole on its MIDI in (*Link › MIDI loopback*); a note-on on channel 16
       presses the extension's buttons; and Bitwig carries out Save, Copy, Paste and the focus actions run from
       its flush, on the SysEx message, or for a button press (which routes work, if any, decides how the app
-      saves and arranges).
+      saves and arranges). Check the first before 3.7 ships: if Bitwig doesn't start the extension with its
+      ports unassigned, the loopback needs a controller of its own in the same extension, so that the link
+      itself asks for no ports, as before 3.7.
 - [ ] Two connections at once (the app's look every 2 seconds, and a send or a check) work side by side.
 - [ ] A plugin's parameter names in Bitwig match FL Studio's for the same plugin (VST3 or CLAP in Bitwig,
       often VST2 in FL Studio), which is how knobs are copied.

@@ -183,8 +183,21 @@ public sealed class BitwigLink : IDisposable
     public const int LinkVersion = 2;
     public const string OldScript = "Bitwig has an older copy of the Music Organiser script. Install it again from Settings > DAW links " +
                                     "(Bitwig picks up the new one by itself), then try again.";
+    /// <summary>
+    /// The MIDI port the Java extension (3.7 and later) has its MIDI in and out set to, for its loopback (made in loopMIDI
+    /// on Windows). Never the FL Studio link's port (<see cref="FlSetup.PortName"/>), which has to stay clear of it: FL
+    /// Studio must never get what the Bitwig link sends itself, and the FL Studio link must never take this port for its own.
+    /// </summary>
+    public const string LoopbackPort = "Music Organiser Bitwig";
+    /// <remarks>
+    /// The extension 3.7 asks Bitwig for a MIDI in and out (its loopback). Whether Bitwig starts a controller with them
+    /// unassigned isn't known yet (extensions/README.md, "Still to confirm"), so this says to set them too.
+    /// </remarks>
     public const string NotRunning = "Bitwig isn't answering. Check that Bitwig Studio is open, with the Music Organiser " +
-                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link).";
+                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link). " +
+                                     "With the Music Organiser extension 3.7 or later, also set that controller's MIDI in and MIDI out " +
+                                     $"to the MIDI port “{LoopbackPort}” (make it in loopMIDI on Windows), never “Music Organiser”, " +
+                                     "FL Studio's: Bitwig may not start the extension while they're unassigned.";
     const int MaxMessage = 64 << 20;
 
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
