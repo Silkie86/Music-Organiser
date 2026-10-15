@@ -148,7 +148,7 @@ class SelfCheckTest {
         Map<String, Object> result = bitwig.link.selfCheck("test");
         assertEquals(false, result.get("ok"));
         assertEquals("Bitwig offers API 22; the link needs 23.", detail(result, "API version"));
-        assertEquals("Port 19791 is taken, so Bitwig gave the link port 50123, where the app doesn't look.", detail(result, "remote connection"));
+        assertEquals("Port 19791 is taken, so Bitwig gave the link port 50123, where the app doesn't look. " + Link.TWICE, detail(result, "remote connection"));
         assertEquals(List.of("API version", "remote connection"),
                      listAt(result, "checks").stream().filter(c -> !(Boolean) at(c, "ok")).map(c -> at(c, "name")).collect(Collectors.toList()));
     }

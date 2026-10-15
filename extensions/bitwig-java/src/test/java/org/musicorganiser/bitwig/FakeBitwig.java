@@ -179,7 +179,18 @@ final class FakeBitwig {
         signature = new Value(TimeSignatureValue.class, model.timeSignature);
         builtIn.put(SAMPLER, device("Sampler").id(SAMPLER).kind("note_to_audio").param("TRANSPOSE", 0));
         builtIn.put(NOTE_TRANSPOSE, device("Note Transpose").id(NOTE_TRANSPOSE).kind("note_to_note").param("COARSE", 0));
-        if (model.drumMachine != null) builtIn.put(model.drumMachine, device("Drum Machine").id(model.drumMachine).kind("note_to_audio").drum());
+        if (model.drumMachine != null) {
+            DeviceSpec machine = device("Drum Machine").id(model.drumMachine).kind("note_to_audio").drum();
+            if (model.drumPads != null) {
+                machine.pads = new LinkedHashMap<>();
+                for (int note = 0; note < 128; note++) {
+                    PadSpec pad = new PadSpec(model.drumPads.get(0).name);
+                    for (DeviceSpec d : model.drumPads) pad.devices.add(d.copy());
+                    machine.pads.put(note, pad);
+                }
+            }
+            builtIn.put(model.drumMachine, machine);
+        }
         for (ActionSpec a : model.actions) actions.add(action(a));
 
         cursorDevice = new CursorDevice();
@@ -396,10 +407,8 @@ final class FakeBitwig {
                 PadSpec p = from != null && from.pads != null ? from.pads.get(padScroll + i) : null;
                 pad.present.v = p != null;
                 pad.title.v = p != null ? p.name : "";
-                if (p != null || !model.stalePadChains) {
-                    pad.chain.count.v = p != null ? p.devices.size() : 0;
-                    ((FakeDevice) pad.chain.items.get(0)).load(p != null && !p.devices.isEmpty() ? p.devices.get(0) : null);
-                }
+                pad.chain.count.v = p != null ? p.devices.size() : 0;
+                ((FakeDevice) pad.chain.items.get(0)).load(p != null && !p.devices.isEmpty() ? p.devices.get(0) : null);
             }
         }
         lastClicked.parameter.show(clicked);
@@ -529,10 +538,10 @@ final class FakeBitwig {
         /** Whether a new track opens Bitwig's browser. */
         boolean browserOnNewTrack;
         /**
-         * Whether a pad with nothing on it keeps showing the devices it last showed, as Bitwig 6.1.3 may (a live run
-         * found a new Drum Machine's pads counted as taken).
+         * The devices on every pad of a new Drum Machine, as a saved default Drum Machine can have (Solomon's has an
+         * empty Sampler on each), or null for none.
          */
-        boolean stalePadChains;
+        List<DeviceSpec> drumPads;
         /** The port Bitwig gives the link when 19791 is taken, or 0 when it isn't. */
         int portInUse;
         /** How many times Bitwig says -1 when asked which port it gave (Bitwig 6.1.3 does, straight after making the connection). */
@@ -1100,6 +1109,7 @@ final class FakeBitwig {
         final Value isPlugin = new Value(BooleanValue.class, false);
         final Value deviceType = new Value(EnumValue.class, "");
         final Value isEnabled = new Value(SettableBooleanValue.class, true);
+        final Value sampleName = new Value(StringValue.class, "");
 
         FakeDevice() {
             this(Device.class);
@@ -1117,6 +1127,7 @@ final class FakeBitwig {
             isPlugin.v = spec != null && spec.plugin;
             deviceType.v = spec == null ? "" : spec.kind == null ? "audio_to_audio" : spec.kind;
             isEnabled.v = spec == null || spec.enabled;
+            sampleName.v = spec != null && spec.sample != null ? spec.sample.substring(spec.sample.replace('\\', '/').lastIndexOf('/') + 1) : "";
             for (SpecificParam p : specifics) {
                 boolean mine = spec != null && p.id.equals(spec.id);
                 p.present.v = mine;
@@ -1147,6 +1158,10 @@ final class FakeBitwig {
 
         Value isEnabled() {
             return isEnabled;
+        }
+
+        Value sampleName() {
+            return sampleName;
         }
 
         Stand createSpecificBitwigDevice(UUID id) {
@@ -1334,12 +1349,13 @@ final class FakeBitwig {
         final int index;
         final Value present = new Value(BooleanValue.class, false);
         final Value title;
-        final Bank chain = new Bank(DeviceBank.class, List.of(new FakeDevice()));
+        final Bank chain;
         final Point point;
 
         Pad(int index) {
             super(DrumPad.class);
             this.index = index;
+            chain = new Bank(DeviceBank.class, List.of(new PadDevice(index)));
             title = new Value(SettableStringValue.class, "", name -> later(20, () -> {
                 PadSpec pad = padAt(index);
                 if (pad != null) pad.name = (String) name;
@@ -1373,6 +1389,29 @@ final class FakeBitwig {
 
         Point insertionPoint() {
             return point;
+        }
+    }
+
+    /** A pad's first device. A sample put in its place takes the place of the pad's first device as a Sampler. */
+    final class PadDevice extends FakeDevice {
+        final Point replace;
+
+        PadDevice(int index) {
+            replace = new Point("pad " + index + " first device", (method, arg) -> {
+                DeviceSpec device = padDevice();
+                if (!method.equals("insertFile") || !AUDIO.matcher((String) arg).find() || device == null) return;
+                later(40, () -> {
+                    PadSpec pad = device.pads == null ? null : device.pads.get(padScroll + index);
+                    if (pad == null || pad.devices.isEmpty()) return;
+                    DeviceSpec sampler = builtIn.get(SAMPLER).copy();
+                    sampler.sample = (String) arg;
+                    pad.devices.set(0, sampler);
+                });
+            });
+        }
+
+        Point replaceDeviceInsertionPoint() {
+            return replace;
         }
     }
 

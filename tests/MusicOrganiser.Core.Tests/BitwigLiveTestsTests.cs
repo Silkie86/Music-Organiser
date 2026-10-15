@@ -132,6 +132,8 @@ public class BitwigLiveTestsTests
         Assert.Equal(run.Passed, (int)json["counts"]!["passed"]!);
         var roundTrip = json["tests"]!.AsArray().Single(t => (string)t!["name"]! == "Round trip")!;
         Assert.Equal(20, roundTrip["data"]!["ms"]!.AsArray().Count);
+        var actions = json["tests"]!.AsArray().Single(t => (string)t!["name"]! == "Actions")!["data"]!["actions"]!.AsArray();
+        Assert.Contains(actions, a => (string)a!["id"]! == "Save" && (string)a["category"]! == "File");
         var md = File.ReadAllText(run.ReportMarkdown!);
         Assert.Contains($"**{run.Summary}**", md);
         Assert.DoesNotContain("## Failed", md);

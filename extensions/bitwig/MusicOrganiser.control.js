@@ -64,9 +64,10 @@ var trackSlots = [];
 /** @type {API.DirectParameterValueDisplayObserver} */ var displayObserver;
 /** The selected device's drum pads, when it's a Drum Machine. @type {API.DrumPadBank} */ var drumPads;
 /** @type {API.DrumPad[]} */ var padItems = [];
-/** Each pad's devices, and the first of them. @type {API.DeviceBank[]} */ var padDevices = [];
+/** Each pad's devices, the first of them, and where to put a sample in place of that one. @type {API.DeviceBank[]} */ var padDevices = [];
 /** @type {API.Device[]} */ var padFirst = [];
 /** @type {API.InsertionPoint[]} */ var padInserts = [];
+/** @type {API.InsertionPoint[]} */ var padReplace = [];
 /** @type {API.PopupBrowser} */ var popupBrowser;
 /** @type {API.SettableBooleanValue} */ var changesSetting;
 /** @type {API.RemoteSocket} */ var socket;
@@ -149,10 +150,12 @@ function init() {
         var first = chain.getItemAt(0);
         first.exists().markInterested();
         first.name().markInterested();
+        first.sampleName().markInterested();
         padItems.push(pad);
         padDevices.push(chain);
         padFirst.push(first);
         padInserts.push(pad.insertionPoint());
+        padReplace.push(first.replaceDeviceInsertionPoint());
     }
 
     tracks = host.createTrackBank(MAX_TRACKS, 0, SCENES, true);
@@ -239,7 +242,8 @@ function warnIfPortTaken() {
     if (port <= 0 || port === PORT || portWarned) return;
     portWarned = true;
     host.showPopupNotification("Music Organiser: port " + PORT + " is taken, so the app can't connect. " +
-                               "Close what's using it and restart Bitwig.");
+                               "If Music Organiser is listed twice in Bitwig's Settings > Controllers, remove one; " +
+                               "otherwise close what's using the port. Then restart Bitwig.");
 }
 
 function flush() {}
@@ -825,9 +829,11 @@ function emptySlot(slots) {
 }
 
 /**
- * Puts samples on a Drum Machine's empty pads (as if each were dropped on its pad, so each gets a
- * Sampler), leaving pads that have something on them alone. The Drum Machine is `device` on `track`
- * (which this selects), or the selected device.
+ * Puts samples on a Drum Machine's free pads (as if each were dropped on its pad, so each gets a
+ * Sampler), leaving pads that have something on them alone. A pad that holds only what a Drum Machine
+ * preset put there, a Sampler with no sample, is free too: the sample goes in that Sampler's place,
+ * keeping what comes after it. The Drum Machine is `device` on `track` (which this selects), or the
+ * selected device.
  * @param {{ track?: any, device?: any, pads: any }} request
  * @param {Finish} finish
  */
@@ -871,49 +877,61 @@ function fillPads(request, finish) {
 }
 
 /**
- * Drops each sample on its pad when the pad is empty, then waits for the pads to fill and names them.
- * The answer says what's on each pad it leaves alone.
+ * Drops each sample on its free pad, or in place of the pad's empty Sampler, then waits for the pads
+ * to take them and names them. The answer says which samples went in place of an empty Sampler, and
+ * what's on each pad it leaves alone.
  * @param {{ note: number, path: string, name?: string }[]} list
  * @param {Finish} finish
  */
 function fill(list, finish) {
     var filled = [];
+    var replaced = {};   // note -> the pad's name before
     var skipped = [];
     var taken = [];
     for (var i = 0; i < list.length; i++) {
         var note = list[i].note;
-        if (padTaken(note)) {
+        if (!padTaken(note)) {
+            padInserts[note].insertFile(list[i].path);
+        } else if (emptySampler(note)) {
+            replaced[String(note)] = str(padItems[note].name().get());
+            padReplace[note].insertFile(list[i].path);
+        } else {
             skipped.push(note);
             taken.push(padContents(note));
-        } else {
-            padInserts[note].insertFile(list[i].path);
-            filled.push(list[i]);
+            continue;
         }
+        filled.push(list[i]);
+    }
+    /** @param {{ note: number }} pad */
+    function took(pad) {
+        var before = replaced[String(pad.note)];
+        return before === undefined ? padTaken(pad.note)
+            : str(padFirst[pad.note].sampleName().get()) !== "" || str(padItems[pad.note].name().get()) !== before;
     }
     waitFor(function () {
         for (var i = 0; i < filled.length; i++)
-            if (!padTaken(filled[i].note)) return false;
+            if (!took(filled[i])) return false;
         return true;
     }, CHANGE_WAIT, function () {
         var done = [];
+        var swapped = [];
         var failed = [];
         for (var i = 0; i < filled.length; i++) {
             var pad = filled[i];
-            if (!padTaken(pad.note)) {
+            if (!took(pad)) {
                 failed.push(pad.note);
                 continue;
             }
             if (pad.name) padItems[pad.note].name().set(pad.name);
             done.push(pad.note);
+            if (has(replaced, String(pad.note))) swapped.push(pad.note);
         }
-        finish({ filled: done, skipped: skipped, failed: failed, taken: taken });
+        finish({ filled: done, replaced: swapped, skipped: skipped, failed: failed, taken: taken });
     }, finish);
 }
 
 /**
- * Whether a pad has something on it. Bitwig says so three ways, and all three must agree: a live run on
- * Bitwig 6.1.3 found a new Drum Machine's pads counted as taken, perhaps from devices a pad showed before
- * (a pad with nothing on it may not tell the script its devices went).
+ * Whether a pad has a device on it: the pad, its device count and its first device all show it.
  * @param {number} note
  */
 function padTaken(note) {
@@ -921,12 +939,25 @@ function padTaken(note) {
 }
 
 /**
- * What's on a pad: its name, how many devices, and the first one's name, as Bitwig shows them.
+ * Whether a pad holds a Sampler with no sample, as a Drum Machine preset can put on every pad
+ * (Solomon's default Drum Machine does), and still has the name it came with, not a sample's: such a
+ * pad is free.
+ * @param {number} note
+ */
+function emptySampler(note) {
+    var first = str(padFirst[note].name().get());
+    var name = str(padItems[note].name().get());
+    return padTaken(note) && first === "Sampler" && str(padFirst[note].sampleName().get()) === "" &&
+           (name === "" || name === first);
+}
+
+/**
+ * What's on a pad: its name, how many devices, the first one's name and its sample, as Bitwig shows them.
  * @param {number} note
  */
 function padContents(note) {
     return { note: note, name: str(padItems[note].name().get()), devices: Number(padDevices[note].itemCount().get()),
-             first: str(padFirst[note].name().get()) };
+             first: str(padFirst[note].name().get()), sample: str(padFirst[note].sampleName().get()) };
 }
 
 /**
@@ -985,10 +1016,16 @@ function trackList() {
     return list;
 }
 
-/** Which pads have something on them (how many devices), and where the pad list starts, to tell when it's caught up. */
+/**
+ * Where the pad list starts, and what's on each pad (how many devices, less than 0 when the first is an
+ * empty Sampler), to tell when it's caught up.
+ */
 function padList() {
     var list = [Number(drumPads.scrollPosition().get())];
-    for (var p = 0; p < DRUM_PADS; p++) list.push(padTaken(p) ? Number(padDevices[p].itemCount().get()) : 0);
+    for (var p = 0; p < DRUM_PADS; p++) {
+        var count = Number(padDevices[p].itemCount().get());
+        list.push(!padTaken(p) ? 0 : emptySampler(p) ? -count : count);
+    }
     return list;
 }
 

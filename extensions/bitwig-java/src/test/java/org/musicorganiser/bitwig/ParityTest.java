@@ -441,6 +441,22 @@ class ParityTest {
         runs.add(new Run("Bitwig doesn't say which port", unsaid, List.of(
             advance(2000), send(obj("id", 1, "cmd", "hello")))));
 
+        // Solomon's default Drum Machine has an empty Sampler on every pad.
+        Map<String, Object> preset = studio();
+        preset.put("drumPads", list(obj("name", "Sampler", "id", Link.SAMPLER, "kind", "note_to_audio"), obj("name", "Compressor")));
+        List<Map<String, Object>> kit = new ArrayList<>(List.of(allowChanges()));
+        for (Map<String, Object> request : List.of(
+                obj("id", 1, "cmd", "insert", "track", 0, "at", "start", "kind", "bitwig", "device", DRUM_MACHINE),
+                obj("id", 2, "cmd", "pads", "track", 0, "device", 0, "pads", list(
+                    obj("note", 36, "path", "C:\\Kit\\Kick.wav", "name", "Kick"), obj("note", 38, "path", "C:\\Kit\\notes.txt"))),
+                obj("id", 3, "cmd", "pads", "track", 0, "device", 0, "pads", list(
+                    obj("note", 36, "path", "C:\\Kit\\Kick 2.wav"), obj("note", 37, "path", "C:\\Kit\\Rim.wav"))),
+                obj("id", 4, "cmd", "project"))) {
+            kit.add(send(request));
+            kit.add(advance(10000));
+        }
+        runs.add(new Run("a default Drum Machine with an empty Sampler on each pad", preset, kit));
+
         Map<String, Object> elsewhere = song();
         elsewhere.put("portInUse", 50123);
         elsewhere.put("modified", true);
@@ -479,6 +495,7 @@ class ParityTest {
         m.browserOnNewTrack = Boolean.TRUE.equals(js.get("browserOnNewTrack"));
         if (js.containsKey("portInUse")) m.portInUse = (int) number(js.get("portInUse"));
         if (js.containsKey("portUnknown")) m.portUnknown = (int) number(js.get("portUnknown"));
+        if (js.containsKey("drumPads")) m.drumPads = items(js.get("drumPads")).stream().map(d -> device(map(d))).collect(Collectors.toList());
         return m;
     }
 
