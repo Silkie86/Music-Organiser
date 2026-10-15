@@ -14,15 +14,33 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
     string? _want;
     bool _stop, _running;
 
-    public void Play(string path) => Ask(path, stop: false);
+    public void Play(string path)
+    {
+        Latest = path;
+        Ask(path, stop: false);
+    }
+
+    /// <summary>The last preview asked for (null after a stop).</summary>
+    public string? Latest { get; private set; }
+
+    /// <summary>A preview is still being opened.</summary>
+    public bool Busy
+    {
+        get { lock (_gate) return _running; }
+    }
 
     /// <summary>Stops the preview, once any that's still opening has started.</summary>
-    public void Stop() => Ask(null, stop: true);
+    public void Stop()
+    {
+        Latest = null;
+        Ask(null, stop: true);
+    }
 
     /// <summary>Forgets a preview that hasn't started yet (something is being played on purpose instead).</summary>
     public void Cancel()
     {
         lock (_gate) { _want = null; _stop = false; }
+        Latest = null;
     }
 
     void Ask(string? path, bool stop)

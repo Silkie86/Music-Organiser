@@ -121,7 +121,7 @@ public class BitwigProjectTests
     }
 
     [Fact]
-    public void SerumCanBeSwappedForTheTemplatesSerum2WithItsSoundHandedOver()
+    public void SerumCanBeSwappedForTheTemplatesSerum2AtItsDefaultSound()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
         var serum1 = song.Channels[1].Instrument!;
@@ -134,25 +134,17 @@ public class BitwigProjectTests
         var serum2 = Def(Chain(track).Last());
         Assert.Equal(("Serum 2", "56534558667350736572756D20320000"), (serum2.Str(0x9a), serum2[0xce4]));
 
-        // Serum's chunk (from FL's .fxp) as Serum 2's component state, in a .vstpreset carrying Serum 2's id.
-        using (var zip = doc.OpenZip()!)
-        {
-            var entry = zip.Entries.Single(e => e.FullName == $"plugin-states/{serum2.Str(0xbe5)}");
-            Assert.EndsWith(".vstpreset", entry.FullName);
-            using var ms = new MemoryStream();
-            entry.Open().CopyTo(ms);
-            var preset = ms.ToArray();
-            Assert.Equal("VST3", System.Text.Encoding.ASCII.GetString(preset, 0, 4));
-            Assert.Equal("56534558667350736572756D20320000", System.Text.Encoding.ASCII.GetString(preset, 8, 32));
-            Assert.Equal(Fxp.Chunk(serum1.State!.Data), preset[48..(48 + Fxp.Chunk(serum1.State.Data)!.Length)]);
-        }
+        // No state handed to it: Serum 2 refuses Serum's sound as its own and then doesn't load at all.
+        Assert.Equal("", serum2.Str(0xbe5));
+        Assert.DoesNotContain(result.Notes, n => n.Contains("opens at its defaults"));
 
         // Serum 1's settings are numbered differently from Serum 2's, so its automation is left out and says why.
         Assert.Empty(track.Obj(0x2dc9)!.List(0x4ba));
         Assert.Contains(result.Notes, n => n.StartsWith("Serum - Cutoff: automation left out") && n.Contains("newer version"));
-        Assert.Contains(result.Notes, n => n.StartsWith("Serum: Serum swapped for Serum 2"));
+        Assert.Contains(result.Notes, n => n.StartsWith("Serum: Serum swapped for Serum 2, which opens with its default sound") &&
+                                           n.Contains("\"Serum (Serum)\""));
         var (channel, sound) = Assert.Single(result.Upgraded!);
-        Assert.Equal(("Serum", serum1.State.Data), (channel, sound.Data));
+        Assert.Equal(("Serum", serum1.State!.Data), (channel, sound.Data));
     }
 
     [Fact]

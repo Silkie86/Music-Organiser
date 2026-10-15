@@ -43,6 +43,12 @@ public sealed record BitwigLiveOptions
     /// <summary>Bitwig's user folders, whose Projects folder is searched for the saved test project.</summary>
     public Func<IReadOnlyList<string>> BitwigUserFolders { get; init; } = () => DawScripts.BitwigUserFolders();
 
+    /// <summary>
+    /// Brings Bitwig's window to the front before the run saves (Bitwig may ignore Save otherwise), returning whether it's
+    /// in front, or null when that can't be told. Does nothing unless given, so tests never touch a real window.
+    /// </summary>
+    public Func<bool?> BringBitwigToFront { get; init; } = () => null;
+
     /// <summary>The Bitwig projects in the library: searched for the saved test project, and for the Drum Machine's ID.</summary>
     public Func<IEnumerable<string>> LibraryProjects { get; init; } = () => [];
 
@@ -79,6 +85,18 @@ public sealed record BitwigLiveOptions
 /// </summary>
 public static class BitwigLiveTests
 {
+    /// <summary>
+    /// Where Bitwig may save a project: Projects in each of its user folders, and each Projects folder the library's Bitwig
+    /// projects are in. Bitwig's projects can be kept apart from the rest of its user folder (Settings > Locations): seen,
+    /// with its extensions in Documents\Bitwig Studio and its projects on another drive.
+    /// </summary>
+    public static IEnumerable<string> ProjectFolders(IEnumerable<string> userFolders, IEnumerable<string> library) =>
+        userFolders.Select(f => Path.Combine(f, "Projects"))
+            // Bitwig keeps each project in a folder of its own name: Projects\<name>\<name>.bwproject.
+            .Concat(library.Select(p => Path.GetDirectoryName(Path.GetDirectoryName(p))).OfType<string>()
+                           .Where(d => Path.GetFileName(d).Equals("Projects", StringComparison.OrdinalIgnoreCase)))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists);
+
     public const string Daw = "Bitwig Studio";
     /// <summary>The DAW in the report files' names.</summary>
     public const string Key = "bitwig";
@@ -115,6 +133,47 @@ public static class BitwigLiveTests
     public static Task<LiveRun> RunAsync(BitwigLiveOptions? options = null, IProgress<LiveProgress>? progress = null,
                                          CancellationToken ct = default) =>
         new Suite(options ?? new(), progress, ct).RunAsync();
+
+    /// <summary>
+    /// What Save did: Passed when Bitwig's unsaved changes cleared, or when it wrote the project's file (if the app found
+    /// it) even though they didn't; else Failed. The file says more than the flag: on Bitwig 6.1.3 a run saw the flag stay
+    /// on after Save, with no Save As window, and couldn't tell whether the project was saved.
+    /// </summary>
+    /// <param name="file">The project's file as the app found it before Save (or after, for a first save), or null.</param>
+    /// <param name="before">When <paramref name="file"/> was written before Save (null if it wasn't there), and after the wait.</param>
+    /// <param name="front">Whether Bitwig's window was in front when Save ran, or null when that couldn't be told.</param>
+    public static LiveVerdict SaveVerdict(string project, string action, bool wasModified, bool stillModified, TimeSpan took, TimeSpan wait,
+                                          string? file, DateTime? before, DateTime? after, bool? front = null)
+    {
+        var written = file is not null && after is { } a && a != before;
+        var data = new JsonObject
+        {
+            ["action"] = action, ["modifiedBefore"] = wasModified, ["modifiedAfter"] = stillModified, ["file"] = file,
+            ["writtenBefore"] = Utc(before), ["writtenAfter"] = Utc(after), ["front"] = front,
+        };
+        var wrote = file is null ? "" : written ? $", and wrote {file}" : $", though {file} wasn't written again";
+        if (!stillModified)
+            return LiveVerdict.Pass(wasModified
+                ? $"Bitwig saved “{project}”: its unsaved changes cleared {Ms(took.TotalMilliseconds)} after Save{wrote}."
+                : $"Bitwig ran Save. “{project}” had no unsaved changes before, so this only shows they stayed clear{wrote}.", data);
+        if (written)
+            return LiveVerdict.Pass($"Bitwig wrote {file} after Save, but still showed unsaved changes {wait.TotalSeconds:0} s later: something " +
+                                    $"changed “{project}” again straight away, or Bitwig didn't clear them.", data);
+        return LiveVerdict.Fail($"Bitwig still showed unsaved changes {wait.TotalSeconds:0} s after Save (“{action}”)" +
+                                (file is null ? ", and the app didn't find the project's file to see whether it was written" : $", and didn't write {file}") +
+                                (front switch
+                                {
+                                    true => ", though its window was in front",
+                                    false => ". The app couldn't bring Bitwig's window to the front, which Save may need: click on Bitwig while the run saves",
+                                    null => "",
+                                }) +
+                                $". If Bitwig opened a Save As window, the project hasn't been saved yet: save it as “{TestProject}”, then run again.", data);
+
+        static string? Utc(DateTime? t) => t?.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+    }
+
+    static string Ms(double ms) => ms >= 1000 ? (ms / 1000).ToString("0.0", CultureInfo.InvariantCulture) + " s"
+        : ms.ToString(ms < 10 ? "0.#" : "0", CultureInfo.InvariantCulture) + " ms";
 
     /// <summary>
     /// Compares what the app read from the saved project with what Bitwig shows (<see cref="BitwigCheck"/>): Failed with
@@ -361,6 +420,11 @@ public static class BitwigLiveTests
                     ["count"] = actions.Count,
                     ["save"] = save is null ? null : new JsonObject { ["id"] = save.Id, ["name"] = save.Name, ["category"] = save.Category, ["menu"] = save.Menu },
                     ["categories"] = Strings(actions.Select(a => a.Category).Where(c => c.Length > 0).Distinct().Order(StringComparer.Ordinal)),
+                    // Every action, to look up what Bitwig can do that the API can't (such as putting a clip in the arranger).
+                    ["actions"] = new JsonArray(actions.Select(a => (JsonNode)new JsonObject
+                    {
+                        ["id"] = a.Id, ["name"] = a.Name, ["category"] = a.Category, ["menu"] = a.Menu,
+                    }).ToArray()),
                 };
                 if (save is null)
                     return LiveVerdict.Fail($"Bitwig listed {actions.Count:N0} actions, but none called Save, which the app runs to save a project.", data);
@@ -529,12 +593,26 @@ public static class BitwigLiveTests
                     ["filled"] = new JsonArray(filled.Filled.Select(n => (JsonNode)n).ToArray()),
                     ["skipped"] = new JsonArray(filled.Skipped.Select(n => (JsonNode)n).ToArray()),
                     ["failed"] = new JsonArray(filled.Failed.Select(n => (JsonNode)n).ToArray()),
+                    ["replaced"] = filled.Replaced is { } replaced ? new JsonArray(replaced.Select(n => (JsonNode)n).ToArray()) : null,
+                    ["taken"] = filled.Taken is { } taken
+                        ? new JsonArray(taken.Select(p => (JsonNode)new JsonObject
+                        {
+                            ["note"] = p.Note, ["name"] = p.Name, ["devices"] = p.Devices, ["first"] = p.First, ["sample"] = p.Sample,
+                        }).ToArray())
+                        : null,
                 };
                 string On(IEnumerable<int> notes) => string.Join(", ", pads.Where(p => notes.Contains(p.Note)).Select(p => $"{p.Name} on {DawProject.NoteName(p.Note)}"));
-                if (filled.Filled.Count == pads.Count) return LiveVerdict.Pass($"Bitwig put each sample on its pad: {On(filled.Filled)}.", data);
+                if (filled.Filled.Count == pads.Count)
+                    return LiveVerdict.Pass($"Bitwig put each sample on its pad: {On(filled.Filled)}" +
+                                            (filled.Replaced is { Count: > 0 } r ? $", {(r.Count == pads.Count ? "each" : On(r))} in place of an empty Sampler." : "."), data);
                 var missed = new List<string>();
                 if (filled.Failed.Count > 0) missed.Add($"it didn't load {On(filled.Failed)}");
-                if (filled.Skipped.Count > 0) missed.Add($"it said {On(filled.Skipped)} already had something on them");
+                if (filled.Skipped.Count > 0)
+                    missed.Add($"it said {On(filled.Skipped)} already had something on them" + (filled.Taken is { Count: > 0 } shown
+                        ? " (" + string.Join("; ", shown.Select(p => $"{DawProject.NoteName(p.Note)} showed “{p.Name}” with {p.Devices} " +
+                                                                     $"device{(p.Devices == 1 ? "" : "s")}, the first “{p.First}”" +
+                                                                     (p.Sample.Length > 0 ? $" playing {p.Sample}" : ""))) + ")"
+                        : ""));
                 return LiveVerdict.Fail($"Not every sample went on its pad: {string.Join("; ", missed)}.", data);
             });
 
@@ -740,21 +818,25 @@ public static class BitwigLiveTests
                 if (_save is null) return LiveVerdict.Fail("Bitwig listed no Save action (see Link › Actions), so the run couldn't save.");
                 var project = link.Hello.Project;
                 var wasModified = link.Hello.Modified;
+                // The project's file, if the app can find it: whether Save wrote it says more than Bitwig's unsaved changes.
+                var file = FindSaved(project, DateTime.MinValue, options.LibraryProjects(), SavedFolders());
+                DateTime? Written() => file is not null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : null;
+                var before = Written();
+                var front = options.BringBitwigToFront();
                 _savedAt = DateTime.UtcNow;
                 var took = Stopwatch.StartNew();
                 await link.RunActionAsync(_save, t);
-                while ((await link.HelloAsync(t)).Modified)
+                bool modified;
+                while ((modified = (await link.HelloAsync(t)).Modified) && took.Elapsed <= options.SaveWait) await Task.Delay(100, t);
+                // A project saved for the first time has no file until Save writes one.
+                file ??= FindSaved(project, _savedAt.AddSeconds(-2), options.LibraryProjects(), SavedFolders());
+                var verdict = SaveVerdict(project, _save, wasModified, modified, took.Elapsed, options.SaveWait, file, before, Written(), front);
+                if (verdict.Outcome == LiveOutcome.Passed)
                 {
-                    if (took.Elapsed > options.SaveWait)
-                        return LiveVerdict.Fail($"Bitwig still showed unsaved changes {options.SaveWait.TotalSeconds:0} s after Save. If Bitwig opened a Save " +
-                                                $"As window, the project hasn't been saved yet: save it as “{TestProject}”, then run again.");
-                    await Task.Delay(100, t);
+                    _saved = true;
+                    _savedProject = project;
                 }
-                _saved = true;
-                _savedProject = project;
-                return LiveVerdict.Pass(wasModified
-                    ? $"Bitwig saved “{project}”: its unsaved changes cleared {Ms(took.Elapsed.TotalMilliseconds)} after Save."
-                    : $"Bitwig ran Save. “{project}” had no unsaved changes before, so this only shows they stayed clear.");
+                return verdict;
             });
 
             string? path = null;
@@ -784,8 +866,7 @@ public static class BitwigLiveTests
             });
         }
 
-        IEnumerable<string> SavedFolders() =>
-            options.BitwigUserFolders().Select(f => Path.Combine(f, "Projects")).Where(Directory.Exists);
+        IEnumerable<string> SavedFolders() => ProjectFolders(options.BitwigUserFolders(), options.LibraryProjects());
 
         /// <summary>
         /// The newest &lt;name&gt;.bwproject written since <paramref name="since"/>: among the library's projects, else in the
@@ -1033,9 +1114,6 @@ public static class BitwigLiveTests
         };
 
         static string Quoted(string? display) => display is { Length: > 0 } d ? $" (“{d}”)" : "";
-
-        static string Ms(double ms) => ms >= 1000 ? (ms / 1000).ToString("0.0", CultureInfo.InvariantCulture) + " s"
-            : ms.ToString(ms < 10 ? "0.#" : "0", CultureInfo.InvariantCulture) + " ms";
     }
 }
 

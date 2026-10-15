@@ -121,6 +121,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         Settings.RefreshTemplate();
         _ = Settings.RefreshLinksAsync();
+        _ = Settings.SoundOutput.RefreshAsync();
         _ = Settings.Probe.RefreshAsync();
         Settings.Probe.StartLive();
     }

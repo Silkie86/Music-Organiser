@@ -17,7 +17,7 @@ namespace MusicOrganiser.Core.DawLink;
 /// <param name="OnlyIn">Whether the link honours <see cref="BitwigLink.OnlyIn"/> (older scripts don't).</param>
 public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
                                  string Project, bool Modified, bool Engine, bool Changes, string? Runtime = null,
-                                 string? Extension = null, bool OnlyIn = false)
+                                 string? Extension = null, bool OnlyIn = false, string? LoadedFrom = null)
 {
     /// <summary>What answers in Bitwig: the extension or the script.</summary>
     public string Answering => Runtime == "java" ? $"the Music Organiser extension {Extension}".TrimEnd() : "the Music Organiser script";
@@ -56,8 +56,16 @@ public sealed record BitwigInserted(bool Added, int? Index, BitwigDevice? Device
 /// <summary>A sample for a Drum Machine pad: the MIDI note the pad plays on, and the name to give the pad.</summary>
 public sealed record BitwigPad(int Note, string Path, string Name = "");
 
-/// <summary>The pads (by note) that got their sample, that already had something on them, and that Bitwig didn't fill.</summary>
-public sealed record BitwigPadsFilled(IReadOnlyList<int> Filled, IReadOnlyList<int> Skipped, IReadOnlyList<int> Failed);
+/// <summary>
+/// The pads (by note) that got their sample, that already had something on them, and that Bitwig didn't fill. The
+/// link also says what was on each pad left alone (since extension 3.2), and which samples went in place of an empty
+/// Sampler a Drum Machine preset put on the pad (since 3.3; they're among the filled).
+/// </summary>
+public sealed record BitwigPadsFilled(IReadOnlyList<int> Filled, IReadOnlyList<int> Skipped, IReadOnlyList<int> Failed,
+                                      IReadOnlyList<BitwigPadContents>? Taken = null, IReadOnlyList<int>? Replaced = null);
+
+/// <summary>What Bitwig showed on a pad: its name, how many devices, the first one's name and its sample's file name.</summary>
+public sealed record BitwigPadContents(int Note, string Name, int Devices, string First, string Sample = "");
 
 /// <summary>A pitch Bitwig set: on which device, in semitones, and as Bitwig shows it ("-3.50 st").</summary>
 public sealed record BitwigPitch(string Device, double Value, string Display);
