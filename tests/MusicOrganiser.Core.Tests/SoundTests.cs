@@ -537,17 +537,28 @@ public class GalaxyMapTests
     {
         var vectors = Families();
         var map = GalaxyMap.Layout(vectors);
-        Assert.Equal(60, map.Count);
-        Assert.All(map.Values, p => Assert.InRange(p.X, 0f, 1f));
+        AssertFamiliesApart(map);
+        Assert.Equal(map, GalaxyMap.Layout(vectors));   // same library, same galaxy
+    }
 
+    [Fact]
+    public void The_big_library_route_still_keeps_sound_alikes_together()
+    {
+        // exactBelow: 0 takes the route a 300,000-sound library takes: estimated neighbours and parallel updates.
+        var map = GalaxyMap.Layout(Families(), exactBelow: 0);
+        AssertFamiliesApart(map);
+    }
+
+    static void AssertFamiliesApart(Dictionary<long, StarPoint> map)
+    {
+        Assert.Equal(60, map.Count);
+        Assert.All(map.Values, p => { Assert.InRange(p.X, 0f, 1f); Assert.InRange(p.Y, 0f, 1f); });
         static double D(StarPoint a, StarPoint b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
         double Mean(Func<long, long, bool> pair) =>
             map.SelectMany(a => map.Where(b => b.Key > a.Key && pair(a.Key, b.Key)).Select(b => D(a.Value, b.Value))).Average();
         var within = Mean((a, b) => a / 20 == b / 20);
         var between = Mean((a, b) => a / 20 != b / 20);
         Assert.True(between > within * 3, $"families should sit apart: within {within:0.000}, between {between:0.000}");
-
-        Assert.Equal(map, GalaxyMap.Layout(vectors));   // same library, same galaxy
     }
 
     [Fact]

@@ -247,23 +247,28 @@ public sealed class SoundOrganiser : IDisposable
     /// "how it sounds" (brightness, attack, length, tone: 60 %), so neighbours match in kind and in character. A sound
     /// CLAP hasn't heard yet falls back to its measurements in every mode.
     /// </summary>
-    public Dictionary<long, float[]> GalaxyVectors(string space)
+    /// <remarks>
+    /// The joined fingerprints are worked out on demand rather than stored: for 300,000 sounds a stored copy would
+    /// take most of a gigabyte, and the map maker only reads each one a few times.
+    /// </remarks>
+    public (IReadOnlyList<long> Ids, Func<long, float[]> Vector) GalaxyVectors(string space)
     {
-        var result = new Dictionary<long, float[]>();
-        if (_features is null) return result;
+        if (_features is null) return (Array.Empty<long>(), _ => Array.Empty<float>());
+        var features = _features;
+        var ids = features.Units.Keys.OrderBy(id => id).ToArray();
         var clap = space == "features" ? null : _clapIndex;
         var clapDim = clap?.Units.Values.FirstOrDefault()?.Length ?? 0;
-        foreach (var (id, f) in _features.Units)
+        if (clap is null || clapDim == 0) return (ids, id => features.Units[id]);
+        return (ids, id =>
         {
-            if (clap is null) { result[id] = f; continue; }
+            var f = features.Units[id];
             var v = new float[clapDim + f.Length];
             var c = clap.Get(id) is { } cv && cv.Length == clapDim ? cv : null;
             var (wc, wf) = c is null ? (0f, 1f) : space == "clap" ? (1f, 0f) : (0.8f, 0.6f);
             if (c is not null) for (var i = 0; i < clapDim; i++) v[i] = c[i] * wc;
             for (var i = 0; i < f.Length; i++) v[clapDim + i] = f[i] * wf;
-            result[id] = VectorIndex.Unit(v);
-        }
-        return result;
+            return VectorIndex.Unit(v);
+        });
     }
 
     /// <summary>True when the saved map is missing, made from the other kind of fingerprint, or lacks some sounds.</summary>
@@ -283,18 +288,19 @@ public sealed class SoundOrganiser : IDisposable
     public Dictionary<long, StarPoint> UpdateGalaxy(string wanted, IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
     {
         var space = GalaxySpace(wanted);
-        var vectors = GalaxyVectors(space);
+        var (ids, vector) = GalaxyVectors(space);
         var map = Library.Map();
-        var missing = vectors.Keys.Count(id => !map.ContainsKey(id));
-        if (map.Count == 0 || Library.GetSetting(GalaxySpaceKey) != space || missing > vectors.Count / 5)
+        var newIds = ids.Where(id => !map.ContainsKey(id)).ToArray();
+        if (map.Count == 0 || Library.GetSetting(GalaxySpaceKey) != space || newIds.Length > ids.Count / 5)
         {
-            map = GalaxyMap.Layout(vectors, progress, ct);
+            map = GalaxyMap.Layout(ids, vector, progress, ct);
             Library.SaveMap(map, replace: true);
             Library.SetSetting(GalaxySpaceKey, space);
         }
-        else if (missing > 0)
+        else if (newIds.Length > 0)
         {
-            var added = GalaxyMap.PlaceNew(vectors, map);
+            var mapped = ids.Where(map.ContainsKey).ToArray();
+            var added = GalaxyMap.PlaceNew(newIds, mapped, vector, map);
             Library.SaveMap(added, replace: false);
             foreach (var (id, p) in added) map[id] = p;
         }

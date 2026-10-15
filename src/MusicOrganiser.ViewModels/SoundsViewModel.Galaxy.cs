@@ -74,13 +74,15 @@ public sealed partial class SoundsViewModel
     }
 
     bool _galaxyFailed;
+    // The saved map, kept in memory: reading 300,000 positions back on every filter change would be slow.
+    Dictionary<long, StarPoint>? _map;
 
     /// <summary>Works the map out (or adds new sounds to it) when it's behind the library, in the background.</summary>
     async Task MapGalaxyIfNeeded()
     {
         if (_galaxyFailed || IsBusy || !Org.GalaxyOutOfDate(PlacedBy)) return;
         var failed = true;
-        await RunAsync("Mapping your sound galaxy", (p, ct) => { Org.UpdateGalaxy(PlacedBy, p, ct); failed = false; },
+        await RunAsync("Mapping your sound galaxy", (p, ct) => { _map = Org.UpdateGalaxy(PlacedBy, p, ct); failed = false; },
                        () => ("Sound galaxy mapped", $"{Org.Sounds.Count:N0} sounds placed by how they sound"));
         _galaxyFailed = failed;
     }
@@ -97,7 +99,7 @@ public sealed partial class SoundsViewModel
     void BuildStars()
     {
         if (!IsGalaxy) return;
-        var map = Org.Library.Map();
+        var map = _map ??= Org.Library.Map();
         var newest = Items.Count == 0 ? [] : Items.OrderBy(s => s.Added).Select((s, i) => (s.Id, i)).ToDictionary(t => t.Id, t => t.i);
         var stars = new List<GalaxyStar>(map.Count);
         foreach (var s in Items)
@@ -179,7 +181,9 @@ public sealed partial class SoundsViewModel
     internal IReadOnlyList<GalaxyRegion> FindRegions(IReadOnlyList<GalaxyStar> stars)
     {
         if (ColourBy is not ("Type" or "Pack")) return [];
-        const int grid = 10;
+        // Finer squares and bigger minimums for a big library, so its families still get their own names.
+        var grid = (int)Math.Clamp(Math.Sqrt(stars.Count) / 20, 10, 24);
+        var least = Math.Max(5, stars.Count / 3000);
         string Name(GalaxyStar s) => ColourBy == "Pack" ? s.Sound.Folder : s.Sound.Type;
         var cells = stars.Where(s => s.Shown && Name(s) is not ("" or "Unknown"))
             .GroupBy(s => (X: Math.Min(grid - 1, (int)(s.X * grid)), Y: Math.Min(grid - 1, (int)(s.Y * grid))))
@@ -200,12 +204,13 @@ public sealed partial class SoundsViewModel
                 foreach (var n in new[] { (c.X + 1, c.Y), (c.X - 1, c.Y), (c.X, c.Y + 1), (c.X, c.Y - 1) })
                     if (cells.TryGetValue(n, out var other) && other.Name == name && seen.Add(n)) queue.Enqueue(n);
             }
-            if (members.Count < 5) continue;
+            if (members.Count < least) continue;
             var colour = ColourBy == "Pack" ? StarColours.Pack(name) : StarColours.Type(name);
-            regions.Add(new GalaxyRegion(name, members.Average(m => m.X), members.Min(m => m.Y), members.Count, colour));
+            regions.Add(new GalaxyRegion(name, members.Average(m => m.X), members.Min(m => m.Y), members.Count, colour,
+                                         members.Min(m => m.X), members.Max(m => m.X), members.Max(m => m.Y)));
         }
         // The biggest few, so the labels never crowd the stars.
-        return regions.OrderByDescending(r => r.Count).Take(12).ToList();
+        return regions.OrderByDescending(r => r.Count).Take(16).ToList();
     }
 
     /// <summary>The mouse swept over a star: a preview (not a deliberate play), and onto the trail.</summary>
@@ -252,8 +257,11 @@ public sealed partial class SoundsViewModel
 /// <summary>A star on the galaxy map: 0..1 across and down, its colour (0xAARRGGBB), and whether the filters show it.</summary>
 public sealed record GalaxyStar(Sound Sound, float X, float Y, uint Colour, bool Shown);
 
-/// <summary>A labelled neighbourhood of the galaxy ("KICK"), centred over its stars: X is their middle, Y their top edge.</summary>
-public sealed record GalaxyRegion(string Name, double X, double Y, int Count, uint Colour);
+/// <summary>
+/// A labelled neighbourhood of the galaxy ("KICK"), centred over its stars: X is their middle, Y their top edge.
+/// Left, Right and Bottom finish the box around them, so clicking the name can fly the view in to fit it.
+/// </summary>
+public sealed record GalaxyRegion(string Name, double X, double Y, int Count, uint Colour, double Left, double Right, double Bottom);
 
 /// <summary>One colour in the galaxy's key, as a #AARRGGBB string for the view.</summary>
 public sealed record LegendItem(string Label, string Colour);
