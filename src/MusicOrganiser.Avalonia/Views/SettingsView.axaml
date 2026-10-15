@@ -442,6 +442,7 @@
                                   ToolTip.Tip="Sounds move here at once, even one that's playing" />
                         <Button Content="Look again" Command="{Binding RefreshCommand}"
                                 ToolTip.Tip="Lists the outputs again, after plugging something in or switching it on" />
+                        <ProgressBar IsIndeterminate="True" Width="60" VerticalAlignment="Center" IsVisible="{Binding Busy}" />
                     </StackPanel>
                     <TextBlock Text="{Binding Note}" Classes="live" TextWrapping="Wrap" FontSize="12.5"
                                IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
