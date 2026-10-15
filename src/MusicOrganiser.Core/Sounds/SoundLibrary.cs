@@ -68,7 +68,7 @@ public sealed record SoundActivity(int Plays, int OlderPlays, int Drags, int Old
 /// results, neural embeddings, your labels and tags, and the trained models.
 /// Kept apart from the project library so each can evolve on its own.
 /// </summary>
-public sealed class SoundLibrary : IDisposable
+public sealed partial class SoundLibrary : IDisposable
 {
     const string Schema = """
         PRAGMA journal_mode = WAL;

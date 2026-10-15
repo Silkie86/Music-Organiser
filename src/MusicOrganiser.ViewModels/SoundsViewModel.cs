@@ -26,6 +26,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     public SoundOrganiser Org { get; }
     public RediscoverViewModel Rediscover { get; }
     public KitViewModel Kit { get; }
+    /// <summary>The Duplicates tab: copies of the same sound across your sample folders.</summary>
+    public DuplicatesViewModel Duplicates { get; }
 
     public static IReadOnlyList<string> AllTypes { get; } = [.. SoundTypes.All, SoundTypes.Unknown];
     public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. MusicTheory.NoteNames.Select(n => n), .. MusicTheory.NoteNames.Select(n => n + "m")];
@@ -142,6 +144,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Org = org;
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
+        Duplicates = new DuplicatesViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
         _viewMode = db.GetSetting(ViewKey) is List or Galaxy ? db.GetSetting(ViewKey)! : Tiles;
         _placedBy = db.GetSetting(GalaxyBasisKey) is { } basis && PlacedByChoices.Contains(basis) ? basis : SoundOrganiser.Both;
@@ -648,7 +651,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     // ---- long jobs ------------------------------------------------------------------
 
     /// <param name="done">The card's words once the job has finished, worked out then.</param>
-    async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null)
+    internal async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null)
     {
         if (IsBusy) return;
         IsBusy = true;
