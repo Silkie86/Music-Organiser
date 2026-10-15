@@ -45,9 +45,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * The Music Organiser link for Bitwig Studio.
@@ -127,10 +129,11 @@ final class Link {
     /** The selected device's drum pads, when it's a Drum Machine. */
     private DrumPadBank drumPads;
     private final DrumPad[] padItems = new DrumPad[DRUM_PADS];
-    /** Each pad's devices, and the first of them. */
+    /** Each pad's devices, the first of them, and where to put a sample in place of that one. */
     private final DeviceBank[] padDevices = new DeviceBank[DRUM_PADS];
     private final Device[] padFirst = new Device[DRUM_PADS];
     private final InsertionPoint[] padInserts = new InsertionPoint[DRUM_PADS];
+    private final InsertionPoint[] padReplace = new InsertionPoint[DRUM_PADS];
     private PopupBrowser popupBrowser;
     private SettableBooleanValue changesSetting;
     private RemoteSocket socket;
@@ -139,6 +142,9 @@ final class Link {
     private boolean listening;
     /** Whether Bitwig has been told the port is taken (once is enough). */
     private boolean portWarned;
+    /** What most often takes the port: the link itself, loaded twice. */
+    static final String TWICE = "If Music Organiser is listed twice in Bitwig's Settings > Controllers, remove one; "
+                                + "otherwise close what's using the port. Then restart Bitwig.";
 
     // Newer API (version 20 to 23), each null when Bitwig wouldn't make it.
     private CursorRemoteControlsPage remoteControls;
@@ -260,10 +266,12 @@ final class Link {
                 Device first = (Device) chain.getItemAt(0);
                 first.exists().markInterested();
                 first.name().markInterested();
+                first.sampleName().markInterested();
                 padItems[p] = pad;
                 padDevices[p] = chain;
                 padFirst[p] = first;
                 padInserts[p] = pad.insertionPoint();
+                padReplace[p] = first.replaceDeviceInsertionPoint();
             }
         }, () -> cursorDevice.hasDrumPads().get()
                  ? "The selected device has drum pads, shown from note " + drumPads.scrollPosition().get() + "."
@@ -409,7 +417,7 @@ final class Link {
         }, () -> {
             int now = knownPort();
             if (now > 0 && now != PORT)
-                throw new LinkError("Port " + PORT + " is taken, so Bitwig gave the link port " + now + ", where the app doesn't look.");
+                throw new LinkError("Port " + PORT + " is taken, so Bitwig gave the link port " + now + ", where the app doesn't look. " + TWICE);
             if (now <= 0) return "Waiting for the app on port " + PORT + ", though Bitwig hasn't said yet which port it gave the link.";
             return "Waiting for the app on port " + now + ", with " + clients.size() + " connected now.";
         });
@@ -512,8 +520,7 @@ final class Link {
     private void warnIfPortTaken() {
         if (port <= 0 || port == PORT || portWarned) return;
         portWarned = true;
-        host.showPopupNotification("Music Organiser: port " + PORT + " is taken, so the app can't connect. "
-                                   + "Close what's using it and restart Bitwig.");
+        host.showPopupNotification("Music Organiser: port " + PORT + " is taken, so the app can't connect. " + TWICE);
     }
 
     /** Handles one request from the app. */
@@ -1170,9 +1177,10 @@ final class Link {
     }
 
     /**
-     * Puts samples on a Drum Machine's empty pads (as if each were dropped on its pad, so each gets a Sampler),
-     * leaving pads that have something on them alone. The Drum Machine is `device` on `track` (which this
-     * selects), or the selected device.
+     * Puts samples on a Drum Machine's free pads (as if each were dropped on its pad, so each gets a Sampler),
+     * leaving pads that have something on them alone. A pad that holds only what a Drum Machine preset put there,
+     * a Sampler with no sample, is free too: the sample goes in that Sampler's place, keeping what comes after it.
+     * The Drum Machine is `device` on `track` (which this selects), or the selected device.
      */
     private void fillPads(Map<String, Object> request, Finish finish) {
         Object given = field(request, "pads");
@@ -1222,31 +1230,37 @@ final class Link {
     }
 
     /**
-     * Drops each sample on its pad when the pad is empty, then waits for the pads to fill and names them. The answer
-     * says what's on each pad it leaves alone.
+     * Drops each sample on its free pad, or in place of the pad's empty Sampler, then waits for the pads to take
+     * them and names them. The answer says which samples went in place of an empty Sampler, and what's on each
+     * pad it leaves alone.
      */
     private void fill(List<Pad> list, Finish finish) {
         List<Pad> filled = new ArrayList<>();
+        Map<Integer, String> replaced = new LinkedHashMap<>();   // note -> the pad's name before
         List<Integer> skipped = new ArrayList<>();
         List<Map<String, Object>> taken = new ArrayList<>();
         for (Pad pad : list) {
-            if (padTaken(pad.note())) {
-                skipped.add(pad.note());
-                taken.add(padContents(pad.note()));
+            int n = pad.note();
+            if (!padTaken(n)) {
+                padInserts[n].insertFile(pad.path());
+            } else if (emptySampler(n)) {
+                replaced.put(n, str(padItems[n].name().get()));
+                padReplace[n].insertFile(pad.path());
             } else {
-                padInserts[pad.note()].insertFile(pad.path());
-                filled.add(pad);
+                skipped.add(n);
+                taken.add(padContents(n));
+                continue;
             }
+            filled.add(pad);
         }
-        waitFor(() -> {
-            for (Pad pad : filled)
-                if (!padTaken(pad.note())) return false;
-            return true;
-        }, CHANGE_WAIT, all -> {
+        Predicate<Pad> took = pad -> replaced.containsKey(pad.note())
+            ? !str(padFirst[pad.note()].sampleName().get()).isEmpty() || !str(padItems[pad.note()].name().get()).equals(replaced.get(pad.note()))
+            : padTaken(pad.note());
+        waitFor(() -> filled.stream().allMatch(took), CHANGE_WAIT, all -> {
             List<Integer> done = new ArrayList<>();
             List<Integer> failed = new ArrayList<>();
             for (Pad pad : filled) {
-                if (!padTaken(pad.note())) {
+                if (!took.test(pad)) {
                     failed.add(pad.note());
                     continue;
                 }
@@ -1255,6 +1269,7 @@ final class Link {
             }
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("filled", done);
+            m.put("replaced", done.stream().filter(replaced::containsKey).collect(Collectors.toList()));
             m.put("skipped", skipped);
             m.put("failed", failed);
             m.put("taken", taken);
@@ -1262,22 +1277,30 @@ final class Link {
         }, finish);
     }
 
-    /**
-     * Whether a pad has something on it. Bitwig says so three ways, and all three must agree: a live run on Bitwig
-     * 6.1.3 found a new Drum Machine's pads counted as taken, perhaps from devices a pad showed before (a pad with
-     * nothing on it may not tell the script its devices went).
-     */
+    /** Whether a pad has a device on it: the pad, its device count and its first device all show it. */
     private boolean padTaken(int note) {
         return padItems[note].exists().get() && padDevices[note].itemCount().get() > 0 && padFirst[note].exists().get();
     }
 
-    /** What's on a pad: its name, how many devices, and the first one's name, as Bitwig shows them. */
+    /**
+     * Whether a pad holds a Sampler with no sample, as a Drum Machine preset can put on every pad (Solomon's
+     * default Drum Machine does), and still has the name it came with, not a sample's: such a pad is free.
+     */
+    private boolean emptySampler(int note) {
+        String first = str(padFirst[note].name().get());
+        String name = str(padItems[note].name().get());
+        return padTaken(note) && first.equals("Sampler") && str(padFirst[note].sampleName().get()).isEmpty()
+               && (name.isEmpty() || name.equals(first));
+    }
+
+    /** What's on a pad: its name, how many devices, the first one's name and its sample, as Bitwig shows them. */
     private Map<String, Object> padContents(int note) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("note", note);
         m.put("name", str(padItems[note].name().get()));
         m.put("devices", padDevices[note].itemCount().get());
         m.put("first", str(padFirst[note].name().get()));
+        m.put("sample", str(padFirst[note].sampleName().get()));
         return m;
     }
 
@@ -1463,11 +1486,15 @@ final class Link {
         return list;
     }
 
-    /** Which pads have something on them (how many devices), and where the pad list starts, to tell when it's caught up. */
+    /**
+     * Where the pad list starts, and what's on each pad (how many devices, less than 0 when the first is an empty
+     * Sampler), to tell when it's caught up.
+     */
     private List<Integer> padList() {
         List<Integer> list = new ArrayList<>(DRUM_PADS + 1);
         list.add(drumPads.scrollPosition().get());
-        for (int p = 0; p < DRUM_PADS; p++) list.add(padTaken(p) ? padDevices[p].itemCount().get() : 0);
+        for (int p = 0; p < DRUM_PADS; p++)
+            list.add(!padTaken(p) ? 0 : emptySampler(p) ? -padDevices[p].itemCount().get() : padDevices[p].itemCount().get());
         return list;
     }
 

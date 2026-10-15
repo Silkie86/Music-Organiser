@@ -395,6 +395,11 @@ public static class BitwigLiveTests
                     ["count"] = actions.Count,
                     ["save"] = save is null ? null : new JsonObject { ["id"] = save.Id, ["name"] = save.Name, ["category"] = save.Category, ["menu"] = save.Menu },
                     ["categories"] = Strings(actions.Select(a => a.Category).Where(c => c.Length > 0).Distinct().Order(StringComparer.Ordinal)),
+                    // Every action, to look up what Bitwig can do that the API can't (such as putting a clip in the arranger).
+                    ["actions"] = new JsonArray(actions.Select(a => (JsonNode)new JsonObject
+                    {
+                        ["id"] = a.Id, ["name"] = a.Name, ["category"] = a.Category, ["menu"] = a.Menu,
+                    }).ToArray()),
                 };
                 if (save is null)
                     return LiveVerdict.Fail($"Bitwig listed {actions.Count:N0} actions, but none called Save, which the app runs to save a project.", data);
@@ -563,18 +568,25 @@ public static class BitwigLiveTests
                     ["filled"] = new JsonArray(filled.Filled.Select(n => (JsonNode)n).ToArray()),
                     ["skipped"] = new JsonArray(filled.Skipped.Select(n => (JsonNode)n).ToArray()),
                     ["failed"] = new JsonArray(filled.Failed.Select(n => (JsonNode)n).ToArray()),
+                    ["replaced"] = filled.Replaced is { } replaced ? new JsonArray(replaced.Select(n => (JsonNode)n).ToArray()) : null,
                     ["taken"] = filled.Taken is { } taken
-                        ? new JsonArray(taken.Select(p => (JsonNode)new JsonObject { ["note"] = p.Note, ["name"] = p.Name, ["devices"] = p.Devices, ["first"] = p.First }).ToArray())
+                        ? new JsonArray(taken.Select(p => (JsonNode)new JsonObject
+                        {
+                            ["note"] = p.Note, ["name"] = p.Name, ["devices"] = p.Devices, ["first"] = p.First, ["sample"] = p.Sample,
+                        }).ToArray())
                         : null,
                 };
                 string On(IEnumerable<int> notes) => string.Join(", ", pads.Where(p => notes.Contains(p.Note)).Select(p => $"{p.Name} on {DawProject.NoteName(p.Note)}"));
-                if (filled.Filled.Count == pads.Count) return LiveVerdict.Pass($"Bitwig put each sample on its pad: {On(filled.Filled)}.", data);
+                if (filled.Filled.Count == pads.Count)
+                    return LiveVerdict.Pass($"Bitwig put each sample on its pad: {On(filled.Filled)}" +
+                                            (filled.Replaced is { Count: > 0 } r ? $", {(r.Count == pads.Count ? "each" : On(r))} in place of an empty Sampler." : "."), data);
                 var missed = new List<string>();
                 if (filled.Failed.Count > 0) missed.Add($"it didn't load {On(filled.Failed)}");
                 if (filled.Skipped.Count > 0)
                     missed.Add($"it said {On(filled.Skipped)} already had something on them" + (filled.Taken is { Count: > 0 } shown
                         ? " (" + string.Join("; ", shown.Select(p => $"{DawProject.NoteName(p.Note)} showed “{p.Name}” with {p.Devices} " +
-                                                                     $"device{(p.Devices == 1 ? "" : "s")}, the first “{p.First}”")) + ")"
+                                                                     $"device{(p.Devices == 1 ? "" : "s")}, the first “{p.First}”" +
+                                                                     (p.Sample.Length > 0 ? $" playing {p.Sample}" : ""))) + ")"
                         : ""));
                 return LiveVerdict.Fail($"Not every sample went on its pad: {string.Join("; ", missed)}.", data);
             });

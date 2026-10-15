@@ -153,7 +153,8 @@ public class BitwigSendTests
 
         // The link says what's on a pad it leaves alone.
         var kick = await link.FillPadsAsync([new BitwigPad(36, @"C:\Kit\Kick 2.wav")]);
-        Assert.Equal([new BitwigPadContents(36, "Kick", 1, "Sampler")], kick.Taken!);
+        Assert.Equal([new BitwigPadContents(36, "Kick", 1, "Sampler", "Kick.wav")], kick.Taken!);
+        Assert.Empty(kick.Replaced!);
     }
 
     [Fact]

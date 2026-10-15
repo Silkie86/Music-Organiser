@@ -62,6 +62,8 @@ test("says hello when the app connects", () => {
 test("warns in Bitwig when its port is taken", () => {
   const bitwig = startBitwig({ portInUse: 50123 });
   assert.match(bitwig.popups[0], /port 19791 is taken/);
+  // Most often by the link itself, loaded twice.
+  assert.match(bitwig.popups[0], /listed twice in Bitwig's Settings > Controllers, remove one/);
 });
 
 test("doesn't say the port is taken while Bitwig hasn't said which port it gave", () => {
@@ -410,7 +412,7 @@ test("fills a new Drum Machine's empty pads, from the lowest note", () => {
     { note: 42, path: "C:\\Kit\\notes.txt", name: "Closed hat" },
   ];
   const reply = app.wait({ id: 3, cmd: "pads", track: 1, device: 0, pads });
-  assert.deepEqual(reply.result, { filled: [36, 38], skipped: [], failed: [42], taken: [] });
+  assert.deepEqual(reply.result, { filled: [36, 38], replaced: [], skipped: [], failed: [42], taken: [] });
   assert.equal(bitwig.pads.indication, false, "doesn't light up the pads in Bitwig");
   const filled = bitwig.state.tracks[1].devices[0].pads;
   assert.deepEqual(Object.keys(filled), ["36", "38"]);
@@ -418,21 +420,31 @@ test("fills a new Drum Machine's empty pads, from the lowest note", () => {
 
   // A pad with something on it is left alone.
   const again = app.wait({ id: 4, cmd: "pads", track: 1, device: 0, pads: [{ note: 36, path: "C:\\Kit\\Kick 2.wav" }, { note: 37, path: "C:\\Kit\\Rim.wav" }] });
-  assert.deepEqual(again.result, { filled: [37], skipped: [36], failed: [], taken: [{ note: 36, name: "Kick", devices: 1, first: "Sampler" }] });
+  assert.deepEqual(again.result, { filled: [37], replaced: [], skipped: [36], failed: [],
+                                  taken: [{ note: 36, name: "Kick", devices: 1, first: "Sampler", sample: "Kick.wav" }] });
   assert.equal(filled[36].devices.length, 1);
 });
 
-test("fills a new Drum Machine's pads even when they still show the devices of the last Drum Machine's", () => {
-  // A live run on Bitwig 6.1.3 found a new Drum Machine's pads counted as taken.
-  const { bitwig, app } = studio({ stalePadChains: true });
-  const kit = [{ note: 36, path: "C:\\Kit\\Kick.wav" }, { note: 38, path: "C:\\Kit\\Snare.wav" }];
-  for (let t = 1; t <= 2; t++) {
-    app.wait({ id: 10 * t, cmd: "newtrack", name: `Kit ${t}` });
-    app.wait({ id: 10 * t + 1, cmd: "insert", track: t, kind: "bitwig", device: DRUM_MACHINE });
-    assert.deepEqual(app.wait({ id: 10 * t + 2, cmd: "pads", track: t, device: 0, pads: kit }).result,
-                     { filled: [36, 38], skipped: [], failed: [], taken: [] });
-  }
-  assert.deepEqual(Object.keys(bitwig.state.tracks[2].devices[0].pads), ["36", "38"]);
+test("puts samples in place of the empty Samplers a default Drum Machine has on its pads, keeping what's after them", () => {
+  // Solomon's default Drum Machine has an empty Sampler on every pad.
+  const { bitwig, app } = studio({ drumPads: [{ name: "Sampler", id: SAMPLER, kind: "note_to_audio" }, { name: "Compressor" }] });
+  app.wait({ id: 1, cmd: "newtrack", name: "Kit #8" });
+  app.wait({ id: 2, cmd: "insert", track: 1, kind: "bitwig", device: DRUM_MACHINE });
+  const kit = [{ note: 36, path: "C:\\Kit\\Kick.wav", name: "Kick" }, { note: 38, path: "C:\\Kit\\Snare.wav" }];
+  assert.deepEqual(app.wait({ id: 3, cmd: "pads", track: 1, device: 0, pads: kit }).result,
+                   { filled: [36, 38], replaced: [36, 38], skipped: [], failed: [], taken: [] });
+  const pads = bitwig.state.tracks[1].devices[0].pads;
+  assert.deepEqual(pads[36].devices.map((d) => d.name), ["Sampler", "Compressor"]);
+  assert.deepEqual([pads[36].name, pads[36].devices[0].sample], ["Kick", "C:\\Kit\\Kick.wav"]);
+  assert.equal(pads[38].devices[0].sample, "C:\\Kit\\Snare.wav");
+  assert.equal(pads[40].devices[0].sample, undefined);
+
+  // A pad whose Sampler has a sample now is left alone.
+  assert.deepEqual(app.wait({ id: 4, cmd: "pads", track: 1, device: 0,
+                              pads: [{ note: 36, path: "C:\\Kit\\Kick 2.wav" }, { note: 40, path: "C:\\Kit\\Rim.wav" }] }).result,
+                   { filled: [40], replaced: [40], skipped: [36], failed: [],
+                     taken: [{ note: 36, name: "Kick", devices: 2, first: "Sampler", sample: "Kick.wav" }] });
+  assert.equal(pads[36].devices[0].sample, "C:\\Kit\\Kick.wav");
 });
 
 test("reads and sets the knobs of a plugin it put on a track, once that's selected", () => {
@@ -467,7 +479,7 @@ test("fills the selected Drum Machine, and says when the selected device isn't o
   app.wait({ id: 2, cmd: "select", track: 0, device: 0 });
   assert.equal(app.wait({ id: 3, cmd: "device" }).result.drumPads, true);
   assert.deepEqual(app.wait({ id: 4, cmd: "pads", pads: [{ note: 40, path: "C:\\Kit\\Snare 2.wav" }] }).result,
-                   { filled: [40], skipped: [], failed: [], taken: [] });
+                   { filled: [40], replaced: [], skipped: [], failed: [], taken: [] });
   assert.deepEqual(Object.keys(bitwig.state.tracks[0].devices[0].pads), ["40"]);
 
   app.wait({ id: 5, cmd: "select", track: 0, device: 1 });
@@ -594,7 +606,7 @@ test("stops filling pads when another project comes to the front while the sampl
 
   bitwig.app.name.v = "Night Drive";
   assert.deepEqual(app.wait({ id: 3, cmd: "pads", track: 0, device: 0, pads: [{ note: 40, path: "C:\\Kit\\Tom.wav", name: "Low Tom" }],
-                             onlyIn: "Night Drive" }).result, { filled: [40], skipped: [], failed: [], taken: [] });
+                             onlyIn: "Night Drive" }).result, { filled: [40], replaced: [], skipped: [], failed: [], taken: [] });
   assert.equal(pads[40].name, "Low Tom");
 });
 
@@ -613,7 +625,7 @@ test("stops filling pads before dropping the samples when another project comes 
 
   bitwig.app.name.v = "Night Drive";
   assert.deepEqual(app.wait({ id: 3, cmd: "pads", track: 0, device: 0, pads: [{ note: 40, path: "C:\\Kit\\Tom.wav", name: "Low Tom" }],
-                             onlyIn: "Night Drive" }).result, { filled: [40], skipped: [], failed: [], taken: [] });
+                             onlyIn: "Night Drive" }).result, { filled: [40], replaced: [], skipped: [], failed: [], taken: [] });
   assert.equal(bitwig.state.tracks[0].devices[0].pads[40].name, "Low Tom");
 });
 

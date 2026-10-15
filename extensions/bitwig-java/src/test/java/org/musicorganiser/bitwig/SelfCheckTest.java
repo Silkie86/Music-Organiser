@@ -65,7 +65,7 @@ class SelfCheckTest {
         assertEquals("Waiting for the app on port 19791, with 1 connected now.", detail(result, "remote connection"));
         assertEquals("2 actions.", detail(result, "actions"));
 
-        assertJson(obj("why", "asked", "ok", true, "extension", "3.2", "link", 3, "product", "Bitwig Studio", "bitwig", "6.1.2", "api", 25,
+        assertJson(obj("why", "asked", "ok", true, "extension", "3.3", "link", 3, "product", "Bitwig Studio", "bitwig", "6.1.2", "api", 25,
                        "apiUsed", 23, "java", System.getProperty("java.version"), "platform", "WINDOWS", "changes", true, "port", 19791,
                        "connections", 1, "folder", reports.toString()),
                    pick(result, "why", "ok", "extension", "link", "product", "bitwig", "api", "apiUsed", "java", "platform", "changes", "port",
@@ -148,7 +148,7 @@ class SelfCheckTest {
         Map<String, Object> result = bitwig.link.selfCheck("test");
         assertEquals(false, result.get("ok"));
         assertEquals("Bitwig offers API 22; the link needs 23.", detail(result, "API version"));
-        assertEquals("Port 19791 is taken, so Bitwig gave the link port 50123, where the app doesn't look.", detail(result, "remote connection"));
+        assertEquals("Port 19791 is taken, so Bitwig gave the link port 50123, where the app doesn't look. " + Link.TWICE, detail(result, "remote connection"));
         assertEquals(List.of("API version", "remote connection"),
                      listAt(result, "checks").stream().filter(c -> !(Boolean) at(c, "ok")).map(c -> at(c, "name")).collect(Collectors.toList()));
     }
