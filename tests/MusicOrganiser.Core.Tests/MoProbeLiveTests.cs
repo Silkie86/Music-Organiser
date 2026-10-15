@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
@@ -238,6 +239,34 @@ public class MoProbeLiveTests
     }
 
     [Fact]
+    public async Task AStatusMissingAcrossAPauseIsntTheProbeStopping()
+    {
+        var dir = Fixtures.TempDir();
+        var file = Status(Path.Combine(dir, "live"), Instance, DateTimeOffset.UtcNow.AddMinutes(1));
+        var status = File.ReadAllBytes(file);
+        using var computer = new HeldUpContext();
+
+        // Missing at the first look, then everything is held up for longer than a probe may go missing (a long garbage
+        // collection, or a busy computer), the probe's next write with it: one look after that isn't the probe gone.
+        foreach (var look in new Func<Task<MoProbeLive>>[]
+                 {
+                     () => MoProbeLive.ReadRunningAsync(file, Instance),
+                     async () => (await MoProbeLive.UntilAsync(Instance, _ => true, dir)).Status,
+                 })
+        {
+            File.Delete(file);
+            var found = computer.Run(look);
+            computer.HoldUp(TimeSpan.FromMilliseconds(700));
+            computer.Post(_ => _ = Task.Delay(30).ContinueWith(_ =>
+            {
+                File.WriteAllBytes(file + ".tmp", status);
+                File.Move(file + ".tmp", file);
+            }, TaskScheduler.Default), null);
+            Assert.Equal(Instance, (await found).Instance);
+        }
+    }
+
+    [Fact]
     public async Task AProbeThatStopsAsTimeRunsOutIsSaidToHaveStopped()
     {
         var dir = Fixtures.TempDir();
@@ -280,6 +309,40 @@ public class MoProbeLiveTests
         }) { IsBackground = true };
         back.Start();
         return back;
+    }
+
+    /// <summary>
+    /// A computer that can be held up: what's posted to it runs in turn on a thread of its own, and so does what an await
+    /// in it carries on with.
+    /// </summary>
+    sealed class HeldUpContext : SynchronizationContext, IDisposable
+    {
+        readonly BlockingCollection<(SendOrPostCallback Run, object? State)> _queue = new();
+
+        public HeldUpContext() =>
+            new Thread(() =>
+            {
+                SetSynchronizationContext(this);
+                foreach (var (run, state) in _queue.GetConsumingEnumerable()) run(state);
+            }) { IsBackground = true }.Start();
+
+        public override void Post(SendOrPostCallback d, object? state) => _queue.Add((d, state));
+
+        public Task<T> Run<T>(Func<Task<T>> work)
+        {
+            var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Post(async _ =>
+            {
+                try { done.SetResult(await work()); }
+                catch (Exception e) { done.SetException(e); }
+            }, null);
+            return done.Task;
+        }
+
+        /// <summary>Nothing posted after this runs for <paramref name="time"/>.</summary>
+        public void HoldUp(TimeSpan time) => Post(_ => Thread.Sleep(time), null);
+
+        public void Dispose() => _queue.CompleteAdding();
     }
 
     [Fact]
