@@ -81,6 +81,7 @@ public sealed class GalaxyCanvas : Control
         ClipToBounds = true;
         Cursor = new Cursor(StandardCursorType.Cross);
         _frame = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Render, (_, _) => Animate());
+        GalaxyGpu.Changed += InvalidateVisual;
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -110,8 +111,9 @@ public sealed class GalaxyCanvas : Control
     GalaxyStar[] _all = [];
     string?[] _packs = [];
     float[] _xs = [], _ys = [], _weight = [], _rgb = [];
-    readonly int[] _cellStart = new int[Grid * Grid + 1];
-    readonly int[] _cellShown = new int[Grid * Grid];
+    // Made afresh each time (never changed in place), because the graphics card's drawing reads them on another thread.
+    int[] _cellStart = new int[Grid * Grid + 1];
+    int[] _cellShown = new int[Grid * Grid];
     int[] _cellItems = [];
     int _version;
 
@@ -123,8 +125,8 @@ public sealed class GalaxyCanvas : Control
         _all = Stars switch { null => [], GalaxyStar[] a => a, var list => list.ToArray() };
         var n = _all.Length;
         var cellOf = new int[n];
-        Array.Clear(_cellStart);
-        Array.Clear(_cellShown);
+        _cellStart = new int[Grid * Grid + 1];
+        _cellShown = new int[Grid * Grid];
         for (var i = 0; i < n; i++)
         {
             var c = Cell(_all[i].Y) * Grid + Cell(_all[i].X);
@@ -718,24 +720,36 @@ public sealed class GalaxyCanvas : Control
         room = Math.Clamp(Math.Sqrt(w * h / Math.Max(inView, 1)) * 0.22, 1.6, 9);
 
         // The painted sky, repainted only when the view or the stars change.
-        // While you drag a big, slow-to-paint view, the last picture just slides along with you; it's repainted
-        // when you let go.
-        var key = (_cx, _cy, _zoom, w, h, intro, _version, painted);
-        var shift = new Vector();
-        var sliding = (_panning || _miniDrag) && _paintMs > 25 && _sky is not null && _skyKey is not null
-                      && Equals(key with { Item1 = _skyCx, Item2 = _skyCy }, _skyKey);
-        if (sliding) shift = new Vector((_skyCx - _cx) * Scale, (_skyCy - _cy) * Scale);
-        else if (_sky is null || !Equals(key, _skyKey))
+        // On the graphics card when there is one: the whole sky is redrawn every frame, it's that quick.
+        if (GalaxyGpu.Available != false && intro >= 1)
         {
-            var started = System.Diagnostics.Stopwatch.StartNew();
-            _sky = Bitmap(_sky, (int)Math.Ceiling(w), (int)Math.Ceiling(h));
-            Paint(_sky, view, Scale, w / 2 - _cx * Scale, MidY - _cy * Scale, intro < 1 ? Pos : null, painted * (float)(0.4 + 0.6 * intro), glow);
-            _skyKey = key;
-            (_skyCx, _skyCy) = (_cx, _cy);
-            _paintMs = started.Elapsed.TotalMilliseconds;
+            var area = Math.Max(w * h, 1);
+            var gain = (float)Math.Clamp(1.7 / Math.Max(1, inView * 9.0 / area), 0.35, 1.7);
+            ctx.Custom(new GalaxyGpu.Op(new Rect(0, 0, w, h), new GalaxyGpu.Frame(
+                _xs, _ys, _rgb, _weight, _cellStart, _cellItems, Grid, view, Scale, w / 2 - _cx * Scale, MidY - _cy * Scale,
+                (int)Math.Ceiling(w), (int)Math.Ceiling(h), painted, glow, gain)));
         }
-        var skyRect = new Rect(0, 0, _sky!.PixelSize.Width, _sky.PixelSize.Height);
-        ctx.DrawImage(_sky, skyRect, skyRect.Translate(shift));
+        else
+        {
+            // While you drag a big, slow-to-paint view, the last picture just slides along with you; it's repainted
+            // when you let go.
+            var key = (_cx, _cy, _zoom, w, h, intro, _version, painted);
+            var shift = new Vector();
+            var sliding = (_panning || _miniDrag) && _paintMs > 25 && _sky is not null && _skyKey is not null
+                          && Equals(key with { Item1 = _skyCx, Item2 = _skyCy }, _skyKey);
+            if (sliding) shift = new Vector((_skyCx - _cx) * Scale, (_skyCy - _cy) * Scale);
+            else if (_sky is null || !Equals(key, _skyKey))
+            {
+                var started = System.Diagnostics.Stopwatch.StartNew();
+                _sky = Bitmap(_sky, (int)Math.Ceiling(w), (int)Math.Ceiling(h));
+                Paint(_sky, view, Scale, w / 2 - _cx * Scale, MidY - _cy * Scale, intro < 1 ? Pos : null, painted * (float)(0.4 + 0.6 * intro), glow);
+                _skyKey = key;
+                (_skyCx, _skyCy) = (_cx, _cy);
+                _paintMs = started.Elapsed.TotalMilliseconds;
+            }
+            var skyRect = new Rect(0, 0, _sky!.PixelSize.Width, _sky.PixelSize.Height);
+            ctx.DrawImage(_sky, skyRect, skyRect.Translate(shift));
+        }
 
         // The trail: a line through the sounds you swept past, fading with age.
         if (Trail is { Count: > 1 } trail)
