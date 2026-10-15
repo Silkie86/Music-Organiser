@@ -366,6 +366,49 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void MutesWhatAnAutomatedChannelPlaysWhileItsOffAndCarriesItsInsertsEffects()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir()));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 2));
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+        var tracks = doc.Root!.Obj(0x4dd)!.List(0x4de).ToList();
+        Assert.Equal(["Bass", "Vox"], tracks.Select(t => t.Str(0x15b)));
+
+        // The bass is switched off in FL's Channel Rack, but automation switches it on and off, so its track isn't muted:
+        // the clip it's off all through is, and so is the note that starts while it's off in the clip at beats 10-14.
+        var bass = tracks[0];
+        Assert.Equal([0.0, 0.0], tracks.Select(t => t.Obj(0x165)!.Obj(0x1a6)!.Num(0xd2)!.Value));
+        var clips = Clips(bass);
+        Assert.Equal([1.0, 0.0, 0.0], clips.Select(c => c.Num(0x10f8) ?? 0));
+        Assert.Equal([1.0, 0.0], Notes(clips[2]).Select(n => n.Num(0x10f8) ?? 0));
+        Assert.Equal([0.0, 1.0], Clips(tracks[1]).Select(c => c.Num(0x10f8) ?? 0));
+
+        // Insert 1's effects follow Serum, WOW2 switched off as it is in FL, and Pro-Q 3's setting is automated on the copy
+        // on the bass's track.
+        var chain = Chain(bass).ToList();
+        Assert.Equal([("Serum", 1.0), ("Pro-Q 3", 1.0), ("WOW2", 0.0)], chain.Select(d => (Def(d).Str(0x9a), Def(d).Num(0xa3)!.Value)));
+        var lane = bass.Obj(0x2dc9)!.List(0x4ba).Single();
+        var target = lane.Obj(0x2a3)!;
+        Assert.Same(chain[1], target.Obj(0xec));
+        Assert.Equal(("CONTENTS/ROOT_GENERIC_MODULE/PARAM3", "Gain"), (target.Str(0xed), target.Str(0x133a)));
+        Assert.Equal([(0.0, 0.25), (4.0, 0.75)], lane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, p.Num(0x28f)!.Value)));
+
+        Assert.Equal([
+            "Bass: switched on and off by \"Bass - Mute / solo\" in FL Studio, so what it plays while it's off is muted",
+            "Vox: switched on and off by \"Vox - Mute / solo\" in FL Studio, so what it plays while it's off is muted; " +
+            "one audio clip it switches off part of the way through plays whole",
+            "Mixer: the fader or pan of insert 1 isn't at FL Studio's default, and mixer faders and pans aren't carried over yet",
+            "Tempo: automation left out (tempo automation isn't carried over yet; the project is set to 120 BPM)",
+            "Insert 1 - Volume: automation left out (the fader of insert 1 isn't automated here yet)",
+        ], result.Notes);
+
+        // A template whose plugins have no power switch can't switch the effect off, and says so.
+        var plain = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(devicePower: false), _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 2));
+        Assert.Contains("WOW2 on Insert 1: switched off in FL Studio, but on here (the Bitwig template's plugin has no on/off to copy)", plain.Notes);
+    }
+
+    [Fact]
     public void MutesSwitchedOffChannelsAndClipsOnMutedPlaylistTracks()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutedTracks(Fixtures.TempDir()));
