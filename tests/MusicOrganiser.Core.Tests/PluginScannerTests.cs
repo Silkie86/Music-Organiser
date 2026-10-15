@@ -62,6 +62,124 @@ public class PluginScannerTests : IDisposable
         Assert.Equal(["CLAP", "VST3"], scan.Plugins.Select(p => p.Format));
     }
 
+    /// <summary>A moduleinfo.json as the VST3 SDK's moduleinfotool writes it: commas after the last item included.</summary>
+    const string ModuleInfo = """
+        {
+          "Name": "Twin Pack",
+          "Version": "2.1.0",
+          "Factory Info": {
+            "Vendor": "Example Audio",
+            "URL": "https://example.com",
+            "E-Mail": "mailto:help@example.com",
+            "Flags": {
+              "Classes Discardable": false,
+              "Component Non Discardable": false,
+              "Unicode": true,
+            },
+          },
+          "Classes": [
+            {
+              "CID": "5c2f1e3a9b8d4c7e8f6a1b2c3d4e5f60",
+              "Category": "Audio Module Class",
+              "Name": "Twin Synth",
+              "Vendor": "",
+              "Version": "2.1.0",
+              "SDKVersion": "VST 3.7.12",
+              "Sub Categories": [
+                "Instrument",
+                "Synth",
+              ],
+              "Class Flags": 1,
+              "Cardinality": 2147483647,
+              "Snapshots": [
+              ],
+            },
+            {
+              "CID": "A1B2C3D4E5F60718293A4B5C6D7E8F90",
+              "Category": "Component Controller Class",
+              "Name": "Twin Synth Controller",
+              "Vendor": "Example Audio",
+              "Version": "2.1.0",
+              "SDKVersion": "VST 3.7.12",
+              "Class Flags": 0,
+              "Cardinality": 2147483647,
+              "Snapshots": [
+              ],
+            },
+            {
+              "CID": "0F1E2D3C4B5A69788796A5B4C3D2E1F0",
+              "Category": "Audio Module Class",
+              "Name": "Twin Delay",
+              "Vendor": "Example Audio FX",
+              "Version": "2.0.3",
+              "SDKVersion": "VST 3.7.12",
+              "Sub Categories": [
+                "Fx",
+                "Delay",
+              ],
+              "Class Flags": 1,
+              "Cardinality": 2147483647,
+              "Snapshots": [
+              ],
+            },
+          ],
+        }
+        """;
+
+    string Bundle(string name, string? moduleInfo)
+    {
+        var bundle = Path.Combine(_root, name + ".vst3");
+        Directory.CreateDirectory(Path.Combine(bundle, "Contents", "x86_64-win"));
+        if (moduleInfo is not null)
+        {
+            Directory.CreateDirectory(Path.Combine(bundle, "Contents", "Resources"));
+            File.WriteAllText(Vst3ModuleInfo.FileIn(bundle), moduleInfo);
+        }
+        return bundle;
+    }
+
+    [Fact]
+    public void ReadsWhatAVst3SaysIsInsideIt()
+    {
+        var bundle = Bundle("Twin Pack", ModuleInfo);
+        var plugins = Vst3ModuleInfo.Read(bundle)!;
+        // The editor class is left out, as the scanner leaves it out.
+        Assert.Equal(["Twin Synth", "Twin Delay"], plugins.Select(p => p.Name));
+        var synth = plugins[0];
+        Assert.Equal(("VST3", bundle, "5C2F1E3A9B8D4C7E8F6A1B2C3D4E5F60", "Example Audio", "2.1.0", "instrument"),
+                     (synth.Format, synth.Path, synth.Id, synth.Vendor, synth.Version, synth.Kind));   // the module's vendor when the class has none
+        Assert.Equal(["Instrument", "Synth"], synth.Features);
+        Assert.Null(synth.Params);
+        var delay = plugins[1];
+        Assert.Equal(("0F1E2D3C4B5A69788796A5B4C3D2E1F0", "Example Audio FX", "2.0.3", "effect"), (delay.Id, delay.Vendor, delay.Version, delay.Kind));
+        // Kept as the scanner's own line for it would be.
+        Assert.StartsWith("{\"format\":\"VST3\",\"path\":", delay.Json);
+        Assert.EndsWith("\"version\":\"2.0.3\",\"kind\":\"effect\",\"features\":[\"Fx\",\"Delay\"]}", delay.Json);
+
+        // Anything else leaves it to the scanner.
+        Assert.Null(Vst3ModuleInfo.Read(Bundle("Older", null)));
+        Assert.Null(Vst3ModuleInfo.Read(Bundle("Broken", ModuleInfo[..^40])));
+        Assert.Null(Vst3ModuleInfo.Read(Bundle("Only an editor", ModuleInfo.Replace("Audio Module Class", "Something Else"))));
+        Assert.Null(Vst3ModuleInfo.Read(Bundle("Bad ID", ModuleInfo.Replace("\"CID\": \"", "\"CID\": \"x"))));
+        var file = Path.Combine(_root, "Single file.vst3");   // an old-style VST3 is just the library
+        File.WriteAllText(file, "MZ");
+        Assert.Null(Vst3ModuleInfo.Read(file));
+    }
+
+    [Fact]
+    public async Task ListsAVst3FromItsModuleInfoWithoutRunningTheScanner()
+    {
+        var bundle = Bundle("Twin Pack", ModuleInfo);
+        var scanner = new PluginScanner(FakeScanner("fail", [ErrorLine], exitCode: 2));   // says so if it's run
+        var scan = await scanner.ScanAsync(bundle);
+        Assert.Equal(("", 2), (scan.Error, scan.Plugins.Count));
+        Assert.Equal(["Twin Delay"], (await scanner.ScanAsync(bundle, only: "0f1e2d3c4b5a69788796a5b4c3d2e1f0")).Plugins.Select(p => p.Name));
+
+        // Its parameters need the plugin loaded, as does one the file doesn't list.
+        Assert.Equal("32-bit plugin: this scanner is 64-bit", (await scanner.ScanAsync(bundle, parameters: true)).Error);
+        Assert.Equal("32-bit plugin: this scanner is 64-bit", (await scanner.ScanAsync(bundle, only: "00000000000000000000000000000000")).Error);
+    }
+
     [Fact]
     public async Task SaysWhenAPluginCrashesTheScanner()
     {
