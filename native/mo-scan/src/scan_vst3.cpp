@@ -300,23 +300,48 @@ bool scanVst3(const std::filesystem::path& path, const Options& opt, std::string
     std::string factoryVendor = cleanUtf8(fi.vendor, sizeof fi.vendor);
 
     IPluginFactory2* f2 = nullptr;
+    IPluginFactory3* f3 = nullptr;
     factory->queryInterface(IPluginFactory2_iid, reinterpret_cast<void**>(&f2));
+    factory->queryInterface(IPluginFactory3_iid, reinterpret_cast<void**>(&f3));
 
     for (int32 i = 0, n = factory->countClasses(); i < n; i++)
     {
-        PClassInfo info{};
-        if (factory->getClassInfo(i, &info) != kResultOk) continue;
-        if (std::strncmp(info.category, kVstAudioEffectClass, sizeof info.category) != 0) continue;
-        if (!opt.wanted(classId(info.cid))) continue;
-
-        std::string vendor = factoryVendor, version, sub;
+        // The newest info the factory gives, as the VST3 SDK's own hosts (and its moduleinfo.json) take it: a class
+        // registered with Unicode names gives nothing to the older calls, and its names may not fit in plain text.
+        TUID cid{};
+        std::string category, name, vendor, version, sub;
+        PClassInfoW infoW{};
         PClassInfo2 info2{};
-        if (f2 && f2->getClassInfo2(i, &info2) == kResultOk)
+        PClassInfo info{};
+        if (f3 && f3->getClassInfoUnicode(i, &infoW) == kResultOk)
         {
-            if (info2.vendor[0]) vendor = cleanUtf8(info2.vendor, sizeof info2.vendor);
+            std::memcpy(cid, infoW.cid, sizeof cid);
+            category = cleanUtf8(infoW.category, sizeof infoW.category);
+            name = utf16ToUtf8(reinterpret_cast<const char16_t*>(infoW.name), PClassInfo::kNameSize);
+            vendor = utf16ToUtf8(reinterpret_cast<const char16_t*>(infoW.vendor), PClassInfoW::kVendorSize);
+            version = utf16ToUtf8(reinterpret_cast<const char16_t*>(infoW.version), PClassInfoW::kVersionSize);
+            sub = cleanUtf8(infoW.subCategories, sizeof infoW.subCategories);
+        }
+        else if (f2 && f2->getClassInfo2(i, &info2) == kResultOk)
+        {
+            std::memcpy(cid, info2.cid, sizeof cid);
+            category = cleanUtf8(info2.category, sizeof info2.category);
+            name = cleanUtf8(info2.name, sizeof info2.name);
+            vendor = cleanUtf8(info2.vendor, sizeof info2.vendor);
             version = cleanUtf8(info2.version, sizeof info2.version);
             sub = cleanUtf8(info2.subCategories, sizeof info2.subCategories);
         }
+        else if (factory->getClassInfo(i, &info) == kResultOk)
+        {
+            std::memcpy(cid, info.cid, sizeof cid);
+            category = cleanUtf8(info.category, sizeof info.category);
+            name = cleanUtf8(info.name, sizeof info.name);
+        }
+        else continue;
+        if (category != kVstAudioEffectClass) continue;
+        if (!opt.wanted(classId(cid))) continue;
+        if (vendor.empty()) vendor = factoryVendor;
+
         std::vector<std::string> features;
         for (size_t start = 0; start <= sub.size() && !sub.empty();)
         {
@@ -331,16 +356,17 @@ bool scanVst3(const std::filesystem::path& path, const Options& opt, std::string
         j.begin()
             .str("format", "VST3")
             .str("path", path.u8string())
-            .str("id", classId(info.cid))
-            .str("name", cleanUtf8(info.name, sizeof info.name))
+            .str("id", classId(cid))
+            .str("name", name)
             .str("vendor", vendor)
             .str("version", version)
             .str("kind", instrument ? "instrument" : "effect")
             .strings("features", features);
-        if (opt.params || opt.state) scanClass(j, factory, info.cid, opt);
+        if (opt.params || opt.state) scanClass(j, factory, cid, opt);
         emit(j.end());
     }
 
+    if (f3) f3->release();
     if (f2) f2->release();
     factory->release();
 #if defined(_WIN32)

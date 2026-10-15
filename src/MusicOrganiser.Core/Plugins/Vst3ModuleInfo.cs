@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -21,15 +22,42 @@ public static class Vst3ModuleInfo
     public static string FileIn(string bundle) => Path.Combine(bundle, "Contents", "Resources", "moduleinfo.json");
 
     /// <summary>
+    /// The library a bundle holds for this computer, the one mo-scan loads (binaryIn in native/mo-scan/src/scan_vst3.cpp).
+    /// A Windows ARM computer tries two more folders after this one, and a Mac loads whatever is in Contents/MacOS.
+    /// </summary>
+    public static string LibraryIn(string bundle) => Libraries(bundle)[0];
+
+    static string[] Libraries(string bundle)
+    {
+        var contents = Path.Combine(bundle, "Contents");
+        var name = Path.GetFileNameWithoutExtension(bundle.TrimEnd('\\', '/'));
+        if (OperatingSystem.IsMacOS()) return [Path.Combine(contents, "MacOS", name)];
+        var arm = RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
+        return OperatingSystem.IsWindows()
+            ? [.. (arm ? new[] { "arm64-win", "arm64ec-win", "arm64x-win" } : ["x86_64-win"]).Select(a => Path.Combine(contents, a, name + ".vst3"))]
+            : [Path.Combine(contents, arm ? "aarch64-linux" : "x86_64-linux", name + ".so")];
+    }
+
+    /// <summary>Whether mo-scan could load it here; when it couldn't, it says why, so it's left to mo-scan.</summary>
+    static bool HasLibrary(string bundle)
+    {
+        if (!OperatingSystem.IsMacOS()) return Libraries(bundle).Any(File.Exists);
+        var macOS = Path.Combine(bundle, "Contents", "MacOS");
+        return Directory.Exists(macOS) && Directory.EnumerateFiles(macOS).Any();
+    }
+
+    /// <summary>
     /// The plugins a bundle's moduleinfo.json lists, as mo-scan lists them without loading anything (no ports or
-    /// parameters). Null when the bundle has none, or it can't be read or lists no plugin: the scanner loads it then.
+    /// parameters). Null when the bundle has none, or it can't be read, lists a plugin it can't say enough about, or
+    /// has no library for this computer: the scanner loads it instead.
     /// </summary>
     public static IReadOnlyList<ScannedPlugin>? Read(string bundle)
     {
         try
         {
             var file = new FileInfo(FileIn(bundle));
-            if (!Directory.Exists(bundle) || !file.Exists || file.Length > MaxSize) return null;
+            if (!bundle.TrimEnd('\\', '/').EndsWith(".vst3", StringComparison.OrdinalIgnoreCase) || !Directory.Exists(bundle) ||
+                !file.Exists || file.Length > MaxSize || !HasLibrary(bundle)) return null;
             using var doc = JsonDocument.Parse(File.ReadAllBytes(file.FullName), Json5ish);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("Classes", out var classes) ||
@@ -39,14 +67,15 @@ public static class Vst3ModuleInfo
             var plugins = classes.EnumerateArray()
                 .Where(c => c.ValueKind == JsonValueKind.Object && Str(c, "Category") == AudioClass)
                 .Select(c => Plugin(c, bundle, factoryVendor))
-                .OfType<ScannedPlugin>()
                 .ToList();
-            return plugins.Count > 0 ? plugins : null;
+            // One it can't read would be missing for good, as the scanner wouldn't be asked: all or none.
+            return plugins.Count > 0 && !plugins.Contains(null) ? plugins.OfType<ScannedPlugin>().ToList() : null;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { return null; }
+        // InvalidOperationException: text that isn't UTF-8, which the parser lets through and GetString won't read.
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException) { return null; }
     }
 
-    /// <summary>One class as mo-scan's line for it (src/scan_vst3.cpp), so it's kept and read back the same way.</summary>
+    /// <summary>One class as mo-scan's line for it (native/mo-scan/src/scan_vst3.cpp), so it's kept and read back the same way.</summary>
     static ScannedPlugin? Plugin(JsonElement c, string bundle, string factoryVendor)
     {
         // The SDK writes the ID as mo-scan does: 32 hex digits of the four numbers DAWs save.

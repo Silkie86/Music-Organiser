@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -422,6 +423,25 @@ public class ProbeKnobCheckTests
     }
 
     [Fact]
+    public async Task WaitsForTheKnobsToBeBackWhenTheProbeIsHeldUp()
+    {
+        var dir = Fixtures.TempDir();
+        await using var probe = new FakeProbe(dir);
+        // Only MO Switch, so it's quick. The probe answers its last turn (to 1) and then stalls: the status from before
+        // that turn still shows it at 0, as it was, while it isn't back yet.
+        var daw = new FakeDaw(probe) { Hidden = [.. MoProbe.Knobs.Select(k => k.Id).Where(k => k != 1005)] };
+        var turns = 0;
+        probe.StallAfterSet = (knob, _) => knob == 1005 && ++turns == 2 ? TimeSpan.FromMilliseconds(500) : TimeSpan.Zero;
+        var check = await ProbeKnobCheck.RunAsync(daw, Assert.Single(MoProbeLive.Running(dir)), wait: Quick, settle: Settle);
+
+        Assert.True(check.AllMatched, check.Summary);
+        Assert.Equal(4, check.Lines.Count);
+        Assert.DoesNotContain(check.Notes, n => n.Contains("didn't go back", StringComparison.Ordinal));
+        Assert.Equal(3, turns);   // the check's two and the one putting it back
+        Assert.Equal(0, probe[1005]);
+    }
+
+    [Fact]
     public async Task FindsAStepThatLandsWrongly()
     {
         var dir = Fixtures.TempDir();
@@ -549,6 +569,8 @@ sealed class FakeProbe : IAsyncDisposable
     readonly CancellationTokenSource _stop = new();
     readonly string _status, _commands;
     readonly Thread _running;
+    /// <summary>What went wrong on its thread, given to the test as it's disposed: thrown there, it would end the whole test run.</summary>
+    ExceptionDispatchInfo? _failed;
     readonly string _host, _hostVersion;
     int _n, _handled;
 
@@ -578,6 +600,8 @@ sealed class FakeProbe : IAsyncDisposable
     public bool Answers { get; init; } = true;
     /// <summary>Hears of each knob the probe turns itself (a set command), as the DAW does.</summary>
     public Action<int, double>? Turned { get; set; }
+    /// <summary>How long it stops after answering a set command, as on a busy computer: it writes no status meanwhile.</summary>
+    public Func<int, double, TimeSpan>? StallAfterSet { get; set; }
 
     /// <summary>A knob's value, in its own units; setting it is the DAW turning it.</summary>
     public double this[int knob]
@@ -592,6 +616,7 @@ sealed class FakeProbe : IAsyncDisposable
         _running.Join();
         File.Delete(_status);
         Directory.Delete(_commands, recursive: true);
+        _failed?.Throw();
         return ValueTask.CompletedTask;
     }
 
@@ -611,6 +636,11 @@ sealed class FakeProbe : IAsyncDisposable
             }
             // A reader had the status open: Windows won't replace it then (Access denied), so next time, as the probe does.
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            catch (Exception e)
+            {
+                _failed = ExceptionDispatchInfo.Capture(e);
+                return;
+            }
             _stop.Token.WaitHandle.WaitOne(5);
         }
     }
@@ -652,6 +682,7 @@ sealed class FakeProbe : IAsyncDisposable
                 this[knob] = value;
                 Turned?.Invoke(knob, value);
                 Write("app-set", new() { ["id"] = knob, ["name"] = k.Name, ["value"] = value }, id);
+                if (StallAfterSet?.Invoke(knob, value) is { } stall && stall > TimeSpan.Zero) Thread.Sleep(stall);
                 break;
             case "label":
                 Label = (string)c["label"]!;

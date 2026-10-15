@@ -171,12 +171,51 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         BuildStars();
         TypeCounts = [new TypeCount("All sounds", Items.Count), .. Items.GroupBy(s => s.Type).OrderByDescending(g => g.Count()).Select(g => new TypeCount(g.Key, g.Count()))];
         SelectedType ??= TypeCounts[0];
+        UpdateSummary();
+        UpdateModelInfo();
+    }
+
+    /// <summary>
+    /// After a scan of projects: only how many projects use each sound can have changed, so only that (and the Most
+    /// liked scores built on it) is worked out again, in the background. Reloading the whole page for 357,000 sounds
+    /// held the window up for seconds.
+    /// </summary>
+    public async Task RefreshUsageAsync()
+    {
+        var items = Items;
+        if (items.Count == 0 || !ReferenceEquals(items, Org.Sounds))
+        {
+            Reload();   // nothing showing yet, or the sounds themselves changed
+            return;
+        }
+        var since = DateTime.Now.AddYears(-1);
+        var weights = _weights;
+        var (changed, liked) = await Task.Run(() =>
+        {
+            var before = items.Select(s => (s.UsedIn, s.UsedInRecently)).ToArray();
+            Org.ApplyUsage(_db.SampleUsageByAge(since));
+            var changed = items.Where((s, i) => (s.UsedIn, s.UsedInRecently) != before[i]).Any();
+            return (changed, changed ? items.Select(weights.Score).ToArray() : []);
+        });
+        if (!changed || !ReferenceEquals(items, Items)) return;
+        var top = liked.Length == 0 ? 0 : liked.Max();
+        for (var i = 0; i < items.Count; i++)
+        {
+            items[i].Liked = liked[i];
+            items[i].LikedShare = top > 0 ? liked[i] / top : 0;
+        }
+        UpdateSummary();
+        if (OnlyUnused) Refresh();
+        else if (SortBy == MostLiked) ApplySort();
+    }
+
+    void UpdateSummary()
+    {
         var loops = Items.Count(s => s.IsLoop);
         var unused = Items.Count(s => s.UsedIn == 0);
         Summary = Items.Count == 0
             ? "Add your sample folders in Settings, then scan them here."
             : $"{Items.Count:N0} sounds · {loops:N0} loops · {unused:N0} never used in a project";
-        UpdateModelInfo();
     }
 
     void UpdateModelInfo()
@@ -656,7 +695,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _cts = new CancellationTokenSource();
         var cts = _cts;
         var card = Activities.Start(label, cancel: cts.Cancel);
-        var progress = new Progress<SoundProgress>(p =>
+        var progress = new ThrottledProgress<SoundProgress>(p =>
         {
             BusyText = p.Total > 0 ? $"{p.Stage}: {p.Done:N0} of {p.Total:N0}" : p.Stage;
             BusyPercent = p.Total > 0 ? 100.0 * p.Done / p.Total : 0;
@@ -664,7 +703,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         });
         try
         {
-            await Task.Run(() => job(progress, cts.Token), cts.Token);
+            try { await Task.Run(() => job(progress, cts.Token), cts.Token); }
+            finally { progress.Close(); }
             var (title, detail) = done?.Invoke() ?? ($"{label}: done", "");
             card.Finish(title, detail);
         }

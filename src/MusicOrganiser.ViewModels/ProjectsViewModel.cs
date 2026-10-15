@@ -56,18 +56,34 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         OnGroupByChanged(GroupBy);
     }
 
-    public void Reload()
+    public void Reload() => Show(Load(GroupSaves));
+
+    /// <summary>Reload with the database work done in the background, so the window keeps answering.</summary>
+    public async Task ReloadAsync()
+    {
+        var group = GroupSaves;
+        Show(await Task.Run(() => Load(group)));
+    }
+
+    /// <summary>The rows, read from the database and grouped into songs (on any thread).</summary>
+    (int Saves, List<ProjectItem> Items, List<string> Tags) Load(bool group)
+    {
+        var projects = _db.Projects();
+        var items = group
+            ? SongVersions.Group(projects).Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older)).ToList()
+            : projects.Select(p => new ProjectItem(_db, p)).ToList();
+        return (projects.Count, items, _db.AllTags().Select(t => t.Tag).ToList());
+    }
+
+    void Show((int Saves, List<ProjectItem> Items, List<string> Tags) loaded)
     {
         var selectedId = Selected?.Id;
-        var projects = _db.Projects();
-        _saveCount = projects.Count;
-        Items.ReplaceAll(GroupSaves
-            ? SongVersions.Group(projects).Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older))
-            : projects.Select(p => new ProjectItem(_db, p)));
+        _saveCount = loaded.Saves;
+        Items.ReplaceAll(loaded.Items);
 
         Refill(DawFilters, Items.Select(i => i.Daw), DawFilter, v => DawFilter = v);
         Refill(StatusFilters, Statuses.All, StatusFilter, v => StatusFilter = v);
-        Refill(TagFilters, _db.AllTags().Select(t => t.Tag), TagFilter, v => TagFilter = v);
+        Refill(TagFilters, loaded.Tags, TagFilter, v => TagFilter = v);
         Refill(HardwareFilters, Items.SelectMany(i => i.Hardware), HardwareFilter, v => HardwareFilter = v);
 
         Selected = Items.FirstOrDefault(i => i.Id == selectedId || i.OlderSaves.Any(o => o.Id == selectedId));

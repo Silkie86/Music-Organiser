@@ -75,8 +75,7 @@ public partial class App : Application
                 log.Info("Facts", Core.Plugins.PluginScanner.Find() is { } scanner ? $"Plugin scanner: {scanner}" : "Plugin scanner (mo-scan) not found");
             });
         };
-        // The galaxy says which way it draws the first time it draws (Views/GalaxyGpu.cs).
-        Views.GalaxyGpu.Changed += () => log.Info("Facts", "Galaxy: the graphics card version failed, drawing on the processor");
+        // The galaxy logs which way it draws itself, through Core.AppLog (Views/GalaxyGpu.cs, wired up in Program.cs).
     }
 
     readonly List<string> _errors = [];

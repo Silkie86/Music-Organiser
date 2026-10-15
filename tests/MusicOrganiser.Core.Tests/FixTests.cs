@@ -51,7 +51,7 @@ public class FixTests : IDisposable
         Assert.Equal(before, File.ReadAllBytes(path));
 
         var info = new FlStudioReader().Read(fixedPath);
-        Assert.Equal([kick.Use], info.Samples);
+        Assert.Equal([kick.Use!], info.Samples);
         Assert.Equal(new FlStudioReader().Read(path).Plugins.Select(p => p.Name), info.Plugins.Select(p => p.Name));
 
         // Every other event comes through as it was.
