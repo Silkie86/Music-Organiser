@@ -107,6 +107,7 @@ public static class SelfCheck
     {
         if (projects.Count == 0) return LiveVerdict.Skip("The library has no projects yet.");
         var failures = new List<(string Daw, string Path, string Error)>();
+        var damaged = new List<string>();   // files that are empty or broken on disk: worth knowing, not the app's fault
         var times = new Dictionary<string, List<double>>();
         var slowest = new List<(double Ms, string Path)>();
         var gone = 0;
@@ -116,7 +117,12 @@ public static class SelfCheck
             if (Readers.For(path) is not { } reader) continue;
             if (!File.Exists(path)) { gone++; continue; }
             var watch = Stopwatch.StartNew();
-            try { reader.Read(path); }
+            try
+            {
+                var info = reader.Read(path);
+                if (info.Confidence == Confidence.Catalogue && info.Warnings.Any(w => w.Contains("empty or damaged", StringComparison.Ordinal)))
+                    damaged.Add(path);
+            }
             catch (Exception e) when (e is not OperationCanceledException)
             {
                 failures.Add((reader.Daw, path, $"{e.GetType().Name}: {e.Message}"));
@@ -141,16 +147,21 @@ public static class SelfCheck
         }
         foreach (var f in failures.Take(Listed)) lines.Add($"Failed: {f.Path} ({f.Error})");
         if (failures.Count > Listed) lines.Add($"…and {failures.Count - Listed} more failed.");
+        foreach (var d in damaged.Take(Listed)) lines.Add($"Damaged: {d} (the file itself is empty or broken)");
+        if (damaged.Count > Listed) lines.Add($"…and {damaged.Count - Listed} more damaged.");
         var top = slowest.OrderByDescending(s => s.Ms).Take(5).ToList();
         foreach (var s in top) lines.Add($"Slow: {Ms(s.Ms)} {s.Path}");
 
         var data = new JsonObject
         {
-            ["read"] = read, ["missing"] = gone, ["failed"] = failures.Count, ["perDaw"] = perDaw,
+            ["read"] = read, ["missing"] = gone, ["failed"] = failures.Count, ["damaged"] = damaged.Count, ["perDaw"] = perDaw,
             ["failures"] = new JsonArray(failures.Select(f => (JsonNode?)new JsonObject { ["daw"] = f.Daw, ["path"] = f.Path, ["error"] = f.Error }).ToArray()),
             ["slowest"] = new JsonArray(top.Select(s => (JsonNode?)new JsonObject { ["ms"] = Math.Round(s.Ms, 1), ["path"] = s.Path }).ToArray()),
         };
-        var missingNote = gone > 0 ? $" ({gone} in the library aren't on disk any more)" : "";
+        var notes = new List<string>();
+        if (gone > 0) notes.Add($"{gone} in the library aren't on disk any more");
+        if (damaged.Count > 0) notes.Add(damaged.Count == 1 ? "1 is a damaged file" : $"{damaged.Count} are damaged files");
+        var missingNote = notes.Count > 0 ? $" ({string.Join("; ", notes)})" : "";
         return failures.Count == 0
             ? LiveVerdict.Pass($"All {read} projects opened{missingNote}.", data) with { Lines = lines }
             : LiveVerdict.Fail($"{failures.Count} of {read} projects couldn't be read{missingNote}.", data) with { Lines = lines };
