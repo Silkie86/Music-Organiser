@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MusicOrganiser.Core;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.LiveTests;
@@ -126,6 +127,29 @@ public sealed partial class MainViewModel : ObservableObject
         Live.Match();   // the library may have the projects the DAWs have open now
     }
 
+    /// <summary>
+    /// After a scan (or a DAW saving a project): each page reads the database in the background, then shows the result,
+    /// so a library of 16,000 projects and 357,000 sounds doesn't hold the window up ("Not responding"). The sounds
+    /// themselves don't change in a project scan, only how many projects use each one.
+    /// </summary>
+    public async Task RefreshAllAsync()
+    {
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var times = new List<string>();
+        async Task Time(string page, Func<Task> reload)
+        {
+            var start = timer.Elapsed;
+            await reload();
+            times.Add($"{page} {(timer.Elapsed - start).TotalSeconds:0.00} s");
+        }
+        await Time("Projects", Projects.ReloadAsync);
+        await Time("Plugins", Plugins.ReloadAsync);
+        await Time("Samples", Samples.ReloadAsync);
+        await Time("Sounds", Sounds.RefreshUsageAsync);
+        Live.Match();   // the library may have the projects the DAWs have open now
+        AppLog.Info("Pages", $"Refreshed in {timer.Elapsed.TotalSeconds:0.00} s: {string.Join(", ", times)}");
+    }
+
     [RelayCommand]
     Task Rescan() => ScanAsync(false);
 
@@ -200,6 +224,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         finally
         {
+            progress.Close();
             _readingParameters = IsScanning = false;
             ScanPercent = 0;
             Plugins.Reload();
@@ -207,7 +232,7 @@ public sealed partial class MainViewModel : ObservableObject
         await RunQueuedScanAsync();
     }
 
-    Progress<ScanProgress> ProgressInStatus() => new(p =>
+    ThrottledProgress<ScanProgress> ProgressInStatus() => new(p =>
     {
         ScanStatus = p.Total > 0 ? $"{p.Stage}: {p.Done} of {p.Total}" : p.Stage;
         ScanPercent = p.Total > 0 ? 100.0 * p.Done / p.Total : 0;
@@ -291,7 +316,7 @@ public sealed partial class MainViewModel : ObservableObject
             // a minute the first time, so show the projects first.
             if (pluginFiles.Count > 0 && PluginScanner.Available)
             {
-                RefreshAll();
+                await RefreshAllAsync();
                 await Task.Run(async () =>
                 {
                     await _scanner.ReadPluginFilesAsync(PluginScanner, pluginFiles, progress, ct);
@@ -312,9 +337,10 @@ public sealed partial class MainViewModel : ObservableObject
         }
         finally
         {
+            progress.Close();
             IsScanning = false;
             ScanPercent = 0;
-            RefreshAll();
+            await RefreshAllAsync();
         }
         if (_scanCard.IsRunning)
         {

@@ -95,6 +95,7 @@ public sealed partial class Activity : ObservableObject
     /// <summary>How far it has got: <paramref name="percent"/> below 0 when it can't say.</summary>
     public Activity Report(double percent, string? detail = null)
     {
+        if (!IsRunning) return this;   // a late report doesn't undo "done"
         Percent = Math.Clamp(percent, -1, 100);
         if (detail is not null) Detail = detail;
         return this;
