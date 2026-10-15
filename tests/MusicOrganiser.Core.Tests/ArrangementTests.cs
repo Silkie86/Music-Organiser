@@ -89,25 +89,32 @@ public class ArrangementTests
         Assert.Equal([new PreviewMarker(3, "Verse 1")], playlist.Markers);
     }
 
-    [Fact]
-    public void OldFlProjectsCountTheirPlaylistTracksFrom198()
+    [Theory]
+    // FL 11 had 199 playlist tracks and saved 198 for the first: a clip at 196 is on track 3.
+    [InlineData("11.0.4", new[] { 196 }, new[] { "Track 3" })]
+    // A 2012 song (Solomon's robotasiza) has its clips on tracks 1 to 4 in FL, counting down from 98.
+    [InlineData("10.0.9", new[] { 98, 97, 96, 95 }, new[] { "Track 1", "Track 2", "Track 3", "Track 4" })]
+    // From FL 12.9.1 there are 500 tracks and the first is 499.
+    [InlineData("12.9.1", new[] { 499, 497 }, new[] { "Track 1", "Track 3" })]
+    public void OldFlProjectsCountTheirPlaylistTracksTheirOwnWay(string version, int[] slots, string[] tracks)
     {
-        // FL before 12.9.1 had 199 playlist tracks and saved 198 for the first. Here a clip on track 3 of an FL 11 song.
-        var item = Fixtures.PlaylistItem(0, 1, 384);
-        BitConverter.GetBytes((ushort)196).CopyTo(item, 12);
-        var b = new Fixtures.FlpBuilder()
-            .Ascii(199, "11.0.4").Dword(156, 140_000)
-            .Word(65, 1).Ascii(193, "Beat").Data(224, Fixtures.Note(0, 0, 96, 36, 100))
-            .Word(64, 0).Byte(21, 0).Ascii(203, "Kick")
-            .Data(233, item);
+        var unicode = int.Parse(version.Split('.')[0]) >= 12;   // names are UTF-16 from FL 11.5
+        var b = new Fixtures.FlpBuilder().Ascii(199, version).Dword(156, 140_000).Word(65, 1);
+        b = unicode ? b.Text(193, "Beat") : b.Ascii(193, "Beat");
+        b = b.Data(224, Fixtures.Note(0, 0, 96, 36, 100)).Word(64, 0).Byte(21, 0);
+        var items = slots.SelectMany((slot, i) =>
+        {
+            var item = Fixtures.PlaylistItem((uint)(i * 384), 1, 384);
+            BitConverter.GetBytes((ushort)slot).CopyTo(item, 12);
+            return item;
+        }).ToArray();
         var path = Path.Combine(Fixtures.TempDir(), "Old.flp");
-        File.WriteAllBytes(path, b.Build());
+        File.WriteAllBytes(path, b.Data(233, items).Build());
 
         var playlist = ArrangementReader.Read(path)[0];
-        var lane = Assert.Single(playlist.Lanes);
-        Assert.Equal("Track 3", lane.Name);
-        Assert.Equal(("Beat", 0.0, 4.0), (lane.Clips.Single().Name, lane.Clips.Single().Start, lane.Clips.Single().Length));
-        Assert.Single(lane.Clips.Single().Notes);
+        Assert.Equal(tracks, playlist.Lanes.Select(l => l.Name));
+        Assert.All(playlist.Lanes, l => Assert.Equal(("Beat", 4.0), (l.Clips.Single().Name, l.Clips.Single().Length)));
+        Assert.Single(playlist.Lanes[0].Clips.Single().Notes);
     }
 
     [Fact]
