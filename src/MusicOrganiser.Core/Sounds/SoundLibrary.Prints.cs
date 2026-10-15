@@ -130,15 +130,21 @@ public sealed partial class SoundLibrary
         }
     }
 
-    /// <summary>Every stored SoundFingerprinting print, for looking new sounds up against.</summary>
+    /// <summary>
+    /// Every stored SoundFingerprinting print, for looking new sounds up against. Read a page at a time, and
+    /// <paramref name="each"/> is called outside the database lock, so the rest of the app isn't kept waiting.
+    /// </summary>
     public void ForEachSfp(Action<long, byte[]> each)
     {
         EnsurePrints();
-        lock (_lock)
+        var after = long.MinValue;
+        while (true)
         {
-            using var cmd = Cmd("SELECT sound_id, sfp FROM sound_prints WHERE sfp IS NOT NULL");
-            using var r = cmd.ExecuteReader();
-            while (r.Read()) each((long)r["sound_id"], (byte[])r["sfp"]);
+            var page = Query("SELECT sound_id, sfp FROM sound_prints WHERE sfp IS NOT NULL AND sound_id > $after ORDER BY sound_id LIMIT 1000",
+                             r => ((long)r["sound_id"], (byte[])r["sfp"]), ("$after", after));
+            foreach (var (id, sfp) in page) each(id, sfp);
+            if (page.Count < 1000) return;
+            after = page[^1].Item1;
         }
     }
 
