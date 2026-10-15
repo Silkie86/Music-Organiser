@@ -228,12 +228,20 @@ public sealed record SoundPrint(byte[] Exact, int Frames, byte[] Bands, ushort[]
     /// it hears the highs and the tail as much as the hit, so a copy with another EQ, more drive or a shorter tail is
     /// told apart from the same sound in another file, which comes out near 0 (an MP3 within about a dB).
     /// </summary>
-    public static double SpectralDistance(float[] x, float[] y, int rate)
+    public static double SpectralDistance(float[] x, float[] y, int rate) => SpectralDistances(x, y, rate).Worst;
+
+    /// <summary>
+    /// <see cref="SpectralDistance"/> (<paramref name="Worst"/>, the 90th percentile) and the median difference
+    /// (<paramref name="Typical"/>): two sounds that differ all through, such as a kick loop and a hi-hat loop that
+    /// share a rhythm, are far apart in both; a copy with only its tail or top end changed is close in the median.
+    /// </summary>
+    public static (double Typical, double Worst) SpectralDistances(float[] x, float[] y, int rate)
     {
+        var none = (double.PositiveInfinity, double.PositiveInfinity);
         // Line them up: WaveStart starts both at their onset, give or take a few milliseconds.
         var maxLag = rate * 3 / 1000;
         var probe = Math.Min(Math.Min(x.Length, y.Length) - maxLag, rate);
-        if (probe <= maxLag) return double.PositiveInfinity;
+        if (probe <= maxLag) return none;
         var (best, lag) = (-1.0, 0);
         for (var l = -maxLag; l <= maxLag; l++)
         {
@@ -250,7 +258,7 @@ public sealed record SoundPrint(byte[] Exact, int Frames, byte[] Bands, ushort[]
         var sx = Dsp.PowerSpectrogram(x, nFft, hop, center: false);
         var sy = Dsp.PowerSpectrogram(y, nFft, hop, center: false);
         var frames = Math.Min(sx.Length, sy.Length);
-        if (frames == 0) return double.PositiveInfinity;
+        if (frames == 0) return none;
         var top = Math.Min(9000, rate * 0.45);
         var edges = new int[bands + 1];
         for (var b = 0; b <= bands; b++)
@@ -286,12 +294,12 @@ public sealed record SoundPrint(byte[] Exact, int Frames, byte[] Bands, ushort[]
                 var m = Math.Max(dx[f, b], dy[f, b]);
                 if (m >= loudest - 50 && m >= bandLoudest[b] - 30) diffs.Add(dx[f, b] - dy[f, b]);
             }
-        if (diffs.Count == 0) return double.PositiveInfinity;
+        if (diffs.Count == 0) return none;
         // A level change isn't a different sound: take away the typical difference first.
         var sorted = diffs.Order().ToList();
         var level = sorted[sorted.Count / 2];
         var apart = diffs.Select(d => Math.Min(20, Math.Abs(d - level))).Order().ToList();
-        return apart[apart.Count * 9 / 10];
+        return (apart[apart.Count / 2], apart[apart.Count * 9 / 10]);
     }
 
     // ---- buckets ------------------------------------------------------------------------
