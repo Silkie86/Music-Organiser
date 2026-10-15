@@ -32,10 +32,12 @@ public sealed class SelfCheckTests
         Assert.Contains(Result("Library folders are there").Lines, l => l.EndsWith("Unplugged drive", StringComparison.Ordinal));
 
         var read = Result("Every project opens");
-        Assert.Equal(LiveOutcome.Failed, read.Outcome);
-        Assert.Equal("1 of 2 projects couldn't be read (1 in the library aren't on disk any more).", read.Detail);
-        Assert.Contains(read.Lines, l => l.StartsWith("Failed: " + broken, StringComparison.Ordinal));
-        Assert.Equal(1, (int)read.Data!["perDaw"]!["FL Studio"]!["failed"]!);
+        // A file that's empty or broken on disk is listed as damaged, not as the app failing to read it.
+        Assert.Equal(LiveOutcome.Passed, read.Outcome);
+        Assert.Equal("All 2 projects opened (1 in the library aren't on disk any more; 1 is a damaged file).", read.Detail);
+        Assert.Contains(read.Lines, l => l.StartsWith("Damaged: " + broken, StringComparison.Ordinal));
+        Assert.Equal(1, (int)read.Data!["damaged"]!);
+        Assert.Equal(0, (int)read.Data!["perDaw"]!["FL Studio"]!["failed"]!);
 
         Assert.Equal(LiveOutcome.Skipped, Result("Sound library loads").Outcome);   // empty
         Assert.Equal(LiveOutcome.Passed, Result("Something the app adds").Outcome);
