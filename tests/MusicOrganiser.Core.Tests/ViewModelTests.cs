@@ -618,7 +618,7 @@ public class ViewModelTests : IDisposable
         Assert.Equal("Not installed. Install puts in extension 3.2.", link.Status);
         link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "MO Live Test 1", Changes: true, Extension: "3.0"));
         Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3, with “MO Live Test 1” open. Bitwig is running extension 3.0, and Install puts in 3.2: " +
-                     "press Install, then restart Bitwig.", link.Live);
+                     "close Bitwig, press Install, then open Bitwig again.", link.Live);
 
         DawScriptTests.Extension(Path.Combine(user, "Extensions", "MusicOrganiser.bwextension"), "3.0");
         await link.RefreshAsync();
@@ -628,6 +628,18 @@ public class ViewModelTests : IDisposable
         Assert.Equal($"Installed in {Path.Combine(user, "Extensions")} (extension 3.2).", link.Status);
         link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "", Changes: true, Extension: "3.2"));
         Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3.", link.Live);
+        // Installed, but Bitwig hasn't restarted, or loads extensions from another user folder.
+        link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "", Changes: true, Extension: "3.0"));
+        Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3. Bitwig is running extension 3.0, but 3.2 is installed: restart Bitwig to load it. " +
+                     "If it still runs 3.0 after that, Bitwig loads extensions from another folder: use Choose folder… to pick the one Bitwig " +
+                     "shows in Settings > Locations.", link.Live);
+
+        // A newer one, from a newer build of the app, isn't called older, and Install isn't asked for.
+        DawScriptTests.Extension(Path.Combine(user, "Extensions", "MusicOrganiser.bwextension"), "3.10");
+        await link.RefreshAsync();
+        Assert.Equal("Installed, and newer (3.10) than the extension 3.2 this app has: Install would put that older one back.", link.Status);
+        link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "", Changes: true, Extension: "3.10"));
+        Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3. Bitwig is running extension 3.10, newer than the 3.2 this app has.", link.Live);
     }
 
     [Fact]

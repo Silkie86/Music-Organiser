@@ -155,6 +155,21 @@ public class DawScriptTests
         Assert.Null((extension with { Code = null }).ChangedSinceBuilt);   // an installed app has no code next to it
     }
 
+    [Fact]
+    public async Task SaysWhereToLookWhenTheExtensionDidntBuildAgain()
+    {
+        // A build that fails (no JDK, a mistake in the code) leaves the old extension, so starting again doesn't help.
+        var code = Directory.CreateDirectory(Path.Combine(Fixtures.TempDir(), "bitwig-java")).FullName;
+        File.WriteAllText(Path.Combine(code, "pom.xml"), "<project/>");
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.3");
+        File.SetLastWriteTimeUtc(built, DateTime.UtcNow.AddHours(-1));
+        var link = new MusicOrganiser.ViewModels.DawLinkSetting("Bitwig Studio", () => "",
+            () => DawScripts.BitwigExtension([Fixtures.TempDir()], built) with { Code = code }, () => Task.FromResult(""), found: () => true);
+        await link.RefreshAsync();
+        Assert.EndsWith("close the app and start it again so it's built anew. If this stays, building it failed, and " +
+                        $"{Path.Combine(code, "build.log")} says why.", link.Status);
+    }
+
     /// <summary>A stand-in for the built extension: a Java archive whose manifest gives its version.</summary>
     internal static string Extension(string path, string version)
     {
