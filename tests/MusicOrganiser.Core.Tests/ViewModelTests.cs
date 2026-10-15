@@ -858,9 +858,10 @@ public class ViewModelTests : IDisposable
         var reports = Path.Combine(_root, "probe");
         var live = Path.Combine(reports, "live");
         var now = DateTimeOffset.UtcNow;
-        ProbeStatus(live, "AAAA000000000001", now, "1-instrument-AAAA0000.jsonl", playing: true, bar: 5);
+        var fresh = now.AddMinutes(1);   // can't go stale however slow the run
+        ProbeStatus(live, "AAAA000000000001", fresh, "1-instrument-AAAA0000.jsonl", playing: true, bar: 5);
         ProbeStatus(live, "AAAA000000000002", now.AddSeconds(-10), "2-instrument-AAAA0000.jsonl");   // its DAW went away
-        ProbeStatus(live, "AAAA000000000003", now, "3-instrument-AAAA0000.jsonl", host: "FL Studio", version: "25.1.6", format: "VST3",
+        ProbeStatus(live, "AAAA000000000003", fresh, "3-instrument-AAAA0000.jsonl", host: "FL Studio", version: "25.1.6", format: "VST3",
                     track: "", bar: 1, tempo: 140);
         var probe = new ProbeReportsViewModel(reports, () => []);
         Assert.Equal("", probe.RunningNote);   // before the first look
@@ -877,7 +878,7 @@ public class ViewModelTests : IDisposable
 
         // The next look changes the rows in place, so what their buttons said stays.
         row.Reply = "Answered in 85 ms";
-        ProbeStatus(live, "AAAA000000000001", DateTimeOffset.UtcNow, "1-instrument-AAAA0000.jsonl", playing: true, bar: 6, gain: -12);
+        ProbeStatus(live, "AAAA000000000001", fresh, "1-instrument-AAAA0000.jsonl", playing: true, bar: 6, gain: -12);
         await probe.RefreshRunningAsync();
         Assert.Same(row, probe.Running[0]);
         Assert.Equal(("Bitwig Studio 6.1.3 · CLAP · playing, bar 6 · 110 BPM", "Answered in 85 ms"), (row.Details, row.Reply));
@@ -897,7 +898,8 @@ public class ViewModelTests : IDisposable
         // A probe whose status is there, but nothing takes what's dropped in its command folder.
         var reports = Path.Combine(_root, "probe");
         var live = Path.Combine(reports, "live");
-        ProbeStatus(live, "AAAA000000000001", DateTimeOffset.UtcNow, "1-instrument-AAAA0000.jsonl");
+        // Written once, so dated ahead: a busy run can take longer than a probe's status stays fresh.
+        ProbeStatus(live, "AAAA000000000001", DateTimeOffset.UtcNow.AddMinutes(1), "1-instrument-AAAA0000.jsonl");
         var probe = new ProbeReportsViewModel(reports, () => []) { AnswerWait = TimeSpan.FromMilliseconds(300) };
         await probe.RefreshRunningAsync();
         var row = Assert.Single(probe.Running);

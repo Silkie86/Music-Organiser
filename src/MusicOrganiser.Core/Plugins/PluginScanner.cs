@@ -124,12 +124,19 @@ public sealed class PluginScanner
 
     /// <summary>
     /// Reads one plugin file. Without <paramref name="parameters"/> it only lists the plugins inside
-    /// (quick, and CLAP and VST3 plugins aren't even started); with them it loads each plugin.
+    /// (quick, and CLAP and VST3 plugins aren't even started; a VST3 with a moduleinfo.json isn't even
+    /// loaded, see <see cref="Vst3ModuleInfo"/>); with them it loads each plugin.
     /// <paramref name="only"/> picks one plugin by ID, e.g. one from a Waves shell.
     /// </summary>
     public async Task<PluginFileScan> ScanAsync(string path, bool parameters = false, string? only = null, CancellationToken ct = default)
     {
         if (Executable is null) return new(path, [], "The plugin scanner isn't built (see native/README.md)");
+        // A VST3 that says what's inside it needn't be loaded just to list it.
+        if (!parameters && Vst3ModuleInfo.Read(path) is { } listed)
+        {
+            var wanted = only is null ? listed : listed.Where(p => p.Id.Equals(only, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (wanted.Count > 0) return new(path, wanted);
+        }
         var psi = new ProcessStartInfo(Executable)
         {
             RedirectStandardOutput = true,
