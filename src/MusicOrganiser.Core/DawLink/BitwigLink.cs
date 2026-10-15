@@ -57,9 +57,9 @@ public sealed record BitwigInserted(bool Added, int? Index, BitwigDevice? Device
 public sealed record BitwigPad(int Note, string Path, string Name = "");
 
 /// <summary>
-/// The pads (by note) that got their sample, that already had something on them, and that Bitwig didn't fill. Since
-/// extension 3.2 the link also says which samples went in place of an empty Sampler a Drum Machine preset put on the
-/// pad (they're among the filled), and what was on each pad left alone.
+/// The pads (by note) that got their sample, that already had something on them, and that Bitwig didn't fill. The
+/// link also says what was on each pad left alone (since extension 3.2), and which samples went in place of an empty
+/// Sampler a Drum Machine preset put on the pad (since 3.3; they're among the filled).
 /// </summary>
 public sealed record BitwigPadsFilled(IReadOnlyList<int> Filled, IReadOnlyList<int> Skipped, IReadOnlyList<int> Failed,
                                       IReadOnlyList<BitwigPadContents>? Taken = null, IReadOnlyList<int>? Replaced = null);
