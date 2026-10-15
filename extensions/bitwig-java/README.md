@@ -114,7 +114,15 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   `launcherFocus`, `timeline`, `focus`, the clip selected in the arranger `before`, `beforePaste` and `after`,
   its `pastedColor`, and the track's `launcherClipsBefore` and `launcherClipsAfter`. From 3.7 it takes `via`
   too (below), and says `via` and `ran` (whether each of `launcherFocus`, `copy`, `focus` and `paste` ran by
-  it). See [the extensions README](../README.md#clips-in-the-arranger-an-experiment).
+  it). From 3.8 it takes `checks: true`: when the clip didn't land in the arranger, it then checks a paste into
+  an empty launcher slot and Bitwig's Duplicate on the launcher clip by the same route, deletes the clips they
+  made, and says what each found in `checks`. See
+  [the extensions README](../README.md#clips-in-the-arranger-an-experiment).
+- `filetrack` ✎ with `track`, `path` and `at` (optional, in beats): **an experiment** (extension 3.8), which only
+  the live tests send. It inserts the file after the track as a new track (the track's
+  `afterTrackInsertionPoint`, as a drop between tracks), with the play start moved to `at` first, and says where
+  Bitwig put it: the new track's `index`, `name`, `type` and launcher clips, and the clip selected in the
+  arranger before and after.
 
 Not new to version 3, since the script does it too: any request can carry `onlyIn`, a project's name, and the
 link refuses it, or stops a change part way, unless Bitwig has that project open; `hello` says `onlyIn: true`.
@@ -127,8 +135,8 @@ Earlier versions answer `{}`. If the link can't read the project's name, it stil
 `project` out.
 
 New in 3.7, the command routes: `action` and `arrange` take `via`, the route to run Bitwig's commands by (Save,
-Copy, Paste and the two focus actions): `direct` (straight away, the default and the only route the script
-has), `flush` (from Bitwig's next flush), `midi` (when a SysEx message the link sent itself comes back through
+Copy, Paste and the two focus actions): `direct` (straight away, the default before 3.8 and the only route the
+script has), `flush` (from Bitwig's next flush, the default from 3.8, as Bitwig 6.1.3 saved from there), `midi` (when a SysEx message the link sent itself comes back through
 the loopback), `buttonCode` (when a press of one of its own hardware buttons comes back, from a note on channel
 16, and the link runs the command) and `button` (another button, which Bitwig runs the command for itself). The
 answer says `via` and `ran`. A route that hasn't come back within a second is dropped, so a late message or
@@ -176,13 +184,17 @@ the app connects.
   extensions at all. Also the colour mark: a clip already on the clipboard pasted when the copy didn't take
   (appeared, but not the same clip), a colour Bitwig ignores or rounds to its own (never `arranged` then, as a
   clip that was on the clipboard in the colour Bitwig rounded the mark to looks just the same), and a fresh
-  colour for each arrange.
+  colour for each arrange. From 3.8, the checks: a paste in the launcher that made the marked clip and a
+  Duplicate there (both clips deleted again), a copy that didn't take, a Duplicate that went to the track, a check
+  with nothing to work on, a check stopped part way, no checks unless asked or when the clip landed; and
+  `filetrack`, with the file going to the arranger, the launcher, or nowhere.
 - `RoutesTest`: the command routes: Save by every route, the MIDI each sends, a route that never comes back
   (`ran: false`, and a late message or press doesn't run it, nor does a stale message or the link's own ping that
   comes back while a newer command waits), a Bitwig that honours commands only for hardware or
   only in SysEx, the callback each route runs in, an unknown route, `onlyIn` and changes checked again as a
   routed command runs, `hello`'s `loopback`, the self-check's detail, a Bitwig without MIDI ports, and `arrange`
-  by the buttons, refused routes and no paste when the copy didn't run.
+  by the buttons, refused routes and no paste when the copy didn't run. From 3.8, a command with no route runs
+  from the flush.
 - `SelfCheckTest`, `LinkLogTest`, `ReportsTest`: the self-check and the reports, in a temporary folder,
   including a Bitwig missing part of the API (each part fails on its own), another port, an older API and a
   folder that can't be written.
