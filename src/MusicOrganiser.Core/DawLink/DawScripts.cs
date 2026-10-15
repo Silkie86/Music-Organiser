@@ -10,8 +10,7 @@ public enum ScriptState { NotInstalled, Installed, Outdated }
 /// <param name="Source">The copy that ships with the app, in Extensions next to it.</param>
 /// <param name="Folders">Where it goes: one folder for each place the DAW may look.</param>
 /// <param name="Kept">The start of a setting line people may change in their copy, which updates keep.</param>
-/// <param name="Replaces">Older forms of the link, and copies in the DAW's other user folders, to remove when this is
-/// installed, so the DAW can't run two.</param>
+/// <param name="Replaces">Older forms of the link to remove when this is installed, so the DAW doesn't run both.</param>
 /// <param name="Code">For a built extension, the folder of its code when the app runs from a copy of the repo, to tell
 /// when the build is older than the code.</param>
 public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> Folders, string? Kept = null,
@@ -66,7 +65,7 @@ public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> 
         }
     }
 
-    /// <summary>The older forms and other copies of the link that are there now, which Install removes.</summary>
+    /// <summary>The older forms of the link that are there now, which Install removes.</summary>
     public IReadOnlyList<string> Leftovers => (Replaces ?? []).Where(File.Exists).ToList();
 
     /// <summary>The folders that have the script in them.</summary>
@@ -157,15 +156,9 @@ public static class DawScripts
     public static DawScript Bitwig(string userFolder) => Bitwig([userFolder]);
 
     /// <summary>The Bitwig controller script, for Controller Scripts in each of these user folders (<see cref="BitwigUserFolders"/>).</summary>
-    /// <param name="others">Bitwig user folders found besides those, which Install takes any copy of the link out of.</param>
-    public static DawScript Bitwig(IReadOnlyList<string>? userFolders = null, IReadOnlyList<string>? others = null)
-    {
-        var folders = userFolders ?? BitwigUserFolders();
-        var replaces = CopiesIn(others, folders).ToList();
-        return new("Bitwig Studio", Shipped("Bitwig", "MusicOrganiser.control.js"),
-                   folders.Select(f => Path.Combine(f, "Controller Scripts", "Music Organiser")).ToList(),
-                   Replaces: replaces.Count > 0 ? replaces : null);
-    }
+    public static DawScript Bitwig(IReadOnlyList<string>? userFolders = null) =>
+        new("Bitwig Studio", Shipped("Bitwig", "MusicOrganiser.control.js"),
+            (userFolders ?? BitwigUserFolders()).Select(f => Path.Combine(f, "Controller Scripts", "Music Organiser")).ToList());
 
     /// <summary>
     /// The Bitwig extension (Java), for Extensions in each of these user folders. It takes over from the script, as the
@@ -173,30 +166,29 @@ public static class DawScripts
     /// </summary>
     /// <param name="source">The built extension: unless given, the one next to the app (and then, when the app runs from
     /// a copy of the repo, its code there too).</param>
-    /// <param name="others">Bitwig user folders found besides those, which Install takes any copy of the link out of.</param>
-    public static DawScript BitwigExtension(IReadOnlyList<string>? userFolders = null, string? source = null,
-                                            IReadOnlyList<string>? others = null)
+    /// <param name="loadedFrom">The Extensions folder Bitwig was last seen loading the extension from, which it goes
+    /// into as well (see <see cref="BitwigExtensionsFolder"/>).</param>
+    public static DawScript BitwigExtension(IReadOnlyList<string>? userFolders = null, string? source = null, string? loadedFrom = null)
     {
         var folders = userFolders ?? BitwigUserFolders();
-        return new("Bitwig Studio", source ?? Shipped("Bitwig", "MusicOrganiser.bwextension"),
-                   folders.Select(f => Path.Combine(f, "Extensions")).ToList(),
-                   Replaces: Bitwig(folders).Folders.Select(f => Path.Combine(f, "MusicOrganiser.control.js"))
-                                            .Concat(CopiesIn(others, folders)).ToList(),
+        var extensions = folders.Select(f => Path.Combine(f, "Extensions")).ToList();
+        // Only while it's there: Bitwig may have moved, or the drive gone.
+        if (loadedFrom is { Length: > 0 } && Directory.Exists(loadedFrom) && !extensions.Any(f => SameFolder(f, loadedFrom)))
+            extensions.Add(loadedFrom);
+        return new("Bitwig Studio", source ?? Shipped("Bitwig", "MusicOrganiser.bwextension"), extensions,
+                   Replaces: Bitwig(folders).Folders.Select(f => Path.Combine(f, "MusicOrganiser.control.js")).ToList(),
                    Code: source is null ? ExtensionCode() : null);
     }
 
     /// <summary>
-    /// Where either form of the link would be in each of the <paramref name="others"/> that isn't one of the
-    /// <paramref name="folders"/> it goes into. A copy left in another user folder (say Documents\Bitwig Studio, from
-    /// before Bitwig's folder was chosen) could be loaded as well as the new one, as the same controller.
+    /// The Extensions folder an extension Bitwig loaded (its <see cref="DawState.LoadedFrom"/>) is in, or null when that
+    /// isn't a Bitwig Extensions folder (a copy Bitwig made somewhere of its own, say), which Install mustn't write to.
     /// </summary>
-    static IEnumerable<string> CopiesIn(IReadOnlyList<string>? others, IReadOnlyList<string> folders) =>
-        (others ?? []).Where(o => !folders.Any(f => SameFolder(f, o))).Distinct(StringComparer.OrdinalIgnoreCase)
-            .SelectMany(o => new[]
-            {
-                Path.Combine(o, "Extensions", "MusicOrganiser.bwextension"),
-                Path.Combine(o, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js"),
-            });
+    public static string? BitwigExtensionsFolder(string? loadedFrom) =>
+        loadedFrom is { Length: > 0 } && Path.GetDirectoryName(loadedFrom) is { Length: > 0 } folder &&
+        Path.GetFileName(folder).Equals("Extensions", StringComparison.OrdinalIgnoreCase) &&
+        Path.GetFileName(loadedFrom).Equals("MusicOrganiser.bwextension", StringComparison.OrdinalIgnoreCase)
+            ? folder : null;
 
     static bool SameFolder(string a, string b) =>
         string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
@@ -213,13 +205,22 @@ public static class DawScripts
 
     /// <summary>Bitwig's link: the extension when the build made it (it needs a JDK), else the script.</summary>
     /// <param name="extension">The built extension (the one next to the app unless given).</param>
-    /// <param name="others">Bitwig user folders found besides those, which Install takes any copy of the link out of.</param>
-    public static DawScript BitwigLink(IReadOnlyList<string>? userFolders = null, string? extension = null,
-                                       IReadOnlyList<string>? others = null) =>
-        BitwigExtension(userFolders, extension, others) is var built && File.Exists(built.Source) ? built : Bitwig(userFolders, others);
+    /// <param name="loadedFrom">The Extensions folder Bitwig was last seen loading the extension from.</param>
+    public static DawScript BitwigLink(IReadOnlyList<string>? userFolders = null, string? extension = null, string? loadedFrom = null) =>
+        BitwigExtension(userFolders, extension, loadedFrom) is var built && File.Exists(built.Source) ? built : Bitwig(userFolders);
 
     /// <summary>Bitwig's usual user folder: Documents\Bitwig Studio (on Linux, ~/Bitwig Studio).</summary>
     public static string BitwigUserFolder => BitwigPreset.DefaultFolders()[0];
+
+    /// <summary>
+    /// Where Install puts Bitwig's link: the chosen user folder (where the projects are) and every Bitwig Studio folder in
+    /// a Documents folder. Bitwig can load extensions from one of those while it keeps the projects in another (seen:
+    /// extensions from Documents\Bitwig Studio, projects on another drive), and every copy is the same, so it doesn't
+    /// matter which it loads.
+    /// </summary>
+    public static IReadOnlyList<string> BitwigLinkFolders(string? chosen) =>
+        BitwigUserFolders(chosen).Concat(BitwigUserFolders())
+            .DistinctBy(f => Path.TrimEndingDirectorySeparator(Path.GetFullPath(f)), StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>
     /// Bitwig's user folders: the one picked in the app, or else every Bitwig Studio folder in a Documents folder. A PC

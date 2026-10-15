@@ -17,7 +17,7 @@ namespace MusicOrganiser.Core.DawLink;
 /// <param name="OnlyIn">Whether the link honours <see cref="BitwigLink.OnlyIn"/> (older scripts don't).</param>
 public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
                                  string Project, bool Modified, bool Engine, bool Changes, string? Runtime = null,
-                                 string? Extension = null, bool OnlyIn = false)
+                                 string? Extension = null, bool OnlyIn = false, string? LoadedFrom = null)
 {
     /// <summary>What answers in Bitwig: the extension or the script.</summary>
     public string Answering => Runtime == "java" ? $"the Music Organiser extension {Extension}".TrimEnd() : "the Music Organiser script";

@@ -122,7 +122,7 @@ class ParityTest {
 
     /**
      * The extension's answers as the script would give them: link version 3 adds to hello (`link` is 3, with
-     * `runtime` and `extension`) and to device (the remote controls `page` and its `controls`), and nothing else.
+     * `runtime`, `extension` and `loadedFrom`) and to device (the remote controls `page` and its `controls`), and nothing else.
      */
     static Object normalise(Object value) {
         if (value instanceof Map) {
@@ -132,6 +132,7 @@ class ParityTest {
                 m.put("link", 2.0);
                 m.remove("runtime");
                 m.remove("extension");
+                m.remove("loadedFrom");
             }
             if (m.containsKey("params") && m.containsKey("drumPads")) {
                 m.remove("page");

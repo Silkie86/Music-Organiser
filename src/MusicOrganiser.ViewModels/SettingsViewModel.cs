@@ -16,9 +16,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>FL Studio's user data folder, when it was chosen here.</summary>
     public const string FlUserDataKey = "fl_user_data";
     public const string BitwigUserKey = "bitwig_user_folder";
+    /// <summary>The Extensions folder Bitwig was last seen loading the extension from, which Install puts it in too.</summary>
+    public const string BitwigLoadsFromKey = "bitwig_extensions_folder";
 
     readonly LibraryDb _db;
     readonly MainViewModel _main;
+    /// <summary>The <see cref="BitwigLoadsFromKey"/> setting as last read or kept, so each look doesn't read it again.</summary>
+    string? _bitwigLoadsFrom;
     /// <summary>Where the live tests' reports go: reports\live in the app's data folder.</summary>
     readonly string _liveReports;
 
@@ -87,15 +91,18 @@ public sealed partial class SettingsViewModel : ObservableObject
         SoundOutput = new SoundOutputSetting(db, Ui.Current.SoundOutputs);
         Links =
         [
-            // Into the chosen user folder, taking any copy out of the others found, so Bitwig can't load two.
+            // Into the chosen user folder, each one found in Documents, and the Extensions folder Bitwig loaded it from.
             new DawLinkSetting("Bitwig Studio", () => BitwigSteps,
-                               () => DawScripts.BitwigLink(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey)), others: DawScripts.BitwigUserFolders()),
+                               () => DawScripts.BitwigLink(DawScripts.BitwigLinkFolders(db.GetSetting(BitwigUserKey)),
+                                                           loadedFrom: db.GetSetting(BitwigLoadsFromKey)),
                                () => CheckBitwig(watch), new FolderChoice(
                 "Choose Bitwig's user folder (the Bitwig Studio folder that holds Extensions, Library and Projects; Bitwig shows it in Settings > Locations)",
                 DawScripts.BitwigUserFolderFrom,
                 "That isn't Bitwig's user folder or a folder in it. It's the Bitwig Studio folder that holds Extensions, Library and " +
                 "Projects, and Bitwig shows where it is in Settings > Locations.",
-                f => db.SetSetting(BitwigUserKey, f), "From now on Install puts the link there, and nowhere else."),
+                f => db.SetSetting(BitwigUserKey, f),
+                "From now on the app looks for Bitwig projects there. Install puts the link there too, as well as in each Bitwig Studio " +
+                "folder in Documents and where Bitwig was seen loading it from, as Bitwig may load extensions from another folder."),
                 liveTests: liveTests),
             new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), () => CheckFlStudio(watch), new FolderChoice(
                 "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
@@ -130,6 +137,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     public void ShowLive(LiveDawsViewModel live)
     {
         foreach (var link in Links) link.ShowLive(live.State(link.Daw));
+        // Where Bitwig loads the extension from, for Install to put the next version there.
+        if (DawScripts.BitwigExtensionsFolder(live.State(DawState.Bitwig)?.LoadedFrom) is { } folder &&
+            !string.Equals(folder, _bitwigLoadsFrom ??= _db.GetSetting(BitwigLoadsFromKey) ?? "", StringComparison.OrdinalIgnoreCase))
+            _db.SetSetting(BitwigLoadsFromKey, _bitwigLoadsFrom = folder);
     }
 
     /// <summary>
@@ -701,6 +712,7 @@ public sealed partial class DawLinkSetting : ObservableObject
             ? $"✓ Answering now: {state.Version}" + (state.Project.Length > 0 ? $", with “{state.Project}” open." : ".") +
               (state.Daw == DawState.Bitwig && !state.Changes
                   ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "") +
+              (state.LoadedFrom is { Length: > 0 } file ? $" Bitwig loads the extension from {Path.GetDirectoryName(file)}." : "") +
               (state.Extension is { } running && _shipped is { } shipped && running != shipped ? Running(running, shipped) : "")
             : state.Running == true ? $"Not answering right now, though {Daw} is open. Check connection says what's missing."
             : "Not answering right now.";
