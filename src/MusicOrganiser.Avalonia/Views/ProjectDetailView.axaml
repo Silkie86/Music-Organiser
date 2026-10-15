@@ -316,7 +316,7 @@
         </StackPanel>
 
         <TabControl x:Name="Tabs" Margin="12,14,12,0" Classes="detailTabs">
-            <TabItem Header="Overview">
+            <TabItem Header="Overview" IsSelected="{Binding PreviewShown, Mode=OneWayToSource}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="12,14,12,20">
                         <!-- Trouble first: what's missing, in one red card. -->
@@ -386,8 +386,8 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- The arrangement, big, the first thing you see (filled in by the Project preview work). -->
-                        <ContentControl x:Name="ArrangementSlot" Margin="0,0,0,18" />
+                        <!-- The arrangement, big, the first thing you see. Read when Overview first shows; Full size opens it in its own window. -->
+                        <v:ArrangementPanel Height="340" Margin="-12,-12,-12,6" IsVisible="{Binding CanPreview}" />
 
                         <!-- Below it: your own fields on the left, the song at a glance on the right (stacked when narrow). -->
                         <Grid x:Name="OverviewColumns" ColumnDefinitions="*,28,*" RowDefinitions="Auto,Auto,Auto">
@@ -497,10 +497,6 @@
                         </Grid>
                     </StackPanel>
                 </ScrollViewer>
-            </TabItem>
-
-            <TabItem Header="Arrange" ToolTip.Tip="See the project laid out like your DAW's arrangement, without opening it" IsSelected="{Binding PreviewShown, Mode=OneWayToSource}">
-                <v:ArrangementPanel />
             </TabItem>
 
             <TabItem Header="Plugins">
