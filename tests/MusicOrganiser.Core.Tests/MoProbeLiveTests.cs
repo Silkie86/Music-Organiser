@@ -539,14 +539,16 @@ public class ProbeKnobCheckTests
 /// <summary>
 /// A stand-in for MO Probe running in a DAW, following its live link as native/README.md describes it: it writes its
 /// status every few milliseconds, and takes the commands dropped in its command folder, answering in its report.
-/// Disposing it is the DAW removing it: its status and command folder go.
+/// Disposing it is the DAW removing it: its status and command folder go. Like the real one, which runs in the DAW, it
+/// has a thread of its own: on the thread pool a busy test run could hold it up for seconds, and its status would go
+/// stale as if it had stopped.
 /// </summary>
 sealed class FakeProbe : IAsyncDisposable
 {
     readonly Dictionary<int, double> _knobs = MoProbe.Knobs.ToDictionary(k => k.Id, k => k.Default);
     readonly CancellationTokenSource _stop = new();
     readonly string _status, _commands;
-    readonly Task _running;
+    readonly Thread _running;
     readonly string _host, _hostVersion;
     int _n, _handled;
 
@@ -563,7 +565,8 @@ sealed class FakeProbe : IAsyncDisposable
         ReportFile = Path.Combine(folder, $"20261014T091855Z-instrument-{instance[..8]}.jsonl");
         Write("create", new() { ["plugin"] = "org.musicorganiser.probe.instrument", ["host"] = _host, ["hostVersion"] = _hostVersion, ["format"] = format });
         WriteStatus();
-        _running = Task.Run(RunAsync);
+        _running = new Thread(Run) { IsBackground = true, Name = "Fake MO Probe " + instance };
+        _running.Start();
     }
 
     public string Instance { get; }
@@ -583,15 +586,16 @@ sealed class FakeProbe : IAsyncDisposable
         set { lock (_knobs) _knobs[knob] = value; }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         _stop.Cancel();
-        await _running;
+        _running.Join();
         File.Delete(_status);
         Directory.Delete(_commands, recursive: true);
+        return ValueTask.CompletedTask;
     }
 
-    async Task RunAsync()
+    void Run()
     {
         var since = Stopwatch.StartNew();
         while (!_stop.IsCancellationRequested)
@@ -607,8 +611,7 @@ sealed class FakeProbe : IAsyncDisposable
             }
             // A reader had the status open: Windows won't replace it then (Access denied), so next time, as the probe does.
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-            try { await Task.Delay(5, _stop.Token); }
-            catch (OperationCanceledException) { }
+            _stop.Token.WaitHandle.WaitOne(5);
         }
     }
 
