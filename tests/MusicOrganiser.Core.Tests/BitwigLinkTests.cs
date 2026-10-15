@@ -116,6 +116,51 @@ public class BitwigLinkTests
         var arranged = await link.ArrangeAsync(0, 0, 16, "button");
         Assert.Equal("button", (string?)java.Requests.Last()["via"]);
         Assert.Equal(("button", new BitwigArrangeRan(false, false, null, null)), (arranged.Via, arranged.Ran));
+        Assert.Null(arranged.Checks);
+    }
+
+    [Fact]
+    public async Task AsksForArrangesChecksAndReadsThem()
+    {
+        // The extension 3.8 checks a paste into an empty launcher slot and Bitwig's Duplicate when asked, after the clip
+        // didn't land in the arranger.
+        await using var java = new FakeJavaBitwig();
+        java.Answer = request => (string)request["cmd"]! == "arrange"
+            ? """{"arranged":false,"appeared":false,"sameAsSource":false,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE","launcher":{"before":true,"after":true},"mark":{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true,"exact":true},"launcherFocus":1,"timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},"after":{"exists":false,"track":null},"pastedColor":null,"launcherClipsBefore":1,"launcherClipsAfter":1,"via":"flush","ran":{"launcherFocus":true,"copy":true,"focus":true,"paste":true},"checks":{"launcherPaste":{"slot":2,"selected":true,"focus":1,"ran":{"focus":true,"paste":true},"made":true,"colour":"#416DD9","sameAsMark":true,"removed":true},"duplicate":{"selected":true,"focus":1,"ran":{"focus":true,"duplicate":null},"launcher":0,"tracks":0,"removed":false},"error":"Bitwig has “My Song” open now."}}"""
+            : null;
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+
+        var arranged = await link.ArrangeAsync(0, 0, 16, checks: true);
+
+        var sent = java.Requests.Last().AsObject();
+        Assert.True((bool)sent["checks"]!);
+        Assert.False(sent.ContainsKey("via"));
+        Assert.Equal(new BitwigLauncherPasteCheck(2, true, 1, new(true, true), true, "#416DD9", true, true), arranged.Checks!.LauncherPaste);
+        Assert.Equal(new BitwigDuplicateCheck(true, 1, new(true, null), 0, 0, false), arranged.Checks.Duplicate);
+        Assert.Equal("Bitwig has “My Song” open now.", arranged.Checks.Error);
+
+        // Not asked, the request carries no checks.
+        await link.ArrangeAsync(0, 0, 16);
+        Assert.False(java.Requests.Last().AsObject().ContainsKey("checks"));
+    }
+
+    [Fact]
+    public async Task InsertsAFileAsATrackInTheProjectGiven()
+    {
+        await using var java = new FakeJavaBitwig(answers: new Dictionary<string, string>
+        {
+            ["filetrack"] = """{"added":1,"index":3,"name":"Live Clip","type":"Instrument","tracksBefore":4,"tracksAfter":5,"launcherClips":0,"selected":true,"arranger":{"exists":true,"track":"Live Clip"},"arrangerBefore":{"exists":false,"track":null},"at":16,"onTrack":{"before":1,"after":1}}""",
+        });
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+        link.OnlyIn = "MO Live Test";
+
+        var placed = await link.FileTrackAsync(2, @"C:\Tests\Live Clip.mid", 16);
+
+        var sent = java.Requests.Last();
+        Assert.Equal(("filetrack", 2, @"C:\Tests\Live Clip.mid", 16.0, "MO Live Test"),
+                     ((string)sent["cmd"]!, (int)sent["track"]!, (string)sent["path"]!, (double)sent["at"]!, (string?)sent["onlyIn"]));
+        Assert.Equal(new BitwigFileTrack(1, 3, "Live Clip", "Instrument", 4, 5, 0, true, new(true, "Live Clip"), new(false, null), 16, new(1, 1)),
+                     placed);
     }
 
     [Fact]

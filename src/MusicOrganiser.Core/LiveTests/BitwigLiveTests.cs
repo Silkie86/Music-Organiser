@@ -85,7 +85,8 @@ public sealed record BitwigLiveOptions
 /// extension, it also copies the MIDI clip into the arranger (<see cref="ClipToArrangerAsync"/>): that replaces whatever
 /// was copied in Bitwig (one clipboard for every project open), and leaves the test project in its Arrange layout, with its
 /// clip launcher showing, the play start moved, the MIDI clip in a new colour and a copy of it pasted on the run's Sample
-/// track.
+/// track. With the extension 3.8, Clip to arranger's checks may leave a copy of the Sample track behind too, and the run
+/// inserts its MIDI file as a track of its own (“Live Clip”, <see cref="FileAsTrackAsync"/>).
 /// </summary>
 public static class BitwigLiveTests
 {
@@ -142,16 +143,46 @@ public static class BitwigLiveTests
     /// The routes the run tries Save by, in turn, until one works (see <see cref="BitwigLink.RunActionAsync"/>): straight
     /// away, from Bitwig's flush, then through the MIDI loopback (the extension's own MIDI message, a press of its own
     /// button that the extension runs Save for, and one Bitwig runs Save for itself). Bitwig 6.1.3 ignored Save run straight
-    /// away, from a request or a task the extension scheduled, while it carried it out for a controller's hardware button.
-    /// Clip to arranger tries its copy and paste by the same routes, in the same order.
+    /// away, from a request or a task the extension scheduled, while it carried it out for a controller's hardware button,
+    /// and saved from its flush. Clip to arranger tries its copy and paste by the same routes, in the same order. With the
+    /// extension 3.8, the flush comes first, asked for by naming no route (<see cref="RouteOrder"/>).
     /// </summary>
     public static readonly IReadOnlyList<string> Routes = ["direct", "flush", "midi", "buttonCode", "button"];
 
     /// <summary>The first extension that takes a route other than "direct", and has the MIDI loopback.</summary>
     static readonly Version RoutesFrom = new(3, 7);
 
+    /// <summary>
+    /// The first extension that runs Bitwig's commands from its flush when the app names no route (as Save worked there),
+    /// checks what an arrange that didn't work can still do (<see cref="BitwigArrangeChecks"/>), and inserts a file as a
+    /// track (<see cref="BitwigLink.FileTrackAsync"/>).
+    /// </summary>
+    static readonly Version FlushFrom = new(3, 8);
+
+    /// <summary>Whether the link in Bitwig is the Java extension <paramref name="from"/> or later.</summary>
+    static bool IsFrom(BitwigHello h, Version from) => IsNewer(h) && Version.TryParse(h.Extension, out var v) && v >= from;
+
     /// <summary>Whether the link in Bitwig takes routes: the Java extension 3.7 or later.</summary>
-    static bool HasRoutes(BitwigHello h) => IsNewer(h) && Version.TryParse(h.Extension, out var v) && v >= RoutesFrom;
+    static bool HasRoutes(BitwigHello h) => IsFrom(h, RoutesFrom);
+
+    /// <summary>
+    /// The routes a run tries, in turn, with the link in Bitwig: <see cref="Routes"/>, with the flush first from the
+    /// extension 3.8, which takes it when the app names no route, so the first go is the way the app's own commands run.
+    /// Only "direct" with a link that takes no routes.
+    /// </summary>
+    public static IReadOnlyList<string> RouteOrder(BitwigHello h) =>
+        !HasRoutes(h) ? ["direct"] : IsFrom(h, FlushFrom) ? ["flush", .. Routes.Where(r => r != "flush")] : Routes;
+
+    /// <summary>
+    /// The route to name in the request for a go by <paramref name="via"/>: none for the route the link takes by itself (the
+    /// flush from the extension 3.8), and none at all for a link that takes no routes, which would refuse (the script) or not
+    /// know it.
+    /// </summary>
+    static string? Named(BitwigHello h, string via) =>
+        !HasRoutes(h) || (via == "flush" && IsFrom(h, FlushFrom)) ? null : via;
+
+    /// <summary>The route the link in Bitwig takes when the app names none: the flush from the extension 3.8, else straight away.</summary>
+    static string DefaultRoute(BitwigHello h) => IsFrom(h, FlushFrom) ? "flush" : "direct";
 
     /// <summary>The routes through the MIDI loopback, which only run once it's set up (<see cref="LoopbackSetup"/>).</summary>
     static readonly HashSet<string> LoopbackRoutes = ["midi", "buttonCode", "button"];
@@ -238,15 +269,14 @@ public static class BitwigLiveTests
         var front = bringBitwigToFront();
         var savedAt = DateTime.UtcNow;
         var attempts = new List<SaveAttempt>();
-        foreach (var via in routes ? Routes : ["direct"])
+        foreach (var via in RouteOrder(link.Hello))
         {
             var took = Stopwatch.StartNew();
             saving?.Invoke(DateTime.UtcNow);
             BitwigActionRun run;
             try
             {
-                // An older link gets no route, which it would refuse (the script) or not know.
-                run = await link.RunActionAsync(action, routes ? via : null, ct);
+                run = await link.RunActionAsync(action, Named(link.Hello, via), ct);
             }
             catch (DawLinkException e) when (via != "direct")
             {
@@ -268,7 +298,7 @@ public static class BitwigLiveTests
             attempts.Add(new SaveAttempt(via, run.Project, true, !modified, written, tookNow));
             if (!modified || written) break;
         }
-        return SaveVerdict(project, action, wasModified, attempts, wait, file, before, Written(), front, routes);
+        return SaveVerdict(project, action, wasModified, attempts, wait, file, before, Written(), front, routes, DefaultRoute(link.Hello));
     }
 
     /// <summary>
@@ -312,8 +342,13 @@ public static class BitwigLiveTests
     /// <param name="before">When <paramref name="file"/> was written before Save (null if it wasn't there), and after the last go.</param>
     /// <param name="front">Whether Bitwig's window was in front when Save ran, or null when that couldn't be told.</param>
     /// <param name="routes">Whether the link in Bitwig takes routes (the extension 3.7): when it doesn't, only "direct" was tried.</param>
+    /// <param name="byDefault">
+    /// The route the link takes when the app names none, which the app's own commands go by: a Save that worked by it says
+    /// so. Null when that isn't known.
+    /// </param>
     public static LiveVerdict SaveVerdict(string project, string action, bool wasModified, IReadOnlyList<SaveAttempt> attempts, TimeSpan wait,
-                                          string? file, DateTime? before, DateTime? after, bool? front = null, bool routes = true)
+                                          string? file, DateTime? before, DateTime? after, bool? front = null, bool routes = true,
+                                          string? byDefault = null)
     {
         var worked = attempts.FirstOrDefault(a => a.Ran && (a.Cleared || a.Written));
         var last = worked ?? attempts[^1];
@@ -340,7 +375,10 @@ public static class BitwigLiveTests
         if (worked is not null)
         {
             var how = SaveHow(worked.Via);
-            var earlier = Earlier(attempts.TakeWhile(a => a != worked).ToList()) + older + ActiveProject(project, attempts, onlyWhenOther: true);
+            var earlier = Earlier(attempts.TakeWhile(a => a != worked).ToList()) + older + ActiveProject(project, attempts, onlyWhenOther: true) +
+                          (routes && worked.Via == byDefault
+                              ? " That's the way the link runs a command when the app names no route, so the app's own Save works the same way."
+                              : "");
             var wrote = file is null ? "" : worked.Written ? $", and wrote {file}" : $", though {file} wasn't written again";
             if (worked.Cleared)
                 return LiveVerdict.Pass(wasModified
@@ -439,11 +477,15 @@ public static class BitwigLiveTests
             return LiveVerdict.Pass("The extension's own MIDI came back to it through the loopback, so it can run Bitwig's commands on its own " +
                                     "MIDI messages and by pressing its own buttons.", data);
         return LiveVerdict.Fail("The extension's own MIDI hasn't come back to it through the loopback, so it can only run Bitwig's commands " +
-                                "straight away or from Bitwig's flush, which Bitwig 6.1.3 ignored for Save, copy and paste. " + LoopbackSetup, data);
+                                "straight away or from Bitwig's flush. Bitwig 6.1.3 ignored Save, copy and paste run straight away, though it " +
+                                "saved from its flush. " + LoopbackSetup, data);
     }
 
-    static LiveVerdict NeedsArrange(string? running) =>
-        LiveVerdict.Skip($"This needs the Music Organiser extension {ArrangeFrom} or later, and Bitwig runs " +
+    static LiveVerdict NeedsArrange(string? running) => NeedsExtension(ArrangeFrom, running);
+
+    /// <summary>Skipped, as the test needs the extension <paramref name="from"/> or later and Bitwig runs <paramref name="running"/>.</summary>
+    static LiveVerdict NeedsExtension(Version from, string? running) =>
+        LiveVerdict.Skip($"This needs the Music Organiser extension {from} or later, and Bitwig runs " +
                          $"{(running is { Length: > 0 } ? running : "an older one")}. {Reinstall}");
 
     /// <summary>
@@ -457,7 +499,10 @@ public static class BitwigLiveTests
     /// cref="Routes"/>), each go marking the launcher clip with a fresh colour, until one puts the clip there or its paste
     /// puts anything down (<see cref="Pasted"/>): another paste would land where that one did, and the clip it left
     /// selected there would hide whether a new one appeared, so the routes after it aren't tried. The verdict is that go's,
-    /// naming its route (Passed when it put the clip there); else the last go's, with a line for each route.
+    /// naming its route (Passed when it put the clip there); else the last go's, with a line for each route. With the
+    /// extension 3.8, the first go is by the flush (<see cref="RouteOrder"/>), and each go whose paste ran but put nothing
+    /// in the arranger checks a paste into an empty launcher slot and Bitwig's Duplicate by the same route (<see
+    /// cref="BitwigArrangeChecks"/>), whose lines say whether the copy took and whether editing works in the launcher.
     /// </summary>
     /// <param name="clipSlot">The launcher slot the MIDI clip test put the clip in, or null when it didn't.</param>
     /// <param name="bringBitwigToFront">Brings Bitwig's window to the front: whether it's in front, or null when that can't be told.</param>
@@ -477,12 +522,13 @@ public static class BitwigLiveTests
         // Copy and paste go to the panel in front inside Bitwig, which may need Bitwig's own window in front too.
         var front = bringBitwigToFront();
         var routes = HasRoutes(hello);
+        var checks = IsFrom(hello, FlushFrom);
         var attempts = new List<ArrangeAttempt>();
-        foreach (var via in routes ? Routes : ["direct"])
+        foreach (var via in RouteOrder(hello))
         {
             try
             {
-                var arranged = await link.ArrangeAsync(on.Index, slot, at, routes ? via : null, ct);
+                var arranged = await link.ArrangeAsync(on.Index, slot, at, Named(hello, via), checks, ct);
                 attempts.Add(new ArrangeAttempt(via, arranged, null));
                 if (Decides(arranged)) break;
             }
@@ -509,7 +555,7 @@ public static class BitwigLiveTests
             o["answer"] = a.Answer is null ? null : JsonSerializer.SerializeToNode(a.Answer, AnswerJson);
             return (JsonNode)o;
         }).ToArray());
-        var lines = attempts.Select(ArrangeLine).ToList();
+        var lines = attempts.SelectMany(ArrangeLines).ToList();
         if (attempts.LastOrDefault(a => a.Answer is not null) is not { Answer: { } answered } seen)
         {
             var first = attempts[0].Error!;
@@ -528,7 +574,7 @@ public static class BitwigLiveTests
                       (before.Count > 0 ? $", after {Join(before)} didn't put the clip there." : ".");
             if (decided.Answer is { Arranged: true, CopiedFromTimeline: false }) return verdict with { Detail = verdict.Detail + ran };
             // Its paste put something down, though not for sure the run's clip in the arranger: no other route was tried.
-            var rest = Routes.Skip(attempts.Count).Select(RouteName).ToList();
+            var rest = RouteOrder(hello).Skip(attempts.Count).Select(RouteName).ToList();
             return verdict with
             {
                 Detail = verdict.Detail + ran + (rest.Count == 0 ? "" :
@@ -577,6 +623,60 @@ public static class BitwigLiveTests
         if (ran.Focus == false) steps.Add("bringing the arranger timeline to the front");
         if (ran.Paste == false) steps.Add("the paste");
         return Join(steps);
+    }
+
+    /// <summary>
+    /// The lines for the report saying what the arrange experiment did by one route: one for the arrange, then one for each
+    /// of its checks (the extension 3.8), indented under it.
+    /// </summary>
+    static IEnumerable<string> ArrangeLines(ArrangeAttempt a)
+    {
+        yield return ArrangeLine(a);
+        if (a.Answer?.Checks is not { } checks) yield break;
+        if (checks.LauncherPaste is { } paste) yield return "  - Paste into the launcher: " + PasteCheck(paste, a.Answer.Mark);
+        if (checks.Duplicate is { } duplicate) yield return "  - Duplicate in the launcher: " + DuplicateCheck(duplicate);
+        if (checks.Error is { } error) yield return "  - The checks stopped: " + error;
+    }
+
+    /// <summary>
+    /// What the check's paste into an empty launcher slot found, in plain words. Its colour only says whose clip it is when
+    /// the link's mark on the launcher clip (<paramref name="mark"/>, arrange's) took, and is the very colour asked for.
+    /// </summary>
+    static string PasteCheck(BitwigLauncherPasteCheck c, BitwigClipMark? mark)
+    {
+        var slot = $"empty slot {c.Slot + 1}";
+        if (!c.Selected) return $"Bitwig didn't select {slot}, so the check stopped there";
+        if (c.Ran.Focus == false) return "giving the clip launcher the focus didn't run, so the check stopped there";
+        if (c.Ran.Paste is not { } pasted) return "the check didn't get to the paste";
+        if (!pasted) return $"the paste into {slot} didn't run";
+        if (!c.Made) return $"a paste into {slot} put nothing there";
+        var left = c.Removed ? "" : $" (the link couldn't delete it again, so it's still in slot {c.Slot + 1})";
+        if (mark is not { Took: true })
+            return $"a paste into {slot} put down a clip ({c.Colour ?? "unknown"}), but Bitwig didn't let the link colour the launcher clip, so " +
+                   "it can't tell whether that's the launcher clip's copy or what Bitwig's clipboard held before" + left;
+        if (c.SameAsMark && !mark.Exact)
+            return $"a paste into {slot} put down a clip in the launcher clip's colour ({c.Colour}), but Bitwig rounded that colour to one of " +
+                   "its own, which other clips can have too, so it can't tell for sure whether the copy took" + left;
+        return c.SameAsMark
+            ? $"a paste into {slot} put the launcher clip's copy there, in its marking colour ({c.Colour}), so the copy took and pasting " +
+              "works in the launcher: it's putting it in the arranger that fails" + left
+            : $"a paste into {slot} put down a clip in another colour ({c.Colour ?? "unknown"}) than the launcher clip's mark, so the copy " +
+              "didn't take: Bitwig pasted what its clipboard held before" + left;
+    }
+
+    /// <summary>What the check's Duplicate on the launcher clip found, in plain words.</summary>
+    static string DuplicateCheck(BitwigDuplicateCheck d)
+    {
+        if (!d.Selected) return "Bitwig didn't select the launcher clip again, so the check stopped there";
+        if (d.Ran.Focus == false) return "giving the clip launcher the focus didn't run, so the check stopped there";
+        if (d.Ran.Duplicate is not { } duplicated) return "the check didn't get to Duplicate";
+        if (!duplicated) return "Duplicate didn't run";
+        if (d.Launcher > 0)
+            return "Duplicate made a copy of the clip in the launcher, so Bitwig's editing actions work in the launcher by this route" +
+                   (d.Removed ? " (the link deleted the copy again)" : " (the link couldn't delete the copy again)");
+        if (d.Tracks > 0)
+            return "Duplicate copied the whole track instead, so the clip launcher didn't have the focus (the copy is left in the test project)";
+        return "Duplicate changed nothing in the launcher or the track list";
     }
 
     /// <summary>A line for the report saying what the arrange experiment did by one route.</summary>
@@ -694,6 +794,69 @@ public static class BitwigLiveTests
         }
         return LiveVerdict.Fail($"Bitwig didn't put the clip into its arranger at {meant} on “{track}”: {string.Join("; ", instead)}." +
                                 Window(front) + LookAt(bar, track), data);
+    }
+
+    /// <summary>
+    /// The live test Changes › MIDI file as a track, an experiment (the Java extension 3.8; Skipped with an older link):
+    /// inserts the run's MIDI file after the track called <paramref name="track"/>, as a new track, with the play start at bar
+    /// 5 (worked out from the project's time signature), the way Bitwig's API inserts a file between tracks, and says where
+    /// Bitwig put its clip (<see cref="FileTrackVerdict"/>). Nothing else in Bitwig's API puts a clip in the arranger, so
+    /// this is another way to try.
+    /// </summary>
+    public static async Task<LiveVerdict> FileAsTrackAsync(BitwigLink link, string track, string file, CancellationToken ct = default)
+    {
+        var hello = link.Hello;
+        if (!IsNewer(hello)) return LiveVerdict.Skip(NeedsJava);
+        if (!IsFrom(hello, FlushFrom)) return NeedsExtension(FlushFrom, hello.Extension);
+        var p = await link.ProjectAsync(ct);
+        if (p.Tracks.LastOrDefault(x => x.Name == track) is not { } after) return Needs("the sample's track");
+        const int bar = 5;
+        var placed = await link.FileTrackAsync(after.Index, file, (bar - 1) * BarBeats(p.TimeSignature), ct);
+        return FileTrackVerdict(placed, Path.GetFileName(file), track, bar);
+    }
+
+    /// <summary>
+    /// Where Bitwig put a MIDI file the link inserted after a track (<see cref="BitwigLink.FileTrackAsync"/>):
+    /// <list type="bullet">
+    /// <item>Passed when it made a new track with no clip in its launcher and the clip selected in the arranger moved to that
+    /// track, so the clip went in the arranger, asking the person to look at where it starts, which the link can't read.</item>
+    /// <item>Failed when Bitwig added no track, or put the clip in the new track's launcher.</item>
+    /// <item>Else Noted, asking the person to look, since the link can't see a clip on the new track.</item>
+    /// </list>
+    /// The data is the extension's whole answer.
+    /// </summary>
+    /// <param name="file">The MIDI file's name.</param>
+    /// <param name="track">The track it went after.</param>
+    /// <param name="bar">Where the play start was moved to, so where the clip should start (1 is the first bar).</param>
+    public static LiveVerdict FileTrackVerdict(BitwigFileTrack f, string file, string track, int bar)
+    {
+        var data = JsonSerializer.SerializeToNode(f, AnswerJson)!;
+        var meant = $"bar {bar} (beat {Share(f.At)})";
+        if (f.Added == 0)
+        {
+            var launcher = f.OnTrack is { After: { } now, Before: var was } && now > was
+                ? $", though “{track}” has {Checks.Count(now, "clip")} in the launcher now, {was} before"
+                : "";
+            return LiveVerdict.Fail($"Bitwig didn't add a track for {file} after “{track}”: it still has {f.TracksBefore} tracks{launcher}.", data);
+        }
+        if (f.Index is not { } index || f.Name is not { } name)
+            return LiveVerdict.Note($"Bitwig added {Checks.Count(f.Added, "track")} for {file}, but the link couldn't find the new one in its " +
+                                    $"listing. Look after “{track}” in Bitwig and say what's there.", data);
+        var made = $"Bitwig put {file} on a new track, “{name}” (track {index + 1})";
+        if (f.LauncherClips > 0)
+            return LiveVerdict.Fail($"{made}, but in its clip launcher ({Checks.Count(f.LauncherClips.Value, "clip")} there), not the arranger, so " +
+                                    "inserting a file between tracks doesn't put it in the arranger.", data);
+        // The 3.7 run left Bitwig's play start marker at bar 1 though the link read it back at bar 5, so where the clip starts is asked, not assumed.
+        var look = $"look at “{name}” in Bitwig's arranger and say whether the clip is there and which bar it starts at (it was meant to start at " +
+                   $"{meant}, where the link moved the play start), and where the play start marker is.";
+        if (f.Arranger is { Exists: true } on && on.Track == name && on != f.ArrangerBefore)
+            return LiveVerdict.Pass($"{made}, with no clip in its launcher, and the clip selected in the arranger is on that track now, so the " +
+                                    $"clip went in the arranger. The link can't read where an arranger clip starts: {look}", data);
+        var why = f.Arranger is { Exists: true } same && same.Track == name && same == f.ArrangerBefore
+            ? $"a clip on a track called “{same.Track}” was selected in the arranger before too, and the link tells those clips apart only by " +
+              "their track's name, so it can't tell whether a new one appeared"
+            : "no clip on it is selected in the arranger, so the link can't tell whether the clip went there";
+        return LiveVerdict.Note($"{made}, with no clip in its launcher, but {why}. {Capital(look)}", data);
     }
 
     /// <summary>
@@ -1054,7 +1217,9 @@ public static class BitwigLiveTests
                 var p = await _link.ProjectAsync(t);
                 var detail = $"Bitwig lets the app make changes, and has “{p.Name}” open, so the run can change it.";
                 if (p.TrackCount > 100)
-                    detail += $" It has {p.TrackCount} tracks, and each run adds about six: make a fresh “{TestProject}” project now and then, " +
+                    detail += $" It has {p.TrackCount} tracks, and each run adds " +
+                              (IsFrom(_link.Hello, FlushFrom) ? "about seven (more when Clip to arranger's checks copy a track)" : "about six") +
+                              $": make a fresh “{TestProject}” project now and then, " +
                               "since Bitwig lists only the first 128 to the app.";
                 return LiveVerdict.Pass(detail);
             });
@@ -1119,6 +1284,10 @@ public static class BitwigLiveTests
             await Change(Changes, "Clip to arranger", (link, t) => ClipToArrangerAsync(link, SampleTrack, _clipSlot, options.BringBitwigToFront, t,
                                                                                        async () => await ClosedSinceAsync(link) is not null),
                          ArrangeTime);
+
+            // Another experiment: Bitwig's API can insert a file between tracks, which may put a MIDI file's clip in the arranger.
+            await Change(Changes, "MIDI file as a track", (link, t) =>
+                _sampleMade ? FileAsTrackAsync(link, SampleTrack, Files.Clip, t) : Task.FromResult(Needs("the sample's track")));
 
             await Change(Changes, "Drum Machine by ID", async (link, t) =>
             {
@@ -1405,8 +1574,8 @@ public static class BitwigLiveTests
         /// <summary>How long Save gets: a wait for the unsaved changes to clear after Save by each route, and time to spare.</summary>
         TimeSpan SaveTime => options.SaveWait * Routes.Count + TimeSpan.FromSeconds(30);
 
-        /// <summary>How long Clip to arranger gets: a go by each route, each with a few of the extension's waits.</summary>
-        static TimeSpan ArrangeTime => TimeSpan.FromSeconds(30) * Routes.Count;
+        /// <summary>How long Clip to arranger gets: a go by each route, each with a few of the extension's waits, and its checks'.</summary>
+        static TimeSpan ArrangeTime => TimeSpan.FromSeconds(60) * Routes.Count;
 
         IEnumerable<string> SavedFolders() => ProjectFolders(options.BitwigUserFolders(), options.LibraryProjects());
 

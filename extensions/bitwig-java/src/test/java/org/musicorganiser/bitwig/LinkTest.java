@@ -91,7 +91,7 @@ class LinkTest {
         MusicOrganiserExtensionDefinition definition = (MusicOrganiserExtensionDefinition) found.get(0);
 
         // The script's identity (MusicOrganiser.control.js's defineController), so Bitwig keeps the controller it has.
-        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.7"),
+        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", MusicOrganiserExtensionDefinition.VERSION),
                      List.of(definition.getHardwareVendor(), definition.getHardwareModel(), definition.getName(), definition.getAuthor(),
                              definition.getVersion()));
         assertEquals(UUID.fromString("ed35e3c7-c544-49ed-936d-c236b0c9b73b"), definition.getId());
@@ -125,7 +125,7 @@ class LinkTest {
                        "project", "Night Drive", "modified", false, "engine", true, "changes", false,
                        "onlyIn", true,   // it honours a request's onlyIn
                        // Link version 3: which link this is.
-                       "runtime", "java", "extension", "3.7",
+                       "runtime", "java", "extension", MusicOrganiserExtensionDefinition.VERSION,
                        // Extension 3.7: whether the link's own MIDI has come back through the loopback (it isn't set up here).
                        "loopback", false),
                    hello.get("result"));
@@ -375,9 +375,10 @@ class LinkTest {
                         obj("id", "toggle_metronome", "name", "Toggle Metronome", "category", "Transport", "menu", "Toggle Metronome")),
                    app.ask(obj("id", 1, "cmd", "actions")).get("result"));
         bitwig.allowChanges(true);
-        // The answer names the project Bitwig had in front as the action ran, and the route it ran by: straight away.
-        assertJson(obj("id", 2, "ok", true, "result", obj("project", "Night Drive", "via", "direct", "ran", true)),
-                   app.ask(obj("id", 2, "cmd", "action", "action", "Save")));
+        // The answer names the project Bitwig had in front as the action ran, and the route it ran by: without one asked for,
+        // from Bitwig's flush (extension 3.8), which Save worked by in Bitwig 6.1.3 where straight away it didn't.
+        assertJson(obj("id", 2, "ok", true, "result", obj("project", "Night Drive", "via", "flush", "ran", true)),
+                   app.waitFor(obj("id", 2, "cmd", "action", "action", "Save")));
         assertEquals(List.of(List.of("invoke", "Save")), bitwig.calls);
         assertMatches("no action Format C:", error(app.ask(obj("id", 3, "cmd", "action", "action", "Format C:"))));
         bitwig.projectName.v = "My Song";
@@ -394,7 +395,8 @@ class LinkTest {
         app.take();
         // As if the application part of Bitwig's API had only half set up: its project name can't be read.
         bitwig.projectName.interested = false;
-        assertJson(obj("id", 1, "ok", true, "result", obj("via", "direct", "ran", true)), app.ask(obj("id", 1, "cmd", "action", "action", "Save")));
+        assertJson(obj("id", 1, "ok", true, "result", obj("via", "direct", "ran", true)),
+                   app.ask(obj("id", 1, "cmd", "action", "action", "Save", "via", "direct")));
         assertEquals(List.of(List.of("invoke", "Save")), bitwig.calls);
     }
 

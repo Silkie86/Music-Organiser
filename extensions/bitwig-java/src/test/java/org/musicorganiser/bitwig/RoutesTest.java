@@ -252,6 +252,25 @@ class RoutesTest {
     }
 
     @Test
+    @DisplayName("runs a command from Bitwig's flush when the request names no route (extension 3.8), as Save worked from there")
+    void runsFromTheFlushByDefault() {
+        // Bitwig 6.1.3 saved from the flush, and ignored Save run straight away.
+        studio(m -> m.honoured.remove(Context.SOCKET));
+        bitwig.modified.v = true;
+        assertJson(obj("id", 1, "ok", true, "result", obj("project", "MO Live Test", "via", "flush", "ran", true)), app.waitFor(save(1, null)));
+        assertEquals(false, bitwig.modified.v);
+        assertEquals(List.of(), bitwig.ignored);
+
+        // Arranging too: its copy and paste run from the flush.
+        studio(m -> m.honoured.remove(Context.TASK));
+        Map<String, Object> request = arrange(2, "direct");
+        request.remove("via");
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(request).get("result"));
+        assertJson(obj("arranged", true, "via", "flush"), SelfCheckTest.pick(result, "arranged", "via"));
+        assertEquals(List.of(), bitwig.ignored);
+    }
+
+    @Test
     @DisplayName("refuses a route it doesn't know, and an action Bitwig doesn't have, before running anything")
     void refusesAnUnknownRoute() {
         studio(m -> m.actions.add(action("toggle_metronome", "Toggle Metronome", "Transport")));
@@ -417,6 +436,55 @@ class RoutesTest {
         // The play start stays where it was.
         assertFalse(bitwig.calls.stream().anyMatch(c -> c.get(0).equals("playStart")));
         assertEquals(List.of(), bitwig.state.arranged);
+    }
+
+    @Test
+    @DisplayName("stops arrange's checks before their paste and Duplicate when the launcher's focus action doesn't come back (extension 3.8)")
+    void stopsChecksWithoutTheLaunchersFocus() {
+        // The timeline's focus action is ignored, so arrange pastes into the launcher; then the loopback goes, so the
+        // checks' focus actions never run, and neither does anything after them.
+        studio(m -> {
+            m.actions.add(action("Duplicate", "Duplicate", "Editing"));
+            m.focusIgnored.add(Link.FOCUS_ARRANGER);
+            m.loopbackCut = () -> bitwig.calls.contains(List.of("invoke", "Paste"));
+        });
+        Map<String, Object> request = arrange(1, "midi");
+        request.put("checks", true);
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(request, 30000).get("result"));
+        assertEquals(2.0, result.get("launcherClipsAfter"));
+        assertJson(obj("launcherPaste", obj("slot", 2, "selected", true, "focus", 0, "ran", obj("focus", false, "paste", null), "made", false,
+                                            "colour", null, "sameAsMark", false, "removed", false),
+                       "duplicate", obj("selected", true, "focus", 0, "ran", obj("focus", false, "duplicate", null), "launcher", 0, "tracks", 0,
+                                        "removed", false)),
+                   result.get("checks"));
+        assertEquals(1, invoked("Paste"));
+        assertEquals(0, invoked("Duplicate"));
+    }
+
+    @Test
+    @DisplayName("stops a check before its paste when the launcher's focus action hid the launcher and didn't come back to show it (extension 3.8)")
+    void stopsAChecksPasteWhenTheLauncherStaysHidden() {
+        // Arrange pastes into the launcher, which is still in front for the first check: its focus action hides it, and
+        // the run that would bring it back never comes back, nor does anything after it.
+        studio(m -> {
+            m.actions.add(action("Duplicate", "Duplicate", "Editing"));
+            m.focusIgnored.add(Link.FOCUS_ARRANGER);
+            m.loopbackCut = () -> {
+                int paste = bitwig.calls.indexOf(List.of("invoke", "Paste"));
+                return paste >= 0 && bitwig.calls.subList(paste, bitwig.calls.size()).contains(List.of("invoke", Link.FOCUS_LAUNCHER));
+            };
+        });
+        Map<String, Object> request = arrange(1, "midi");
+        request.put("checks", true);
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(request, 30000).get("result"));
+        assertEquals(2.0, result.get("launcherClipsAfter"));
+        assertJson(obj("launcherPaste", obj("slot", 2, "selected", true, "focus", 1, "ran", obj("focus", false, "paste", null), "made", false,
+                                            "colour", null, "sameAsMark", false, "removed", false),
+                       "duplicate", obj("selected", true, "focus", 0, "ran", obj("focus", false, "duplicate", null), "launcher", 0, "tracks", 0,
+                                        "removed", false)),
+                   result.get("checks"));
+        assertEquals(1, invoked("Paste"));
+        assertEquals(0, invoked("Duplicate"));
     }
 
     @Test
