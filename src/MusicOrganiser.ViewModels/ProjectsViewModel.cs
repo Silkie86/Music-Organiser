@@ -46,6 +46,20 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     [ObservableProperty] ProjectItem? _selected;
     [ObservableProperty] ProjectDetailViewModel? _detail;
 
+    /// <summary>Setting: how much of the page's width the selected song's panel takes, 0 to 1.</summary>
+    public const string PanelShareKey = "projects_panel_share";
+
+    /// <summary>
+    /// How much of the width the song's panel takes (the rest is the list): two thirds at first, then where you leave
+    /// the divider. Kept between a fifth and nine tenths so neither side disappears.
+    /// </summary>
+    public double PanelShare
+    {
+        get => double.TryParse(_db.GetSetting(PanelShareKey), System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out var share) ? Math.Clamp(share, 0.2, 0.9) : 2 / 3.0;
+        set => _db.SetSetting(PanelShareKey, Math.Clamp(value, 0.2, 0.9).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     public ProjectsViewModel(LibraryDb db, MainViewModel main)
     {
         _db = db;

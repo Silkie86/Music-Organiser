@@ -64,6 +64,22 @@ public class ViewModelTests : IDisposable
         Assert.Equal([$"{newest.Modified.Year} rework (newest) · Didums_77 · {newest.Modified:d MMM yyyy}", "2019 original · Didums_12 · 2 Feb 2019"],
                      detail.RunChoices.Select(r => r.Header));
         Assert.StartsWith("First made 2 Feb 2019 · saved ", detail.DatesText);
+
+        // Overview's glance: the newest save first, then the older ones by date.
+        Assert.Equal(["Didums_77", "Didums_12"], detail.GlanceSaves.Select(s => s.Name));
+        Assert.True(detail.GlanceSaves[0].Newest);
+        Assert.Equal("2 Feb 2019", detail.GlanceSaves[1].WhenText);
+        Assert.Equal("None used", detail.GlanceSamples);
+    }
+
+    [Fact]
+    public void The_song_panel_takes_two_thirds_until_its_divider_is_moved_and_then_keeps_its_place()
+    {
+        Assert.Equal(2 / 3.0, Main().Projects.PanelShare, 3);
+        Main().Projects.PanelShare = 0.55;
+        Assert.Equal(0.55, Main().Projects.PanelShare, 3);
+        Main().Projects.PanelShare = 1;   // never squeezes the list to nothing
+        Assert.Equal(0.9, Main().Projects.PanelShare, 3);
     }
 
     [Fact]
