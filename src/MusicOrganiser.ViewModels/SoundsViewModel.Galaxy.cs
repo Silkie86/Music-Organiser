@@ -213,14 +213,32 @@ public sealed partial class SoundsViewModel
         return regions.OrderByDescending(r => r.Count).Take(16).ToList();
     }
 
-    /// <summary>The mouse swept over a star: a preview (not a deliberate play), and onto the trail.</summary>
+    PreviewWorker? _previews;
+    /// <summary>Sweep previews start off the UI thread, so the mouse never waits for a file to open.</summary>
+    PreviewWorker Previews => _previews ??= new PreviewWorker(_player,
+        (path, e) => Message = $"Can't play {System.IO.Path.GetFileName(path)}: {e.Message}");
+
+    /// <summary>
+    /// The mouse, held down, swept onto a star (or an arrow key hopped to one): a preview (not a deliberate play),
+    /// and onto the trail.
+    /// </summary>
     [RelayCommand]
     void Sweep(Sound? s)
     {
         if (s is null) return;
-        try { Start(s, 0, count: false); }
-        catch (Exception e) { Message = $"Can't play {s.Name}: {e.Message}"; }
+        _preview = s.Path;
+        Previews.Play(s.Path);
+        _clock.Start();
         Trail = [s, .. Trail.Where(t => t != s).Take(TrailLength - 1)];
+    }
+
+    /// <summary>The mouse was let go after sweeping: the preview stops.</summary>
+    [RelayCommand]
+    void EndSweep()
+    {
+        if (_preview is null) return;
+        Previews.Stop();
+        _preview = null;
     }
 
     /// <summary>A click on a star: picks it, and counts as playing it on purpose.</summary>
@@ -232,7 +250,11 @@ public sealed partial class SoundsViewModel
         try
         {
             if (_player.Playing == s.Path && _preview == s.Path) { Count(s); _preview = null; }
-            else Start(s, 0);
+            else
+            {
+                _previews?.Cancel();
+                Start(s, 0);
+            }
         }
         catch (Exception e) { Message = $"Can't play {s.Name}: {e.Message}"; }
         if (!Trail.Contains(s)) Trail = [s, .. Trail.Take(TrailLength - 1)];

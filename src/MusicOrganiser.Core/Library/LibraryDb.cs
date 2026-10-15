@@ -370,41 +370,60 @@ public sealed partial class LibraryDb : IDisposable
         RefreshInstalledFlags();
     }
 
-    /// <summary>Re-check every project plugin against the installed list.</summary>
+    /// <summary>
+    /// Re-check every project plugin against the installed list. Only the rows whose answer changed are written, and in
+    /// small batches: a library of 16,000 projects has hundreds of thousands of plugin rows, and holding the database for
+    /// all of them at once kept the window waiting ("Not responding").
+    /// </summary>
     public void RefreshInstalledFlags()
     {
         var installed = InstalledKeys();
-        var rows = Query("SELECT rowid, name, name_key, vendor, kind, format, path FROM plugins",
-            r => (RowId: (long)r["rowid"], Key: NameKey(Str(r, "name")),
+        var rows = Query("SELECT rowid, name, name_key, vendor, kind, format, path, installed FROM plugins",
+            r => (RowId: (long)r["rowid"], Key: NameKey(Str(r, "name")), Was: Long(r, "installed") != 0,
                   Ref: new PluginRef(Str(r, "name"), Str(r, "vendor"), (PluginKind)Long(r, "kind"), Str(r, "format"), Str(r, "path"))));
-        lock (_lock)
-        {
-            using var tx = _conn.BeginTransaction();
-            foreach (var row in rows)
-            {
-                using var cmd = Cmd("UPDATE plugins SET installed = $i WHERE rowid = $r",
-                    ("$i", IsInstalled(row.Ref, row.Key, installed) ? 1 : 0), ("$r", row.RowId));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            tx.Commit();
-        }
+        var changed = rows.Select(row => (row.RowId, Now: IsInstalled(row.Ref, row.Key, installed), row.Was))
+                          .Where(row => row.Now != row.Was)
+                          .Select(row => (row.RowId, row.Now))
+                          .ToList();
+        InBatches(changed, "UPDATE plugins SET installed = $i WHERE rowid = $r", ["$i", "$r"],
+                  (row, p) => { p[0].Value = row.Now ? 1 : 0; p[1].Value = row.RowId; });
     }
 
+    /// <summary>
+    /// The sample folders' files, in place of the last list. Written in batches with the database let go in between,
+    /// so the window can keep reading it while a big library (350,000 files) goes in.
+    /// </summary>
     public void ReplaceSampleIndex(IEnumerable<string> files)
     {
-        lock (_lock)
+        Exec("DELETE FROM sample_index");
+        InBatches(files, "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
         {
-            using var tx = _conn.BeginTransaction();
-            using (var del = Cmd("DELETE FROM sample_index")) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var f in files)
+            p[0].Value = f;
+            p[1].Value = Path.GetFileName(f);
+            p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
+        });
+    }
+
+    /// <summary>Runs one statement for each item, a few thousand to a transaction, letting go of the database between them.</summary>
+    void InBatches<T>(IEnumerable<T> items, string sql, string[] names, Action<T, SqliteParameter[]> fill, int size = 2000)
+    {
+        using var e = items.GetEnumerator();
+        var more = e.MoveNext();
+        while (more)
+        {
+            lock (_lock)
             {
-                using var cmd = Cmd("INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)",
-                    ("$p", f), ("$n", Path.GetFileName(f)), ("$k", NameKey(Path.GetFileNameWithoutExtension(f))));
+                using var tx = _conn.BeginTransaction();
+                using var cmd = Cmd(sql);
                 cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
+                var p = names.Select(n => cmd.Parameters.Add(new SqliteParameter(n, null))).ToArray();
+                for (var n = 0; more && n < size; n++, more = e.MoveNext())
+                {
+                    fill(e.Current, p);
+                    cmd.ExecuteNonQuery();
+                }
+                tx.Commit();
             }
-            tx.Commit();
         }
     }
 

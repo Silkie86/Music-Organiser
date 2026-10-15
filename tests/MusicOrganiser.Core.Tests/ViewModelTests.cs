@@ -527,6 +527,10 @@ public class ViewModelTests : IDisposable
         Assert.Equal(["Kick 1", "Pad 2"], lab.Trail.Select(s => s.Name));
         Assert.Equal(0, Named("Kick 1").Plays);
         Assert.Equal(3, played.Count);
+        // Letting go after sweeping stops the preview; it doesn't count.
+        lab.EndSweepCommand.Execute(null);
+        Assert.Equal(0, Named("Kick 1").Plays);
+        lab.SweepCommand.Execute(Named("Kick 1"));
         // Clicking the star that's previewing makes it count.
         lab.PickStarCommand.Execute(Named("Kick 1"));
         Assert.Equal(1, Named("Kick 1").Plays);
@@ -998,6 +1002,9 @@ public class ViewModelTests : IDisposable
 
     sealed class HeadlessUi : IPlatformUi
     {
+        // Sweep previews play straight away here, so a test can check what played, in order.
+        static HeadlessUi() => PreviewWorker.InBackground = false;
+
         public IItemsView CreateView(IList items) => new ListView(items);
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
         public Func<IAudioPlayer> Player { get; set; } = () => new Silence();

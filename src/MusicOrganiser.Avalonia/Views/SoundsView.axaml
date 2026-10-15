@@ -23,8 +23,16 @@
             <Setter Property="Padding" Value="0" />
             <Setter Property="Focusable" Value="False" />
         </Style>
-        <Style Selector="ListBox.tiles ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+        <!-- A row of tiles is one list item: it never lights up itself (only the tile you picked does), however it's
+             pressed or chosen. -->
+        <Style Selector="ListBox.tiles ListBoxItem /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:pressed /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Transitions" Value="{x:Null}" />
         </Style>
         <Style Selector="Border.tile">
             <Setter Property="Margin" Value="0,0,10,10" />
@@ -312,7 +320,8 @@
                                     <Panel>
                                         <views:GalaxyCanvas x:Name="Galaxy" Stars="{Binding Stars}" Regions="{Binding Regions}" Trail="{Binding Trail}"
                                                             Constellation="{Binding Constellation}" Selected="{Binding Selected}"
-                                                            SweepCommand="{Binding SweepCommand}" PickCommand="{Binding PickStarCommand}" />
+                                                            SweepCommand="{Binding SweepCommand}" SweepEndedCommand="{Binding EndSweepCommand}"
+                                                            PickCommand="{Binding PickStarCommand}" />
                                         <!-- What placed the stars, and how many show. -->
                                         <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10" Padding="10,6,12,7" IsHitTestVisible="False"
                                                 CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource SurfaceBrush}" Opacity="0.88">
@@ -357,7 +366,7 @@
                                             </StackPanel>
                                         </Border>
                                         <TextBlock HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="14,10" FontSize="11" Foreground="{StaticResource FaintBrush}"
-                                                   IsHitTestVisible="False" Text="Sweep to listen · click to pick · drag to move · scroll to zoom" />
+                                                   IsHitTestVisible="False" Text="Hold the left button and sweep to listen · click to pick · middle drag to move · scroll to zoom" />
                                     </Panel>
                                 </Border>
 
@@ -376,7 +385,7 @@
                                             <Button Content="Clear" Command="{Binding ClearTrailCommand}" />
                                         </StackPanel>
                                         <TextBlock Classes="muted" VerticalAlignment="Center" IsVisible="{Binding !HasTrail}"
-                                                   Text="Sweep over the stars: the sounds you pass collect here, so a good one is never lost." />
+                                                   Text="Hold the left button and sweep over the stars: the sounds you pass collect here, so a good one is never lost." />
                                         <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" IsVisible="{Binding HasTrail}">
                                             <ItemsControl ItemsSource="{Binding Trail}">
                                                 <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>

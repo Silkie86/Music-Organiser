@@ -12,6 +12,7 @@ static class Program
     {
         // This run's diary, for Claude to read (Diagnostics/SessionLog.cs): Avalonia's warnings go into it too.
         var log = SessionLog.Start();
+        MusicOrganiser.Core.AppLog.Noted += (area, message) => log.Info(area, message);
         var app = BuildAvaloniaApp();
         Logger.Sink = new SessionLog.Sink(log, Logger.Sink);
         try { app.StartWithClassicDesktopLifetime(args); }
