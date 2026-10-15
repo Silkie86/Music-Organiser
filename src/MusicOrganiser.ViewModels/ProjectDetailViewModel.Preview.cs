@@ -3,7 +3,7 @@ using MusicOrganiser.Core.Preview;
 
 namespace MusicOrganiser.ViewModels;
 
-/// <summary>The Arrangement tab: the project drawn as its DAW's arrangement, read when the tab is first shown.</summary>
+/// <summary>The arrangement at the top of Overview: the project drawn as its DAW's arrangement, read when Overview is first shown.</summary>
 public sealed partial class ProjectDetailViewModel
 {
     /// <summary>The ways the project can be laid out (FL Studio: its playlist, and how it opens in Bitwig).</summary>
@@ -41,7 +41,7 @@ public sealed partial class ProjectDetailViewModel
 
     static string Count(int n, string what) => $"{n:N0} {what}{(n == 1 ? "" : "s")}";
 
-    /// <summary>Set by the view while the Arrangement tab is showing; the first time, the project is read.</summary>
+    /// <summary>Set by the view while Overview is showing; the first time, the project is read.</summary>
     public bool PreviewShown
     {
         get => _previewShown;

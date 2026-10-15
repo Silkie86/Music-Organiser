@@ -6,7 +6,7 @@
              xmlns:v="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.ArrangementPanel"
              x:DataType="vm:ProjectDetailViewModel">
-    <!-- The Arrangement tab: the project drawn like its DAW shows it, with a line of facts above. -->
+    <!-- The arrangement at the top of Overview: the project drawn like its DAW shows it, with a line of facts above. -->
     <DockPanel Margin="12,12,12,12">
         <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontSize="11" Foreground="{StaticResource FaintBrush}" TextWrapping="Wrap"
                    IsVisible="{Binding HasArrangement}"
@@ -21,7 +21,8 @@
                            Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
             </DockPanel>
             <!-- FL Studio projects: the playlist as FL shows it, or the tracks it becomes in Bitwig. -->
-            <ListBox Classes="chips" ItemsSource="{Binding Arrangements}" SelectedItem="{Binding Arrangement}" IsVisible="{Binding HasArrangementChoice}">
+            <ListBox Classes="chips" ItemsSource="{Binding Arrangements}" SelectedItem="{Binding Arrangement}" IsVisible="{Binding HasArrangementChoice}"
+                     AutoScrollToSelectedItem="False">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                 </ListBox.ItemsPanel>
