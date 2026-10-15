@@ -396,7 +396,10 @@ final class FakeBitwig {
                 PadSpec p = from != null && from.pads != null ? from.pads.get(padScroll + i) : null;
                 pad.present.v = p != null;
                 pad.title.v = p != null ? p.name : "";
-                pad.chain.count.v = p != null ? p.devices.size() : 0;
+                if (p != null || !model.stalePadChains) {
+                    pad.chain.count.v = p != null ? p.devices.size() : 0;
+                    ((FakeDevice) pad.chain.items.get(0)).load(p != null && !p.devices.isEmpty() ? p.devices.get(0) : null);
+                }
             }
         }
         lastClicked.parameter.show(clicked);
@@ -525,6 +528,11 @@ final class FakeBitwig {
         int padScroll;
         /** Whether a new track opens Bitwig's browser. */
         boolean browserOnNewTrack;
+        /**
+         * Whether a pad with nothing on it keeps showing the devices it last showed, as Bitwig 6.1.3 may (a live run
+         * found a new Drum Machine's pads counted as taken).
+         */
+        boolean stalePadChains;
         /** The port Bitwig gives the link when 19791 is taken, or 0 when it isn't. */
         int portInUse;
         /** How many times Bitwig says -1 when asked which port it gave (Bitwig 6.1.3 does, straight after making the connection). */
@@ -1326,7 +1334,7 @@ final class FakeBitwig {
         final int index;
         final Value present = new Value(BooleanValue.class, false);
         final Value title;
-        final Bank chain = new Bank(DeviceBank.class, List.of());
+        final Bank chain = new Bank(DeviceBank.class, List.of(new FakeDevice()));
         final Point point;
 
         Pad(int index) {

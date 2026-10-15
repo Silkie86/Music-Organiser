@@ -126,7 +126,10 @@ final class Link {
     private DirectParameterValueDisplayObserver displayObserver;
     /** The selected device's drum pads, when it's a Drum Machine. */
     private DrumPadBank drumPads;
+    private final DrumPad[] padItems = new DrumPad[DRUM_PADS];
+    /** Each pad's devices, and the first of them. */
     private final DeviceBank[] padDevices = new DeviceBank[DRUM_PADS];
+    private final Device[] padFirst = new Device[DRUM_PADS];
     private final InsertionPoint[] padInserts = new InsertionPoint[DRUM_PADS];
     private PopupBrowser popupBrowser;
     private SettableBooleanValue changesSetting;
@@ -254,7 +257,12 @@ final class Link {
                 pad.name().markInterested();
                 DeviceBank chain = pad.createDeviceBank(1);
                 chain.itemCount().markInterested();
+                Device first = (Device) chain.getItemAt(0);
+                first.exists().markInterested();
+                first.name().markInterested();
+                padItems[p] = pad;
                 padDevices[p] = chain;
+                padFirst[p] = first;
                 padInserts[p] = pad.insertionPoint();
             }
         }, () -> cursorDevice.hasDrumPads().get()
@@ -1213,13 +1221,18 @@ final class Link {
         }, finish);
     }
 
-    /** Drops each sample on its pad when the pad is empty, then waits for the pads to fill and names them. */
+    /**
+     * Drops each sample on its pad when the pad is empty, then waits for the pads to fill and names them. The answer
+     * says what's on each pad it leaves alone.
+     */
     private void fill(List<Pad> list, Finish finish) {
         List<Pad> filled = new ArrayList<>();
         List<Integer> skipped = new ArrayList<>();
+        List<Map<String, Object>> taken = new ArrayList<>();
         for (Pad pad : list) {
-            if (padDevices[pad.note()].itemCount().get() > 0) {
+            if (padTaken(pad.note())) {
                 skipped.add(pad.note());
+                taken.add(padContents(pad.note()));
             } else {
                 padInserts[pad.note()].insertFile(pad.path());
                 filled.add(pad);
@@ -1227,25 +1240,45 @@ final class Link {
         }
         waitFor(() -> {
             for (Pad pad : filled)
-                if (padDevices[pad.note()].itemCount().get() == 0) return false;
+                if (!padTaken(pad.note())) return false;
             return true;
         }, CHANGE_WAIT, all -> {
             List<Integer> done = new ArrayList<>();
             List<Integer> failed = new ArrayList<>();
             for (Pad pad : filled) {
-                if (padDevices[pad.note()].itemCount().get() == 0) {
+                if (!padTaken(pad.note())) {
                     failed.add(pad.note());
                     continue;
                 }
-                if (!pad.name().isEmpty()) ((DrumPad) drumPads.getItemAt(pad.note())).name().set(pad.name());
+                if (!pad.name().isEmpty()) padItems[pad.note()].name().set(pad.name());
                 done.add(pad.note());
             }
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("filled", done);
             m.put("skipped", skipped);
             m.put("failed", failed);
+            m.put("taken", taken);
             finish.ok(m);
         }, finish);
+    }
+
+    /**
+     * Whether a pad has something on it. Bitwig says so three ways, and all three must agree: a live run on Bitwig
+     * 6.1.3 found a new Drum Machine's pads counted as taken, perhaps from devices a pad showed before (a pad with
+     * nothing on it may not tell the script its devices went).
+     */
+    private boolean padTaken(int note) {
+        return padItems[note].exists().get() && padDevices[note].itemCount().get() > 0 && padFirst[note].exists().get();
+    }
+
+    /** What's on a pad: its name, how many devices, and the first one's name, as Bitwig shows them. */
+    private Map<String, Object> padContents(int note) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("note", note);
+        m.put("name", str(padItems[note].name().get()));
+        m.put("devices", padDevices[note].itemCount().get());
+        m.put("first", str(padFirst[note].name().get()));
+        return m;
     }
 
     /**
@@ -1430,11 +1463,11 @@ final class Link {
         return list;
     }
 
-    /** Which pads have something on them, and where the pad list starts, to tell when it's caught up. */
+    /** Which pads have something on them (how many devices), and where the pad list starts, to tell when it's caught up. */
     private List<Integer> padList() {
         List<Integer> list = new ArrayList<>(DRUM_PADS + 1);
         list.add(drumPads.scrollPosition().get());
-        for (DeviceBank pad : padDevices) list.add(pad.itemCount().get());
+        for (int p = 0; p < DRUM_PADS; p++) list.add(padTaken(p) ? padDevices[p].itemCount().get() : 0);
         return list;
     }
 

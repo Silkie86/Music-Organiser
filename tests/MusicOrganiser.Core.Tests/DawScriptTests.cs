@@ -139,6 +139,10 @@ public class DawScriptTests
         Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(Path.Combine(bitwig, "Library", "Presets", "Bass")));
         Assert.Null(DawScripts.BitwigUserFolderFrom(Path.Combine(root, "K")));
         Assert.Null(DawScripts.BitwigUserFolderFrom(installed));   // where Bitwig is installed, not its user folder
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(Path.Combine(bitwig, "Extensions", "Library")));
+        // Folders with Bitwig's folder names that aren't in a Bitwig user folder.
+        foreach (var elsewhere in new[] { Path.Combine("D", "Music", "Projects"), Path.Combine("E", "Audio", "Library"), Path.Combine("SomeApp", "Extensions") })
+            Assert.Null(DawScripts.BitwigUserFolderFrom(Directory.CreateDirectory(Path.Combine(root, elsewhere)).FullName));
 
         var fl = FlUserData(Path.Combine(root, "Image-Line", "FL Studio"));
         var hardware = Directory.CreateDirectory(Path.Combine(fl, "Settings", "Hardware")).FullName;

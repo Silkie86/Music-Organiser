@@ -387,6 +387,41 @@ public class BitwigLiveTestsTests
     }
 
     [Fact]
+    public void SaveSaysWhetherBitwigWroteTheProject()
+    {
+        const string file = "K:/Bitwig Studio/Projects/MO Live Test/MO Live Test.bwproject";
+        var then = new DateTime(2026, 10, 15, 8, 43, 0, DateTimeKind.Utc);
+        var now = then.AddSeconds(25);
+        var wait = TimeSpan.FromSeconds(15);
+        LiveVerdict Save(bool stillModified, string? path, DateTime? before, DateTime? after) =>
+            BitwigLiveTests.SaveVerdict("MO Live Test", "Save", true, stillModified, TimeSpan.FromMilliseconds(120), wait, path, before, after);
+
+        var cleared = Save(false, file, then, now);
+        Assert.Equal(LiveOutcome.Passed, cleared.Outcome);
+        Assert.Equal($"Bitwig saved “MO Live Test”: its unsaved changes cleared 120 ms after Save, and wrote {file}.", cleared.Detail);
+        Assert.Equal("2026-10-15T08:43:00.000Z", (string?)cleared.Data!["writtenBefore"]);
+        Assert.Equal("2026-10-15T08:43:25.000Z", (string?)cleared.Data!["writtenAfter"]);
+
+        // Written, though the unsaved changes didn't clear: saved, and the detail says what looked odd.
+        var stayed = Save(true, file, then, now);
+        Assert.Equal(LiveOutcome.Passed, stayed.Outcome);
+        Assert.StartsWith($"Bitwig wrote {file} after Save, but still showed unsaved changes 15 s later", stayed.Detail);
+        Assert.Equal(true, (bool?)stayed.Data!["modifiedAfter"]);
+
+        // A first save: no file before, one after.
+        Assert.Equal(LiveOutcome.Passed, Save(true, file, null, now).Outcome);
+
+        var unwritten = Save(true, file, then, then);
+        Assert.Equal(LiveOutcome.Failed, unwritten.Outcome);
+        Assert.StartsWith($"Bitwig still showed unsaved changes 15 s after Save (“Save”), and didn't write {file}.", unwritten.Detail);
+
+        var unfound = Save(true, null, null, null);
+        Assert.Equal(LiveOutcome.Failed, unfound.Outcome);
+        Assert.Contains("the app didn't find the project's file to see whether it was written", unfound.Detail);
+        Assert.Null(unfound.Data!["file"]);
+    }
+
+    [Fact]
     public void FailsAKnobThatDoesntMoveOrLandsOnTheWrongStep()
     {
         static KnobCheckLine ToProbe(int knob, double sent, double? got) =>

@@ -244,7 +244,7 @@ class DrumPad {
       const pad = world.padAt(index);
       if (pad) pad.name = name;
     }));
-    this.chain = new Bank([]);
+    this.chain = new Bank([new Device(world)]);
     this.point = insertionPoint(world.calls, `pad ${index}`, (m, arg) => {
       const device = world.padDevice();
       if (m !== "insertFile" || !AUDIO.test(arg) || !device) return;
@@ -384,8 +384,9 @@ function baseName(file) {
  * app inserts: `files` (path -> the device a preset loads), `presets` (true to load any preset file, as
  * the plugin its name starts with: "Serum - Lead.vstpreset"), `plugins` ("VST3:<id>", "VST2:<number>",
  * "CLAP:<id>" -> the device), `drumMachine` (the UUID that adds a Drum Machine here), `scenes` (how many
- * scenes the project has), `padScroll` (where the pad list starts) and `browserOnNewTrack` (whether a new
- * track opens Bitwig's browser). A device can list its `knobs`, which the script sees once it's selected,
+ * scenes the project has), `padScroll` (where the pad list starts), `browserOnNewTrack` (whether a new
+ * track opens Bitwig's browser) and `stalePadChains` (whether a pad with nothing on it keeps showing the
+ * devices it last showed, as Bitwig 6.1.3 may: a live run found a new Drum Machine's pads counted as taken). A device can list its `knobs`, which the script sees once it's selected,
  * and `knobs` can give them by device name ("Serum" -> its knobs) for whatever the app inserts.
  * `portInUse` is the port Bitwig gives the link when 19791 is taken, and `portUnknown` how many times
  * Bitwig says -1 when asked which port it gave (Bitwig 6.1.3 does, straight after making the connection).
@@ -590,7 +591,10 @@ function startBitwig(model = {}) {
         const p = from && from.pads ? from.pads[world.padScroll + i] : null;
         pad.present.v = !!p;
         pad.title.v = p ? p.name : "";
-        pad.chain.count.v = p ? p.devices.length : 0;
+        if (p || !model.stalePadChains) {
+          pad.chain.count.v = p ? p.devices.length : 0;
+          pad.chain.items[0].load(p ? p.devices[0] : null);
+        }
       });
     }
   }

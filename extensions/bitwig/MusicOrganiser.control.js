@@ -63,7 +63,9 @@ var trackSlots = [];
 /** @type {API.PinnableCursorDevice} */ var cursorDevice;
 /** @type {API.DirectParameterValueDisplayObserver} */ var displayObserver;
 /** The selected device's drum pads, when it's a Drum Machine. @type {API.DrumPadBank} */ var drumPads;
-/** @type {API.DeviceBank[]} */ var padDevices = [];
+/** @type {API.DrumPad[]} */ var padItems = [];
+/** Each pad's devices, and the first of them. @type {API.DeviceBank[]} */ var padDevices = [];
+/** @type {API.Device[]} */ var padFirst = [];
 /** @type {API.InsertionPoint[]} */ var padInserts = [];
 /** @type {API.PopupBrowser} */ var popupBrowser;
 /** @type {API.SettableBooleanValue} */ var changesSetting;
@@ -144,7 +146,12 @@ function init() {
         pad.name().markInterested();
         var chain = pad.createDeviceBank(1);
         chain.itemCount().markInterested();
+        var first = chain.getItemAt(0);
+        first.exists().markInterested();
+        first.name().markInterested();
+        padItems.push(pad);
         padDevices.push(chain);
+        padFirst.push(first);
         padInserts.push(pad.insertionPoint());
     }
 
@@ -865,16 +872,19 @@ function fillPads(request, finish) {
 
 /**
  * Drops each sample on its pad when the pad is empty, then waits for the pads to fill and names them.
+ * The answer says what's on each pad it leaves alone.
  * @param {{ note: number, path: string, name?: string }[]} list
  * @param {Finish} finish
  */
 function fill(list, finish) {
     var filled = [];
     var skipped = [];
+    var taken = [];
     for (var i = 0; i < list.length; i++) {
         var note = list[i].note;
-        if (padDevices[note].itemCount().get() > 0) {
+        if (padTaken(note)) {
             skipped.push(note);
+            taken.push(padContents(note));
         } else {
             padInserts[note].insertFile(list[i].path);
             filled.push(list[i]);
@@ -882,22 +892,41 @@ function fill(list, finish) {
     }
     waitFor(function () {
         for (var i = 0; i < filled.length; i++)
-            if (padDevices[filled[i].note].itemCount().get() === 0) return false;
+            if (!padTaken(filled[i].note)) return false;
         return true;
     }, CHANGE_WAIT, function () {
         var done = [];
         var failed = [];
         for (var i = 0; i < filled.length; i++) {
             var pad = filled[i];
-            if (padDevices[pad.note].itemCount().get() === 0) {
+            if (!padTaken(pad.note)) {
                 failed.push(pad.note);
                 continue;
             }
-            if (pad.name) drumPads.getItemAt(pad.note).name().set(pad.name);
+            if (pad.name) padItems[pad.note].name().set(pad.name);
             done.push(pad.note);
         }
-        finish({ filled: done, skipped: skipped, failed: failed });
+        finish({ filled: done, skipped: skipped, failed: failed, taken: taken });
     }, finish);
+}
+
+/**
+ * Whether a pad has something on it. Bitwig says so three ways, and all three must agree: a live run on
+ * Bitwig 6.1.3 found a new Drum Machine's pads counted as taken, perhaps from devices a pad showed before
+ * (a pad with nothing on it may not tell the script its devices went).
+ * @param {number} note
+ */
+function padTaken(note) {
+    return padItems[note].exists().get() && padDevices[note].itemCount().get() > 0 && padFirst[note].exists().get();
+}
+
+/**
+ * What's on a pad: its name, how many devices, and the first one's name, as Bitwig shows them.
+ * @param {number} note
+ */
+function padContents(note) {
+    return { note: note, name: str(padItems[note].name().get()), devices: Number(padDevices[note].itemCount().get()),
+             first: str(padFirst[note].name().get()) };
 }
 
 /**
@@ -956,10 +985,10 @@ function trackList() {
     return list;
 }
 
-/** Which pads have something on them, and where the pad list starts, to tell when it's caught up. */
+/** Which pads have something on them (how many devices), and where the pad list starts, to tell when it's caught up. */
 function padList() {
     var list = [Number(drumPads.scrollPosition().get())];
-    for (var p = 0; p < DRUM_PADS; p++) list.push(Number(padDevices[p].itemCount().get()));
+    for (var p = 0; p < DRUM_PADS; p++) list.push(padTaken(p) ? Number(padDevices[p].itemCount().get()) : 0);
     return list;
 }
 

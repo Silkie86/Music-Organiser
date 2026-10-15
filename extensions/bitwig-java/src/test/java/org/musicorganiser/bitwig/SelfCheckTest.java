@@ -65,7 +65,7 @@ class SelfCheckTest {
         assertEquals("Waiting for the app on port 19791, with 1 connected now.", detail(result, "remote connection"));
         assertEquals("2 actions.", detail(result, "actions"));
 
-        assertJson(obj("why", "asked", "ok", true, "extension", "3.1", "link", 3, "product", "Bitwig Studio", "bitwig", "6.1.2", "api", 25,
+        assertJson(obj("why", "asked", "ok", true, "extension", "3.2", "link", 3, "product", "Bitwig Studio", "bitwig", "6.1.2", "api", 25,
                        "apiUsed", 23, "java", System.getProperty("java.version"), "platform", "WINDOWS", "changes", true, "port", 19791,
                        "connections", 1, "folder", reports.toString()),
                    pick(result, "why", "ok", "extension", "link", "product", "bitwig", "api", "apiUsed", "java", "platform", "changes", "port",
