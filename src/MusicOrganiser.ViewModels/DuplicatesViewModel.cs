@@ -113,7 +113,7 @@ public sealed partial class DuplicatesViewModel : ObservableObject
             foreach (var k in _keep.Keys.Where(k => !keys.Contains(k)).ToList()) _keep.Remove(k);
             HasLooked = counts.Total > 0 && counts.Printed >= counts.Total;
             Summarise(counts);
-            if (toCheck > 0) Summary += $" Press Find duplicates to check whether {toCheck:N0} converted copies are the same sound or only very similar.";
+            if (toCheck > 0) Summary += $" Press Find duplicates to listen to {toCheck:N0} matches again: whether each is the same sound, only very similar, or not a copy at all.";
             await Filter();
         }
         catch (Exception e) { Summary = $"Couldn't read the duplicates: {e.Message}"; }

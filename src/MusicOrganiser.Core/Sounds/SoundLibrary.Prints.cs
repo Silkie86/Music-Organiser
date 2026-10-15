@@ -12,8 +12,9 @@ public enum CopyKind
 }
 
 /// <summary>Two sounds found to be copies (A's id is the smaller). <paramref name="Offset"/>: where the shorter starts in the longer, in seconds.</summary>
-/// <paramref name="Apart"/>: for converted copies, how far apart the whole sounds are in dB (null until checked; see <see cref="SoundPrint.SpectralDistance"/>).
-public sealed record SoundMatch(long A, long B, CopyKind Kind, double Score, double Offset, double? Apart = null);
+/// <paramref name="Apart"/> and <paramref name="Typical"/>: how far apart the two sound where they overlap, in dB, at worst and
+/// typically (null until checked; see <see cref="SoundPrint.SpectralDistances"/>).
+public sealed record SoundMatch(long A, long B, CopyKind Kind, double Score, double Offset, double? Apart = null, double? Typical = null);
 
 /// <summary>The duplicate finder's tables: each sound's print, and the copies found.</summary>
 public sealed partial class SoundLibrary
@@ -29,7 +30,7 @@ public sealed partial class SoundLibrary
         CREATE TABLE IF NOT EXISTS sound_matches (
             a INTEGER NOT NULL REFERENCES sounds(id) ON DELETE CASCADE,
             b INTEGER NOT NULL REFERENCES sounds(id) ON DELETE CASCADE,
-            kind TEXT NOT NULL, score REAL, offset REAL, apart REAL,
+            kind TEXT NOT NULL, score REAL, offset REAL, apart REAL, typical REAL,
             PRIMARY KEY (a, b)
         );
         CREATE INDEX IF NOT EXISTS ix_sound_matches_b ON sound_matches(b);
@@ -45,8 +46,9 @@ public sealed partial class SoundLibrary
     {
         if (_printsReady) return;
         Exec(PrintSchema);
-        if (Query("SELECT COUNT(*) AS n FROM pragma_table_info('sound_matches') WHERE name = 'apart'", r => Long(r, "n")).First() == 0)
-            Exec("ALTER TABLE sound_matches ADD COLUMN apart REAL");   // added after the first test builds
+        foreach (var column in new[] { "apart", "typical" })   // added after the first test builds
+            if (Query("SELECT COUNT(*) AS n FROM pragma_table_info('sound_matches') WHERE name = $c", r => Long(r, "n"), ("$c", column)).First() == 0)
+                Exec($"ALTER TABLE sound_matches ADD COLUMN {column} REAL");
         _printsReady = true;
     }
 
@@ -120,9 +122,9 @@ public sealed partial class SoundLibrary
         {
             var (a, b) = m.A < m.B ? (m.A, m.B) : (m.B, m.A);
             using var cmd = Cmd("""
-                INSERT OR REPLACE INTO sound_matches (a, b, kind, score, offset, apart) SELECT $a, $b, $k, $s, $o, $apart
+                INSERT OR REPLACE INTO sound_matches (a, b, kind, score, offset, apart, typical) SELECT $a, $b, $k, $s, $o, $apart, $typ
                 WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $a) AND EXISTS (SELECT 1 FROM sounds WHERE id = $b)
-                """, ("$a", a), ("$b", b), ("$k", m.Kind.ToString()), ("$s", m.Score), ("$o", m.Offset), ("$apart", m.Apart));
+                """, ("$a", a), ("$b", b), ("$k", m.Kind.ToString()), ("$s", m.Score), ("$o", m.Offset), ("$apart", m.Apart), ("$typ", m.Typical));
             cmd.Transaction = tx;
             cmd.ExecuteNonQuery();
         }
@@ -170,27 +172,28 @@ public sealed partial class SoundLibrary
     public IReadOnlyList<SoundMatch> Matches()
     {
         EnsurePrints();
-        return Query("SELECT a, b, kind, score, offset, apart FROM sound_matches",
+        return Query("SELECT a, b, kind, score, offset, apart, typical FROM sound_matches",
             r => new SoundMatch((long)r["a"], (long)r["b"], Enum.TryParse<CopyKind>((string)r["kind"], out var k) ? k : CopyKind.Converted,
-                                r["score"] is double s ? s : 0, r["offset"] is double o ? o : 0, r["apart"] as double?));
+                                r["score"] is double s ? s : 0, r["offset"] is double o ? o : 0, r["apart"] as double?, r["typical"] as double?));
     }
 
-    /// <summary>Converted copies whose whole sounds haven't been compared yet.</summary>
-    public IReadOnlyList<(long A, long B)> SamenessToCheck()
+    /// <summary>Converted and trimmed copies whose sounds haven't been compared yet, with where the shorter starts in the longer.</summary>
+    public IReadOnlyList<(long A, long B, double Offset)> SamenessToCheck()
     {
         EnsurePrints();
-        return Query("SELECT a, b FROM sound_matches WHERE kind = 'Converted' AND apart IS NULL", r => ((long)r["a"], (long)r["b"]));
+        return Query("SELECT a, b, offset FROM sound_matches WHERE kind IN ('Converted', 'Trimmed') AND apart IS NULL",
+                     r => ((long)r["a"], (long)r["b"], r["offset"] is double o ? o : 0));
     }
 
-    public void SaveSameness(IEnumerable<(long A, long B, double Apart)> checks)
+    public void SaveSameness(IEnumerable<(long A, long B, double Typical, double Apart)> checks)
     {
         EnsurePrints();
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
-            foreach (var (a, b, apart) in checks)
+            foreach (var (a, b, typical, apart) in checks)
             {
-                using var cmd = Cmd("UPDATE sound_matches SET apart = $s WHERE a = $a AND b = $b", ("$a", a), ("$b", b), ("$s", apart));
+                using var cmd = Cmd("UPDATE sound_matches SET apart = $s, typical = $t WHERE a = $a AND b = $b", ("$a", a), ("$b", b), ("$s", apart), ("$t", typical));
                 cmd.Transaction = tx;
                 cmd.ExecuteNonQuery();
             }

@@ -51,6 +51,12 @@ public static class DuplicateFinder
     /// shifts the sound a little (up to about 1 dB at 128 kbit/s), so it gets <see cref="SameDbLossy"/>.
     /// </summary>
     public const double SameDb = 0.5, SameDbLossy = 1.2;
+    /// <summary>
+    /// A match whose sounds are typically (the median) further apart than this, in dB, isn't a copy at all: it was
+    /// matched on its rhythm or onset only, like a kick loop and a hi-hat loop. A copy with another EQ, more drive
+    /// or a shorter tail stays well under it.
+    /// </summary>
+    public const double NotACopyDb = 3;
     /// <summary>SoundFingerprinting must find this share of the shorter sound in the longer one.</summary>
     public const double CoverThreshold = 0.7;
     /// <summary>Buckets up to this size are compared all against all; bigger ones only along their line.</summary>
@@ -266,7 +272,11 @@ public static class DuplicateFinder
 
     // ---- same sound, or only very similar ----------------------------------------------------------
 
-    /// <summary>Compares the whole sounds of converted copies, so the ones that are only very similar aren't offered for hiding.</summary>
+    /// <summary>
+    /// Compares how converted and trimmed copies actually sound where they overlap: so the converted ones that are
+    /// only very similar aren't offered for hiding, and pairs that only share a rhythm (a kick loop and a hi-hat
+    /// loop, say, which SoundFingerprinting can match) aren't listed at all.
+    /// </summary>
     static void CheckSameness(SoundOrganiser org, IProgress<SoundProgress>? progress, CancellationToken ct)
     {
         var todo = org.Library.SamenessToCheck();
@@ -274,11 +284,13 @@ public static class DuplicateFinder
         var done = 0;
         foreach (var chunk in todo.Chunk(256))
         {
-            var checks = new ConcurrentBag<(long, long, double)>();
+            var checks = new ConcurrentBag<(long, long, double, double)>();
             Parallel.ForEach(chunk, Parallelism.Options(ct), p =>
             {
-                var apart = org.Get(p.A) is { } a && org.Get(p.B) is { } b ? Parallelism.Background(() => HowFarApart(a.Path, b.Path)) : Unreadable;
-                checks.Add((p.A, p.B, apart));
+                var (typical, apart) = org.Get(p.A) is { } a && org.Get(p.B) is { } b
+                    ? Parallelism.Background(() => a.Seconds <= b.Seconds ? HowFarApart(a.Path, b.Path, p.Offset) : HowFarApart(b.Path, a.Path, p.Offset))
+                    : (Unreadable, Unreadable);
+                checks.Add((p.A, p.B, typical, apart));
             });
             org.Library.SaveSameness(checks);
             done += chunk.Length;
@@ -290,19 +302,35 @@ public static class DuplicateFinder
     const double Unreadable = 99;
     const int SameRate = 44100;
 
-    /// <summary>How far apart two files sound, in dB, over their first <see cref="SoundPrint.ReadSeconds"/> seconds.</summary>
-    public static double HowFarApart(string a, string b)
+    /// <summary>
+    /// How far apart two files sound, in dB, typically and at worst (see <see cref="SoundPrint.SpectralDistances"/>):
+    /// the shorter against the part of the longer starting <paramref name="offset"/> seconds in, up to
+    /// <see cref="SoundPrint.ReadSeconds"/> seconds of it.
+    /// </summary>
+    public static (double Typical, double Worst) HowFarApart(string shorter, string longer, double offset = 0)
     {
-        try { return Math.Min(Unreadable, SoundPrint.SpectralDistance(Wave(a), Wave(b), SameRate)); }
-        catch (Exception) { return Unreadable; }
-        static float[] Wave(string path)
+        try
+        {
+            var a = Wave(shorter, 0);
+            var b = Wave(longer, Math.Max(0, offset));
+            var (typical, worst) = SoundPrint.SpectralDistances(a, b, SameRate);
+            return (Math.Min(Unreadable, typical), Math.Min(Unreadable, worst));
+        }
+        catch (Exception) { return (Unreadable, Unreadable); }
+        static float[] Wave(string path, double from)
         {
             // Dsp.Resample is slower than the prints' resampler but exact, which the highs need here.
-            var x = AudioFile.Read(path, SoundPrint.ReadSeconds);
-            var mono = x.SampleRate == SameRate ? x.Mono() : Dsp.Resample(x.Mono(), x.SampleRate, SameRate);
+            var x = AudioFile.Read(path, from + SoundPrint.ReadSeconds);
+            var mono = x.Mono();
+            var skip = (int)(from * x.SampleRate);
+            if (skip > 0) mono = skip < mono.Length ? mono[skip..] : [];
+            if (x.SampleRate != SameRate) mono = Dsp.Resample(mono, x.SampleRate, SameRate);
             return SoundPrint.WaveStart(mono, SameRate, SoundPrint.ReadSeconds, SameRate);
         }
     }
+
+    /// <summary>Whether a match is a real copy: one whose sounds are far apart all through only shares a rhythm, or an onset.</summary>
+    static bool IsCopy(SoundMatch m) => m.Typical is not { } typical || typical <= NotACopyDb;
 
     static bool IsSame(SoundMatch m, string? pathA, string? pathB) =>
         m.Kind == CopyKind.Converted && m.Apart is { } apart &&
@@ -359,7 +387,7 @@ public static class DuplicateFinder
         foreach (var g in exact.GroupBy(e => e.Hash))
             foreach (var e in g.Skip(1)) { Join(g.First().Id, e.Id); Same(g.First().Id, e.Id); }
         var links = new Dictionary<long, List<(long Other, CopyKind Kind)>>();
-        foreach (var m in matches)
+        foreach (var m in matches.Where(IsCopy))
         {
             Join(m.A, m.B);
             if (IsSame(m, org.Get(m.A)?.Path, org.Get(m.B)?.Path)) Same(m.A, m.B);

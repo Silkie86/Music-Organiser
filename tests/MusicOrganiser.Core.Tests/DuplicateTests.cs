@@ -161,6 +161,24 @@ public class DuplicateTests
         // A tail that dies away sooner.
         Assert.True(Apart(Synth.Kick(4), Shorter(Synth.Kick(4), 0.85)) > DuplicateFinder.SameDbLossy);
         Assert.True(Apart(Synth.Snare(3), Shorter(Synth.Snare(3), 0.85)) > DuplicateFinder.SameDbLossy);
+        // Still copies, though: typically close, nowhere near a different sound.
+        foreach (var other in new[] { Shorter(Synth.Kick(4), 0.85), Low(Synth.Kick(4), 0.6f), Synth.Kick(4).Select(v => (float)Math.Tanh(3 * v) / 1.2f).ToArray() })
+            Assert.True(Typical(Synth.Kick(4), other) < DuplicateFinder.NotACopyDb, $"{Typical(Synth.Kick(4), other)}");
+
+        // A kick loop and a hi-hat loop with the same rhythm aren't copies at all (SoundFingerprinting can match them).
+        static float[] Every(float[] hit, double gap, int n)
+        {
+            var x = new float[(int)(gap * n * sr)];
+            for (var i = 0; i < n; i++) for (var j = 0; j < hit.Length && (int)(i * gap * sr) + j < x.Length; j++) x[(int)(i * gap * sr) + j] += hit[j];
+            return x;
+        }
+        Assert.True(Typical(Every(Synth.Kick(1), 0.5, 8), Every(Synth.Hat(1), 0.5, 8)) > DuplicateFinder.NotACopyDb);
+        // A loop cut from a longer one, lined up where it starts, is the same where they overlap.
+        var loop = Every(Synth.Kick(1), 0.5, 8).Zip(Every(Synth.Hat(2), 0.25, 16), (k, h) => k + h).ToArray();
+        Assert.InRange(Typical(Cut(loop, 1.0, 3.0), Cut(loop, 1.0, loop.Length / (double)sr)), 0, 0.2);
+
+        static double Typical(float[] a, float[] b) =>
+            SoundPrint.SpectralDistances(SoundPrint.WaveStart(a, sr, 20, sr), SoundPrint.WaveStart(b, sr, 20, sr), sr).Typical;
     }
 
     [Fact]
