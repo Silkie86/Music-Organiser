@@ -27,8 +27,9 @@ to the app (`Extensions` in its folder), and installing copies them where the DA
   `Documents\Bitwig Studio` (on Linux, `~/Bitwig Studio`), taking out the script if it's there; or, when the app
   was built without a JDK and so has no extension, the script, into `Controller Scripts\Music Organiser`. A PC can have more than one (Windows may keep Documents in OneDrive), and
   only Bitwig knows which it uses (Settings → Locations), so the app installs into every Bitwig Studio
-  folder it finds in a Documents folder until **Choose folder…** points it at one; then only that one.
-  Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
+  folder it finds in a Documents folder until **Choose folder…** points it at one; then only that one,
+  and Install takes either form of the link out of the other Bitwig Studio folders it finds (Settings says
+  which), so Bitwig can't load two. Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
 - **FL Studio**: `Settings\Hardware\Music Organiser` in FL Studio's user data folder (normally
   `Documents\Image-Line\FL Studio`). The app also finds user data folders elsewhere from where your FL
   projects are, and **Choose folder…** points it at one. FL Studio only runs a script for a MIDI input, and
