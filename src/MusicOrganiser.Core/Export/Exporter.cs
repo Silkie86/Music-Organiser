@@ -48,15 +48,25 @@ public static class Exporter
     /// saved next to it as "... - not carried over.txt". With <paramref name="stepsUntilNextNote"/>, steps on a
     /// Sampler don't end with their sample (see <see cref="BitwigProject.FromFl"/>).
     /// </summary>
+    /// <param name="upgrade">Swap older versions of the template's VST3 synth for it (see <see cref="BitwigProject.FromFl"/>).</param>
     public static (string File, IReadOnlyList<string> LeftOut) BitwigFromFl(string project, string exportRoot, byte[] template,
-                                                                            bool stepsUntilNextNote = false)
+                                                                            bool stepsUntilNextNote = false, bool upgrade = false)
     {
         var name = TextScan.SafeFileName(Path.GetFileNameWithoutExtension(project));
-        var result = BitwigProject.FromFl(Readers.FlStudio.ReadSong(project), template, stepsUntilNextNote: stepsUntilNextNote);
+        var result = BitwigProject.FromFl(Readers.FlStudio.ReadSong(project), template, stepsUntilNextNote: stepsUntilNextNote, upgrade: upgrade);
         var dir = Path.Combine(OutDir(exportRoot, project, "Bitwig"), name);
         Directory.CreateDirectory(dir);
         var file = Path.Combine(dir, name + ".bwproject");
         File.WriteAllBytes(file, result.Bytes);
+        // The swapped synths' sounds as presets for the older version, the newer one's browser opens them too:
+        // the way back if the newer one didn't take them.
+        if (result.Upgraded is { Count: > 0 } upgraded)
+        {
+            var sounds = Path.Combine(dir, BitwigProject.UpgradedFolder);
+            Directory.CreateDirectory(sounds);
+            foreach (var (channel, sound) in upgraded)
+                File.WriteAllBytes(Path.Combine(sounds, $"{TextScan.SafeFileName(channel)} ({TextScan.SafeFileName(sound.Plugin)}){sound.Extension}"), sound.Data);
+        }
         var notesFile = Path.Combine(dir, name + " - not carried over.txt");
         if (result.Notes.Count > 0)
             File.WriteAllLines(notesFile, [$"What didn't come across from FL Studio to Bitwig for {name}", "", .. result.Notes.Select(n => "  " + n)]);

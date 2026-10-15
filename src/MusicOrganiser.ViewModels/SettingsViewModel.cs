@@ -37,6 +37,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>What's wrong with the template, where it came from, or what Edit in Bitwig did.</summary>
     [ObservableProperty] string _bitwigTemplateNote = "";
     [ObservableProperty] bool _stepsUntilNextNote;
+    [ObservableProperty] bool _upgradeSynths;
 
     /// <summary>Which page the app opens on: a page's title, or <see cref="LastPageChoice"/>.</summary>
     public const string StartPageKey = "start_page";
@@ -82,6 +83,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _bitwigTemplate = BitwigTemplateStore.Find(db, main.DataFolder) ?? "";
         _bitwigTemplateNote = TemplateNote(_bitwigTemplate);
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
+        _upgradeSynths = db.GetSetting(ProjectDetailViewModel.UpgradeSynthsKey) == "1";
         _startPage = db.GetSetting(StartPageKey) is { } start ? start == "Samples" ? "Sound Lab" : start : "Projects";   // Samples is on the Sounds page now
         if (!StartPageChoices.Contains(_startPage)) _startPage = "Projects";
         UpdateSampleIndexText();
@@ -319,6 +321,9 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     partial void OnStepsUntilNextNoteChanged(bool value) =>
         _db.SetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey, value ? "1" : "0");
+
+    partial void OnUpgradeSynthsChanged(bool value) =>
+        _db.SetSetting(ProjectDetailViewModel.UpgradeSynthsKey, value ? "1" : "0");
 
     [RelayCommand]
     async Task ChooseBitwigTemplate()

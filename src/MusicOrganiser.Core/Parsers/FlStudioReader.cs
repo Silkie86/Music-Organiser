@@ -759,6 +759,15 @@ public static class Fxp
         return ms.ToArray();
     }
 
+    /// <summary>The plugin's own chunk inside an 'FPCh' .fxp, or null when it isn't one.</summary>
+    public static byte[]? Chunk(byte[] fxp)
+    {
+        const int ProgramHeader = 60;
+        if (fxp.Length < ProgramHeader || !fxp.AsSpan(0, 4).SequenceEqual("CcnK"u8) || !fxp.AsSpan(8, 4).SequenceEqual("FPCh"u8)) return null;
+        var length = BinaryPrimitives.ReadInt32BigEndian(fxp.AsSpan(ProgramHeader - 4));
+        return length >= 0 && length <= fxp.Length - ProgramHeader ? fxp[ProgramHeader..(ProgramHeader + length)] : null;
+    }
+
     /// <summary>
     /// Wraps a VST chunk in an 'FPCh' (opaque chunk) .fxp header. Pass the plugin's
     /// four-character id when known so hosts can match the preset to the plugin.
@@ -836,7 +845,19 @@ public static class VstPreset
     /// "VST3", version 1, class id, offset of the chunk list; then the component
     /// state ("Comp") and controller state ("Cont"); then the chunk list.
     /// </summary>
-    public static byte[] Build(ReadOnlySpan<byte> classId, byte[] component, byte[] controller)
+    public static byte[] Build(ReadOnlySpan<byte> classId, byte[] component, byte[] controller) =>
+        Build(ClassIdString(classId), component, controller);
+
+    /// <summary>The same preset for another plugin: its header's class id (32 hex digits, as written) replaced.</summary>
+    public static byte[] Relabel(byte[] preset, string classId)
+    {
+        var copy = (byte[])preset.Clone();
+        Encoding.ASCII.GetBytes(classId).CopyTo(copy, 8);
+        return copy;
+    }
+
+    /// <param name="classId">The class id as a .vstpreset writes it (see <see cref="ClassIdString"/>).</param>
+    public static byte[] Build(string classId, byte[] component, byte[] controller)
     {
         using var ms = new MemoryStream();
         var b = new byte[8];
@@ -851,7 +872,7 @@ public static class VstPreset
 
         ms.Write("VST3"u8);
         I32(1);
-        ms.Write(Encoding.ASCII.GetBytes(ClassIdString(classId)));
+        ms.Write(Encoding.ASCII.GetBytes(classId));
         I64(listOffset);
         ms.Write(component);
         ms.Write(controller);

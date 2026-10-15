@@ -285,6 +285,9 @@
                     <CheckBox Content="Steps play until the next note or the end of the clip" IsChecked="{Binding StepsUntilNextNote}" Margin="0,12,0,0" />
                     <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
                                Text="Notes from FL's step sequencer have no length. Plugin tracks always play them until the next note on the same key or the end of the clip. On a Sampler they also stop where the sample ends, unless this is ticked." />
+                    <CheckBox Content="Swap Serum for Serum 2 (try-out)" IsChecked="{Binding UpgradeSynths}" Margin="0,12,0,0" />
+                    <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                               Text="Swaps an older version of your template's synth for the template's own, handing it the old one's sound. If it opens with its default sound instead, each old sound is also saved as a preset in a 'Sounds from older plugins' folder next to the converted project. Your FL projects are never changed." />
                 </StackPanel>
             </Border>
 

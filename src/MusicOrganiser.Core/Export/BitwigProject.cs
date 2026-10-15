@@ -31,7 +31,8 @@ public static class BitwigProject
     public sealed record SampleFile(long Bytes, byte[] Md5, int Rate, int Channels, double Seconds);
 
     /// <param name="Notes">What couldn't come across.</param>
-    public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes);
+    /// <param name="Upgraded">The synths swapped for newer versions: each channel's name and the older synth's own settings.</param>
+    public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<(string Channel, PresetBlob Sound)>? Upgraded = null);
 
     const string SamplerId = "468bc14b-b2e7-45a1-9666-e83117fe404e";
     const string NoteTransposeId = "0815cd9e-3a31-4429-a268-dabd952a3b68";
@@ -92,12 +93,19 @@ public static class BitwigProject
     /// Steps from FL's step sequencer on a Sampler last until the next note on their key or the end of their
     /// clip, as on a plugin track. Otherwise they also end when their sample does.
     /// </param>
-    public static Result FromFl(FlSong song, byte[] template, Func<string, SampleFile?>? readSample = null, bool stepsUntilNextNote = false)
+    /// <param name="upgrade">
+    /// An older version of the template's VST3 synth (Serum for the template's Serum 2) is swapped for the template's,
+    /// with the old one's settings handed to it. Whether the newer version takes them is up to the plugin.
+    /// </param>
+    public static Result FromFl(FlSong song, byte[] template, Func<string, SampleFile?>? readSample = null, bool stepsUntilNextNote = false,
+                                bool upgrade = false)
     {
         readSample ??= ReadSample;
         var t = new Template(template);
         var notes = new List<string>();
         var states = new List<(string Name, byte[] Data)>();
+        var upgraded = new HashSet<int>();
+        var sounds = new List<(string Channel, PresetBlob Sound)>();
 
         // A plugin as a Bitwig device: a copy of the template's VST3 or VST2 device with this plugin's identity and settings.
         BwObject? Plugin(FlPlugin p, int kind, List<string> skipped)
@@ -198,10 +206,18 @@ public static class BitwigProject
             }
             else
             {
-                track = t.Copy(c.Instrument.Format == "VST2" ? t.Vst2Track : t.Vst3Track);
-                if (Plugin(c.Instrument, Instrument, skipped) is { } plugin)
+                var instrument = upgrade && Upgrade(c.Instrument, t) is { } newer ? newer : c.Instrument;
+                if (instrument != c.Instrument)
                 {
-                    instruments[c.Index] = (plugin, c.Instrument);
+                    upgraded.Add(c.Index);
+                    sounds.Add((c.Name, c.Instrument.State!));
+                    notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, with {c.Instrument.Name}'s settings handed to it. " +
+                              $"If it opens with its default sound, load \"{c.Name}\" from the \"{UpgradedFolder}\" folder saved next to this project");
+                }
+                track = t.Copy(instrument.Format == "VST2" ? t.Vst2Track : t.Vst3Track);
+                if (Plugin(instrument, Instrument, skipped) is { } plugin)
+                {
+                    instruments[c.Index] = (plugin, instrument);
                     // FL plays a plugin's root key as C5, so a moved root key transposes it, as does the pitch knob.
                     var shift = FlStudioReader.DefaultRoot - c.RootKey + (int)Math.Round(c.PitchCents / 100.0);
                     if (shift != 0) devices.Add(Transpose(t.Copy(t.NoteTranspose), shift));
@@ -306,6 +322,9 @@ public static class BitwigProject
                     }
                     break;
                 // The plugin is on the channel's instrument track, its first.
+                case FlControl.PluginParameter when upgraded.Contains(a.Channel):
+                    why = "its plugin was swapped for a newer version, whose settings are numbered differently";
+                    break;
                 case FlControl.PluginParameter when instruments.TryGetValue(a.Channel, out var instrument):
                     if (SettingPath(instrument.Plugin, a.Parameter) is not { } setting)
                         why = "FL didn't save which of the plugin's settings it moves";
@@ -324,7 +343,34 @@ public static class BitwigProject
         }
 
         // A channel's notes about its insert or sample can come from each of its tracks.
-        return new Result(t.Finish(tracks, song.Tempo, states), notes.Distinct().ToList());
+        return new Result(t.Finish(tracks, song.Tempo, states), notes.Distinct().ToList(), sounds);
+    }
+
+    /// <summary>Where the original synths' sounds are saved, next to a converted project, when they were swapped for newer versions.</summary>
+    public const string UpgradedFolder = "Sounds from older plugins";
+
+    /// <summary>
+    /// The template's VST3 synth in place of an older version of it (Serum 2 for Serum, by name with the version left
+    /// off), carrying the older one's settings: a VST2 chunk becomes the newer one's component state, a VST3 preset
+    /// is relabelled with its class id. Null when it isn't an older version, or its settings can't be handed over.
+    /// </summary>
+    static FlPlugin? Upgrade(FlPlugin p, Template t)
+    {
+        var newer = Def(t.Vst3Device)!;
+        var name = newer.Str(0x9a);
+        if (p.Native || p.State is not { } state || name.Length == 0 || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+            PluginCatalog.Family(p.Name) != PluginCatalog.Family(name) || newer[0xce4] is not string classId || classId.Length != 32)
+            return null;
+        byte[]? data = state.Extension switch
+        {
+            ".fxp" when Fxp.Chunk(state.Data) is { } chunk => VstPreset.Build(classId, chunk, []),
+            ".vstpreset" when state.Data.Length > 48 && state.Data.AsSpan(0, 4).SequenceEqual("VST3"u8) => VstPreset.Relabel(state.Data, classId),
+            _ => null,
+        };
+        if (data is null) return null;
+        var path = newer.Obj(0xc5a)?[0xc5b] is List<object?> { Count: > 0 } location && newer.Obj(0xc5a)!.Resolve(location[0]) is { } file
+            ? file.Str(0x3b) : "";
+        return new FlPlugin(name, newer.Str(0x9b), "VST3", classId, state with { Extension = ".vstpreset", Data = data }, path);
     }
 
     /// <summary>

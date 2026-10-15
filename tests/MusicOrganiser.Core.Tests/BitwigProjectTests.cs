@@ -121,6 +121,56 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void SerumCanBeSwappedForTheTemplatesSerum2WithItsSoundHandedOver()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var serum1 = song.Channels[1].Instrument!;
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+
+        // The template's Serum 2, as it is (VST3, its id and its file), on the Serum channel's track.
+        var track = doc.Root!.Obj(0x4dd)!.List(0x4de).Single(t => t.Str(0x15b) == "Serum");
+        var serum2 = Def(Chain(track).Last());
+        Assert.Equal(("Serum 2", "56534558667350736572756D20320000"), (serum2.Str(0x9a), serum2[0xce4]));
+
+        // Serum's chunk (from FL's .fxp) as Serum 2's component state, in a .vstpreset carrying Serum 2's id.
+        using (var zip = doc.OpenZip()!)
+        {
+            var entry = zip.Entries.Single(e => e.FullName == $"plugin-states/{serum2.Str(0xbe5)}");
+            Assert.EndsWith(".vstpreset", entry.FullName);
+            using var ms = new MemoryStream();
+            entry.Open().CopyTo(ms);
+            var preset = ms.ToArray();
+            Assert.Equal("VST3", System.Text.Encoding.ASCII.GetString(preset, 0, 4));
+            Assert.Equal("56534558667350736572756D20320000", System.Text.Encoding.ASCII.GetString(preset, 8, 32));
+            Assert.Equal(Fxp.Chunk(serum1.State!.Data), preset[48..(48 + Fxp.Chunk(serum1.State.Data)!.Length)]);
+        }
+
+        // Serum 1's settings are numbered differently from Serum 2's, so its automation is left out and says why.
+        Assert.Empty(track.Obj(0x2dc9)!.List(0x4ba));
+        Assert.Contains(result.Notes, n => n.StartsWith("Serum - Cutoff: automation left out") && n.Contains("newer version"));
+        Assert.Contains(result.Notes, n => n.StartsWith("Serum: Serum swapped for Serum 2"));
+        var (channel, sound) = Assert.Single(result.Upgraded!);
+        Assert.Equal(("Serum", serum1.State.Data), (channel, sound.Data));
+    }
+
+    [Fact]
+    public void ConvertingWithTheSwapSavesTheOldSoundsNextToTheProject()
+    {
+        var dir = Fixtures.TempDir();
+        var project = Fixtures.FlStudio25Automation(dir);
+        var (file, _) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Exports"), Fixtures.BitwigTemplate(), upgrade: true);
+        var saved = Assert.Single(Directory.GetFiles(Path.Combine(Path.GetDirectoryName(file)!, BitwigProject.UpgradedFolder)));
+        Assert.Equal("Serum (Serum).fxp", Path.GetFileName(saved));
+        Assert.Equal("CcnK", System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(saved), 0, 4));
+
+        // Without it, Serum stays Serum and nothing extra is saved.
+        var (plain, _) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Plain"), Fixtures.BitwigTemplate());
+        Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(plain)!, BitwigProject.UpgradedFolder)));
+    }
+
+    [Fact]
     public void KeepsMutedNotesAndClipsMutedAndPlaysStepsUntilTheirSoundEnds()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir()));

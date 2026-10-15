@@ -18,6 +18,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public const string BitwigTemplateKey = "bitwig_template";
     /// <summary>"1" when FL's steps on a Sampler play until the next note or the clip end, not until their sample ends.</summary>
     public const string StepsUntilNextNoteKey = "bitwig_steps_until_next_note";
+    /// <summary>"1" when converting swaps older versions of the template's synth (Serum) for the template's own (Serum 2).</summary>
+    public const string UpgradeSynthsKey = "bitwig_upgrade_synths";
     public static string DawExeKey(string daw) => $"daw_exe:{daw}";
 
     readonly LibraryDb _db;
@@ -233,7 +235,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         {
             var path = save.Path;
             var untilNextNote = _db.GetSetting(StepsUntilNextNoteKey) == "1";
-            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote));
+            var upgrade = _db.GetSetting(UpgradeSynthsKey) == "1";
+            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade));
             OpenWithBitwig(_db, file);
             Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig." +
                       (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
