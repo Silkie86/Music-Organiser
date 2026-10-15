@@ -207,6 +207,12 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     [RelayCommand]
     Task OpenInBitwig() => ConvertForBitwig(Item.Summary, Item.Name);
 
+    /// <summary>
+    /// The names of the Bitwig copies this app has opened since Bitwig was last seen closed. Bitwig can have several
+    /// projects open but only says which one is in front, and opening one it has open just brings that copy forward.
+    /// </summary>
+    static readonly HashSet<string> OpenedInBitwig = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Converts one save (the newest, or the last of an older run) and opens it in Bitwig.</summary>
     internal async Task ConvertForBitwig(ProjectSummary save, string name)
     {
@@ -236,9 +242,19 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             var path = save.Path;
             var untilNextNote = _db.GetSetting(StepsUntilNextNoteKey) == "1";
             var upgrade = _db.GetSetting(UpgradeSynthsKey) == "1";
-            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade));
+            // A new convert saved over a copy Bitwig has open would look unchanged there, so it gets a fresh name.
+            var bitwig = _main.Live.State(DawState.Bitwig);
+            if (bitwig is { Running: false }) OpenedInBitwig.Clear();
+            var saveAs = Exporter.BitwigName(path, n => OpenedInBitwig.Contains(n) ||
+                                                        bitwig is { Answering: true } && bitwig.Project.Trim().Equals(n, StringComparison.OrdinalIgnoreCase));
+            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade, saveAs));
             OpenWithBitwig(_db, file);
-            Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig." +
+            OpenedInBitwig.Add(saveAs);
+            var renamed = saveAs != Exporter.BitwigName(path, _ => false)
+                ? " It has a new name because Bitwig may still have an earlier convert open, and would show that one instead. " +
+                  "Close the old one without saving."
+                : "";
+            Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig.{renamed}" +
                       (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
                                                  $"{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more, listed in the notes saved next to it" : "")}.");
             card.Finish($"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig",

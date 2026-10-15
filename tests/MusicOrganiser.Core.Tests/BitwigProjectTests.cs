@@ -163,6 +163,28 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void ANewConvertGetsAFreshNameWhileBitwigMayHaveTheOldOneOpen()
+    {
+        // Bitwig only brings a project it has open forward, so a convert saved over it would look unchanged.
+        Assert.Equal("civil_18", Exporter.BitwigName("civil_18.flp", _ => false));
+        Assert.Equal("civil_18 (2)", Exporter.BitwigName("civil_18.flp", n => n == "civil_18"));
+        Assert.Equal("civil_18 (3)", Exporter.BitwigName("civil_18.flp", n => n is "civil_18" or "civil_18 (2)"));
+        // Only the names it may have open count: a later number that's closed is used again.
+        Assert.Equal("civil_18", Exporter.BitwigName("civil_18.flp", n => n == "civil_18 (2)"));
+
+        var dir = Fixtures.TempDir();
+        var project = Fixtures.FlStudio25Automation(dir);
+        var name = Path.GetFileNameWithoutExtension(project);
+        var exports = Path.Combine(dir, "Exports");
+        var (first, _) = Exporter.BitwigFromFl(project, exports, Fixtures.BitwigTemplate());
+        var (second, _) = Exporter.BitwigFromFl(project, exports, Fixtures.BitwigTemplate(), saveAs: $"{name} (2)");
+        // Each in its own folder named like it, the layout Bitwig opens without asking, next to the first.
+        Assert.Equal(Path.Combine(exports, name, "Bitwig", $"{name} (2)", $"{name} (2).bwproject"), second);
+        Assert.True(File.Exists(first));
+        Assert.Equal(Path.GetDirectoryName(Path.GetDirectoryName(first)), Path.GetDirectoryName(Path.GetDirectoryName(second)));
+    }
+
+    [Fact]
     public void KeepsMutedNotesAndClipsMutedAndPlaysStepsUntilTheirSoundEnds()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir()));
