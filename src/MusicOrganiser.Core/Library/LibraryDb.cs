@@ -60,6 +60,19 @@ public sealed partial class LibraryDb : IDisposable
 
     public string FilePath { get; }
 
+    long _projectsRevision, _pluginsRevision, _sampleIndexRevision;
+    /// <summary>
+    /// Goes up whenever a scan changes the projects (added, re-read, gone, a plugin's installed answer). The pages compare
+    /// it after a scan and skip reading everything again when nothing changed, which is most scans.
+    /// </summary>
+    public long ProjectsRevision => Interlocked.Read(ref _projectsRevision);
+    /// <summary>Goes up when the installed plugins or what the plugin scanner found in them change.</summary>
+    public long PluginsRevision => Interlocked.Read(ref _pluginsRevision);
+    /// <summary>Goes up when the files in your sample folders change.</summary>
+    public long SampleIndexRevision => Interlocked.Read(ref _sampleIndexRevision);
+    void ProjectsChanged() => Interlocked.Increment(ref _projectsRevision);
+    void PluginsChanged() => Interlocked.Increment(ref _pluginsRevision);
+
     public static string DefaultPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "library.db");
 
@@ -219,6 +232,7 @@ public sealed partial class LibraryDb : IDisposable
             foreach (var f in files) Upsert(tx, f, installed);
             tx.Commit();
         }
+        ProjectsChanged();
     }
 
     void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed)
@@ -373,12 +387,27 @@ public sealed partial class LibraryDb : IDisposable
         {
             if (present.Contains(path) || !roots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase))) continue;
             if (ignored?.Invoke(path) == true) RemoveProject(id);
-            else Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id));
+            else if (Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
         }
     }
 
-    public void RemoveProject(long id) => Exec("DELETE FROM projects WHERE id = $id", ("$id", id));
-    public void RemoveProject(string path) => Exec("DELETE FROM projects WHERE path = $p", ("$p", path));
+    /// <summary>A project file that has gone (deleted, or moved out of your folders): it stays listed, marked missing.</summary>
+    public bool MarkFileMissing(string path)
+    {
+        if (Exec("UPDATE projects SET file_missing = 1 WHERE path = $p AND file_missing = 0", ("$p", path)) == 0) return false;
+        ProjectsChanged();
+        return true;
+    }
+
+    public void RemoveProject(long id)
+    {
+        if (Exec("DELETE FROM projects WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
+    }
+
+    public void RemoveProject(string path)
+    {
+        if (Exec("DELETE FROM projects WHERE path = $p", ("$p", path)) > 0) ProjectsChanged();
+    }
 
     // ---- installed plugins & sample index ----------------------------------------------
 
@@ -390,11 +419,17 @@ public sealed partial class LibraryDb : IDisposable
 
     public void ReplaceInstalledPlugins(IEnumerable<string> names)
     {
+        var list = names.ToList();
+        var now = Query("SELECT name, name_key FROM installed_plugins", r => (Name: (string)r["name"], Key: (string)r["name_key"])).ToList();
+        // The same list as last time (most scans): nothing to write, and every project's plugins keep their answers.
+        var keys = new Dictionary<string, string>();
+        foreach (var n in list) keys.TryAdd(NameKey(n), n);
+        if (now.Count == keys.Count && now.All(r => keys.TryGetValue(r.Key, out var n) && n == r.Name)) return;
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
             using (var del = Cmd("DELETE FROM installed_plugins")) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var n in names)
+            foreach (var n in list)
             {
                 using var cmd = Cmd("INSERT OR IGNORE INTO installed_plugins VALUES ($n, $k)", ("$n", n), ("$k", NameKey(n)));
                 cmd.Transaction = tx;
@@ -402,6 +437,7 @@ public sealed partial class LibraryDb : IDisposable
             }
             tx.Commit();
         }
+        PluginsChanged();
         RefreshInstalledFlags();
     }
 
@@ -422,6 +458,7 @@ public sealed partial class LibraryDb : IDisposable
                           .ToList();
         InBatches(changed, "UPDATE plugins SET installed = $i WHERE rowid = $r", ["$i", "$r"],
                   (row, p) => { p[0].Value = row.Now ? 1 : 0; p[1].Value = row.RowId; });
+        if (changed.Count > 0) ProjectsChanged();
     }
 
     /// <summary>
@@ -430,13 +467,35 @@ public sealed partial class LibraryDb : IDisposable
     /// </summary>
     public void ReplaceSampleIndex(IEnumerable<string> files)
     {
-        Exec("DELETE FROM sample_index");
-        InBatches(files, "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
+        // Only the difference is written: most scans find the same files, and rewriting 350,000 rows each time kept the
+        // disk and the database busy for nothing.
+        var now = Query("SELECT path FROM sample_index", r => (string)r["path"]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var found = files.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var gone = now.Where(f => !found.Contains(f)).ToList();
+        var added = found.Where(f => !now.Contains(f)).ToList();
+        InBatches(gone, "DELETE FROM sample_index WHERE path = $p", ["$p"], (f, p) => p[0].Value = f);
+        InBatches(added, "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
         {
             p[0].Value = f;
             p[1].Value = Path.GetFileName(f);
             p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
         });
+        if (gone.Count + added.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
+    }
+
+    /// <summary>The sample index brought up to date for files the sample folders' watcher saw change: there now, or gone.</summary>
+    public void UpdateSampleIndex(IEnumerable<string> paths)
+    {
+        var list = paths.Where(TextScan.IsAudioPath).ToList();
+        var gone = list.Where(f => !File.Exists(f)).ToList();
+        InBatches(gone, "DELETE FROM sample_index WHERE path = $p", ["$p"], (f, p) => p[0].Value = f);
+        InBatches(list.Except(gone), "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
+        {
+            p[0].Value = f;
+            p[1].Value = Path.GetFileName(f);
+            p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
+        });
+        if (list.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
     }
 
     /// <summary>Runs one statement for each item, a few thousand to a transaction, letting go of the database between them.</summary>

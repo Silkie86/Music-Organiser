@@ -242,6 +242,29 @@ public sealed class SoundLibrary : IDisposable
     public void SetClap(long id, float[] v) => Exec("UPDATE sounds SET clap = $c WHERE id = $id", ("$c", ToBlob(v)), ("$id", id));
 
     /// <summary>Forgets samples that are no longer in your sample folders.</summary>
+    /// <summary>The size and modified time stored for one file, or null when it isn't in the library.</summary>
+    public (long Mtime, long Size)? KnownFile(string path) =>
+        Query("SELECT mtime, size FROM sounds WHERE path = $p", r => (Long(r, "mtime"), Long(r, "size")), ("$p", path))
+            .Select(t => ((long, long)?)t).FirstOrDefault();
+
+    /// <summary>Forgets these files (deleted or moved away); returns how many were in the library.</summary>
+    public int Remove(IEnumerable<string> paths)
+    {
+        var removed = 0;
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var path in paths)
+            {
+                using var cmd = Cmd("DELETE FROM sounds WHERE path = $p", ("$p", path));
+                cmd.Transaction = tx;
+                removed += cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        return removed;
+    }
+
     public int RemoveMissing(IReadOnlySet<string> present, Func<string, bool>? keep = null)
     {
         var gone = Query("SELECT id, path FROM sounds", r => ((long)r["id"], (string)r["path"]))
