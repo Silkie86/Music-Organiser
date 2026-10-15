@@ -102,15 +102,16 @@ public sealed partial class SettingsViewModel : ObservableObject
                                            dataFolder is null ? Core.LiveTests.SelfCheck.DefaultFolder : Path.Combine(dataFolder, "reports", "checks"),
                                            (folder, progress, ct) =>
         {
-            // Settings' lists and the library are read here, on the UI thread; the checks go on in the background.
-            var options = new SelfCheckOptions
+            // Only Settings' own lists are copied here, on the UI thread (a few folders). Everything else, even listing the
+            // library's projects, happens in the background, so the app stays usable while the checks run.
+            var (projects, samples, plugins) = (ProjectFolders.ToList(), SampleFolders.ToList(), PluginFolders.ToList());
+            return Task.Run(() => Core.LiveTests.SelfCheck.RunAsync(new SelfCheckOptions
             {
                 ReportFolder = folder, DataFolder = main.DataFolder, Projects = _db.Projects().Select(p => p.Path).ToList(),
-                ProjectFolders = [.. ProjectFolders], SampleFolders = [.. SampleFolders], PluginFolders = [.. PluginFolders],
+                ProjectFolders = projects, SampleFolders = samples, PluginFolders = plugins,
                 PluginFoldersAreDefaults = _db.GetList(Scanner.PluginFoldersKey).Count == 0,
                 Sounds = main.SoundLibrary, ScannerExecutable = main.PluginScanner.Executable, AppChecks = main.AppChecks,
-            };
-            return Task.Run(() => Core.LiveTests.SelfCheck.RunAsync(options, progress, ct));
+            }, progress, ct), ct);
         }) { Answering = true };
         var flPort = new FlPortSetting(db);
         Links =

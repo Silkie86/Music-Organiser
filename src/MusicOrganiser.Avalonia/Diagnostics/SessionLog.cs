@@ -32,6 +32,9 @@ public sealed class SessionLog : IDisposable
 
     readonly object _gate = new();
     readonly StreamWriter? _writer;
+    /// <summary>Lines waiting for the writer thread, so logging never waits on the disk (the UI thread logs too).</summary>
+    readonly System.Collections.Concurrent.BlockingCollection<string> _queue = new();
+    readonly Thread? _thread;
     readonly Dictionary<string, int> _seen = [];
     readonly Queue<string> _recent = new();
     bool _full;
@@ -49,10 +52,15 @@ public sealed class SessionLog : IDisposable
         try
         {
             _writer = new StreamWriter(new FileStream(Path, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete),
-                                       new UTF8Encoding(false)) { AutoFlush = true };
+                                       new UTF8Encoding(false));
         }
         catch (IOException) { }   // no log is better than no app
         catch (UnauthorizedAccessException) { }
+        if (_writer is not null)
+        {
+            _thread = new Thread(WriteQueued) { IsBackground = true, Name = "Session log", Priority = ThreadPriority.BelowNormal };
+            _thread.Start();
+        }
         Prune(folder);
         Write("Info", "App", Header(start));
     }
@@ -63,7 +71,10 @@ public sealed class SessionLog : IDisposable
         Current?.Dispose();
         Current = new SessionLog(folder ?? DefaultFolder);
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
             Current?.Error("App", "The app stopped because of an error", e.ExceptionObject as Exception);
+            Current?.Dispose();   // writes out what's waiting before the app goes
+        };
         TaskScheduler.UnobservedTaskException += (_, e) => Current?.Error("App", "A background job failed", e.Exception);
         return Current;
     }
@@ -122,13 +133,24 @@ public sealed class SessionLog : IDisposable
             var line = $"{DateTime.Now:HH:mm:ss.fff} {level,-7} [{area}] {message}";
             _recent.Enqueue(line);
             while (_recent.Count > 60) _recent.Dequeue();
-            if (_writer is null || _full) return;
+            if (_writer is not null && !_queue.IsAddingCompleted) _queue.Add(line);
+        }
+    }
+
+    /// <summary>The writer thread: writes lines as they come, flushing whenever it catches up.</summary>
+    void WriteQueued()
+    {
+        foreach (var line in _queue.GetConsumingEnumerable())
+        {
+            if (_full) continue;
             try
             {
-                _writer.WriteLine(line);
+                _writer!.WriteLine(line);
+                if (_queue.Count == 0) _writer.Flush();
                 if (_writer.BaseStream.Length > MaxBytes)
                 {
                     _writer.WriteLine("The log is full, so nothing more is written for this run.");
+                    _writer.Flush();
                     _full = true;
                 }
             }
@@ -162,10 +184,12 @@ public sealed class SessionLog : IDisposable
     {
         lock (_gate)
         {
-            if (_writer is null) return;
-            try { _writer.WriteLine($"{DateTime.Now:HH:mm:ss.fff} Info    [App] Closed"); } catch (IOException) { } catch (ObjectDisposedException) { }
-            _writer.Dispose();
+            if (_writer is null || _queue.IsAddingCompleted) return;
+            _queue.Add($"{DateTime.Now:HH:mm:ss.fff} Info    [App] Closed");
+            _queue.CompleteAdding();
         }
+        _thread?.Join(TimeSpan.FromSeconds(2));
+        try { _writer.Dispose(); } catch (IOException) { }
     }
 
     /// <summary>
