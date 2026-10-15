@@ -174,17 +174,23 @@ public class FlStudioTests
         var song = Readers.FlStudio.ReadSong(path);
 
         // Tracks 2 and 4 are muted in the first arrangement (the second's muted track 1 doesn't count), so what's on them
-        // is too: the pattern in bar 2 and the Acapella clips. Muted, they play nothing.
+        // doesn't play: the Verse pattern in bar 2, the Acapella clips and the Pad. The clips themselves aren't muted.
         Assert.Equal([new FlTrack(2, "Acapellas"), new FlTrack(4, "")], song.MutedTracks);
         var snare = song.Channels.Single(c => c.Name == "Snare");
-        Assert.Equal([(0L, false, 1), (384L, true, 2)], snare.Clips.Select(c => (c.Start, c.Muted, c.Track)));
+        Assert.Equal([(0L, false, false, 1), (384L, false, true, 2)], snare.Clips.Select(c => (c.Start, c.Muted, c.OnMutedTrack, c.Track)));
         Assert.Equal([0L], snare.Notes.Select(n => n.Start));
-        Assert.Equal([(true, 2), (true, 4)], song.Channels.Single(c => c.Name == "Acapella").AudioClips.Select(c => (c.Muted, c.Track)));
-        Assert.Equal([(false, 1), (false, 3)], song.Channels.Single(c => c.Name == "Vox").AudioClips.Select(c => (c.Muted, c.Track)));
-        Assert.Equal([0L], Readers.FlStudio.ExtractChannels(path).Single(c => c.Name == "Snare").Notes.Select(n => n.Start));
+        Assert.Empty(song.Channels.Single(c => c.Name == "Pad").Notes);
+        Assert.Equal([(false, true, 2), (false, true, 4)],
+                     song.Channels.Single(c => c.Name == "Acapella").AudioClips.Select(c => (c.Muted, c.OnMutedTrack, c.Track)));
+        Assert.Equal([(false, false, 1), (false, false, 3)],
+                     song.Channels.Single(c => c.Name == "Vox").AudioClips.Select(c => (c.Muted, c.OnMutedTrack, c.Track)));
+        var midi = Readers.FlStudio.ExtractChannels(path);
+        Assert.Equal([0L], midi.Single(c => c.Name == "Snare").Notes.Select(n => n.Start));
+        Assert.DoesNotContain(midi, c => c.Name == "Pad");
 
         // The hat and the vox are switched off in the Channel Rack (the project's own event 0 before them isn't a channel's).
-        Assert.Equal([("Snare", true), ("Hat", false), ("Acapella", true), ("Vox", false)], song.Channels.Select(c => (c.Name, c.Enabled)));
+        Assert.Equal([("Snare", true), ("Hat", false), ("Acapella", true), ("Vox", false), ("Pad", true)],
+                     song.Channels.Select(c => (c.Name, c.Enabled)));
     }
 
     [Fact]
@@ -194,6 +200,48 @@ public class FlStudioTests
                      Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir())).Automation.Select(a => a.Name));
         Assert.Equal(["Serum - Cutoff"],
                      Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir(), volumeOff: true)).Automation.Select(a => a.Name));
+    }
+
+    [Fact]
+    public void AutomatedOnOffMutesWhatPlaysWhileTheChannelIsOff()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir()));
+
+        // The on/off holds each point's value until the next, and the points just past the clip's end (as FL saves its
+        // sums of point gaps) count as at its end: off 0-4, on 4-8, off 8-12, then on.
+        var onOff = song.Automation.Single(a => a.Name == "Bass - Mute / solo");
+        Assert.Equal((0, FlControl.OnOff), (onOff.Channel, onOff.Control));
+        Assert.Equal([(0.0, 0.0), (4.0, 1.0), (8.0, 0.0), (12.0, 0.97)], onOff.Points.Select(p => (p.Beat, p.Value)));
+
+        // The bass is switched off in the Channel Rack, but that's only where the automation left it: it plays while it's
+        // on. The clip at beats 0-4 is off all the way through, so it's muted; at 4-8 it plays; at 10-14 only its first
+        // note (beat 10) starts while it's off.
+        var bass = song.Channels.Single(c => c.Name == "Bass");
+        Assert.Equal((true, "Bass - Mute / solo"), (bass.Enabled, bass.SwitchedBy));
+        Assert.Equal([(0L, true), (384L, false), (960L, false)], bass.Clips.Select(c => (c.Start, c.Muted)));
+        Assert.Equal([true, false], bass.Clips[2].Notes.Select(n => n.Muted));
+        Assert.Equal([384L, 576L, 1152L], bass.Notes.Select(n => n.Start));
+
+        // The vox is off from beat 2: its clip at 0-4 plays part of the way, the one at 4-6 is muted.
+        var vox = song.Channels.Single(c => c.Name == "Vox");
+        Assert.Equal([(false, true), (true, false)], vox.AudioClips.Select(c => (c.Muted, c.PartlyOff)));
+    }
+
+    [Fact]
+    public void ReadsMixerInsertSettingsEffectSlotsAndWhatAutomationMovesOnThem()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir()));
+
+        // Insert 1's fader is moved and its second effect, in slot 1, is switched off; the master is as FL leaves it.
+        var insert = song.Inserts.Single(i => i.Index == 1);
+        Assert.Equal([("Pro-Q 3", 0, true), ("WOW2", 1, false)], insert.Effects.Select(e => (e.Name, e.Slot, e.Enabled)));
+        Assert.Equal((9600, 0, true), (insert.Fader, insert.Pan, insert.Moved));
+        Assert.Equal([(0, 12800, false), (1, 9600, true)], song.Inserts.Select(i => (i.Index, i.Fader!.Value, i.Moved)));
+
+        // Automation of a setting of the effect in insert 1's slot 0, of the tempo and of insert 1's fader.
+        Assert.Equal([("Pro-Q 3 - Gain", FlControl.InsertEffect, -1, 1, 0, 3), ("Tempo", FlControl.Tempo, -1, -1, -1, 5),
+                      ("Insert 1 - Volume", FlControl.InsertVolume, -1, 1, 0, 0x1fc0)],
+                     song.Automation.Where(a => a.Control != FlControl.OnOff).Select(a => (a.Name, a.Control, a.Channel, a.Insert, a.Slot, a.Parameter)));
     }
 
     [Fact]

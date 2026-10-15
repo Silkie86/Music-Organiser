@@ -43,6 +43,23 @@ static class FlClips
         return clips;
     }
 
+    /// <summary>Whether all of a track's clips sit on muted FL playlist tracks, so the track is muted rather than they are.</summary>
+    public static bool AllOnMutedTracks(IReadOnlyCollection<FlClip> clips) => clips.Count > 0 && clips.All(x => x.OnMutedTrack);
+
+    /// <inheritdoc cref="AllOnMutedTracks(IReadOnlyCollection{FlClip})"/>
+    public static bool AllOnMutedTracks(IReadOnlyCollection<FlAudioClip> clips) => clips.Count > 0 && clips.All(x => x.OnMutedTrack);
+
+    /// <summary>
+    /// A track's clips with those on muted FL playlist tracks muted, unless the track itself is muted for them
+    /// (<paramref name="trackMuted"/>), when they keep only their own mutes.
+    /// </summary>
+    public static List<FlClip> OnMutedTracks(IEnumerable<FlClip> clips, bool trackMuted) =>
+        clips.Select(x => x with { Muted = x.Muted || x.OnMutedTrack && !trackMuted }).ToList();
+
+    /// <inheritdoc cref="OnMutedTracks(IEnumerable{FlClip}, bool)"/>
+    public static List<FlAudioClip> OnMutedTracks(IEnumerable<FlAudioClip> clips, bool trackMuted) =>
+        clips.Select(x => x with { Muted = x.Muted || x.OnMutedTrack && !trackMuted }).ToList();
+
     /// <summary>
     /// Gives steps from FL's step sequencer, which have no length, the length FL plays them for: FL plays a
     /// step until its sound ends. Here that's until the next note on the same key or the end of the clip,

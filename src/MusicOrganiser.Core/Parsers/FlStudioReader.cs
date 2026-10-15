@@ -477,7 +477,7 @@ public sealed partial class FlStudioReader : IProjectReader
         public int Number(int slot) => At(slot)?.Track.Number ?? 0;
     }
 
-    /// <summary>The playlist's clips, with those on a muted track muted too.</summary>
+    /// <summary>The playlist's clips, with those on a muted track muted too (for automation, which then doesn't play).</summary>
     static List<PlaylistItem> PlaylistItems(ReadOnlySpan<byte> d, PlaylistTracks tracks) =>
         PlaylistItems(d).Select(i => tracks.At(i.Slot) is { Muted: true } ? i with { Muted = true } : i).ToList();
 
@@ -574,7 +574,8 @@ public sealed partial class FlStudioReader : IProjectReader
     /// <summary>
     /// Each channel's clips across the song: one per pattern placed in the playlist (the first
     /// arrangement), holding the channel's notes in that part of the pattern, timed from the clip's
-    /// start. With nothing in the playlist, patterns play one after another. Clips on a muted track are muted.
+    /// start. With nothing in the playlist, patterns play one after another. Clips on a muted track are marked
+    /// <see cref="FlClip.OnMutedTrack"/>; <see cref="FlClip.Muted"/> is only the clip's own mute.
     /// </summary>
     static Dictionary<int, List<FlClip>> PlaceClips(Flp flp, List<(int Pattern, ReadOnlyMemory<byte> Data)> rawNotes,
                                                     ReadOnlyMemory<byte>? playlist, PlaylistTracks tracks, IReadOnlySet<int> known,
@@ -588,7 +589,7 @@ public sealed partial class FlStudioReader : IProjectReader
         }
 
         var clips = new Dictionary<int, List<FlClip>>();
-        void Place(int pat, long at, long from, long length, bool muted, int track)
+        void Place(int pat, long at, long from, long length, bool muted, int track, bool onMutedTrack)
         {
             if (!patterns.TryGetValue(pat, out var pn)) return;
             foreach (var channel in pn.Where(x => x.Note.Start >= from && x.Note.Start < from + length).GroupBy(x => x.Channel))
@@ -596,13 +597,18 @@ public sealed partial class FlStudioReader : IProjectReader
                 var notes = channel.Select(x => x.Note with { Start = x.Note.Start - from, Length = Math.Min(x.Note.Length, from + length - x.Note.Start) })
                                    .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
                 if (!clips.TryGetValue(channel.Key, out var cl)) clips[channel.Key] = cl = new();
-                cl.Add(new FlClip(patternNames.GetValueOrDefault(pat, $"Pattern {pat}"), at, length, notes, muted) { Track = track });
+                cl.Add(new FlClip(patternNames.GetValueOrDefault(pat, $"Pattern {pat}"), at, length, notes, muted)
+                {
+                    Track = track,
+                    OnMutedTrack = onMutedTrack,
+                });
             }
         }
 
-        var items = playlist is { } pl ? PlaylistItems(pl.Span, tracks).Where(i => i.Index > PatternBase).ToList() : [];
+        var items = playlist is { } pl ? PlaylistItems(pl.Span).Where(i => i.Index > PatternBase).ToList() : [];
         if (items.Count > 0)
-            foreach (var i in items.OrderBy(i => i.At)) Place(i.Index - PatternBase, i.At, i.From, i.Length, i.Muted, tracks.Number(i.Slot));
+            foreach (var i in items.OrderBy(i => i.At))
+                Place(i.Index - PatternBase, i.At, i.From, i.Length, i.Muted, tracks.Number(i.Slot), tracks.At(i.Slot) is { Muted: true });
         else
         {
             // Pattern mode: one pattern after another, each rounded up to whole bars.
@@ -613,7 +619,7 @@ public sealed partial class FlStudioReader : IProjectReader
                 if (pn.Count == 0) continue;
                 var end = pn.Max(x => x.Note.Start + x.Note.Length);
                 var length = Math.Max(bar, (end + bar - 1) / bar * bar);
-                Place(pat, at, 0, length, false, 0);
+                Place(pat, at, 0, length, false, 0, false);
                 at += length;
             }
         }
@@ -629,17 +635,21 @@ public sealed partial class FlStudioReader : IProjectReader
     {
         var clips = new Dictionary<int, List<FlAudioClip>>();
         if (playlist is not { } pl) return clips;
-        foreach (var i in PlaylistItems(pl.Span, tracks).Where(i => i.Index < PatternBase && channels.Contains(i.Index) && i.Length > 0).OrderBy(i => i.At))
+        foreach (var i in PlaylistItems(pl.Span).Where(i => i.Index < PatternBase && channels.Contains(i.Index) && i.Length > 0).OrderBy(i => i.At))
         {
             if (!clips.TryGetValue(i.Index, out var list)) clips[i.Index] = list = new();
-            list.Add(new FlAudioClip(i.At, i.Length, i.Offset / 1000, i.Muted) { Track = tracks.Number(i.Slot) });
+            list.Add(new FlAudioClip(i.At, i.Length, i.Offset / 1000, i.Muted)
+            {
+                Track = tracks.Number(i.Slot),
+                OnMutedTrack = tracks.At(i.Slot) is { Muted: true },
+            });
         }
         return clips;
     }
 
-    /// <summary>What plays of a channel's clips: the notes, less muted ones and those in muted clips, in song ticks.</summary>
+    /// <summary>What plays of a channel's clips: the notes, less muted ones and those in muted clips or on muted tracks, in song ticks.</summary>
     static List<NoteEvent> Audible(IEnumerable<FlClip> clips) =>
-        clips.Where(c => !c.Muted)
+        clips.Where(c => !c.Muted && !c.OnMutedTrack)
              .SelectMany(c => c.Notes.Where(n => !n.Muted).Select(n => n with { Start = c.Start + n.Start }))
              .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
 

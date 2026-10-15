@@ -302,6 +302,49 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void MutesWhatAnAutomatedChannelPlaysWhileItsOffAndCarriesItsInsertsEffects()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir()));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 2));
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+        var tracks = doc.Root!.Obj(0x4dd)!.List(0x4de).ToList();
+        Assert.Equal(["Bass", "Vox"], tracks.Select(t => t.Str(0x15b)));
+
+        // The bass is switched off in FL's Channel Rack, but automation switches it on and off, so its track isn't muted:
+        // the clip it's off all through is, and so is the note that starts while it's off in the clip at beats 10-14.
+        var bass = tracks[0];
+        Assert.Equal([0.0, 0.0], tracks.Select(t => t.Obj(0x165)!.Obj(0x1a6)!.Num(0xd2)!.Value));
+        var clips = Clips(bass);
+        Assert.Equal([1.0, 0.0, 0.0], clips.Select(c => c.Num(0x10f8) ?? 0));
+        Assert.Equal([1.0, 0.0], Notes(clips[2]).Select(n => n.Num(0x10f8) ?? 0));
+        Assert.Equal([0.0, 1.0], Clips(tracks[1]).Select(c => c.Num(0x10f8) ?? 0));
+
+        // Insert 1's effects follow Serum, WOW2 switched off as it is in FL, and Pro-Q 3's setting is automated on the copy
+        // on the bass's track.
+        var chain = Chain(bass).ToList();
+        Assert.Equal([("Serum", 1.0), ("Pro-Q 3", 1.0), ("WOW2", 0.0)], chain.Select(d => (Def(d).Str(0x9a), Def(d).Num(0xa3)!.Value)));
+        var lane = bass.Obj(0x2dc9)!.List(0x4ba).Single();
+        var target = lane.Obj(0x2a3)!;
+        Assert.Same(chain[1], target.Obj(0xec));
+        Assert.Equal(("CONTENTS/ROOT_GENERIC_MODULE/PARAM3", "Gain"), (target.Str(0xed), target.Str(0x133a)));
+        Assert.Equal([(0.0, 0.25), (4.0, 0.75)], lane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, p.Num(0x28f)!.Value)));
+
+        Assert.Equal([
+            "Bass: switched on and off by \"Bass - Mute / solo\" in FL Studio, so what it plays while it's off is muted",
+            "Vox: switched on and off by \"Vox - Mute / solo\" in FL Studio, so what it plays while it's off is muted; " +
+            "one audio clip it switches off part of the way through plays whole",
+            "Mixer: the fader or pan of insert 1 isn't at FL Studio's default, and mixer faders and pans aren't carried over yet",
+            "Tempo: automation left out (tempo automation isn't carried over yet; the project is set to 120 BPM)",
+            "Insert 1 - Volume: automation left out (the fader of insert 1 isn't automated here yet)",
+        ], result.Notes);
+
+        // A template whose plugins have no power switch can't switch the effect off, and says so.
+        var plain = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(devicePower: false), _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 2));
+        Assert.Contains("WOW2 on Insert 1: switched off in FL Studio, but on here (the Bitwig template's plugin has no on/off to copy)", plain.Notes);
+    }
+
+    [Fact]
     public void MutesSwitchedOffChannelsAndClipsOnMutedPlaylistTracks()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutedTracks(Fixtures.TempDir()));
@@ -310,19 +353,22 @@ public class BitwigProjectTests
         var doc = Decode(result.Bytes);
         Assert.Null(doc.BodyError);
         var tracks = doc.Root!.Obj(0x4dd)!.List(0x4de).ToList();
-        Assert.Equal(["Snare", "Hat", "Acapella", "Vox", "Vox 2"], tracks.Select(t => t.Str(0x15b)));
+        Assert.Equal(["Snare", "Hat", "Acapella", "Vox", "Vox 2", "Pad"], tracks.Select(t => t.Str(0x15b)));
 
         // The hat and the vox are switched off in FL, so their tracks' mute buttons are on, on both of the vox's tracks.
-        Assert.Equal([0.0, 1.0, 0.0, 1.0, 1.0], tracks.Select(t => t.Obj(0x165)!.Obj(0x1a6)!.Num(0xd2)!.Value));
-        // What's on muted playlist tracks 2 and 4 is muted: the pattern in bar 2, and the Acapella clips.
-        Assert.All(tracks.Take(2), t => Assert.Equal([0.0, 1.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
-        Assert.Equal([1.0, 1.0], Clips(tracks[2]).Select(c => c.Num(0x10f8) ?? 0));
+        // The Acapella's and the Pad's clips are all on muted playlist tracks, so their tracks are muted, not their clips.
+        Assert.Equal([0.0, 1.0, 1.0, 1.0, 1.0, 1.0], tracks.Select(t => t.Obj(0x165)!.Obj(0x1a6)!.Num(0xd2)!.Value));
+        Assert.Equal([0.0, 0.0], Clips(tracks[2]).Select(c => c.Num(0x10f8) ?? 0));
         Assert.All(tracks.Skip(3), t => Assert.Equal([0.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
-        Assert.Equal(["Hat: switched off in FL Studio's Channel Rack, so its track is muted",
+        // The snare and the hat also play on track 1, so only their clip from muted track 2 is muted.
+        Assert.All(tracks.Take(2), t => Assert.Equal([0.0, 1.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
+        Assert.Equal(["Snare: its clips on a muted playlist track in FL Studio (Acapellas, playlist track 2) are muted, as it also has clips from other playlist tracks",
+                      "Hat: its clips on a muted playlist track in FL Studio (Acapellas, playlist track 2) are muted, as it also has clips from other playlist tracks",
+                      "Hat: switched off in FL Studio's Channel Rack, so its track is muted",
+                      "Acapella: muted, because its clips are all on muted playlist tracks in FL Studio (Acapellas, playlist track 2; playlist track 4)",
                       "Vox: its audio clips overlap in FL Studio, so they're on 2 tracks",
                       "Vox: switched off in FL Studio's Channel Rack, so its tracks are muted",
-                      "Acapellas (playlist track 2): muted in FL Studio, so its clips are muted here too",
-                      "Playlist track 4: muted in FL Studio, so its clips are muted here too"],
+                      "Pad: muted, because its clips are all on a muted playlist track in FL Studio (playlist track 4)"],
                      result.Notes);
     }
 
