@@ -180,6 +180,22 @@ public class BitwigLinkTests
     }
 
     [Fact]
+    public void SaysToSetTheMidiPortsWhenTheLoopbackDoesntWork()
+    {
+        var hello = new BitwigHello(3, "Bitwig Studio", "6.1.3", 23, "WINDOWS", 19791, "MO Live Test", false, true, true, "java", "3.8", true,
+                                    Loopback: false);
+        var setUp = BitwigLink.LoopbackMissing(hello)!;
+        Assert.StartsWith("Its MIDI in and out aren't set to the MIDI port “Music Organiser Bitwig” yet, and Bitwig only saves for the app once " +
+                          "they are: ", setUp);
+        Assert.EndsWith("in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it (never to “Music Organiser”, " +
+                        "FL Studio's port).", setUp);
+        Assert.Equal(OperatingSystem.IsWindows(), setUp.Contains("in loopMIDI"));
+        // It works, or the link doesn't say (the script, or an extension before 3.7).
+        Assert.Null(BitwigLink.LoopbackMissing(hello with { Loopback = true }));
+        Assert.Null(BitwigLink.LoopbackMissing(hello with { Loopback = null }));
+    }
+
+    [Fact]
     public async Task SaysWhenBitwigIsntListening()
     {
         var unused = new TcpListener(IPAddress.Loopback, 0);

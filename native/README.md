@@ -78,7 +78,8 @@ like Waves holds many):
 
 Plugins print all sorts of things; that goes to stderr, so stdout is only JSON. The app runs
 `mo-scan` once per plugin file (four at a time) with a 30-second limit, so a plugin that crashes or
-hangs only takes the scanner down, not the app. On Windows the scanner turns off the system's crash
+hangs only takes the scanner down, not the app. Each runs below normal priority, so a scan gets only
+what the PC has spare and the app never lags behind it. On Windows the scanner turns off the system's crash
 and missing-DLL boxes, so a bad plugin can't leave one waiting. Plugins aren't unloaded at the end
 because many crash when they are; the process just exits.
 

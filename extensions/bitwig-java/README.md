@@ -40,13 +40,13 @@ Music Organiser → DAW link.
 The extension has one MIDI in and one MIDI out, only for its loopback: it sends itself MIDI through the out, and
 Bitwig hands it back on the in as if a device had sent it. Bitwig 6.1.3 ignored Save, copy and paste run straight
 away by the link, while it carried them out for a controller's hardware button (it turned out to save from its flush
-too, which 3.8 makes the default route). To set it up: in loopMIDI, add a
+too once these ports were set, which 3.8 makes the default route). To set it up: in loopMIDI, add a
 port called **Music Organiser Bitwig**, then in Bitwig, Settings → Controllers → Music Organiser, set both MIDI
 in and MIDI out to it. Bitwig can fill them in by itself when it finds the port (the extension offers it for
 auto-detection). Never use **Music Organiser**, the FL Studio link's port: FL Studio must never get what the
-Bitwig link sends itself. The self-check and `hello`'s `loopback` say whether the loopback works. Whether
-Bitwig starts the extension at all with its MIDI in and out unassigned isn't known yet: it may not, which would
-stop the whole link, so set them after installing 3.7. See
+Bitwig link sends itself. The self-check and `hello`'s `loopback` say whether the loopback works. Bitwig 6.1.3
+starts the extension, and the link answers, with its MIDI in and out unassigned, but it saved for the link by no
+route until they were set, so set them after installing 3.7 or later, whichever route the app uses. See
 [Routes and the MIDI loopback](../README.md#routes-and-the-midi-loopback).
 
 ## Reports

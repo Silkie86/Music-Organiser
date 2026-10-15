@@ -16,8 +16,9 @@ namespace MusicOrganiser.Core.DawLink;
 /// <param name="Extension">The extension's version, when it's the extension.</param>
 /// <param name="OnlyIn">Whether the link honours <see cref="BitwigLink.OnlyIn"/> (older scripts don't).</param>
 /// <param name="Loopback">
-/// Whether the extension's own MIDI has come back to it through the loopback (extension 3.7), which the routes other
-/// than "direct" and "flush" need (see <see cref="BitwigLink.RunActionAsync"/>); null when the link doesn't say.
+/// Whether the extension's own MIDI has come back to it through the loopback (extension 3.7), which the routes through
+/// MIDI need (see <see cref="BitwigLink.RunActionAsync"/>); Bitwig 6.1.3 also saved from its flush only once the
+/// loopback's ports were set (<see cref="BitwigLink.LoopbackMissing"/>). Null when the link doesn't say.
 /// </param>
 public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
                                  string Project, bool Modified, bool Engine, bool Changes, string? Runtime = null,
@@ -271,14 +272,24 @@ public sealed class BitwigLink : IDisposable
     /// </summary>
     public const string LoopbackPort = "Music Organiser Bitwig";
     /// <remarks>
-    /// The extension 3.7 asks Bitwig for a MIDI in and out (its loopback). Whether Bitwig starts a controller with them
-    /// unassigned isn't known yet (extensions/README.md, "Still to confirm"), so this says to set them too.
+    /// Bitwig starts the extension 3.7 and later, and the link answers, with its MIDI in and out unassigned (confirmed on
+    /// Bitwig 6.1.3), so they're no reason for it not to answer: <see cref="LoopbackMissing"/> says when they're needed.
     /// </remarks>
     public const string NotRunning = "Bitwig isn't answering. Check that Bitwig Studio is open, with the Music Organiser " +
-                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link). " +
-                                     "With the Music Organiser extension 3.7 or later, also set that controller's MIDI in and MIDI out " +
-                                     $"to the MIDI port “{LoopbackPort}” (make it in loopMIDI on Windows), never “Music Organiser”, " +
-                                     "FL Studio's: Bitwig may not start the extension while they're unassigned.";
+                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link).";
+
+    /// <summary>
+    /// What to set up when the extension's MIDI loopback doesn't work (its hello's <see cref="BitwigHello.Loopback"/> is
+    /// false), as a sentence to add after saying the app connected; null when it works, or the link doesn't say (the
+    /// script, or an extension before 3.7). Bitwig 6.1.3 answered the link without it, but saved for it only once the
+    /// extension's MIDI in and out were set (then from its flush), so the app's commands need it too.
+    /// </summary>
+    public static string? LoopbackMissing(BitwigHello hello) => hello.Loopback is false
+        ? $"Its MIDI in and out aren't set to the MIDI port “{LoopbackPort}” yet, and Bitwig only saves for the app once they are: " +
+          (OperatingSystem.IsWindows() ? $"make a port called “{LoopbackPort}” in loopMIDI, then " : "") +
+          "in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it (never to “Music Organiser”, " +
+          "FL Studio's port)."
+        : null;
     const int MaxMessage = 64 << 20;
 
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
