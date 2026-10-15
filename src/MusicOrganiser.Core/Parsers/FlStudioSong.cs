@@ -12,6 +12,12 @@ public sealed record FlPlugin(string Name, string Vendor, string Format, string 
                               IReadOnlyList<uint>? ParameterIds = null)
 {
     public bool Native => Format == "FL";
+
+    /// <summary>An effect's slot in its mixer insert, from 0 at the top; -1 for an instrument, or when the file doesn't say.</summary>
+    public int Slot { get; init; } = -1;
+
+    /// <summary>False for an effect switched off in its mixer slot (its green light is off).</summary>
+    public bool Enabled { get; init; } = true;
 }
 
 /// <summary>
@@ -36,8 +42,17 @@ public sealed record FlChannel(int Index, string Name, FlPlugin? Instrument, str
     /// <summary>How the channel stretches and pitches its sample (its time stretching knobs), and whether it plays it backwards.</summary>
     public FlStretch Stretch { get; init; } = new();
 
-    /// <summary>False when the channel is switched off in the Channel Rack (its green light is off), so it plays nothing.</summary>
+    /// <summary>
+    /// False when the channel is switched off in the Channel Rack (its green light is off), so it plays nothing. A channel
+    /// whose light is automated (<see cref="SwitchedBy"/>) counts as on: what it plays while it's off is muted instead.
+    /// </summary>
     public bool Enabled { get; init; } = true;
+
+    /// <summary>
+    /// The automation clip that switches the channel on and off, or "". Its clips that are off all the way through are
+    /// muted, as are the notes in its other clips that start while it's off (FL's switch stops notes starting, not sound).
+    /// </summary>
+    public string SwitchedBy { get; init; } = "";
 }
 
 /// <summary>
@@ -51,6 +66,9 @@ public sealed record FlAudioClip(long Start, long Length, double From = 0, bool 
 
     /// <summary>Whether that playlist track is muted, so the clip doesn't play even when it isn't <see cref="Muted"/> itself.</summary>
     public bool OnMutedTrack { get; init; }
+
+    /// <summary>Whether automation switches its channel off part of the way through it (see <see cref="FlChannel.SwitchedBy"/>).</summary>
+    public bool PartlyOff { get; init; }
 }
 
 /// <summary>
@@ -102,20 +120,42 @@ public sealed record FlTrack(int Number, string Name)
     public string Label => Name.Length > 0 ? $"{Name}, playlist track {Number}" : $"playlist track {Number}";
 }
 
-/// <summary>What an automation clip moves.</summary>
-public enum FlControl { Volume, Pan, Pitch, PluginParameter, Other }
+/// <summary>
+/// What an automation clip moves: a channel's volume, pan, pitch, on/off (its Channel Rack light) or a setting of its
+/// plugin; a mixer insert's volume, pan, an effect slot's on/off or a setting of the effect in it; or the song's tempo
+/// or master volume.
+/// </summary>
+public enum FlControl { Volume, Pan, Pitch, PluginParameter, Other, OnOff, InsertVolume, InsertPan, InsertSlotOnOff, InsertEffect, Tempo, MainVolume }
 
 /// <summary>A point on an automation curve: beats from the start of the song, and the value (0..1).</summary>
 public readonly record struct FlPoint(double Beat, double Value);
 
 /// <summary>
 /// An automation clip's curve across the song, as placed in the playlist. It moves <paramref name="Control"/>
-/// on <paramref name="Channel"/>; for a plugin parameter, <paramref name="Parameter"/> is its index.
+/// on <paramref name="Channel"/> (-1 when it moves a mixer insert or the song); for a plugin parameter,
+/// <paramref name="Parameter"/> is its index.
 /// </summary>
-public sealed record FlAutomation(string Name, int Channel, FlControl Control, int Parameter, IReadOnlyList<FlPoint> Points);
+public sealed record FlAutomation(string Name, int Channel, FlControl Control, int Parameter, IReadOnlyList<FlPoint> Points)
+{
+    /// <summary>The mixer insert it moves something on, or -1.</summary>
+    public int Insert { get; init; } = -1;
+
+    /// <summary>For an insert's effect: its slot (see <see cref="FlPlugin.Slot"/>), or -1.</summary>
+    public int Slot { get; init; } = -1;
+}
 
 /// <summary>A mixer insert (0 is the master) and its effects in slot order.</summary>
-public sealed record FlInsert(int Index, string Name, IReadOnlyList<FlPlugin> Effects);
+public sealed record FlInsert(int Index, string Name, IReadOnlyList<FlPlugin> Effects)
+{
+    /// <summary>FL's fader value, when the file says: <see cref="FlStudioReader.InsertFaderDefault"/> where FL leaves it (how it maps to gain isn't worked out).</summary>
+    public int? Fader { get; init; }
+
+    /// <summary>FL's pan value, when the file says: 0 is the centre.</summary>
+    public int? Pan { get; init; }
+
+    /// <summary>Whether the fader or pan isn't where FL leaves it.</summary>
+    public bool Moved => Fader is { } f && f != FlStudioReader.InsertFaderDefault || Pan is { } p && p != 0;
+}
 
 /// <summary>An FL Studio project laid out for moving to another DAW.</summary>
 public sealed record FlSong(string Title, int Ppq, double Tempo, IReadOnlyList<FlChannel> Channels, IReadOnlyList<FlInsert> Inserts,
@@ -137,8 +177,19 @@ public sealed partial class FlStudioReader
     const int EvChannelLevels = Data + 11;      // 219: i32 pan (0..12800), volume (0..12800), pitch in cents
     const int EvAutomationLink = Data + 19;     // 227: which control an automation clip moves
     const int EvAutomationPoints = Data + 26;   // 234: an automation clip's points
+    const int EvMixerSettings = Data + 17;      // 225: the mixer's settings, 12 bytes each (see MixerSettings)
     const int ChannelTypeAutomation = 5;
     const double LevelsFull = 12800;
+
+    // What an automation link (227) or a mixer setting (225) moves: the target's high word is a channel, a mixer insert's
+    // slot (see MixerSettings) or the song, and its low word what on it. The insert and song ones match the ids FL's
+    // scripting docs give; only channel volume, on/off and plugin settings have been seen in an automation link so far.
+    const int TargetVolume = 0, TargetPan = 1, TargetPitch = 4, TargetOnOff = 7, TargetPlugin = 0x8000;
+    const int TargetSlotOnOff = 0x1f00, TargetInsertVolume = 0x1fc0, TargetInsertPan = 0x1fc1;
+    const int TargetSong = 0x4000, TargetMainVolume = 0, TargetTempo = 5;
+
+    /// <summary>A mixer insert's fader where FL leaves it (its value in event 225).</summary>
+    public const int InsertFaderDefault = 12800;
 
     /// <summary>FL Studio's default root key, C5 (MIDI 60).</summary>
     public const int DefaultRoot = 60;
@@ -179,6 +230,9 @@ public sealed partial class FlStudioReader
         var pluginName = "";
         var insert = -1;
         var nextInsertName = "";
+        ReadOnlyMemory<byte>? mixerSettings = null;
+        // The effect added last, until its slot's closing event says which slot it's in.
+        (int Insert, int Index)? unslotted = null;
 
         foreach (var e in flp.Events)
         {
@@ -228,7 +282,14 @@ public sealed partial class FlStudioReader
                     break;
                 // An insert's name (with its colour and icon) comes just before the flags that start it.
                 case EvInsertName: nextInsertName = flp.Str(e); break;
-                case EvMixerSlot: inMixer = true; break;
+                case EvMixerSlot:
+                    inMixer = true;
+                    // An effect's events come before the event that closes its slot, which holds the slot's number.
+                    if (unslotted is var (atInsert, index) && effects.TryGetValue(atInsert, out var slotted))
+                        slotted[index] = slotted[index] with { Slot = (int)e.Int };
+                    unslotted = null;
+                    break;
+                case EvMixerSettings: mixerSettings = e.Payload; break;
                 case EvPluginInternal:
                     pendingInternal = flp.Str(e);
                     pluginName = "";
@@ -246,6 +307,7 @@ public sealed partial class FlStudioReader
                     {
                         if (!effects.TryGetValue(insert, out var list)) effects[insert] = list = new();
                         list.Add(plugin);
+                        unslotted = (insert, list.Count - 1);
                     }
                     pendingInternal = "";
                     break;
@@ -256,6 +318,11 @@ public sealed partial class FlStudioReader
             }
         }
 
+        var mixer = new MixerSettings(mixerSettings);
+        // An automation clip switched off in the Channel Rack doesn't play, like a muted one.
+        var automation = PlaceAutomation(links.Where(l => !off.Contains(l.Clip)).ToList(), curves, names, playlist, tracks, mixer, flp.Ppq);
+        // A channel whose on/off is automated plays only while it's on (the first clip that switches it, if several do).
+        var switching = automation.Where(a => a.Control == FlControl.OnOff).DistinctBy(a => a.Channel).ToDictionary(a => a.Channel);
         var clips = PlaceClips(flp, rawNotes, playlist, tracks, order.ToHashSet(), patternNames);
         var audioClips = PlaceAudioClips(playlist, tracks, order.Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation).ToHashSet());
         var channels = order
@@ -264,26 +331,38 @@ public sealed partial class FlStudioReader
             {
                 var lv = levels.GetValueOrDefault(ch, (Pan: 0.5, Volume: DefaultVolume, Pitch: 0));
                 var placed = clips.GetValueOrDefault(ch) ?? [];
+                var placedAudio = audioClips.GetValueOrDefault(ch) ?? [];
+                var switchedBy = switching.GetValueOrDefault(ch);
+                if (switchedBy is not null)
+                {
+                    var onOff = new OnOff(switchedBy.Points, flp.Ppq);
+                    placed = placed.Select(onOff.Mute).ToList();
+                    placedAudio = placedAudio.Select(onOff.Mute).ToList();
+                }
                 return new FlChannel(ch, names.GetValueOrDefault(ch, $"Channel {ch + 1}"), instruments.GetValueOrDefault(ch),
                                      samples.GetValueOrDefault(ch, ""), routes.GetValueOrDefault(ch), Audible(placed),
                                      roots.GetValueOrDefault(ch, DefaultRoot), lv.Pitch, lv.Volume, lv.Pan)
                 {
                     Clips = placed,
                     VolumeEnvelope = volumeEnvelopes.GetValueOrDefault(ch),
-                    AudioClips = audioClips.GetValueOrDefault(ch) ?? [],
+                    AudioClips = placedAudio,
                     Stretch = (stretches.GetValueOrDefault(ch) ?? new FlStretch()) with { Reversed = reversed.Contains(ch) },
-                    Enabled = !off.Contains(ch),
+                    Enabled = !off.Contains(ch) || switchedBy is not null,
+                    SwitchedBy = switchedBy?.Name ?? "",
                 };
             })
             .ToList();
-        // An automation clip switched off in the Channel Rack doesn't play, like a muted one.
-        var automation = PlaceAutomation(links.Where(l => !off.Contains(l.Clip)).ToList(), curves, names, playlist, tracks, flp.Ppq);
         var mutedTracks = playlist is { } pl
             ? PlaylistItems(pl.Span).Select(i => tracks.At(i.Slot)).OfType<(FlTrack Track, bool Muted)>()
                 .Where(t => t.Muted).Select(t => t.Track).Distinct().OrderBy(t => t.Number).ToList()
             : [];
         var inserts = effects.Keys.Union(insertNames.Keys).Union(channels.Select(c => c.Insert)).Distinct().Order()
-            .Select(i => new FlInsert(i, insertNames.GetValueOrDefault(i, ""), effects.GetValueOrDefault(i) ?? []))
+            .Select(i => new FlInsert(i, insertNames.GetValueOrDefault(i, ""),
+                                      (effects.GetValueOrDefault(i) ?? []).Select(fx => mixer.Value(i, fx.Slot, TargetSlotOnOff) == 0 ? fx with { Enabled = false } : fx).ToList())
+            {
+                Fader = mixer.Value(i, 0, TargetInsertVolume),
+                Pan = mixer.Value(i, 0, TargetInsertPan),
+            })
             .ToList();
         return new FlSong(title, flp.Ppq, tempo ?? 140, channels, inserts, automation) { MutedTracks = mutedTracks };
     }
@@ -346,13 +425,15 @@ public sealed partial class FlStudioReader
 
     /// <summary>
     /// Automation clips placed where the playlist puts them, cut to each clip's length, joined per
-    /// clip. A link (event 227) gives the clip's channel and its target: the low word is the control
-    /// (0 volume, 1 pan, 4 pitch, 0x8000 + n plugin parameter n), the high word the channel it's on.
+    /// clip. A link (event 227) gives the clip's channel and its target: what it moves (see TargetVolume and
+    /// the rest; <see cref="MixerSettings"/> tells a mixer insert's targets from a channel's).
     /// Clips that aren't in the playlist, or are muted there or on a muted track, don't play, so they're left out. A clip
-    /// placed several times, with gaps between, becomes one curve that holds its value through the gaps.
+    /// placed several times, with gaps between, becomes one curve that holds its value through the gaps. An on/off
+    /// switches rather than slides, so its curve holds each point's value until the next.
     /// </summary>
     static List<FlAutomation> PlaceAutomation(List<(int Clip, uint Target)> links, Dictionary<int, List<FlPoint>> curves,
-                                              Dictionary<int, string> names, ReadOnlyMemory<byte>? playlist, PlaylistTracks tracks, int ppq)
+                                              Dictionary<int, string> names, ReadOnlyMemory<byte>? playlist, PlaylistTracks tracks,
+                                              MixerSettings mixer, int ppq)
     {
         var result = new List<FlAutomation>();
         if (playlist is not { } pl || ppq <= 0) return result;
@@ -360,43 +441,132 @@ public sealed partial class FlStudioReader
         foreach (var (clip, target) in links)
         {
             if (!curves.TryGetValue(clip, out var curve) || curve.Count == 0) continue;
-            var points = new List<FlPoint>();
+            var name = names.GetValueOrDefault(clip, $"Automation {clip + 1}");
+            var (high, low) = ((int)(target >> 16), (int)(target & 0xFFFF));
+            var plugin = low >= TargetPlugin ? low - TargetPlugin : low;
+            FlAutomation Moves(IReadOnlyList<FlPoint> points) =>
+                high == TargetSong
+                    ? new(name, -1, low switch { TargetTempo => FlControl.Tempo, TargetMainVolume => FlControl.MainVolume, _ => FlControl.Other }, low, points)
+                : mixer.Slot(high) is var (insert, slot)
+                    ? new(name, -1, (low, slot) switch
+                    {
+                        (TargetInsertVolume, 0) => FlControl.InsertVolume,
+                        (TargetInsertPan, 0) => FlControl.InsertPan,
+                        (TargetSlotOnOff, _) => FlControl.InsertSlotOnOff,
+                        ( >= TargetPlugin, _) => FlControl.InsertEffect,
+                        _ => FlControl.Other,
+                    }, plugin, points) { Insert = insert, Slot = slot }
+                : new(name, high, low switch
+                {
+                    TargetVolume => FlControl.Volume,
+                    TargetPan => FlControl.Pan,
+                    TargetPitch => FlControl.Pitch,
+                    TargetOnOff => FlControl.OnOff,
+                    >= TargetPlugin => FlControl.PluginParameter,
+                    _ => FlControl.Other,
+                }, plugin, points);
+            var hold = Moves([]).Control == FlControl.OnOff;
+            var placed = new List<FlPoint>();
             foreach (var item in items.Where(i => i.Index == clip && !i.Muted))
             {
-                var placed = CutCurve(curve, item.At / (double)ppq, item.From / (double)ppq, item.Length / (double)ppq).ToList();
+                var part = CutCurve(curve, item.At / (double)ppq, item.From / (double)ppq, item.Length / (double)ppq, hold).ToList();
                 // Between clips FL holds the value the last one ended on, then jumps to where the next starts.
-                if (points.Count > 0 && placed.Count > 0 && points[^1].Beat < placed[0].Beat && points[^1].Value != placed[0].Value)
-                    points.Add(points[^1] with { Beat = placed[0].Beat });
-                points.AddRange(placed);
+                if (placed.Count > 0 && part.Count > 0 && placed[^1].Beat < part[0].Beat && placed[^1].Value != part[0].Value)
+                    placed.Add(placed[^1] with { Beat = part[0].Beat });
+                placed.AddRange(part);
             }
-            if (points.Count == 0) continue;
-            var low = (int)(target & 0xFFFF);
-            var control = low switch { 0 => FlControl.Volume, 1 => FlControl.Pan, 4 => FlControl.Pitch, >= 0x8000 => FlControl.PluginParameter, _ => FlControl.Other };
-            result.Add(new FlAutomation(names.GetValueOrDefault(clip, $"Automation {clip + 1}"), (int)(target >> 16), control,
-                                        control == FlControl.PluginParameter ? low - 0x8000 : low, points));
+            if (placed.Count > 0) result.Add(Moves(placed));
         }
         return result;
     }
 
-    /// <summary>The part of a curve from <paramref name="from"/> to from + length (beats into the clip), moved to start at <paramref name="at"/>.</summary>
-    static IEnumerable<FlPoint> CutCurve(List<FlPoint> curve, double at, double from, double length)
+    /// <summary>How far apart two points can be and still count as at the same beat: FL adds up the gaps between points, which drifts.</summary>
+    const double SameBeat = 1e-4;
+
+    /// <summary>
+    /// The part of a curve from <paramref name="from"/> to from + length (beats into the clip), moved to start at
+    /// <paramref name="at"/>. Between points the value slides in a straight line, or with <paramref name="hold"/> stays
+    /// at the earlier point's until the next. Where several points share a beat (a jump), the value there is the last's.
+    /// </summary>
+    static IEnumerable<FlPoint> CutCurve(List<FlPoint> curve, double at, double from, double length, bool hold = false)
     {
         double ValueAt(double beat)
         {
-            if (beat <= curve[0].Beat) return curve[0].Value;
-            for (var k = 1; k < curve.Count; k++)
-                if (beat <= curve[k].Beat)
-                {
-                    var (a, b) = (curve[k - 1], curve[k]);
-                    return b.Beat <= a.Beat ? b.Value : a.Value + (b.Value - a.Value) * (beat - a.Beat) / (b.Beat - a.Beat);
-                }
-            return curve[^1].Value;
+            var last = curve.FindLastIndex(p => p.Beat <= beat + SameBeat);
+            if (last < 0) return curve[0].Value;
+            var (a, next) = (curve[last], last + 1 < curve.Count ? curve[last + 1] : (FlPoint?)null);
+            if (hold || next is not { } b || a.Beat >= beat - SameBeat) return a.Value;
+            return a.Value + (b.Value - a.Value) * (beat - a.Beat) / (b.Beat - a.Beat);
         }
         if (length <= 0) yield break;
+        var end = from + length;
         yield return new FlPoint(at, ValueAt(from));
         foreach (var p in curve)
-            if (p.Beat > from && p.Beat < from + length) yield return p with { Beat = at + p.Beat - from };
-        yield return new FlPoint(at + length, ValueAt(from + length));
+            if (p.Beat > from + SameBeat && p.Beat < end - SameBeat) yield return p with { Beat = at + p.Beat - from };
+        yield return new FlPoint(at + length, ValueAt(end));
+    }
+
+    /// <summary>
+    /// The mixer's settings (event 225): 12 bytes each, u32 0, u32 the setting's target (as an automation link names it) and
+    /// i32 its value. A setting on a mixer insert has base + 64 × insert + slot in its target's high word (slot 0 for the
+    /// insert's own fader and pan). The base is 0x2000 in FL 21 and 0x7000 in FL 25 and 26, so it's taken from the file: the
+    /// lowest high word of an insert's fader.
+    /// </summary>
+    sealed class MixerSettings
+    {
+        readonly Dictionary<uint, int> _values = [];
+        readonly int? _base;
+
+        public MixerSettings(ReadOnlyMemory<byte>? data)
+        {
+            var d = data is { } m ? m.Span : [];
+            for (var k = 0; k + 12 <= d.Length; k += 12)
+                _values[BinaryPrimitives.ReadUInt32LittleEndian(d[(k + 4)..])] = BinaryPrimitives.ReadInt32LittleEndian(d[(k + 8)..]);
+            var faders = _values.Keys.Where(t => (t & 0xFFFF) == TargetInsertVolume && t >> 16 != TargetSong).Select(t => (int)(t >> 16)).ToList();
+            if (faders.Count > 0) _base = faders.Min();
+        }
+
+        /// <summary>A setting's value on an insert's slot, if the file has it.</summary>
+        public int? Value(int insert, int slot, int setting) =>
+            _base is { } b && slot >= 0 && _values.TryGetValue((uint)((b + 64 * insert + slot) << 16 | setting), out var v) ? v : null;
+
+        /// <summary>The insert and slot a target's high word names, when it names one of the file's inserts.</summary>
+        public (int Insert, int Slot)? Slot(int high) =>
+            _base is { } b && high >= b && high != TargetSong && Value((high - b) / 64, 0, TargetInsertVolume) is not null
+                ? ((high - b) / 64, (high - b) % 64) : null;
+    }
+
+    /// <summary>
+    /// A channel's on/off (its Channel Rack light) as automation switches it: each point's value holds until the next,
+    /// 0.5 and above is on, and before the first point it's at the first point's value.
+    /// </summary>
+    sealed class OnOff(IReadOnlyList<FlPoint> points, int ppq)
+    {
+        bool On(double beat)
+        {
+            var at = points[0];
+            foreach (var p in points)
+                if (p.Beat <= beat + SameBeat) at = p;
+                else break;
+            return at.Value >= 0.5;
+        }
+
+        /// <summary>Whether it's at <paramref name="on"/> all the way from one tick to another.</summary>
+        bool Throughout(long from, long to, bool on)
+        {
+            var (a, b) = (from / (double)ppq, to / (double)ppq);
+            return On(a) == on && points.All(p => p.Beat <= a + SameBeat || p.Beat >= b - SameBeat || p.Value >= 0.5 == on);
+        }
+
+        /// <summary>A clip muted when the channel is off all the way through it, else with the notes that start while it's off muted.</summary>
+        public FlClip Mute(FlClip clip) =>
+            Throughout(clip.Start, clip.Start + clip.Length, on: false) ? clip with { Muted = true }
+            : clip with { Notes = clip.Notes.Select(n => n.Muted || On((clip.Start + n.Start) / (double)ppq) ? n : n with { Muted = true }).ToList() };
+
+        /// <summary>An audio clip muted when the channel is off all the way through it, else marked when it's off part of the way.</summary>
+        public FlAudioClip Mute(FlAudioClip clip) =>
+            Throughout(clip.Start, clip.Start + clip.Length, on: false) ? clip with { Muted = true }
+            : Throughout(clip.Start, clip.Start + clip.Length, on: true) ? clip : clip with { PartlyOff = true };
     }
 
     static FlPlugin SongPlugin(string internalName, ReadOnlyMemory<byte> payload, string displayName)
