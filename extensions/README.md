@@ -411,7 +411,8 @@ What runs, in this order:
   for each: whether the copy took and a paste works in the launcher, and whether Duplicate works there); the
   MIDI file inserted after the Sample track as a track of its own, with the play start at bar 5 (extension 3.8,
   another experiment: Passed when it made a new track with no launcher clip and the clip selected in the
-  arranger moved to it, asking you to look at bar 5 on that track; Failed when no track came or the clip went in
+  arranger moved to it, asking you which bar the clip starts at and where the play start marker is (the 3.7 run
+  left the marker at bar 1, though the link read it back at bar 5); Failed when no track came or the clip went in
   its launcher; else Noted, asking you to look); Drum Machine pads; selecting a device, setting a parameter and reading it back (then setting it back); the
   master recorder's status (Java only; it's never started); and, after Send, Save, with Bitwig's window brought
   to the front first (on Windows; the report says whether it got there, as `front`). Bitwig 6.1.3 ignored Save from the

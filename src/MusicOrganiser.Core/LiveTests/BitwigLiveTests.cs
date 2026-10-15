@@ -836,11 +836,12 @@ public static class BitwigLiveTests
         if (f.LauncherClips > 0)
             return LiveVerdict.Fail($"{made}, but in its clip launcher ({Checks.Count(f.LauncherClips.Value, "clip")} there), not the arranger, so " +
                                     "inserting a file between tracks doesn't put it in the arranger.", data);
-        var look = $"look at {meant} on “{name}” in Bitwig's arranger and say what you see there.";
+        // The 3.7 run left Bitwig's play start marker at bar 1 though the link read it back at bar 5, so where the clip starts is asked, not assumed.
+        var look = $"look at “{name}” in Bitwig's arranger and say whether the clip is there and which bar it starts at (it was meant to start at " +
+                   $"{meant}, where the link moved the play start), and where the play start marker is.";
         if (f.Arranger is { Exists: true } on && on.Track == name && on != f.ArrangerBefore)
             return LiveVerdict.Pass($"{made}, with no clip in its launcher, and the clip selected in the arranger is on that track now, so the " +
-                                    $"clip went in the arranger. It was meant to start at {meant}, where the link moved the play start, but the " +
-                                    $"link can't read where an arranger clip starts: {look}", data);
+                                    $"clip went in the arranger. The link can't read where an arranger clip starts: {look}", data);
         var why = f.Arranger is { Exists: true } same && same == f.ArrangerBefore
             ? $"the clip selected in the arranger is the one selected before (on “{same.Track}”), so the link can't tell whether a new one appeared"
             : "no clip on it is selected in the arranger, so the link can't tell whether the clip went there";

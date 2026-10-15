@@ -1467,9 +1467,9 @@ public class BitwigLiveTestsTests
                      ((string)sent["cmd"]!, (int)sent["track"]!, (string)sent["path"]!, (double)sent["at"]!));
         Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
         Assert.Equal("Bitwig put Live Clip.mid on a new track, “Live Clip” (track 4), with no clip in its launcher, and the clip selected in the " +
-                     "arranger is on that track now, so the clip went in the arranger. It was meant to start at bar 5 (beat 14), where the link moved " +
-                     "the play start, but the link can't read where an arranger clip starts: look at bar 5 (beat 14) on “Live Clip” in Bitwig's " +
-                     "arranger and say what you see there.", verdict.Detail);
+                     "arranger is on that track now, so the clip went in the arranger. The link can't read where an arranger clip starts: look at " +
+                     "“Live Clip” in Bitwig's arranger and say whether the clip is there and which bar it starts at (it was meant to start at bar 5 " +
+                     "(beat 14), where the link moved the play start), and where the play start marker is.", verdict.Detail);
         Assert.Equal(("Live Clip", 0), ((string?)verdict.Data!["name"], (int)verdict.Data["launcherClips"]!));
 
         // An older extension, or the script, hasn't got it: skipped, sending nothing.
@@ -1497,7 +1497,8 @@ public class BitwigLiveTestsTests
             change(answer);
             return BitwigLiveTests.FileTrackVerdict(FileTrack(answer.ToJsonString()), "Live Clip.mid", "Sample 143012", 5);
         }
-        const string look = "Look at bar 5 (beat 14) on “Live Clip” in Bitwig's arranger and say what you see there.";
+        const string look = "Look at “Live Clip” in Bitwig's arranger and say whether the clip is there and which bar it starts at (it was meant to " +
+                            "start at bar 5 (beat 14), where the link moved the play start), and where the play start marker is.";
 
         var launcher = Verdict(a => a["launcherClips"] = 1);
         Assert.Equal((LiveOutcome.Failed, "Bitwig put Live Clip.mid on a new track, “Live Clip” (track 4), but in its clip launcher (1 clip there), " +
