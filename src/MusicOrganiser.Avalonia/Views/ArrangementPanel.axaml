@@ -1,0 +1,57 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:pv="using:MusicOrganiser.Core.Preview"
+             xmlns:sys="using:System"
+             xmlns:v="using:MusicOrganiser.Avalonia.Views"
+             x:Class="MusicOrganiser.Avalonia.Views.ArrangementPanel"
+             x:DataType="vm:ProjectDetailViewModel">
+    <!-- The Arrangement tab: the project drawn like its DAW shows it, with a line of facts above. -->
+    <DockPanel Margin="12,12,12,12">
+        <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontSize="11" Foreground="{StaticResource FaintBrush}" TextWrapping="Wrap"
+                   IsVisible="{Binding HasArrangement}"
+                   Text="Scroll to move up and down · Ctrl + scroll to zoom · drag to move around · double-click to see it all" />
+        <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,10">
+            <DockPanel>
+                <Panel x:Name="FullSizeHolder" DockPanel.Dock="Right">
+                    <Button Classes="row" Content="Full size" Click="OnFullSize" IsVisible="{Binding HasArrangement}"
+                            ToolTip.Tip="Open the arrangement in its own window" Padding="10,4" />
+                </Panel>
+                <TextBlock Text="{Binding ArrangementSummary}" FontFamily="{DynamicResource NumberFont}" FontSize="12.5"
+                           Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
+            </DockPanel>
+            <!-- FL Studio projects: the playlist as FL shows it, or the tracks it becomes in Bitwig. -->
+            <ListBox Classes="chips" ItemsSource="{Binding Arrangements}" SelectedItem="{Binding Arrangement}" IsVisible="{Binding HasArrangementChoice}">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="pv:Arrangement">
+                        <TextBlock Text="{Binding View}" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <ItemsControl ItemsSource="{Binding ArrangementNotes}" IsVisible="{Binding HasArrangementNotes}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="sys:String">
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12" Margin="0,1" Foreground="{StaticResource MutedBrush}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+
+        <Panel>
+            <Border CornerRadius="{DynamicResource RadiusM}" ClipToBounds="True" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1"
+                    IsVisible="{Binding HasArrangement}">
+                <v:ArrangementView Arrangement="{Binding Arrangement}" MinHeight="180" />
+            </Border>
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10" IsVisible="{Binding ArrangementLoading}">
+                <ProgressBar IsIndeterminate="True" Width="160" />
+                <TextBlock Text="Reading the arrangement…" Foreground="{StaticResource MutedBrush}" FontSize="12" HorizontalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Text="{Binding ArrangementMessage}" Foreground="{StaticResource MutedBrush}" FontSize="12.5" TextWrapping="Wrap"
+                       VerticalAlignment="Center" HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="360"
+                       IsVisible="{Binding ArrangementMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </Panel>
+    </DockPanel>
+</UserControl>

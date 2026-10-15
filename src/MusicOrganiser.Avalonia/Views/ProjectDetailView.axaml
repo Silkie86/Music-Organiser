@@ -4,6 +4,7 @@
              xmlns:lib="using:MusicOrganiser.Core.Library"
              xmlns:dl="using:MusicOrganiser.Core.DawLink"
              xmlns:sys="using:System"
+             xmlns:v="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.ProjectDetailView"
              x:DataType="vm:ProjectDetailViewModel">
     <UserControl.Styles>
@@ -348,6 +349,10 @@
                                  Text="{Binding Item.Notes, UpdateSourceTrigger=LostFocus}" />
                     </StackPanel>
                 </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Arrange" ToolTip.Tip="See the project laid out like your DAW's arrangement, without opening it" IsSelected="{Binding PreviewShown, Mode=OneWayToSource}">
+                <v:ArrangementPanel />
             </TabItem>
 
             <TabItem Header="Plugins">
