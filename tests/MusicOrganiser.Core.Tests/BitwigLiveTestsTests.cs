@@ -438,6 +438,15 @@ public class BitwigLiveTestsTests
         Assert.Equal(LiveOutcome.Failed, unfound.Outcome);
         Assert.Contains("the app didn't find the project's file to see whether it was written", unfound.Detail);
         Assert.Null(unfound.Data!["file"]);
+
+        // Whether Bitwig's window was in front, which Save may need.
+        LiveVerdict Front(bool? front) =>
+            BitwigLiveTests.SaveVerdict("MO Live Test", "Save", true, true, TimeSpan.FromMilliseconds(120), wait, file, then, then, front);
+        Assert.Contains($"didn't write {file}, though its window was in front.", Front(true).Detail);
+        Assert.Contains($"didn't write {file}. The app couldn't bring Bitwig's window to the front, which Save may need: click on Bitwig while " +
+                        "the run saves.", Front(false).Detail);
+        Assert.Equal(false, (bool?)Front(false).Data!["front"]);
+        Assert.Null(unfound.Data!["front"]);
     }
 
     [Fact]

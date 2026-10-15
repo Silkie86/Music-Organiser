@@ -43,6 +43,12 @@ public sealed record BitwigLiveOptions
     /// <summary>Bitwig's user folders, whose Projects folder is searched for the saved test project.</summary>
     public Func<IReadOnlyList<string>> BitwigUserFolders { get; init; } = () => DawScripts.BitwigUserFolders();
 
+    /// <summary>
+    /// Brings Bitwig's window to the front before the run saves (Bitwig may ignore Save otherwise), returning whether it's
+    /// in front, or null when that can't be told. Does nothing unless given, so tests never touch a real window.
+    /// </summary>
+    public Func<bool?> BringBitwigToFront { get; init; } = () => null;
+
     /// <summary>The Bitwig projects in the library: searched for the saved test project, and for the Drum Machine's ID.</summary>
     public Func<IEnumerable<string>> LibraryProjects { get; init; } = () => [];
 
@@ -135,14 +141,15 @@ public static class BitwigLiveTests
     /// </summary>
     /// <param name="file">The project's file as the app found it before Save (or after, for a first save), or null.</param>
     /// <param name="before">When <paramref name="file"/> was written before Save (null if it wasn't there), and after the wait.</param>
+    /// <param name="front">Whether Bitwig's window was in front when Save ran, or null when that couldn't be told.</param>
     public static LiveVerdict SaveVerdict(string project, string action, bool wasModified, bool stillModified, TimeSpan took, TimeSpan wait,
-                                          string? file, DateTime? before, DateTime? after)
+                                          string? file, DateTime? before, DateTime? after, bool? front = null)
     {
         var written = file is not null && after is { } a && a != before;
         var data = new JsonObject
         {
             ["action"] = action, ["modifiedBefore"] = wasModified, ["modifiedAfter"] = stillModified, ["file"] = file,
-            ["writtenBefore"] = Utc(before), ["writtenAfter"] = Utc(after),
+            ["writtenBefore"] = Utc(before), ["writtenAfter"] = Utc(after), ["front"] = front,
         };
         var wrote = file is null ? "" : written ? $", and wrote {file}" : $", though {file} wasn't written again";
         if (!stillModified)
@@ -154,6 +161,12 @@ public static class BitwigLiveTests
                                     $"changed “{project}” again straight away, or Bitwig didn't clear them.", data);
         return LiveVerdict.Fail($"Bitwig still showed unsaved changes {wait.TotalSeconds:0} s after Save (“{action}”)" +
                                 (file is null ? ", and the app didn't find the project's file to see whether it was written" : $", and didn't write {file}") +
+                                (front switch
+                                {
+                                    true => ", though its window was in front",
+                                    false => ". The app couldn't bring Bitwig's window to the front, which Save may need: click on Bitwig while the run saves",
+                                    null => "",
+                                }) +
                                 $". If Bitwig opened a Save As window, the project hasn't been saved yet: save it as “{TestProject}”, then run again.", data);
 
         static string? Utc(DateTime? t) => t?.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
@@ -809,6 +822,7 @@ public static class BitwigLiveTests
                 var file = FindSaved(project, DateTime.MinValue, options.LibraryProjects(), SavedFolders());
                 DateTime? Written() => file is not null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : null;
                 var before = Written();
+                var front = options.BringBitwigToFront();
                 _savedAt = DateTime.UtcNow;
                 var took = Stopwatch.StartNew();
                 await link.RunActionAsync(_save, t);
@@ -816,7 +830,7 @@ public static class BitwigLiveTests
                 while ((modified = (await link.HelloAsync(t)).Modified) && took.Elapsed <= options.SaveWait) await Task.Delay(100, t);
                 // A project saved for the first time has no file until Save writes one.
                 file ??= FindSaved(project, _savedAt.AddSeconds(-2), options.LibraryProjects(), SavedFolders());
-                var verdict = SaveVerdict(project, _save, wasModified, modified, took.Elapsed, options.SaveWait, file, before, Written());
+                var verdict = SaveVerdict(project, _save, wasModified, modified, took.Elapsed, options.SaveWait, file, before, Written(), front);
                 if (verdict.Outcome == LiveOutcome.Passed)
                 {
                     _saved = true;

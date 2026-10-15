@@ -161,6 +161,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             PluginFolders = () => plugins,
             ScannedProbes = _db.ScannedPluginsNamed(BitwigLiveTests.ProbeName),
             BitwigUserFolders = () => DawScripts.BitwigLinkFolders(_db.GetSetting(BitwigUserKey)),
+            BringBitwigToFront = () => DawWindows.BringToFront("Bitwig"),
             LibraryProjects = () =>
             {
                 var drums = _db.ProjectsUsingPlugin(BitwigSend.DrumMachine).ToHashSet();
