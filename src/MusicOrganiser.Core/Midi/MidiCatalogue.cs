@@ -9,7 +9,9 @@ namespace MusicOrganiser.Core.Midi;
 public sealed class MidiEntry
 {
     public required StoredPhrase Phrase { get; init; }
-    public int Copies { get; set; } = 1;
+    public int Copies => 1 + (OtherSources?.Count ?? 0);
+    /// <summary>The other files with the same notes (older saves of the song, or the same pattern in another project).</summary>
+    public List<string>? OtherSources { get; set; }
     public string SearchText { get; set; } = "";
     /// <summary>What you said it is, which wins over the app's guess; null for the guess.</summary>
     public string? YourRole { get; set; }
@@ -17,6 +19,11 @@ public sealed class MidiEntry
     public float[] Chroma { get; init; } = new float[12];
 
     public long Id => Phrase.Id;
+
+    /// <summary>Whether this file has these notes (as the newest copy or one of the others).</summary>
+    public bool IsIn(string path) =>
+        Phrase.Source.Path.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+        OtherSources?.Any(o => o.Equals(path, StringComparison.OrdinalIgnoreCase)) == true;
     public string Role => YourRole ?? Phrase.Role;
     public bool IsProject => Phrase.Source.Kind == MidiSource.Project;
     public string SourceName => Path.GetFileNameWithoutExtension(Phrase.Source.Path);
@@ -34,8 +41,9 @@ public sealed class MidiEntry
 /// <param name="From">"projects", "files" or null for both.</param>
 /// <param name="Fit">Rank by how well each part fits this harmony, moved to fit it.</param>
 /// <param name="Like">Rank by how alike each part is to this one.</param>
+/// <param name="Leave">Leave out the parts in this file: the project being fitted to fits itself, which says nothing.</param>
 public sealed record MidiQuery(string Text = "", string? Role = null, string? From = null, HarmonyTarget? Fit = null,
-                               MidiEntry? Like = null, int Limit = 500);
+                               MidiEntry? Like = null, int Limit = 500, string? Leave = null);
 
 /// <summary>A part found, with how it fits (when matching a harmony) or how alike it is (for "more like this").</summary>
 public sealed record MidiHit(MidiEntry Entry, HarmonyFit? Fit = null, double? Likeness = null);
@@ -60,7 +68,7 @@ public sealed class MidiCatalogue
         {
             if (byHash.TryGetValue(p.Hash, out var seen))
             {
-                seen.Copies++;
+                (seen.OtherSources ??= []).Add(p.Source.Path);
                 continue;
             }
             var chords = PhraseChord.Decode(p.Chords);
@@ -101,6 +109,7 @@ public sealed class MidiCatalogue
             (q.Role is null || e.Role == q.Role) &&
             (q.From is null || (q.From == "projects") == e.IsProject) &&
             !ReferenceEquals(e, q.Like) &&
+            (q.Leave is null || !e.IsIn(q.Leave)) &&
             words.All(w => e.SearchText.Contains(w, StringComparison.Ordinal))).ToList();
         matching = pool.Count;
         ct.ThrowIfCancellationRequested();

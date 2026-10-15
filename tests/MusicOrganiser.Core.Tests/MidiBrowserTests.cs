@@ -203,6 +203,8 @@ public class MidiBrowserTests
         var hits = catalogue.Search(new MidiQuery(Fit: song), out _);
         Assert.Equal(2, hits[0].Entry.Id);
         Assert.Equal(-3, hits[0].Fit!.Semitones);
+        // The project being fitted to is left out: its own parts fit it, which says nothing.
+        Assert.DoesNotContain(catalogue.Search(new MidiQuery(Fit: song, Leave: @"k:\B.flp"), out _), h => h.Entry.Id == 2);
     }
 
     // ---- indexing ----

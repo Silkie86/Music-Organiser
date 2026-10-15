@@ -212,6 +212,13 @@ public static partial class PhraseAnalyser
             ? MusicTheory.EstimateKey(chroma.Select(c => (double)c).ToArray())
             : null;
         var chords = pitched ? Progression(notes, role == MidiRoles.Chords) : [];
+        // A key and its relative major or minor share every note; a progression that starts on the other one's root
+        // (Cm – Ab – Eb – Bb) is in that one.
+        if (key is not null && chords.Count > 0)
+        {
+            var relative = key.Minor ? (key.Tonic + 3) % 12 : (key.Tonic + 9) % 12;
+            if (chords[0].Root == relative) key = key with { Tonic = relative, Minor = !key.Minor };
+        }
         return new PhraseAnalysis(role, why, BarsOf(notes), notes.Count == 0 ? 0 : notes.Min(n => n.Key),
                                   notes.Count == 0 ? 0 : notes.Max(n => n.Key), key, chroma, chords,
                                   Features(shape, notes, chroma, key), HashOf(notes));

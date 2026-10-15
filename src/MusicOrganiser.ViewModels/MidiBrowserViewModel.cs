@@ -80,6 +80,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsFitting))] HarmonyTarget? _fit;
     [ObservableProperty] string _fitText = "";
     public bool IsFitting => Fit is not null;
+    /// <summary>The project being fitted to, whose own parts are left out of the list.</summary>
+    string? _fitPath;
 
     // ---- more like this ----
 
@@ -142,7 +144,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (delayMs > 0 && UiWork.InBackground) await Task.Delay(delayMs);
         if (request != _searchRequest || _catalogue is not { } catalogue) return;
         var query = new MidiQuery(Search.Trim(), SelectedRole.Role == "All" ? null : SelectedRole.Role,
-                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, Fit, Like);
+                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, Fit, Like, Leave: _fitPath);
         var (hits, matching) = await UiWork.Run(() => (catalogue.Search(query, out var n), n));
         if (request != _searchRequest) return;
         var keep = Selected?.Entry;
@@ -252,7 +254,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
                 Message = $"{name} has too few pitched notes to fit MIDI to.";
                 return;
             }
-            FitToHarmony(target);
+            FitToHarmony(target, leave: path);
         }
         catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
         {
@@ -266,6 +268,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         if (Selected is not { } row) return;
         var e = row.Entry;
+        Search = "";   // the words found this part; its partners won't share them
         var chroma = row.Fit is { Semitones: var s and not 0 } ? Rotate(e.Chroma, s) : e.Chroma;
         var chords = row.Fit is { Semitones: var s2 and not 0 } ? e.Chords.Select(c => c.Transposed(s2)).ToList() : e.Chords;
         FitToHarmony(HarmonyTarget.FromPhrase(row.Title, chroma, chords, e.Phrase.Key));
@@ -283,8 +286,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     }
 
     /// <summary>Ranks every part by how well it fits this harmony, each moved into the key that fits best.</summary>
-    public void FitToHarmony(HarmonyTarget target)
+    /// <param name="leave">The project the harmony is from, whose own parts are left out.</param>
+    public void FitToHarmony(HarmonyTarget target, string? leave = null)
     {
+        _fitPath = leave;
         Like = null;
         Fit = target;
         FitSearch = "";
@@ -302,6 +307,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     void ClearFit()
     {
         Fit = null;
+        _fitPath = null;
         FitText = "";
         _ = RefreshAsync();
     }
@@ -311,7 +317,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         if (Selected is not { } row) return;
         Fit = null;
+        _fitPath = null;
         FitText = "";
+        Search = "";
         Like = row.Entry;
     }
 
@@ -499,7 +507,8 @@ public sealed partial class MidiRow : ObservableObject
 
     public string Title => Entry.Title.Length > 0 ? Entry.Title : Entry.SourceName;
     /// <summary>Where it's from: the project or file, and how many other saves have the same notes.</summary>
-    public string From => Entry.SourceName + (Entry.IsProject ? $" · {Entry.Phrase.Source.Daw}" : "") +
+    public string From => (Entry.IsProject ? $"{Entry.SourceName} · {Entry.Phrase.Source.Daw}"
+                              : $"MIDI file in {Path.GetFileName(Path.GetDirectoryName(Entry.Phrase.Source.Path))}") +
                           (Entry.Copies > 1 ? $" · in {Entry.Copies} files" : "");
     public string Role => Entry.Role;
     public string RoleLabel => MidiRoles.Plural(Entry.Role) switch { "Melodies" => "Melody", "Basslines" => "Bassline", "Arps" => "Arp", var p => p };

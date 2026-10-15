@@ -97,7 +97,7 @@
                          ToolTip.Tip="Pick one of your projects: every part is ranked by how well its harmony fits that song once moved into the right key (rhythm doesn't count), and shown already moved." />
                 <Popup IsOpen="{Binding FitChoicesOpen}" PlacementTarget="{Binding #FitBox}" Placement="BottomEdgeAlignedLeft"
                        IsLightDismissEnabled="True">
-                    <Border Classes="card" Padding="4" Width="320">
+                    <Border Classes="card" Padding="4" Width="280">
                         <ItemsControl ItemsSource="{Binding FitChoices}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:ProjectItem">
@@ -179,7 +179,7 @@
                             </StackPanel>
                             <views:NoteRoll Grid.Column="2" Height="44" Channel="{Binding Channel}" Position="{Binding Position}"
                                             SeekCommand="{Binding SeekCommand}" />
-                            <StackPanel Grid.Column="3" Width="96" Margin="10,0,4,0" VerticalAlignment="Center"
+                            <StackPanel Grid.Column="3" Width="124" Margin="10,0,4,0" VerticalAlignment="Center"
                                         IsVisible="{Binding FitText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                         ToolTip.Tip="{Binding FitWhy}">
                                 <TextBlock Classes="fitScore" Text="{Binding FitText}" />
