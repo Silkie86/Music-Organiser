@@ -647,9 +647,20 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     /// <summary>
-    /// The views call this when you click a row or arrow onto one, not when the list moves the
-    /// selection by itself (a sort, a filter, coming back to the tab). Autoplay previews don't
-    /// count as plays.
+    /// A single click on a sound (a row, a tile, a History line): it always plays, Autoplay or not. Clicking it
+    /// again while it plays doesn't restart it. Like Autoplay previews, it doesn't count as a play until you
+    /// double-click it.
+    /// </summary>
+    public void PlayClicked()
+    {
+        _passingNext = null;
+        if (Selected is not { } s || IsPreviewing(s)) return;
+        StartPreview(s);
+    }
+
+    /// <summary>
+    /// The views call this when an arrow key lands on a sound, not when the list moves the selection by itself
+    /// (a sort, a filter, coming back to the tab). It plays only with Autoplay on; previews don't count as plays.
     /// </summary>
     public void PlayPicked()
     {
