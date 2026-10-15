@@ -2,29 +2,60 @@ using System.Collections.Concurrent;
 
 namespace MusicOrganiser.Core;
 
-/// <summary>Spreads scanning and analysis across every CPU core.</summary>
+/// <summary>
+/// Spreads scanning and analysis across the CPU, without taking it all: the window must keep answering while a scan,
+/// Deep listen or indexing runs (Solomon, 2026-10-15: "don't allow any scan to take up so many resources that the
+/// program becomes laggy").
+/// </summary>
 public static class Parallelism
 {
     public static int Cores => Environment.ProcessorCount;
 
-    public static ParallelOptions Options(CancellationToken ct = default) =>
-        new() { CancellationToken = ct, MaxDegreeOfParallelism = Cores };
+    /// <summary>How many pieces of background work may run at once, across every job together: two cores stay free for the window and playback.</summary>
+    public static int Workers { get; } = Math.Max(1, Environment.ProcessorCount - 2);
 
-    /// <summary>Set while a sound is playing; background work then steps aside for it.</summary>
+    // Shared by every job, so a scan and Deep listen running together still leave the cores above free.
+    static readonly SemaphoreSlim Slots = new(Workers, Workers);
+    [ThreadStatic] static int _depth;
+
+    static Parallelism()
+    {
+        // Jobs waiting for a slot hold thread-pool threads; enough threads up front means the window's own
+        // background reads (Task.Run) never queue behind them while the pool slowly grows.
+        ThreadPool.GetMinThreads(out var worker, out var io);
+        ThreadPool.SetMinThreads(Math.Max(worker, Cores + 2 * Workers), io);
+    }
+
+    public static ParallelOptions Options(CancellationToken ct = default) =>
+        new() { CancellationToken = ct, MaxDegreeOfParallelism = Workers };
+
+    /// <summary>Set while a sound is playing. Background work always steps aside now; kept for the players that set it.</summary>
     public static volatile bool AudioPlaying;
 
     /// <summary>
-    /// Runs one piece of background work. While a sound is playing it runs below normal
-    /// priority, so playback gets the CPU first; otherwise it runs at full speed.
+    /// Runs one piece of background work below normal priority, in one of the shared <see cref="Workers"/> slots, so
+    /// the window, the galaxy and playback always get the CPU first.
     /// </summary>
     public static T Background<T>(Func<T> work)
     {
-        if (!AudioPlaying) return work();
+        // Already in a slot: work started from background work never waits on itself. And the window's own thread (the
+        // only one with a synchronisation context) takes part in a search it started without waiting or being slowed.
+        if (_depth > 0 || SynchronizationContext.Current is not null) return work();
+        Slots.Wait();
+        _depth++;
         var thread = Thread.CurrentThread;
         var before = thread.Priority;
-        thread.Priority = ThreadPriority.BelowNormal;
-        try { return work(); }
-        finally { thread.Priority = before; }
+        try
+        {
+            thread.Priority = ThreadPriority.BelowNormal;
+            return work();
+        }
+        finally
+        {
+            thread.Priority = before;
+            _depth--;
+            Slots.Release();
+        }
     }
 
     public static void Background(Action work) => Background(() => { work(); return 0; });

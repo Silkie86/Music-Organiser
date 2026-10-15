@@ -42,7 +42,7 @@ public sealed partial class SamplesViewModel : ObservableObject, IFileDragSource
     public void Reload() => Show(_db.SampleUsage());
 
     /// <summary>Reload with the database work done in the background, so the window keeps answering.</summary>
-    public async Task ReloadAsync() => Show(await Task.Run(_db.SampleUsage));
+    public async Task ReloadAsync() => Show(await UiWork.Run(_db.SampleUsage));
 
     void Show(IReadOnlyList<SampleUsage> items)
     {

@@ -70,7 +70,7 @@ public sealed partial class MainViewModel : ObservableObject
             new("Settings", "", Settings),
         ];
         _selectedNav = StartPage();
-        Projects.Reload();
+        _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
 
         // First run: send people to Settings to add their project folders.
         if (_db.Roots().Count == 0 && _db.GetList(Scanner.SampleFoldersKey).Count == 0) SelectedNav = Nav[^1];
@@ -119,14 +119,8 @@ public sealed partial class MainViewModel : ObservableObject
         Settings.Probe.StartLive();
     }
 
-    public void RefreshAll()
-    {
-        Projects.Reload();
-        Plugins.Reload();
-        Samples.Reload();
-        Sounds.Reload();
-        Live.Match();   // the library may have the projects the DAWs have open now
-    }
+    /// <summary>Every page reads the library again, in the background (see <see cref="RefreshAllAsync"/>).</summary>
+    public void RefreshAll() => _ = RefreshAllAsync();
 
     /// <summary>
     /// After a scan (or a DAW saving a project): each page reads the database in the background, then shows the result,
