@@ -262,7 +262,8 @@ clipboard before (nor do the checks below, which only follow a paste that ran).
 
 The 3.7 live run (on 6.1.3) put nothing in the arranger by any route, while Save worked from the flush. To tell
 which part fails, `arrange` from 3.8 takes `checks: true`: when its own paste ran but put nothing in the arranger
-(no clip appeared on the track, and the clip selected there is as it was), and Bitwig has
+(no clip appeared on the track, and the clip selected there is as it was and wasn't on the track already, where
+a new one would look just like it), and Bitwig has
 `focus_or_toggle_clip_launcher`, it then runs two checks by the same route, each starting as `arrange` does (it
 selects the track and a launcher slot, and gives the clip launcher the focus). They don't run otherwise, since
 their paste could then put down what Bitwig's clipboard held before, or a clip in the arranger that would hide
@@ -412,9 +413,10 @@ What runs, in this order:
   or its paste puts anything down (a clip on the track, whichever it is, one in the launcher, or one on another
   track), since another paste would land in the same place, where the clip the last one left selected hides
   whether a new one appeared; the verdict is that route's, naming it, with a line for what each route did; from
-  3.8 the flush comes first (asked for by naming no route, as the app's own commands do), and each route that
-  didn't put the clip there runs the [checks](#clips-in-the-arranger-an-experiment), with a line under its own
-  for each: whether the copy took and a paste works in the launcher, and whether Duplicate works there); the
+  3.8 the flush comes first (asked for by naming no route, as the app's own commands do), and each route whose
+  paste ran but put nothing in the arranger runs the [checks](#clips-in-the-arranger-an-experiment) (when Bitwig
+  has the clip launcher's focus action), with a line under its own for each: whether the copy took and a paste
+  works in the launcher, and whether Duplicate works there); the
   MIDI file inserted after the Sample track as a track of its own, with the play start at bar 5 (extension 3.8,
   another experiment: Passed when it made a new track with no launcher clip and the clip selected in the
   arranger moved to it, asking you which bar the clip starts at and where the play start marker is (the 3.7 run

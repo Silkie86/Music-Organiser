@@ -462,6 +462,32 @@ class RoutesTest {
     }
 
     @Test
+    @DisplayName("stops a check before its paste when the launcher's focus action hid the launcher and didn't come back to show it (extension 3.8)")
+    void stopsAChecksPasteWhenTheLauncherStaysHidden() {
+        // Arrange pastes into the launcher, which is still in front for the first check: its focus action hides it, and
+        // the run that would bring it back never comes back, nor does anything after it.
+        studio(m -> {
+            m.actions.add(action("Duplicate", "Duplicate", "Editing"));
+            m.focusIgnored.add(Link.FOCUS_ARRANGER);
+            m.loopbackCut = () -> {
+                int paste = bitwig.calls.indexOf(List.of("invoke", "Paste"));
+                return paste >= 0 && bitwig.calls.subList(paste, bitwig.calls.size()).contains(List.of("invoke", Link.FOCUS_LAUNCHER));
+            };
+        });
+        Map<String, Object> request = arrange(1, "midi");
+        request.put("checks", true);
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(request, 30000).get("result"));
+        assertEquals(2.0, result.get("launcherClipsAfter"));
+        assertJson(obj("launcherPaste", obj("slot", 2, "selected", true, "focus", 1, "ran", obj("focus", false, "paste", null), "made", false,
+                                            "colour", null, "sameAsMark", false, "removed", false),
+                       "duplicate", obj("selected", true, "focus", 0, "ran", obj("focus", false, "duplicate", null), "launcher", 0, "tracks", 0,
+                                        "removed", false)),
+                   result.get("checks"));
+        assertEquals(1, invoked("Paste"));
+        assertEquals(0, invoked("Duplicate"));
+    }
+
+    @Test
     @DisplayName("refuses to arrange by a route it can't take, before changing anything")
     void refusesToArrangeByARouteItCantTake() {
         studio();

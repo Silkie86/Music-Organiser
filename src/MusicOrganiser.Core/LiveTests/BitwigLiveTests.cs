@@ -852,7 +852,7 @@ public static class BitwigLiveTests
         if (f.Arranger is { Exists: true } on && on.Track == name && on != f.ArrangerBefore)
             return LiveVerdict.Pass($"{made}, with no clip in its launcher, and the clip selected in the arranger is on that track now, so the " +
                                     $"clip went in the arranger. The link can't read where an arranger clip starts: {look}", data);
-        var why = f.Arranger is { Exists: true } same && same == f.ArrangerBefore
+        var why = f.Arranger is { Exists: true } same && same.Track == name && same == f.ArrangerBefore
             ? $"a clip on a track called “{same.Track}” was selected in the arranger before too, and the link tells those clips apart only by " +
               "their track's name, so it can't tell whether a new one appeared"
             : "no clip on it is selected in the arranger, so the link can't tell whether the clip went there";
@@ -1217,7 +1217,9 @@ public static class BitwigLiveTests
                 var p = await _link.ProjectAsync(t);
                 var detail = $"Bitwig lets the app make changes, and has “{p.Name}” open, so the run can change it.";
                 if (p.TrackCount > 100)
-                    detail += $" It has {p.TrackCount} tracks, and each run adds about seven (more when Clip to arranger's checks copy a track): make a fresh “{TestProject}” project now and then, " +
+                    detail += $" It has {p.TrackCount} tracks, and each run adds " +
+                              (IsFrom(_link.Hello, FlushFrom) ? "about seven (more when Clip to arranger's checks copy a track)" : "about six") +
+                              $": make a fresh “{TestProject}” project now and then, " +
                               "since Bitwig lists only the first 128 to the app.";
                 return LiveVerdict.Pass(detail);
             });

@@ -568,7 +568,7 @@ final class FakeBitwig {
 
     /**
      * Paste: with the arranger timeline shown and in front, a copy of the clip goes on the selected track at the play
-     * start, and is selected there (so the arranger's cursor clip follows it); with the clip launcher in front, it goes in
+     * start (or the track the model says), and is selected there (so the arranger's cursor clip follows it); with the clip launcher in front, it goes in
      * the slot selected when that's empty, else the track's next empty slot after it. Either way the copy has the colour the clip had when it was
      * copied. With another panel in front, nothing happens. The model can make Bitwig ignore paste, or paste into the
      * launcher whichever panel is in front.
@@ -578,7 +578,9 @@ final class FakeBitwig {
             TrackSpec track = cursorSpec();
             if (model.pasteIgnored || clipboard == null || track == null) return;
             if (TIMELINE.equals(focus) && timelineShown && !model.pasteInLauncher) {
-                Arranged made = new Arranged(track, playStartAt, clipboard.clip(), clipboard.colour());
+                TrackSpec on = model.arrangerPasteOn == null ? track
+                        : state.tracks.stream().filter(t -> t.name.equals(model.arrangerPasteOn)).findFirst().orElseThrow();
+                Arranged made = new Arranged(on, playStartAt, clipboard.clip(), clipboard.colour());
                 state.arranged.add(made);
                 state.arrangerSelected = made;
             } else if (LAUNCHER.equals(focus) && launcherShown || model.pasteInLauncher) {
@@ -894,6 +896,8 @@ final class FakeBitwig {
         boolean fileSelected = true;
         /** Whether Bitwig pastes into the clip launcher, whichever panel has the focus. */
         boolean pasteInLauncher;
+        /** The track Bitwig's paste in the arranger timeline goes on instead of the selected one, or null for that one. */
+        String arrangerPasteOn;
         /** What's on Bitwig's clipboard at first, as if someone had copied a clip in their own song, or null for nothing. */
         Copied clipboard;
         /** Whether Bitwig ignores giving a launcher clip a colour. */

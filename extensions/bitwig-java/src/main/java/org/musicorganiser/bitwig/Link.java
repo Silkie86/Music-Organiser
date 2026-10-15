@@ -1867,8 +1867,9 @@ final class Link {
      * that didn't run doesn't stop the change with an error: the link answers with what Bitwig shows, and doesn't paste
      * after a copy that didn't run.
      *
-     * Extension 3.8: with `checks` true, when the clip didn't land in the arranger, two more steps in the launcher say which
-     * step Bitwig dropped, a paste into an empty slot and a Duplicate, before the answer (see check).
+     * Extension 3.8: with `checks` true, when arrange's paste ran but put nothing in the arranger that the link can see, and
+     * Bitwig has FOCUS_LAUNCHER (see worthChecking), two more steps in the launcher say which step Bitwig dropped, a paste
+     * into an empty slot and a Duplicate, before the answer (see check).
      */
     private void arrange(Map<String, Object> request, Finish asked) {
         String route = route(request);
@@ -1945,7 +1946,7 @@ final class Link {
         // They need the mark the clip got, once it has one.
         Mark[] marked = new Mark[1];
         Finish finish = !checks ? asked : (result, error) -> {
-            if (error != null || !worthChecking(m, launcherFocus)) asked.done(result, error);
+            if (error != null || !worthChecking(m, launcherFocus, name)) asked.done(result, error);
             else check(route, t, index, track, launcherFocus, launcherShown, pasted, duplicate, marked[0], m, asked);
         };
 
@@ -2155,14 +2156,18 @@ final class Link {
      * front) and put nothing in the arranger (no clip appeared on the track, and the clip selected there is as it was),
      * and Bitwig has the launcher's focus action, which keeps the checks' paste and Duplicate in the launcher. Otherwise
      * a check's paste could put down what Bitwig's clipboard held before, or a clip in the arranger, which the link would
-     * neither see nor delete, and would hide a clip a later go put there.
+     * neither see nor delete, and would hide a clip a later go put there. Nor when a clip on the track (called `name`) was
+     * selected in the arranger before the paste: the link tells clips there apart only by their track, so one the paste
+     * put on that track would look just like it.
      */
-    private static boolean worthChecking(Map<String, Object> m, Action launcherFocus) {
+    private static boolean worthChecking(Map<String, Object> m, Action launcherFocus, String name) {
         Map<?, ?> ran = (Map<?, ?>) m.get("ran");
+        Object before = m.get("beforePaste");
         Object after = m.get("after");
+        boolean unseen = before instanceof Map && name.equals(((Map<?, ?>) before).get("track"));
         boolean inArranger = Boolean.TRUE.equals(m.get("appeared"))
-                || (after instanceof Map && Boolean.TRUE.equals(((Map<?, ?>) after).get("exists")) && !after.equals(m.get("beforePaste")));
-        return launcherFocus != null && Boolean.TRUE.equals(ran.get("paste")) && !inArranger;
+                || (after instanceof Map && Boolean.TRUE.equals(((Map<?, ?>) after).get("exists")) && !after.equals(before));
+        return launcherFocus != null && Boolean.TRUE.equals(ran.get("paste")) && !inArranger && !unseen;
     }
 
     /**
@@ -2171,10 +2176,11 @@ final class Link {
      * arrange's steps Bitwig dropped. Then it answers with `m`, which gets them as `checks`:
      * <ul>
      * <li>`launcherPaste`: the link selects an empty launcher slot on the track (the first that exists), gives the clip
-     * launcher the focus as arrange does, and pastes. A clip in the mark's colour appearing there (`made`, `colour`,
-     * `sameAsMark`) means Bitwig's Copy did copy the clip and its Paste works in the launcher, so what went wrong was the
-     * arranger's part. The clip it made is deleted again (`removed`), so the next go starts as this one did. Null when the
-     * track has no empty slot the link can reach.</li>
+     * launcher the focus as arrange does, and pastes. When the mark took and is exact, a clip in the mark's colour
+     * appearing there (`made`, `colour`, `sameAsMark`) means Bitwig's Copy did copy the clip and its Paste works in the
+     * launcher, so what went wrong was the arranger's part (a colour Bitwig rounded the mark to, a clip already on its
+     * clipboard can have too). The clip it made is deleted again (`removed`), so the next go starts as this one did. Null
+     * when the track has no empty slot the link can reach.</li>
      * <li>`duplicate`: the link selects the clip's slot again, gives the launcher the focus, and runs Bitwig's Duplicate
      * action, which needs no clipboard. A new launcher clip (`launcher`, how many more the track has) means Bitwig's
      * editing actions work in the launcher by this route; a new track (`tracks`) means Duplicate went to the track, so the

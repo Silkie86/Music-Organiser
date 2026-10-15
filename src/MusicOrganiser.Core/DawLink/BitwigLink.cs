@@ -172,7 +172,10 @@ public sealed record BitwigArrangeChecks(BitwigLauncherPasteCheck? LauncherPaste
 /// <param name="Focus">How many times the link ran the launcher's focus action (twice when the first hid it).</param>
 /// <param name="Made">Whether a clip appeared in the slot.</param>
 /// <param name="Colour">That clip's colour (#RRGGBB), or null when none appeared.</param>
-/// <param name="SameAsMark">Whether that's the colour the link marked the launcher clip with, so it's that clip's copy.</param>
+/// <param name="SameAsMark">
+/// Whether the mark took and that's the colour the launcher clip got from it. When the mark is also exact, that makes it
+/// the clip's copy; a colour Bitwig rounded the mark to, other clips can have too.
+/// </param>
 /// <param name="Removed">Whether the link deleted that clip again, so the next go starts as this one did.</param>
 public sealed record BitwigLauncherPasteCheck(int Slot, bool Selected, int Focus, BitwigLauncherPasteRan Ran, bool Made, string? Colour,
                                               bool SameAsMark, bool Removed);

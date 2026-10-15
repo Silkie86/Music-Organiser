@@ -189,7 +189,8 @@ the app connects.
   colour for each arrange. From 3.8, the checks: a paste in the launcher that made the marked clip and a
   Duplicate there (both clips deleted again), a copy that didn't take, a Duplicate that went to the track, a check
   with nothing to work on, a check stopped part way, and no checks unless asked, when arrange didn't paste, when its
-  paste put something in the arranger (rounded mark or not) or without the launcher's focus action; and
+  paste put something in the arranger (rounded mark or not, on the track or another), when a clip on the track was
+  selected in the arranger already, or without the launcher's focus action; and
   `filetrack`, with the file going to the arranger, the launcher, or nowhere.
 - `RoutesTest`: the command routes: Save by every route, the MIDI each sends, a route that never comes back
   (`ran: false`, and a late message or press doesn't run it, nor does a stale message or the link's own ping that
@@ -198,7 +199,7 @@ the app connects.
   routed command runs, `hello`'s `loopback`, the self-check's detail, a Bitwig without MIDI ports, and `arrange`
   by the buttons, refused routes and no paste when the copy didn't run. From 3.8, a command with no route runs
   from the flush, and arrange's checks stop before their paste and Duplicate when the launcher's focus action
-  doesn't come back.
+  doesn't come back (its first run, or the one that would show the launcher again after it hid it).
 - `SelfCheckTest`, `LinkLogTest`, `ReportsTest`: the self-check and the reports, in a temporary folder,
   including a Bitwig missing part of the API (each part fails on its own), another port, an older API and a
   folder that can't be written.

@@ -612,6 +612,28 @@ class ArrangerTest {
         assertJson(obj("arranged", false, "appeared", true, "sameAsSource", true), SelfCheckTest.pick(result, "arranged", "appeared", "sameAsSource"));
         assertFalse(result.containsKey("checks"));
 
+        // Bitwig put the paste on another track, so the clip selected in the arranger moved there: a check's paste could
+        // land there too.
+        studioWithDuplicate(m -> m.arrangerPasteOn = "Lead");
+        result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        assertJson(obj("appeared", false, "beforePaste", obj("exists", false, "track", null), "after", obj("exists", true, "track", "Lead")),
+                   SelfCheckTest.pick(result, "appeared", "beforePaste", "after"));
+        assertFalse(result.containsKey("checks"));
+        assertFalse(bitwig.calls.contains(List.of("invoke", "Duplicate")));
+
+        // A clip on the track was selected in the arranger already, and the clip the paste put there looks just like it.
+        studioWithDuplicate(m -> {});
+        Arranged bass = new Arranged(bitwig.state.tracks.get(0), 0, "C:\\MIDI\\Bass.mid", LEAD);
+        bitwig.state.arranged.add(bass);
+        bitwig.state.arrangerSelected = bass;
+        bitwig.refresh();
+        result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        assertJson(obj("appeared", false, "beforePaste", obj("exists", true, "track", "Bass"), "after", obj("exists", true, "track", "Bass")),
+                   SelfCheckTest.pick(result, "appeared", "beforePaste", "after"));
+        assertFalse(result.containsKey("checks"));
+        assertEquals(2, bitwig.state.arranged.size(), "Bass's clip and the one the paste put there");
+        assertFalse(bitwig.calls.contains(List.of("invoke", "Duplicate")));
+
         // Without the launcher's focus action, nothing keeps a check's paste or Duplicate in the launcher.
         studioWithoutLauncherFocus(m -> {
             m.actions.add(action("Duplicate", "Duplicate", "Editing"));

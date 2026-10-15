@@ -1549,6 +1549,13 @@ public class BitwigLiveTestsTests
                                          "track called “Live Clip” was selected in the arranger before too, and the link tells those clips apart only " +
                                          "by their track's name, so it can't tell whether a new one appeared. " + look),
                      (same.Outcome, same.Detail));
+        // Clip to arranger's clip on the Sample track stayed selected: no clip on “Live Clip” is.
+        var elsewhere = Verdict(a =>
+        {
+            a["arrangerBefore"] = JsonNode.Parse("""{"exists":true,"track":"Sample 143012"}""");
+            a["arranger"] = JsonNode.Parse("""{"exists":true,"track":"Sample 143012"}""");
+        });
+        Assert.Equal((LiveOutcome.Noted, unseen.Detail), (elsewhere.Outcome, elsewhere.Detail));
         var lost = Verdict(a => a["index"] = null);
         Assert.Equal((LiveOutcome.Noted, "Bitwig added 1 track for Live Clip.mid, but the link couldn't find the new one in its listing. Look after " +
                                          "“Sample 143012” in Bitwig and say what's there."),
