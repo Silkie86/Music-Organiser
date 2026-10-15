@@ -200,7 +200,7 @@ public class DawScriptTests
         var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.3");
         File.SetLastWriteTimeUtc(built, DateTime.UtcNow.AddHours(-1));
         var link = new MusicOrganiser.ViewModels.DawLinkSetting("Bitwig Studio", () => "",
-            () => DawScripts.BitwigExtension([Fixtures.TempDir()], built) with { Code = code }, () => Task.FromResult(""), found: () => true);
+            () => DawScripts.BitwigExtension([Fixtures.TempDir()], built) with { Code = code }, () => Task.FromResult(("", true)), found: () => true);
         await link.RefreshAsync();
         Assert.EndsWith("close the app and start it again so it's built anew. If this stays, building it failed, and " +
                         $"{Path.Combine(code, "build.log")} says why.", link.Status);

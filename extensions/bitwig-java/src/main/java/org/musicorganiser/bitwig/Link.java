@@ -146,7 +146,7 @@ final class Link {
      * link sent itself comes back through the loopback, "button" by pressing one of the link's own hardware buttons through
      * the loopback, which Bitwig runs the command for itself, and "buttonCode" by pressing another, whose press the link
      * runs the command for. The last three need the controller's MIDI in and out set to the loopMIDI port called
-     * "Music Organiser Bitwig".
+     * "Music Organiser Bitwig", and Bitwig 6.1.3 carried out Save from its flush only once they were set too.
      */
     static final List<String> ROUTES = List.of("direct", "flush", "midi", "button", "buttonCode");
     static final String DIRECT = "direct";
@@ -607,7 +607,8 @@ final class Link {
         }, () -> "Buttons for " + (buttons.isEmpty() ? "none of Bitwig's commands" : String.join(", ", buttons.keySet())) + " on MIDI channel "
                  + (CHANNEL + 1) + " (notes from " + NOTE_BOUND + " and from " + NOTE_CODE + "). "
                  + (loopback ? "The link has had its own MIDI back, so the loopback works."
-                             : "The link hasn't had its own MIDI back, so only the direct and flush routes work. " + LOOPBACK_SETUP));
+                             : "The link hasn't had its own MIDI back, so its MIDI in and out may not be set (or their port isn't working), "
+                               + "and Bitwig 6.1.3 saved for the link by no route until they were set, then from its flush. " + LOOPBACK_SETUP));
 
         feature("remote connection", () -> {
             socket = host.createRemoteConnection("Music Organiser", PORT);

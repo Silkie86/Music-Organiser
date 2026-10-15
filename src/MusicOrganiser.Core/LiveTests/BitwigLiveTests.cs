@@ -483,9 +483,10 @@ public static class BitwigLiveTests
         if (loopback)
             return LiveVerdict.Pass("The extension's own MIDI came back to it through the loopback, so it can run Bitwig's commands on its own " +
                                     "MIDI messages and by pressing its own buttons.", data);
-        return LiveVerdict.Fail("The extension's own MIDI hasn't come back to it through the loopback, so its MIDI in and out aren't set, " +
-                                "and Bitwig may not carry out the commands the app runs by any route. Bitwig 6.1.3 ignored Save, copy and paste " +
-                                "run straight away. " + PortsNeeded + LoopbackSetup, data);
+        return LiveVerdict.Fail("The extension's own MIDI hasn't come back to it through the loopback, so its MIDI in and out aren't set to " +
+                                $"“{BitwigLink.LoopbackPort}”, or that port isn't working, and Bitwig may not carry out the commands the app runs " +
+                                "by any route: Bitwig 6.1.3 ignored Save, copy and paste run straight away, and saved for the extension only once " +
+                                "its MIDI in and out were set (then from its flush). " + LoopbackSetup, data);
     }
 
     static LiveVerdict NeedsArrange(string? running) => NeedsExtension(ArrangeFrom, running);

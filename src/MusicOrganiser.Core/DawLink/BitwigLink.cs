@@ -273,22 +273,29 @@ public sealed class BitwigLink : IDisposable
     public const string LoopbackPort = "Music Organiser Bitwig";
     /// <remarks>
     /// Bitwig starts the extension 3.7 and later, and the link answers, with its MIDI in and out unassigned (confirmed on
-    /// Bitwig 6.1.3), so they're no reason for it not to answer: <see cref="LoopbackMissing"/> says when they're needed.
+    /// Bitwig 6.1.3): <see cref="LoopbackMissing"/> says when they're needed. Whether it starts the extension while they're
+    /// set to a port that isn't there (loopMIDI not running) isn't known, and Bitwig stops a controller whose device goes
+    /// away, so this says to check that port too.
     /// </remarks>
     public const string NotRunning = "Bitwig isn't answering. Check that Bitwig Studio is open, with the Music Organiser " +
-                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link).";
+                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link). " +
+                                     $"If that controller's MIDI in and out are set to “{LoopbackPort}”, check that the port is there " +
+                                     "(on Windows, that loopMIDI is running): Bitwig may not start a controller whose port is missing.";
 
     /// <summary>
     /// What to set up when the extension's MIDI loopback doesn't work (its hello's <see cref="BitwigHello.Loopback"/> is
     /// false), as a sentence to add after saying the app connected; null when it works, or the link doesn't say (the
     /// script, or an extension before 3.7). Bitwig 6.1.3 answered the link without it, but saved for it only once the
-    /// extension's MIDI in and out were set (then from its flush), so the app's commands need it too.
+    /// extension's MIDI in and out were set (then from its flush), so the app's commands need it too. The extension can't
+    /// tell unset ports from a port that doesn't hand its MIDI back, so this says it may be either.
     /// </summary>
     public static string? LoopbackMissing(BitwigHello hello) => hello.Loopback is false
-        ? $"Its MIDI in and out aren't set to the MIDI port “{LoopbackPort}” yet, and Bitwig only saves for the app once they are: " +
-          (OperatingSystem.IsWindows() ? $"make a port called “{LoopbackPort}” in loopMIDI, then " : "") +
-          "in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it (never to “Music Organiser”, " +
-          "FL Studio's port)."
+        ? $"The extension's own MIDI hasn't come back to it through the MIDI port “{LoopbackPort}”, so its MIDI in and out may not be " +
+          "set to that port yet (or the port isn't working), and Bitwig only saves for the app once they are: " +
+          (OperatingSystem.IsWindows() ? $"make a port called “{LoopbackPort}” in loopMIDI, then "
+                                       : $"make a virtual MIDI port called “{LoopbackPort}” (on a Mac, an IAC bus in Audio MIDI Setup may do), then ") +
+          "in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it (never to FL Studio's port, " +
+          "“Music Organiser”)."
         : null;
     const int MaxMessage = 64 << 20;
 

@@ -32,6 +32,9 @@ to the app (`Extensions` in its folder), and installing copies them where the DA
   **Choose folder…** points it at (which is also where the app looks for Bitwig projects), and in the Extensions
   folder the extension last said Bitwig loaded it from (`loadedFrom` in its hello). Every copy is the same, so it
   doesn't matter which Bitwig loads. Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
+  With the extension, also set that controller's MIDI in and MIDI out to the MIDI port **Music Organiser Bitwig**
+  (make it in loopMIDI on Windows), never to FL Studio's port, **Music Organiser**: Bitwig only saves for the app
+  once they're set (see [Routes and the MIDI loopback](#routes-and-the-midi-loopback)).
 - **FL Studio**: `Settings\Hardware\Music Organiser` in FL Studio's user data folder (normally
   `Documents\Image-Line\FL Studio`). The app also finds user data folders elsewhere from where your FL
   projects are, and **Choose folder…** points it at one. FL Studio only runs a script for a MIDI input, and
@@ -54,7 +57,8 @@ to the app (`Extensions` in its folder), and installing copies them where the DA
   On a Mac or Linux the app can't reach FL Studio yet: it only talks MIDI on Windows so far.
 
 Settings says when an installed copy is older than the app's, and Install updates it. **Check connection**
-asks the DAW to answer. When FL Studio doesn't, the app says which part is missing, on Windows: FL Studio
+asks the DAW to answer (for Bitwig, it also says when the extension's own MIDI hasn't come back through its MIDI
+in and out, as while they aren't set, and *Set up both* doesn't call that set up). When FL Studio doesn't, the app says which part is missing, on Windows: FL Studio
 isn't open, there's no MIDI port called Music Organiser (and how to make one, the way chosen in Settings),
 or there is one but FL Studio isn't running the script for it (`Core/DawLink/FlSetup.cs`).
 
@@ -187,7 +191,7 @@ none (and so the app's own commands take it):
 | `buttonCode` | When a press of one of the link's own hardware buttons comes back through the loopback: the link sends a note on MIDI channel 16 (from note 110, one for each command), Bitwig presses the button, and the link runs the command. |
 | `button` | The same with another of the link's buttons (from note 100), which Bitwig runs the command for itself, as for a controller's button; the link only hears of the press. |
 
-The last three need the loopback, and so, it turned out, does `flush`. In loopMIDI, add a port called **Music Organiser Bitwig**, then in Bitwig,
+The last three need the loopback, and Save from `flush` turned out to need its ports set too. In loopMIDI, add a port called **Music Organiser Bitwig**, then in Bitwig,
 Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it. Never set them to **Music
 Organiser**: that's the FL Studio link's port, and FL Studio must never get the notes and messages the Bitwig link
 sends itself. The extension asks Bitwig for one MIDI in and one MIDI out, only for the loopback, and offers the
@@ -196,8 +200,9 @@ Bitwig 6.1.3 starts the extension with them unassigned, and the link answers, bu
 the link by no route until they were set; once they were, it saved from its flush (still not straight away). That
 fits Bitwig carrying out these commands only for a controller with a device. So set them after installing 3.7 or
 later, whichever route the app uses: the steps Settings shows after *Install* ask for them, and *Check
-connection* says when they aren't set (the hello's `loopback` is false). A Mac or Linux has no loopMIDI; a
-virtual MIDI port there (an IAC bus on a Mac) may do instead, which nobody has tried.
+connection* says when the extension's own MIDI hasn't come back through them (the hello's `loopback` is false),
+as while they aren't set; the extension can't tell that from a port that doesn't hand its MIDI back. A Mac or
+Linux has no loopMIDI; a virtual MIDI port there (an IAC bus on a Mac) may do instead, which nobody has tried.
 
 A route other than `direct` has a second to come back (through Bitwig's flush, or the loopback). When it doesn't,
 the link drops it, so a message or press that turns up late never runs the command, and answers `ran: false`.
@@ -543,6 +548,9 @@ Bitwig:
 - [x] The MIDI loopback's ports (extension 3.7, Bitwig 6.1.3, 2026-10-15): Bitwig starts the extension, and the
       link answers, with its MIDI in and out unassigned, but it saved for the link by no route until they were
       set, and then from its flush (not straight away).
+- [ ] Whether Bitwig still starts the extension, and the link answers, with its MIDI in and out set to “Music
+      Organiser Bitwig” while that port isn't there (loopMIDI not running): Bitwig stops a controller whose device
+      goes away, so it may not. *Bitwig isn't answering* says to check the port, in case.
 - [ ] The rest of the MIDI loopback (extension 3.7): Bitwig fills the ports in with the loopMIDI port “Music
       Organiser Bitwig” by itself; the extension's SysEx message comes back whole on its MIDI in (*Link › MIDI
       loopback*); a note-on on channel 16 presses the extension's buttons; and Bitwig carries out Copy, Paste

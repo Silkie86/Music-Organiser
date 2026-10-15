@@ -619,9 +619,9 @@ public class BitwigLiveTestsTests
 
         var broken = BitwigLiveTests.LoopbackVerdict(Hello("3.7", false));
         Assert.Equal(LiveOutcome.Failed, broken.Outcome);
-        Assert.Equal("The extension's own MIDI hasn't come back to it through the loopback, so its MIDI in and out aren't set, and Bitwig may not " +
-                     "carry out the commands the app runs by any route. Bitwig 6.1.3 ignored Save, copy and paste run straight away. Bitwig 6.1.3 " +
-                     "saved for the extension only once its MIDI in and out were set (then from its flush), so every route needs them. " +
+        Assert.Equal("The extension's own MIDI hasn't come back to it through the loopback, so its MIDI in and out aren't set to “Music Organiser " +
+                     "Bitwig”, or that port isn't working, and Bitwig may not carry out the commands the app runs by any route: Bitwig 6.1.3 ignored " +
+                     "Save, copy and paste run straight away, and saved for the extension only once its MIDI in and out were set (then from its flush). " +
                      BitwigLiveTests.LoopbackSetup, broken.Detail);
         // The setup names the loopMIDI port, and warns off FL Studio's.
         Assert.Contains("set both MIDI in and MIDI out to “Music Organiser Bitwig” (the loopMIDI port), never “Music Organiser” (FL Studio's)",
