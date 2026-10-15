@@ -1105,13 +1105,30 @@ final class Link {
         reply(ask, Map.of(), null);
     }
 
-    /** Runs one of Bitwig's actions by its ID (as listed by the actions command), e.g. saving the project. */
+    /**
+     * Runs one of Bitwig's actions by its ID (as listed by the actions command), e.g. saving the project. The answer
+     * (extension 3.7) says which project Bitwig had in front just before the action ran, as `project`: on Bitwig 6.1.3
+     * Save once left the test project unsaved while another project was open too, and which one is in front may be
+     * why. It's left out when the link can't read it (the application part of the API didn't set up).
+     */
     private void runAction(Ask ask, Map<String, Object> request) {
         Object id = field(request, "action");
         Action action = id instanceof String ? app.getAction((String) id) : null;
         if (action == null) throw new LinkError("Bitwig has no action " + Json.js(id) + ".");
+        String front = frontProject();
         action.invoke();
-        reply(ask, Map.of(), null);
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (front != null) m.put("project", front);
+        reply(ask, m, null);
+    }
+
+    /** The name of the project Bitwig has in front, or null when the link can't read it. */
+    private String frontProject() {
+        try {
+            return str(app.projectName().get());
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** The parameter last clicked in Bitwig (link version 3), with what Bitwig says of it. */

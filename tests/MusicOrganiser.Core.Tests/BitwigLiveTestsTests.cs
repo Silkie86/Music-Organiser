@@ -54,6 +54,19 @@ public class BitwigLiveTestsTests
 
     static string Listing(BitwigProject p) => string.Join("; ", p.Tracks.Select(t => $"{t.Name}: {string.Join(", ", t.Devices.Select(d => d.Name))}"));
 
+    /// <summary>Whether a line serve.js wrote on stderr (with --events) says Save ran in the stand-in.</summary>
+    static bool IsSave(string line) => line.StartsWith('{') && (string?)JsonNode.Parse(line)!["event"] == "save";
+
+    /// <summary>
+    /// A count the stand-in's stderr lines keep, once it has reached <paramref name="expected"/> or had 2 seconds to: those
+    /// lines come in on their own thread, a moment after what they tell of.
+    /// </summary>
+    static async Task<int> Settled(Func<int> count, int expected)
+    {
+        for (var waited = 0; count() < expected && waited < 2000; waited += 20) await Task.Delay(20);
+        return count();
+    }
+
     [Fact]
     public void LooksForTheSavedProjectWhereverTheLibrarysBitwigProjectsAre()
     {
@@ -76,7 +89,12 @@ public class BitwigLiveTestsTests
     {
         var dir = Fixtures.TempDir();
         ProbeBridge? bridge = null;
-        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false, line => bridge?.Heard(line));
+        var saves = 0;
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false, line =>
+        {
+            bridge?.Heard(line);
+            if (IsSave(line)) Interlocked.Increment(ref saves);
+        });
         if (bitwig is null) return;
         var options = Options(dir, bitwig.Port);
         await using var probes = bridge = new ProbeBridge(options.ProbeFolder, bitwig);
@@ -110,7 +128,12 @@ public class BitwigLiveTestsTests
         Assert.Equal("Bitwig set the Note Transpose to +5 st, +5 semitones as asked, and read it back.", Find(run, "Changes", "Transpose a Note Transpose").Detail);
         Assert.Equal("Bitwig put each sample on its pad: Live Kick on C1, Live Snare on D1, Live Hat on F#1.", Find(run, "Changes", "Drum pads").Detail);
         Assert.StartsWith("Set “Gain” on the Sampler from 0.5 (“0.0 dB”) to 0.25, and Bitwig showed 0.25", Find(run, "Changes", "Set a parameter").Detail);
-        Assert.StartsWith("Bitwig saved “MO Live Test”: its unsaved changes cleared", Find(run, "Changes", "Save").Detail);
+        var save = Find(run, "Changes", "Save");
+        Assert.StartsWith("Bitwig saved “MO Live Test”: its unsaved changes cleared", save.Detail);
+        // The script said which project was in front as Save ran; the first Save did it, so there was no second.
+        Assert.Equal("MO Live Test", (string?)save.Data!["projectAtSave"]);
+        Assert.Null(save.Data["secondSave"]);
+        Assert.Equal(1, await Settled(() => saves, 1));
         Assert.StartsWith($"“Send {tag}”, a sample on root key A4, went in as a Sampler tuned up 3 semitones", Find(run, "Send", "FL Studio channel").Detail);
 
         // MO Probe, both ways in: as a VST3 it doesn't know its track (as through the wrapper), so the run says where it put it.
@@ -320,6 +343,44 @@ public class BitwigLiveTestsTests
     }
 
     [Fact]
+    public async Task SavesASecondTimeOnlyWhenTheFirstSaveLeavesChanges()
+    {
+        var dir = Fixtures.TempDir();
+        var saves = 0;
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false, line =>
+        {
+            if (IsSave(line)) Interlocked.Increment(ref saves);
+        });
+        if (bitwig is null) return;
+        bitwig.Change("""{"project": "MO Live Test"}""");
+        var options = Options(dir, bitwig.Port, probeInstalled: false) with { SaveWait = TimeSpan.FromSeconds(2) };
+
+        // Bitwig ignores the first Save, as Bitwig 6.1.3 once did: the run saves again, and that one works.
+        bitwig.Change("""{"ignoreSaves": 1}""");
+        var run = await BitwigLiveTests.RunAsync(options);
+        var save = Find(run, "Changes", "Save");
+        Assert.Equal(LiveOutcome.Passed, save.Outcome);
+        Assert.StartsWith("Only the second Save worked. Bitwig still showed unsaved changes 2 s after the first Save (“Save”)", save.Detail);
+        Assert.Contains("a second Save, run 1 s after that, cleared them", save.Detail);
+        Assert.Equal("MO Live Test", (string?)save.Data!["projectAtSave"]);
+        Assert.Equal(("MO Live Test", true), ((string?)save.Data["secondSave"]!["project"], (bool?)save.Data["secondSave"]!["cleared"]));
+        Assert.Equal(2, await Settled(() => saves, 2));
+        // What follows a Save that worked goes ahead: the stand-in writes no file, so it's only the file that isn't found.
+        Assert.StartsWith("Bitwig saved “MO Live Test”, but the app didn't find", Find(run, "Saved file", "Find the saved project").Detail);
+
+        // Bitwig ignores both: Failed, saying so, and that the test project was in front as Save ran.
+        bitwig.Change("""{"ignoreSaves": 2}""");
+        run = await BitwigLiveTests.RunAsync(options);
+        save = Find(run, "Changes", "Save");
+        Assert.Equal(LiveOutcome.Failed, save.Outcome);
+        Assert.Contains("A second Save, run 1 s after that, didn't help either: Bitwig still showed unsaved changes 2 s after it.", save.Detail);
+        Assert.Contains("Bitwig said the test project, “MO Live Test”, was the active project when Save ran.", save.Detail);
+        Assert.Equal(false, (bool?)save.Data!["secondSave"]!["cleared"]);
+        Assert.Equal(4, await Settled(() => saves, 4));
+        Assert.Equal("Needs Changes › Save, which didn't work.", Find(run, "Saved file", "Find the saved project").Detail);
+    }
+
+    [Fact]
     public async Task SaysWhenBitwigIsntAnswering()
     {
         var dir = Fixtures.TempDir();
@@ -447,6 +508,76 @@ public class BitwigLiveTestsTests
                         "the run saves.", Front(false).Detail);
         Assert.Equal(false, (bool?)Front(false).Data!["front"]);
         Assert.Null(unfound.Data!["front"]);
+    }
+
+    [Fact]
+    public void SaveSaysWhenOnlyTheSecondSaveWorked()
+    {
+        const string file = "K:/Bitwig Studio/Projects/MO Live Test/MO Live Test.bwproject";
+        var then = new DateTime(2026, 10, 15, 8, 43, 0, DateTimeKind.Utc);
+        var now = then.AddSeconds(32);
+        var wait = TimeSpan.FromSeconds(15);
+        LiveVerdict Save(bool stillModified, DateTime? after, string? active, BitwigLiveTests.SecondSave? second, bool? front = true) =>
+            BitwigLiveTests.SaveVerdict("MO Live Test", "Save", true, stillModified, TimeSpan.FromMilliseconds(120), wait, file, then, after, front,
+                                        active, second);
+
+        // The first Save did it: no second one, and the project Bitwig had in front is in the data.
+        var first = Save(false, now, "MO Live Test", null);
+        Assert.Equal(LiveOutcome.Passed, first.Outcome);
+        Assert.Equal($"Bitwig saved “MO Live Test”: its unsaved changes cleared 120 ms after Save, and wrote {file}.", first.Detail);
+        Assert.Equal("MO Live Test", (string?)first.Data!["projectAtSave"]);
+        Assert.Null(first.Data["secondSave"]);
+
+        // The first left the changes and didn't write the file; a second, a second later, cleared them and wrote it.
+        var again = new BitwigLiveTests.SecondSave("MO Live Test", true, TimeSpan.FromMilliseconds(300), now);
+        var onlySecond = Save(true, then, "MO Live Test", again);
+        Assert.Equal(LiveOutcome.Passed, onlySecond.Outcome);
+        Assert.Equal($"Only the second Save worked. Bitwig still showed unsaved changes 15 s after the first Save (“Save”), and didn't write {file}, " +
+                     $"with its window in front; a second Save, run 1 s after that, cleared them 300 ms after it ran, and wrote {file}. That matters " +
+                     "for how the app saves projects in Bitwig: one Save wasn't enough.", onlySecond.Detail);
+        Assert.Equal(true, (bool?)onlySecond.Data!["modifiedAfter"]);
+        Assert.Equal("""{"project":"MO Live Test","cleared":true,"tookMs":300,"written":true,"writtenAfter":"2026-10-15T08:43:32.000Z"}""",
+                     onlySecond.Data["secondSave"]!.ToJsonString());
+
+        // A second Save that wrote the file, though the changes stayed, worked too.
+        var wroteOnly = Save(true, then, "MO Live Test", again with { Cleared = false, Took = wait });
+        Assert.Equal(LiveOutcome.Passed, wroteOnly.Outcome);
+        Assert.Contains($"a second Save, run 1 s after that, wrote {file}, though Bitwig still showed unsaved changes 15 s after it.", wroteOnly.Detail);
+        Assert.StartsWith("Only the second Save worked.", wroteOnly.Detail);
+
+        // Both failed: it says so, and which project Bitwig had in front as Save ran (the test project here).
+        var neither = again with { Cleared = false, Took = wait, WrittenAfter = then };
+        var both = Save(true, then, "MO Live Test", neither);
+        Assert.Equal(LiveOutcome.Failed, both.Outcome);
+        Assert.Equal($"Bitwig still showed unsaved changes 15 s after Save (“Save”), and didn't write {file}, though its window was in front. A second " +
+                     $"Save, run 1 s after that, didn't help either: Bitwig still showed unsaved changes 15 s after it, and {file} wasn't written. Bitwig " +
+                     "said the test project, “MO Live Test”, was the active project when Save ran. If Bitwig opened a Save As window, the project hasn't " +
+                     "been saved yet: save it as “MO Live Test”, then run again.", both.Detail);
+        Assert.Equal(false, (bool?)both.Data!["secondSave"]!["cleared"]);
+        Assert.Equal(false, (bool?)both.Data["secondSave"]!["written"]);
+
+        // Another project in front: named, and the front message stays.
+        var elsewhere = Save(true, then, "Night Drive", neither with { Project = "Night Drive" }, front: false);
+        Assert.Equal(LiveOutcome.Failed, elsewhere.Outcome);
+        Assert.Contains($"didn't write {file}. The app couldn't bring Bitwig's window to the front, which Save may need: click on Bitwig while the run " +
+                        "saves. A second Save, run 1 s after that, didn't help either", elsewhere.Detail);
+        Assert.Contains(" Bitwig said “Night Drive” was the active project when Save ran, not the test project, “MO Live Test”. If Bitwig opened",
+                        elsewhere.Detail);
+        Assert.Equal("Night Drive", (string?)elsewhere.Data!["projectAtSave"]);
+        Assert.Contains(" At the second Save it said “MO Live Test”.", Save(true, then, "Night Drive", neither).Detail);
+
+        // A link older than extension 3.7 doesn't say which project was in front: the verdicts still come, without it.
+        var older = Save(false, now, null, null);
+        Assert.Equal(first.Detail, older.Detail);
+        Assert.Null(older.Data!["projectAtSave"]);
+        Assert.StartsWith("Only the second Save worked.", Save(true, then, null, again with { Project = null }).Detail);
+        Assert.DoesNotContain("active project", Save(true, then, null, again with { Project = null }).Detail);
+        var olderBoth = Save(true, then, null, neither with { Project = null });
+        Assert.Equal(LiveOutcome.Failed, olderBoth.Outcome);
+        Assert.Contains("didn't help either", olderBoth.Detail);
+        Assert.Contains(" The link in Bitwig didn't say which project was active when Save ran (an older extension doesn't). If Bitwig opened",
+                        olderBoth.Detail);
+        Assert.Null(olderBoth.Data!["secondSave"]!["project"]);
     }
 
     [Fact]

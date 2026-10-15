@@ -53,7 +53,7 @@ public class BitwigLinkTests
         Assert.Null(selected.Params[2].Value);   // Bitwig couldn't read it
 
         Assert.Equal("Save", (await link.ActionsAsync()).Single().Id);
-        await link.RunActionAsync("Save");
+        Assert.Equal("Night Drive", await link.RunActionAsync("Save"));   // the project in front as Save ran
         await link.SetParameterAsync("CONTENTS/PID3e8", 0.5);
         await link.InsertPluginAsync("VST2", "MoB2");
         await link.InsertVst2Async(1234);
@@ -70,6 +70,23 @@ public class BitwigLinkTests
         // Requests sent together each get their own answer.
         var answers = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => link.ProjectAsync()));
         Assert.All(answers, a => Assert.Equal(4, a.Tracks.Count));
+    }
+
+    [Fact]
+    public async Task RunsAnActionThroughALinkThatDoesntSayWhichProjectWasInFront()
+    {
+        // An extension before 3.7 answers an action with {}, and one that couldn't read the name leaves it out too.
+        await using (var older = new FakeJavaBitwig(answers: new Dictionary<string, string> { ["action"] = "{}" }))
+        {
+            using var link = await BitwigLink.ConnectAsync(older.Port);
+            Assert.Null(await link.RunActionAsync("Save"));
+            Assert.Equal("Save", (string?)older.Requests.Last()["action"]);
+        }
+        await using (var newer = new FakeJavaBitwig(answers: new Dictionary<string, string> { ["action"] = """{"project":"MO Live Test"}""" }))
+        {
+            using var link = await BitwigLink.ConnectAsync(newer.Port);
+            Assert.Equal("MO Live Test", await link.RunActionAsync("Save"));
+        }
     }
 
     [Fact]

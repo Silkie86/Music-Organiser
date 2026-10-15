@@ -126,7 +126,7 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 | `clip` ✎ | `track`, `path` (a MIDI or audio file), `slot` (optional) | `slot`: where Bitwig made the clip, by default the first empty one in the first 8 scenes |
 | `pads` ✎ | `pads`, each with `note` (0 to 127), `path` and `name` (optional). Then `track` and `device` for a Drum Machine's place, or nothing for the selected device. | `filled`, `replaced` (those of the filled that went in place of an empty Sampler), `skipped` (pads that already had something on them, left alone) and `failed`, as notes, and `taken`: what's on each skipped pad (`note`, `name`, `devices`, `first` device's name, its `sample`). Each sample goes on a free pad as if dropped there, in a Sampler. A pad whose first device is a Sampler with no sample, still named as it came (a Drum Machine preset can put one on every pad), with nothing after it but audio effects (up to 3), is free too: the sample goes in that Sampler's place, keeping the effects after it. |
 | `transpose` ✎ | `track`, `device` (0 or 1), `semitones` | `device`, `value`, `display`. Sets a Sampler's Transpose (fractions allowed) or a Note Transpose's Coarse (whole semitones). |
-| `action` ✎ | `action` (an `id` from `actions`) | `{}` |
+| `action` ✎ | `action` (an `id` from `actions`) | `project`: the project Bitwig had in front just before the action ran, so the app can tell which one a Save went to with more than one open. From extension 3.7 and the script; older extensions answer `{}`, and the extension leaves `project` out if it can't read it. |
 | `clicked` (3) | | The parameter last clicked in Bitwig: `exists` (false until one is), `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated`, `locked` |
 | `recorder` ✎ (3) | `do`: `"start"`, `"stop"` or `"status"` (the default) | Bitwig's master recorder, once it has started or stopped: `active`, `duration` (milliseconds recorded) |
 | `selftest` (3) | | The self-check (see [the extension's README](bitwig-java/README.md#reports)), written to the reports folder, with `file` |
@@ -324,7 +324,14 @@ What runs, in this order:
   else Failed, saying what Bitwig did instead, or the step it didn't go along with, and asking you to look at
   Bitwig's arranger and say what you see); Drum Machine pads; selecting a device, setting a
   parameter and reading it back (then setting it back); the master recorder's status (Java only; it's
-  never started); and, after Send, Save, then the unsaved changes clear.
+  never started); and, after Send, Save, with Bitwig's window brought to the front first (on Windows; the
+  report says whether it got there, as `front`). Save passes when the unsaved changes clear, or when the
+  project's file is written. When neither happens within 15 seconds (on Bitwig 6.1.3 one Save once left the
+  test project unsaved), the run waits a second and runs Save once more, through the same checks as every
+  change: Passed when that second Save works, saying plainly that only the second one did, since that matters
+  for how the app saves; Failed when it doesn't either. The report keeps the project Bitwig said it had in
+  front as each Save ran (`projectAtSave`, and `secondSave` with its `project`, whether it `cleared`, `tookMs`
+  and whether the file was `written`), and a failure says whether that was the test project.
 - **MO Probe**, as a CLAP and then as a VST3, each on a new track: it waits for the probe's live status,
   pings it and labels it with the run's stamp (“MO Live Test 20261014T143012Z CLAP”, so its own report
   can be matched with the run's), checks its knobs both ways (Failed when a knob doesn't move, or a stepped
@@ -336,8 +343,9 @@ What runs, in this order:
   folder, read with the app's reader and compared with what Bitwig lists (as Check with Bitwig does).
 
 Each test ends Passed, Failed, Skipped (saying why) or Noted (a finding that isn't a pass or a fail, like
-the knob table). One failing never stops the run, and each has its own time limit (30 seconds; 2 minutes
-for the Drum Machine, which may mean reading Bitwig's presets for its ID, and 5 for a knob check).
+the knob table). One failing never stops the run, and each has its own time limit (30 seconds; 46 for Save,
+which may wait 15 seconds twice; 2 minutes for the Drum Machine, which may mean reading Bitwig's presets for
+its ID; and 5 minutes for a knob check).
 
 ### Only in a project made for them
 
@@ -414,6 +422,9 @@ Bitwig:
       finding the open project in the library).
 - [ ] `modified` clears when the project is saved, and stays clear after Save As (the app re-reads the
       file then).
+- [ ] One Save (`action`) saves the project Bitwig has in front. On 6.1.3, with two projects open, one Save
+      once left the test project unsaved; the live tests' *Changes › Save* now records the project in front
+      as Save ran (`project` in the answer) and tries a second Save when the first doesn't take.
 - [ ] Two connections at once (the app's look every 2 seconds, and a send or a check) work side by side.
 - [ ] A plugin's parameter names in Bitwig match FL Studio's for the same plugin (VST3 or CLAP in Bitwig,
       often VST2 in FL Studio), which is how knobs are copied.

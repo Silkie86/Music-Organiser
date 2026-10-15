@@ -105,6 +105,11 @@ link refuses it, or stops a change part way, unless Bitwig has that project open
 The live tests use it to keep their changes in their own project (see
 [the extensions README](../README.md#only-in-one-project)).
 
+Also not new to version 3: from extension 3.7, `action` answers with `project`, the project Bitwig had in front
+just before the action ran (the script does the same), so the live tests can tell which project a Save went to.
+Earlier versions answer `{}`. If the link can't read the project's name, it still runs the action and leaves
+`project` out.
+
 ## Code
 
 `src/main/java/org/musicorganiser/bitwig`:

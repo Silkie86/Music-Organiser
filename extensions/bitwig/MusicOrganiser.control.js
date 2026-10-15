@@ -691,7 +691,10 @@ function setParameter(client, id, request) {
 }
 
 /**
- * Runs one of Bitwig's actions by its ID (as listed by the actions command), e.g. saving the project.
+ * Runs one of Bitwig's actions by its ID (as listed by the actions command), e.g. saving the project. The
+ * answer says which project Bitwig had in front just before the action ran, as `project` (the Java
+ * extension says the same from 3.7), so the app can tell which project an action such as Save went to
+ * when more than one is open.
  * @param {Client} client
  * @param {any} id
  * @param {{ action: string }} request
@@ -699,8 +702,9 @@ function setParameter(client, id, request) {
 function runAction(client, id, request) {
     var action = typeof request.action === "string" ? app.getAction(request.action) : null;
     if (!action) throw new LinkError("Bitwig has no action " + request.action + ".");
+    var front = str(app.projectName().get());
     action.invoke();
-    reply(client, id, {});
+    reply(client, id, { project: front });
 }
 
 // ---- Changes that wait for Bitwig ----

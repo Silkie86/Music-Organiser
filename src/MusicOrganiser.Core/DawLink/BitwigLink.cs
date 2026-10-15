@@ -325,9 +325,19 @@ public sealed class BitwigLink : IDisposable
     public Task InsertFileAsync(string path, CancellationToken ct = default) =>
         RequestAsync(new() { ["cmd"] = "insert", ["kind"] = "file", ["path"] = path }, ct);
 
-    /// <summary>Runs one of Bitwig's actions by its ID, e.g. to save the project.</summary>
-    public Task RunActionAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(new() { ["cmd"] = "action", ["action"] = id }, ct);
+    /// <summary>
+    /// Runs one of Bitwig's actions by its ID, e.g. to save the project. Returns the name of the project Bitwig had in
+    /// front just before the action ran, as the link says it (the script, and the Java extension from 3.7), or null when
+    /// an older link doesn't say.
+    /// </summary>
+    public async Task<string?> RunActionAsync(string id, CancellationToken ct = default)
+    {
+        var answer = await RequestAsync(new() { ["cmd"] = "action", ["action"] = id }, ct);
+        return answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("project", out var project) &&
+               project.ValueKind == JsonValueKind.String
+            ? project.GetString()
+            : null;
+    }
 
     /// <summary>
     /// Sends any command, with <paramref name="fields"/> added to it, and returns Bitwig's answer as it came. For commands

@@ -237,9 +237,12 @@ test("lists and runs Bitwig's actions", () => {
     { id: "toggle_metronome", name: "Toggle Metronome", category: "Transport", menu: "Toggle Metronome" },
   ]);
   bitwig.allowChanges(true);
-  assert.equal(app.ask({ id: 2, cmd: "action", action: "Save" }).ok, true);
+  // The answer names the project Bitwig had in front as the action ran.
+  assert.deepEqual(app.ask({ id: 2, cmd: "action", action: "Save" }), { id: 2, ok: true, result: { project: "Night Drive" } });
   assert.deepEqual(bitwig.calls, [["invoke", "Save"]]);
   assert.match(app.ask({ id: 3, cmd: "action", action: "Format C:" }).error, /no action Format C:/);
+  bitwig.app.name.v = "My Song";
+  assert.deepEqual(app.ask({ id: 4, cmd: "action", action: "toggle_metronome" }).result, { project: "My Song" });
 });
 
 test("selects a track and one of its devices", () => {

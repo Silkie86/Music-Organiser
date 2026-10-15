@@ -139,21 +139,47 @@ public static class BitwigLiveTests
         new Suite(options ?? new(), progress, ct).RunAsync();
 
     /// <summary>
+    /// How long the run waits, once Save has left the project unsaved, before it runs Save a second time. On Bitwig 6.1.3
+    /// one Save once left the test project unsaved, so the run tries again to see whether a second one does it.
+    /// </summary>
+    public static readonly TimeSpan SecondSaveAfter = TimeSpan.FromSeconds(1);
+
+    /// <summary>What the run's second Save did, when the first left the project unsaved and its file unwritten.</summary>
+    /// <param name="Project">The project Bitwig said it had in front as the second Save ran, or null when the link didn't say.</param>
+    /// <param name="Cleared">Whether Bitwig's unsaved changes cleared within the wait after it.</param>
+    /// <param name="Took">How long they took to clear, or the whole wait when they didn't.</param>
+    /// <param name="WrittenAfter">When the project's file was written, as the app saw it after that wait (null if it wasn't there).</param>
+    public sealed record SecondSave(string? Project, bool Cleared, TimeSpan Took, DateTime? WrittenAfter);
+
+    /// <summary>
     /// What Save did: Passed when Bitwig's unsaved changes cleared, or when it wrote the project's file (if the app found
     /// it) even though they didn't; else Failed. The file says more than the flag: on Bitwig 6.1.3 a run saw the flag stay
-    /// on after Save, with no Save As window, and couldn't tell whether the project was saved.
+    /// on after Save, with no Save As window, and couldn't tell whether the project was saved. When the first Save did
+    /// neither, the run saves again (<paramref name="second"/>): Passed when that one worked, saying only the second did,
+    /// else Failed, saying a second Save didn't help either.
     /// </summary>
+    /// <param name="project">The test project, which the run saves.</param>
     /// <param name="file">The project's file as the app found it before Save (or after, for a first save), or null.</param>
     /// <param name="before">When <paramref name="file"/> was written before Save (null if it wasn't there), and after the wait.</param>
     /// <param name="front">Whether Bitwig's window was in front when Save ran, or null when that couldn't be told.</param>
+    /// <param name="activeAtSave">The project Bitwig said it had in front as Save ran, or null when the link didn't say (an
+    /// extension before 3.7).</param>
+    /// <param name="second">What a second Save did, or null when the run didn't need one.</param>
     public static LiveVerdict SaveVerdict(string project, string action, bool wasModified, bool stillModified, TimeSpan took, TimeSpan wait,
-                                          string? file, DateTime? before, DateTime? after, bool? front = null)
+                                          string? file, DateTime? before, DateTime? after, bool? front = null, string? activeAtSave = null,
+                                          SecondSave? second = null)
     {
-        var written = file is not null && after is { } a && a != before;
+        var written = Wrote(file, before, after);
+        var secondWrote = second is not null && Wrote(file, before, second.WrittenAfter);
         var data = new JsonObject
         {
-            ["action"] = action, ["modifiedBefore"] = wasModified, ["modifiedAfter"] = stillModified, ["file"] = file,
-            ["writtenBefore"] = Utc(before), ["writtenAfter"] = Utc(after), ["front"] = front,
+            ["action"] = action, ["modifiedBefore"] = wasModified, ["modifiedAfter"] = stillModified, ["tookMs"] = Math.Round(took.TotalMilliseconds),
+            ["file"] = file, ["writtenBefore"] = Utc(before), ["writtenAfter"] = Utc(after), ["front"] = front, ["projectAtSave"] = activeAtSave,
+            ["secondSave"] = second is null ? null : new JsonObject
+            {
+                ["project"] = second.Project, ["cleared"] = second.Cleared, ["tookMs"] = Math.Round(second.Took.TotalMilliseconds),
+                ["written"] = secondWrote, ["writtenAfter"] = Utc(second.WrittenAfter),
+            },
         };
         var wrote = file is null ? "" : written ? $", and wrote {file}" : $", though {file} wasn't written again";
         if (!stillModified)
@@ -163,17 +189,54 @@ public static class BitwigLiveTests
         if (written)
             return LiveVerdict.Pass($"Bitwig wrote {file} after Save, but still showed unsaved changes {wait.TotalSeconds:0} s later: something " +
                                     $"changed “{project}” again straight away, or Bitwig didn't clear them.", data);
-        return LiveVerdict.Fail($"Bitwig still showed unsaved changes {wait.TotalSeconds:0} s after Save (“{action}”)" +
-                                (file is null ? ", and the app didn't find the project's file to see whether it was written" : $", and didn't write {file}") +
+        var seconds = $"{wait.TotalSeconds:0} s";
+        var unwritten = file is null ? ", and the app didn't find the project's file to see whether it was written" : $", and didn't write {file}";
+        if (second is { } s && (s.Cleared || secondWrote))
+        {
+            var window = front switch
+            {
+                true => ", with its window in front",
+                false => ", with its window not in front (the app couldn't bring it there)",
+                null => "",
+            };
+            var how = s.Cleared
+                ? $"cleared them {Ms(s.Took.TotalMilliseconds)} after it ran{(secondWrote ? $", and wrote {file}" : "")}"
+                : $"wrote {file}, though Bitwig still showed unsaved changes {seconds} after it";
+            return LiveVerdict.Pass($"Only the second Save worked. Bitwig still showed unsaved changes {seconds} after the first Save (“{action}”)" +
+                                    $"{unwritten}{window}; a second Save, run {SecondSaveAfter.TotalSeconds:0} s after that, {how}. That matters for " +
+                                    "how the app saves projects in Bitwig: one Save wasn't enough." + ActiveProject(project, activeAtSave, s, onlyWhenOther: true),
+                                    data);
+        }
+        return LiveVerdict.Fail($"Bitwig still showed unsaved changes {seconds} after Save (“{action}”){unwritten}" +
                                 (front switch
                                 {
                                     true => ", though its window was in front",
                                     false => ". The app couldn't bring Bitwig's window to the front, which Save may need: click on Bitwig while the run saves",
                                     null => "",
-                                }) +
-                                $". If Bitwig opened a Save As window, the project hasn't been saved yet: save it as “{TestProject}”, then run again.", data);
+                                }) + "." +
+                                (second is null ? "" : $" A second Save, run {SecondSaveAfter.TotalSeconds:0} s after that, didn't help either: Bitwig still " +
+                                                       $"showed unsaved changes {seconds} after it{(file is null ? "" : $", and {file} wasn't written")}.") +
+                                ActiveProject(project, activeAtSave, second, onlyWhenOther: false) +
+                                $" If Bitwig opened a Save As window, the project hasn't been saved yet: save it as “{TestProject}”, then run again.", data);
 
         static string? Utc(DateTime? t) => t?.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Whether <paramref name="file"/> was written since <paramref name="before"/>, going by when it was written <paramref name="after"/>.</summary>
+    static bool Wrote(string? file, DateTime? before, DateTime? after) => file is not null && after is { } a && a != before;
+
+    /// <summary>
+    /// Which project Bitwig said it had in front as Save ran, as a sentence: whether it was the test project, and, at the second
+    /// Save, another one if it said so. With <paramref name="onlyWhenOther"/>, nothing when it was the test project throughout.
+    /// </summary>
+    static string ActiveProject(string project, string? atSave, SecondSave? second, bool onlyWhenOther)
+    {
+        if (atSave is null)
+            return onlyWhenOther ? "" : " The link in Bitwig didn't say which project was active when Save ran (an older extension doesn't).";
+        var then = second?.Project is { } again && again != atSave ? $" At the second Save it said “{again}”." : "";
+        if (atSave != project)
+            return $" Bitwig said “{atSave}” was the active project when Save ran, not the test project, “{project}”." + then;
+        return onlyWhenOther ? then : $" Bitwig said the test project, “{project}”, was the active project when Save ran." + then;
     }
 
     static string Ms(double ms) => ms >= 1000 ? (ms / 1000).ToString("0.0", CultureInfo.InvariantCulture) + " s"
@@ -1010,19 +1073,36 @@ public static class BitwigLiveTests
                 var front = options.BringBitwigToFront();
                 _savedAt = DateTime.UtcNow;
                 var took = Stopwatch.StartNew();
-                await link.RunActionAsync(_save, t);
-                bool modified;
-                while ((modified = (await link.HelloAsync(t)).Modified) && took.Elapsed <= options.SaveWait) await Task.Delay(100, t);
+                // The project Bitwig had in front as Save ran (null from an older link), for the report: with more than one
+                // project open, it says which one Save went to.
+                var active = await link.RunActionAsync(_save, t);
+                var modified = await StillModifiedAsync(link, took, t);
+                var tookFirst = took.Elapsed;
                 // A project saved for the first time has no file until Save writes one.
                 file ??= FindSaved(project, _savedAt.AddSeconds(-2), options.LibraryProjects(), SavedFolders());
-                var verdict = SaveVerdict(project, _save, wasModified, modified, took.Elapsed, options.SaveWait, file, before, Written(), front);
+                var after = Written();
+                SecondSave? second = null;
+                if (modified && !Wrote(file, before, after))
+                {
+                    // Bitwig 6.1.3 once left the test project unsaved after Save: try once more, a moment later, to see whether
+                    // a second Save does it. It's a change like the first, so it goes through the same checks (BeforeChange),
+                    // and carries the test project's name (onlyIn).
+                    await Task.Delay(SecondSaveAfter, t);
+                    var again = Stopwatch.StartNew();
+                    var activeAgain = await link.RunActionAsync(_save, t);
+                    var cleared = !await StillModifiedAsync(link, again, t);
+                    var tookAgain = again.Elapsed;
+                    file ??= FindSaved(project, _savedAt.AddSeconds(-2), options.LibraryProjects(), SavedFolders());
+                    second = new SecondSave(activeAgain, cleared, tookAgain, Written());
+                }
+                var verdict = SaveVerdict(project, _save, wasModified, modified, tookFirst, options.SaveWait, file, before, after, front, active, second);
                 if (verdict.Outcome == LiveOutcome.Passed)
                 {
                     _saved = true;
                     _savedProject = project;
                 }
                 return verdict;
-            });
+            }, SaveTime);
 
             string? path = null;
             await Read(Saved, "Find the saved project", (link, t) =>
@@ -1049,6 +1129,20 @@ public static class BitwigLiveTests
                     return LiveVerdict.Skip($"Bitwig has “{live.Name}” open now, not “{_savedProject}”, so there was nothing to compare the saved file with.");
                 return CompareSaved(path, read, live);
             });
+        }
+
+        /// <summary>How long Save gets: two waits for the unsaved changes to clear (when the first Save didn't do it), and time to spare.</summary>
+        TimeSpan SaveTime => options.SaveWait * 2 + SecondSaveAfter + TimeSpan.FromSeconds(15);
+
+        /// <summary>
+        /// Asks Bitwig until its unsaved changes clear, or until <see cref="BitwigLiveOptions.SaveWait"/> has gone by since
+        /// Save ran (<paramref name="took"/>): whether they're still there.
+        /// </summary>
+        async Task<bool> StillModifiedAsync(BitwigLink link, Stopwatch took, CancellationToken t)
+        {
+            bool modified;
+            while ((modified = (await link.HelloAsync(t)).Modified) && took.Elapsed <= options.SaveWait) await Task.Delay(100, t);
+            return modified;
         }
 
         IEnumerable<string> SavedFolders() => ProjectFolders(options.BitwigUserFolders(), options.LibraryProjects());
