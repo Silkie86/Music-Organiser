@@ -71,6 +71,38 @@ public sealed record BitwigPadContents(int Note, string Name, int Devices, strin
 public sealed record BitwigPitch(string Device, double Value, string Display);
 
 /// <summary>
+/// What the extension saw while it tried to put a launcher clip in Bitwig's arranger (an experiment, extension 3.6: see
+/// <see cref="BitwigLink.ArrangeAsync"/>).
+/// </summary>
+/// <param name="Arranged">
+/// Whether it worked: the clip selected in the arranger moved to the clip's track (it wasn't there just before the paste),
+/// and the track's launcher clips are as they were.
+/// </param>
+/// <param name="At">Where in the arranger it was meant to go, in beats (quarter notes) from the start.</param>
+/// <param name="Layout">The panel layout Bitwig showed before: ARRANGE, MIX or EDIT. The extension switches to ARRANGE.</param>
+/// <param name="Timeline">Whether Bitwig showed its arranger timeline before, and after the paste.</param>
+/// <param name="Focus">
+/// How many times the extension ran Bitwig's focus_or_toggle_arranger action to bring the timeline to the front: twice when
+/// the first hid it, since it hides the timeline when that's in front already.
+/// </param>
+/// <param name="Before">The clip selected in the arranger before the extension did anything.</param>
+/// <param name="BeforePaste">The same just before the paste, which <paramref name="After"/> is compared with.</param>
+/// <param name="After">The same once Bitwig had pasted, or once the extension had waited long enough.</param>
+/// <param name="LauncherClipsBefore">
+/// How many of the track's first 8 launcher slots had a clip before; more in <paramref name="LauncherClipsAfter"/> means
+/// Bitwig pasted into the launcher instead.
+/// </param>
+public sealed record BitwigArranged(bool Arranged, double At, string Layout, BitwigTimeline Timeline, int Focus,
+                                    BitwigArrangerClip Before, BitwigArrangerClip BeforePaste, BitwigArrangerClip After,
+                                    int LauncherClipsBefore, int LauncherClipsAfter);
+
+/// <summary>Whether Bitwig showed its arranger timeline, before and after.</summary>
+public sealed record BitwigTimeline(bool Before, bool After);
+
+/// <summary>The clip selected in Bitwig's arranger: whether there is one, and the name of the track it's on (null when there's none).</summary>
+public sealed record BitwigArrangerClip(bool Exists, string? Track);
+
+/// <summary>
 /// Talks to Bitwig Studio through the Music Organiser controller script
 /// (extensions/bitwig/MusicOrganiser.control.js), which listens on port 19791 on this computer.
 /// Each message is JSON with a 4-byte big-endian length in front.
@@ -134,7 +166,7 @@ public sealed class BitwigLink : IDisposable
     public string? OnlyIn { get; set; }
 
     /// <summary>The commands that change or select something in the project, as the script and the extension list them.</summary>
-    static readonly HashSet<string> ProjectCommands = ["set", "insert", "newtrack", "clip", "pads", "transpose", "action", "recorder", "select"];
+    static readonly HashSet<string> ProjectCommands = ["set", "insert", "newtrack", "clip", "pads", "transpose", "action", "recorder", "arrange", "select"];
 
     BitwigLink(TcpClient tcp)
     {
@@ -319,6 +351,18 @@ public sealed class BitwigLink : IDisposable
     public async Task<BitwigPitch> TransposeAsync(int track, int device, double semitones, CancellationToken ct = default) =>
         Parse<BitwigPitch>(await ChangeAsync(
             new() { ["cmd"] = "transpose", ["track"] = track, ["device"] = device, ["semitones"] = semitones }, ct));
+
+    /// <summary>
+    /// An experiment, for the live tests only (the Java extension, 3.6 and later): puts a copy of the clip in a launcher
+    /// slot into Bitwig's arranger, on the same track, <paramref name="at"/> beats (quarter notes) from the start, or where
+    /// the play start is when not given. Bitwig's API has no way to put a clip in the arranger, so the extension does what
+    /// a person would: select the clip, copy it, show the Arrange layout, move the play start there, bring the arranger
+    /// timeline to the front and paste. Nobody knows yet whether Bitwig goes along with that from an extension, so the
+    /// answer says what Bitwig showed either way (<see cref="BitwigArranged.Arranged"/> says whether it worked). Nothing is
+    /// undone when it doesn't work, and the play start stays where it was moved, which is why only a test project gets this.
+    /// </summary>
+    public async Task<BitwigArranged> ArrangeAsync(int track, int slot, double? at = null, CancellationToken ct = default) =>
+        Parse<BitwigArranged>(await ChangeAsync(new() { ["cmd"] = "arrange", ["track"] = track, ["slot"] = slot, ["at"] = at }, ct));
 
     async Task<BitwigInserted> InsertOnAsync(int track, bool atStart, JsonObject request, CancellationToken ct)
     {

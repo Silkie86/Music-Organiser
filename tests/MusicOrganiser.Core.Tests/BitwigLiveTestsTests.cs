@@ -91,7 +91,7 @@ public class BitwigLiveTestsTests
 
         // The script has none of the Java extension's newer fields, so those say they need it.
         string[] newer = ["Link › Track IDs", "Link › Parameter details", "Link › Last clicked parameter", "Link › Self-check",
-                          "Changes › Sampler's parameter details", "Changes › Master recorder"];
+                          "Changes › Clip to arranger", "Changes › Sampler's parameter details", "Changes › Master recorder"];
         Assert.All(newer, n => Assert.Equal((LiveOutcome.Skipped, BitwigLiveTests.NeedsJava),
                                             run.Results.Where(r => r.Title == n).Select(r => (r.Outcome, r.Detail)).Single()));
         // The stand-in saves no file, so there's no saved project to compare: skipped, saying so.
@@ -100,7 +100,7 @@ public class BitwigLiveTestsTests
         Assert.Equal(LiveOutcome.Skipped, Find(run, "Saved file", "Compare with Bitwig").Outcome);
         var skipped = run.Results.Where(r => r.Outcome == LiveOutcome.Skipped).Select(r => r.Title).ToList();
         Assert.Equal([.. newer, "Saved file › Find the saved project", "Saved file › Compare with Bitwig"], skipped);
-        Assert.Equal(8, run.Skipped);
+        Assert.Equal(9, run.Skipped);
         Assert.All(["Link", "Changes", "Send"], area => Assert.DoesNotContain(run.Results, r => r.Area == area && r.Outcome == LiveOutcome.Failed));
 
         // What each test saw.
@@ -175,7 +175,7 @@ public class BitwigLiveTestsTests
                                           !r.Name.StartsWith("Last") && !r.Name.StartsWith("Self")),
                    r => Assert.Equal(LiveOutcome.Passed, r.Outcome));
         var changes = run.Results.Where(r => r.Area != "Link").ToList();
-        Assert.Equal(27, changes.Count);
+        Assert.Equal(28, changes.Count);
         Assert.All(changes, r => Assert.Equal(LiveOutcome.Skipped, r.Outcome));
         Assert.Equal("Bitwig has “Night Drive” open, so the run changed nothing: it only changes a project whose name starts with “MO Live Test”, " +
                      "never your own work. " + BitwigLiveTests.HowToAllowChanges, Find(run, "Changes", "Changes allowed").Detail);
@@ -496,6 +496,77 @@ public class BitwigLiveTestsTests
     }
 
     [Fact]
+    public async Task ReadsTheJavaExtensionsArrangeAnswer()
+    {
+        await using var java = new FakeJavaBitwig();
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+        var arranged = await link.ArrangeAsync(4, 0, 16);
+        var sent = java.Requests.Last();
+        Assert.Equal(("arrange", 4, 0, 16.0), ((string)sent["cmd"]!, (int)sent["track"]!, (int)sent["slot"]!, (double)sent["at"]!));
+        Assert.Equal(new BitwigArranged(true, 16, "ARRANGE", new(true, true), 1, new(false, null), new(false, null), new(true, "Sample 143012"), 1, 1),
+                     arranged);
+
+        // What the live test makes of it: where the clip went, and all the extension said, with whether Bitwig was in front.
+        var verdict = BitwigLiveTests.ArrangeVerdict(arranged, "Sample 143012", 0, 5, true);
+        Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
+        Assert.Equal("Bitwig put a copy of the clip in launcher slot 1 into its arranger at bar 5 (beat 16) on “Sample 143012”: the clip selected in " +
+                     "the arranger moved to “Sample 143012”, and the track kept its 1 clip in the launcher.", verdict.Detail);
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""
+            {"arranged":true,"at":16,"layout":"ARRANGE","timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},
+             "beforePaste":{"exists":false,"track":null},"after":{"exists":true,"track":"Sample 143012"},"launcherClipsBefore":1,"launcherClipsAfter":1,
+             "front":true}
+            """), verdict.Data), verdict.Data!.ToJsonString());
+        Assert.EndsWith(" Bringing the arranger timeline to the front took two goes: the first hid it.",
+                        BitwigLiveTests.ArrangeVerdict(arranged with { Focus = 2 }, "Sample 143012", 0, 5, null).Detail);
+    }
+
+    [Fact]
+    public void ArrangeSaysWhatBitwigDidInstead()
+    {
+        const string track = "Sample 143012";
+        const string start = "Bitwig didn't put the clip into its arranger at bar 5 (beat 16) on “Sample 143012”: ";
+        BitwigArrangerClip none = new(false, null), there = new(true, track), elsewhere = new(true, "Bass");
+        static BitwigArranged Answer(BitwigArrangerClip beforePaste, BitwigArrangerClip after, int launcherAfter = 1, bool timelineAfter = true) =>
+            new(false, 16, "ARRANGE", new(true, timelineAfter), 1, beforePaste, beforePaste, after, 1, launcherAfter);
+        string Detail(BitwigArranged a, bool? front = true)
+        {
+            var verdict = BitwigLiveTests.ArrangeVerdict(a, track, 0, 5, front);
+            Assert.Equal(LiveOutcome.Failed, verdict.Outcome);
+            Assert.Equal(front, (bool?)verdict.Data!["front"]);
+            // Only the person can see where the clip went, so each failure asks them to look.
+            const string ask = " Look at Bitwig's arranger at bar 5 on “Sample 143012” and say what you see there (the clip, nothing, or the clip " +
+                               "somewhere else), so the link can be put right.";
+            Assert.EndsWith(ask, verdict.Detail);
+            return verdict.Detail[..^ask.Length];
+        }
+
+        Assert.Equal(start + "it pasted into the clip launcher instead (“Sample 143012” has 2 clips there now, 1 before); no clip is selected in the arranger.",
+                     Detail(Answer(none, none, launcherAfter: 2)));
+        Assert.Equal(start + "it pasted into the clip launcher instead (“Sample 143012” has 2 clips there now, 1 before); the clip selected in the arranger " +
+                     "did move to “Sample 143012” as well.", Detail(Answer(none, there, launcherAfter: 2)));
+        Assert.Equal(start + "nothing appeared: no clip is selected in the arranger, and the launcher has the same clips.", Detail(Answer(none, none)));
+        Assert.Equal(start + "nothing new was selected in the arranger: the clip selected there is still the one on “Bass”.", Detail(Answer(elsewhere, elsewhere)));
+        Assert.Equal(start + "the clip selected in the arranger is on “Bass”, not “Sample 143012”.", Detail(Answer(none, elsewhere)));
+        Assert.Equal(start + "a clip on “Sample 143012” was already selected in the arranger before the paste, so the link couldn't tell whether a new " +
+                     "one appeared.", Detail(Answer(there, there)));
+        Assert.Equal(start + "nothing appeared: no clip is selected in the arranger, and the launcher has the same clips; the arranger timeline is hidden " +
+                     "now. The app couldn't bring Bitwig's window to the front, which copy and paste may need.",
+                     Detail(Answer(none, none, timelineAfter: false), front: false));
+    }
+
+    [Theory]
+    [InlineData("4/4", 4)]
+    [InlineData("7/8", 3.5)]
+    [InlineData("6/8", 3)]
+    [InlineData("3/4", 3)]
+    [InlineData("5/16", 1.25)]
+    [InlineData("", 4)]
+    [InlineData("x/4", 4)]
+    [InlineData("4/0", 4)]
+    public void CountsABarsBeatsAsBitwigCountsThePlayStart(string timeSignature, double beats) =>
+        Assert.Equal(beats, BitwigLiveTests.BarBeats(timeSignature));
+
+    [Fact]
     public async Task FormatLabSaysWhatItNeedsBeforeConnecting()
     {
         Assert.Contains("formatlab live bitwig [--port N] [--reports <folder>]", (await FormatLab("help")).Out);
@@ -628,7 +699,12 @@ sealed class FakeJavaBitwig : IAsyncDisposable
         ["actions"] = """[{"id":"Save","name":"Save","category":"File","menu":"Save"}]""",
         ["clicked"] = """{"exists":true,"name":"Cutoff","value":0.25,"display":"440 Hz","steps":-1,"origin":0,"automated":true,"locked":false}""",
         ["selftest"] = """{"time":"2026-10-14T14:30:12Z","why":"asked","ok":false,"extension":"3.0","link":3,"file":"C:\\reports\\bitwig\\x-selfcheck.json","checks":[{"name":"remote connection","ok":true,"detail":"listening on 19791","ms":1},{"name":"cursor device","ok":true,"detail":"","ms":0},{"name":"reports folder","ok":false,"detail":"Access is denied.","ms":2}]}""",
+        // Extension 3.6's experiment, as it answers when Bitwig put the clip in its arranger.
+        ["arrange"] = """{"arranged":true,"at":16,"layout":"ARRANGE","timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},"after":{"exists":true,"track":"Sample 143012"},"launcherClipsBefore":1,"launcherClipsAfter":1}""",
     };
+
+    /// <summary>Every request that came in, as it came.</summary>
+    public ConcurrentQueue<JsonNode> Requests { get; } = new();
 
     async Task ServeAsync()
     {
@@ -658,6 +734,7 @@ sealed class FakeJavaBitwig : IAsyncDisposable
                     var body = new byte[BinaryPrimitives.ReadInt32BigEndian(head)];
                     await stream.ReadExactlyAsync(body, _stop.Token);
                     var request = JsonNode.Parse(body)!;
+                    Requests.Enqueue(request);
                     var id = (int)request["id"]!;
                     var cmd = (string)request["cmd"]!;
                     await SendAsync(stream, (cmd == "hello" ? _hello : Answers.GetValueOrDefault(cmd)) is { } answer

@@ -11,7 +11,9 @@ import com.bitwig.extension.callback.StringArrayValueChangedCallback;
 import com.bitwig.extension.controller.api.Action;
 import com.bitwig.extension.controller.api.ActionCategory;
 import com.bitwig.extension.controller.api.Application;
+import com.bitwig.extension.controller.api.Arranger;
 import com.bitwig.extension.controller.api.BooleanValue;
+import com.bitwig.extension.controller.api.Clip;
 import com.bitwig.extension.controller.api.ClipLauncherSlot;
 import com.bitwig.extension.controller.api.ClipLauncherSlotBank;
 import com.bitwig.extension.controller.api.ControllerHost;
@@ -92,7 +94,8 @@ import java.util.regex.Pattern;
  * Besides the project (tracks, tempo, actions...), the {@link Model} says what Bitwig would make of things the app
  * inserts (files, presets, plugins and knobs by name, a Drum Machine), as the JavaScript stand-in's model does,
  * and what's new to the extension: tracks' IDs, a device's remote controls page, the last clicked parameter, the
- * master recorder, and parts of the API that fail, as in a Bitwig that changed.
+ * master recorder, the arranger (with copy and paste, for the arrange experiment), and parts of the API that fail, as
+ * in a Bitwig that changed.
  */
 final class FakeBitwig {
     static final String SAMPLER = Link.SAMPLER;
@@ -124,6 +127,26 @@ final class FakeBitwig {
     final Value playing = new Value(SettableBooleanValue.class, false);
     final Value position = new Value(SettableBeatTimeValue.class, 0.0);
     final Value browserOpen = new Value(BooleanValue.class, false);
+
+    // The arranger, for the arrange experiment.
+    /** The panels that can have the focus (copy and paste work on the one that has it), as {@link #focus} names them. */
+    static final String LAUNCHER = "launcher";
+    static final String TIMELINE = "timeline";
+    /** The panel layout Bitwig shows (Application.PANEL_LAYOUT_ARRANGE, _MIX or _EDIT), whether the arranger timeline shows, and the play start in beats. */
+    final Value layout;
+    final Value timeline;
+    final Value playStart;
+    private String layoutNow;
+    private boolean timelineShown;
+    private double playStartAt;
+    /** The panel with the focus: LAUNCHER, TIMELINE, or "" for another. */
+    String focus;
+    /** The launcher slot selected, as {track, scene}, or null. */
+    private int[] slotSelected;
+    /** What Bitwig's clipboard holds: the copied launcher clip (the file it came from), or null. */
+    String clipboard;
+    /** The arranger's cursor clip: the clip selected in the arranger. */
+    final ArrangerClip arrangerClip = new ArrangerClip();
     /** "Let the app make changes", once init has asked for it. */
     Value changes;
 
@@ -164,7 +187,13 @@ final class FakeBitwig {
         int scenes;
         /** What Bitwig says the track count is while a new track is on its way, else null. */
         Integer count;
+        /** The clips in the arranger, and the one selected there (null for none). */
+        final List<Arranged> arranged = new ArrayList<>();
+        Arranged arrangerSelected;
     }
+
+    /** A clip in the arranger: its track, where it starts (in beats), and the clip it's a copy of (the file it came from). */
+    record Arranged(TrackSpec track, double start, String clip) {}
 
     private FakeBitwig(Model model, Path reports) {
         this.model = model;
@@ -177,6 +206,13 @@ final class FakeBitwig {
         modified = new Value(BooleanValue.class, model.modified);
         tempo = new Param(Parameter.class, model.tempo, "");
         signature = new Value(TimeSignatureValue.class, model.timeSignature);
+        layoutNow = model.layout;
+        timelineShown = model.timeline;
+        playStartAt = model.playStart;
+        focus = model.focus;
+        layout = new Value(StringValue.class, layoutNow);
+        timeline = new Value(SettableBooleanValue.class, timelineShown, v -> later(20, () -> timelineShown = (Boolean) v));
+        playStart = new Value(SettableBeatTimeValue.class, playStartAt, v -> later(20, () -> playStartAt = Math.max(0, ((Number) v).doubleValue())));
         builtIn.put(SAMPLER, device("Sampler").id(SAMPLER).kind("note_to_audio").param("TRANSPOSE", 0));
         builtIn.put(NOTE_TRANSPOSE, device("Note Transpose").id(NOTE_TRANSPOSE).kind("note_to_note").param("COARSE", 0));
         if (model.drumMachine != null) {
@@ -382,9 +418,73 @@ final class FakeBitwig {
         });
     }
 
+    /** Selects a launcher slot: the clip launcher gets the focus, unless the model says otherwise. */
+    private void selectSlot(int track, int scene) {
+        calls.add(Arrays.asList("selectSlot", track, scene));
+        later(20, () -> {
+            slotSelected = new int[] {track, scene};
+            if (model.selectFocuses) focus = LAUNCHER;
+        });
+    }
+
+    /** Copy: Bitwig's clipboard takes the launcher clip selected, if there's one. */
+    private void copy() {
+        calls.add(List.of("copy"));
+        later(20, () -> {
+            TrackSpec track = slotSelected == null ? null : trackSpec(slotSelected[0]);
+            String clip = track != null && slotSelected[1] < track.slots.size() ? track.slots.get(slotSelected[1]) : null;
+            if (clip != null) clipboard = clip;
+        });
+    }
+
+    /**
+     * Paste: with the arranger timeline shown and in front, a copy of the clip goes on the selected track at the play
+     * start, and is selected there (so the arranger's cursor clip follows it); with the clip launcher in front, it goes in
+     * the track's next empty slot after the one selected. With another panel in front, nothing happens. The model can
+     * make Bitwig ignore paste, or paste into the launcher whichever panel is in front.
+     */
+    private void paste() {
+        calls.add(List.of("paste"));
+        later(40, () -> {
+            TrackSpec track = cursorSpec();
+            if (model.pasteIgnored || clipboard == null || track == null) return;
+            if (TIMELINE.equals(focus) && timelineShown && !model.pasteInLauncher) {
+                Arranged made = new Arranged(track, playStartAt, clipboard);
+                state.arranged.add(made);
+                state.arrangerSelected = made;
+            } else if (LAUNCHER.equals(focus) || model.pasteInLauncher) {
+                int s = slotSelected != null && slotSelected[0] == cursorIndex ? slotSelected[1] + 1 : 0;
+                while (s < track.slots.size() && track.slots.get(s) != null) s++;
+                while (track.slots.size() <= s) track.slots.add(null);
+                track.slots.set(s, clipboard);
+                state.scenes = Math.max(state.scenes, s + 1);
+            }
+        });
+    }
+
+    /** Bitwig's focus_or_toggle_arranger action: brings the arranger timeline to the front, or hides it when it's in front already. */
+    private void focusOrToggleArranger() {
+        later(20, () -> {
+            if (TIMELINE.equals(focus) && timelineShown) {
+                timelineShown = false;
+                focus = "";
+            } else {
+                timelineShown = true;
+                focus = TIMELINE;
+            }
+        });
+    }
+
     /** Tells the extension how things are now, as Bitwig's observers do. */
     private void sync() {
-        if (tracks == null) return;   // the extension couldn't make its track bank: nothing to tell it
+        layout.v = layoutNow;
+        timeline.v = timelineShown;
+        playStart.v = playStartAt;
+        Arranged selectedClip = state.arrangerSelected;
+        arrangerClip.present.v = selectedClip != null;
+        arrangerClip.track.present.v = selectedClip != null;
+        arrangerClip.track.title.v = selectedClip == null ? "" : selectedClip.track().name;
+        if (tracks == null) return;   // the extension couldn't make its track bank: nothing more to tell it
         tracks.count.v = state.count == null ? state.tracks.size() : state.count;
         for (int i = 0; i < trackItems.size(); i++) trackItems.get(i).load(trackSpec(i));
         TrackSpec selected = cursorSpec();
@@ -555,6 +655,22 @@ final class FakeBitwig {
         int api = 25;
         /** Methods of Bitwig's host that fail here, as in a Bitwig that doesn't have them. */
         final Set<String> broken = new HashSet<>();
+
+        // The arranger, for the arrange experiment.
+        /** The panel layout Bitwig shows at first: Application.PANEL_LAYOUT_ARRANGE, _MIX or _EDIT. */
+        String layout = Application.PANEL_LAYOUT_ARRANGE;
+        /** Whether the arranger timeline shows at first. */
+        boolean timeline = true;
+        /** Where the play start is at first, in beats. */
+        double playStart;
+        /** The panel with the focus at first: LAUNCHER, TIMELINE, or "" for another. */
+        String focus = "";
+        /** Whether selecting a launcher slot gives the clip launcher the focus, as clicking one in Bitwig does. */
+        boolean selectFocuses = true;
+        /** Whether Bitwig ignores paste. */
+        boolean pasteIgnored;
+        /** Whether Bitwig pastes into the clip launcher, whichever panel has the focus. */
+        boolean pasteInLauncher;
 
         Model tracks(TrackSpec... list) {
             tracks.addAll(Arrays.asList(list));
@@ -1447,6 +1563,7 @@ final class FakeBitwig {
     final class Slot extends Stand {
         final Value present = new Value(BooleanValue.class, false);
         final Value content = new Value(BooleanValue.class, false);
+        final Value selected = new Value(BooleanValue.class, false);
         private final int track;
         private final int scene;
 
@@ -1462,6 +1579,14 @@ final class FakeBitwig {
 
         Value hasContent() {
             return content;
+        }
+
+        Value isSelected() {
+            return selected;
+        }
+
+        void select() {
+            selectSlot(track, scene);
         }
 
         Point replaceInsertionPoint() {
@@ -1547,6 +1672,7 @@ final class FakeBitwig {
                     Slot slot = (Slot) slots.items.get(s);
                     slot.present.v = s < state.scenes;
                     slot.content.v = s < spec.slots.size() && spec.slots.get(s) != null;
+                    slot.selected.v = slotSelected != null && slotSelected[0] == index && slotSelected[1] == s;
                 }
             }
         }
@@ -1697,6 +1823,42 @@ final class FakeBitwig {
         }
     }
 
+    /** The arranger's cursor clip: the clip selected in the arranger, and the track it's on. */
+    static final class ArrangerClip extends Stand {
+        final Value present = new Value(BooleanValue.class, false);
+        final ClipTrack track = new ClipTrack();
+
+        ArrangerClip() {
+            super(Clip.class);
+        }
+
+        Value exists() {
+            return present;
+        }
+
+        ClipTrack getTrack() {
+            return track;
+        }
+    }
+
+    /** The track a clip is on, as the clip shows it. */
+    static final class ClipTrack extends Stand {
+        final Value present = new Value(BooleanValue.class, false);
+        final Value title = new Value(SettableStringValue.class, "");
+
+        ClipTrack() {
+            super(Track.class);
+        }
+
+        Value exists() {
+            return present;
+        }
+
+        Value name() {
+            return title;
+        }
+    }
+
     private Stand action(ActionSpec a) {
         return new Stand(Action.class) {
             String getId() {
@@ -1722,6 +1884,7 @@ final class FakeBitwig {
 
             void invoke() {
                 calls.add(Arrays.asList("invoke", a.id()));
+                if (a.id().equals(Link.FOCUS_ARRANGER)) focusOrToggleArranger();
             }
         };
     }
@@ -1752,6 +1915,23 @@ final class FakeBitwig {
             void createInstrumentTrack(int position) {
                 FakeBitwig.this.createInstrumentTrack(position);
             }
+
+            Value panelLayout() {
+                return layout;
+            }
+
+            void setPanelLayout(String name) {
+                calls.add(Arrays.asList("setPanelLayout", name));
+                later(20, () -> layoutNow = name);
+            }
+
+            void copy() {
+                FakeBitwig.this.copy();
+            }
+
+            void paste() {
+                FakeBitwig.this.paste();
+            }
         };
 
         private final Stand project = new Stand(Project.class) {
@@ -1775,6 +1955,16 @@ final class FakeBitwig {
 
             Value getPosition() {
                 return position;
+            }
+
+            Value playStartPosition() {
+                return playStart;
+            }
+        };
+
+        private final Stand arranger = new Stand(Arranger.class) {
+            Value isTimelineVisible() {
+                return timeline;
             }
         };
 
@@ -1860,6 +2050,14 @@ final class FakeBitwig {
 
         Recorder createMasterRecorder() {
             return recorder;
+        }
+
+        Stand createArranger() {
+            return arranger;
+        }
+
+        ArrangerClip createArrangerCursorClip(int gridWidth, int gridHeight) {
+            return arrangerClip;
         }
 
         void showPopupNotification(String text) {

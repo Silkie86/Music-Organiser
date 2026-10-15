@@ -89,7 +89,7 @@ class LinkTest {
         MusicOrganiserExtensionDefinition definition = (MusicOrganiserExtensionDefinition) found.get(0);
 
         // The script's identity (MusicOrganiser.control.js's defineController), so Bitwig keeps the controller it has.
-        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.5"),
+        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.6"),
                      List.of(definition.getHardwareVendor(), definition.getHardwareModel(), definition.getName(), definition.getAuthor(),
                              definition.getVersion()));
         assertEquals(UUID.fromString("ed35e3c7-c544-49ed-936d-c236b0c9b73b"), definition.getId());
@@ -115,7 +115,7 @@ class LinkTest {
                        "project", "Night Drive", "modified", false, "engine", true, "changes", false,
                        "onlyIn", true,   // it honours a request's onlyIn
                        // Link version 3: which link this is.
-                       "runtime", "java", "extension", "3.5"),
+                       "runtime", "java", "extension", "3.6"),
                    hello.get("result"));
         assertJson(obj("id", 1, "ok", true, "result", hello.get("result")), app.ask(obj("id", 1, "cmd", "hello")));
         assertEquals(List.of(), bitwig.popups);
@@ -304,7 +304,8 @@ class LinkTest {
                 obj("id", 5, "cmd", "clip", "track", 1, "path", "C:\\Lead.mid"),
                 obj("id", 6, "cmd", "pads", "pads", list(obj("note", 36, "path", "C:\\Kick.wav"))),
                 obj("id", 7, "cmd", "transpose", "track", 1, "device", 0, "semitones", 2),
-                obj("id", 8, "cmd", "recorder", "do", "start"))) {
+                obj("id", 8, "cmd", "recorder", "do", "start"),
+                obj("id", 9, "cmd", "arrange", "track", 1, "slot", 0, "at", 16))) {
             assertMatches(CHANGES_OFF, error(app.ask(request)));
         }
         assertEquals(List.of(), bitwig.calls);
@@ -769,6 +770,7 @@ class LinkTest {
                 obj("cmd", "set", "param", "p", "value", 0.5),
                 obj("cmd", "action", "action", "Save"),
                 obj("cmd", "recorder", "do", "start"),
+                obj("cmd", "arrange", "track", 0, "slot", 0, "at", 16),
                 obj("cmd", "select", "track", 0, "device", 0),
                 obj("cmd", "project"))) {
             assertJson(obj("id", 1, "ok", false, "error", elsewhere("Night Drive", "MO Live Test")), app.waitFor(with(request, 1, "MO Live Test")));

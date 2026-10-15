@@ -130,10 +130,11 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 | `clicked` (3) | | The parameter last clicked in Bitwig: `exists` (false until one is), `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated`, `locked` |
 | `recorder` ✎ (3) | `do`: `"start"`, `"stop"` or `"status"` (the default) | Bitwig's master recorder, once it has started or stopped: `active`, `duration` (milliseconds recorded) |
 | `selftest` (3) | | The self-check (see [the extension's README](bitwig-java/README.md#reports)), written to the reports folder, with `file` |
+| `arrange` ✎ (3) | `track`, `slot` (a launcher slot with a clip), `at` (optional: where in the arranger, in beats from the start; the play start by default) | **An experiment**, from extension 3.6, which only the live tests send ([below](#clips-in-the-arranger-an-experiment)). Once its steps are through, whether it worked or not: `arranged`, `at`, `layout` (before), `timeline` (`before` and `after`: whether the arranger timeline showed), `focus` (how many times the link ran Bitwig's `focus_or_toggle_arranger`), `before`, `beforePaste` and `after` (the clip selected in the arranger: `exists`, and its `track`'s name), `launcherClipsBefore` and `launcherClipsAfter` (the track's clips in its first 8 launcher slots) |
 
 ✎ needs changes turned on. (3) only in link version 3, the extension. `insert` with a track, `newtrack`,
-`clip`, `pads`, `transpose` and `recorder` wait for Bitwig to make the change (up to 5 seconds for each
-step), and run one at a time in the order sent. In the app this is `Core/DawLink/BitwigLink.cs`.
+`clip`, `pads`, `transpose`, `recorder` and `arrange` wait for Bitwig to make the change (up to 5 seconds for
+each step), and run one at a time in the order sent. In the app this is `Core/DawLink/BitwigLink.cs`.
 
 ### Only in one project
 
@@ -163,6 +164,27 @@ see [its README](bitwig-java/README.md#reports) for macOS and Linux): a line for
 regular hellos) in
 `<date>-link.jsonl`, and a self-check of each part of Bitwig's API it uses in `<time>-selfcheck.json`, written
 when Bitwig starts it and on `selftest`. A Bitwig problem in a real session can be read there afterwards.
+
+### Clips in the arranger (an experiment)
+
+Bitwig's controller API (23) can put a clip in a launcher slot, but not on the arranger timeline: only launcher
+slots have insertion points. The app would like what it sends (*To Bitwig* from FL Studio, the Kit builder) to
+land in the arranger, so extension 3.6 tries the only other way, Bitwig's own editing, as a person would do it.
+`arrange` selects the track and its launcher clip, copies it (`Application.copy`), switches to the Arrange layout
+if another one shows, moves the play start to `at`, brings the arranger timeline to the front with Bitwig's action
+`focus_or_toggle_arranger` (which hides the timeline when it's in front already, so the link runs it a second
+time when it does), and pastes (`Application.paste`), which puts the copy on the selected track. Each step waits
+for Bitwig to show it, and the request fails, saying which step, when Bitwig doesn't. Nothing is pasted unless
+the clip was copied first.
+
+Nobody knows yet whether Bitwig goes along with copy and paste from an extension, so once the steps are through
+the answer always says what Bitwig showed. `arranged` is true when the clip selected in the arranger (Bitwig's
+arranger cursor clip, which follows a pasted clip) has moved to the track, where it wasn't just before the paste,
+and the track's launcher clips are as they were; more launcher clips after than before means Bitwig pasted into
+the launcher instead. The API can't say where an arranger clip starts, so `at` is where it was meant to go, and
+only a look at Bitwig shows whether it's there. Nothing is undone when it doesn't work (the play start stays where
+it was moved), so only the live tests send it, in their own test project (*Changes › Clip to arranger*); the
+app's sends don't use it yet. In the app it's `BitwigLink.ArrangeAsync`.
 
 ### Sending into Bitwig
 
@@ -268,9 +290,12 @@ What runs, in this order:
   controls), `clicked`, and the extension's own `selftest`; with the script those are Skipped, saying they
   need the extension.
 - **Changes**: a new track with a name and colour; the Sampler, Note Transpose and Drum Machine by ID; the
-  Sampler's and Note Transpose's pitch, read back; a sample into a Sampler; a MIDI clip; Drum Machine pads;
-  selecting a device, setting a parameter and reading it back (then setting it back); the master
-  recorder's status (Java only; it's never started); and, after Send, Save, then the unsaved changes clear.
+  Sampler's and Note Transpose's pitch, read back; a sample into a Sampler; a MIDI clip; that clip copied
+  into the arranger at bar 5 (Java only, and [an experiment](#clips-in-the-arranger-an-experiment): Passed
+  when Bitwig shows it there, else Failed, saying what Bitwig did instead and asking you to look at Bitwig's
+  arranger and say what you see); Drum Machine pads; selecting a device, setting a parameter and reading it
+  back (then setting it back); the master recorder's status (Java only; it's never started); and, after
+  Send, Save, then the unsaved changes clear.
 - **MO Probe**, as a CLAP and then as a VST3, each on a new track: it waits for the probe's live status,
   pings it and labels it with the run's stamp (“MO Live Test 20261014T143012Z CLAP”, so its own report
   can be matched with the run's), checks its knobs both ways (Failed when a knob doesn't move, or a stepped
@@ -342,6 +367,10 @@ Bitwig:
 - [ ] `clicked` follows clicks on any parameter, and creating the last clicked parameter adds nothing unwanted
       to Bitwig's menus.
 - [ ] The master recorder starts and stops from `recorder`, and `duration` is in milliseconds.
+- [ ] `arrange` (an experiment): Bitwig selects a launcher clip, copies it, shows and focuses the arranger
+      timeline and pastes the clip there at the play start when the extension asks (the live tests' *Changes ›
+      Clip to arranger*); whether its window has to be in front for that; and whether the arranger cursor clip
+      follows the pasted clip, as the link expects.
 - [ ] Parameter IDs from `device` look like `CONTENTS/PID3e8`, and `set` takes them back.
 - [ ] `insert` takes the scanner's VST3 class ID as Bitwig wants it, and a UUID for its own devices.
 - [ ] The words `type` and `kind` use (e.g. `Instrument`, `note_to_audio`).
