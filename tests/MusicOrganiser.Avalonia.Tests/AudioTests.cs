@@ -298,17 +298,17 @@ public sealed class AudioTests : IDisposable
 
         WithOutput(null, name => { lock (moves) moves.Add(name); return true; }, () =>
         {
+            var clock = Stopwatch.StartNew();   // from the start, so a slow machine's longer sleeps count too
             player.Play(path);
             Thread.Sleep(100);
             lock (moves) moves.Clear();
-            var clock = Stopwatch.StartNew();
 
             OpenAlPlayer.ChooseOutput("Focusrite USB");
             Thread.Sleep(300);
 
             lock (moves) Assert.Equal(["Focusrite USB"], moves);
             Assert.Equal(path, player.Playing);
-            Assert.InRange(player.Position ?? 0, 0.1, 0.1 + clock.Elapsed.TotalSeconds + 0.1);   // plays on in time
+            Assert.InRange(player.Position ?? 0, 0.1, clock.Elapsed.TotalSeconds + 0.1);   // plays on in time
             Assert.StartsWith("Sounds play through", OpenAlPlayer.CheckOutput());
             lock (moves) Assert.Single(moves);   // already there: looking again moves nothing
         }, outputs: () => ["Speakers (HDMI)", "Focusrite USB"]);
