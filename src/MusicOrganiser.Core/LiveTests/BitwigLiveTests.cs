@@ -81,7 +81,11 @@ public sealed record BitwigLiveOptions
 /// run while Bitwig lets the app make changes AND its project's name starts with “MO Live Test”: a run never touches
 /// anything else. That's checked again before each test, in case another project was opened meanwhile.</item>
 /// </list>
-/// Each run adds a handful of tracks named with the time it started (“Devices 143012”), then saves.
+/// Each run adds a handful of tracks named with the time it started (“Devices 143012”), then saves. With the Java
+/// extension, it also copies the MIDI clip into the arranger (<see cref="ClipToArrangerAsync"/>): that replaces whatever
+/// was copied in Bitwig (one clipboard for every project open), and leaves the test project in its Arrange layout, with its
+/// clip launcher showing, the play start moved, the MIDI clip in a new colour and a copy of it pasted on the run's Sample
+/// track.
 /// </summary>
 public static class BitwigLiveTests
 {
@@ -174,6 +178,180 @@ public static class BitwigLiveTests
 
     static string Ms(double ms) => ms >= 1000 ? (ms / 1000).ToString("0.0", CultureInfo.InvariantCulture) + " s"
         : ms.ToString(ms < 10 ? "0.#" : "0", CultureInfo.InvariantCulture) + " ms";
+
+    static readonly JsonSerializerOptions AnswerJson = new(JsonSerializerDefaults.Web);
+
+    /// <summary>The first extension with <see cref="BitwigLink.ArrangeAsync"/>.</summary>
+    static readonly Version ArrangeFrom = new(3, 6);
+
+    /// <summary>Whether Bitwig has the Java extension, which gives more than the script (link 3, runtime "java").</summary>
+    static bool IsNewer(BitwigHello h) => h.Link >= 3 || h.Runtime == "java";
+
+    static LiveVerdict Needs(string what) => LiveVerdict.Skip($"This needs {what}, which an earlier test didn't get (see above).");
+
+    static LiveVerdict NeedsArrange(string? running) =>
+        LiveVerdict.Skip($"This needs the Music Organiser extension {ArrangeFrom} or later, and Bitwig runs " +
+                         $"{(running is { Length: > 0 } ? running : "an older one")}. {Reinstall}");
+
+    /// <summary>
+    /// The live test Changes › Clip to arranger, an experiment: copies the MIDI clip in launcher slot <paramref
+    /// name="clipSlot"/> of the track called <paramref name="track"/> into Bitwig's arranger at bar 5 (worked out from the
+    /// project's time signature), with Bitwig's window brought to the front first, and says what Bitwig did (<see
+    /// cref="ArrangeVerdict"/>). Skipped without the Java extension 3.6 or later, or without the clip. When the extension
+    /// stops at a step Bitwig didn't go along with, Failed with its reason, still asking the person to look.
+    /// </summary>
+    /// <param name="clipSlot">The launcher slot the MIDI clip test put the clip in, or null when it didn't.</param>
+    /// <param name="bringBitwigToFront">Brings Bitwig's window to the front: whether it's in front, or null when that can't be told.</param>
+    public static async Task<LiveVerdict> ClipToArrangerAsync(BitwigLink link, string track, int? clipSlot, Func<bool?> bringBitwigToFront,
+                                                              CancellationToken ct = default)
+    {
+        var hello = link.Hello;
+        if (!IsNewer(hello)) return LiveVerdict.Skip(NeedsJava);
+        // Older extensions have no arrange, and let changes through all the same: Bitwig runs one until it's installed again.
+        if (Version.TryParse(hello.Extension, out var running) && running < ArrangeFrom) return NeedsArrange(hello.Extension);
+        var p = await link.ProjectAsync(ct);
+        if (clipSlot is not { } slot || p.Tracks.LastOrDefault(x => x.Name == track) is not { } on) return Needs("the MIDI clip");
+        const int bar = 5;
+        // Bitwig counts the play start in beats (quarter notes) from the start.
+        var at = (bar - 1) * BarBeats(p.TimeSignature);
+        // Copy and paste go to the panel in front inside Bitwig, which may need Bitwig's own window in front too.
+        var front = bringBitwigToFront();
+        BitwigArranged arranged;
+        try
+        {
+            arranged = await link.ArrangeAsync(on.Index, slot, at, ct);
+        }
+        catch (DawLinkException e) when (e.Message.StartsWith("Unknown command", StringComparison.Ordinal))
+        {
+            return NeedsArrange(hello.Extension);
+        }
+        catch (DawLinkException e)
+        {
+            // A step Bitwig didn't go along with (the layout, the clip launcher, the selection, the play start, the timeline),
+            // with what's needed to tell why. A change refused because another project came to the front is Failed here too,
+            // and the suite's Change still turns that into Stopped part way.
+            return LiveVerdict.Fail(e.Message + Window(front) + LookAt(bar, track), new JsonObject { ["error"] = e.Message, ["front"] = front });
+        }
+        return ArrangeVerdict(arranged, track, slot, bar, front);
+    }
+
+    /// <summary>What a Failed arrange adds when Bitwig's window wasn't in front.</summary>
+    static string Window(bool? front) =>
+        front == false ? " The app couldn't bring Bitwig's window to the front, which copy and paste may need." : "";
+
+    /// <summary>What a Failed arrange asks when the link can't tell what's there: only the person can see where the clip went, if anywhere.</summary>
+    static string LookAt(int bar, string track) =>
+        $" Look at Bitwig's arranger at bar {bar} on “{track}” and say what you see there (the clip, nothing, or the clip somewhere " +
+        "else), so the link can be put right.";
+
+    /// <summary>
+    /// What the arrange experiment found (<see cref="BitwigLink.ArrangeAsync"/>):
+    /// <list type="bullet">
+    /// <item>Passed when the extension saw a clip in the launcher clip's own marking colour (the very one it asked for)
+    /// appear in the arranger on the track, so it's the run's clip, saying that where it starts is only intended, as the
+    /// link can't read it, and asking the person to look.</item>
+    /// <item>Failed when a clip appeared on the track in another colour than the launcher clip got: Bitwig pasted whatever
+    /// was on its clipboard before, so copying from the launcher didn't take.</item>
+    /// <item>Noted when a clip appeared on the track but Bitwig didn't let the extension colour the launcher clip, or when
+    /// the clip has the launcher clip's colour but Bitwig rounded that to one of its own, which other clips can have too: the
+    /// extension can't tell which clip it is, so the person is asked to look.</item>
+    /// <item>Else Failed, saying what Bitwig did instead and asking the person to look at Bitwig's arranger, since only they
+    /// can see where the clip went, if anywhere.</item>
+    /// </list>
+    /// The data is the extension's whole answer, and whether Bitwig's window was in front.
+    /// </summary>
+    /// <param name="track">The track the clip is on, which is where it should appear in the arranger.</param>
+    /// <param name="slot">The launcher slot it was copied from (0 is the first).</param>
+    /// <param name="bar">The bar it was meant to start at (1 is the first).</param>
+    /// <param name="front">Whether Bitwig's window was in front, or null when that couldn't be told.</param>
+    public static LiveVerdict ArrangeVerdict(BitwigArranged a, string track, int slot, int bar, bool? front)
+    {
+        var data = JsonSerializer.SerializeToNode(a, AnswerJson)!.AsObject();
+        data["front"] = front;
+        var meant = $"bar {bar} (beat {Share(a.At)})";
+        var launcher = Checks.Count(a.LauncherClipsAfter, "clip");
+        var launcherFocus = a.LauncherFocus switch
+        {
+            0 => "Bitwig has no focus_or_toggle_clip_launcher action to give the clip launcher the focus",
+            2 => "giving the clip launcher the focus took two goes: the first hid it",
+            _ => "",
+        };
+        if (a.Arranged && !a.CopiedFromTimeline)
+            return LiveVerdict.Pass($"Bitwig pasted a copy of the clip in launcher slot {slot + 1} into its arranger on “{track}”: a clip in the " +
+                                    $"launcher clip's own marking colour ({a.PastedColor}) appeared in the arranger on “{track}”, so it's the run's " +
+                                    $"MIDI clip, and the track kept its {launcher} in the launcher" +
+                                    (launcherFocus.Length > 0 ? $" ({launcherFocus})" : "") + $". It was meant to go in at {meant}, where the " +
+                                    $"link moved the play start, but the link can't read where an arranger clip starts: look at bar {bar} on " +
+                                    $"“{track}” in Bitwig's arranger and say whether it's there.", data);
+        if (a.Appeared && !a.CopiedFromTimeline && a.Mark is { Took: true } mark && !a.SameAsSource)
+        {
+            // Paste put down what Bitwig's clipboard held before: a clip copied in another song, or the last run's copy.
+            var copying = a.LauncherFocus == 0
+                ? "Bitwig has no focus_or_toggle_clip_launcher action, so the link copied from whichever panel had the focus"
+                : $"the link ran focus_or_toggle_clip_launcher first ({(a.LauncherFocus == 2 ? "twice, as the first go hid the launcher" : "once")}), " +
+                  "so either that didn't give the clip launcher the focus or Bitwig doesn't copy launcher clips for an extension";
+            return LiveVerdict.Fail($"Bitwig didn't put the clip into its arranger at {meant} on “{track}”: a clip appeared on “{track}” after the " +
+                                    $"paste, but it isn't the launcher clip (its colour is {a.PastedColor ?? "unknown"}, and the link coloured the " +
+                                    $"launcher clip {mark.Got}). Bitwig pasted whatever was already on its clipboard, so copying from the launcher " +
+                                    $"didn't take: {copying}. The test project now has that other clip on “{track}” at bar {bar}, which can be " +
+                                    "deleted." + Window(front), data);
+        }
+        // Only the person can tell which clip appeared when the mark doesn't single the run's clip out.
+        var which = $"so the link can't tell whether it's the run's MIDI clip or whatever was on Bitwig's clipboard before. Look at bar {bar} " +
+                    $"on “{track}” in Bitwig's arranger and say which clip it is." + Window(front);
+        if (a.Appeared && !a.CopiedFromTimeline && a.Mark is not { Took: true })
+            return LiveVerdict.Note($"A clip appeared in Bitwig's arranger on “{track}” after the paste, but Bitwig didn't let the link colour the " +
+                                    $"launcher clip in slot {slot + 1}, {which}", data);
+        if (a.Appeared && !a.CopiedFromTimeline && a.SameAsSource && a.Mark is { Took: true, Exact: false } rounded)
+            return LiveVerdict.Note($"A clip appeared in Bitwig's arranger on “{track}” after the paste, in the colour the link gave the launcher clip " +
+                                    $"in slot {slot + 1}, but Bitwig rounded that colour to one of its own (the link asked for {rounded.Asked} and got " +
+                                    $"{rounded.Got}), which other clips can have too, {which}", data);
+
+        var instead = new List<string>();
+        if (a.CopiedFromTimeline)
+        {
+            instead.Add("the arranger timeline had the focus when the link copied (bringing the timeline to the front hid it, which happens " +
+                        $"only when it's in front already), so Bitwig copied from the timeline, not launcher slot {slot + 1}, and the link " +
+                        "didn't paste");
+            instead.Add(a.LauncherFocus == 0 ? launcherFocus : "the link ran focus_or_toggle_clip_launcher first, which didn't give the clip launcher the focus");
+        }
+        else
+        {
+            var on = a.After is { Exists: true } after && after.Track == track;
+            var wasOn = a.BeforePaste is { Exists: true } before && before.Track == track;
+            if (a.LauncherClipsAfter > a.LauncherClipsBefore)
+                instead.Add($"it pasted into the clip launcher instead (“{track}” has {launcher} there now, {a.LauncherClipsBefore} before)");
+            else if (a.LauncherClipsAfter < a.LauncherClipsBefore)
+                instead.Add($"“{track}” has {launcher} in the launcher now, {a.LauncherClipsBefore} before");
+            if (on && wasOn)
+                instead.Add($"a clip on “{track}” was already selected in the arranger before the paste, so the link couldn't tell whether a new one appeared");
+            else if (on)
+                instead.Add($"the clip selected in the arranger did move to “{track}” as well");
+            else if (a.After is { Exists: true } same && same == a.BeforePaste)
+                instead.Add($"nothing new was selected in the arranger: the clip selected there is still the one on “{same.Track}”");
+            else if (a.After is { Exists: true } other)
+                instead.Add($"the clip selected in the arranger is on “{other.Track}”, not “{track}”");
+            else
+                instead.Add(instead.Count == 0 ? "nothing appeared: no clip is selected in the arranger, and the launcher has the same clips"
+                                               : "no clip is selected in the arranger");
+            if (a.Timeline is { After: false }) instead.Add("the arranger timeline is hidden now");
+        }
+        return LiveVerdict.Fail($"Bitwig didn't put the clip into its arranger at {meant} on “{track}”: {string.Join("; ", instead)}." +
+                                Window(front) + LookAt(bar, track), data);
+    }
+
+    /// <summary>
+    /// How many beats (quarter notes, as Bitwig counts its play start) a bar has in a time signature such as "7/8": 3.5. Four
+    /// when the time signature can't be read.
+    /// </summary>
+    public static double BarBeats(string timeSignature)
+    {
+        var parts = timeSignature.Split('/');
+        return parts.Length == 2 && int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var top) && top > 0 &&
+               int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var bottom) && bottom > 0
+            ? top * 4.0 / bottom
+            : 4;
+    }
 
     /// <summary>
     /// Compares what the app read from the saved project with what Bitwig shows (<see cref="BitwigCheck"/>): Failed with
@@ -303,6 +481,8 @@ public static class BitwigLiveTests
         string? _savedProject;
         bool _changed, _saved, _sampleMade;
         int? _drum;
+        /// <summary>The launcher slot the MIDI clip went in, on the sample's track.</summary>
+        int? _clipSlot;
         DateTime _savedAt;
         LiveFiles? _files;
 
@@ -314,7 +494,7 @@ public static class BitwigLiveTests
         string KitTrack => $"Kit {Tag}";
 
         /// <summary>Whether Bitwig has the Java extension, which gives more than the script (link 3, runtime "java").</summary>
-        bool Newer => _link?.Hello is { } h && (h.Link >= 3 || h.Runtime == "java");
+        bool Newer => _link?.Hello is { } h && IsNewer(h);
 
         /// <summary>What answers in Bitwig: "Java extension 3.0, link 3" or "JavaScript script, link 2".</summary>
         string LinkText => _link?.Hello is not { } h ? ""
@@ -569,9 +749,14 @@ public static class BitwigLiveTests
             {
                 if (!_sampleMade || await TrackAsync(link, SampleTrack, t) is not { } track) return Needs("the sample's track");
                 var slot = await link.AddClipAsync(track.Index, Files.Clip, ct: t);
+                _clipSlot = slot;
                 return LiveVerdict.Pass($"Bitwig made a clip from {Path.GetFileName(Files.Clip)} in launcher slot {slot + 1} of “{SampleTrack}”.",
                                         new JsonObject { ["slot"] = slot });
             });
+
+            // An experiment: the API can't put a clip in the arranger, so the extension copies and pastes it there as a person
+            // would, and says what Bitwig did.
+            await Change(Changes, "Clip to arranger", (link, t) => ClipToArrangerAsync(link, SampleTrack, _clipSlot, options.BringBitwigToFront, t));
 
             await Change(Changes, "Drum Machine by ID", async (link, t) =>
             {
@@ -970,7 +1155,6 @@ public static class BitwigLiveTests
             return _closed;
         }
 
-        static LiveVerdict Needs(string what) => LiveVerdict.Skip($"This needs {what}, which an earlier test didn't get (see above).");
 
         static async Task<BitwigTrack?> TrackAsync(BitwigLink link, string name, CancellationToken t) =>
             (await link.ProjectAsync(t)).Tracks.LastOrDefault(x => x.Name == name);

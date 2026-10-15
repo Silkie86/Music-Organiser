@@ -3,7 +3,9 @@ package org.musicorganiser.bitwig;
 import com.bitwig.extension.controller.api.Action;
 import com.bitwig.extension.controller.api.ActionCategory;
 import com.bitwig.extension.controller.api.Application;
+import com.bitwig.extension.controller.api.Arranger;
 import com.bitwig.extension.controller.api.BooleanValue;
+import com.bitwig.extension.controller.api.Clip;
 import com.bitwig.extension.controller.api.ClipLauncherSlot;
 import com.bitwig.extension.controller.api.ClipLauncherSlotBank;
 import com.bitwig.extension.controller.api.ControllerHost;
@@ -45,11 +47,13 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -63,8 +67,9 @@ import java.util.stream.Collectors;
  * device's parameters (with the IDs Bitwig saves them under) and Bitwig's actions. With "Let the app make
  * changes" turned on in this controller's settings, the app can also add tracks, set a parameter, insert a
  * plugin, device, preset or sample, put a MIDI file in a clip slot, fill a Drum Machine's pads, run an action
- * such as Save, and start and stop Bitwig's master recorder. That's how the app sends an FL Studio channel or a
- * kit into Bitwig, and how it learns Bitwig's file format: change one thing, save, and compare.
+ * such as Save, start and stop Bitwig's master recorder, and (an experiment) copy a launcher clip into the
+ * arranger. That's how the app sends an FL Studio channel or a kit into Bitwig, and how it learns Bitwig's file
+ * format: change one thing, save, and compare.
  *
  * The app connects to port 19791 on this computer and sends JSON requests, one per message (see {@link
  * Framing}). The commands are described in extensions/README.md. This is a port of the JavaScript controller
@@ -104,6 +109,25 @@ final class Link {
     /** Bitwig's own devices the app tunes, by the IDs Bitwig saves them under. */
     static final String SAMPLER = "468bc14b-b2e7-45a1-9666-e83117fe404e";
     static final String NOTE_TRANSPOSE = "0815cd9e-3a31-4429-a268-dabd952a3b68";
+    /** Bitwig's action that brings the arranger timeline to the front, or hides it when it's in front already. */
+    static final String FOCUS_ARRANGER = "focus_or_toggle_arranger";
+    /**
+     * The same for the clip launcher, which arrange runs before it copies when Bitwig has an action by this ID: Bitwig
+     * copies from whichever panel has the focus. Nobody has seen it in Bitwig's list of actions yet, so arrange does
+     * without it when it isn't there.
+     */
+    static final String FOCUS_LAUNCHER = "focus_or_toggle_clip_launcher";
+    /** How long to wait to see whether such an action hid its panel, rather than bringing it to the front. */
+    static final long TOGGLE_WAIT = 500;
+    /**
+     * The golden ratio's fraction. Stepping round the colour wheel by it, each colour arrange marks a launcher clip with
+     * lands far from the one before (and from the one before that).
+     */
+    static final double GOLDEN = 0.6180339887498949;
+    /** How far apart two colours' red, green and blue may be (out of 255 each) and still count as the same colour. */
+    static final int SAME_COLOUR = 2;
+    /** How far apart one of them has to be (out of 255) for a colour to look clearly different. */
+    static final int OTHER_COLOUR = 64;
     static final String CHANGES_OFF = "Changes are turned off. To let the app change things, turn on \"Let the app make changes\" "
                                       + "in Bitwig: Settings > Controllers > Music Organiser.";
 
@@ -159,6 +183,16 @@ final class Link {
     private LastClickedParameter lastClicked;
     private Parameter clickedParameter;
     private MasterRecorder recorder;
+    /** Bitwig's arranger, for the arrange experiment: whether its timeline shows, and the clip selected there, on its track. */
+    private Arranger arranger;
+    private Clip arrangerClip;
+    private Track arrangerClipTrack;
+    /**
+     * The hue (0 to 1, round the colour wheel) of the colour arrange marked a launcher clip with last, so the next mark
+     * differs from it. It starts from the clock, once, so the marks differ from one time Bitwig starts the link to the
+     * next as well. The tests' stand-in Bitwig sets it, to know which colours come.
+     */
+    double markHue = Math.floorMod(System.nanoTime(), 1_000_000L) / 1_000_000.0;
     /** Whether parameters carry their steps, origin and automation (marked as interesting in init). */
     private boolean details;
     /** Whether tracks carry their IDs. */
@@ -216,6 +250,8 @@ final class Link {
         commands.put("clicked", Command.answer(false, this::clicked));
         commands.put("recorder", Command.job(this::useRecorder));
         commands.put("selftest", Command.answer(false, (ask, request) -> reply(ask, selfTest("asked"), null)));
+        // Extension 3.6: an experiment, which only the live tests send.
+        commands.put("arrange", Command.job(this::arrange));
     }
 
     // ---- Starting and stopping ----
@@ -427,6 +463,37 @@ final class Link {
             master.duration().markInterested();
             recorder = master;
         }, () -> recorder.isActive().get() ? "Recording, for " + recorder.duration().get() + " ms so far." : "Not recording.");
+
+        // For the arrange experiment: the arranger timeline and its clip launcher, the panel layout, the play start, the
+        // clip selected in the arranger and its colour, which launcher slot is selected, and each launcher clip's colour.
+        feature("arranger", () -> {
+            Arranger made = host.createArranger();
+            made.isTimelineVisible().markInterested();
+            made.isClipLauncherVisible().markInterested();
+            app.panelLayout().markInterested();
+            transport.playStartPosition().markInterested();
+            // The clip's notes aren't read, so its grid can be as small as can be.
+            Clip clip = host.createArrangerCursorClip(1, 1);
+            clip.exists().markInterested();
+            clip.color().markInterested();
+            Track on = clip.getTrack();
+            on.name().markInterested();
+            for (ClipLauncherSlot[] slots : trackSlots) {
+                if (slots == null) continue;   // the track bank wasn't made: arrange can't reach a track anyway
+                for (ClipLauncherSlot slot : slots) {
+                    slot.isSelected().markInterested();
+                    slot.color().markInterested();
+                }
+            }
+            arrangerClipTrack = on;
+            arrangerClip = clip;
+            arranger = made;
+        }, () -> "Bitwig shows its " + str(app.panelLayout().get()) + " layout, with the arranger timeline "
+                 + (arranger.isTimelineVisible().get() ? "shown" : "hidden") + " and the Arrange layout's clip launcher "
+                 + (arranger.isClipLauncherVisible().get() ? "shown" : "hidden") + "; "
+                 + (arrangerClip.exists().get() ? "a clip on \"" + str(arrangerClipTrack.name().get()) + "\" is selected in the arranger"
+                                                : "no clip is selected in the arranger")
+                 + ", and the play start is at beat " + Json.number(transport.playStartPosition().get()) + ".");
 
         feature("remote connection", () -> {
             socket = host.createRemoteConnection("Music Organiser", PORT);
@@ -1436,6 +1503,283 @@ final class Link {
         return m;
     }
 
+    /**
+     * An experiment (extension 3.6): puts a copy of a launcher clip in Bitwig's arranger, on the clip's own track, `at`
+     * beats from the start (where the play start is, unless given). Bitwig's API has no way to put a clip in the arranger
+     * (only launcher slots have insertion points), so the link does what a person would: show the Arrange layout with its
+     * clip launcher, select the clip, give the launcher the focus, copy, move the play start there, bring the arranger
+     * timeline to the front and paste. Bitwig copies and pastes in whichever of its panels has the focus, which the API
+     * can't read, so:
+     * <ul>
+     * <li>the link gives the clip launcher the focus with Bitwig's FOCUS_LAUNCHER action when Bitwig has one, and copies
+     * from whichever panel has the focus when it hasn't (`launcherFocus` says how many times it ran, 0 without one);</li>
+     * <li>when FOCUS_ARRANGER hid the arranger timeline rather than bringing it to the front (`focus` 2), the timeline had
+     * the focus when the link copied, as nothing in between moves it. Bitwig copied from the timeline, not the launcher
+     * clip, so the link doesn't paste, and says `copiedFromTimeline`.</li>
+     * </ul>
+     * Paste puts down whatever is on Bitwig's clipboard, which every open project shares. When the copy didn't take, that's
+     * whatever was copied before: a clip copied in someone's own song, or the last run's copy. So before it copies, the
+     * link marks the launcher clip with a fresh colour (`mark`; only test projects get this, so changing the clip's colour
+     * is fine), and a clip pasted with that colour can be told from whatever Bitwig's clipboard held before.
+     *
+     * Nobody knows yet whether Bitwig does all that for an extension, so once the steps are through, the answer says what
+     * Bitwig showed before and after, whether or not it worked: `appeared` is whether the clip selected in the arranger
+     * moved to the track after the paste, with the track's launcher clips as they were; `sameAsSource` is whether that clip
+     * has the launcher clip's marking colour (`pastedColor` is its colour); and `arranged` is whether both are true and the
+     * launcher clip got the very colour the link asked for (the mark is `exact`). When Bitwig rounded the mark to one of
+     * its own colours, other clips can have that colour too (one already on Bitwig's clipboard, say), so a pasted clip in
+     * it may not be the launcher clip's copy. Where the clip starts can't be read, so only a look at Bitwig shows whether
+     * it went in at `at`. Only the live tests send it, in their own project, so nothing is undone when it doesn't work.
+     */
+    private void arrange(Map<String, Object> request, Finish finish) {
+        if (arranger == null) throw new LinkError("This Bitwig didn't let the link reach its arranger. A selftest says why.");
+        int t = checkTrack(field(request, "track"));
+        Object s = field(request, "slot");
+        if (!isIndex(s, SCENES))
+            throw new LinkError("The app can reach the first " + SCENES + " clip slots on a track, not slot " + Json.js(s) + ".");
+        int index = index(s);
+        Object given = field(request, "at");
+        if (!absent(given) && !(given instanceof Double && Double.isFinite((Double) given) && (Double) given >= 0))
+            throw new LinkError("Say where in the arranger as beats from the start (0 or more), not " + Json.js(given) + ".");
+        ClipLauncherSlot slot = trackSlots[t][index];
+        if (!slot.hasContent().get()) throw new LinkError("Slot " + index + " on that track has no clip to put in the arranger.");
+        Action focus = app.getAction(FOCUS_ARRANGER);
+        if (focus == null)
+            throw new LinkError("Bitwig has no action \"" + FOCUS_ARRANGER + "\", which the link runs to bring the arranger timeline to the front.");
+        Action launcherFocus = app.getAction(FOCUS_LAUNCHER);
+        double at = absent(given) ? transport.playStartPosition().get() : (Double) given;
+        Track track = trackItems[t];
+        String name = str(track.name().get());
+        SettableBooleanValue launcherShown = arranger.isClipLauncherVisible();
+
+        // The answer, in the order the app reads it, filled in as the steps go: first what Bitwig shows before.
+        Shown shown = new Shown(launcherShown.get(), arranger.isTimelineVisible().get());
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("arranged", false);
+        m.put("appeared", false);
+        m.put("sameAsSource", false);
+        m.put("copiedFromTimeline", false);
+        m.put("at", at);
+        m.put("layout", str(app.panelLayout().get()));
+        m.put("launcher", shown.launcher);
+        m.put("mark", null);
+        m.put("launcherFocus", 0);
+        m.put("timeline", shown.timeline);
+        m.put("focus", 0);
+        m.put("before", arrangerClipState());
+        m.put("beforePaste", null);
+        m.put("after", null);
+        m.put("pastedColor", null);
+        int launcherBefore = launcherClips(t);
+        m.put("launcherClipsBefore", launcherBefore);
+        m.put("launcherClipsAfter", null);
+
+        // The Arrange layout, with its clip launcher showing.
+        if (!arrangeLayout()) app.setPanelLayout(Application.PANEL_LAYOUT_ARRANGE);
+        waitFor(this::arrangeLayout, CHANGE_WAIT, arranging -> {
+            if (!arranging) throw new LinkError("Bitwig didn't switch to its Arrange layout.");
+            if (!launcherShown.get()) launcherShown.set(true);
+            waitFor(launcherShown::get, CHANGE_WAIT, showing -> {
+                if (!showing) throw new LinkError("Bitwig didn't show the clip launcher in its Arrange layout.");
+                // The clip, selected in the launcher, which has the focus as the link copies (as far as it can tell).
+                cursorTrack.selectChannel(track);
+                slot.select();
+                waitFor(() -> trackSelected[t].get() && slot.isSelected().get(), CHANGE_WAIT, selected -> {
+                    if (!selected) throw new LinkError("Bitwig didn't select the clip in slot " + index + " of track " + t + ".");
+                    // The clip in its marking colour, so the link can tell it once it's pasted.
+                    mark(slot, m, mark -> {
+                        Runnable copy = () -> {
+                            app.copy();
+                            transport.playStartPosition().set(at);
+                            waitFor(() -> Math.abs(transport.playStartPosition().get() - at) < 1e-6, CHANGE_WAIT, moved -> {
+                                if (!moved) throw new LinkError("Bitwig didn't move the play start to beat " + Json.number(at) + ".");
+                                focusPanel(focus, arranger.isTimelineVisible(), "arranger timeline", m, "focus", times -> {
+                                    if (times == 1) {
+                                        paste(t, name, launcherBefore, mark, m, shown, finish);
+                                        return;
+                                    }
+                                    // It hid the timeline, which only happens when the timeline is in front: so it had the
+                                    // focus as the link copied, and Bitwig's clipboard doesn't hold the launcher clip.
+                                    m.put("copiedFromTimeline", true);
+                                    m.put("beforePaste", arrangerClipState());
+                                    answer(t, m, shown, finish);
+                                }, finish);
+                            }, finish);
+                        };
+                        if (launcherFocus == null) copy.run();
+                        else focusPanel(launcherFocus, launcherShown, "clip launcher", m, "launcherFocus", times -> copy.run(), finish);
+                    }, finish);
+                }, finish);
+            }, finish);
+        }, finish);
+    }
+
+    /** Whether Bitwig showed its clip launcher (in the Arrange layout) and arranger timeline, before and after. */
+    private static final class Shown {
+        final Map<String, Object> launcher = new LinkedHashMap<>();
+        final Map<String, Object> timeline = new LinkedHashMap<>();
+
+        Shown(boolean launcherBefore, boolean timelineBefore) {
+            launcher.put("before", launcherBefore);
+            launcher.put("after", null);
+            timeline.put("before", timelineBefore);
+            timeline.put("after", null);
+        }
+    }
+
+    private boolean arrangeLayout() {
+        return Application.PANEL_LAYOUT_ARRANGE.equals(str(app.panelLayout().get()));
+    }
+
+    /**
+     * Brings one of Bitwig's panels (`what`, which `visible` says is shown or not) to the front with Bitwig's
+     * focus-or-toggle `action` for it, then hands `then` how many times the action ran, which the answer keeps under
+     * `key`. Such an action hides its panel when that's in front already, so when it does, the link runs it again to
+     * show the panel, in front.
+     */
+    private void focusPanel(Action action, BooleanValue visible, String what, Map<String, Object> m, String key, IntConsumer then,
+                            Finish finish) {
+        boolean shown = visible.get();
+        action.invoke();
+        m.put(key, 1);
+        // Hidden, the panel comes into view. Shown, it stays (now in front) unless it was in front already: then it hides,
+        // which the link gives it a moment to do.
+        waitFor(() -> visible.get() != shown, shown ? TOGGLE_WAIT : CHANGE_WAIT, changed -> {
+            if (!shown && !changed) throw new LinkError("Bitwig didn't show its " + what + ".");
+            if (!shown || !changed) {
+                then.accept(1);
+                return;
+            }
+            action.invoke();
+            m.put(key, 2);
+            waitFor(visible::get, CHANGE_WAIT, again -> {
+                if (!again) throw new LinkError("Bitwig hid its " + what + ", which was in front already, and didn't show it again.");
+                then.accept(2);
+            }, finish);
+        }, finish);
+    }
+
+    /**
+     * Marks a launcher clip with a fresh colour (see nextMark), so that a clip pasted from it can be told from whatever else
+     * Bitwig's clipboard held, and hands `then` how that went, which the answer keeps as `mark`. Bitwig may round a colour
+     * to one of its own, so the mark took when the clip shows the colour asked for, or at least a different one than before;
+     * the colour read back then is what the pasted clip is compared with. The mark is exact when that's the colour asked
+     * for (give or take SAME_COLOUR): a colour Bitwig rounded is one of its own, which other clips can have too, so only an
+     * exact mark tells the launcher clip's copy from them for sure. When the clip's colour doesn't change, the link carries
+     * on all the same, though it can't tell its own clip from another when it's pasted.
+     */
+    private void mark(ClipLauncherSlot slot, Map<String, Object> m, Consumer<Mark> then, Finish finish) {
+        SettableColorValue colour = slot.color();
+        float[] before = rgb(colour);
+        float[] asked = nextMark(before);
+        colour.set(asked[0], asked[1], asked[2]);
+        waitFor(() -> sameColour(rgb(colour), asked) || !sameColour(rgb(colour), before), CHANGE_WAIT, took -> {
+            float[] got = rgb(colour);
+            Mark mark = new Mark(before, asked, got, took, sameColour(got, asked));
+            m.put("mark", mark.answer());
+            then.accept(mark);
+        }, finish);
+    }
+
+    /**
+     * A fresh colour to mark a launcher clip with: the next hue round the colour wheel from the last mark's (a GOLDEN step
+     * on), fairly strong and bright so it stands out. While it looks like the clip's colour `now`, or the last mark, it
+     * steps on again.
+     */
+    private float[] nextMark(float[] now) {
+        float[] last = markColour(markHue);
+        float[] mark;
+        int tries = 0;
+        do {
+            markHue = (markHue + GOLDEN) % 1;
+            mark = markColour(markHue);
+        } while ((!clearlyDifferent(mark, now) || !clearlyDifferent(mark, last)) && ++tries < 8);
+        return mark;
+    }
+
+    /** A marking colour of a hue (0 to 1, round the colour wheel): fairly strong (saturation 0.7) and bright (0.85). */
+    static float[] markColour(double hue) {
+        return hsb(hue, 0.7, 0.85);
+    }
+
+    /**
+     * How arrange marked the launcher clip: its colour before, the one asked for, the one it got, whether it took (the
+     * colour changed), and whether it's exact (the clip got the very colour asked for, not one Bitwig rounded it to).
+     */
+    private record Mark(float[] before, float[] asked, float[] got, boolean took, boolean exact) {
+        Map<String, Object> answer() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("before", hexColour(before));
+            m.put("asked", hexColour(asked));
+            m.put("got", hexColour(got));
+            m.put("took", took);
+            m.put("exact", exact);
+            return m;
+        }
+    }
+
+    /**
+     * Pastes what the link copied, then waits for the clip selected in the arranger to show up on the track called `name`
+     * (where it wasn't just before), or for the track's launcher clips to change (Bitwig pasted there instead), and
+     * answers with what Bitwig shows once it settles. When neither happens, it answers after CHANGE_WAIT all the same.
+     * A clip that appeared on the track is the launcher clip's copy only when it has the `mark` colour: else Bitwig pasted
+     * whatever its clipboard held before. Even then, the link says it arranged the clip only when the mark is exact, as a
+     * colour Bitwig rounded to one of its own could be another clip's as well.
+     */
+    private void paste(int t, String name, int launcherBefore, Mark mark, Map<String, Object> m, Shown shown, Finish finish) {
+        m.put("beforePaste", arrangerClipState());
+        boolean there = clipOn(name);
+        app.paste();
+        waitFor(() -> (!there && clipOn(name)) || launcherClips(t) != launcherBefore, CHANGE_WAIT, seen -> {
+            // Bitwig reports a change bit by bit, so what it did is read once it stops changing.
+            settle(() -> Arrays.asList(arrangerClipState(), arrangerClipColour(), launcherClips(t)), settled -> {
+                boolean appeared = !there && clipOn(name) && launcherClips(t) == launcherBefore;
+                boolean sameAsSource = mark.took() && arrangerClip.exists().get() && sameColour(rgb(arrangerClip.color()), mark.got());
+                m.put("arranged", appeared && sameAsSource && mark.exact());
+                m.put("appeared", appeared);
+                m.put("sameAsSource", sameAsSource);
+                answer(t, m, shown, finish);
+            }, finish);
+        }, finish);
+    }
+
+    /** Answers arrange with what Bitwig shows now, after the paste or without one. */
+    private void answer(int t, Map<String, Object> m, Shown shown, Finish finish) {
+        shown.launcher.put("after", arranger.isClipLauncherVisible().get());
+        shown.timeline.put("after", arranger.isTimelineVisible().get());
+        m.put("after", arrangerClipState());
+        m.put("pastedColor", arrangerClipColour());
+        m.put("launcherClipsAfter", launcherClips(t));
+        finish.ok(m);
+    }
+
+    /** The clip selected in Bitwig's arranger: whether there is one, and the name of the track it's on (null without one). */
+    private Map<String, Object> arrangerClipState() {
+        boolean exists = arrangerClip.exists().get();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("exists", exists);
+        m.put("track", exists ? str(arrangerClipTrack.name().get()) : null);
+        return m;
+    }
+
+    /** The colour of the clip selected in Bitwig's arranger, written #RRGGBB, or null without one. */
+    private String arrangerClipColour() {
+        return arrangerClip.exists().get() ? hexColour(rgb(arrangerClip.color())) : null;
+    }
+
+    /** Whether the clip selected in Bitwig's arranger is on the track called `name`. */
+    private boolean clipOn(String name) {
+        return arrangerClip.exists().get() && str(arrangerClipTrack.name().get()).equals(name);
+    }
+
+    /** How many of a track's launcher slots (those the link sees) have a clip. */
+    private int launcherClips(int t) {
+        int count = 0;
+        for (ClipLauncherSlot slot : trackSlots[t])
+            if (slot.hasContent().get()) count++;
+        return count;
+    }
+
     // ---- Self-check ----
 
     /**
@@ -1644,6 +1988,54 @@ final class Link {
     private static String hex(float v) {
         int n = (int) Math.max(0, Math.min(255, Math.round(v * 255.0)));
         return (n < 16 ? "0" : "") + Integer.toHexString(n);
+    }
+
+    /** A colour as Bitwig reports it: red, green and blue, each from 0 to 1. */
+    static float[] rgb(SettableColorValue c) {
+        return new float[] {c.red(), c.green(), c.blue()};
+    }
+
+    /** A colour (red, green and blue from 0 to 1) written #RRGGBB, in capitals, as arrange's answer gives colours. */
+    static String hexColour(float[] rgb) {
+        return ("#" + hex(rgb[0]) + hex(rgb[1]) + hex(rgb[2])).toUpperCase(Locale.ROOT);
+    }
+
+    /** Whether two colours are the same, give or take SAME_COLOUR (out of 255) in each of red, green and blue. */
+    static boolean sameColour(float[] a, float[] b) {
+        for (int i = 0; i < 3; i++)
+            if (Math.abs(a[i] - b[i]) * 255 > SAME_COLOUR + 0.01) return false;
+        return true;
+    }
+
+    /** Whether two colours look clearly different: one of red, green and blue is OTHER_COLOUR (out of 255) or more apart. */
+    static boolean clearlyDifferent(float[] a, float[] b) {
+        for (int i = 0; i < 3; i++)
+            if (Math.abs(a[i] - b[i]) * 255 >= OTHER_COLOUR - 0.01) return true;
+        return false;
+    }
+
+    /**
+     * A colour from its hue (0 to 1, round the colour wheel from red through green and blue), saturation and brightness (0
+     * to 1 each), as red, green and blue in whole steps of 1/255, as a colour is written (#RRGGBB): so the colour asked
+     * for is exactly the one the answer gives.
+     */
+    static float[] hsb(double hue, double saturation, double brightness) {
+        double h = (hue - Math.floor(hue)) * 6;
+        int sector = Math.min(5, (int) h);
+        double f = h - sector;
+        double v = brightness;
+        double p = v * (1 - saturation);
+        double q = v * (1 - saturation * f);
+        double u = v * (1 - saturation * (1 - f));
+        double[] c = switch (sector) {
+            case 0 -> new double[] {v, u, p};
+            case 1 -> new double[] {q, v, p};
+            case 2 -> new double[] {p, v, u};
+            case 3 -> new double[] {p, q, v};
+            case 4 -> new double[] {u, p, v};
+            default -> new double[] {v, p, q};
+        };
+        return new float[] {Math.round(c[0] * 255) / 255f, Math.round(c[1] * 255) / 255f, Math.round(c[2] * 255) / 255f};
     }
 
     // ---- Types ----

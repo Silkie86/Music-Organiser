@@ -31,7 +31,9 @@ import org.musicorganiser.bitwig.FakeBitwig.TrackSpec;
  * Sends the same requests (plenty of them odd) to the JavaScript script, running in its own stand-in Bitwig with
  * Node.js (src/test/js/run-script.js), and to the extension in FakeBitwig, and checks every message that comes
  * back is the same, apart from what link version 3 adds on purpose. The script is the reference: while both are
- * in use, this keeps them from drifting apart, and it checks FakeBitwig behaves as the script's stand-in does.
+ * in use, this keeps them from drifting apart, and it checks FakeBitwig behaves as the script's stand-in does. The
+ * commands only the extension has (clicked, recorder, selftest and the arrange experiment) aren't sent: the script
+ * answers each with "Unknown command", and NewerApiTest, SelfCheckTest and ArrangerTest check them.
  *
  * Without Node.js on the PATH it's skipped, except on CI, where the workflow installs it.
  */
