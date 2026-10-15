@@ -9,6 +9,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />
+    <!-- Audio fingerprinting (MIT) for finding the same sound inside another one: the duplicate finder. -->
+    <PackageReference Include="SoundFingerprinting" Version="15.16.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -30,6 +30,7 @@ The first screen. Point it at your sample folders (Settings) and it listens to e
 - **Rediscover**: sounds you haven't used, matched to your taste (what your scanned projects use, favourites, plays) and kept varied. Plus "forgotten folders" ranked by how little of them you use.
 - **Kit builder**: random drum kits with locks, per-pad re-rolls, "favour unused", "one pack", a key for bass/808 pads and a described vibe. Exports a numbered folder, optionally Elektron-ready (48 kHz 16-bit) for Digitakt II / Analog Rytm via Elektron Transfer. *Send to Bitwig* puts the kit on a Drum Machine in the project open in Bitwig, with kick, snare, clap and hats on the General MIDI pads (kick on C1).
 - **Sounds like this**: nearest neighbours by timbre.
+- **Duplicates**: copies of the same sound across your sample folders, even renamed, converted to another format, sample rate or level, or trimmed (a loop cut from a longer one is found too, with [SoundFingerprinting](https://github.com/AddictedCS/soundfingerprinting), MIT). Each group suggests which copy to keep (the one your projects use, uncompressed, full length) and you can play each to compare. Tick groups (or Select all) and "Hide extra copies" hides the spare copies from the app's lists in one go, with "Show again" to bring them back; your files are never moved or deleted. It can also look for copies by itself after each folder scan. The first run listens to every sound; after that only new or changed ones.
 
 ### The models
 
