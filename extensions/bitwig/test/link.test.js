@@ -445,6 +445,17 @@ test("puts samples in place of the empty Samplers a default Drum Machine has on 
                    { filled: [40], replaced: [40], skipped: [36], failed: [],
                      taken: [{ note: 36, name: "Kick", devices: 2, first: "Sampler", sample: "Kick.wav" }] });
   assert.equal(pads[36].devices[0].sample, "C:\\Kit\\Kick.wav");
+
+  // Nor is one whose empty Sampler has an instrument after it, which plays; effects after it don't.
+  pads[42].devices.push({ name: "Polymer", kind: "note_to_audio" });
+  pads[44].devices.push({ name: "Delay+" });
+  bitwig.clock.advance(100);
+  assert.deepEqual(app.wait({ id: 5, cmd: "pads", track: 1, device: 0,
+                              pads: [{ note: 42, path: "C:\\Kit\\Hat.wav" }, { note: 44, path: "C:\\Kit\\Clap.wav" }] }).result,
+                   { filled: [44], replaced: [44], skipped: [42], failed: [],
+                     taken: [{ note: 42, name: "Sampler", devices: 3, first: "Sampler", sample: "" }] });
+  assert.deepEqual(pads[42].devices.map((d) => d.name), ["Sampler", "Compressor", "Polymer"]);
+  assert.equal(pads[42].devices[0].sample, undefined);
 });
 
 test("reads and sets the knobs of a plugin it put on a track, once that's selected", () => {
