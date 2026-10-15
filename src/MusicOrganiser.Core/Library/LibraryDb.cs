@@ -518,12 +518,33 @@ public sealed partial class LibraryDb : IDisposable
         Query("SELECT tag, COUNT(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag", r => ((string)r["tag"], (int)(long)r["n"]));
 
     public IReadOnlyList<PluginUsage> PluginUsage() => Query("""
-        SELECT MIN(pl.name) AS name, MAX(pl.vendor) AS vendor, MAX(pl.format) AS format,
-               COUNT(DISTINCT pl.project_id) AS n, group_concat(DISTINCT p.daw) AS daws, MIN(pl.installed) AS installed
-        FROM plugins pl JOIN projects p ON p.id = pl.project_id
-        WHERE p.file_missing = 0
-        GROUP BY pl.name_key ORDER BY n DESC, name
-        """, r => new PluginUsage(Str(r, "name"), Str(r, "vendor"), Str(r, "format"), (int)Long(r, "n"), Str(r, "daws"), Long(r, "installed") == 1));
+        WITH live AS (
+            SELECT pl.*, p.mtime AS saved, p.daw AS daw FROM plugins pl JOIN projects p ON p.id = pl.project_id WHERE p.file_missing = 0),
+        missing AS (SELECT project_id, COUNT(DISTINCT name_key) AS n FROM live WHERE installed = 0 GROUP BY project_id)
+        SELECT MIN(l.name) AS name, MAX(l.vendor) AS vendor, MAX(l.format) AS format,
+               COUNT(DISTINCT l.project_id) AS n, group_concat(DISTINCT l.daw) AS daws, MIN(l.installed) AS installed,
+               COUNT(DISTINCT CASE WHEN l.installed = 0 AND m.n = 1 THEN l.project_id END) AS unlocks,
+               MAX(l.saved) AS last, MAX(l.kind) AS kind
+        FROM live l LEFT JOIN missing m ON m.project_id = l.project_id
+        GROUP BY l.name_key ORDER BY n DESC, name
+        """, r => new PluginUsage(Str(r, "name"), Str(r, "vendor"), Str(r, "format"), (int)Long(r, "n"), Str(r, "daws").Replace(",", ", "), Long(r, "installed") == 1,
+                                  (int)Long(r, "unlocks"), Long(r, "last") is > 0 and var t ? DateTimeOffset.FromUnixTimeSeconds(t).LocalDateTime : null,
+                                  (PluginKind)Long(r, "kind")));
+
+    /// <summary>Each project that's missing a plugin, with the plugins it's missing (by name key).</summary>
+    public IReadOnlyDictionary<long, HashSet<string>> MissingPluginsByProject() =>
+        Query("""
+            SELECT DISTINCT pl.project_id, pl.name_key FROM plugins pl JOIN projects p ON p.id = pl.project_id
+            WHERE p.file_missing = 0 AND pl.installed = 0
+            """, r => ((long)r["project_id"], Str(r, "name_key")))
+            .GroupBy(t => t.Item1).ToDictionary(g => g.Key, g => g.Select(t => t.Item2).ToHashSet());
+
+    /// <summary>The projects using a plugin, most recently saved first.</summary>
+    public IReadOnlyList<PluginProject> ProjectsWithPlugin(string name) => Query("""
+        SELECT DISTINCT p.id, p.name, p.daw, p.mtime FROM plugins pl JOIN projects p ON p.id = pl.project_id
+        WHERE pl.name_key = $k AND p.file_missing = 0 ORDER BY p.mtime DESC
+        """, r => new PluginProject((long)r["id"], Str(r, "name"), Str(r, "daw"), DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime),
+        ("$k", NameKey(name)));
 
     public IReadOnlyList<SampleUsage> SampleUsage() => Query("""
         SELECT s.path, COUNT(DISTINCT s.project_id) AS n, MIN(s.found) AS found

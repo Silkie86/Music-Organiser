@@ -541,6 +541,45 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void The_plugins_page_puts_first_what_would_open_the_most_projects()
+    {
+        void Song(string name, params string[] plugins)
+        {
+            var info = new ProjectInfo { Daw = "FL Studio" };
+            info.Plugins.AddRange(plugins.Select(n => new PluginRef(n, "Vendor", PluginKind.Instrument, "VST2")));
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(file, 1, 100, info, null, [], []));
+        }
+        Song("A", "Bass Master");
+        Song("B", "Bass Master");
+        Song("C", "Bass Master", "Old Verb");
+        Song("D", "Old Verb", "Rare Synth");
+        Song("E", "Serum");
+        _db.ReplaceInstalledPlugins(["Serum", "Old Verb 2"]);
+
+        var page = Main().Plugins;
+        // Bass Master is the last missing plugin of A and B; Old Verb of none (C and D miss others too).
+        Assert.Equal("Bass Master", page.Needed[0].Name);
+        Assert.Equal(2, page.Needed[0].Count);
+        Assert.Equal("projects it opens", page.Needed[0].CountLabel);
+        Assert.Contains("used in 3", page.Needed[0].Details);
+        Assert.Equal(["Bass Master", "Old Verb", "Rare Synth"], page.Needed.Select(n => n.Name));
+        Assert.Contains("4 of your projects are missing a plugin", page.NeededSummary);
+        Assert.Contains("these 3 and 4 of them open", page.NeededSummary);
+        Assert.True(page.Needed[1].HasOtherVersion);   // Old Verb 2 is installed
+
+        // Chips filter the full list; picking a plugin lists its projects, newest first.
+        page.Filter = PluginsViewModel.Missing;
+        Assert.Equal(3, page.View!.Cast<PluginUsage>().Count());
+        page.Filter = PluginsViewModel.Installed_;
+        Assert.Equal(["Serum"], page.View!.Cast<PluginUsage>().Select(p => p.Name));
+        page.Needed[0].PickCommand.Execute(null);
+        Assert.Equal("Used in 3 projects", page.ProjectsTitle);
+        Assert.Equal(["A", "B", "C"], page.Projects.Select(p => p.Name).Order());
+    }
+
+    [Fact]
     public void AutoplayPlaysTheSoundYouPickButNotOnesTheListSelectsByItself()
     {
         var played = new List<string>();

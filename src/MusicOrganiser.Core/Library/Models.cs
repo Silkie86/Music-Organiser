@@ -68,6 +68,14 @@ public sealed class ProjectDetail
     public bool CanExtractPresets { get; init; }
 }
 
-public sealed record PluginUsage(string Name, string Vendor, string Format, int Projects, string Daws, bool Installed);
+/// <summary>
+/// A plugin across your projects. <see cref="Unlocks"/> counts the projects it's the only missing plugin of, so
+/// installing it would open them with nothing missing; <see cref="LastUsed"/> is when a project using it was last saved.
+/// </summary>
+public sealed record PluginUsage(string Name, string Vendor, string Format, int Projects, string Daws, bool Installed,
+                                 int Unlocks = 0, DateTime? LastUsed = null, PluginKind Kind = PluginKind.Unknown);
+
+/// <summary>A project that uses a plugin, for the Plugins page's side panel.</summary>
+public sealed record PluginProject(long Id, string Name, string Daw, DateTime Saved);
 
 public sealed record SampleUsage(string Path, int Projects, bool Found);
