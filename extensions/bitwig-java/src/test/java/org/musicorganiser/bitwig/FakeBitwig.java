@@ -527,6 +527,8 @@ final class FakeBitwig {
         boolean browserOnNewTrack;
         /** The port Bitwig gives the link when 19791 is taken, or 0 when it isn't. */
         int portInUse;
+        /** How many times Bitwig says -1 when asked which port it gave (Bitwig 6.1.3 does, straight after making the connection). */
+        int portUnknown;
         /** The Bitwig version and API version the host reports (the script's stand-in reports the same). */
         String version = "6.1.2";
         int api = 25;
@@ -1788,6 +1790,10 @@ final class FakeBitwig {
                 }
 
                 int getPort() {
+                    if (model.portUnknown > 0) {
+                        model.portUnknown--;
+                        return -1;
+                    }
                     return model.portInUse != 0 ? model.portInUse : port;
                 }
             };

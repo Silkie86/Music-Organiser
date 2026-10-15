@@ -37,6 +37,8 @@ var TUNED_DEVICES = 2;
 var DEVICE_WAIT = 2000;
 /** How long to wait for Bitwig to make a change the app asked for (a track, a device, a clip). */
 var CHANGE_WAIT = 5000;
+/** When to ask Bitwig again which port it gave the link, if it didn't say at first (milliseconds). */
+var PORT_CHECK_DELAY = 1000;
 /** Bitwig's own devices the app tunes, by the IDs Bitwig saves them under. */
 var SAMPLER = "468bc14b-b2e7-45a1-9666-e83117fe404e";
 var NOTE_TRANSPOSE = "0815cd9e-3a31-4429-a268-dabd952a3b68";
@@ -65,7 +67,11 @@ var trackSlots = [];
 /** @type {API.InsertionPoint[]} */ var padInserts = [];
 /** @type {API.PopupBrowser} */ var popupBrowser;
 /** @type {API.SettableBooleanValue} */ var changesSetting;
+/** @type {API.RemoteSocket} */ var socket;
+/** The port Bitwig gave the link; 0 or less while Bitwig hasn't said (see knownPort). */
 var port = PORT;
+/** Whether Bitwig has been told the port is taken (once is enough). */
+var portWarned = false;
 
 /**
  * The selected device's parameters, as Bitwig reports them. Display texts are only asked for while a
@@ -199,13 +205,34 @@ function init() {
     changesSetting = host.getPreferences().getBooleanSetting("Let the app make changes", "Music Organiser", false);
     changesSetting.markInterested();
 
-    var socket = host.createRemoteConnection("Music Organiser", PORT);
+    socket = host.createRemoteConnection("Music Organiser", PORT);
     socket.setClientConnectCallback(connected);
     port = socket.getPort();
-    println("Music Organiser: waiting for the app on port " + port + ".");
-    if (port !== PORT)
-        host.showPopupNotification("Music Organiser: port " + PORT + " is taken, so the app can't connect. " +
-                                   "Close what's using it and restart Bitwig.");
+    println("Music Organiser: waiting for the app on port " + (port > 0 ? port : PORT) + ".");
+    warnIfPortTaken();
+    // If Bitwig didn't say which port, ask again once it's had a moment (the extension's self-check does the same).
+    host.scheduleTask(knownPort, PORT_CHECK_DELAY);
+}
+
+/**
+ * The port Bitwig gave the link, asked again while Bitwig hasn't said: Bitwig 6.1.3 says -1 straight after
+ * making the connection. The app connecting shows it's 19791, the only port the app tries. Warns in Bitwig
+ * when it's another.
+ */
+function knownPort() {
+    if (port <= 0 && socket) {
+        port = socket.getPort();
+        if (port <= 0 && clients.length > 0) port = PORT;
+    }
+    warnIfPortTaken();
+    return port;
+}
+
+function warnIfPortTaken() {
+    if (port <= 0 || port === PORT || portWarned) return;
+    portWarned = true;
+    host.showPopupNotification("Music Organiser: port " + PORT + " is taken, so the app can't connect. " +
+                               "Close what's using it and restart Bitwig.");
 }
 
 function flush() {}
@@ -247,6 +274,7 @@ function connected(connection) {
     /** @type {Client} */
     var client = { connection: connection, open: true };
     clients.push(client);
+    knownPort();
     connection.setDisconnectCallback(function () {
         client.open = false;
         remove(clients, client);

@@ -387,6 +387,8 @@ function baseName(file) {
  * scenes the project has), `padScroll` (where the pad list starts) and `browserOnNewTrack` (whether a new
  * track opens Bitwig's browser). A device can list its `knobs`, which the script sees once it's selected,
  * and `knobs` can give them by device name ("Serum" -> its knobs) for whatever the app inserts.
+ * `portInUse` is the port Bitwig gives the link when 19791 is taken, and `portUnknown` how many times
+ * Bitwig says -1 when asked which port it gave (Bitwig 6.1.3 does, straight after making the connection).
  */
 function startBitwig(model = {}) {
   const clock = {
@@ -408,6 +410,7 @@ function startBitwig(model = {}) {
   };
   const calls = [];
   const errors = [];
+  let portUnknown = model.portUnknown || 0;
   const popups = [];
   const state = { tracks: (model.tracks || []).map(trackState), scenes: model.scenes === undefined ? 8 : model.scenes, count: null };
   const builtIn = {
@@ -617,7 +620,13 @@ function startBitwig(model = {}) {
     }),
     createRemoteConnection: (name, port) => ({
       setClientConnectCallback(cb) { connect = cb; },
-      getPort: () => model.portInUse || port,
+      getPort: () => {
+        if (portUnknown > 0) {
+          portUnknown--;
+          return -1;
+        }
+        return model.portInUse || port;
+      },
     }),
     showPopupNotification: (text) => popups.push(text),
     getHostProduct: () => "Bitwig Studio",
