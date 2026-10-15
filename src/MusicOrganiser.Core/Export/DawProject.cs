@@ -34,8 +34,19 @@ public static class DawProject
     internal static string SwitchedOff(int tracks) =>
         $"switched off in FL Studio's Channel Rack, so {(tracks > 1 ? "its tracks are" : "its track is")} muted";
 
-    /// <summary>What's said of a muted playlist track some of whose clips came over: they're muted, on whichever tracks they went to.</summary>
-    internal static string MutedTrack(FlTrack t) => $"{t.Label}: muted in FL Studio, so its clips are muted here too";
+    /// <summary>
+    /// What's said of a track some of whose clips (<paramref name="on"/>, by playlist track) sit on FL's muted playlist
+    /// tracks: the track is muted when they all do (<paramref name="trackMuted"/>), otherwise those clips are. Null when none do.
+    /// </summary>
+    internal static string? OnMutedTracks(string track, IEnumerable<int> on, IReadOnlyList<FlTrack> muted, bool trackMuted)
+    {
+        var numbers = on.ToHashSet();
+        var from = muted.Where(t => numbers.Contains(t.Number)).ToList();
+        if (from.Count == 0) return null;
+        var where = $"{(from.Count == 1 ? "a muted playlist track" : "muted playlist tracks")} in FL Studio ({string.Join("; ", from.Select(t => t.Label))})";
+        return trackMuted ? $"{track}: muted, because its clips are all on {where}"
+                          : $"{track}: its clips on {where} are muted, as it also has clips from other playlist tracks";
+    }
 
     /// <summary>
     /// FL's channel volume knob (0..1, 0 dB at its default 78%) as a gain for a 0..2 linear fader.
@@ -153,8 +164,6 @@ public static class DawProject
         var lanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("timeUnit", "beats"));
         var setup = new List<string>();
         var placed = new Dictionary<int, (XElement Lanes, XElement Channel, XElement? Device)>();
-        // The playlist tracks that clips written here came from.
-        var written = new HashSet<int>();
         foreach (var c in playing)
         {
             var skipped = new List<string>();
@@ -177,19 +186,22 @@ public static class DawProject
                 setup.Add($"{c.Name}: add Bitwig's Transpose note effect before {plugin.Name} and set it to {shift}" +
                           $" (its FL root key was {NoteName(c.RootKey, flStudio: true)}).");
             }
+            // When all its clips are on muted FL playlist tracks, the track is muted rather than its clips.
+            var trackMuted = FlClips.AllOnMutedTracks(c.Clips);
             var ch = Channel("regular", insertChannels.GetValueOrDefault(c.Insert, masterId), device is null ? [] : [device],
-                             Gain(c.Volume), c.Pan, muted: !c.Enabled);
+                             Gain(c.Volume), c.Pan, muted: !c.Enabled || trackMuted);
             var track = Track(c.Name, "notes", ch, skipped, todo);
             structure.Add(track);
             if (!c.Enabled) notes.Add($"{c.Name}: {SwitchedOff(1)}");
+            if (OnMutedTracks(c.Name, c.Clips.Where(x => x.OnMutedTrack).Select(x => x.Track), song.MutedTracks, trackMuted) is { } onMuted)
+                notes.Add(onMuted);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
             if (c.VolumeEnvelope is not null) notes.Add($"{c.Name}: {EnvelopeLeftOut}");
 
             var trackLanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("track", (string)track.Attribute("id")!));
             placed[c.Index] = (trackLanes, ch, device?.Name.LocalName is "Vst2Plugin" or "Vst3Plugin" ? device : null);
             lanes.Add(trackLanes);
-            written.UnionWith(c.Clips.Select(x => x.Track));
-            var clips = FlClips.Of(c, song.Ppq);
+            var clips = FlClips.Of(c with { Clips = FlClips.OnMutedTracks(c.Clips, trackMuted) }, song.Ppq);
             if (clips.Count == 0) continue;
 
             // DAWproject has no muted notes, so FL's muted notes are left out; a muted clip is switched off.
@@ -265,7 +277,6 @@ public static class DawProject
         }
         foreach (var t in insertTracks) structure.Add(t);
         structure.Add(Track("Master", "audio notes", masterChannel, masterSkipped));
-        notes.AddRange(song.MutedTracks.Where(t => written.Contains(t.Number)).Select(MutedTrack));
         if (masterSkipped.Count > 0) notes.Add($"Master: left out {string.Join(", ", masterSkipped)}");
 
         var title = song.Title.Length > 0 ? song.Title : fallbackTitle;
