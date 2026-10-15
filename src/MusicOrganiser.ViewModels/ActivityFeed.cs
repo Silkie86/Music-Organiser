@@ -18,6 +18,14 @@ public sealed class ActivityFeed
     /// <summary>How long a card takes to fade out, so the view's animation finishes before it goes.</summary>
     public TimeSpan FadeOut { get; set; } = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>
+    /// A job started (the state is null) or ended (Done, Failed or Stopped). The app's run log listens, so a report says
+    /// which job was running when something went wrong.
+    /// </summary>
+    public event Action<Activity, ActivityState?>? Changed;
+
+    internal void Raise(Activity a, ActivityState? ended) => Changed?.Invoke(a, ended);
+
     /// <summary>The cards showing now, oldest first.</summary>
     public ObservableCollection<Activity> Items { get; } = [];
 
@@ -30,6 +38,7 @@ public sealed class ActivityFeed
     {
         var a = new Activity(this, title, detail, cancel);
         Items.Add(a);
+        Raise(a, null);
         while (Items.Count > MaxCards && Items.FirstOrDefault(i => !i.IsRunning) is { } old) Items.Remove(old);
         return a;
     }
@@ -59,6 +68,10 @@ public sealed partial class Activity : ObservableObject
     readonly Action? _cancel;
     Action? _action;
     internal int Version;
+    long _started = System.Diagnostics.Stopwatch.GetTimestamp();
+
+    /// <summary>How long the job has run, or ran: from its start (or restart) until now.</summary>
+    public TimeSpan Elapsed => System.Diagnostics.Stopwatch.GetElapsedTime(_started);
 
     internal Activity(ActivityFeed feed, string title, string detail, Action? cancel)
     {
@@ -133,14 +146,18 @@ public sealed partial class Activity : ObservableObject
         Detail = detail;
         Percent = -1;
         State = ActivityState.Running;
+        _started = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!_feed.Items.Contains(this)) _feed.Items.Add(this);
+        _feed.Raise(this, null);
         return this;
     }
 
     Activity End(ActivityState state, TimeSpan linger)
     {
         Version++;
+        var wasRunning = IsRunning;
         State = state;
+        if (wasRunning) _feed.Raise(this, state);
         _feed.Retire(this, linger);
         return this;
     }
