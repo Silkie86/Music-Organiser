@@ -46,6 +46,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>MO Probe, the test plugin: whether it's installed, the probes running now, and its reports.</summary>
     public ProbeReportsViewModel Probe { get; }
 
+    /// <summary>Where the app's sounds play: the computer's default output, or one chosen (an audio interface, say).</summary>
+    public SoundOutputSetting SoundOutput { get; }
+
     /// <summary>What Set up both did: a line for each DAW.</summary>
     [ObservableProperty] string _setUpResult = "";
     [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SetUpBothCommand))] bool _settingUp;
@@ -81,6 +84,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             return Task.Run(() => BitwigLiveTests.RunAsync(options, progress, ct));
         });
         var flPort = new FlPortSetting(db);
+        SoundOutput = new SoundOutputSetting(db, Ui.Current.SoundOutputs);
         Links =
         [
             new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.BitwigLink(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey))),

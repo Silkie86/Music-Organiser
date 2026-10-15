@@ -176,16 +176,22 @@ public sealed class AudioTests : IDisposable
         Assert.Equal(0, stopped);
     }
 
-    /// <summary>Plays with the output reported as gone, as OpenAL Soft reports it once a DAW takes the audio interface.</summary>
-    static void WithOutput(Func<bool> connected, Func<bool> reopen, Action test)
+    /// <summary>
+    /// Plays with pretend outputs: whether the output is connected (OpenAL Soft says not once a DAW takes the audio
+    /// interface), what moving it does, and which outputs there are. Afterwards it's back on the real default.
+    /// </summary>
+    static void WithOutput(Func<bool>? connected, Func<string?, bool> reopen, Action test, Func<IReadOnlyList<string>>? outputs = null)
     {
         OpenAlPlayer.ConnectedOverride = connected;
         OpenAlPlayer.ReopenOverride = reopen;
+        OpenAlPlayer.OutputsOverride = outputs;
         try { test(); }
         finally
         {
             OpenAlPlayer.ConnectedOverride = null;
             OpenAlPlayer.ReopenOverride = null;
+            OpenAlPlayer.OutputsOverride = null;
+            OpenAlPlayer.ChooseOutput(null);
         }
     }
 
@@ -198,7 +204,7 @@ public sealed class AudioTests : IDisposable
         bool connected = true;
         var reopened = 0;
 
-        WithOutput(() => connected, () => { reopened++; return connected = true; }, () =>
+        WithOutput(() => connected, _ => { reopened++; return connected = true; }, () =>
         {
             player.Play(path);
             Thread.Sleep(300);
@@ -215,6 +221,34 @@ public sealed class AudioTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Every_sound_playing_starts_again_when_the_output_comes_back()
+    {
+        NeedSilentOutput();
+        var first = Wav("first.wav", 3, new WaveFormat(8000, 16, 1));
+        var second = Wav("second.wav", 3, new WaveFormat(8000, 16, 1));
+        using var sounds = new OpenAlPlayer();
+        using var preview = new OpenAlPlayer();   // the MIDI preview window, say, playing at the same time
+        var connected = true;
+
+        WithOutput(() => connected, _ => connected = true, () =>
+        {
+            sounds.Play(first);
+            preview.Play(second);
+            Thread.Sleep(200);
+            var clock = Stopwatch.StartNew();
+            connected = false;
+            Thread.Sleep(300);
+
+            // Whichever reconnected, both start again from where they were: neither skips ahead.
+            var log = File.ReadAllText(Path.Combine(AudioLog.Folder, "audio.log"));
+            Assert.Contains($"Started \"{first}\" again", log);
+            Assert.Contains($"Started \"{second}\" again", log);
+            foreach (var player in new[] { sounds, preview })
+                Assert.InRange(player.Position ?? 0, 0.1, 0.2 + clock.Elapsed.TotalSeconds + 0.1);
+        });
+    }
+
+    [AvaloniaFact]
     public void A_sound_stops_and_says_so_when_the_output_cant_be_got_back()
     {
         NeedSilentOutput();
@@ -224,7 +258,7 @@ public sealed class AudioTests : IDisposable
         player.Stopped += () => stopped++;
         var connected = true;
 
-        WithOutput(() => connected, () => false, () =>
+        WithOutput(() => connected, _ => false, () =>
         {
             player.Play(path);
             Thread.Sleep(100);
@@ -245,13 +279,104 @@ public sealed class AudioTests : IDisposable
         var path = Wav("short.wav", 0.3, new WaveFormat(8000, 16, 1));
         using var player = new OpenAlPlayer();
 
-        WithOutput(() => false, () => false, () =>
+        WithOutput(() => false, _ => false, () =>
         {
             var error = Assert.Throws<InvalidOperationException>(() => player.Play(path));
 
             Assert.Contains("taken it over", error.Message);
             Assert.Null(player.Playing);
         });
+    }
+
+    [AvaloniaFact]
+    public void Choosing_an_output_moves_the_sound_playing_there()
+    {
+        NeedSilentOutput();
+        var path = Wav("three.wav", 3, new WaveFormat(8000, 16, 1));
+        using var player = new OpenAlPlayer();
+        var moves = new List<string?>();
+
+        WithOutput(null, name => { lock (moves) moves.Add(name); return true; }, () =>
+        {
+            player.Play(path);
+            Thread.Sleep(100);
+            lock (moves) moves.Clear();
+            var clock = Stopwatch.StartNew();
+
+            OpenAlPlayer.ChooseOutput("Focusrite USB");
+            Thread.Sleep(300);
+
+            lock (moves) Assert.Equal(["Focusrite USB"], moves);
+            Assert.Equal(path, player.Playing);
+            Assert.InRange(player.Position ?? 0, 0.1, 0.1 + clock.Elapsed.TotalSeconds + 0.1);   // plays on in time
+            Assert.StartsWith("Sounds play through", OpenAlPlayer.CheckOutput());
+            lock (moves) Assert.Single(moves);   // already there: looking again moves nothing
+        }, outputs: () => ["Speakers (HDMI)", "Focusrite USB"]);
+    }
+
+    [AvaloniaFact]
+    public void A_chosen_output_thats_not_there_leaves_sound_on_the_default()
+    {
+        NeedSilentOutput();
+        var moves = new List<string?>();
+
+        WithOutput(null, name => { lock (moves) moves.Add(name); return true; }, () =>
+        {
+            OpenAlPlayer.ChooseOutput(null);
+            lock (moves) moves.Clear();
+
+            OpenAlPlayer.ChooseOutput("Focusrite USB");
+
+            lock (moves) Assert.DoesNotContain("Focusrite USB", moves);
+            Assert.StartsWith("Focusrite USB isn't there or won't open now", OpenAlPlayer.CheckOutput());
+        }, outputs: () => ["Speakers (HDMI)"]);
+    }
+
+    [AvaloniaFact]
+    public void A_chosen_output_that_wont_open_leaves_sound_on_the_default()
+    {
+        NeedSilentOutput();
+        var path = Wav("three.wav", 3, new WaveFormat(8000, 16, 1));
+        using var player = new OpenAlPlayer();
+        var moves = new List<string?>();
+
+        WithOutput(null, name => { lock (moves) moves.Add(name); return name is null; }, () =>
+        {
+            OpenAlPlayer.ChooseOutput(null);
+            player.Play(path);
+            lock (moves) moves.Clear();
+
+            OpenAlPlayer.ChooseOutput("Focusrite USB");
+
+            lock (moves) Assert.Equal("Focusrite USB", moves[0]);
+            Assert.Equal(path, player.Playing);
+            Assert.StartsWith("Focusrite USB isn't there or won't open now", OpenAlPlayer.CheckOutput());
+        }, outputs: () => ["Speakers (HDMI)", "Focusrite USB"]);
+    }
+
+    [AvaloniaFact]
+    public void Sound_follows_the_default_output_when_it_changes()
+    {
+        NeedSilentOutput();
+        var path = Wav("three.wav", 3, new WaveFormat(8000, 16, 1));
+        using var player = new OpenAlPlayer();
+        var moves = new List<string?>();
+        IReadOnlyList<string> outputs = ["Speakers (HDMI)", "Focusrite USB"];
+
+        WithOutput(null, name => { lock (moves) moves.Add(name); return true; }, () =>
+        {
+            OpenAlPlayer.ChooseOutput(null);   // starts on the default as listed here
+            player.Play(path);
+            Thread.Sleep(50);
+            lock (moves) moves.Clear();
+
+            outputs = ["Focusrite USB", "Speakers (HDMI)"];   // Windows' default is now the interface
+            OpenAlPlayer.OutputsChanged();
+            Thread.Sleep(200);
+
+            lock (moves) Assert.Equal([null], moves);   // to the default, wherever it is now
+            Assert.Equal(path, player.Playing);
+        }, outputs: () => outputs);
     }
 
     [AvaloniaFact]

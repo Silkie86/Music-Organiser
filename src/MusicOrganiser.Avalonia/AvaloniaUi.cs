@@ -25,6 +25,8 @@ public sealed class AvaloniaUi : IPlatformUi
 
     public IAudioPlayer CreateAudioPlayer() => new Audio.OpenAlPlayer();
 
+    public ISoundOutputs? SoundOutputs { get; } = new Audio.OpenAlOutputs();
+
     public async Task<string?> PickFolder(string title)
     {
         if (Storage is not { } storage) return null;
