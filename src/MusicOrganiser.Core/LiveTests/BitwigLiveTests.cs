@@ -79,6 +79,18 @@ public sealed record BitwigLiveOptions
 /// </summary>
 public static class BitwigLiveTests
 {
+    /// <summary>
+    /// Where Bitwig may save a project: Projects in each of its user folders, and each Projects folder the library's Bitwig
+    /// projects are in. Bitwig's projects can be kept apart from the rest of its user folder (Settings > Locations): seen,
+    /// with its extensions in Documents\Bitwig Studio and its projects on another drive.
+    /// </summary>
+    public static IEnumerable<string> ProjectFolders(IEnumerable<string> userFolders, IEnumerable<string> library) =>
+        userFolders.Select(f => Path.Combine(f, "Projects"))
+            // Bitwig keeps each project in a folder of its own name: Projects\<name>\<name>.bwproject.
+            .Concat(library.Select(p => Path.GetDirectoryName(Path.GetDirectoryName(p))).OfType<string>()
+                           .Where(d => Path.GetFileName(d).Equals("Projects", StringComparison.OrdinalIgnoreCase)))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists);
+
     public const string Daw = "Bitwig Studio";
     /// <summary>The DAW in the report files' names.</summary>
     public const string Key = "bitwig";
@@ -840,8 +852,7 @@ public static class BitwigLiveTests
             });
         }
 
-        IEnumerable<string> SavedFolders() =>
-            options.BitwigUserFolders().Select(f => Path.Combine(f, "Projects")).Where(Directory.Exists);
+        IEnumerable<string> SavedFolders() => ProjectFolders(options.BitwigUserFolders(), options.LibraryProjects());
 
         /// <summary>
         /// The newest &lt;name&gt;.bwproject written since <paramref name="since"/>: among the library's projects, else in the

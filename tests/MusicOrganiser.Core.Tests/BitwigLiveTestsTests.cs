@@ -55,6 +55,23 @@ public class BitwigLiveTestsTests
     static string Listing(BitwigProject p) => string.Join("; ", p.Tracks.Select(t => $"{t.Name}: {string.Join(", ", t.Devices.Select(d => d.Name))}"));
 
     [Fact]
+    public void LooksForTheSavedProjectWhereverTheLibrarysBitwigProjectsAre()
+    {
+        // Seen: Bitwig's extensions in Documents\Bitwig Studio, its projects on another drive, which the library has.
+        var dir = Fixtures.TempDir();
+        var documents = Directory.CreateDirectory(Path.Combine(dir, "Documents", "Bitwig Studio", "Projects")).Parent!.FullName;
+        var projects = Directory.CreateDirectory(Path.Combine(dir, "K", "Bitwig Studio", "Projects")).FullName;
+        string[] library =
+        [
+            Path.Combine(projects, "Night Drive", "Night Drive.bwproject"),
+            Path.Combine(projects, "Loop Idea", "Loop Idea.bwproject"),
+            Path.Combine(dir, "Exports", "Bounce.bwproject"),   // not in a Projects folder, so its folder isn't searched
+        ];
+        Assert.Equal([Path.Combine(documents, "Projects"), projects],
+                     BitwigLiveTests.ProjectFolders([documents, Path.Combine(dir, "Gone")], library));
+    }
+
+    [Fact]
     public async Task RunsEveryAreaInATestProject()
     {
         var dir = Fixtures.TempDir();
