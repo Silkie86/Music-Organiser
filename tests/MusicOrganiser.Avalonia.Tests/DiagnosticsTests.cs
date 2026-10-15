@@ -108,3 +108,36 @@ public sealed class DiagnosticsTests : IDisposable
         Assert.Empty(Directory.GetFiles(_dir, "*.png"));
     }
 }
+
+/// <summary>The freeze watchdog and the jobs' lines in the run log.</summary>
+public sealed class WatchdogTests : IDisposable
+{
+    readonly string _dir = Directory.CreateTempSubdirectory("mo-watchdog-").FullName;
+
+    public void Dispose() => Directory.Delete(_dir, recursive: true);
+
+    [global::Avalonia.Headless.XUnit.AvaloniaFact]
+    public void A_freeze_is_logged_with_the_page_and_the_job_running()
+    {
+        var log = SessionLog.Start(_dir);
+        var jobs = new MusicOrganiser.ViewModels.ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero };
+        using (new UiWatchdog(jobs, () => "Plugins"))
+        {
+            var job = jobs.Start("Scanning plugins", "VST3");
+            Thread.Sleep(700);   // the UI thread (this test's) stuck, as a slow job on it would
+            var until = DateTime.UtcNow.AddSeconds(5);
+            while (!log.Recent().Any(l => l.Contains("[Freeze]")) && DateTime.UtcNow < until)
+            {
+                global::Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                Thread.Sleep(20);
+            }
+            job.Finish("Scanned plugins");
+        }
+
+        var recent = log.Recent();
+        Assert.Contains(recent, l => l.Contains("[Job] Started: Scanning plugins (VST3)"));
+        Assert.Contains(recent, l => l.Contains("[Freeze] The app didn't respond for") && l.Contains("on Plugins, while running: Scanning plugins"));
+        Assert.Contains(recent, l => l.Contains("[Job] Done: Scanned plugins after"));
+        log.Dispose();
+    }
+}

@@ -83,9 +83,11 @@ static class GalaxyGpu
             {
                 // A driver that can't run the shader, say: the processor's picture is just as good, only slower.
                 Console.Error.WriteLine($"The galaxy couldn't draw on the graphics card, so it uses the processor: {e.Message}");
+                Diagnostics.SessionLog.Current?.Warning("Facts", $"Galaxy: couldn't draw on the graphics card, so it uses the processor: {e}");
                 GiveUp();
                 return;
             }
+            if (Available != true) Diagnostics.SessionLog.Current?.Info("Facts", "Galaxy: drawing on the graphics card");
             Available = true;
             if (Environment.GetEnvironmentVariable("MO_GALAXY_TIMING") is not null)
                 Console.Error.WriteLine($"galaxy gpu {timer.Elapsed.TotalMilliseconds:0.0} ms");

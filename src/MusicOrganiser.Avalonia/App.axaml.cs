@@ -42,12 +42,16 @@ public partial class App : Application
                 e.Handled = true;
                 await NoteForClaude.AskAsync(window, main);
             };
+            // Freezes, and each job's start and end, in the run log too, so a note to Claude says what froze.
+            var watchdog = new UiWatchdog(main);
+            Facts(window);
             main.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == nameof(MainViewModel.SelectedNav)) SessionLog.Current?.Info("Page", main.SelectedNav?.Title ?? "");
             };
             desktop.Exit += (_, _) =>
             {
+                watchdog.Dispose();
                 main.Shutdown();
                 _sounds?.Dispose();
                 _soundDb?.Dispose();
@@ -55,6 +59,24 @@ public partial class App : Application
             };
         }
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>One-off facts about this computer for the run log, once the window is up.</summary>
+    static void Facts(MainWindow window)
+    {
+        var log = SessionLog.Current;
+        if (log is null) return;
+        window.Opened += (_, _) =>
+        {
+            log.Info("Facts", $"Screen scale {window.RenderScaling:0.##}, window {window.Bounds.Width:0}×{window.Bounds.Height:0}");
+            Task.Run(() =>
+            {
+                log.Info("Facts", Audio.OpenAlPlayer.HasOutput ? "Sound output found" : "No sound output found");
+                log.Info("Facts", Core.Plugins.PluginScanner.Find() is { } scanner ? $"Plugin scanner: {scanner}" : "Plugin scanner (mo-scan) not found");
+            });
+        };
+        // The galaxy says which way it draws the first time it draws (Views/GalaxyGpu.cs).
+        Views.GalaxyGpu.Changed += () => log.Info("Facts", "Galaxy: the graphics card version failed, drawing on the processor");
     }
 
     readonly List<string> _errors = [];
