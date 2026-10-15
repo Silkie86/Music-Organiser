@@ -1,6 +1,8 @@
 package org.musicorganiser.bitwig;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.musicorganiser.bitwig.FakeBitwig.CLIP_GREY;
 import static org.musicorganiser.bitwig.FakeBitwig.action;
 import static org.musicorganiser.bitwig.FakeBitwig.track;
 import static org.musicorganiser.bitwig.Messages.assertJson;
@@ -22,19 +24,33 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.musicorganiser.bitwig.FakeBitwig.App;
 import org.musicorganiser.bitwig.FakeBitwig.Arranged;
+import org.musicorganiser.bitwig.FakeBitwig.Copied;
 import org.musicorganiser.bitwig.FakeBitwig.Model;
 
 /**
  * The arrange experiment (extension 3.6): a launcher clip copied into the arranger the way a person would do it (show the
  * Arrange layout and its clip launcher, select the clip, give the launcher the focus, copy, move the play start, bring the
- * arranger timeline to the front, paste), and the answer saying what Bitwig showed, whether it worked or not. The
- * stand-in Bitwig does what Bitwig is expected to, copying and pasting in whichever panel has the focus; switches in its
- * model make it ignore a step, copy from the timeline, paste into the launcher instead, or ignore paste, as the real one
- * might.
+ * arranger timeline to the front, paste), and the answer saying what Bitwig showed, whether it worked or not. Before it
+ * copies, the link marks the launcher clip with a fresh colour, so it can tell its own clip from whatever was on Bitwig's
+ * clipboard before. The stand-in Bitwig does what Bitwig is expected to, copying and pasting in whichever panel has the
+ * focus, with the clip's colour; switches in its model make it ignore a step or a colour, copy from the timeline, paste
+ * into the launcher instead, or ignore paste, as the real one might, and it can start with a clip on its clipboard.
  */
 class ArrangerTest {
     /** Bar 5 in 4/4: four bars of four beats from the start. */
     static final double BAR_5 = 16;
+    /**
+     * The colours the link marks launcher clips with, one arrange after another, from the hue the stand-in starts it at
+     * (0): blue, green, pink, then turquoise.
+     */
+    static final String MARK_1 = "#416DD9";
+    static final String MARK_2 = "#9AD941";
+    static final String MARK_3 = "#D941C6";
+    static final String MARK_4 = "#41D9BF";
+    /** The colour of Lead's clip in the arranger (see leadClipSelectedInTheArranger). */
+    static final String LEAD = "#CC3333";
+    /** The colour of a clip the person copied in their own song. */
+    static final String THEIRS = "#2E8B57";
 
     @TempDir
     Path reports;
@@ -78,7 +94,7 @@ class ArrangerTest {
 
     /** Lead's clip, in the arranger at the start and selected there, as if someone had just clicked it in the timeline. */
     void leadClipSelectedInTheArranger() {
-        Arranged lead = new Arranged(bitwig.state.tracks.get(1), 0, "C:\\MIDI\\Lead.mid");
+        Arranged lead = new Arranged(bitwig.state.tracks.get(1), 0, "C:\\MIDI\\Lead.mid", LEAD);
         bitwig.state.arranged.add(lead);
         bitwig.state.arrangerSelected = lead;
         bitwig.refresh();
@@ -97,32 +113,50 @@ class ArrangerTest {
         return obj("before", before, "after", after);
     }
 
+    /** How the answer says the link marked the launcher clip: its colour before, the one asked for, the one it got, and whether it took. */
+    static Map<String, Object> mark(String before, String asked, String got, boolean took) {
+        return obj("before", before, "asked", asked, "got", got, "took", took);
+    }
+
+    /** Bass's launcher clip pasted into the arranger at `start`, in `colour`. */
+    Arranged bassAt(double start, String colour) {
+        return new Arranged(bitwig.state.tracks.get(0), start, "C:\\MIDI\\Bass.mid", colour);
+    }
+
     @Test
     @DisplayName("puts a copy of a launcher clip in the arranger at bar 5, on the clip's own track, and says so")
     void arrangesALauncherClip() {
         studio();
         Map<String, Object> reply = app.waitFor(arrange(1, 0, 0, BAR_5));
         assertJson(obj("id", 1, "ok", true, "result", obj(
-                       "arranged", true, "copiedFromTimeline", false, "at", 16, "layout", "ARRANGE", "launcher", shown(true, true), "launcherFocus", 1,
-                       "timeline", shown(true, true), "focus", 1, "before", clip(null), "beforePaste", clip(null), "after", clip("Bass"),
+                       "arranged", true, "appeared", true, "sameAsSource", true, "copiedFromTimeline", false, "at", 16, "layout", "ARRANGE",
+                       "launcher", shown(true, true), "mark", mark(CLIP_GREY, MARK_1, MARK_1, true), "launcherFocus", 1, "timeline", shown(true, true),
+                       "focus", 1, "before", clip(null), "beforePaste", clip(null), "after", clip("Bass"), "pastedColor", MARK_1,
                        "launcherClipsBefore", 1, "launcherClipsAfter", 1)),
                    reply);
-        assertEquals(List.of(new Arranged(bitwig.state.tracks.get(0), BAR_5, "C:\\MIDI\\Bass.mid")), bitwig.state.arranged);
+        // The clip that appeared has the colour the launcher clip got, so it's a copy of that clip.
+        assertEquals(at(reply, "result", "mark", "got"), at(reply, "result", "pastedColor"));
+        assertEquals(List.of(bassAt(BAR_5, MARK_1)), bitwig.state.arranged);
         assertEquals(List.of("C:\\MIDI\\Bass.mid"), bitwig.state.tracks.get(0).slots, "the launcher keeps its clip");
-        // Select, give the launcher the focus, copy, move the play start, bring the timeline to the front, paste: the layout
-        // was Arrange already, with its clip launcher showing, so that's left alone.
-        assertEquals(List.of("selectChannel", "selectSlot", "invoke", "copy", "playStart", "invoke", "paste"), calls());
-        assertEquals(List.of(List.of("selectSlot", 0, 0), List.of("invoke", Link.FOCUS_LAUNCHER), List.of("playStart", BAR_5),
-                             List.of("invoke", Link.FOCUS_ARRANGER)),
+        assertEquals(Map.of(0, MARK_1), bitwig.state.tracks.get(0).clipColours, "in its marking colour");
+        // Select, colour the clip, give the launcher the focus, copy, move the play start, bring the timeline to the front,
+        // paste: the layout was Arrange already, with its clip launcher showing, so that's left alone.
+        assertEquals(List.of("selectChannel", "selectSlot", "clipColour", "invoke", "copy", "playStart", "invoke", "paste"), calls());
+        assertEquals(List.of(List.of("selectSlot", 0, 0), List.of("clipColour", 0, 0, MARK_1), List.of("invoke", Link.FOCUS_LAUNCHER),
+                             List.of("playStart", BAR_5), List.of("invoke", Link.FOCUS_ARRANGER)),
                      bitwig.calls.stream().filter(c -> c.size() > 1 && !c.get(0).equals("selectChannel")).collect(Collectors.toList()));
 
-        // Without `at`, it goes where the play start is (still bar 5), and the clip selected in the arranger moves to Lead.
-        // The timeline has the focus after the paste: the launcher gets it back before the copy.
+        // Without `at`, it goes where the play start is (still bar 5), and the clip selected in the arranger moves to Lead,
+        // in Lead's clip's marking colour. The timeline has the focus after the paste: the launcher gets it back before the
+        // copy.
         Object next = app.waitFor(obj("id", 2, "cmd", "arrange", "track", 1, "slot", 0)).get("result");
-        assertJson(obj("arranged", true, "copiedFromTimeline", false, "at", 16, "launcherFocus", 1, "focus", 1, "before", clip("Bass"), "after", clip("Lead")),
-                   SelfCheckTest.pick(SelfCheckTest.map(next), "arranged", "copiedFromTimeline", "at", "launcherFocus", "focus", "before", "after"));
+        assertJson(obj("arranged", true, "appeared", true, "sameAsSource", true, "copiedFromTimeline", false, "at", 16,
+                       "mark", mark(CLIP_GREY, MARK_2, MARK_2, true), "launcherFocus", 1, "focus", 1, "before", clip("Bass"), "after", clip("Lead"),
+                       "pastedColor", MARK_2),
+                   SelfCheckTest.pick(SelfCheckTest.map(next), "arranged", "appeared", "sameAsSource", "copiedFromTimeline", "at", "mark",
+                                      "launcherFocus", "focus", "before", "after", "pastedColor"));
         assertEquals(List.of(BAR_5, BAR_5), bitwig.state.arranged.stream().map(Arranged::start).collect(Collectors.toList()));
-        assertEquals("C:\\MIDI\\Lead.mid", bitwig.state.arranged.get(1).clip());
+        assertEquals(new Arranged(bitwig.state.tracks.get(1), BAR_5, "C:\\MIDI\\Lead.mid", MARK_2), bitwig.state.arranged.get(1));
     }
 
     @Test
@@ -138,7 +172,9 @@ class ArrangerTest {
         assertJson(obj("arranged", true, "at", 8, "layout", "MIX", "launcher", shown(false, true), "launcherFocus", 1, "timeline", shown(false, true),
                        "focus", 1),
                    SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "at", "layout", "launcher", "launcherFocus", "timeline", "focus"));
-        assertEquals(List.of("setPanelLayout", "showLauncher", "selectChannel", "selectSlot", "invoke", "copy", "playStart", "invoke", "paste"), calls());
+        assertEquals(List.of("setPanelLayout", "showLauncher", "selectChannel", "selectSlot", "clipColour", "invoke", "copy", "playStart", "invoke",
+                             "paste"),
+                     calls());
         assertEquals(List.of(List.of("setPanelLayout", "ARRANGE"), List.of("showLauncher", true)), bitwig.calls.subList(0, 2));
         assertEquals(8.0, bitwig.state.arranged.get(0).start());
     }
@@ -149,10 +185,12 @@ class ArrangerTest {
         studio(m -> m.focus = FakeBitwig.TIMELINE);
         leadClipSelectedInTheArranger();
         Object result = app.waitFor(arrange(1, 0, 0, BAR_5)).get("result");
-        assertJson(obj("arranged", true, "copiedFromTimeline", false, "launcherFocus", 1, "focus", 1, "before", clip("Lead"), "after", clip("Bass")),
-                   SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "copiedFromTimeline", "launcherFocus", "focus", "before", "after"));
-        assertEquals("C:\\MIDI\\Bass.mid", bitwig.clipboard);
-        assertEquals(new Arranged(bitwig.state.tracks.get(0), BAR_5, "C:\\MIDI\\Bass.mid"), bitwig.state.arranged.get(1));
+        assertJson(obj("arranged", true, "sameAsSource", true, "copiedFromTimeline", false, "launcherFocus", 1, "focus", 1, "before", clip("Lead"),
+                       "after", clip("Bass"), "pastedColor", MARK_1),
+                   SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "sameAsSource", "copiedFromTimeline", "launcherFocus", "focus", "before",
+                                      "after", "pastedColor"));
+        assertEquals(new Copied("C:\\MIDI\\Bass.mid", MARK_1), bitwig.clipboard);
+        assertEquals(bassAt(BAR_5, MARK_1), bitwig.state.arranged.get(1));
     }
 
     @Test
@@ -163,7 +201,7 @@ class ArrangerTest {
         Object result = app.waitFor(arrange(1, 0, 0, BAR_5)).get("result");
         assertJson(obj("arranged", true, "launcher", shown(true, true), "launcherFocus", 2, "focus", 1, "after", clip("Bass")),
                    SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "launcher", "launcherFocus", "focus", "after"));
-        assertEquals(List.of("selectChannel", "selectSlot", "invoke", "invoke", "copy", "playStart", "invoke", "paste"), calls());
+        assertEquals(List.of("selectChannel", "selectSlot", "clipColour", "invoke", "invoke", "copy", "playStart", "invoke", "paste"), calls());
     }
 
     @Test
@@ -173,12 +211,13 @@ class ArrangerTest {
         // copies that, not Bass's launcher clip. Bringing the timeline to the front then hides it, which is how the link knows.
         studioWithoutLauncherFocus(m -> m.focus = FakeBitwig.TIMELINE);
         leadClipSelectedInTheArranger();
-        assertJson(obj("arranged", false, "copiedFromTimeline", true, "at", 16, "layout", "ARRANGE", "launcher", shown(true, true), "launcherFocus", 0,
-                       "timeline", shown(true, true), "focus", 2, "before", clip("Lead"), "beforePaste", clip("Lead"), "after", clip("Lead"),
+        assertJson(obj("arranged", false, "appeared", false, "sameAsSource", false, "copiedFromTimeline", true, "at", 16, "layout", "ARRANGE",
+                       "launcher", shown(true, true), "mark", mark(CLIP_GREY, MARK_1, MARK_1, true), "launcherFocus", 0, "timeline", shown(true, true),
+                       "focus", 2, "before", clip("Lead"), "beforePaste", clip("Lead"), "after", clip("Lead"), "pastedColor", LEAD,
                        "launcherClipsBefore", 1, "launcherClipsAfter", 1),
                    app.waitFor(arrange(1, 0, 0, BAR_5)).get("result"));
-        assertEquals("C:\\MIDI\\Lead.mid", bitwig.clipboard, "Bitwig copied from the timeline");
-        assertEquals(List.of("selectChannel", "selectSlot", "copy", "playStart", "invoke", "invoke"), calls());
+        assertEquals(new Copied("C:\\MIDI\\Lead.mid", LEAD), bitwig.clipboard, "Bitwig copied from the timeline");
+        assertEquals(List.of("selectChannel", "selectSlot", "clipColour", "copy", "playStart", "invoke", "invoke"), calls());
         assertEquals(1, bitwig.state.arranged.size(), "nothing pasted");
         assertEquals(List.of("C:\\MIDI\\Bass.mid"), bitwig.state.tracks.get(0).slots);
 
@@ -188,10 +227,10 @@ class ArrangerTest {
             m.focusIgnored.add(Link.FOCUS_LAUNCHER);
         });
         leadClipSelectedInTheArranger();
-        assertJson(obj("arranged", false, "copiedFromTimeline", true, "launcherFocus", 1, "focus", 2),
+        assertJson(obj("arranged", false, "appeared", false, "sameAsSource", false, "copiedFromTimeline", true, "launcherFocus", 1, "focus", 2),
                    SelfCheckTest.pick(SelfCheckTest.map(app.waitFor(arrange(1, 0, 0, BAR_5)).get("result")),
-                                      "arranged", "copiedFromTimeline", "launcherFocus", "focus"));
-        assertEquals(List.of("selectChannel", "selectSlot", "invoke", "copy", "playStart", "invoke", "invoke"), calls());
+                                      "arranged", "appeared", "sameAsSource", "copiedFromTimeline", "launcherFocus", "focus"));
+        assertEquals(List.of("selectChannel", "selectSlot", "clipColour", "invoke", "copy", "playStart", "invoke", "invoke"), calls());
         assertEquals(1, bitwig.state.arranged.size(), "nothing pasted");
     }
 
@@ -200,20 +239,22 @@ class ArrangerTest {
     void copiesWithoutTheLauncherFocusAction() {
         studioWithoutLauncherFocus(m -> m.selectFocuses = true);
         Object result = app.waitFor(arrange(1, 0, 0, BAR_5)).get("result");
-        assertJson(obj("arranged", true, "copiedFromTimeline", false, "launcherFocus", 0, "focus", 1, "after", clip("Bass")),
-                   SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "copiedFromTimeline", "launcherFocus", "focus", "after"));
-        assertEquals(List.of("selectChannel", "selectSlot", "copy", "playStart", "invoke", "paste"), calls());
+        assertJson(obj("arranged", true, "sameAsSource", true, "copiedFromTimeline", false, "launcherFocus", 0, "focus", 1, "after", clip("Bass")),
+                   SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "sameAsSource", "copiedFromTimeline", "launcherFocus", "focus", "after"));
+        assertEquals(List.of("selectChannel", "selectSlot", "clipColour", "copy", "playStart", "invoke", "paste"), calls());
     }
 
     @Test
     @DisplayName("says so when Bitwig pasted the clip into the launcher instead")
     void saysWhenBitwigPastedIntoTheLauncher() {
         studio(m -> m.pasteInLauncher = true);
-        assertJson(obj("arranged", false, "copiedFromTimeline", false, "at", 16, "layout", "ARRANGE", "launcher", shown(true, true), "launcherFocus", 1,
-                       "timeline", shown(true, true), "focus", 1, "before", clip(null), "beforePaste", clip(null), "after", clip(null),
+        assertJson(obj("arranged", false, "appeared", false, "sameAsSource", false, "copiedFromTimeline", false, "at", 16, "layout", "ARRANGE",
+                       "launcher", shown(true, true), "mark", mark(CLIP_GREY, MARK_1, MARK_1, true), "launcherFocus", 1, "timeline", shown(true, true),
+                       "focus", 1, "before", clip(null), "beforePaste", clip(null), "after", clip(null), "pastedColor", null,
                        "launcherClipsBefore", 1, "launcherClipsAfter", 2),
                    app.waitFor(arrange(1, 0, 0, BAR_5)).get("result"));
         assertEquals(List.of("C:\\MIDI\\Bass.mid", "C:\\MIDI\\Bass.mid"), bitwig.state.tracks.get(0).slots);
+        assertEquals(Map.of(0, MARK_1, 1, MARK_1), bitwig.state.tracks.get(0).clipColours, "the copy keeps the clip's colour");
         assertEquals(List.of(), bitwig.state.arranged);
     }
 
@@ -226,11 +267,11 @@ class ArrangerTest {
         assertEquals(List.of(), app.take(), "waits for Bitwig");
         bitwig.clock.advance(5000);
         Map<String, Object> reply = app.take().get(0);
-        assertJson(obj("arranged", false, "before", clip(null), "beforePaste", clip(null), "after", clip(null),
-                       "launcherClipsBefore", 1, "launcherClipsAfter", 1),
-                   SelfCheckTest.pick(SelfCheckTest.map(reply.get("result")), "arranged", "before", "beforePaste", "after",
-                                      "launcherClipsBefore", "launcherClipsAfter"));
-        assertEquals(List.of("selectChannel", "selectSlot", "invoke", "copy", "playStart", "invoke", "paste"), calls());
+        assertJson(obj("arranged", false, "appeared", false, "sameAsSource", false, "before", clip(null), "beforePaste", clip(null), "after", clip(null),
+                       "pastedColor", null, "launcherClipsBefore", 1, "launcherClipsAfter", 1),
+                   SelfCheckTest.pick(SelfCheckTest.map(reply.get("result")), "arranged", "appeared", "sameAsSource", "before", "beforePaste", "after",
+                                      "pastedColor", "launcherClipsBefore", "launcherClipsAfter"));
+        assertEquals(List.of("selectChannel", "selectSlot", "clipColour", "invoke", "copy", "playStart", "invoke", "paste"), calls());
         // The play start stays where the link put it: only test projects are sent this.
         assertEquals(16.0, bitwig.playStart.v);
     }
@@ -238,8 +279,8 @@ class ArrangerTest {
     @Test
     @DisplayName("stops at the step Bitwig doesn't go along with, saying which, and pastes nothing")
     void stopsAtAStepBitwigIgnores() {
-        // Each step, with what the link asked of Bitwig by then: nothing is copied before the clip is selected (with the
-        // launcher showing, and in front), and nothing is pasted unless every step went through.
+        // Each step, with what the link asked of Bitwig by then: nothing is coloured or copied before the clip is selected
+        // (with the launcher showing, and in front), and nothing is pasted unless every step went through.
         fails(m -> {
             m.layout = Application.PANEL_LAYOUT_MIX;
             m.layoutIgnored = true;
@@ -252,18 +293,20 @@ class ArrangerTest {
         fails(m -> {
             m.selectFocuses = true;
             m.focusOnlyHides.add(Link.FOCUS_LAUNCHER);
-        }, "Bitwig hid its clip launcher, which was in front already, and didn't show it again.", "selectChannel", "selectSlot", "invoke", "invoke");
-        fails(m -> m.playStartIgnored = true, "Bitwig didn't move the play start to beat 16.", "selectChannel", "selectSlot", "invoke", "copy", "playStart");
+        }, "Bitwig hid its clip launcher, which was in front already, and didn't show it again.", "selectChannel", "selectSlot", "clipColour", "invoke",
+              "invoke");
+        fails(m -> m.playStartIgnored = true, "Bitwig didn't move the play start to beat 16.", "selectChannel", "selectSlot", "clipColour", "invoke", "copy",
+              "playStart");
         fails(m -> {
             m.timeline = false;
             m.focusIgnored.add(Link.FOCUS_ARRANGER);
-        }, "Bitwig didn't show its arranger timeline.", "selectChannel", "selectSlot", "invoke", "copy", "playStart", "invoke");
+        }, "Bitwig didn't show its arranger timeline.", "selectChannel", "selectSlot", "clipColour", "invoke", "copy", "playStart", "invoke");
         fails(m -> {
             m.focus = FakeBitwig.TIMELINE;
             m.focusIgnored.add(Link.FOCUS_LAUNCHER);
             m.focusOnlyHides.add(Link.FOCUS_ARRANGER);
         }, "Bitwig hid its arranger timeline, which was in front already, and didn't show it again.",
-              "selectChannel", "selectSlot", "invoke", "copy", "playStart", "invoke", "invoke");
+              "selectChannel", "selectSlot", "clipColour", "invoke", "copy", "playStart", "invoke", "invoke");
     }
 
     /** Runs arrange in a studio set up by `setup`, which fails with `error` once the link has asked Bitwig for `calls`, and no more. */
@@ -275,6 +318,80 @@ class ArrangerTest {
         assertEquals(List.of(calls), calls(), "and nothing more afterwards: " + error);
         assertEquals(List.of(), bitwig.state.arranged, error);
         assertEquals(List.of("C:\\MIDI\\Bass.mid"), bitwig.state.tracks.get(0).slots, error);
+    }
+
+    @Test
+    @DisplayName("isn't fooled by a clip that was on Bitwig's clipboard already when the copy didn't take")
+    void tellsItsOwnClipFromWhatWasOnTheClipboard() {
+        // The reviewers' case: the person copied a clip in their own song, Bitwig ignores the launcher focus action and
+        // another panel has the focus, so copy does nothing. Paste puts down their clip, which appears on the track all the
+        // same, but in its own colour, not the launcher clip's.
+        studio(m -> {
+            m.clipboard = new Copied("D:\\Songs\\Night Drive\\Hook.mid", THEIRS);
+            m.focus = "";
+            m.focusIgnored.add(Link.FOCUS_LAUNCHER);
+        });
+        Object result = app.waitFor(arrange(1, 0, 0, BAR_5)).get("result");
+        assertJson(obj("arranged", false, "appeared", true, "sameAsSource", false, "copiedFromTimeline", false, "mark", mark(CLIP_GREY, MARK_1, MARK_1, true),
+                       "launcherFocus", 1, "focus", 1, "beforePaste", clip(null), "after", clip("Bass"), "pastedColor", THEIRS,
+                       "launcherClipsBefore", 1, "launcherClipsAfter", 1),
+                   SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "appeared", "sameAsSource", "copiedFromTimeline", "mark", "launcherFocus",
+                                      "focus", "beforePaste", "after", "pastedColor", "launcherClipsBefore", "launcherClipsAfter"));
+        assertEquals(new Copied("D:\\Songs\\Night Drive\\Hook.mid", THEIRS), bitwig.clipboard, "the copy didn't take");
+        assertEquals(List.of(new Arranged(bitwig.state.tracks.get(0), BAR_5, "D:\\Songs\\Night Drive\\Hook.mid", THEIRS)), bitwig.state.arranged);
+        assertEquals(List.of("selectChannel", "selectSlot", "clipColour", "invoke", "copy", "playStart", "invoke", "paste"), calls());
+    }
+
+    @Test
+    @DisplayName("carries on when Bitwig won't colour the launcher clip, but never says it arranged the clip then")
+    void cantTellItsClipWhenTheColourDoesntTake() {
+        studio(m -> m.colourIgnored = true);
+        app.send(arrange(1, 0, 0, BAR_5));
+        bitwig.clock.advance(4000);
+        assertFalse(calls().contains("copy"), "waits for Bitwig to colour the clip");
+        bitwig.clock.advance(6000);
+        Object result = app.take().get(0).get("result");
+        // The clip went in, but in the colour it always had, which a clip on the clipboard before could have had too.
+        assertJson(obj("arranged", false, "appeared", true, "sameAsSource", false, "mark", mark(CLIP_GREY, MARK_1, CLIP_GREY, false), "after", clip("Bass"),
+                       "pastedColor", CLIP_GREY),
+                   SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "appeared", "sameAsSource", "mark", "after", "pastedColor"));
+        assertEquals(List.of(bassAt(BAR_5, CLIP_GREY)), bitwig.state.arranged);
+        assertEquals(List.of("selectChannel", "selectSlot", "clipColour", "invoke", "copy", "playStart", "invoke", "paste"), calls());
+    }
+
+    @Test
+    @DisplayName("takes the colour Bitwig gives the clip when it rounds the mark to one of its own")
+    void comparesWithTheColourTheClipGot() {
+        studio(m -> m.colourSnaps = true);
+        Object result = app.waitFor(arrange(1, 0, 0, BAR_5)).get("result");
+        assertJson(obj("arranged", true, "appeared", true, "sameAsSource", true, "mark", mark(CLIP_GREY, MARK_1, "#3366CC", true), "pastedColor", "#3366CC"),
+                   SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "appeared", "sameAsSource", "mark", "pastedColor"));
+        assertEquals(List.of(bassAt(BAR_5, "#3366CC")), bitwig.state.arranged);
+    }
+
+    @Test
+    @DisplayName("marks each arrange with a colour of its own, unlike the clip's and the last mark")
+    void marksEachArrangeInAFreshColour() {
+        studio();
+        Object first = app.waitFor(arrange(1, 0, 0, BAR_5)).get("result");
+        assertJson(mark(CLIP_GREY, MARK_1, MARK_1, true), at(first, "mark"));
+        // The same clip again, with nothing selected in the arranger now (as if someone had clicked an empty spot there): it
+        // has the first mark's colour, and gets another.
+        bitwig.state.arrangerSelected = null;
+        bitwig.refresh();
+        Object second = app.waitFor(arrange(2, 0, 0, 32)).get("result");
+        assertJson(obj("arranged", true, "sameAsSource", true, "mark", mark(MARK_1, MARK_2, MARK_2, true), "pastedColor", MARK_2),
+                   SelfCheckTest.pick(SelfCheckTest.map(second), "arranged", "sameAsSource", "mark", "pastedColor"));
+        assertEquals(List.of(bassAt(BAR_5, MARK_1), bassAt(32, MARK_2)), bitwig.state.arranged);
+
+        // A clip that already has the colour that would come next gets the one after.
+        bitwig.state.tracks.get(1).clipColours.put(0, MARK_3);
+        bitwig.refresh();
+        Object third = app.waitFor(arrange(3, 1, 0, BAR_5)).get("result");
+        assertJson(obj("arranged", true, "mark", mark(MARK_3, MARK_4, MARK_4, true), "pastedColor", MARK_4),
+                   SelfCheckTest.pick(SelfCheckTest.map(third), "arranged", "mark", "pastedColor"));
+        assertEquals(List.of(List.of("clipColour", 0, 0, MARK_1), List.of("clipColour", 0, 0, MARK_2), List.of("clipColour", 1, 0, MARK_4)),
+                     bitwig.calls.stream().filter(c -> c.get(0).equals("clipColour")).collect(Collectors.toList()));
     }
 
     @Test

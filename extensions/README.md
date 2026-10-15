@@ -130,7 +130,7 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 | `clicked` (3) | | The parameter last clicked in Bitwig: `exists` (false until one is), `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated`, `locked` |
 | `recorder` ✎ (3) | `do`: `"start"`, `"stop"` or `"status"` (the default) | Bitwig's master recorder, once it has started or stopped: `active`, `duration` (milliseconds recorded) |
 | `selftest` (3) | | The self-check (see [the extension's README](bitwig-java/README.md#reports)), written to the reports folder, with `file` |
-| `arrange` ✎ (3) | `track`, `slot` (a launcher slot with a clip), `at` (optional: where in the arranger, in beats from the start; the play start by default) | **An experiment**, from extension 3.6, which only the live tests send ([below](#clips-in-the-arranger-an-experiment)). Once its steps are through, whether it worked or not: `arranged`, `copiedFromTimeline` (the arranger timeline had the focus when the link copied, so it didn't paste), `at`, `layout` (before), `launcher` and `timeline` (`before` and `after`: whether the Arrange layout's clip launcher, and the arranger timeline, showed), `launcherFocus` and `focus` (how many times the link ran Bitwig's `focus_or_toggle_clip_launcher` and `focus_or_toggle_arranger`), `before`, `beforePaste` and `after` (the clip selected in the arranger: `exists`, and its `track`'s name), `launcherClipsBefore` and `launcherClipsAfter` (the track's clips in its first 8 launcher slots) |
+| `arrange` ✎ (3) | `track`, `slot` (a launcher slot with a clip), `at` (optional: where in the arranger, in beats from the start; the play start by default) | **An experiment**, from extension 3.6, which only the live tests send ([below](#clips-in-the-arranger-an-experiment)). Once its steps are through, whether it worked or not: `arranged` (both of the next two), `appeared` (a clip showed up selected on the track after the paste, with the track's launcher clips as they were), `sameAsSource` (that clip has the launcher clip's marking colour, so it's a copy of that clip and not whatever was on Bitwig's clipboard before), `copiedFromTimeline` (the arranger timeline had the focus when the link copied, so it didn't paste), `at`, `layout` (before), `launcher` and `timeline` (`before` and `after`: whether the Arrange layout's clip launcher, and the arranger timeline, showed), `mark` (the fresh colour the link gave the launcher clip before it copied: the clip's colour `before`, the one `asked` for, the one it `got`, each `#RRGGBB`, and whether it `took`), `launcherFocus` and `focus` (how many times the link ran Bitwig's `focus_or_toggle_clip_launcher` and `focus_or_toggle_arranger`), `before`, `beforePaste` and `after` (the clip selected in the arranger: `exists`, and its `track`'s name), `pastedColor` (the colour of the clip selected in the arranger at the end, `#RRGGBB`, or null when none is), `launcherClipsBefore` and `launcherClipsAfter` (the track's clips in its first 8 launcher slots) |
 
 ✎ needs changes turned on. (3) only in link version 3, the extension. `insert` with a track, `newtrack`,
 `clip`, `pads`, `transpose`, `recorder` and `arrange` wait for Bitwig to make the change (up to 5 seconds for
@@ -171,10 +171,19 @@ Bitwig's controller API (23) can put a clip in a launcher slot, but not on the a
 slots have insertion points. The app would like what it sends (*To Bitwig* from FL Studio, the Kit builder) to
 land in the arranger, so extension 3.6 tries the only other way, Bitwig's own editing, as a person would do it.
 `arrange` switches to the Arrange layout if another one shows, shows its clip launcher if it's hidden, selects
-the track and its launcher clip, gives the clip launcher the focus, copies the clip (`Application.copy`), moves
-the play start to `at`, brings the arranger timeline to the front and pastes (`Application.paste`), which puts
-the copy on the selected track. Each step waits for Bitwig to show it, and the request fails, saying which step,
-when Bitwig doesn't. Nothing is pasted unless the clip was copied first.
+the track and its launcher clip, gives the clip a fresh colour, gives the clip launcher the focus, copies the clip
+(`Application.copy`), moves the play start to `at`, brings the arranger timeline to the front and pastes
+(`Application.paste`), which puts the copy on the selected track. Each step waits for Bitwig to show it, and the
+request fails, saying which step, when Bitwig doesn't (all but the colour: see below).
+
+Paste puts down whatever is on Bitwig's clipboard, which every open project shares. When the copy didn't take,
+that's whatever was copied before: a clip you copied in your own song, or the last run's copy. To tell its own
+clip from that, the link marks the launcher clip with a fresh colour before it copies (`mark`): a new hue each
+time, a golden-ratio step round the colour wheel from the last one, and clearly unlike the clip's colour then.
+It waits for Bitwig to show the new colour (Bitwig may round it to one of its own, so any clear change counts)
+and keeps the colour the clip `got`, which the pasted clip's colour is compared with. When Bitwig doesn't change
+the clip's colour, the link carries on, with `took` false, but can't tell its clip from another. The launcher
+clip keeps its new colour: only the test project gets this.
 
 Bitwig copies and pastes in whichever of its panels has the focus, and the API can't say which one has it. The
 link brings a panel to the front with Bitwig's actions `focus_or_toggle_clip_launcher` (when Bitwig has one by
@@ -185,14 +194,17 @@ when it does. When `focus_or_toggle_arranger` hid the timeline, the timeline had
 and says `copiedFromTimeline`.
 
 Nobody knows yet whether Bitwig goes along with copy and paste from an extension, so once the steps are through
-the answer always says what Bitwig showed. `arranged` is true when the clip selected in the arranger (Bitwig's
+the answer always says what Bitwig showed. `appeared` is true when the clip selected in the arranger (Bitwig's
 arranger cursor clip, which follows a pasted clip) has moved to the track, where it wasn't just before the paste,
 and the track's launcher clips are as they were; more launcher clips after than before means Bitwig pasted into
-the launcher instead. The API can't say where an arranger clip starts, so `at` is where it was meant to go, and
-only a look at Bitwig shows whether it's there. Copy replaces whatever was on Bitwig's clipboard (one for every
-project open), and nothing is undone when it doesn't work (the layout and the play start stay as the link left
-them), so only the live tests send it, in their own test project (*Changes › Clip to arranger*); the app's sends
-don't use it yet. In the app it's `BitwigLink.ArrangeAsync`.
+the launcher instead. `sameAsSource` is true when the mark took and the clip selected in the arranger has the
+colour the launcher clip got (`pastedColor`, within 2 of 255 in each of red, green and blue), and `arranged` when
+both are. A clip that appeared in another colour is whatever Bitwig's clipboard held before. The API can't say
+where an arranger clip starts, so `at` is where it was meant to go, and only a look at Bitwig shows whether it's
+there. Copy replaces whatever was on Bitwig's clipboard (one for every project open), and nothing is undone when
+it doesn't work (the layout, the play start and the launcher clip's colour stay as the link left them), so only
+the live tests send it, in their own test project (*Changes › Clip to arranger*); the app's sends don't use it
+yet. In the app it's `BitwigLink.ArrangeAsync`.
 
 ### Sending into Bitwig
 
@@ -300,10 +312,13 @@ What runs, in this order:
 - **Changes**: a new track with a name and colour; the Sampler, Note Transpose and Drum Machine by ID; the
   Sampler's and Note Transpose's pitch, read back; a sample into a Sampler; a MIDI clip; that clip copied
   into the arranger at bar 5 (Java extension 3.6 or later, and
-  [an experiment](#clips-in-the-arranger-an-experiment): Passed when the link sees the pasted clip selected
-  in the arranger on the clip's track, though it can't see where the clip starts, so it asks you to look at
-  bar 5; else Failed, saying what Bitwig did instead, or the step it didn't go along with, and asking you to
-  look at Bitwig's arranger and say what you see); Drum Machine pads; selecting a device, setting a
+  [an experiment](#clips-in-the-arranger-an-experiment): Passed when the link sees a clip in the launcher
+  clip's marking colour appear selected in the arranger on the clip's track, though it can't see where the
+  clip starts, so it asks you to look at bar 5; Failed when a clip in another colour appeared there, as Bitwig
+  pasted what its clipboard held before, so the copy didn't take (that clip can be deleted); Noted when a clip
+  appeared but Bitwig wouldn't recolour the launcher clip, asking you to look and say which clip it is; else
+  Failed, saying what Bitwig did instead, or the step it didn't go along with, and asking you to look at
+  Bitwig's arranger and say what you see); Drum Machine pads; selecting a device, setting a
   parameter and reading it back (then setting it back); the master recorder's status (Java only; it's
   never started); and, after Send, Save, then the unsaved changes clear.
 - **MO Probe**, as a CLAP and then as a VST3, each on a new track: it waits for the probe's live status,
@@ -339,7 +354,8 @@ Projects folder, or in one of the app's project folders), then turn on *Let the 
 (“Devices 143012”, “Kit 143012”…) and saves. With the Java extension, a run also copies its MIDI clip into
 the arranger ([an experiment](#clips-in-the-arranger-an-experiment)): the copy replaces whatever you had
 copied in Bitwig, in any project, since Bitwig has one clipboard; and the test project is left in its Arrange
-layout, with its clip launcher showing, the play start at bar 5 and a pasted clip on the run's Sample track.
+layout, with its clip launcher showing, the play start at bar 5, the run's MIDI clip in the launcher in a new
+colour (a different one each run) and a pasted clip on the run's Sample track.
 The link can't delete tracks, so clear them out by hand now and then, or save a fresh “MO Live Test 2”
 (Bitwig lists only the first 128 tracks to the app). The samples and the MIDI file a run sends in are in
 `files` next to the reports, the same every run, so the project goes on playing them.
@@ -384,7 +400,9 @@ Bitwig:
       timeline and pastes the clip there at the play start when the extension asks (the live tests' *Changes ›
       Clip to arranger*); whether its window has to be in front for that; whether the arranger cursor clip
       follows the pasted clip, as the link expects; whether Bitwig has `focus_or_toggle_clip_launcher`, and
-      whether selecting a launcher slot from the API gives the launcher the focus without it.
+      whether selecting a launcher slot from the API gives the launcher the focus without it; whether a launcher
+      clip's colour set from the API shows as asked (or rounded to Bitwig's palette), and whether the pasted
+      clip keeps it, which `sameAsSource` relies on.
 - [ ] Parameter IDs from `device` look like `CONTENTS/PID3e8`, and `set` takes them back.
 - [ ] `insert` takes the scanner's VST3 class ID as Bitwig wants it, and a UUID for its own devices.
 - [ ] The words `type` and `kind` use (e.g. `Instrument`, `note_to_audio`).

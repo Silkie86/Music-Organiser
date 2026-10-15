@@ -68,6 +68,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -94,8 +95,8 @@ import java.util.regex.Pattern;
  * Besides the project (tracks, tempo, actions...), the {@link Model} says what Bitwig would make of things the app
  * inserts (files, presets, plugins and knobs by name, a Drum Machine), as the JavaScript stand-in's model does,
  * and what's new to the extension: tracks' IDs, a device's remote controls page, the last clicked parameter, the
- * master recorder, the arranger (with copy and paste, for the arrange experiment), and parts of the API that fail, as
- * in a Bitwig that changed.
+ * master recorder, the arranger (with copy and paste, for the arrange experiment, and launcher and arranger clips' colours,
+ * which copy and paste carry with the clip), and parts of the API that fail, as in a Bitwig that changed.
  */
 final class FakeBitwig {
     static final String SAMPLER = Link.SAMPLER;
@@ -148,8 +149,8 @@ final class FakeBitwig {
     String focus;
     /** The launcher slot selected, as {track, scene}, or null. */
     private int[] slotSelected;
-    /** What Bitwig's clipboard holds: the clip copied last (the file it came from), or null. */
-    String clipboard;
+    /** What Bitwig's clipboard holds: the clip copied last, with its colour, or null. */
+    Copied clipboard;
     /** The arranger's cursor clip: the clip selected in the arranger. */
     final ArrangerClip arrangerClip = new ArrangerClip();
     /** "Let the app make changes", once init has asked for it. */
@@ -197,8 +198,20 @@ final class FakeBitwig {
         Arranged arrangerSelected;
     }
 
-    /** A clip in the arranger: its track, where it starts (in beats), and the clip it's a copy of (the file it came from). */
-    record Arranged(TrackSpec track, double start, String clip) {}
+    /**
+     * A clip in the arranger: its track, where it starts (in beats), the clip it's a copy of (the file it came from), and
+     * its colour (#RRGGBB).
+     */
+    record Arranged(TrackSpec track, double start, String clip, String colour) {}
+
+    /** What Bitwig's clipboard holds: a clip (the file it came from) and its colour (#RRGGBB), which a paste keeps. */
+    record Copied(String clip, String colour) {}
+
+    /**
+     * The colour of a launcher clip that hasn't been given one, on a track without a colour of its own (a clip on a track
+     * with one shows the track's, as a new clip in Bitwig does).
+     */
+    static final String CLIP_GREY = "#808080";
 
     private FakeBitwig(Model model, Path reports) {
         this.model = model;
@@ -216,6 +229,7 @@ final class FakeBitwig {
         launcherShown = model.launcher;
         playStartAt = model.playStart;
         focus = model.focus;
+        clipboard = model.clipboard;
         layout = new Value(StringValue.class, layoutNow);
         timeline = new Value(SettableBooleanValue.class, timelineShown, v -> later(20, () -> timelineShown = (Boolean) v));
         launcher = new Value(SettableBooleanValue.class, launcherShown, v -> {
@@ -251,6 +265,7 @@ final class FakeBitwig {
         host = new Host();
         link = new Link((ControllerHost) host.api, new Reports(reports, clock), clock);
         link.loadedFrom = model.loadedFrom;
+        link.markHue = model.markHue;
     }
 
     /**
@@ -453,28 +468,43 @@ final class FakeBitwig {
 
     /**
      * Copy, in the panel with the focus: Bitwig's clipboard takes the launcher clip selected (with the clip launcher in
-     * front), or the clip selected in the arranger (with the arranger timeline in front). With another panel in front,
-     * or nothing selected, the clipboard keeps what it had.
+     * front), or the clip selected in the arranger (with the arranger timeline in front), with its colour. With another
+     * panel in front, or nothing selected, the clipboard keeps what it had.
      */
     private void copy() {
         calls.add(List.of("copy"));
         later(20, () -> {
-            String clip = null;
+            Copied copied = null;
             if (LAUNCHER.equals(focus) && launcherShown && slotSelected != null) {
                 TrackSpec track = trackSpec(slotSelected[0]);
-                clip = track != null && slotSelected[1] < track.slots.size() ? track.slots.get(slotSelected[1]) : null;
+                int scene = slotSelected[1];
+                if (track != null && scene < track.slots.size() && track.slots.get(scene) != null)
+                    copied = new Copied(track.slots.get(scene), clipColour(track, scene));
             } else if (TIMELINE.equals(focus) && timelineShown && state.arrangerSelected != null) {
-                clip = state.arrangerSelected.clip();
+                copied = new Copied(state.arrangerSelected.clip(), state.arrangerSelected.colour());
             }
-            if (clip != null) clipboard = clip;
+            if (copied != null) clipboard = copied;
         });
+    }
+
+    /** A launcher clip's colour: its own, or else its track's (CLIP_GREY on a track without one). */
+    static String clipColour(TrackSpec track, int scene) {
+        String own = track.clipColours.get(scene);
+        if (own != null) return own;
+        return track.colour != null ? hex(track.colour) : CLIP_GREY;
+    }
+
+    /** A colour (red, green and blue from 0 to 1) as the stand-in keeps it: #RRGGBB. */
+    static String hex(float[] rgb) {
+        return String.format(Locale.ROOT, "#%02X%02X%02X", Math.round(rgb[0] * 255), Math.round(rgb[1] * 255), Math.round(rgb[2] * 255));
     }
 
     /**
      * Paste: with the arranger timeline shown and in front, a copy of the clip goes on the selected track at the play
      * start, and is selected there (so the arranger's cursor clip follows it); with the clip launcher in front, it goes in
-     * the track's next empty slot after the one selected. With another panel in front, nothing happens. The model can
-     * make Bitwig ignore paste, or paste into the launcher whichever panel is in front.
+     * the track's next empty slot after the one selected. Either way the copy has the colour the clip had when it was
+     * copied. With another panel in front, nothing happens. The model can make Bitwig ignore paste, or paste into the
+     * launcher whichever panel is in front.
      */
     private void paste() {
         calls.add(List.of("paste"));
@@ -482,14 +512,15 @@ final class FakeBitwig {
             TrackSpec track = cursorSpec();
             if (model.pasteIgnored || clipboard == null || track == null) return;
             if (TIMELINE.equals(focus) && timelineShown && !model.pasteInLauncher) {
-                Arranged made = new Arranged(track, playStartAt, clipboard);
+                Arranged made = new Arranged(track, playStartAt, clipboard.clip(), clipboard.colour());
                 state.arranged.add(made);
                 state.arrangerSelected = made;
             } else if (LAUNCHER.equals(focus) && launcherShown || model.pasteInLauncher) {
                 int s = slotSelected != null && slotSelected[0] == cursorIndex ? slotSelected[1] + 1 : 0;
                 while (s < track.slots.size() && track.slots.get(s) != null) s++;
                 while (track.slots.size() <= s) track.slots.add(null);
-                track.slots.set(s, clipboard);
+                track.slots.set(s, clipboard.clip());
+                track.clipColours.put(s, clipboard.colour());
                 state.scenes = Math.max(state.scenes, s + 1);
             }
         });
@@ -526,6 +557,7 @@ final class FakeBitwig {
         playStart.v = playStartAt;
         Arranged selectedClip = state.arrangerSelected;
         arrangerClip.present.v = selectedClip != null;
+        arrangerClip.colour.show(selectedClip == null ? null : selectedClip.colour());
         arrangerClip.track.present.v = selectedClip != null;
         arrangerClip.track.title.v = selectedClip == null ? "" : selectedClip.track().name;
         if (tracks == null) return;   // the extension couldn't make its track bank: nothing more to tell it
@@ -727,6 +759,17 @@ final class FakeBitwig {
         boolean pasteIgnored;
         /** Whether Bitwig pastes into the clip launcher, whichever panel has the focus. */
         boolean pasteInLauncher;
+        /** What's on Bitwig's clipboard at first, as if someone had copied a clip in their own song, or null for nothing. */
+        Copied clipboard;
+        /** Whether Bitwig ignores giving a launcher clip a colour. */
+        boolean colourIgnored;
+        /**
+         * Whether Bitwig rounds a launcher clip's colour to one of its own, as it may to its palette: here each of red, green
+         * and blue to the nearest multiple of 0x33.
+         */
+        boolean colourSnaps;
+        /** The hue the link's marking colours start from (see Link.markHue), so a test knows which colours come. */
+        double markHue;
 
         Model tracks(TrackSpec... list) {
             tracks.addAll(Arrays.asList(list));
@@ -748,6 +791,8 @@ final class FakeBitwig {
         final List<DeviceSpec> devices = new ArrayList<>();
         /** Each clip slot's clip (the file it came from), or null where the slot is empty. */
         final List<String> slots = new ArrayList<>();
+        /** The colours (#RRGGBB) of the launcher clips that have one of their own, by slot (see clipColour). */
+        final Map<Integer, String> clipColours = new HashMap<>();
 
         TrackSpec(String name, String type) {
             this.name = name;
@@ -791,6 +836,7 @@ final class FakeBitwig {
             t.id = id;
             for (DeviceSpec d : devices) t.devices.add(d.copy());
             t.slots.addAll(slots);
+            t.clipColours.putAll(clipColours);
             return t;
         }
     }
@@ -1200,6 +1246,14 @@ final class FakeBitwig {
 
         void set(float red, float green, float blue) {
             onSet.accept(new float[] {red, green, blue});
+        }
+
+        /** Shows a colour written #RRGGBB, or black for none, as Bitwig reports a colour. */
+        void show(String hex) {
+            int n = hex == null ? 0 : Integer.parseInt(hex.substring(1), 16);
+            r = (n >> 16 & 0xFF) / 255f;
+            g = (n >> 8 & 0xFF) / 255f;
+            b = (n & 0xFF) / 255f;
         }
     }
 
@@ -1620,6 +1674,8 @@ final class FakeBitwig {
         final Value present = new Value(BooleanValue.class, false);
         final Value content = new Value(BooleanValue.class, false);
         final Value selected = new Value(BooleanValue.class, false);
+        /** The clip's colour. Setting it colours the clip a moment later, unless the model says Bitwig ignores that. */
+        final Colour colour;
         private final int track;
         private final int scene;
 
@@ -1627,6 +1683,24 @@ final class FakeBitwig {
             super(ClipLauncherSlot.class);
             this.track = track;
             this.scene = scene;
+            colour = new Colour(rgb -> {
+                calls.add(Arrays.asList("clipColour", track, scene, hex(rgb)));
+                String made = hex(model.colourSnaps ? snapped(rgb) : rgb);
+                later(20, () -> {
+                    TrackSpec at = trackSpec(track);
+                    if (model.colourIgnored || at == null || scene >= at.slots.size() || at.slots.get(scene) == null) return;
+                    at.clipColours.put(scene, made);
+                });
+            });
+        }
+
+        /** Each of red, green and blue rounded to the nearest multiple of 0x33, as Bitwig's palette might. */
+        private float[] snapped(float[] rgb) {
+            return new float[] {Math.round(rgb[0] * 5) / 5f, Math.round(rgb[1] * 5) / 5f, Math.round(rgb[2] * 5) / 5f};
+        }
+
+        Colour color() {
+            return colour;
         }
 
         Value exists() {
@@ -1652,6 +1726,7 @@ final class FakeBitwig {
                 later(40, () -> {
                     while (at.slots.size() <= scene) at.slots.add(null);
                     at.slots.set(scene, (String) arg);
+                    at.clipColours.remove(scene);   // a new clip, in its track's colour
                     state.scenes = Math.max(state.scenes, scene + 1);
                 });
             });
@@ -1727,7 +1802,9 @@ final class FakeBitwig {
                 for (int s = 0; s < slots.items.size(); s++) {
                     Slot slot = (Slot) slots.items.get(s);
                     slot.present.v = s < state.scenes;
-                    slot.content.v = s < spec.slots.size() && spec.slots.get(s) != null;
+                    boolean clip = s < spec.slots.size() && spec.slots.get(s) != null;
+                    slot.content.v = clip;
+                    slot.colour.show(clip ? clipColour(spec, s) : null);
                     slot.selected.v = slotSelected != null && slotSelected[0] == index && slotSelected[1] == s;
                 }
             }
@@ -1879,9 +1956,12 @@ final class FakeBitwig {
         }
     }
 
-    /** The arranger's cursor clip: the clip selected in the arranger, and the track it's on. */
+    /** The arranger's cursor clip: the clip selected in the arranger, its colour, and the track it's on. */
     static final class ArrangerClip extends Stand {
         final Value present = new Value(BooleanValue.class, false);
+        final Colour colour = new Colour(rgb -> {
+            throw new IllegalStateException("The link only reads the arranger clip's colour.");
+        });
         final ClipTrack track = new ClipTrack();
 
         ArrangerClip() {
@@ -1890,6 +1970,10 @@ final class FakeBitwig {
 
         Value exists() {
             return present;
+        }
+
+        Colour color() {
+            return colour;
         }
 
         ClipTrack getTrack() {

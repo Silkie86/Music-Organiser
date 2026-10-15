@@ -503,22 +503,24 @@ public class BitwigLiveTestsTests
         var arranged = await link.ArrangeAsync(4, 0, 16);
         var sent = java.Requests.Last();
         Assert.Equal(("arrange", 4, 0, 16.0), ((string)sent["cmd"]!, (int)sent["track"]!, (int)sent["slot"]!, (double)sent["at"]!));
-        Assert.Equal(new BitwigArranged(true, false, 16, "ARRANGE", new(false, true), 1, new(true, true), 1, new(false, null), new(false, null),
-                                        new(true, "Sample 143012"), 1, 1),
+        Assert.Equal(new BitwigArranged(true, true, true, false, 16, "ARRANGE", new(false, true), new("#3366CC", "#416DD9", "#416DD9", true), 1,
+                                        new(true, true), 1, new(false, null), new(false, null), new(true, "Sample 143012"), "#416DD9", 1, 1),
                      arranged);
 
         // What the live test makes of it: what the link saw, where the clip was meant to go (which only a look at Bitwig can
         // confirm), and all the extension said, with whether Bitwig was in front.
         var verdict = BitwigLiveTests.ArrangeVerdict(arranged, "Sample 143012", 0, 5, true);
         Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
-        Assert.Equal("Bitwig pasted a copy of the clip in launcher slot 1 into its arranger on “Sample 143012”: the clip selected in the arranger " +
-                     "moved to “Sample 143012”, and the track kept its 1 clip in the launcher. It was meant to go in at bar 5 (beat 16), where the " +
+        Assert.Equal("Bitwig pasted a copy of the clip in launcher slot 1 into its arranger on “Sample 143012”: a clip in the launcher clip's own " +
+                     "marking colour (#416DD9) appeared in the arranger on “Sample 143012”, so it's the run's MIDI clip, and the track kept its 1 " +
+                     "clip in the launcher. It was meant to go in at bar 5 (beat 16), where the " +
                      "link moved the play start, but the link can't read where an arranger clip starts: look at bar 5 on “Sample 143012” in " +
                      "Bitwig's arranger and say whether it's there.", verdict.Detail);
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""
-            {"arranged":true,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE","launcher":{"before":false,"after":true},"launcherFocus":1,
+            {"arranged":true,"appeared":true,"sameAsSource":true,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE",
+             "launcher":{"before":false,"after":true},"mark":{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true},"launcherFocus":1,
              "timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},
-             "after":{"exists":true,"track":"Sample 143012"},"launcherClipsBefore":1,"launcherClipsAfter":1,"front":true}
+             "after":{"exists":true,"track":"Sample 143012"},"pastedColor":"#416DD9","launcherClipsBefore":1,"launcherClipsAfter":1,"front":true}
             """), verdict.Data), verdict.Data!.ToJsonString());
         Assert.Contains(" in the launcher (giving the clip launcher the focus took two goes: the first hid it). ",
                         BitwigLiveTests.ArrangeVerdict(arranged with { LauncherFocus = 2 }, "Sample 143012", 0, 5, null).Detail);
@@ -533,7 +535,8 @@ public class BitwigLiveTestsTests
         const string start = "Bitwig didn't put the clip into its arranger at bar 5 (beat 16) on “Sample 143012”: ";
         BitwigArrangerClip none = new(false, null), there = new(true, track), elsewhere = new(true, "Bass");
         static BitwigArranged Answer(BitwigArrangerClip beforePaste, BitwigArrangerClip after, int launcherAfter = 1, bool timelineAfter = true) =>
-            new(false, false, 16, "ARRANGE", new(true, true), 1, new(true, timelineAfter), 1, beforePaste, beforePaste, after, 1, launcherAfter);
+            new(false, false, false, false, 16, "ARRANGE", new(true, true), Marked, 1, new(true, timelineAfter), 1, beforePaste, beforePaste, after,
+                after.Exists ? "#416DD9" : null, 1, launcherAfter);
         string Detail(BitwigArranged a, bool? front = true)
         {
             var verdict = BitwigLiveTests.ArrangeVerdict(a, track, 0, 5, front);
@@ -569,6 +572,58 @@ public class BitwigLiveTestsTests
 
     const string Ask = " Look at Bitwig's arranger at bar 5 on “Sample 143012” and say what you see there (the clip, nothing, or the clip somewhere " +
                        "else), so the link can be put right.";
+
+    /** The launcher clip, marked with a fresh colour before the copy, as the extension says it. */
+    static readonly BitwigClipMark Marked = new("#3366CC", "#416DD9", "#416DD9", true);
+
+    [Fact]
+    public void ArrangeTellsTheRunsClipFromWhatWasOnTheClipboardByItsColour()
+    {
+        const string track = "Sample 143012";
+        // A clip appeared on the track after the paste, as when it worked.
+        var appeared = new BitwigArranged(false, true, false, false, 16, "ARRANGE", new(true, true), Marked, 1, new(true, true), 1, new(false, null),
+                                          new(false, null), new(true, track), "#2E8B57", 1, 1);
+
+        // In another colour than the launcher clip's mark: Bitwig pasted whatever its clipboard held before (a clip copied in
+        // someone's own song, say), so the copy didn't take. Failed, whatever the clip's place.
+        var other = BitwigLiveTests.ArrangeVerdict(appeared, track, 0, 5, true);
+        Assert.Equal(LiveOutcome.Failed, other.Outcome);
+        const string start = "Bitwig didn't put the clip into its arranger at bar 5 (beat 16) on “Sample 143012”: a clip appeared on “Sample 143012” " +
+                             "after the paste, but it isn't the launcher clip (its colour is #2E8B57, and the link coloured the launcher clip #416DD9). " +
+                             "Bitwig pasted whatever was already on its clipboard, so copying from the launcher didn't take: ";
+        const string end = ". The test project now has that other clip on “Sample 143012” at bar 5, which can be deleted.";
+        Assert.Equal(start + "the link ran focus_or_toggle_clip_launcher first (once), so either that didn't give the clip launcher the focus or Bitwig " +
+                     "doesn't copy launcher clips for an extension" + end, other.Detail);
+        // The data is the whole answer, with the mark and the pasted clip's colour.
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true}"""), other.Data!["mark"]),
+                    other.Data!.ToJsonString());
+        Assert.Equal("#2E8B57", (string?)other.Data["pastedColor"]);
+        Assert.True((bool?)other.Data["appeared"]);
+        Assert.True((bool?)other.Data["front"]);
+        Assert.Equal(start + "Bitwig has no focus_or_toggle_clip_launcher action, so the link copied from whichever panel had the focus" + end +
+                     " The app couldn't bring Bitwig's window to the front, which copy and paste may need.",
+                     BitwigLiveTests.ArrangeVerdict(appeared with { LauncherFocus = 0 }, track, 0, 5, false).Detail);
+        Assert.Equal(start + "the link ran focus_or_toggle_clip_launcher first (twice, as the first go hid the launcher), so either that didn't give " +
+                     "the clip launcher the focus or Bitwig doesn't copy launcher clips for an extension" + end,
+                     BitwigLiveTests.ArrangeVerdict(appeared with { LauncherFocus = 2 }, track, 0, 5, null).Detail);
+
+        // Bitwig didn't let the link colour the launcher clip, so the clip that appeared can't be told from another: Noted,
+        // asking the person to look.
+        var unmarked = appeared with { Mark = new("#3366CC", "#416DD9", "#3366CC", false), PastedColor = "#3366CC" };
+        var noted = BitwigLiveTests.ArrangeVerdict(unmarked, track, 0, 5, true);
+        Assert.Equal(LiveOutcome.Noted, noted.Outcome);
+        Assert.Equal("A clip appeared in Bitwig's arranger on “Sample 143012” after the paste, but Bitwig didn't let the link colour the launcher clip " +
+                     "in slot 1, so the link can't tell whether it's the run's MIDI clip or whatever was on Bitwig's clipboard before. Look at bar 5 " +
+                     "on “Sample 143012” in Bitwig's arranger and say which clip it is.", noted.Detail);
+        Assert.False((bool)noted.Data!["mark"]!["took"]!);
+        Assert.EndsWith(" The app couldn't bring Bitwig's window to the front, which copy and paste may need.",
+                        BitwigLiveTests.ArrangeVerdict(unmarked, track, 0, 5, false).Detail);
+
+        // Passed only with the clip in the mark's colour, as the extension says when it's the same as the launcher clip.
+        var passed = BitwigLiveTests.ArrangeVerdict(appeared with { Arranged = true, SameAsSource = true, PastedColor = "#416DD9" }, track, 0, 5, true);
+        Assert.Equal(LiveOutcome.Passed, passed.Outcome);
+        Assert.Contains("a clip in the launcher clip's own marking colour (#416DD9) appeared in the arranger on “Sample 143012”", passed.Detail);
+    }
 
     /// <summary>The Java extension 3.6 with a test project open, changes allowed.</summary>
     const string ArrangingHello =
@@ -812,8 +867,9 @@ sealed class FakeJavaBitwig : IAsyncDisposable
         ["actions"] = """[{"id":"Save","name":"Save","category":"File","menu":"Save"}]""",
         ["clicked"] = """{"exists":true,"name":"Cutoff","value":0.25,"display":"440 Hz","steps":-1,"origin":0,"automated":true,"locked":false}""",
         ["selftest"] = """{"time":"2026-10-14T14:30:12Z","why":"asked","ok":false,"extension":"3.0","link":3,"file":"C:\\reports\\bitwig\\x-selfcheck.json","checks":[{"name":"remote connection","ok":true,"detail":"listening on 19791","ms":1},{"name":"cursor device","ok":true,"detail":"","ms":0},{"name":"reports folder","ok":false,"detail":"Access is denied.","ms":2}]}""",
-        // Extension 3.6's experiment, as it answers when Bitwig put the clip in its arranger.
-        ["arrange"] = """{"arranged":true,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE","launcher":{"before":false,"after":true},"launcherFocus":1,"timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},"after":{"exists":true,"track":"Sample 143012"},"launcherClipsBefore":1,"launcherClipsAfter":1}""",
+        // Extension 3.6's experiment, as it answers when Bitwig put the clip in its arranger: the clip that appeared there has
+        // the colour the extension marked the launcher clip with.
+        ["arrange"] = """{"arranged":true,"appeared":true,"sameAsSource":true,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE","launcher":{"before":false,"after":true},"mark":{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true},"launcherFocus":1,"timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},"after":{"exists":true,"track":"Sample 143012"},"pastedColor":"#416DD9","launcherClipsBefore":1,"launcherClipsAfter":1}""",
     };
 
     /// <summary>Every request that came in, as it came.</summary>
