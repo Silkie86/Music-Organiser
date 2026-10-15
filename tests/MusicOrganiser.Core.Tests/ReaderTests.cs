@@ -116,11 +116,55 @@ public class FlStudioTests
     }
 
     [Fact]
-    public void RejectsNonFlpFiles()
+    public void ListsEmptyAndDamagedFilesWithWhatsWrong()
     {
-        var p = Path.Combine(Fixtures.TempDir(), "bad.flp");
-        File.WriteAllText(p, "not a project");
-        Assert.Throws<InvalidDataException>(() => new FlStudioReader().Read(p));
+        const string damaged = "This file is empty or damaged: it doesn't start the way an FL Studio project does, so there's nothing in it to read";
+        var dir = Fixtures.TempDir();
+        var files = new Dictionary<string, byte[]>
+        {
+            ["empty.flp"] = [],
+            ["text.flp"] = "not a project"u8.ToArray(),
+            // What disk damage left in one: an NTFS directory index record.
+            ["index.flp"] = [.. "INDX"u8, 0x28, 0, 0x09, 0, .. new byte[40]],
+            // FL's header, then neither an FLdt chunk nor events with FL's version in them.
+            ["junk.flp"] = [.. "FLhd"u8, 6, 0, 0, 0, 0, 0, 3, 0, 96, 0, .. new byte[8], 0xff, 0xff, 0xff, 0xff, 0x7f, 1, 2, 3],
+        };
+        foreach (var (name, bytes) in files)
+        {
+            var p = Path.Combine(dir, name);
+            File.WriteAllBytes(p, bytes);
+            var info = new FlStudioReader().Read(p);
+            Assert.Equal(Confidence.Catalogue, info.Confidence);
+            Assert.Equal([damaged + "."], info.Warnings);
+            Assert.False(info.CanExtractMidi);
+            Assert.Equal(damaged, Assert.Throws<InvalidDataException>(() => Readers.FlStudio.ReadSong(p)).Message);
+        }
+    }
+
+    [Fact]
+    public void ReadsOldSavesWithAGarbledDataHeader()
+    {
+        // Some FL Studio 4 to 7 saves have what looks like a memory address and a size where "FLdt" and its length belong.
+        var dir = Fixtures.TempDir();
+        var good = new Fixtures.FlpBuilder()
+            .Ascii(199, "7.0.2").Word(66, 140).Ascii(194, "Side")
+            .Word(64, 0).Byte(21, 0).Ascii(192, "Kick").Ascii(196, @"C:\Samples\Kick.wav")
+            .Word(65, 1).Data(224, Fixtures.Note(0, 0, 96, 60, 100))
+            .Build();
+        var garbled = good.ToArray();
+        new byte[] { 0x60, 0xfb, 0x12, 0x00, 0xd9, 0x4a, 0x06, 0x01 }.CopyTo(garbled, 14);
+        File.WriteAllBytes(Path.Combine(dir, "good.flp"), good);
+        File.WriteAllBytes(Path.Combine(dir, "side.flp"), garbled);
+
+        var (a, b) = (new FlStudioReader().Read(Path.Combine(dir, "good.flp")), new FlStudioReader().Read(Path.Combine(dir, "side.flp")));
+        Assert.Equal(("7.0.2", 140.0, "Side", Confidence.Full), (b.Version, b.Tempo, b.Title, b.Confidence));
+        Assert.Equal(["Kick"], b.Tracks);
+        Assert.Equal(a.Tracks, b.Tracks);
+        Assert.Equal(a.Samples, b.Samples);
+        Assert.Equal(a.Details, b.Details);
+        Assert.Empty(a.Warnings);
+        Assert.Equal(["Saved by an old FL Studio that garbled the start of its data; everything after it was read as usual."], b.Warnings);
+        Assert.Equal(1, Readers.FlStudio.ReadSong(Path.Combine(dir, "side.flp")).Channels.Single().Notes.Count);
     }
 
     [Fact]
