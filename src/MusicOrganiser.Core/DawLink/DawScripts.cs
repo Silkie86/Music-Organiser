@@ -158,8 +158,13 @@ public static class DawScripts
     {
         var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(picked));
         var parent = Path.GetDirectoryName(folder);
+        var name = Path.GetFileName(folder);
         // Extensions or Controller Scripts first: one with a Library folder of its own in it would pass as a user folder.
-        if (parent is not null && BitwigFolders.Contains(Path.GetFileName(folder), StringComparer.OrdinalIgnoreCase) && IsBitwigUserFolder(parent))
+        // The folder it's in counts when it's called Bitwig Studio or has another of Bitwig's folders, so an Extensions,
+        // Library or Projects folder somewhere else (D:\Music\Projects, say) doesn't make its parent the user folder.
+        if (parent is not null && BitwigFolders.Contains(name, StringComparer.OrdinalIgnoreCase) &&
+            (Path.GetFileName(parent).Equals("Bitwig Studio", StringComparison.OrdinalIgnoreCase) ||
+             BitwigFolders.Any(d => !d.Equals(name, StringComparison.OrdinalIgnoreCase) && Directory.Exists(Path.Combine(parent, d)))))
             return parent;
         if (IsBitwigUserFolder(folder)) return folder;
         // Deeper in: a Bitwig Studio folder with Bitwig's folders in it (not, say, the one Bitwig is installed in).
