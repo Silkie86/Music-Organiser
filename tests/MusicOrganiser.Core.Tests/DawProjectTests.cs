@@ -250,6 +250,31 @@ public class DawProjectTests
     }
 
     [Fact]
+    public void LeavesOutWhatAnAutomatedChannelPlaysWhileItsOffAndSwitchesOffInsertEffectsSwitchedOffInFl()
+    {
+        var dir = Fixtures.TempDir();
+        var (file, notes, _) = Exporter.DawProjectFromFl(Fixtures.FlStudio25SwitchedAndMixer(dir), Path.Combine(dir, "out"));
+        Assert.Contains("Bass: switched on and off by \"Bass - Mute / solo\" in FL Studio, so what it plays while it's off is muted", notes);
+        Assert.Contains("Pro-Q 3 - Gain: automation left out (automating mixer effects isn't carried over to DAWproject yet)", notes);
+        Assert.Contains("Tempo: automation left out (tempo automation isn't carried over yet; the project is set to 120 BPM)", notes);
+        Assert.DoesNotContain(notes, n => n.Contains("Bass - Mute / solo: automation left out") || n.StartsWith("Bass: switched off"));
+        var (project, zip) = Open(file);
+        using (zip)
+        {
+            // The bass's track isn't muted; its clip at beats 0-4 is switched off, and its note on beat 10 left out.
+            var bass = project.Descendants("Track").Single(t => (string?)t.Attribute("name") == "Bass");
+            Assert.Equal("false", (string)bass.Element("Channel")!.Element("Mute")!.Attribute("value")!);
+            var lane = project.Descendants("Lanes").Single(l => (string?)l.Attribute("track") == (string)bass.Attribute("id")!);
+            Assert.Equal(["false", "true", "true"], lane.Descendants("Clip").Select(c => (string?)c.Attribute("enable") ?? "true"));
+            Assert.Equal(["2"], lane.Descendants("Clip").Last().Descendants("Note").Select(n => (string)n.Attribute("time")!));
+            // Insert 1's WOW2 is switched off, as in FL.
+            Assert.Equal([("Pro-Q 3", "true"), ("WOW2", "false")],
+                         project.Descendants("Vst2Plugin").Where(d => (string?)d.Attribute("deviceRole") == "audioFX")
+                                .Select(d => ((string)d.Attribute("deviceName")!, (string)d.Element("Enabled")!.Attribute("value")!)));
+        }
+    }
+
+    [Fact]
     public void WritesADawProjectBitwigCanOpen()
     {
         var dir = Fixtures.TempDir();
