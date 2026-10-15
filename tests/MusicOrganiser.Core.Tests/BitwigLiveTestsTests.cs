@@ -55,6 +55,23 @@ public class BitwigLiveTestsTests
     static string Listing(BitwigProject p) => string.Join("; ", p.Tracks.Select(t => $"{t.Name}: {string.Join(", ", t.Devices.Select(d => d.Name))}"));
 
     [Fact]
+    public void LooksForTheSavedProjectWhereverTheLibrarysBitwigProjectsAre()
+    {
+        // Seen: Bitwig's extensions in Documents\Bitwig Studio, its projects on another drive, which the library has.
+        var dir = Fixtures.TempDir();
+        var documents = Directory.CreateDirectory(Path.Combine(dir, "Documents", "Bitwig Studio", "Projects")).Parent!.FullName;
+        var projects = Directory.CreateDirectory(Path.Combine(dir, "K", "Bitwig Studio", "Projects")).FullName;
+        string[] library =
+        [
+            Path.Combine(projects, "Night Drive", "Night Drive.bwproject"),
+            Path.Combine(projects, "Loop Idea", "Loop Idea.bwproject"),
+            Path.Combine(dir, "Exports", "Bounce.bwproject"),   // not in a Projects folder, so its folder isn't searched
+        ];
+        Assert.Equal([Path.Combine(documents, "Projects"), projects],
+                     BitwigLiveTests.ProjectFolders([documents, Path.Combine(dir, "Gone")], library));
+    }
+
+    [Fact]
     public async Task RunsEveryAreaInATestProject()
     {
         var dir = Fixtures.TempDir();
@@ -132,6 +149,8 @@ public class BitwigLiveTestsTests
         Assert.Equal(run.Passed, (int)json["counts"]!["passed"]!);
         var roundTrip = json["tests"]!.AsArray().Single(t => (string)t!["name"]! == "Round trip")!;
         Assert.Equal(20, roundTrip["data"]!["ms"]!.AsArray().Count);
+        var actions = json["tests"]!.AsArray().Single(t => (string)t!["name"]! == "Actions")!["data"]!["actions"]!.AsArray();
+        Assert.Contains(actions, a => (string)a!["id"]! == "Save" && (string)a["category"]! == "File");
         var md = File.ReadAllText(run.ReportMarkdown!);
         Assert.Contains($"**{run.Summary}**", md);
         Assert.DoesNotContain("## Failed", md);
@@ -384,6 +403,50 @@ public class BitwigLiveTestsTests
         Assert.Contains("Tracks Bitwig shows that the app didn't read: “Vocals”.", different.Detail);
         Assert.Contains("Devices Bitwig shows that the app didn't find: “EQ+” on Vocals.", different.Detail);
         Assert.Equal(path, (string)different.Data!["file"]!);
+    }
+
+    [Fact]
+    public void SaveSaysWhetherBitwigWroteTheProject()
+    {
+        const string file = "K:/Bitwig Studio/Projects/MO Live Test/MO Live Test.bwproject";
+        var then = new DateTime(2026, 10, 15, 8, 43, 0, DateTimeKind.Utc);
+        var now = then.AddSeconds(25);
+        var wait = TimeSpan.FromSeconds(15);
+        LiveVerdict Save(bool stillModified, string? path, DateTime? before, DateTime? after) =>
+            BitwigLiveTests.SaveVerdict("MO Live Test", "Save", true, stillModified, TimeSpan.FromMilliseconds(120), wait, path, before, after);
+
+        var cleared = Save(false, file, then, now);
+        Assert.Equal(LiveOutcome.Passed, cleared.Outcome);
+        Assert.Equal($"Bitwig saved “MO Live Test”: its unsaved changes cleared 120 ms after Save, and wrote {file}.", cleared.Detail);
+        Assert.Equal("2026-10-15T08:43:00.000Z", (string?)cleared.Data!["writtenBefore"]);
+        Assert.Equal("2026-10-15T08:43:25.000Z", (string?)cleared.Data!["writtenAfter"]);
+
+        // Written, though the unsaved changes didn't clear: saved, and the detail says what looked odd.
+        var stayed = Save(true, file, then, now);
+        Assert.Equal(LiveOutcome.Passed, stayed.Outcome);
+        Assert.StartsWith($"Bitwig wrote {file} after Save, but still showed unsaved changes 15 s later", stayed.Detail);
+        Assert.Equal(true, (bool?)stayed.Data!["modifiedAfter"]);
+
+        // A first save: no file before, one after.
+        Assert.Equal(LiveOutcome.Passed, Save(true, file, null, now).Outcome);
+
+        var unwritten = Save(true, file, then, then);
+        Assert.Equal(LiveOutcome.Failed, unwritten.Outcome);
+        Assert.StartsWith($"Bitwig still showed unsaved changes 15 s after Save (“Save”), and didn't write {file}.", unwritten.Detail);
+
+        var unfound = Save(true, null, null, null);
+        Assert.Equal(LiveOutcome.Failed, unfound.Outcome);
+        Assert.Contains("the app didn't find the project's file to see whether it was written", unfound.Detail);
+        Assert.Null(unfound.Data!["file"]);
+
+        // Whether Bitwig's window was in front, which Save may need.
+        LiveVerdict Front(bool? front) =>
+            BitwigLiveTests.SaveVerdict("MO Live Test", "Save", true, true, TimeSpan.FromMilliseconds(120), wait, file, then, then, front);
+        Assert.Contains($"didn't write {file}, though its window was in front.", Front(true).Detail);
+        Assert.Contains($"didn't write {file}. The app couldn't bring Bitwig's window to the front, which Save may need: click on Bitwig while " +
+                        "the run saves.", Front(false).Detail);
+        Assert.Equal(false, (bool?)Front(false).Data!["front"]);
+        Assert.Null(unfound.Data!["front"]);
     }
 
     [Fact]

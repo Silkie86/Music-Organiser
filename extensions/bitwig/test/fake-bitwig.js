@@ -105,7 +105,7 @@ class Device {
     this.specifics = [];
     this.values = {
       exists: new Value(false), name: new Value(""), presetName: new Value(""),
-      isPlugin: new Value(false), deviceType: new Value(""), isEnabled: new Value(true),
+      isPlugin: new Value(false), deviceType: new Value(""), isEnabled: new Value(true), sampleName: new Value(""),
     };
   }
   load(spec) {
@@ -117,6 +117,7 @@ class Device {
     v.isPlugin.v = !!(spec && spec.plugin);
     v.deviceType.v = spec ? spec.kind || "audio_to_audio" : "";
     v.isEnabled.v = !spec || spec.enabled !== false;
+    v.sampleName.v = spec && spec.sample ? path.basename(spec.sample.replace(/\\/g, "/")) : "";
     for (const p of this.specifics) {
       const mine = !!spec && spec.id === p.id;
       p.present.v = mine;
@@ -130,6 +131,7 @@ class Device {
   isPlugin() { return this.values.isPlugin; }
   deviceType() { return this.values.deviceType; }
   isEnabled() { return this.values.isEnabled; }
+  sampleName() { return this.values.sampleName; }
   createSpecificBitwigDevice(id) {
     const key = typeof id === "string" ? id : id.uuid;
     return { createParameter: (param) => {
@@ -244,7 +246,7 @@ class DrumPad {
       const pad = world.padAt(index);
       if (pad) pad.name = name;
     }));
-    this.chain = new Bank([]);
+    this.chain = new Bank([new PadDevice(world, index)]);
     this.point = insertionPoint(world.calls, `pad ${index}`, (m, arg) => {
       const device = world.padDevice();
       if (m !== "insertFile" || !AUDIO.test(arg) || !device) return;
@@ -261,6 +263,22 @@ class DrumPad {
   name() { return this.title; }
   createDeviceBank() { return this.chain; }
   insertionPoint() { return this.point; }
+}
+
+/** A pad's first device. A sample put in its place takes the place of the pad's first device as a Sampler. */
+class PadDevice extends Device {
+  constructor(world, index) {
+    super(world);
+    this.replace = insertionPoint(world.calls, `pad ${index} first device`, (m, arg) => {
+      const device = world.padDevice();
+      if (m !== "insertFile" || !AUDIO.test(arg) || !device) return;
+      world.later(40, () => {
+        const pad = device.pads && device.pads[world.padScroll + index];
+        if (pad && pad.devices.length) pad.devices[0] = { name: "Sampler", id: SAMPLER, kind: "note_to_audio", sample: arg };
+      });
+    });
+  }
+  replaceDeviceInsertionPoint() { return this.replace; }
 }
 
 class DrumPadBank extends Bank {
@@ -384,9 +402,12 @@ function baseName(file) {
  * app inserts: `files` (path -> the device a preset loads), `presets` (true to load any preset file, as
  * the plugin its name starts with: "Serum - Lead.vstpreset"), `plugins` ("VST3:<id>", "VST2:<number>",
  * "CLAP:<id>" -> the device), `drumMachine` (the UUID that adds a Drum Machine here), `scenes` (how many
- * scenes the project has), `padScroll` (where the pad list starts) and `browserOnNewTrack` (whether a new
- * track opens Bitwig's browser). A device can list its `knobs`, which the script sees once it's selected,
+ * scenes the project has), `padScroll` (where the pad list starts), `drumPads` (the devices on every pad of
+ * a new Drum Machine, as a saved default Drum Machine can have: Solomon's has an empty Sampler on each) and
+ * `browserOnNewTrack` (whether a new track opens Bitwig's browser). A device can list its `knobs`, which the script sees once it's selected,
  * and `knobs` can give them by device name ("Serum" -> its knobs) for whatever the app inserts.
+ * `portInUse` is the port Bitwig gives the link when 19791 is taken, and `portUnknown` how many times
+ * Bitwig says -1 when asked which port it gave (Bitwig 6.1.3 does, straight after making the connection).
  */
 function startBitwig(model = {}) {
   const clock = {
@@ -408,13 +429,22 @@ function startBitwig(model = {}) {
   };
   const calls = [];
   const errors = [];
+  let portUnknown = model.portUnknown || 0;
   const popups = [];
   const state = { tracks: (model.tracks || []).map(trackState), scenes: model.scenes === undefined ? 8 : model.scenes, count: null };
   const builtIn = {
     [SAMPLER]: { name: "Sampler", id: SAMPLER, kind: "note_to_audio", params: { TRANSPOSE: 0 } },
     [NOTE_TRANSPOSE]: { name: "Note Transpose", id: NOTE_TRANSPOSE, kind: "note_to_note", params: { COARSE: 0 } },
   };
-  if (model.drumMachine) builtIn[model.drumMachine] = { name: "Drum Machine", id: model.drumMachine, kind: "note_to_audio", drum: true };
+  if (model.drumMachine) {
+    const machine = { name: "Drum Machine", id: model.drumMachine, kind: "note_to_audio", drum: true };
+    if (model.drumPads) {
+      machine.pads = {};
+      for (let note = 0; note < 128; note++)
+        machine.pads[note] = { name: model.drumPads[0].name, devices: model.drumPads.map((d) => ({ ...d })) };
+    }
+    builtIn[model.drumMachine] = machine;
+  }
   const browser = { open: new Value(false), exists() { return this.open; }, cancel() { calls.push(["cancelBrowser"]); this.open.v = false; } };
 
   const world = {
@@ -588,6 +618,7 @@ function startBitwig(model = {}) {
         pad.present.v = !!p;
         pad.title.v = p ? p.name : "";
         pad.chain.count.v = p ? p.devices.length : 0;
+        pad.chain.items[0].load(p ? p.devices[0] : null);
       });
     }
   }
@@ -617,7 +648,13 @@ function startBitwig(model = {}) {
     }),
     createRemoteConnection: (name, port) => ({
       setClientConnectCallback(cb) { connect = cb; },
-      getPort: () => model.portInUse || port,
+      getPort: () => {
+        if (portUnknown > 0) {
+          portUnknown--;
+          return -1;
+        }
+        return model.portInUse || port;
+      },
     }),
     showPopupNotification: (text) => popups.push(text),
     getHostProduct: () => "Bitwig Studio",

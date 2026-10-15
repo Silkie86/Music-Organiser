@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.musicorganiser.bitwig.FakeBitwig.NOTE_TRANSPOSE;
+import static org.musicorganiser.bitwig.FakeBitwig.SAMPLER;
 import static org.musicorganiser.bitwig.FakeBitwig.action;
 import static org.musicorganiser.bitwig.FakeBitwig.device;
 import static org.musicorganiser.bitwig.FakeBitwig.knob;
@@ -82,7 +83,7 @@ class LinkTest {
         MusicOrganiserExtensionDefinition definition = (MusicOrganiserExtensionDefinition) found.get(0);
 
         // The script's identity (MusicOrganiser.control.js's defineController), so Bitwig keeps the controller it has.
-        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.0"),
+        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.4"),
                      List.of(definition.getHardwareVendor(), definition.getHardwareModel(), definition.getName(), definition.getAuthor(),
                              definition.getVersion()));
         assertEquals(UUID.fromString("ed35e3c7-c544-49ed-936d-c236b0c9b73b"), definition.getId());
@@ -108,11 +109,27 @@ class LinkTest {
                        "project", "Night Drive", "modified", false, "engine", true, "changes", false,
                        "onlyIn", true,   // it honours a request's onlyIn
                        // Link version 3: which link this is.
-                       "runtime", "java", "extension", "3.0"),
+                       "runtime", "java", "extension", "3.4"),
                    hello.get("result"));
         assertJson(obj("id", 1, "ok", true, "result", hello.get("result")), app.ask(obj("id", 1, "cmd", "hello")));
         assertEquals(List.of(), bitwig.popups);
         assertEquals(List.of(), bitwig.errors);
+    }
+
+    @Test
+    @DisplayName("says which file Bitwig loaded it from, as Bitwig may load extensions from another folder than its projects'")
+    void saysWhereItWasLoadedFrom() {
+        Model model = song();
+        model.loadedFrom = "C:\\Users\\me\\Documents\\Bitwig Studio\\Extensions\\MusicOrganiser.bwextension";
+        FakeBitwig bitwig = start(model);
+        App app = bitwig.connect();
+        Map<String, Object> hello = app.take().get(0);
+        assertEquals(model.loadedFrom, ((Map<?, ?>) hello.get("result")).get("loadedFrom"));
+
+        // A class from an archive gives its file; the extension's own classes here come from a folder, which isn't one.
+        Path junit = Path.of(Link.loadedFrom(Test.class));
+        assertTrue(junit.getFileName().toString().endsWith(".jar"), junit.toString());
+        assertEquals("", Link.loadedFrom(Link.class));
     }
 
     @Test
@@ -122,7 +139,39 @@ class LinkTest {
         m.portInUse = 50123;
         FakeBitwig bitwig = start(m);
         assertMatches("port 19791 is taken", bitwig.popups.get(0));
+        // Most often by the link itself, loaded twice.
+        assertMatches("listed twice in Bitwig's Settings > Controllers, remove one", bitwig.popups.get(0));
         assertEquals(List.of("Music Organiser: waiting for the app on port 50123."), bitwig.printed);
+    }
+
+    @Test
+    @DisplayName("doesn't say the port is taken while Bitwig hasn't said which port it gave")
+    void waitsForBitwigToSayWhichPort() {
+        // Bitwig 6.1.3 says -1 straight after making the connection, and the app connects on 19791 all the same.
+        Model m = song();
+        m.portUnknown = 1000;
+        FakeBitwig bitwig = start(m);
+        bitwig.clock.advance(2000);
+        assertEquals(List.of(), bitwig.popups);
+        assertEquals(List.of("Music Organiser: waiting for the app on port 19791."), bitwig.printed);
+        App app = bitwig.connect();
+        assertEquals(19791, ((Number) at(app.take().get(0), "result", "port")).intValue());
+        assertEquals(List.of(), bitwig.popups);
+    }
+
+    @Test
+    @DisplayName("says the port is taken once Bitwig says it gave another")
+    void warnsOnceBitwigSaysWhichPort() {
+        Model m = song();
+        m.portUnknown = 1;
+        m.portInUse = 50123;
+        FakeBitwig bitwig = start(m);
+        assertEquals(List.of(), bitwig.popups);
+        bitwig.clock.advance(1000);
+        assertEquals(1, bitwig.popups.size());
+        assertMatches("port 19791 is taken", bitwig.popups.get(0));
+        bitwig.connect().take();
+        assertEquals(1, bitwig.popups.size());
     }
 
     @Test
@@ -509,7 +558,7 @@ class LinkTest {
             obj("note", 38, "path", "C:\\Kit\\Snare.wav", "name", "Snare"),
             obj("note", 42, "path", "C:\\Kit\\notes.txt", "name", "Closed hat"));
         Map<String, Object> reply = app.waitFor(obj("id", 3, "cmd", "pads", "track", 1, "device", 0, "pads", pads));
-        assertJson(obj("filled", list(36, 38), "skipped", list(), "failed", list(42)), reply.get("result"));
+        assertJson(obj("filled", list(36, 38), "replaced", list(), "skipped", list(), "failed", list(42), "taken", list()), reply.get("result"));
         assertFalse(bitwig.pads.indication, "doesn't light up the pads in Bitwig");
         Map<Integer, FakeBitwig.PadSpec> filled = bitwig.state.tracks.get(1).devices.get(0).pads;
         assertEquals(List.of(36, 38), new ArrayList<>(filled.keySet()));
@@ -518,8 +567,34 @@ class LinkTest {
         // A pad with something on it is left alone.
         Map<String, Object> again = app.waitFor(obj("id", 4, "cmd", "pads", "track", 1, "device", 0,
                                                     "pads", list(obj("note", 36, "path", "C:\\Kit\\Kick 2.wav"), obj("note", 37, "path", "C:\\Kit\\Rim.wav"))));
-        assertJson(obj("filled", list(37), "skipped", list(36), "failed", list()), again.get("result"));
+        assertJson(obj("filled", list(37), "replaced", list(), "skipped", list(36), "failed", list(),
+                       "taken", list(obj("note", 36, "name", "Kick", "devices", 1, "first", "Sampler", "sample", "Kick.wav"))),
+                   again.get("result"));
         assertEquals(1, filled.get(36).devices.size());
+    }
+
+    @Test
+    @DisplayName("puts samples in place of the empty Samplers a default Drum Machine has on its pads, keeping what's after them")
+    void fillsADefaultDrumMachinesEmptySamplers() {
+        // Solomon's default Drum Machine has an empty Sampler on every pad.
+        studio(m -> m.drumPads = List.of(device("Sampler").id(SAMPLER).kind("note_to_audio"), device("Compressor")));
+        app.waitFor(obj("id", 1, "cmd", "newtrack", "name", "Kit #8"));
+        app.waitFor(obj("id", 2, "cmd", "insert", "track", 1, "kind", "bitwig", "device", DRUM_MACHINE));
+        List<Object> kit = list(obj("note", 36, "path", "C:\\Kit\\Kick.wav", "name", "Kick"), obj("note", 38, "path", "C:\\Kit\\Snare.wav"));
+        assertJson(obj("filled", list(36, 38), "replaced", list(36, 38), "skipped", list(), "failed", list(), "taken", list()),
+                   app.waitFor(obj("id", 3, "cmd", "pads", "track", 1, "device", 0, "pads", kit)).get("result"));
+        Map<Integer, FakeBitwig.PadSpec> pads = bitwig.state.tracks.get(1).devices.get(0).pads;
+        assertEquals(List.of("Sampler", "Compressor"), pads.get(36).devices.stream().map(d -> d.name).collect(Collectors.toList()));
+        assertEquals(List.of("Kick", "C:\\Kit\\Kick.wav"), List.of(pads.get(36).name, pads.get(36).devices.get(0).sample));
+        assertEquals("C:\\Kit\\Snare.wav", pads.get(38).devices.get(0).sample);
+        assertNull(pads.get(40).devices.get(0).sample);
+
+        // A pad whose Sampler has a sample now is left alone.
+        assertJson(obj("filled", list(40), "replaced", list(40), "skipped", list(36), "failed", list(),
+                       "taken", list(obj("note", 36, "name", "Kick", "devices", 2, "first", "Sampler", "sample", "Kick.wav"))),
+                   app.waitFor(obj("id", 4, "cmd", "pads", "track", 1, "device", 0,
+                                   "pads", list(obj("note", 36, "path", "C:\\Kit\\Kick 2.wav"), obj("note", 40, "path", "C:\\Kit\\Rim.wav")))).get("result"));
+        assertEquals("C:\\Kit\\Kick.wav", pads.get(36).devices.get(0).sample);
     }
 
     @Test
@@ -552,7 +627,7 @@ class LinkTest {
         app.waitFor(obj("id", 1, "cmd", "insert", "track", 0, "at", "start", "kind", "bitwig", "device", DRUM_MACHINE));
         app.waitFor(obj("id", 2, "cmd", "select", "track", 0, "device", 0));
         assertEquals(true, at(app.waitFor(obj("id", 3, "cmd", "device")), "result", "drumPads"));
-        assertJson(obj("filled", list(40), "skipped", list(), "failed", list()),
+        assertJson(obj("filled", list(40), "replaced", list(), "skipped", list(), "failed", list(), "taken", list()),
                    app.waitFor(obj("id", 4, "cmd", "pads", "pads", list(obj("note", 40, "path", "C:\\Kit\\Snare 2.wav")))).get("result"));
         assertEquals(List.of(40), new ArrayList<>(bitwig.state.tracks.get(0).devices.get(0).pads.keySet()));
 
@@ -724,7 +799,7 @@ class LinkTest {
                      pads.entrySet().stream().map(e -> List.<Object>of(e.getKey(), e.getValue().name)).collect(Collectors.toList()));
 
         bitwig.projectName.v = "Night Drive";
-        assertJson(obj("filled", list(40), "skipped", list(), "failed", list()),
+        assertJson(obj("filled", list(40), "replaced", list(), "skipped", list(), "failed", list(), "taken", list()),
                    app.waitFor(obj("id", 3, "cmd", "pads", "track", 0, "device", 0, "pads", list(obj("note", 40, "path", "C:\\Kit\\Tom.wav", "name", "Low Tom")),
                                    "onlyIn", "Night Drive")).get("result"));
         assertEquals("Low Tom", pads.get(40).name);
@@ -748,7 +823,7 @@ class LinkTest {
         assertNull(bitwig.state.tracks.get(0).devices.get(0).pads);
 
         bitwig.projectName.v = "Night Drive";
-        assertJson(obj("filled", list(40), "skipped", list(), "failed", list()),
+        assertJson(obj("filled", list(40), "replaced", list(), "skipped", list(), "failed", list(), "taken", list()),
                    app.waitFor(obj("id", 3, "cmd", "pads", "track", 0, "device", 0, "pads", list(obj("note", 40, "path", "C:\\Kit\\Tom.wav", "name", "Low Tom")),
                                    "onlyIn", "Night Drive")).get("result"));
         assertEquals("Low Tom", bitwig.state.tracks.get(0).devices.get(0).pads.get(40).name);

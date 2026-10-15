@@ -66,7 +66,7 @@ and the self-check says what went wrong.
 
 ## What's new in link version 3
 
-`hello` says `link: 3`, `runtime: "java"` and `extension` (this extension's version). (`engine` still says
+`hello` says `link: 3`, `runtime: "java"`, `extension` (this extension's version) and `loadedFrom` (the file Bitwig loaded it from, when it can tell, so the app can put the next version there). (`engine` still says
 whether Bitwig's audio engine is on.) The rest is additions, which the app can ignore:
 
 - `project`: each track's `id`, the ID Bitwig keeps it under, once Bitwig has said.

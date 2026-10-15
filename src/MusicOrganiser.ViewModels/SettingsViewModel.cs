@@ -16,9 +16,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>FL Studio's user data folder, when it was chosen here.</summary>
     public const string FlUserDataKey = "fl_user_data";
     public const string BitwigUserKey = "bitwig_user_folder";
+    /// <summary>The Extensions folder Bitwig was last seen loading the extension from, which Install puts it in too.</summary>
+    public const string BitwigLoadsFromKey = "bitwig_extensions_folder";
 
     readonly LibraryDb _db;
     readonly MainViewModel _main;
+    /// <summary>The <see cref="BitwigLoadsFromKey"/> setting as last read or kept, so each look doesn't read it again.</summary>
+    string? _bitwigLoadsFrom;
     /// <summary>Where the live tests' reports go: reports\live in the app's data folder.</summary>
     readonly string _liveReports;
 
@@ -105,17 +109,22 @@ public sealed partial class SettingsViewModel : ObservableObject
         SoundOutput = new SoundOutputSetting(db, Ui.Current.SoundOutputs);
         Links =
         [
-            new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.BitwigLink(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey))),
+            // Into the chosen user folder, each one found in Documents, and the Extensions folder Bitwig loaded it from.
+            new DawLinkSetting("Bitwig Studio", () => BitwigSteps,
+                               () => DawScripts.BitwigLink(DawScripts.BitwigLinkFolders(db.GetSetting(BitwigUserKey)),
+                                                           loadedFrom: db.GetSetting(BitwigLoadsFromKey)),
                                () => CheckBitwig(watch), new FolderChoice(
-                "Choose Bitwig's user folder (the Bitwig Studio folder Bitwig shows in Settings > Locations)",
-                DawScripts.IsBitwigUserFolder,
-                "That doesn't look like Bitwig's user folder: it's called Bitwig Studio, with Library or Projects folders in it. " +
-                "Bitwig shows where it is in Settings > Locations.",
-                f => db.SetSetting(BitwigUserKey, f), "From now on Install puts the link there, and nowhere else."),
+                "Choose Bitwig's user folder (the Bitwig Studio folder that holds Extensions, Library and Projects; Bitwig shows it in Settings > Locations)",
+                DawScripts.BitwigUserFolderFrom,
+                "That isn't Bitwig's user folder or a folder in it. It's the Bitwig Studio folder that holds Extensions, Library and " +
+                "Projects, and Bitwig shows where it is in Settings > Locations.",
+                f => db.SetSetting(BitwigUserKey, f),
+                "From now on the app looks for Bitwig projects there. Install puts the link there too, as well as in each Bitwig Studio " +
+                "folder in Documents and where Bitwig was seen loading it from, as Bitwig may load extensions from another folder."),
                 liveTests: liveTests),
             new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), () => CheckFlStudio(watch), new FolderChoice(
                 "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
-                DawScripts.IsFlUserData,
+                DawScripts.FlUserDataFrom,
                 "That isn't FL Studio's user data folder: it has Settings, Presets and Projects folders in it. " +
                 "FL Studio shows where it is in Options > File settings.",
                 f => db.SetSetting(FlUserDataKey, f)), flPort),
@@ -146,6 +155,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     public void ShowLive(LiveDawsViewModel live)
     {
         foreach (var link in Links) link.ShowLive(live.State(link.Daw));
+        // Where Bitwig loads the extension from, for Install to put the next version there.
+        if (DawScripts.BitwigExtensionsFolder(live.State(DawState.Bitwig)?.LoadedFrom) is { } folder &&
+            !string.Equals(folder, _bitwigLoadsFrom ??= _db.GetSetting(BitwigLoadsFromKey) ?? "", StringComparison.OrdinalIgnoreCase))
+            _db.SetSetting(BitwigLoadsFromKey, _bitwigLoadsFrom = folder);
     }
 
     /// <summary>
@@ -165,7 +178,8 @@ public sealed partial class SettingsViewModel : ObservableObject
             ProbeFolder = Probe.Folder,
             PluginFolders = () => plugins,
             ScannedProbes = _db.ScannedPluginsNamed(BitwigLiveTests.ProbeName),
-            BitwigUserFolders = () => DawScripts.BitwigUserFolders(_db.GetSetting(BitwigUserKey)),
+            BitwigUserFolders = () => DawScripts.BitwigLinkFolders(_db.GetSetting(BitwigUserKey)),
+            BringBitwigToFront = () => DawWindows.BringToFront("Bitwig"),
             LibraryProjects = () =>
             {
                 var drums = _db.ProjectsUsingPlugin(BitwigSend.DrumMachine).ToHashSet();
@@ -410,11 +424,11 @@ public sealed partial class DawSetting : ObservableObject
 
 /// <summary>Where a DAW keeps its files, when the app has to ask.</summary>
 /// <param name="Prompt">What the folder picker asks for.</param>
-/// <param name="IsRight">Whether a folder is the right kind.</param>
+/// <param name="Find">The folder to keep, from the one picked: it, or the right one it's in. Null if it's neither.</param>
 /// <param name="Wrong">What to say when it isn't.</param>
 /// <param name="Save">Remembers the folder.</param>
 /// <param name="Chosen">What to say once a folder is chosen.</param>
-public sealed record FolderChoice(string Prompt, Func<string, bool> IsRight, string Wrong, Action<string> Save,
+public sealed record FolderChoice(string Prompt, Func<string, string?> Find, string Wrong, Action<string> Save,
                                   string Chosen = "Install puts the script there too.");
 
 /// <summary>
@@ -502,6 +516,11 @@ public sealed partial class DawLinkSetting : ObservableObject
     readonly Func<Task<string>> _check;
     readonly Func<bool> _found;
     readonly FolderChoice? _folder;
+    /// <summary>The extension version Install copies, from the last look (null for a script).</summary>
+    string? _shipped;
+    /// <summary>Whether every folder had the app's own copy at the last look.</summary>
+    bool _current;
+    DawState? _state;
 
     public string Daw { get; }
     /// <summary>What to do in the DAW once the script is installed.</summary>
@@ -550,7 +569,14 @@ public sealed partial class DawLinkSetting : ObservableObject
     {
         try
         {
-            Status = await Task.Run(() => Describe(_script()));
+            Status = await Task.Run(() =>
+            {
+                var script = _script();
+                _shipped = script.Version;
+                _current = script.State == ScriptState.Installed;
+                return Describe(script);
+            });
+            ShowLive(_state);
         }
         catch (Exception e)
         {
@@ -560,14 +586,37 @@ public sealed partial class DawLinkSetting : ObservableObject
         if (LiveTests is not null) await LiveTests.RefreshAsync();
     }
 
-    string Describe(DawScript script) => script.State switch
+    string Describe(DawScript script)
     {
-        ScriptState.NotInstalled when script.Folders.Count == 0 =>
-            $"Not installed, and the app didn't find {Daw}'s folder for it. Install asks where it is.",
-        ScriptState.NotInstalled => "Not installed.",
-        ScriptState.Outdated => "Installed, but an older version. Install it again to update it.",
-        _ => $"Installed in {string.Join(" and ", script.InstalledIn)}.",
-    };
+        var copies = script.Version is { } v ? $"extension {v}" : null;
+        var others = script.InstalledVersions.Where(i => i.Length > 0 && i != script.Version).Distinct().ToList();
+        var newer = others.Where(i => Newer(i, script.Version)).ToList();
+        var older = others.Except(newer).ToList();
+        var state = script.State switch
+        {
+            ScriptState.NotInstalled when script.Folders.Count == 0 =>
+                $"Not installed, and the app didn't find {Daw}'s folder for it. Install asks where it is.",
+            ScriptState.NotInstalled => "Not installed." + (copies is null ? "" : $" Install puts in {copies}."),
+            // From a newer build of the app (another branch, say): Install would go back to this app's own.
+            ScriptState.Outdated when newer.Count > 0 =>
+                $"Installed, and newer ({string.Join(", ", newer)}) than the {copies} this app has: Install would put that older one back.",
+            ScriptState.Outdated => "Installed, but an older version" + (older.Count > 0 ? $" ({string.Join(", ", older)})" : "") +
+                                    (copies is null ? ". Install it again to update it." : $". Install it again to put in {copies}."),
+            _ => $"Installed in {string.Join(" and ", script.InstalledIn)}" + (copies is null ? "." : $" ({copies})."),
+        };
+        if (Folders(script.Leftovers) is { Length: > 0 } leftovers)
+            state += $" There's an old copy in {leftovers} too, which Install removes so {Daw} can't load two.";
+        // Running the app with hot reload (as the Music Organiser (latest) shortcut does) doesn't build the extension again.
+        return script.ChangedSinceBuilt is { } changed
+            ? state + $" The extension the app has was built before its code last changed ({Path.GetFileName(changed)}), so Install would " +
+              "put in an old one: close the app and start it again so it's built anew. If this stays, building it failed, and " +
+              $"{Path.Combine(script.Code!, "build.log")} says why."
+            : state;
+    }
+
+    /// <summary>Whether extension version <paramref name="a"/> is newer than <paramref name="b"/> (3.10 is newer than 3.9).</summary>
+    internal static bool Newer(string? a, string? b) =>
+        Version.TryParse(a, out var x) && Version.TryParse(b, out var y) && x > y;
 
     [RelayCommand]
     async Task Install()
@@ -577,12 +626,13 @@ public sealed partial class DawLinkSetting : ObservableObject
             var script = await Task.Run(_script);
             if (script.Folders.Count == 0)
             {
-                if (!await ChooseFolderAsync()) return;
+                if (await ChooseFolderAsync() is null) return;
                 script = await Task.Run(_script);
             }
             var update = script.State != ScriptState.NotInstalled;
-            await Task.Run(script.Install);
-            Result = update ? $"Updated. Restart {Daw} to load the new version." : $"Installed. Now set it up in {Daw} as described above.";
+            var removed = await Task.Run(script.Install);
+            Result = (update ? $"Updated. Restart {Daw} to load the new version." : $"Installed. Now set it up in {Daw} as described above.") +
+                     Removed(removed);
             // The port shows how it stands with the choice above it.
             if (MidiPort is not null) await MidiPort.SetUpAsync();
         }
@@ -593,26 +643,34 @@ public sealed partial class DawLinkSetting : ObservableObject
         await RefreshAsync();
     }
 
+    /// <summary>The folders these files are in, for a sentence.</summary>
+    static string Folders(IEnumerable<string> files) => string.Join(" and ", files.Select(Path.GetDirectoryName).Distinct());
+
+    /// <summary>What Install removed, as a sentence to add, or "".</summary>
+    string Removed(IReadOnlyList<string> removed) =>
+        removed.Count == 0 ? "" : $" Removed the old {(removed.Count == 1 ? "copy" : "copies")} in {Folders(removed)}, so {Daw} can't load two.";
+
     [RelayCommand]
     async Task ChooseFolder()
     {
-        if (await ChooseFolderAsync())
+        if (await ChooseFolderAsync() is { } folder)
         {
             await RefreshAsync();
-            Result = _folder!.Chosen;
+            Result = $"Using {folder}. {_folder!.Chosen}";
         }
     }
 
-    async Task<bool> ChooseFolderAsync()
+    /// <summary>Asks for the DAW's folder and keeps it. Returns the folder kept, or null.</summary>
+    async Task<string?> ChooseFolderAsync()
     {
-        if (_folder is null || await Ui.Current.PickFolder(_folder.Prompt) is not { } chosen) return false;
-        if (!_folder.IsRight(chosen))
+        if (_folder is null || await Ui.Current.PickFolder(_folder.Prompt) is not { } picked) return null;
+        if (_folder.Find(picked) is not { } folder)
         {
             Result = _folder.Wrong;
-            return false;
+            return null;
         }
-        _folder.Save(chosen);
-        return true;
+        _folder.Save(folder);
+        return folder;
     }
 
     /// <summary>
@@ -632,15 +690,15 @@ public sealed partial class DawLinkSetting : ObservableObject
         var what = "the script";   // or Bitwig's extension, when the app was built with it
         try
         {
-            var (script, state) = await Task.Run(() => { var s = _script(); return (s, s.State); });
+            var (script, state, leftovers) = await Task.Run(() => { var s = _script(); return (s, s.State, s.Leftovers.Count > 0); });
             if (script.Binary) what = "the extension";
-            if (state != ScriptState.Installed) await Task.Run(script.Install);
+            IReadOnlyList<string> removed = state != ScriptState.Installed || leftovers ? await Task.Run(script.Install) : [];
             done = state switch
             {
                 ScriptState.NotInstalled => $"Installed {what}.",
                 ScriptState.Outdated => $"Updated {what}: restart {Daw} to load the new version.",
                 _ => $"{char.ToUpperInvariant(what[0])}{what[1..]} was already installed.",
-            };
+            } + Removed(removed);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -669,17 +727,30 @@ public sealed partial class DawLinkSetting : ObservableObject
         if (LiveTests is not null) LiveTests.Answering = value;
     }
 
-    internal void ShowLive(DawState? state)
+    public void ShowLive(DawState? state)
     {
         if (state is null) return;
+        _state = state;
         IsAnswering = state.Answering;
         Live = state.Answering
             ? $"✓ Answering now: {state.Version}" + (state.Project.Length > 0 ? $", with “{state.Project}” open." : ".") +
               (state.Daw == DawState.Bitwig && !state.Changes
-                  ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "")
+                  ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "") +
+              (state.LoadedFrom is { Length: > 0 } file ? $" Bitwig loads the extension from {Path.GetDirectoryName(file)}." : "") +
+              (state.Extension is { } running && _shipped is { } shipped && running != shipped ? Running(running, shipped) : "")
             : state.Running == true ? $"Not answering right now, though {Daw} is open. Check connection says what's missing."
             : "Not answering right now.";
     }
+
+    /// <summary>What to do when Bitwig runs another extension than the one Install puts in.</summary>
+    string Running(string running, string shipped) =>
+        Newer(running, shipped) ? $" Bitwig is running extension {running}, newer than the {shipped} this app has."
+        // Installed, yet Bitwig runs another: it hasn't restarted since, or it loads extensions from another user folder.
+        : _current ? $" Bitwig is running extension {running}, but {shipped} is installed: restart Bitwig to load it. If it still runs " +
+                     $"{running} after that, Bitwig loads extensions from another folder: use Choose folder… to pick the one Bitwig " +
+                     "shows in Settings > Locations."
+        // Windows won't replace an extension Bitwig has open.
+        : $" Bitwig is running extension {running}, and Install puts in {shipped}: close Bitwig, press Install, then open Bitwig again.";
 
     /// <summary>Asks the DAW to answer, through the script.</summary>
     [RelayCommand]

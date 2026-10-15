@@ -73,6 +73,27 @@ public sealed class AudioTests : IDisposable
     }
 
     [Fact]
+    public void A_wav_that_says_nothing_of_its_byte_rate_still_streams_and_seeks()
+    {
+        var path = Wav("no-rate.wav", 2.5, new WaveFormat(8000, 16, 1));
+        using (var file = File.OpenWrite(path))
+        {
+            file.Position = 28;   // the fmt chunk's bytes a second
+            file.Write(new byte[4]);
+        }
+        using var source = PcmSource.Open(path, 600);
+        var buffer = new float[2];
+
+        Assert.EndsWith(", 2.50 s", source.Describe());   // the player logs this as it starts
+        source.SeekTo(1.5);
+        source.Read(buffer);
+
+        Assert.IsType<StreamSource>(source);
+        Assert.Equal(Sample(12000, 0), buffer[0], 3);
+        Assert.Equal(Sample(12001, 0), buffer[1], 3);
+    }
+
+    [Fact]
     public void A_24_bit_wav_with_a_long_header_streams_too()
     {
         var path = Wav("wide24.wav", 1, new WaveFormatExtensible(8000, 24, 2));
@@ -390,11 +411,13 @@ public sealed class AudioTests : IDisposable
         var clock = Stopwatch.StartNew();
         while (player.Playing is not null && clock.Elapsed < TimeSpan.FromSeconds(3)) Thread.Sleep(20);
 
+        Assert.Null(player.Playing);
         var log = File.ReadAllText(Path.Combine(AudioLog.Folder, "audio.log"));
         Assert.StartsWith(Path.GetTempPath(), AudioLog.Folder);
         Assert.Contains("Output: \"", log);
         Assert.Contains($"Play \"{path}\": streamed by WaveFileReader as 16 bit PCM: 8000Hz 1 channels, {0.3:0.00} s, 8000 Hz, mono", log);
-        Assert.Contains("(to its end)", log);
+        // The tests share one log: this sound's own timing line, after it started, not another test's.
+        Assert.Contains("(to its end)", log[log.LastIndexOf($"Play \"{path}\"", StringComparison.Ordinal)..]);
     }
 
     [AvaloniaFact]
