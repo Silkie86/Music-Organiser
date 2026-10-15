@@ -79,6 +79,8 @@ static class FlArrangement
                     });
                 }
             }
+            // An empty track only shows if it was named: an old project's clips can sit a hundred tracks down.
+            if (clips.Count == 0 && info?.Name is not { Length: > 0 }) continue;
             var kind = kinds.Count == 1 ? kinds.First() : LaneKind.Instrument;
             lanes.Add(new PreviewLane(info?.Name is { Length: > 0 } n ? n : $"Track {t + 1}", kind)
             {

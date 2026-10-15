@@ -83,10 +83,31 @@ public class ArrangementTests
 
         var playlist = ArrangementReader.Read(path)[0];
         Assert.Equal(3, playlist.BeatsPerBar);
-        Assert.Equal(["Track 1", "Keys"], playlist.Lanes.Select(l => l.Name));
-        Assert.Equal(0x0080FF, playlist.Lanes[1].Colour);
-        Assert.Equal(("Verse", 3.0), (playlist.Lanes[1].Clips.Single().Name, playlist.Lanes[1].Clips.Single().Start));
+        Assert.Equal(["Keys"], playlist.Lanes.Select(l => l.Name));   // the empty, unnamed track 1 is left out
+        Assert.Equal(0x0080FF, playlist.Lanes[0].Colour);
+        Assert.Equal(("Verse", 3.0), (playlist.Lanes[0].Clips.Single().Name, playlist.Lanes[0].Clips.Single().Start));
         Assert.Equal([new PreviewMarker(3, "Verse 1")], playlist.Markers);
+    }
+
+    [Fact]
+    public void OldFlProjectsCountTheirPlaylistTracksFrom198()
+    {
+        // FL before 12.9.1 had 199 playlist tracks and saved 198 for the first. Here a clip on track 3 of an FL 11 song.
+        var item = Fixtures.PlaylistItem(0, 1, 384);
+        BitConverter.GetBytes((ushort)196).CopyTo(item, 12);
+        var b = new Fixtures.FlpBuilder()
+            .Ascii(199, "11.0.4").Dword(156, 140_000)
+            .Word(65, 1).Ascii(193, "Beat").Data(224, Fixtures.Note(0, 0, 96, 36, 100))
+            .Word(64, 0).Byte(21, 0).Ascii(203, "Kick")
+            .Data(233, item);
+        var path = Path.Combine(Fixtures.TempDir(), "Old.flp");
+        File.WriteAllBytes(path, b.Build());
+
+        var playlist = ArrangementReader.Read(path)[0];
+        var lane = Assert.Single(playlist.Lanes);
+        Assert.Equal("Track 3", lane.Name);
+        Assert.Equal(("Beat", 0.0, 4.0), (lane.Clips.Single().Name, lane.Clips.Single().Start, lane.Clips.Single().Length));
+        Assert.Single(lane.Clips.Single().Notes);
     }
 
     [Fact]
