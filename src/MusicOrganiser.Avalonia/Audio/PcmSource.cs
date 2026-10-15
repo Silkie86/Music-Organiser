@@ -21,6 +21,9 @@ abstract class PcmSource : IDisposable
 
     public virtual void Dispose() { }
 
+    /// <summary>Where the sound comes from and its format as read, for the audio log.</summary>
+    public abstract string Describe();
+
     /// <summary>
     /// Opens a file to play. WAV and AIFF (and on Windows MP3, FLAC and the rest) stream from disk;
     /// anything those readers can't take is decoded whole by the Sound Lab's reader, up to
@@ -119,6 +122,8 @@ sealed class MemorySource : PcmSource
 
     public override void SeekTo(double seconds) => _frame = (int)Math.Clamp(seconds * _rate, 0, Frames);
 
+    public override string Describe() => $"decoded into memory, {Frames / (double)_rate:0.00} s";
+
     public override int Read(float[] interleaved)
     {
         var n = Math.Min(interleaved.Length / Channels, Frames - _frame);
@@ -139,6 +144,8 @@ sealed class StreamSource(WaveStream stream) : PcmSource
 
     public override int SampleRate => stream.WaveFormat.SampleRate;
     public override int Channels => Math.Min(_fileChannels, 2);
+
+    public override string Describe() => $"streamed by {stream.GetType().Name} as {stream.WaveFormat}, {stream.TotalTime.TotalSeconds:0.00} s";
 
     /// <summary>Moves to a time, on a whole sample frame so the channels stay in step.</summary>
     public override void SeekTo(double seconds)
