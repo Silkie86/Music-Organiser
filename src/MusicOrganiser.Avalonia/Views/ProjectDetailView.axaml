@@ -367,8 +367,27 @@
                                                             <Run Text="  " />
                                                             <Run Text="{Binding Name}" FontWeight="SemiBold" />
                                                         </TextBlock>
-                                                        <TextBlock Text="{Binding Use, StringFormat='→ {0}'}" IsVisible="{Binding HasUse}" FontSize="12"
-                                                                   Foreground="{StaticResource AccentBrush}" TextTrimming="PrefixCharacterEllipsis" ToolTip.Tip="{Binding Use}" />
+                                                        <!-- Where the project expected it: a clue to where it went (and selectable, to copy). -->
+                                                        <SelectableTextBlock Text="{Binding LookedFor}" IsVisible="{Binding HasLookedFor}" FontSize="11.5"
+                                                                             Foreground="{StaticResource FaintBrush}" TextWrapping="Wrap" Margin="0,1,0,2" />
+                                                        <TextBlock Text="{Binding Use, StringFormat='→ {0}'}" FontSize="12"
+                                                                   Foreground="{StaticResource AccentBrush}" TextTrimming="PrefixCharacterEllipsis" ToolTip.Tip="{Binding Use}">
+                                                            <TextBlock.IsVisible>
+                                                                <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                                                    <Binding Path="HasUse" />
+                                                                    <Binding Path="!HasChoices" />
+                                                                </MultiBinding>
+                                                            </TextBlock.IsVisible>
+                                                        </TextBlock>
+                                                        <!-- Several copies or close matches: the best is picked, the others are a click away. -->
+                                                        <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding Chosen}" IsVisible="{Binding HasChoices}"
+                                                                  HorizontalAlignment="Stretch" FontSize="12" Margin="0,2,0,2" ToolTip.Tip="{Binding ChoicesTip}">
+                                                            <ComboBox.ItemTemplate>
+                                                                <DataTemplate x:DataType="sys:String">
+                                                                    <TextBlock Text="{Binding}" FontSize="12" TextTrimming="PrefixCharacterEllipsis" ToolTip.Tip="{Binding}" />
+                                                                </DataTemplate>
+                                                            </ComboBox.ItemTemplate>
+                                                        </ComboBox>
                                                         <TextBlock Text="{Binding Note}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </DockPanel>

@@ -65,6 +65,37 @@ public class FixTests : IDisposable
     }
 
     [Fact]
+    public void Of_several_copies_the_one_in_the_most_similar_folders_is_used_and_the_others_can_be_picked()
+    {
+        // Same name in another pack, listed first by the index: the folder the project looked in ("Drums") decides.
+        Directory.CreateDirectory(Path.Combine(_lib, "Aardvark Pack"));
+        File.WriteAllBytes(Path.Combine(_lib, "Aardvark Pack", "Kick 01.wav"), [0]);
+        var dir = Path.Combine(_root, "Projects");
+        Directory.CreateDirectory(dir);
+        Fixtures.FlStudioProject(dir);   // looks for C:\Samples\Drums\Kick 01.wav
+
+        var kick = ProjectFixer.Plan(_db, Scan("FL Studio")).Single(l => l.IsSample);
+        Assert.Equal(FixAction.Relink, kick.Action);
+        Assert.Equal(Path.Combine(_lib, "Drums", "Kick 01.wav"), kick.Use);
+        Assert.Equal([Path.Combine(_lib, "Drums", "Kick 01.wav"), Path.Combine(_lib, "Aardvark Pack", "Kick 01.wav")], kick.Choices);
+        Assert.Contains("most similar folders", kick.Note);
+    }
+
+    [Fact]
+    public void A_weaker_name_is_suggested_when_it_sits_in_the_same_pack()
+    {
+        Directory.CreateDirectory(Path.Combine(_lib, "Soundscan Vol 46 - 70s Breakbeats"));
+        File.WriteAllBytes(Path.Combine(_lib, "Soundscan Vol 46 - 70s Breakbeats", "Break 12 Funky.wav"), [0]);
+        File.WriteAllBytes(Path.Combine(_lib, "Drums", "Break 12 Funky.wav.bak.wav"), [0]);
+        new Scanner(_db).ScanSampleFolders();
+
+        var matches = MatchFinder.ForSample(_db, @"C:\Program Files\Image-Line\FL Studio\Data\Patches\Packs\Soundscan 46 - 70's Breakbeats\Break 12.wav");
+        Assert.EndsWith(Path.Combine("Soundscan Vol 46 - 70s Breakbeats", "Break 12 Funky.wav"), matches[0].Candidate);
+        Assert.True(matches[0].Folders > 0.9);
+        Assert.Equal("Similar name, in matching folders", matches[0].Reason);
+    }
+
+    [Fact]
     public void A_Bitwig_project_gets_a_ticked_suggestion_relinked()
     {
         var dir = Path.Combine(_root, "Projects");

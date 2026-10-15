@@ -20,6 +20,8 @@ public enum FixAction
 /// </summary>
 public sealed record FixLine(bool IsSample, string Missing, FixAction Action, string? Use, string Note)
 {
+    /// <summary>The other files it could use instead of <see cref="Use"/> (Use first), best first.</summary>
+    public IReadOnlyList<string> Choices { get; init; } = Use is null ? [] : [Use];
     /// <summary>The file name or plugin name, for the line's title.</summary>
     public string Name => IsSample ? Missing.Split('\\', '/')[^1] : Missing;
     /// <summary>Whether the fixed copy can use <see cref="Use"/>: only a sample, and only when there's one.</summary>
@@ -55,14 +57,19 @@ public static class ProjectFixer
 
     static FixLine ForSample(LibraryDb db, string path)
     {
-        var matches = MatchFinder.ForSample(db, path, 6).Where(m => File.Exists(m.Candidate)).ToList();
+        var matches = MatchFinder.ForSample(db, path, 8).Where(m => File.Exists(m.Candidate)).ToList();
+        var choices = matches.Select(m => m.Candidate).ToList();
         var same = matches.Where(m => m.Score >= 1).ToList();
         if (same.Count > 0)
-            return new FixLine(true, path, FixAction.Relink, same[0].Candidate,
-                same.Count == 1 ? "Found with the same name" : $"Found with the same name ({same.Count} copies; using the first)");
+            return new FixLine(true, path, FixAction.Relink, same[0].Candidate, same.Count == 1
+                ? "Found with the same name"
+                : same[0].Folders > 0
+                    ? $"Found with the same name: {same.Count} copies, using the one in the most similar folders"
+                    : $"Found with the same name: {same.Count} copies, using the first") { Choices = choices };
         if (matches.FirstOrDefault() is { } best)
-            return new FixLine(true, path, FixAction.Suggestion, best.Candidate,
-                $"Not found, but this one has a similar name ({best.Score:P0}). Tick it to use it.");
+            return new FixLine(true, path, FixAction.Suggestion, best.Candidate, best.Folders > 0
+                ? $"Not found, but this one has a similar name ({best.Score:P0}) in matching folders. Tick it to use it."
+                : $"Not found, but this one has a similar name ({best.Score:P0}). Tick it to use it.") { Choices = choices };
         return new FixLine(true, path, FixAction.StillMissing, null, "Not found in your sample folders.");
     }
 
