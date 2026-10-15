@@ -108,7 +108,7 @@ public static class BitwigProject
         var sounds = new List<(string Channel, PresetBlob Sound)>();
 
         // A plugin as a Bitwig device: a copy of the template's VST3 or VST2 device with this plugin's identity and settings.
-        BwObject? Plugin(FlPlugin p, int kind, List<string> skipped)
+        BwObject? Plugin(FlPlugin p, int kind, List<string> skipped, bool fresh = false)
         {
             if (p.Native || p.Format is not ("VST2" or "VST3"))
             {
@@ -153,7 +153,7 @@ public static class BitwigProject
                 state = $"{Guid.NewGuid()}{extension}";
                 states.Add((state, data));
             }
-            else skipped.Add($"{p.Name}'s settings (opens at its defaults)");
+            else if (!fresh) skipped.Add($"{p.Name}'s settings (opens at its defaults)");
             def.Set(0xbe5, state);
             return device;
         }
@@ -211,11 +211,11 @@ public static class BitwigProject
                 {
                     upgraded.Add(c.Index);
                     sounds.Add((c.Name, c.Instrument.State!));
-                    notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, with {c.Instrument.Name}'s settings handed to it. " +
-                              $"If it opens with its default sound, load \"{c.Name}\" from the \"{UpgradedFolder}\" folder saved next to this project");
+                    notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, which opens with its default sound. To get the old sound back, " +
+                              $"load \"{c.Name} ({c.Instrument.Name})\" in {instrument.Name}'s preset browser, from the \"{UpgradedFolder}\" folder saved next to this project");
                 }
                 track = t.Copy(instrument.Format == "VST2" ? t.Vst2Track : t.Vst3Track);
-                if (Plugin(instrument, Instrument, skipped) is { } plugin)
+                if (Plugin(instrument, Instrument, skipped, fresh: instrument != c.Instrument) is { } plugin)
                 {
                     instruments[c.Index] = (plugin, instrument);
                     // FL plays a plugin's root key as C5, so a moved root key transposes it, as does the pitch knob.
@@ -351,26 +351,20 @@ public static class BitwigProject
 
     /// <summary>
     /// The template's VST3 synth in place of an older version of it (Serum 2 for Serum, by name with the version left
-    /// off), carrying the older one's settings: a VST2 chunk becomes the newer one's component state, a VST3 preset
-    /// is relabelled with its class id. Null when it isn't an older version, or its settings can't be handed over.
+    /// off), at its default sound. The older one's settings aren't handed to it: Serum 2 refuses Serum's as its own
+    /// state and then won't load at all (seen on Solomon's PC), but its browser opens Serum's presets, so the old
+    /// sound is saved as one beside the project instead. Null when it isn't an older version, or has no sound to save.
     /// </summary>
     static FlPlugin? Upgrade(FlPlugin p, Template t)
     {
         var newer = Def(t.Vst3Device)!;
         var name = newer.Str(0x9a);
-        if (p.Native || p.State is not { } state || name.Length == 0 || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+        if (p.Native || p.State is null || name.Length == 0 || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
             PluginCatalog.Family(p.Name) != PluginCatalog.Family(name) || newer[0xce4] is not string classId || classId.Length != 32)
             return null;
-        byte[]? data = state.Extension switch
-        {
-            ".fxp" when Fxp.Chunk(state.Data) is { } chunk => VstPreset.Build(classId, chunk, []),
-            ".vstpreset" when state.Data.Length > 48 && state.Data.AsSpan(0, 4).SequenceEqual("VST3"u8) => VstPreset.Relabel(state.Data, classId),
-            _ => null,
-        };
-        if (data is null) return null;
         var path = newer.Obj(0xc5a)?[0xc5b] is List<object?> { Count: > 0 } location && newer.Obj(0xc5a)!.Resolve(location[0]) is { } file
             ? file.Str(0x3b) : "";
-        return new FlPlugin(name, newer.Str(0x9b), "VST3", classId, state with { Extension = ".vstpreset", Data = data }, path);
+        return new FlPlugin(name, newer.Str(0x9b), "VST3", classId, null, path);
     }
 
     /// <summary>
