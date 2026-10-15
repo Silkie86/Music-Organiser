@@ -24,7 +24,7 @@ static class GalaxyGpu
     public sealed record Frame(
         float[] Xs, float[] Ys, float[] Rgb, float[] Weight, int[] CellStart, int[] CellItems, int Grid,
         (int X0, int Y0, int X1, int Y1) Cells, double Scale, double OffsetX, double OffsetY,
-        int Width, int Height, float Core, float Glow, float Gain, bool Sliding = false);
+        int Width, int Height, float Core, float Glow, float Gain, bool Moving = false);
 
     // Stamps are stored at a fraction of their brightness so a crowd can pile onto one pixel before the layer runs out
     // of room; the shader scales back up.
@@ -53,7 +53,7 @@ static class GalaxyGpu
     // pair of triangles on the processor, every time), so a frame showing the same view (a hover, a pulse, the trail
     // moving) reuses the sky, and while you drag a slow view the sky slides along and is redrawn when you let go.
     static object? _skyKey;
-    static (double X, double Y, (int, int, int, int) Cells) _skyAt;
+    static (double X, double Y, double Scale, (int, int, int, int) Cells) _skyAt;
     static double _stampMs;
 
     /// <summary>A soft white dot, 16 pixels across, that each star is stamped with.</summary>
@@ -125,14 +125,22 @@ static class GalaxyGpu
             _skyKey = null;
         }
 
-        var key = (f.Xs, f.Rgb, f.Weight, f.Scale, w, h, f.Core, f.Glow, f.Gain);
-        if (Equals(key, _skyKey))
+        var key = (f.Xs, f.Rgb, f.Weight, w, h, f.Core, f.Glow, f.Gain);
+        var stars = (f.Xs, f.Rgb, f.Weight, w, h);
+        if (_skyKey is ValueTuple<float[], float[], float[], int, int, float, float, float> last && (last.Item1, last.Item2, last.Item3, last.Item4, last.Item5) == stars)
         {
-            var same = _skyAt == (f.OffsetX, f.OffsetY, f.Cells);
-            if (same || f.Sliding && _stampMs > 25)
+            var same = Equals(key, _skyKey) && _skyAt == (f.OffsetX, f.OffsetY, f.Scale, f.Cells);
+            // Moving (dragged, or the camera gliding to a zoom) and slow to stamp: the last sky moves and scales with
+            // the camera, and the stars are stamped again once it stops.
+            if (same || f.Moving && _stampMs > 25)
             {
+                var ratio = (float)(f.Scale / _skyAt.Scale);
                 using var sky = s.Sky.Snapshot();
-                target.DrawImage(sky, same ? 0 : (float)(f.OffsetX - _skyAt.X), same ? 0 : (float)(f.OffsetY - _skyAt.Y));
+                target.Save();
+                target.Translate((float)(f.OffsetX - _skyAt.X * ratio), (float)(f.OffsetY - _skyAt.Y * ratio));
+                target.Scale(ratio);
+                target.DrawImage(sky, 0, 0, new SKSamplingOptions(SKFilterMode.Linear));
+                target.Restore();
                 return;
             }
         }
@@ -212,7 +220,7 @@ static class GalaxyGpu
         skyCanvas.DrawRect(new SKRect(0, 0, w, h), paint);
         using (var sky = s.Sky.Snapshot()) target.DrawImage(sky, 0, 0);
         _skyKey = key;
-        _skyAt = (f.OffsetX, f.OffsetY, f.Cells);
+        _skyAt = (f.OffsetX, f.OffsetY, f.Scale, f.Cells);
         _stampMs = stamping.Elapsed.TotalMilliseconds;
     }
 }
