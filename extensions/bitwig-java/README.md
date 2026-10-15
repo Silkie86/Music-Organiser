@@ -89,14 +89,16 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   the live tests send. Bitwig's API can't put a clip on the arranger timeline, so the link copies a launcher
   clip and pastes it there, as a person would. Paste puts down whatever is on Bitwig's clipboard, which may be
   something copied before when the copy didn't take, so before it copies the link gives the launcher clip a
-  fresh colour (the test project's clip keeps it) and checks the pasted clip has it. The answer says what
-  Bitwig showed before and after: `arranged`, whether it worked (`appeared` and `sameAsSource` both true);
-  `appeared`, when a clip showed up selected on the track after the paste; `sameAsSource`, when that clip has
-  the launcher clip's marking colour; `copiedFromTimeline`, when the timeline had the focus as it copied, so it
-  didn't paste; `layout`, `launcher`, `mark` (the clip's colour `before`, the one `asked` for, the one it `got`
-  and whether it `took`), `launcherFocus`, `timeline`, `focus`, the clip selected in the arranger `before`,
-  `beforePaste` and `after`, its `pastedColor`, and the track's `launcherClipsBefore` and
-  `launcherClipsAfter`. See [the extensions README](../README.md#clips-in-the-arranger-an-experiment).
+  fresh colour (the test project's clip keeps it) and checks the pasted clip has it. When Bitwig rounds that
+  colour to one of its own, other clips can have it too, so the link can't be sure then. The answer says what
+  Bitwig showed before and after: `arranged`, whether it worked (`appeared` and `sameAsSource` both true, and
+  the mark `exact`); `appeared`, when a clip showed up selected on the track after the paste; `sameAsSource`,
+  when that clip has the launcher clip's marking colour; `copiedFromTimeline`, when the timeline had the focus
+  as it copied, so it didn't paste; `layout`, `launcher`, `mark` (the clip's colour `before`, the one `asked`
+  for, the one it `got`, whether it `took` and whether it's `exact`, the very colour asked for),
+  `launcherFocus`, `timeline`, `focus`, the clip selected in the arranger `before`, `beforePaste` and `after`,
+  its `pastedColor`, and the track's `launcherClipsBefore` and `launcherClipsAfter`. See
+  [the extensions README](../README.md#clips-in-the-arranger-an-experiment).
 
 Not new to version 3, since the script does it too: any request can carry `onlyIn`, a project's name, and the
 link refuses it, or stops a change part way, unless Bitwig has that project open; `hello` says `onlyIn: true`.
@@ -136,8 +138,9 @@ The live tests use it to keep their changes in their own project (see
   the link copied, each step Bitwig doesn't go along with (with nothing pasted), and the answers when Bitwig
   pastes into the launcher instead or ignores paste, without its focus action, or without an arranger for
   extensions at all. Also the colour mark: a clip already on the clipboard pasted when the copy didn't take
-  (appeared, but not the same clip), a colour Bitwig ignores or rounds to its own, and a fresh colour for each
-  arrange.
+  (appeared, but not the same clip), a colour Bitwig ignores or rounds to its own (never `arranged` then, as a
+  clip that was on the clipboard in the colour Bitwig rounded the mark to looks just the same), and a fresh
+  colour for each arrange.
 - `SelfCheckTest`, `LinkLogTest`, `ReportsTest`: the self-check and the reports, in a temporary folder,
   including a Bitwig missing part of the API (each part fails on its own), another port, an older API and a
   folder that can't be written.

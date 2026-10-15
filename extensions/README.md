@@ -130,7 +130,7 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 | `clicked` (3) | | The parameter last clicked in Bitwig: `exists` (false until one is), `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated`, `locked` |
 | `recorder` ✎ (3) | `do`: `"start"`, `"stop"` or `"status"` (the default) | Bitwig's master recorder, once it has started or stopped: `active`, `duration` (milliseconds recorded) |
 | `selftest` (3) | | The self-check (see [the extension's README](bitwig-java/README.md#reports)), written to the reports folder, with `file` |
-| `arrange` ✎ (3) | `track`, `slot` (a launcher slot with a clip), `at` (optional: where in the arranger, in beats from the start; the play start by default) | **An experiment**, from extension 3.6, which only the live tests send ([below](#clips-in-the-arranger-an-experiment)). Once its steps are through, whether it worked or not: `arranged` (both of the next two), `appeared` (a clip showed up selected on the track after the paste, with the track's launcher clips as they were), `sameAsSource` (that clip has the launcher clip's marking colour, so it's a copy of that clip and not whatever was on Bitwig's clipboard before), `copiedFromTimeline` (the arranger timeline had the focus when the link copied, so it didn't paste), `at`, `layout` (before), `launcher` and `timeline` (`before` and `after`: whether the Arrange layout's clip launcher, and the arranger timeline, showed), `mark` (the fresh colour the link gave the launcher clip before it copied: the clip's colour `before`, the one `asked` for, the one it `got`, each `#RRGGBB`, and whether it `took`), `launcherFocus` and `focus` (how many times the link ran Bitwig's `focus_or_toggle_clip_launcher` and `focus_or_toggle_arranger`), `before`, `beforePaste` and `after` (the clip selected in the arranger: `exists`, and its `track`'s name), `pastedColor` (the colour of the clip selected in the arranger at the end, `#RRGGBB`, or null when none is), `launcherClipsBefore` and `launcherClipsAfter` (the track's clips in its first 8 launcher slots) |
+| `arrange` ✎ (3) | `track`, `slot` (a launcher slot with a clip), `at` (optional: where in the arranger, in beats from the start; the play start by default) | **An experiment**, from extension 3.6, which only the live tests send ([below](#clips-in-the-arranger-an-experiment)). Once its steps are through, whether it worked or not: `arranged` (both of the next two, with an `exact` mark), `appeared` (a clip showed up selected on the track after the paste, with the track's launcher clips as they were), `sameAsSource` (that clip has the launcher clip's marking colour, so it's a copy of that clip and not whatever was on Bitwig's clipboard before, unless Bitwig rounded the mark: see `exact`), `copiedFromTimeline` (the arranger timeline had the focus when the link copied, so it didn't paste), `at`, `layout` (before), `launcher` and `timeline` (`before` and `after`: whether the Arrange layout's clip launcher, and the arranger timeline, showed), `mark` (the fresh colour the link gave the launcher clip before it copied: the clip's colour `before`, the one `asked` for, the one it `got`, each `#RRGGBB`, whether it `took`, and whether it's `exact`: the very colour asked for, not one Bitwig rounded it to), `launcherFocus` and `focus` (how many times the link ran Bitwig's `focus_or_toggle_clip_launcher` and `focus_or_toggle_arranger`), `before`, `beforePaste` and `after` (the clip selected in the arranger: `exists`, and its `track`'s name), `pastedColor` (the colour of the clip selected in the arranger at the end, `#RRGGBB`, or null when none is), `launcherClipsBefore` and `launcherClipsAfter` (the track's clips in its first 8 launcher slots) |
 
 ✎ needs changes turned on. (3) only in link version 3, the extension. `insert` with a track, `newtrack`,
 `clip`, `pads`, `transpose`, `recorder` and `arrange` wait for Bitwig to make the change (up to 5 seconds for
@@ -181,7 +181,10 @@ that's whatever was copied before: a clip you copied in your own song, or the la
 clip from that, the link marks the launcher clip with a fresh colour before it copies (`mark`): a new hue each
 time, a golden-ratio step round the colour wheel from the last one, and clearly unlike the clip's colour then.
 It waits for Bitwig to show the new colour (Bitwig may round it to one of its own, so any clear change counts)
-and keeps the colour the clip `got`, which the pasted clip's colour is compared with. When Bitwig doesn't change
+and keeps the colour the clip `got`, which the pasted clip's colour is compared with. The mark is `exact` when
+that's the colour asked for (within 2 of 255 in each of red, green and blue). A colour Bitwig rounded is one of
+its own, which other clips can have too (one you copied, or an earlier run's copy whose mark Bitwig rounded the
+same way), so the link can't be sure a pasted clip in it is the launcher clip's copy. When Bitwig doesn't change
 the clip's colour, the link carries on, with `took` false, but can't tell its clip from another. The launcher
 clip keeps its new colour: only the test project gets this.
 
@@ -199,12 +202,12 @@ arranger cursor clip, which follows a pasted clip) has moved to the track, where
 and the track's launcher clips are as they were; more launcher clips after than before means Bitwig pasted into
 the launcher instead. `sameAsSource` is true when the mark took and the clip selected in the arranger has the
 colour the launcher clip got (`pastedColor`, within 2 of 255 in each of red, green and blue), and `arranged` when
-both are. A clip that appeared in another colour is whatever Bitwig's clipboard held before. The API can't say
-where an arranger clip starts, so `at` is where it was meant to go, and only a look at Bitwig shows whether it's
-there. Copy replaces whatever was on Bitwig's clipboard (one for every project open), and nothing is undone when
-it doesn't work (the layout, the play start and the launcher clip's colour stay as the link left them), so only
-the live tests send it, in their own test project (*Changes › Clip to arranger*); the app's sends don't use it
-yet. In the app it's `BitwigLink.ArrangeAsync`.
+both are and the mark is `exact`. A clip that appeared in another colour is whatever Bitwig's clipboard held
+before. The API can't say where an arranger clip starts, so `at` is where it was meant to go, and only a look at
+Bitwig shows whether it's there. Copy replaces whatever was on Bitwig's clipboard (one for every project open),
+and nothing is undone when it doesn't work (the layout, the play start and the launcher clip's colour stay as
+the link left them), so only the live tests send it, in their own test project (*Changes › Clip to arranger*);
+the app's sends don't use it yet. In the app it's `BitwigLink.ArrangeAsync`.
 
 ### Sending into Bitwig
 
@@ -316,8 +319,9 @@ What runs, in this order:
   clip's marking colour appear selected in the arranger on the clip's track, though it can't see where the
   clip starts, so it asks you to look at bar 5; Failed when a clip in another colour appeared there, as Bitwig
   pasted what its clipboard held before, so the copy didn't take (that clip can be deleted); Noted when a clip
-  appeared but Bitwig wouldn't recolour the launcher clip, asking you to look and say which clip it is; else
-  Failed, saying what Bitwig did instead, or the step it didn't go along with, and asking you to look at
+  appeared but Bitwig wouldn't recolour the launcher clip, or when it has the launcher clip's colour but Bitwig
+  rounded that to one of its own (which other clips can have too), asking you to look and say which clip it is;
+  else Failed, saying what Bitwig did instead, or the step it didn't go along with, and asking you to look at
   Bitwig's arranger and say what you see); Drum Machine pads; selecting a device, setting a
   parameter and reading it back (then setting it back); the master recorder's status (Java only; it's
   never started); and, after Send, Save, then the unsaved changes clear.
@@ -401,8 +405,8 @@ Bitwig:
       Clip to arranger*); whether its window has to be in front for that; whether the arranger cursor clip
       follows the pasted clip, as the link expects; whether Bitwig has `focus_or_toggle_clip_launcher`, and
       whether selecting a launcher slot from the API gives the launcher the focus without it; whether a launcher
-      clip's colour set from the API shows as asked (or rounded to Bitwig's palette), and whether the pasted
-      clip keeps it, which `sameAsSource` relies on.
+      clip's colour set from the API shows as asked (`exact`) or rounded to Bitwig's palette, and whether the
+      pasted clip keeps it, which `sameAsSource` relies on.
 - [ ] Parameter IDs from `device` look like `CONTENTS/PID3e8`, and `set` takes them back.
 - [ ] `insert` takes the scanner's VST3 class ID as Bitwig wants it, and a UUID for its own devices.
 - [ ] The words `type` and `kind` use (e.g. `Instrument`, `note_to_audio`).

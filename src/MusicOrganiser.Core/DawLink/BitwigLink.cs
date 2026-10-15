@@ -76,7 +76,8 @@ public sealed record BitwigPitch(string Device, double Value, string Display);
 /// </summary>
 /// <param name="Arranged">
 /// Whether it worked: a clip <paramref name="Appeared"/> on the clip's track, and it's a copy of the launcher clip
-/// (<paramref name="SameAsSource"/>). Where the clip starts can't be read.
+/// (<paramref name="SameAsSource"/>), marked in the very colour the extension asked for (<see cref="BitwigClipMark.Exact"/>).
+/// Where the clip starts can't be read.
 /// </param>
 /// <param name="Appeared">
 /// Whether, after the paste, the clip selected in the arranger had moved to the clip's track (it wasn't there just before
@@ -86,7 +87,9 @@ public sealed record BitwigPitch(string Device, double Value, string Display);
 /// </param>
 /// <param name="SameAsSource">
 /// Whether the clip selected in the arranger after the paste has the colour the extension marked the launcher clip with
-/// (<paramref name="Mark"/>), so it's a copy of that clip. Always false when the mark didn't take.
+/// (<paramref name="Mark"/>), so it's a copy of that clip. Always false when the mark didn't take. When Bitwig rounded the
+/// mark to one of its own colours (it isn't <see cref="BitwigClipMark.Exact"/>), other clips can have that colour too, so
+/// then it doesn't say for sure.
 /// </param>
 /// <param name="CopiedFromTimeline">
 /// Whether the arranger timeline had the focus when the extension copied, so Bitwig copied from the timeline rather than
@@ -129,7 +132,12 @@ public sealed record BitwigArranged(bool Arranged, bool Appeared, bool SameAsSou
 /// <param name="Asked">The colour the extension asked for.</param>
 /// <param name="Got">The colour the clip showed then, which a pasted clip is compared with: Bitwig may round a colour to one of its own.</param>
 /// <param name="Took">Whether the clip's colour changed. When it didn't, the extension can't tell its clip from another once pasted.</param>
-public sealed record BitwigClipMark(string Before, string Asked, string Got, bool Took);
+/// <param name="Exact">
+/// Whether the clip got the very colour asked for (give or take 2 of 255 in each of red, green and blue). When Bitwig rounded
+/// it to one of its own colours instead, other clips can have that colour too (one already on Bitwig's clipboard, say), so
+/// the extension can't be sure a pasted clip in it is the launcher clip's copy.
+/// </param>
+public sealed record BitwigClipMark(string Before, string Asked, string Got, bool Took, bool Exact);
 
 /// <summary>Whether Bitwig showed one of its panels (the arranger timeline, or the clip launcher), before and after.</summary>
 public sealed record BitwigShown(bool Before, bool After);

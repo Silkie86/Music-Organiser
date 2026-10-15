@@ -1525,9 +1525,11 @@ final class Link {
      * Nobody knows yet whether Bitwig does all that for an extension, so once the steps are through, the answer says what
      * Bitwig showed before and after, whether or not it worked: `appeared` is whether the clip selected in the arranger
      * moved to the track after the paste, with the track's launcher clips as they were; `sameAsSource` is whether that clip
-     * has the launcher clip's marking colour (`pastedColor` is its colour); and `arranged` is whether both are true. Where
-     * the clip starts can't be read, so only a look at Bitwig shows whether it went in at `at`. Only the live tests send
-     * it, in their own project, so nothing is undone when it doesn't work.
+     * has the launcher clip's marking colour (`pastedColor` is its colour); and `arranged` is whether both are true and the
+     * launcher clip got the very colour the link asked for (the mark is `exact`). When Bitwig rounded the mark to one of
+     * its own colours, other clips can have that colour too (one already on Bitwig's clipboard, say), so a pasted clip in
+     * it may not be the launcher clip's copy. Where the clip starts can't be read, so only a look at Bitwig shows whether
+     * it went in at `at`. Only the live tests send it, in their own project, so nothing is undone when it doesn't work.
      */
     private void arrange(Map<String, Object> request, Finish finish) {
         if (arranger == null) throw new LinkError("This Bitwig didn't let the link reach its arranger. A selftest says why.");
@@ -1661,8 +1663,10 @@ final class Link {
      * Marks a launcher clip with a fresh colour (see nextMark), so that a clip pasted from it can be told from whatever else
      * Bitwig's clipboard held, and hands `then` how that went, which the answer keeps as `mark`. Bitwig may round a colour
      * to one of its own, so the mark took when the clip shows the colour asked for, or at least a different one than before;
-     * the colour read back then is what the pasted clip is compared with. When the clip's colour doesn't change, the link
-     * carries on all the same, though it can't tell its own clip from another when it's pasted.
+     * the colour read back then is what the pasted clip is compared with. The mark is exact when that's the colour asked
+     * for (give or take SAME_COLOUR): a colour Bitwig rounded is one of its own, which other clips can have too, so only an
+     * exact mark tells the launcher clip's copy from them for sure. When the clip's colour doesn't change, the link carries
+     * on all the same, though it can't tell its own clip from another when it's pasted.
      */
     private void mark(ClipLauncherSlot slot, Map<String, Object> m, Consumer<Mark> then, Finish finish) {
         SettableColorValue colour = slot.color();
@@ -1670,7 +1674,8 @@ final class Link {
         float[] asked = nextMark(before);
         colour.set(asked[0], asked[1], asked[2]);
         waitFor(() -> sameColour(rgb(colour), asked) || !sameColour(rgb(colour), before), CHANGE_WAIT, took -> {
-            Mark mark = new Mark(before, asked, rgb(colour), took);
+            float[] got = rgb(colour);
+            Mark mark = new Mark(before, asked, got, took, sameColour(got, asked));
             m.put("mark", mark.answer());
             then.accept(mark);
         }, finish);
@@ -1697,14 +1702,18 @@ final class Link {
         return hsb(hue, 0.7, 0.85);
     }
 
-    /** How arrange marked the launcher clip: its colour before, the one asked for, the one it got, and whether it took. */
-    private record Mark(float[] before, float[] asked, float[] got, boolean took) {
+    /**
+     * How arrange marked the launcher clip: its colour before, the one asked for, the one it got, whether it took (the
+     * colour changed), and whether it's exact (the clip got the very colour asked for, not one Bitwig rounded it to).
+     */
+    private record Mark(float[] before, float[] asked, float[] got, boolean took, boolean exact) {
         Map<String, Object> answer() {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("before", hexColour(before));
             m.put("asked", hexColour(asked));
             m.put("got", hexColour(got));
             m.put("took", took);
+            m.put("exact", exact);
             return m;
         }
     }
@@ -1714,7 +1723,8 @@ final class Link {
      * (where it wasn't just before), or for the track's launcher clips to change (Bitwig pasted there instead), and
      * answers with what Bitwig shows once it settles. When neither happens, it answers after CHANGE_WAIT all the same.
      * A clip that appeared on the track is the launcher clip's copy only when it has the `mark` colour: else Bitwig pasted
-     * whatever its clipboard held before.
+     * whatever its clipboard held before. Even then, the link says it arranged the clip only when the mark is exact, as a
+     * colour Bitwig rounded to one of its own could be another clip's as well.
      */
     private void paste(int t, String name, int launcherBefore, Mark mark, Map<String, Object> m, Shown shown, Finish finish) {
         m.put("beforePaste", arrangerClipState());
@@ -1725,7 +1735,7 @@ final class Link {
             settle(() -> Arrays.asList(arrangerClipState(), arrangerClipColour(), launcherClips(t)), settled -> {
                 boolean appeared = !there && clipOn(name) && launcherClips(t) == launcherBefore;
                 boolean sameAsSource = mark.took() && arrangerClip.exists().get() && sameColour(rgb(arrangerClip.color()), mark.got());
-                m.put("arranged", appeared && sameAsSource);
+                m.put("arranged", appeared && sameAsSource && mark.exact());
                 m.put("appeared", appeared);
                 m.put("sameAsSource", sameAsSource);
                 answer(t, m, shown, finish);

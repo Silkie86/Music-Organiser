@@ -247,13 +247,14 @@ public static class BitwigLiveTests
     /// <summary>
     /// What the arrange experiment found (<see cref="BitwigLink.ArrangeAsync"/>):
     /// <list type="bullet">
-    /// <item>Passed when the extension saw a clip in the launcher clip's own marking colour appear in the arranger on the
-    /// track, so it's the run's clip, saying that where it starts is only intended, as the link can't read it, and asking
-    /// the person to look.</item>
+    /// <item>Passed when the extension saw a clip in the launcher clip's own marking colour (the very one it asked for)
+    /// appear in the arranger on the track, so it's the run's clip, saying that where it starts is only intended, as the
+    /// link can't read it, and asking the person to look.</item>
     /// <item>Failed when a clip appeared on the track in another colour than the launcher clip got: Bitwig pasted whatever
     /// was on its clipboard before, so copying from the launcher didn't take.</item>
-    /// <item>Noted when a clip appeared on the track but Bitwig didn't let the extension colour the launcher clip, so it
-    /// can't tell which clip it is: the person is asked to look.</item>
+    /// <item>Noted when a clip appeared on the track but Bitwig didn't let the extension colour the launcher clip, or when
+    /// the clip has the launcher clip's colour but Bitwig rounded that to one of its own, which other clips can have too: the
+    /// extension can't tell which clip it is, so the person is asked to look.</item>
     /// <item>Else Failed, saying what Bitwig did instead and asking the person to look at Bitwig's arranger, since only they
     /// can see where the clip went, if anywhere.</item>
     /// </list>
@@ -295,11 +296,16 @@ public static class BitwigLiveTests
                                     $"didn't take: {copying}. The test project now has that other clip on “{track}” at bar {bar}, which can be " +
                                     "deleted." + Window(front), data);
         }
+        // Only the person can tell which clip appeared when the mark doesn't single the run's clip out.
+        var which = $"so the link can't tell whether it's the run's MIDI clip or whatever was on Bitwig's clipboard before. Look at bar {bar} " +
+                    $"on “{track}” in Bitwig's arranger and say which clip it is." + Window(front);
         if (a.Appeared && !a.CopiedFromTimeline && a.Mark is not { Took: true })
             return LiveVerdict.Note($"A clip appeared in Bitwig's arranger on “{track}” after the paste, but Bitwig didn't let the link colour the " +
-                                    $"launcher clip in slot {slot + 1}, so the link can't tell whether it's the run's MIDI clip or whatever was on " +
-                                    $"Bitwig's clipboard before. Look at bar {bar} on “{track}” in Bitwig's arranger and say which clip it is." +
-                                    Window(front), data);
+                                    $"launcher clip in slot {slot + 1}, {which}", data);
+        if (a.Appeared && !a.CopiedFromTimeline && a.SameAsSource && a.Mark is { Took: true, Exact: false } rounded)
+            return LiveVerdict.Note($"A clip appeared in Bitwig's arranger on “{track}” after the paste, in the colour the link gave the launcher clip " +
+                                    $"in slot {slot + 1}, but Bitwig rounded that colour to one of its own (the link asked for {rounded.Asked} and got " +
+                                    $"{rounded.Got}), which other clips can have too, {which}", data);
 
         var instead = new List<string>();
         if (a.CopiedFromTimeline)
