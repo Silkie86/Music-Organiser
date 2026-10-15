@@ -30,7 +30,7 @@ public partial class App : Application
             _db = new LibraryDb(LibraryDb.DefaultPath);
             _soundDb = new SoundLibrary(SoundLibrary.DefaultPath);
             _sounds = new SoundOrganiser(_soundDb);
-            var main = new MainViewModel(_db, _sounds);
+            var main = new MainViewModel(_db, _sounds) { AppChecks = AppChecks.All };
             var window = new MainWindow { DataContext = main };
             desktop.MainWindow = window;
             Views.Appearance.Follow(main.Settings.Appearance, window.Scaler);
