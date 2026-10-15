@@ -61,12 +61,17 @@ public sealed partial class FlStudioReader : IProjectReader
         };
     }
 
+    /// <summary>What's said of a file named .flp that holds no FL project any more: empty, or overwritten (disk damage).</summary>
+    const string Damaged = "This file is empty or damaged: it doesn't start the way an FL Studio project does, so there's nothing in it to read";
+
     sealed class Flp
     {
         public int Ppq;
         public string Version = "";
         public bool Utf16 = true;
         public readonly List<Event> Events = new();
+        /// <summary>Said about the project when it could still be read but something about the file was off.</summary>
+        public string? Warning;
 
         public string Str(Event e)
         {
@@ -79,16 +84,22 @@ public sealed partial class FlStudioReader : IProjectReader
 
     static Flp Load(byte[] raw)
     {
-        if (raw.Length < 22 || Encoding.ASCII.GetString(raw, 0, 4) != "FLhd")
-            throw new InvalidDataException("Not an FL Studio project (missing FLhd header)");
+        if (raw.Length < 22 || Encoding.ASCII.GetString(raw, 0, 4) != "FLhd") throw new InvalidDataException(Damaged);
         var headerLen = BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(4));
+        if (headerLen < 0 || headerLen > raw.Length - 16) throw new InvalidDataException(Damaged);
         var flp = new Flp { Ppq = BinaryPrimitives.ReadUInt16LittleEndian(raw.AsSpan(12)) };
         var dt = 8 + headerLen;
-        if (dt + 8 > raw.Length || Encoding.ASCII.GetString(raw, dt, 4) != "FLdt")
-            throw new InvalidDataException("FL Studio project is missing its FLdt chunk");
-        var dataLen = BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(dt + 4));
         var pos = dt + 8;
-        var end = Math.Min(raw.Length, pos + dataLen);
+        int end;
+        if (Encoding.ASCII.GetString(raw, dt, 4) == "FLdt")
+            end = (int)Math.Min(raw.Length, (long)pos + BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(dt + 4)));
+        else
+        {
+            // Some FL Studio 4 to 7 saves have junk (what looks like a leftover memory address and a size) where the
+            // FLdt chunk's name and length belong. Their events follow it as usual, to the end of the file.
+            end = raw.Length;
+            flp.Warning = "Saved by an old FL Studio that garbled the start of its data; everything after it was read as usual.";
+        }
 
         var major = 0;
         while (pos < end)
@@ -118,6 +129,8 @@ public sealed partial class FlStudioReader : IProjectReader
         }
 
         var ver = flp.Events.FirstOrDefault(e => e.Id == EvVersion);
+        // Without the FLdt chunk to go by, only events that include FL's version show it's really a project.
+        if (flp.Warning is not null && ver.Id != EvVersion) throw new InvalidDataException(Damaged);
         if (ver.Id == EvVersion)
         {
             flp.Version = Encoding.ASCII.GetString(ver.Payload.Span).TrimEnd('\0');
@@ -152,12 +165,16 @@ public sealed partial class FlStudioReader : IProjectReader
 
     public ProjectInfo Read(string path)
     {
-        var flp = Load(path);
+        Flp flp;
+        try { flp = Load(path); }
+        // Listed with what's wrong with it rather than as a file the app failed on.
+        catch (InvalidDataException e) when (e.Message == Damaged) { return new ProjectInfo { Daw = Daw, Confidence = Confidence.Catalogue, Warnings = { e.Message + "." } }; }
         var info = new ProjectInfo
         {
             Daw = Daw, Version = flp.Version, Confidence = Confidence.Full,
             CanExtractMidi = true, CanExtractPresets = true,
         };
+        if (flp.Warning is not null) info.Warnings.Add(flp.Warning);
         info.Details["PPQ"] = flp.Ppq.ToString();
 
         var channelNames = new Dictionary<int, string>();
@@ -761,6 +778,15 @@ public static class Fxp
         return ms.ToArray();
     }
 
+    /// <summary>The plugin's own chunk inside an 'FPCh' .fxp, or null when it isn't one.</summary>
+    public static byte[]? Chunk(byte[] fxp)
+    {
+        const int ProgramHeader = 60;
+        if (fxp.Length < ProgramHeader || !fxp.AsSpan(0, 4).SequenceEqual("CcnK"u8) || !fxp.AsSpan(8, 4).SequenceEqual("FPCh"u8)) return null;
+        var length = BinaryPrimitives.ReadInt32BigEndian(fxp.AsSpan(ProgramHeader - 4));
+        return length >= 0 && length <= fxp.Length - ProgramHeader ? fxp[ProgramHeader..(ProgramHeader + length)] : null;
+    }
+
     /// <summary>
     /// Wraps a VST chunk in an 'FPCh' (opaque chunk) .fxp header. Pass the plugin's
     /// four-character id when known so hosts can match the preset to the plugin.
@@ -838,7 +864,11 @@ public static class VstPreset
     /// "VST3", version 1, class id, offset of the chunk list; then the component
     /// state ("Comp") and controller state ("Cont"); then the chunk list.
     /// </summary>
-    public static byte[] Build(ReadOnlySpan<byte> classId, byte[] component, byte[] controller)
+    public static byte[] Build(ReadOnlySpan<byte> classId, byte[] component, byte[] controller) =>
+        Build(ClassIdString(classId), component, controller);
+
+    /// <param name="classId">The class id as a .vstpreset writes it (see <see cref="ClassIdString"/>).</param>
+    public static byte[] Build(string classId, byte[] component, byte[] controller)
     {
         using var ms = new MemoryStream();
         var b = new byte[8];
@@ -853,7 +883,7 @@ public static class VstPreset
 
         ms.Write("VST3"u8);
         I32(1);
-        ms.Write(Encoding.ASCII.GetBytes(ClassIdString(classId)));
+        ms.Write(Encoding.ASCII.GetBytes(classId));
         I64(listOffset);
         ms.Write(component);
         ms.Write(controller);

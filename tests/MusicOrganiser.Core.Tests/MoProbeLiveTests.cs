@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -237,6 +239,34 @@ public class MoProbeLiveTests
     }
 
     [Fact]
+    public async Task AStatusMissingAcrossAPauseIsntTheProbeStopping()
+    {
+        var dir = Fixtures.TempDir();
+        var file = Status(Path.Combine(dir, "live"), Instance, DateTimeOffset.UtcNow.AddMinutes(1));
+        var status = File.ReadAllBytes(file);
+        using var computer = new HeldUpContext();
+
+        // Missing at the first look, then everything is held up for longer than a probe may go missing (a long garbage
+        // collection, or a busy computer), the probe's next write with it: one look after that isn't the probe gone.
+        foreach (var look in new Func<Task<MoProbeLive>>[]
+                 {
+                     () => MoProbeLive.ReadRunningAsync(file, Instance),
+                     async () => (await MoProbeLive.UntilAsync(Instance, _ => true, dir)).Status,
+                 })
+        {
+            File.Delete(file);
+            var found = computer.Run(look);
+            computer.HoldUp(TimeSpan.FromMilliseconds(700));
+            computer.Post(_ => _ = Task.Delay(30).ContinueWith(_ =>
+            {
+                File.WriteAllBytes(file + ".tmp", status);
+                File.Move(file + ".tmp", file);
+            }, TaskScheduler.Default), null);
+            Assert.Equal(Instance, (await found).Instance);
+        }
+    }
+
+    [Fact]
     public async Task AProbeThatStopsAsTimeRunsOutIsSaidToHaveStopped()
     {
         var dir = Fixtures.TempDir();
@@ -279,6 +309,40 @@ public class MoProbeLiveTests
         }) { IsBackground = true };
         back.Start();
         return back;
+    }
+
+    /// <summary>
+    /// A computer that can be held up: what's posted to it runs in turn on a thread of its own, and so does what an await
+    /// in it carries on with.
+    /// </summary>
+    sealed class HeldUpContext : SynchronizationContext, IDisposable
+    {
+        readonly BlockingCollection<(SendOrPostCallback Run, object? State)> _queue = new();
+
+        public HeldUpContext() =>
+            new Thread(() =>
+            {
+                SetSynchronizationContext(this);
+                foreach (var (run, state) in _queue.GetConsumingEnumerable()) run(state);
+            }) { IsBackground = true }.Start();
+
+        public override void Post(SendOrPostCallback d, object? state) => _queue.Add((d, state));
+
+        public Task<T> Run<T>(Func<Task<T>> work)
+        {
+            var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Post(async _ =>
+            {
+                try { done.SetResult(await work()); }
+                catch (Exception e) { done.SetException(e); }
+            }, null);
+            return done.Task;
+        }
+
+        /// <summary>Nothing posted after this runs for <paramref name="time"/>.</summary>
+        public void HoldUp(TimeSpan time) => Post(_ => Thread.Sleep(time), null);
+
+        public void Dispose() => _queue.CompleteAdding();
     }
 
     [Fact]
@@ -422,6 +486,25 @@ public class ProbeKnobCheckTests
     }
 
     [Fact]
+    public async Task WaitsForTheKnobsToBeBackWhenTheProbeIsHeldUp()
+    {
+        var dir = Fixtures.TempDir();
+        await using var probe = new FakeProbe(dir);
+        // Only MO Switch, so it's quick. The probe answers its last turn (to 1) and then stalls: the status from before
+        // that turn still shows it at 0, as it was, while it isn't back yet.
+        var daw = new FakeDaw(probe) { Hidden = [.. MoProbe.Knobs.Select(k => k.Id).Where(k => k != 1005)] };
+        var turns = 0;
+        probe.StallAfterSet = (knob, _) => knob == 1005 && ++turns == 2 ? TimeSpan.FromMilliseconds(500) : TimeSpan.Zero;
+        var check = await ProbeKnobCheck.RunAsync(daw, Assert.Single(MoProbeLive.Running(dir)), wait: Quick, settle: Settle);
+
+        Assert.True(check.AllMatched, check.Summary);
+        Assert.Equal(4, check.Lines.Count);
+        Assert.DoesNotContain(check.Notes, n => n.Contains("didn't go back", StringComparison.Ordinal));
+        Assert.Equal(3, turns);   // the check's two and the one putting it back
+        Assert.Equal(0, probe[1005]);
+    }
+
+    [Fact]
     public async Task FindsAStepThatLandsWrongly()
     {
         var dir = Fixtures.TempDir();
@@ -539,14 +622,18 @@ public class ProbeKnobCheckTests
 /// <summary>
 /// A stand-in for MO Probe running in a DAW, following its live link as native/README.md describes it: it writes its
 /// status every few milliseconds, and takes the commands dropped in its command folder, answering in its report.
-/// Disposing it is the DAW removing it: its status and command folder go.
+/// Disposing it is the DAW removing it: its status and command folder go. Like the real one, which runs in the DAW, it
+/// has a thread of its own: on the thread pool a busy test run could hold it up for seconds, and its status would go
+/// stale as if it had stopped.
 /// </summary>
 sealed class FakeProbe : IAsyncDisposable
 {
     readonly Dictionary<int, double> _knobs = MoProbe.Knobs.ToDictionary(k => k.Id, k => k.Default);
     readonly CancellationTokenSource _stop = new();
     readonly string _status, _commands;
-    readonly Task _running;
+    readonly Thread _running;
+    /// <summary>What went wrong on its thread, given to the test as it's disposed: thrown there, it would end the whole test run.</summary>
+    ExceptionDispatchInfo? _failed;
     readonly string _host, _hostVersion;
     int _n, _handled;
 
@@ -563,7 +650,8 @@ sealed class FakeProbe : IAsyncDisposable
         ReportFile = Path.Combine(folder, $"20261014T091855Z-instrument-{instance[..8]}.jsonl");
         Write("create", new() { ["plugin"] = "org.musicorganiser.probe.instrument", ["host"] = _host, ["hostVersion"] = _hostVersion, ["format"] = format });
         WriteStatus();
-        _running = Task.Run(RunAsync);
+        _running = new Thread(Run) { IsBackground = true, Name = "Fake MO Probe " + instance };
+        _running.Start();
     }
 
     public string Instance { get; }
@@ -575,6 +663,8 @@ sealed class FakeProbe : IAsyncDisposable
     public bool Answers { get; init; } = true;
     /// <summary>Hears of each knob the probe turns itself (a set command), as the DAW does.</summary>
     public Action<int, double>? Turned { get; set; }
+    /// <summary>How long it stops after answering a set command, as on a busy computer: it writes no status meanwhile.</summary>
+    public Func<int, double, TimeSpan>? StallAfterSet { get; set; }
 
     /// <summary>A knob's value, in its own units; setting it is the DAW turning it.</summary>
     public double this[int knob]
@@ -583,15 +673,17 @@ sealed class FakeProbe : IAsyncDisposable
         set { lock (_knobs) _knobs[knob] = value; }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         _stop.Cancel();
-        await _running;
+        _running.Join();
         File.Delete(_status);
         Directory.Delete(_commands, recursive: true);
+        _failed?.Throw();
+        return ValueTask.CompletedTask;
     }
 
-    async Task RunAsync()
+    void Run()
     {
         var since = Stopwatch.StartNew();
         while (!_stop.IsCancellationRequested)
@@ -607,8 +699,12 @@ sealed class FakeProbe : IAsyncDisposable
             }
             // A reader had the status open: Windows won't replace it then (Access denied), so next time, as the probe does.
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-            try { await Task.Delay(5, _stop.Token); }
-            catch (OperationCanceledException) { }
+            catch (Exception e)
+            {
+                _failed = ExceptionDispatchInfo.Capture(e);
+                return;
+            }
+            _stop.Token.WaitHandle.WaitOne(5);
         }
     }
 
@@ -649,6 +745,7 @@ sealed class FakeProbe : IAsyncDisposable
                 this[knob] = value;
                 Turned?.Invoke(knob, value);
                 Write("app-set", new() { ["id"] = knob, ["name"] = k.Name, ["value"] = value }, id);
+                if (StallAfterSet?.Invoke(knob, value) is { } stall && stall > TimeSpan.Zero) Thread.Sleep(stall);
                 break;
             case "label":
                 Label = (string)c["label"]!;

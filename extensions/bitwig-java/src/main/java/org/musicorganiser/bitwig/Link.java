@@ -30,7 +30,12 @@ import com.bitwig.extension.controller.api.TrackBank;
 import com.bitwig.extension.controller.api.Transport;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.CodeSource;
 import java.time.Clock;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -45,9 +50,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * The Music Organiser link for Bitwig Studio.
@@ -82,6 +89,8 @@ final class Link {
     static final int SCENES = 8;
     /** A Drum Machine's pads: one for each MIDI note. */
     static final int DRUM_PADS = 128;
+    /** How many of each pad's devices the link sees: enough to tell an empty Sampler with effects after it from a pad that plays. */
+    static final int PAD_DEVICES = 4;
     /** Devices at the start of each track whose pitch the app can set (a Sampler or a Note Transpose). */
     static final int TUNED_DEVICES = 2;
     /** The selected device's remote controls the link reads steps, origins and automation from (one page). */
@@ -126,12 +135,23 @@ final class Link {
     private DirectParameterValueDisplayObserver displayObserver;
     /** The selected device's drum pads, when it's a Drum Machine. */
     private DrumPadBank drumPads;
+    private final DrumPad[] padItems = new DrumPad[DRUM_PADS];
+    /** Each pad's devices, the first of them, and where to put a sample in place of that one. */
     private final DeviceBank[] padDevices = new DeviceBank[DRUM_PADS];
+    private final Device[] padFirst = new Device[DRUM_PADS];
     private final InsertionPoint[] padInserts = new InsertionPoint[DRUM_PADS];
+    private final InsertionPoint[] padReplace = new InsertionPoint[DRUM_PADS];
     private PopupBrowser popupBrowser;
     private SettableBooleanValue changesSetting;
+    private RemoteSocket socket;
+    /** The port Bitwig gave the link; 0 or less while Bitwig hasn't said (see {@link #knownPort}). */
     private int port = PORT;
     private boolean listening;
+    /** Whether Bitwig has been told the port is taken (once is enough). */
+    private boolean portWarned;
+    /** What most often takes the port: the link itself, loaded twice. */
+    static final String TWICE = "If Music Organiser is listed twice in Bitwig's Settings > Controllers, remove one; "
+                                + "otherwise close what's using the port. Then restart Bitwig.";
 
     // Newer API (version 20 to 23), each null when Bitwig wouldn't make it.
     private CursorRemoteControlsPage remoteControls;
@@ -168,6 +188,13 @@ final class Link {
      * for Bitwig to make the change, so jobs run one at a time and answer when they're done.
      */
     private final Map<String, Command> commands = new HashMap<>();
+
+    /**
+     * The file Bitwig loaded the extension from, or "" when that can't be told. Bitwig may load extensions from another
+     * Bitwig Studio folder than the one holding the projects (Documents, while the projects are on another drive), so
+     * the app needs this to put a new version where Bitwig looks.
+     */
+    String loadedFrom = loadedFrom(Link.class);
 
     Link(ControllerHost host, Reports reports, Clock clock) {
         this.host = host;
@@ -248,10 +275,22 @@ final class Link {
                 DrumPad pad = (DrumPad) drumPads.getItemAt(p);
                 pad.exists().markInterested();
                 pad.name().markInterested();
-                DeviceBank chain = pad.createDeviceBank(1);
+                DeviceBank chain = pad.createDeviceBank(PAD_DEVICES);
                 chain.itemCount().markInterested();
+                Device first = (Device) chain.getItemAt(0);
+                first.exists().markInterested();
+                first.name().markInterested();
+                first.sampleName().markInterested();
+                for (int d = 1; d < PAD_DEVICES; d++) {
+                    Device after = (Device) chain.getItemAt(d);
+                    after.exists().markInterested();
+                    after.deviceType().markInterested();
+                }
+                padItems[p] = pad;
                 padDevices[p] = chain;
+                padFirst[p] = first;
                 padInserts[p] = pad.insertionPoint();
+                padReplace[p] = first.replaceDeviceInsertionPoint();
             }
         }, () -> cursorDevice.hasDrumPads().get()
                  ? "The selected device has drum pads, shown from note " + drumPads.scrollPosition().get() + "."
@@ -390,20 +429,20 @@ final class Link {
         }, () -> recorder.isActive().get() ? "Recording, for " + recorder.duration().get() + " ms so far." : "Not recording.");
 
         feature("remote connection", () -> {
-            RemoteSocket socket = host.createRemoteConnection("Music Organiser", PORT);
+            socket = host.createRemoteConnection("Music Organiser", PORT);
             socket.setClientConnectCallback(this::connected);
             port = socket.getPort();
             listening = true;
         }, () -> {
-            if (port != PORT)
-                throw new LinkError("Port " + PORT + " is taken, so Bitwig gave the link port " + port + ", where the app doesn't look.");
-            return "Waiting for the app on port " + port + ", with " + clients.size() + " connected now.";
+            int now = knownPort();
+            if (now > 0 && now != PORT)
+                throw new LinkError("Port " + PORT + " is taken, so Bitwig gave the link port " + now + ", where the app doesn't look. " + TWICE);
+            if (now <= 0) return "Waiting for the app on port " + PORT + ", though Bitwig hasn't said yet which port it gave the link.";
+            return "Waiting for the app on port " + now + ", with " + clients.size() + " connected now.";
         });
         if (listening) {
-            host.println("Music Organiser: waiting for the app on port " + port + ".");
-            if (port != PORT)
-                host.showPopupNotification("Music Organiser: port " + PORT + " is taken, so the app can't connect. "
-                                           + "Close what's using it and restart Bitwig.");
+            host.println("Music Organiser: waiting for the app on port " + (port > 0 ? port : PORT) + ".");
+            warnIfPortTaken();
         } else {
             host.showPopupNotification("Music Organiser: Bitwig couldn't listen for the app. The self-check in " + reports.folder()
                                        + " says why.");
@@ -411,6 +450,7 @@ final class Link {
 
         Map<String, Object> start = event("start");
         start.put("extension", MusicOrganiserExtensionDefinition.VERSION);
+        if (!loadedFrom.isEmpty()) start.put("loadedFrom", loadedFrom);
         start.put("bitwig", str(host.getHostVersion()));
         start.put("api", host.getHostApiVersion());
         start.put("port", port);
@@ -469,6 +509,7 @@ final class Link {
     private void connected(RemoteConnection connection) {
         Client client = new Client(connection);
         clients.add(client);
+        knownPort();
         connection.setDisconnectCallback(() -> {
             client.open = false;
             clients.remove(client);
@@ -480,6 +521,26 @@ final class Link {
         hello.put("event", "hello");
         hello.put("result", greeting());
         send(client, hello);
+    }
+
+    /**
+     * The port Bitwig gave the link, asked again while Bitwig hasn't said: Bitwig 6.1.3 says -1 straight after making
+     * the connection. The app connecting shows it's 19791, the only port the app tries. Warns in Bitwig when it's
+     * another.
+     */
+    private int knownPort() {
+        if (port <= 0 && socket != null) {
+            port = socket.getPort();
+            if (port <= 0 && !clients.isEmpty()) port = PORT;
+        }
+        warnIfPortTaken();
+        return port;
+    }
+
+    private void warnIfPortTaken() {
+        if (port <= 0 || port == PORT || portWarned) return;
+        portWarned = true;
+        host.showPopupNotification("Music Organiser: port " + PORT + " is taken, so the app can't connect. " + TWICE);
     }
 
     /** Handles one request from the app. */
@@ -700,7 +761,34 @@ final class Link {
         // Additions in link version 3. ("engine" already says whether Bitwig's audio engine is on.)
         m.put("runtime", "java");
         m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
+        if (!loadedFrom.isEmpty()) m.put("loadedFrom", loadedFrom);
         return m;
+    }
+
+    /** The file a class was loaded from, when it's a file (an archive such as the .bwextension), else "". */
+    static String loadedFrom(Class<?> type) {
+        try {
+            CodeSource source = type.getProtectionDomain().getCodeSource();
+            if (source == null || source.getLocation() == null) return "";
+            Path file = Path.of(uri(source.getLocation()));
+            return Files.isRegularFile(file) ? file.toString() : "";
+        } catch (URISyntaxException | RuntimeException e) {
+            // Not a file: URL, or Bitwig doesn't allow asking.
+            return "";
+        }
+    }
+
+    /**
+     * A URL as a URI. Bitwig makes its extensions' URLs from their files without escaping them (File.toURL), so one in a
+     * folder with a space in its name ("Bitwig Studio") isn't a URI as it stands: its parts are escaped here instead.
+     */
+    static URI uri(URL url) throws URISyntaxException {
+        try {
+            return url.toURI();
+        } catch (URISyntaxException e) {
+            String authority = url.getAuthority();
+            return new URI(url.getProtocol(), authority == null || authority.isEmpty() ? null : authority, url.getPath(), null, null);
+        }
     }
 
     /** The greeting for a new connection: what's known, even when part of Bitwig's API didn't start. */
@@ -718,6 +806,7 @@ final class Link {
             m.put("onlyIn", true);
             m.put("runtime", "java");
             m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
+            if (!loadedFrom.isEmpty()) m.put("loadedFrom", loadedFrom);
             m.put("error", failure(e) + " Ask for a selftest to see what's wrong.");
             return m;
         }
@@ -1136,9 +1225,10 @@ final class Link {
     }
 
     /**
-     * Puts samples on a Drum Machine's empty pads (as if each were dropped on its pad, so each gets a Sampler),
-     * leaving pads that have something on them alone. The Drum Machine is `device` on `track` (which this
-     * selects), or the selected device.
+     * Puts samples on a Drum Machine's free pads (as if each were dropped on its pad, so each gets a Sampler),
+     * leaving pads that have something on them alone. A pad that holds only what a Drum Machine preset put there,
+     * a Sampler with no sample, is free too: the sample goes in that Sampler's place, keeping what comes after it.
+     * The Drum Machine is `device` on `track` (which this selects), or the selected device.
      */
     private void fillPads(Map<String, Object> request, Finish finish) {
         Object given = field(request, "pads");
@@ -1187,39 +1277,94 @@ final class Link {
         }, finish);
     }
 
-    /** Drops each sample on its pad when the pad is empty, then waits for the pads to fill and names them. */
+    /**
+     * Drops each sample on its free pad, or in place of the pad's empty Sampler, then waits for the pads to take
+     * them and names them. The answer says which samples went in place of an empty Sampler, and what's on each
+     * pad it leaves alone.
+     */
     private void fill(List<Pad> list, Finish finish) {
         List<Pad> filled = new ArrayList<>();
+        Map<Integer, String> replaced = new LinkedHashMap<>();   // note -> the pad's name before
         List<Integer> skipped = new ArrayList<>();
+        List<Map<String, Object>> taken = new ArrayList<>();
         for (Pad pad : list) {
-            if (padDevices[pad.note()].itemCount().get() > 0) {
-                skipped.add(pad.note());
+            int n = pad.note();
+            if (!padTaken(n)) {
+                padInserts[n].insertFile(pad.path());
+            } else if (emptySampler(n)) {
+                replaced.put(n, str(padItems[n].name().get()));
+                padReplace[n].insertFile(pad.path());
             } else {
-                padInserts[pad.note()].insertFile(pad.path());
-                filled.add(pad);
+                skipped.add(n);
+                taken.add(padContents(n));
+                continue;
             }
+            filled.add(pad);
         }
-        waitFor(() -> {
-            for (Pad pad : filled)
-                if (padDevices[pad.note()].itemCount().get() == 0) return false;
-            return true;
-        }, CHANGE_WAIT, all -> {
+        Predicate<Pad> took = pad -> replaced.containsKey(pad.note())
+            ? !str(padFirst[pad.note()].sampleName().get()).isEmpty() || !str(padItems[pad.note()].name().get()).equals(replaced.get(pad.note()))
+            : padTaken(pad.note());
+        waitFor(() -> filled.stream().allMatch(took), CHANGE_WAIT, all -> {
             List<Integer> done = new ArrayList<>();
             List<Integer> failed = new ArrayList<>();
             for (Pad pad : filled) {
-                if (padDevices[pad.note()].itemCount().get() == 0) {
+                if (!took.test(pad)) {
                     failed.add(pad.note());
                     continue;
                 }
-                if (!pad.name().isEmpty()) ((DrumPad) drumPads.getItemAt(pad.note())).name().set(pad.name());
+                if (!pad.name().isEmpty()) padItems[pad.note()].name().set(pad.name());
                 done.add(pad.note());
             }
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("filled", done);
+            m.put("replaced", done.stream().filter(replaced::containsKey).collect(Collectors.toList()));
             m.put("skipped", skipped);
             m.put("failed", failed);
+            m.put("taken", taken);
             finish.ok(m);
         }, finish);
+    }
+
+    /** Whether a pad has a device on it: the pad, its device count and its first device all show it. */
+    private boolean padTaken(int note) {
+        return padItems[note].exists().get() && padDevices[note].itemCount().get() > 0 && padFirst[note].exists().get();
+    }
+
+    /**
+     * Whether a pad holds a Sampler with no sample, as a Drum Machine preset can put on every pad (Solomon's
+     * default Drum Machine does), still has the name it came with, not a sample's, and has nothing after it but
+     * effects: such a pad is free.
+     */
+    private boolean emptySampler(int note) {
+        String first = str(padFirst[note].name().get());
+        String name = str(padItems[note].name().get());
+        return padTaken(note) && first.equals("Sampler") && str(padFirst[note].sampleName().get()).isEmpty()
+               && (name.isEmpty() || name.equals(first)) && onlyEffectsAfter(note);
+    }
+
+    /**
+     * Whether all a pad has after its first device are audio effects, so nothing else on it makes a sound. A pad with
+     * more devices than the link sees ({@link #PAD_DEVICES}) doesn't count.
+     */
+    private boolean onlyEffectsAfter(int note) {
+        int count = padDevices[note].itemCount().get();
+        if (count > PAD_DEVICES) return false;
+        for (int d = 1; d < count; d++) {
+            Device after = (Device) padDevices[note].getItemAt(d);
+            if (after.exists().get() && !"audio_to_audio".equals(str(after.deviceType().get()))) return false;
+        }
+        return true;
+    }
+
+    /** What's on a pad: its name, how many devices, the first one's name and its sample, as Bitwig shows them. */
+    private Map<String, Object> padContents(int note) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("note", note);
+        m.put("name", str(padItems[note].name().get()));
+        m.put("devices", padDevices[note].itemCount().get());
+        m.put("first", str(padFirst[note].name().get()));
+        m.put("sample", str(padFirst[note].sampleName().get()));
+        return m;
     }
 
     /**
@@ -1337,6 +1482,7 @@ final class Link {
         m.put("why", why);
         m.put("ok", ok);
         m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
+        if (!loadedFrom.isEmpty()) m.put("loadedFrom", loadedFrom);
         m.put("link", LINK_VERSION);
         m.put("product", safely(() -> str(host.getHostProduct())));
         m.put("bitwig", safely(() -> str(host.getHostVersion())));
@@ -1404,11 +1550,15 @@ final class Link {
         return list;
     }
 
-    /** Which pads have something on them, and where the pad list starts, to tell when it's caught up. */
+    /**
+     * Where the pad list starts, and what's on each pad (how many devices, less than 0 when the first is an empty
+     * Sampler), to tell when it's caught up.
+     */
     private List<Integer> padList() {
         List<Integer> list = new ArrayList<>(DRUM_PADS + 1);
         list.add(drumPads.scrollPosition().get());
-        for (DeviceBank pad : padDevices) list.add(pad.itemCount().get());
+        for (int p = 0; p < DRUM_PADS; p++)
+            list.add(!padTaken(p) ? 0 : emptySampler(p) ? -padDevices[p].itemCount().get() : padDevices[p].itemCount().get());
         return list;
     }
 

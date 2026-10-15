@@ -26,11 +26,14 @@
     <Style Selector="Button:pressed, ToggleButton:pressed">
         <Setter Property="RenderTransform" Value="scale(0.96)" />
     </Style>
-    <Style Selector="DataGridRow /template/ Rectangle#BackgroundRectangle">
+    <!-- The chosen row in a table changes without a fade on purpose. A fade there mixed the row's colour with its see-through
+         opacity on the way, so moving from one sound to the next flashed bright for a moment. -->
+    <!-- Sound tiles: the chosen tile's tint and outline fade in quietly. -->
+    <Style Selector="Border.tile">
         <Setter Property="Transitions">
             <Transitions>
-                <DoubleTransition Property="Opacity" Duration="0:0:0.12" />
-                <BrushTransition Property="Fill" Duration="0:0:0.12" />
+                <BrushTransition Property="Background" Duration="0:0:0.12" />
+                <BrushTransition Property="BorderBrush" Duration="0:0:0.12" />
             </Transitions>
         </Setter>
     </Style>

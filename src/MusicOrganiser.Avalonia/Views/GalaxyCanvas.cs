@@ -16,7 +16,8 @@ namespace MusicOrganiser.Avalonia.Views;
 
 /// <summary>
 /// The sound galaxy, drawn by hand: every sound a glowing star, bigger the more you like it, close to the sounds it
-/// sounds like. Sweep the mouse over the stars to hear them; click one to pick it; drag to move about, scroll to zoom.
+/// sounds like. Hold the left button and sweep over the stars to hear them; click one to pick it; drag with the middle
+/// (or right) button to move about, scroll to zoom.
 /// The picked sound shows lines to its six closest sound-alikes, and the trail of sounds you swept past is drawn as a
 /// fading line so you can find your way back to a good one.
 /// </summary>
@@ -40,6 +41,7 @@ public sealed class GalaxyCanvas : Control
         AvaloniaProperty.Register<GalaxyCanvas, Sound?>(nameof(Selected), defaultBindingMode: global::Avalonia.Data.BindingMode.TwoWay);
     public static readonly StyledProperty<ICommand?> SweepCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(SweepCommand));
     public static readonly StyledProperty<ICommand?> PickCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(PickCommand));
+    public static readonly StyledProperty<ICommand?> SweepEndedCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(SweepEndedCommand));
 
     public IReadOnlyList<GalaxyStar>? Stars { get => GetValue(StarsProperty); set => SetValue(StarsProperty, value); }
     public IReadOnlyList<GalaxyRegion>? Regions { get => GetValue(RegionsProperty); set => SetValue(RegionsProperty, value); }
@@ -48,6 +50,8 @@ public sealed class GalaxyCanvas : Control
     public Sound? Selected { get => GetValue(SelectedProperty); set => SetValue(SelectedProperty, value); }
     public ICommand? SweepCommand { get => GetValue(SweepCommandProperty); set => SetValue(SweepCommandProperty, value); }
     public ICommand? PickCommand { get => GetValue(PickCommandProperty); set => SetValue(PickCommandProperty, value); }
+    /// <summary>The left button was let go after sweeping: the preview stops.</summary>
+    public ICommand? SweepEndedCommand { get => GetValue(SweepEndedCommandProperty); set => SetValue(SweepEndedCommandProperty, value); }
 
     static GalaxyCanvas() => AffectsRender<GalaxyCanvas>(StarsProperty, RegionsProperty, TrailProperty, ConstellationProperty, SelectedProperty);
 
@@ -60,7 +64,8 @@ public sealed class GalaxyCanvas : Control
     DateTime _lastFrame = DateTime.UtcNow;
 
     Point? _press;
-    bool _panning, _miniDrag;
+    // Left held: sweeping (each star the pointer reaches plays). Middle or right held: dragging the view about.
+    bool _sweeping, _swept, _panning, _miniDrag;
     Point _last;
     GalaxyStar? _hover;
     Dictionary<long, GalaxyStar> _byId = [];
@@ -288,10 +293,20 @@ public sealed class GalaxyCanvas : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         Focus();
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        var props = e.GetCurrentPoint(this).Properties;
         _press = _last = e.GetPosition(this);
-        _panning = false;
         e.Handled = true;
+        if (props.IsMiddleButtonPressed || props.IsRightButtonPressed)
+        {
+            // Middle (or right) drag moves the view about.
+            _panning = true;
+            _sweeping = false;
+            Cursor = new Cursor(StandardCursorType.SizeAll);
+            e.Pointer.Capture(this);
+            return;
+        }
+        if (!props.IsLeftButtonPressed) return;
+        _panning = _swept = false;
         if (MiniMapRect is { } mini && mini.Inflate(new Thickness(0, 24, 0, 0)).Contains(_last))
         {
             // Click (or drag) on the mini-map: go there.
@@ -306,7 +321,20 @@ public sealed class GalaxyCanvas : Control
             _press = null;
             return;
         }
-        if (e.ClickCount == 2 && HitTest(_last) is null) ZoomBy(2.5, _last);
+        if (e.ClickCount == 2 && HitTest(_last) is null)
+        {
+            ZoomBy(2.5, _last);
+            return;
+        }
+        // Held down, the left button sweeps: the star under it plays now, and each one it reaches after that.
+        _sweeping = true;
+        e.Pointer.Capture(this);
+        if (HitTest(_last) is { } star)
+        {
+            _hover = star;
+            Sweep(star);
+            InvalidateVisual();
+        }
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
@@ -321,26 +349,19 @@ public sealed class GalaxyCanvas : Control
             InvalidateVisual();
             return;
         }
-        if (_press is { } start)
+        if (_panning)
         {
-            if (!_panning && Distance(p, start) > 4)
-            {
-                _panning = true;
-                Cursor = new Cursor(StandardCursorType.SizeAll);
-            }
-            if (_panning)
-            {
-                _anchor = null;
-                _cx -= (p.X - _last.X) / Scale;
-                _cy -= (p.Y - _last.Y) / Scale;
-                _tx = _cx;
-                _ty = _cy;
-                _last = p;
-                InvalidateVisual();
-                return;
-            }
+            _anchor = null;
+            _cx -= (p.X - _last.X) / Scale;
+            _cy -= (p.Y - _last.Y) / Scale;
+            _tx = _cx;
+            _ty = _cy;
+            _last = p;
+            InvalidateVisual();
+            return;
         }
-        var label = LabelAt(p) ?? -1;
+        if (_sweeping && _press is { } start && Distance(p, start) > 4) _swept = true;
+        var label = _sweeping ? -1 : LabelAt(p) ?? -1;
         if (label != _hoverLabel)
         {
             _hoverLabel = label;
@@ -350,29 +371,46 @@ public sealed class GalaxyCanvas : Control
         var hit = label >= 0 ? null : HitTest(p);
         if (hit == _hover) return;
         _hover = hit;
-        if (hit is not null)
-        {
-            // Sweeping: each new star the pointer lands on plays (a preview) and joins the trail.
-            if (SweepCommand?.CanExecute(hit.Sound) == true) SweepCommand.Execute(hit.Sound);
-            Pulse(hit);
-        }
+        // Only while the left button is held does a star play; hovering just shows its card.
+        if (hit is not null && _sweeping) Sweep(hit);
         InvalidateVisual();
+    }
+
+    void Sweep(GalaxyStar star)
+    {
+        if (SweepCommand?.CanExecute(star.Sound) == true) SweepCommand.Execute(star.Sound);
+        Pulse(star);
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         var moved = _panning || _miniDrag;
+        var sweeping = _sweeping;
         var pressed = _press is not null;
         _press = null;
-        _panning = _miniDrag = false;
+        _panning = _miniDrag = _sweeping = false;
+        e.Pointer.Capture(null);
         if (moved) InvalidateVisual();   // paint the view properly where the drag ended
         Cursor = new Cursor(_hoverLabel >= 0 ? StandardCursorType.Hand : StandardCursorType.Cross);
-        if (moved || !pressed) return;
-        if (HitTest(e.GetPosition(this)) is { } star && PickCommand?.CanExecute(star.Sound) == true)
+        if (moved || !pressed || e.InitialPressMouseButton != MouseButton.Left) return;
+        if (sweeping && _swept)
         {
-            PickCommand.Execute(star.Sound);
-            Pulse(star);
+            // Let go after sweeping: the sound stops with the mouse.
+            if (SweepEndedCommand?.CanExecute(null) == true) SweepEndedCommand.Execute(null);
+            return;
         }
+        // A click without sweeping off: picks the star, and it counts as playing it on purpose.
+        if (HitTest(e.GetPosition(this)) is { } star && PickCommand?.CanExecute(star.Sound) == true)
+            PickCommand.Execute(star.Sound);
+    }
+
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        base.OnPointerCaptureLost(e);
+        // The window lost the mouse mid-sweep (a dialog, Alt+Tab): nothing keeps playing on its own.
+        if (_sweeping && _swept && SweepEndedCommand?.CanExecute(null) == true) SweepEndedCommand.Execute(null);
+        _press = null;
+        _panning = _miniDrag = _sweeping = false;
     }
 
     protected override void OnPointerExited(PointerEventArgs e)
@@ -413,9 +451,8 @@ public sealed class GalaxyCanvas : Control
         e.Handled = true;
         if (next is null) return;
         Selected = next.Sound;
-        if (SweepCommand?.CanExecute(next.Sound) == true) SweepCommand.Execute(next.Sound);
         if (!OnScreen(next, -40)) FlyTo(next.X, next.Y, _tz);
-        Pulse(next);
+        Sweep(next);
         InvalidateVisual();
     }
 
@@ -868,6 +905,7 @@ public sealed class GalaxyCanvas : Control
         }
 
         MiniMap(ctx, inView, surface, stroke, text, muted, accent);
+        GalaxyTiming.Frame(timer.Elapsed.TotalMilliseconds, () => $"{_all.Length:N0} stars, zoom ×{_zoom:0.#}, {inView:N0} in view");
         if (Environment.GetEnvironmentVariable("MO_GALAXY_TIMING") is not null)
             Console.Error.WriteLine($"galaxy frame {timer.Elapsed.TotalMilliseconds:0.0} ms, zoom {_zoom:0.0}, in view {inView}, painted {painted:0.00}");
     }
@@ -909,6 +947,31 @@ public sealed class GalaxyCanvas : Control
     /// </summary>
     void PackLabels(DrawingContext ctx, (int X0, int Y0, int X1, int Y1) view, double fade, Color bg)
     {
+        // Counting the packs goes through every star in view, up to 100,000 of them, so it's kept between frames:
+        // worked out again when the stars change or the view settles, and every so often while it moves (the names are
+        // placed on the map, so they stay in the right spot meanwhile). Hovering over a star doesn't count them again.
+        var key = (view, _cx, _cy, _zoom, _w, _h);
+        if (_packNames is null || _packNamesVersion != _version
+            || (!Equals(key, _packNamesKey) && (!(_panning || _miniDrag || _frame.IsEnabled) || (DateTime.UtcNow - _packNamesAt).TotalMilliseconds > 120)))
+        {
+            _packNames = CountPacks(view);
+            _packNamesKey = key;
+            _packNamesVersion = _version;
+            _packNamesAt = DateTime.UtcNow;
+        }
+        var taken = Covered();
+        foreach (var (name, b) in _packNames)
+            Label(ctx, taken, name, b.N, StarColours.Pack(name), ToScreen(b.X / b.N, b.Top), fade, bg,
+                  new Rect(b.L, b.Top, b.R - b.L, b.B - b.Top), big: false);
+    }
+
+    List<(string Name, (int N, double X, float Top, float L, float R, float B) Box)>? _packNames;
+    object? _packNamesKey;
+    int _packNamesVersion = -1;
+    DateTime _packNamesAt;
+
+    List<(string Name, (int N, double X, float Top, float L, float R, float B) Box)> CountPacks((int X0, int Y0, int X1, int Y1) view)
+    {
         const int cols = 5, rows = 4;
         var (ax, ay) = ToMap(new Point(0, 0));
         var (bx, by) = ToMap(new Point(_w, _h));
@@ -934,10 +997,7 @@ public sealed class GalaxyCanvas : Control
             if (top.N < totals[c] * 0.45 || name.Length == 0) continue;
             if (!best.TryGetValue(name, out var had) || had.N < top.N) best[name] = top;
         }
-        var taken = Covered();
-        foreach (var (name, b) in best.OrderByDescending(kv => kv.Value.N))
-            Label(ctx, taken, name, b.N, StarColours.Pack(name), ToScreen(b.X / b.N, b.Top), fade, bg,
-                  new Rect(b.L, b.Top, b.R - b.L, b.B - b.Top), big: false);
+        return best.OrderByDescending(kv => kv.Value.N).Select(kv => (kv.Key, kv.Value)).ToList();
     }
 
     /// <summary>

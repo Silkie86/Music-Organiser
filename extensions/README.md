@@ -25,10 +25,13 @@ to the app (`Extensions` in its folder), and installing copies them where the DA
 
 - **Bitwig**: the extension, `MusicOrganiser.bwextension`, into `Extensions` in Bitwig's user folder, normally
   `Documents\Bitwig Studio` (on Linux, `~/Bitwig Studio`), taking out the script if it's there; or, when the app
-  was built without a JDK and so has no extension, the script, into `Controller Scripts\Music Organiser`. A PC can have more than one (Windows may keep Documents in OneDrive), and
-  only Bitwig knows which it uses (Settings → Locations), so the app installs into every Bitwig Studio
-  folder it finds in a Documents folder until **Choose folder…** points it at one; then only that one.
-  Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
+  was built without a JDK and so has no extension, the script, into `Controller Scripts\Music Organiser`. A PC can
+  have more than one Bitwig Studio folder (Windows may keep Documents in OneDrive), and Bitwig can load extensions
+  from one while it keeps projects in another (seen: extensions from `Documents\Bitwig Studio`, projects on another
+  drive). So Install puts the link in every Bitwig Studio folder it finds in a Documents folder, in the one
+  **Choose folder…** points it at (which is also where the app looks for Bitwig projects), and in the Extensions
+  folder the extension last said Bitwig loaded it from (`loadedFrom` in its hello). Every copy is the same, so it
+  doesn't matter which Bitwig loads. Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
 - **FL Studio**: `Settings\Hardware\Music Organiser` in FL Studio's user data folder (normally
   `Documents\Image-Line\FL Studio`). The app also finds user data folders elsewhere from where your FL
   projects are, and **Choose folder…** points it at one. FL Studio only runs a script for a MIDI input, and
@@ -112,7 +115,7 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 
 | Command | Asks for | Result |
 |---|---|---|
-| `hello` | | `link` (this protocol's version: 3 from the extension, 2 from the script), `product`, `version`, `api`, `platform`, `port`, `project`, `modified`, `engine` (whether Bitwig's audio engine is on), `changes`, `onlyIn` (`true`: the link honours a request's `onlyIn`, [below](#only-in-one-project)). Version 3 adds `runtime` (`"java"`) and `extension` (its version). |
+| `hello` | | `link` (this protocol's version: 3 from the extension, 2 from the script), `product`, `version`, `api`, `platform`, `port`, `project`, `modified`, `engine` (whether Bitwig's audio engine is on), `changes`, `onlyIn` (`true`: the link honours a request's `onlyIn`, [below](#only-in-one-project)). Version 3 adds `runtime` (`"java"`) and `extension` (its version), and from extension 3.4 `loadedFrom` (the file Bitwig loaded it from, when it can tell; 3.5 can tell in a folder with a space in its name, as Bitwig Studio's are). |
 | `project` | | `name`, `modified`, `tempo`, `timeSignature`, `playing`, `position`, `trackCount`, `tracks`: the first 128 tracks in Bitwig's flat list, each with `index`, `name`, `type`, `group`, `color`, `active`, `mute`, `solo`, `arm`, `volume`, `pan` (as shown, with `volumeValue` and `panValue` from 0 to 1), `deviceCount` and the first 16 `devices` (`name`, `preset`, `kind`, `plugin`, `enabled`). Version 3 adds each track's `id`, the ID Bitwig keeps it under, once Bitwig has said. |
 | `device` | | The selected device: `track`, `device` (or null), `drumPads` (whether it has a Drum Machine's pads) and every parameter as `id` (what Bitwig saves it under), `name`, `value` (0 to 1) and `display` ("-6.0 dB"). Waits up to 2 seconds for the display texts. Version 3 adds the device's remote controls on the page Bitwig shows (`page`, and `controls` with `index`, `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated` and `param`), and gives a parameter that is one of those controls the same `steps` (-1 for continuous), `stepNames`, `origin` and `automated`: see [below](#link-version-3). |
 | `actions` | | Every Bitwig action: `id`, `name`, `category`, `menu` |
@@ -121,7 +124,7 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 | `insert` ✎ | `kind`: `vst3` or `clap` with `plugin` (the ID the plugin scanner reads), `vst2` with `plugin` as a number, `bitwig` with `device` (a UUID), or `file` with `path` (a preset, or a sample, which goes in a Sampler). Then `track` (optional) and `at`: `"end"` (the default) or `"start"` of its chain. | Without `track`, at the end of the selected track's chain: `{}`, since Bitwig quietly ignores what it can't use. With `track`, once Bitwig has added it: `added`, `index` and `device` (as in `project`), or `added: false`. |
 | `newtrack` ✎ | `name`, `color` (optional, `#rrggbb`) | `index` and `name`. An instrument track after the last main track (before the effect tracks), selected. If adding it opened Bitwig's browser, the script closes it. |
 | `clip` ✎ | `track`, `path` (a MIDI or audio file), `slot` (optional) | `slot`: where Bitwig made the clip, by default the first empty one in the first 8 scenes |
-| `pads` ✎ | `pads`, each with `note` (0 to 127), `path` and `name` (optional). Then `track` and `device` for a Drum Machine's place, or nothing for the selected device. | `filled`, `skipped` (pads that already had something on them, left alone) and `failed`, as notes. Each sample goes on its pad as if dropped there, in a Sampler. |
+| `pads` ✎ | `pads`, each with `note` (0 to 127), `path` and `name` (optional). Then `track` and `device` for a Drum Machine's place, or nothing for the selected device. | `filled`, `replaced` (those of the filled that went in place of an empty Sampler), `skipped` (pads that already had something on them, left alone) and `failed`, as notes, and `taken`: what's on each skipped pad (`note`, `name`, `devices`, `first` device's name, its `sample`). Each sample goes on a free pad as if dropped there, in a Sampler. A pad whose first device is a Sampler with no sample, still named as it came (a Drum Machine preset can put one on every pad), with nothing after it but audio effects (up to 3), is free too: the sample goes in that Sampler's place, keeping the effects after it. |
 | `transpose` ✎ | `track`, `device` (0 or 1), `semitones` | `device`, `value`, `display`. Sets a Sampler's Transpose (fractions allowed) or a Note Transpose's Coarse (whole semitones). |
 | `action` ✎ | `action` (an `id` from `actions`) | `{}` |
 | `clicked` (3) | | The parameter last clicked in Bitwig: `exists` (false until one is), `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated`, `locked` |

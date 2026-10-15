@@ -13,8 +13,10 @@ namespace MusicOrganiser.Core.DawLink;
 /// <param name="Title">FL Studio's window title, which is how it names the project.</param>
 /// <param name="Modified">Whether the open project has unsaved changes, or null when the script doesn't say (an older copy of it).</param>
 /// <param name="Changes">Whether the script lets the app make changes.</param>
+/// <param name="Extension">The Bitwig extension's version, when the extension answers rather than the script.</param>
 public sealed record DawState(string Daw, bool Answering, bool? Running = null, string Version = "", string Project = "",
-                              string Title = "", bool? Modified = null, bool Changes = false)
+                              string Title = "", bool? Modified = null, bool Changes = false, string? Extension = null,
+                              string? LoadedFrom = null)
 {
     public const string Bitwig = "Bitwig Studio";
     public const string FlStudio = "FL Studio";
@@ -144,7 +146,8 @@ public sealed class DawWatch : IDisposable
     }
 
     static DawState FromHello(BitwigHello h) =>
-        new(DawState.Bitwig, true, true, $"{h.Product} {h.Version}", h.Project.Trim(), h.Project, h.Modified, h.Changes);
+        new(DawState.Bitwig, true, true, $"{h.Product} {h.Version}", h.Project.Trim(), h.Project, h.Modified, h.Changes,
+            h.Runtime == "java" ? h.Extension : null, h.Runtime == "java" ? h.LoadedFrom : null);
 
     async Task<DawState> FlStudioAsync(CancellationToken ct)
     {

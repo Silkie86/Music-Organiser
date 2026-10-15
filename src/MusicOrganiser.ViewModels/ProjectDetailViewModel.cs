@@ -18,6 +18,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public const string BitwigTemplateKey = "bitwig_template";
     /// <summary>"1" when FL's steps on a Sampler play until the next note or the clip end, not until their sample ends.</summary>
     public const string StepsUntilNextNoteKey = "bitwig_steps_until_next_note";
+    /// <summary>"1" when converting swaps older versions of the template's synth (Serum) for the template's own (Serum 2).</summary>
+    public const string UpgradeSynthsKey = "bitwig_upgrade_synths";
     public static string DawExeKey(string daw) => $"daw_exe:{daw}";
 
     readonly LibraryDb _db;
@@ -59,6 +61,20 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public string PluginHeader => $"Plugins ({Plugins.Count}{(Item.MissingPlugins > 0 ? $", {Item.MissingPlugins} missing" : "")})";
     public string SampleHeader => $"Samples ({Samples.Count}{(Item.MissingSamples > 0 ? $", {Item.MissingSamples} missing" : "")})";
 
+    /// <summary>Overview's glance at the plugins: missing ones first and synths that never play last, as many as fit a few lines of chips.</summary>
+    public IReadOnlyList<PluginRow> GlancePlugins => Plugins.OrderBy(p => p.Installed).ThenBy(p => p.Silent).Take(GlanceChipCount).ToList();
+    public string GlancePluginsMore => Plugins.Count > GlanceChipCount ? $"+{Plugins.Count - GlanceChipCount} more" : "";
+    public string GlancePluginsLabel => Item.MissingPlugins > 0 ? $"PLUGINS · {Plugins.Count}, {Item.MissingPlugins} MISSING" : $"PLUGINS · {Plugins.Count}";
+    public const int GlanceChipCount = 12;
+    /// <summary>"23 found, 2 missing", or "None used" for a song made only of synths.</summary>
+    public string GlanceSamples => Samples.Count == 0 ? "None used"
+        : Item.MissingSamples == 0 ? $"All {Samples.Count} found"
+        : $"{Samples.Count - Item.MissingSamples} found, {Item.MissingSamples} missing";
+    /// <summary>This save and the few before it, newest first.</summary>
+    public IReadOnlyList<SaveGlance> GlanceSaves =>
+        Item.OlderSaves.OrderByDescending(s => s.Modified).Take(3).Select(s => new SaveGlance(s.Name, s.Modified, false))
+            .Prepend(new SaveGlance(Item.FileName, Item.Modified, true)).ToList();
+
     [ObservableProperty] string _message = "";
 
     public ProjectDetailViewModel(LibraryDb db, ProjectItem item, MainViewModel main)
@@ -88,6 +104,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         if (item.Error is { } err) facts.Add(new("Couldn't read", err));
         Facts = facts;
         if (item.Daw == "FL Studio" && CanExtractMidi) _ = FindSilentSynthsAsync();
+        LoadPendingFix();
     }
 
     /// <summary>
@@ -101,7 +118,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         {
             var players = await Task.Run(() => MidiChannel.Players(reader.ExtractChannels(Item.Path)));
             if (players.Count == 0) return;
-            foreach (var p in Plugins) p.Silent = p.IsInstrument && !players.Contains(p.Name);
+            foreach (var p in Plugins) p.Silent = p.IsInstrument && p.Installed && !players.Contains(p.Name);   // a missing one stays in sight
             SilentCount = Plugins.Count(p => p.Silent);
             ApplyPluginFilter();
         }
@@ -114,6 +131,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     {
         VisiblePlugins = ShowSilent ? Plugins : Plugins.Where(p => !p.Silent).ToList();
         OnPropertyChanged(nameof(SilentToggleText));
+        OnPropertyChanged(nameof(GlancePlugins));
     }
 
     [RelayCommand]
@@ -204,6 +222,12 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     [RelayCommand]
     Task OpenInBitwig() => ConvertForBitwig(Item.Summary, Item.Name);
 
+    /// <summary>
+    /// The names of the Bitwig copies this app has opened since Bitwig was last seen closed. Bitwig can have several
+    /// projects open but only says which one is in front, and opening one it has open just brings that copy forward.
+    /// </summary>
+    static readonly HashSet<string> OpenedInBitwig = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Converts one save (the newest, or the last of an older run) and opens it in Bitwig.</summary>
     internal async Task ConvertForBitwig(ProjectSummary save, string name)
     {
@@ -232,9 +256,20 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         {
             var path = save.Path;
             var untilNextNote = _db.GetSetting(StepsUntilNextNoteKey) == "1";
-            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote));
+            var upgrade = _db.GetSetting(UpgradeSynthsKey) == "1";
+            // A new convert saved over a copy Bitwig has open would look unchanged there, so it gets a fresh name.
+            var bitwig = _main.Live.State(DawState.Bitwig);
+            if (bitwig is { Running: false }) OpenedInBitwig.Clear();
+            var saveAs = Exporter.BitwigName(path, n => OpenedInBitwig.Contains(n) ||
+                                                        bitwig is { Answering: true } && bitwig.Project.Trim().Equals(n, StringComparison.OrdinalIgnoreCase));
+            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade, saveAs));
             OpenWithBitwig(_db, file);
-            Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig." +
+            OpenedInBitwig.Add(saveAs);
+            var renamed = saveAs != Exporter.BitwigName(path, _ => false)
+                ? " It has a new name because Bitwig may still have an earlier convert open, and would show that one instead. " +
+                  "Close the old one without saving."
+                : "";
+            Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig.{renamed}" +
                       (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
                                                  $"{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more, listed in the notes saved next to it" : "")}.");
             card.Finish($"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig",
@@ -424,6 +459,12 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         _db.Upsert(Scanner.Analyse(Item.Path));
         _main.RefreshAll();
     }
+}
+
+/// <summary>One save in Overview's glance; the newest is the one the Open button opens.</summary>
+public sealed record SaveGlance(string Name, DateTime When, bool Newest)
+{
+    public string WhenText => When.ToString("d MMM yyyy");
 }
 
 public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p, IReadOnlySet<string> installed) : ObservableObject

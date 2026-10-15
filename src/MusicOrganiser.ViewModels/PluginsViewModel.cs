@@ -60,15 +60,26 @@ public sealed partial class PluginsViewModel : ObservableObject
         Reload();
     }
 
-    public void Reload()
+    public void Reload() => Show(Load());
+
+    /// <summary>Reload with the database work done in the background, so the window keeps answering.</summary>
+    public async Task ReloadAsync() => Show(await Task.Run(Load));
+
+    /// <summary>What the page shows, read from the database (on any thread).</summary>
+    sealed record Loaded(IReadOnlyList<PluginUsage> Items, HashSet<string> InstalledNames,
+                         IReadOnlyDictionary<long, HashSet<string>> MissingBy, (int Files, int Plugins, int Failed) Scans, (int Read, int Left) Parameters);
+
+    Loaded Load() => new(_db.PluginUsage(), _db.InstalledNames(), _db.MissingPluginsByProject(), _db.PluginScanCounts(), _db.ParameterCounts());
+
+    void Show(Loaded loaded)
     {
         var selected = Selected?.Name;
-        Items = _db.PluginUsage();
+        Items = loaded.Items;
         View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
         View.Filter = o => o is PluginUsage p && Matches(p);
         var missing = Items.Count(p => !p.Installed);
         Summary = $"{Items.Count} plugins used" + (missing > 0 ? $", {missing} not installed on this PC" : "");
-        BuildNeeded();
+        BuildNeeded(loaded);
         Selected = selected is null ? null : Items.FirstOrDefault(p => p.Name == selected);
 
         if (!_main.PluginScanner.Available)
@@ -80,8 +91,8 @@ public sealed partial class PluginsViewModel : ObservableObject
                                   : "Building the app builds it once CMake and a C++ compiler are installed (see native/README.md).");
         else
         {
-            var (files, plugins, failed) = _db.PluginScanCounts();
-            var (read, left) = _db.ParameterCounts();
+            var (files, plugins, failed) = loaded.Scans;
+            var (read, left) = loaded.Parameters;
             ScannerNote = files == 0 ? "The plugin scanner reads your plugin files after the next scan."
                 : $"The plugin scanner has read {files} plugin files holding {plugins} plugins" +
                   (failed > 0 ? $"; {failed} couldn't be read." : ".") +
@@ -112,9 +123,9 @@ public sealed partial class PluginsViewModel : ObservableObject
     /// (they open those projects completely), then the ones the most projects use. The summary counts the projects that
     /// would open with nothing missing if you installed all the cards' plugins.
     /// </summary>
-    void BuildNeeded()
+    void BuildNeeded(Loaded loaded)
     {
-        var installedNames = _db.InstalledNames();
+        var installedNames = loaded.InstalledNames;
         var top = Items.Where(p => !p.Installed)
             .OrderByDescending(p => p.Unlocks).ThenByDescending(p => p.Projects).ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
             .Take(TopNeeded)
@@ -123,7 +134,7 @@ public sealed partial class PluginsViewModel : ObservableObject
         Needed = top;
         OnPropertyChanged(nameof(HasNeeded));
         OnPropertyChanged(nameof(AllInstalled));
-        var missingBy = _db.MissingPluginsByProject();
+        var missingBy = loaded.MissingBy;
         if (top.Count == 0 || missingBy.Count == 0)
         {
             NeededSummary = "";

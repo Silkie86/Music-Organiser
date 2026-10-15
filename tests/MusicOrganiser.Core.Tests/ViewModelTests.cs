@@ -64,6 +64,22 @@ public class ViewModelTests : IDisposable
         Assert.Equal([$"{newest.Modified.Year} rework (newest) · Didums_77 · {newest.Modified:d MMM yyyy}", "2019 original · Didums_12 · 2 Feb 2019"],
                      detail.RunChoices.Select(r => r.Header));
         Assert.StartsWith("First made 2 Feb 2019 · saved ", detail.DatesText);
+
+        // Overview's glance: the newest save first, then the older ones by date.
+        Assert.Equal(["Didums_77", "Didums_12"], detail.GlanceSaves.Select(s => s.Name));
+        Assert.True(detail.GlanceSaves[0].Newest);
+        Assert.Equal("2 Feb 2019", detail.GlanceSaves[1].WhenText);
+        Assert.Equal("None used", detail.GlanceSamples);
+    }
+
+    [Fact]
+    public void The_song_panel_takes_two_thirds_until_its_divider_is_moved_and_then_keeps_its_place()
+    {
+        Assert.Equal(2 / 3.0, Main().Projects.PanelShare, 3);
+        Main().Projects.PanelShare = 0.55;
+        Assert.Equal(0.55, Main().Projects.PanelShare, 3);
+        Main().Projects.PanelShare = 1;   // never squeezes the list to nothing
+        Assert.Equal(0.9, Main().Projects.PanelShare, 3);
     }
 
     [Fact]
@@ -317,6 +333,26 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsKeepsTheBitwigUserFolderAPickedExtensionsFolderIsIn()
+    {
+        var bitwig = Path.Combine(_root, "K", "Bitwig Studio");
+        foreach (var sub in new[] { "Extensions", "Library", "Projects" }) Directory.CreateDirectory(Path.Combine(bitwig, sub));
+        var link = Main().Settings.Links.Single(l => l.Daw == "Bitwig Studio");
+        var ui = (HeadlessUi)Ui.Current;
+
+        ui.PickedFolder = Path.Combine(bitwig, "Extensions");
+        await link.ChooseFolderCommand.ExecuteAsync(null);
+        Assert.Equal(bitwig, _db.GetSetting(SettingsViewModel.BitwigUserKey));
+        Assert.StartsWith($"Using {bitwig}.", link.Result);
+
+        ui.PickedFolder = Path.Combine(_root, "K");
+        await link.ChooseFolderCommand.ExecuteAsync(null);
+        Assert.Equal(bitwig, _db.GetSetting(SettingsViewModel.BitwigUserKey));
+        Assert.StartsWith("That isn't Bitwig's user folder", link.Result);
+        ui.PickedFolder = null;
+    }
+
+    [Fact]
     public async Task SettingsRunsTheLiveTestsWhileBitwigAnswers()
     {
         using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
@@ -373,7 +409,8 @@ public class ViewModelTests : IDisposable
         Assert.Equal(Path.Combine(_root, "data", "probe"), options.ProbeFolder);
         Assert.Equal(settings.Probe.Folder, options.ProbeFolder);
         Assert.Contains(Path.Combine(_root, "plugins"), options.PluginFolders());
-        Assert.Equal([user], options.BitwigUserFolders());
+        // The chosen one, then each Bitwig Studio folder found in Documents (where Bitwig may be keeping other things).
+        Assert.Equal([user, .. DawScripts.BitwigUserFolders()], options.BitwigUserFolders());
         Assert.Equal(_db.Projects().Where(p => p.Daw == "Bitwig Studio").Select(p => p.Path), options.LibraryProjects());
         Assert.Single(options.LibraryProjects());
         Assert.Equal(drumMachine, options.DrumMachine!(default));
@@ -527,6 +564,10 @@ public class ViewModelTests : IDisposable
         Assert.Equal(["Kick 1", "Pad 2"], lab.Trail.Select(s => s.Name));
         Assert.Equal(0, Named("Kick 1").Plays);
         Assert.Equal(3, played.Count);
+        // Letting go after sweeping stops the preview; it doesn't count.
+        lab.EndSweepCommand.Execute(null);
+        Assert.Equal(0, Named("Kick 1").Plays);
+        lab.SweepCommand.Execute(Named("Kick 1"));
         // Clicking the star that's previewing makes it count.
         lab.PickStarCommand.Execute(Named("Kick 1"));
         Assert.Equal(1, Named("Kick 1").Plays);
@@ -580,7 +621,7 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public void AutoplayPlaysTheSoundYouPickButNotOnesTheListSelectsByItself()
+    public void A_click_always_plays_and_Autoplay_plays_what_you_arrow_onto_but_not_what_the_list_selects_by_itself()
     {
         var played = new List<string>();
         var player = new Recorder(played);
@@ -590,13 +631,17 @@ public class ViewModelTests : IDisposable
 
         lab.Selected = kick;
         lab.PlayPicked();
-        Assert.Empty(played);   // off by default
+        Assert.Empty(played);   // arrowing onto it: Autoplay is off by default
+        lab.PlayClicked();      // a click always plays, Autoplay or not
+        Assert.Equal(["kick.wav"], played);
+        player.Stop();
+        played.Clear();
 
         lab.AutoPlay = true;
         lab.Selected = snare;   // as when a sort or filter moves the selection
         Assert.Empty(played);
-        lab.PlayPicked();       // a click on the row, or arrowing onto it
-        lab.PlayPicked();       // clicking it again while it plays doesn't restart it
+        lab.PlayPicked();       // arrowing onto it
+        lab.PlayClicked();      // clicking it while it plays doesn't restart it
         Assert.Equal(["snare.wav"], played);
         Assert.Equal(0, snare.Plays);   // a preview isn't a play Rediscover learns from...
 
@@ -606,10 +651,63 @@ public class ViewModelTests : IDisposable
         Assert.Equal(1, snare.Plays);
 
         player.Stop();          // it finished; clicking the selected row plays it again
-        lab.PlayPicked();
+        lab.PlayClicked();
         Assert.Equal(["snare.wav", "snare.wav"], played);
 
         Assert.True(new MainViewModel(_db, _sounds).Sounds.AutoPlay);
+    }
+
+    [Fact]
+    public async Task A_folder_can_be_added_while_the_last_one_added_is_still_being_scanned()
+    {
+        var ui = (HeadlessUi)Ui.Current;
+        var picks = new Queue<TaskCompletionSource<string?>>();
+        ui.Picking = () => { var p = new TaskCompletionSource<string?>(); picks.Enqueue(p); return p.Task; };
+        try
+        {
+            var settings = new MainViewModel(_db, _sounds).Settings;
+            var (a, b) = (Path.Combine(_root, "Projects A"), Path.Combine(_root, "Projects B"));
+            Directory.CreateDirectory(a);
+            Directory.CreateDirectory(b);
+
+            var first = settings.AddProjectFolderCommand.ExecuteAsync(null);
+            Assert.True(settings.AddProjectFolderCommand.CanExecute(null));   // the button doesn't wait for the first add
+            var second = settings.AddProjectFolderCommand.ExecuteAsync(null);
+            picks.Dequeue().SetResult(a);
+            picks.Dequeue().SetResult(b);
+            await Task.WhenAll(first, second);
+
+            Assert.Contains(a, settings.ProjectFolders);
+            Assert.Contains(b, settings.ProjectFolders);
+            Assert.Contains(a, _db.Roots());
+            Assert.Contains(b, _db.Roots());
+            Assert.True(settings.AddSampleFolderCommand.CanExecute(null));
+        }
+        finally { ui.Picking = null; }
+    }
+
+    [Fact]
+    public void A_held_arrow_key_plays_the_sounds_it_passes_a_little_each_and_the_last_in_full()
+    {
+        var played = new List<string>();
+        ((HeadlessUi)Ui.Current).Player = () => new Recorder(played);
+        var lab = new MainViewModel(_db, _sounds).Sounds;
+        lab.AutoPlay = true;
+        var (kick, snare, hat) = (new Sound { Path = "kick.wav" }, new Sound { Path = "snare.wav" }, new Sound { Path = "hat.wav" });
+
+        // Key repeats come every 30 ms or so: the first sound plays at once, the ones passed straight after wait their turn...
+        lab.Selected = kick;
+        lab.PlayPassing();
+        lab.Selected = snare;
+        lab.PlayPassing();
+        lab.Selected = hat;
+        lab.PlayPassing();
+        Assert.Equal(["kick.wav"], played);
+
+        // ...and the sound the key is let go on plays.
+        lab.PlayPicked();
+        Assert.Equal(["kick.wav", "hat.wav"], played);
+        Assert.Equal(0, hat.Plays);   // still only a preview
     }
 
     [Fact]
@@ -853,14 +951,95 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsSaysWhichExtensionBitwigRunsAndWhichInstallPutsIn()
+    {
+        var user = Path.Combine(_root, "Bitwig Studio");
+        var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.2");
+        var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built),
+                                      () => Task.FromResult(""), found: () => true);
+
+        await link.RefreshAsync();
+        Assert.Equal("Not installed. Install puts in extension 3.2.", link.Status);
+        link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "MO Live Test 1", Changes: true, Extension: "3.0"));
+        Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3, with “MO Live Test 1” open. Bitwig is running extension 3.0, and Install puts in 3.2: " +
+                     "close Bitwig, press Install, then open Bitwig again.", link.Live);
+
+        DawScriptTests.Extension(Path.Combine(user, "Extensions", "MusicOrganiser.bwextension"), "3.0");
+        await link.RefreshAsync();
+        Assert.Equal("Installed, but an older version (3.0). Install it again to put in extension 3.2.", link.Status);
+
+        await link.InstallCommand.ExecuteAsync(null);
+        Assert.Equal($"Installed in {Path.Combine(user, "Extensions")} (extension 3.2).", link.Status);
+        link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "", Changes: true, Extension: "3.2"));
+        Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3.", link.Live);
+        // Installed, but Bitwig hasn't restarted, or loads extensions from another user folder.
+        link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "", Changes: true, Extension: "3.0"));
+        Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3. Bitwig is running extension 3.0, but 3.2 is installed: restart Bitwig to load it. " +
+                     "If it still runs 3.0 after that, Bitwig loads extensions from another folder: use Choose folder… to pick the one Bitwig " +
+                     "shows in Settings > Locations.", link.Live);
+
+        // A newer one, from a newer build of the app, isn't called older, and Install isn't asked for.
+        DawScriptTests.Extension(Path.Combine(user, "Extensions", "MusicOrganiser.bwextension"), "3.10");
+        await link.RefreshAsync();
+        Assert.Equal("Installed, and newer (3.10) than the extension 3.2 this app has: Install would put that older one back.", link.Status);
+        link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "", Changes: true, Extension: "3.10"));
+        Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3. Bitwig is running extension 3.10, newer than the 3.2 this app has.", link.Live);
+    }
+
+    [Fact]
+    public async Task SettingsSaysWhichOldCopiesInstallRemoved()
+    {
+        // The script, which the extension takes over from as the same controller.
+        var user = Path.Combine(_root, "Bitwig Studio");
+        var old = Path.Combine(user, "Controller Scripts", "Music Organiser");
+        var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.4");
+        var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built),
+                                      () => Task.FromResult("Connected to Bitwig Studio 6.1.3."), found: () => true);
+        Directory.CreateDirectory(old);
+        File.WriteAllText(Path.Combine(old, "MusicOrganiser.control.js"), "// the script");
+
+        await link.RefreshAsync();
+        Assert.Equal($"Not installed. Install puts in extension 3.4. There's an old copy in {old} too, which Install removes so Bitwig Studio " +
+                     "can't load two.", link.Status);
+        await link.InstallCommand.ExecuteAsync(null);
+        Assert.Equal($"Installed. Now set it up in Bitwig Studio as described above. Removed the old copy in {old}, so Bitwig Studio can't load two.",
+                     link.Result);
+        Assert.Equal($"Installed in {Path.Combine(user, "Extensions")} (extension 3.4).", link.Status);
+
+        // Set up both takes out one that turns up again, though the extension is installed.
+        Directory.CreateDirectory(old);
+        File.WriteAllText(Path.Combine(old, "MusicOrganiser.control.js"), "// the script");
+        await link.SetUpAsync();
+        Assert.Equal($"The extension was already installed. Removed the old copy in {old}, so Bitwig Studio can't load two. " +
+                     "Connected to Bitwig Studio 6.1.3.", link.Result);
+        Assert.False(Directory.Exists(old));
+    }
+
+    [Fact]
+    public async Task SettingsRemembersWhereBitwigLoadsTheExtensionFrom()
+    {
+        // Bitwig may load extensions from Documents\Bitwig Studio while the projects (the chosen folder) are elsewhere.
+        var extensions = Path.Combine(_root, "Documents", "Bitwig Studio", "Extensions");
+        var file = System.Text.Json.JsonSerializer.Serialize(Path.Combine(extensions, "MusicOrganiser.bwextension"));
+        await using var bitwig = new FakeJavaBitwig($$"""{"link":3,"product":"Bitwig Studio","version":"6.1.3","api":23,"platform":"WINDOWS","port":19791,"project":"","modified":false,"engine":true,"changes":true,"runtime":"java","extension":"3.4","onlyIn":true,"loadedFrom":{{file}}}""");
+        using var watch = new DawWatch(bitwig.Port, flOpen: () => false, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
+        var main = Main(watch);
+        await PollUntil(main.Live, () => main.Live.Rows[0].Answering);
+
+        Assert.StartsWith($"✓ Answering now: Bitwig Studio 6.1.3. Bitwig loads the extension from {extensions}.", main.Settings.Links[0].Live);
+        Assert.Equal(extensions, _db.GetSetting(SettingsViewModel.BitwigLoadsFromKey));
+    }
+
+    [Fact]
     public async Task SettingsShowsTheProbesRunningNow()
     {
         var reports = Path.Combine(_root, "probe");
         var live = Path.Combine(reports, "live");
         var now = DateTimeOffset.UtcNow;
-        ProbeStatus(live, "AAAA000000000001", now, "1-instrument-AAAA0000.jsonl", playing: true, bar: 5);
+        var fresh = now.AddMinutes(1);   // can't go stale however slow the run
+        ProbeStatus(live, "AAAA000000000001", fresh, "1-instrument-AAAA0000.jsonl", playing: true, bar: 5);
         ProbeStatus(live, "AAAA000000000002", now.AddSeconds(-10), "2-instrument-AAAA0000.jsonl");   // its DAW went away
-        ProbeStatus(live, "AAAA000000000003", now, "3-instrument-AAAA0000.jsonl", host: "FL Studio", version: "25.1.6", format: "VST3",
+        ProbeStatus(live, "AAAA000000000003", fresh, "3-instrument-AAAA0000.jsonl", host: "FL Studio", version: "25.1.6", format: "VST3",
                     track: "", bar: 1, tempo: 140);
         var probe = new ProbeReportsViewModel(reports, () => []);
         Assert.Equal("", probe.RunningNote);   // before the first look
@@ -877,7 +1056,7 @@ public class ViewModelTests : IDisposable
 
         // The next look changes the rows in place, so what their buttons said stays.
         row.Reply = "Answered in 85 ms";
-        ProbeStatus(live, "AAAA000000000001", DateTimeOffset.UtcNow, "1-instrument-AAAA0000.jsonl", playing: true, bar: 6, gain: -12);
+        ProbeStatus(live, "AAAA000000000001", fresh, "1-instrument-AAAA0000.jsonl", playing: true, bar: 6, gain: -12);
         await probe.RefreshRunningAsync();
         Assert.Same(row, probe.Running[0]);
         Assert.Equal(("Bitwig Studio 6.1.3 · CLAP · playing, bar 6 · 110 BPM", "Answered in 85 ms"), (row.Details, row.Reply));
@@ -897,7 +1076,8 @@ public class ViewModelTests : IDisposable
         // A probe whose status is there, but nothing takes what's dropped in its command folder.
         var reports = Path.Combine(_root, "probe");
         var live = Path.Combine(reports, "live");
-        ProbeStatus(live, "AAAA000000000001", DateTimeOffset.UtcNow, "1-instrument-AAAA0000.jsonl");
+        // Written once, so dated ahead: a busy run can take longer than a probe's status stays fresh.
+        ProbeStatus(live, "AAAA000000000001", DateTimeOffset.UtcNow.AddMinutes(1), "1-instrument-AAAA0000.jsonl");
         var probe = new ProbeReportsViewModel(reports, () => []) { AnswerWait = TimeSpan.FromMilliseconds(300) };
         await probe.RefreshRunningAsync();
         var row = Assert.Single(probe.Running);
@@ -996,11 +1176,21 @@ public class ViewModelTests : IDisposable
 
     sealed class HeadlessUi : IPlatformUi
     {
+        // Sweep previews and the Sounds list are worked out straight away here, so a test can check them at once.
+        static HeadlessUi()
+        {
+            PreviewWorker.InBackground = false;
+            UiWork.InBackground = false;
+        }
+
         public IItemsView CreateView(IList items) => new ListView(items);
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
         public Func<IAudioPlayer> Player { get; set; } = () => new Silence();
         public IAudioPlayer CreateAudioPlayer() => Player();
-        public Task<string?> PickFolder(string title) => Task.FromResult<string?>(null);
+        public string? PickedFolder { get; set; }
+        /// <summary>When set, picking a folder waits on this instead (a test holds the dialog open).</summary>
+        public Func<Task<string?>>? Picking { get; set; }
+        public Task<string?> PickFolder(string title) => Picking?.Invoke() ?? Task.FromResult(PickedFolder);
         public string? PickedFile { get; set; }
         public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult(PickedFile);
         public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);

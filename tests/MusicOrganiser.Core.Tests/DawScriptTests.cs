@@ -86,6 +86,138 @@ public class DawScriptTests
     }
 
     [Fact]
+    public void InstallPutsTheExtensionWhereverBitwigMayLoadIt()
+    {
+        // Seen on a PC: Bitwig loaded extensions from Documents\Bitwig Studio, while its projects were on another drive.
+        var root = Fixtures.TempDir();
+        var chosen = Path.Combine(root, "K", "Bitwig Studio");
+        var documents = Path.Combine(root, "Documents", "Bitwig Studio");
+        var old = Extension(Path.Combine(documents, "Extensions", "MusicOrganiser.bwextension"), "3.0");
+        var theirs = Path.Combine(documents, "Extensions", "DrivenByMoss.bwextension");
+        File.WriteAllText(theirs, "another extension");
+        var seen = Directory.CreateDirectory(Path.Combine(root, "Elsewhere", "Extensions")).FullName;
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.4");
+
+        var link = DawScripts.BitwigLink([chosen, documents], built, loadedFrom: seen);
+        Assert.Equal([Path.Combine(chosen, "Extensions"), Path.Combine(documents, "Extensions"), seen], link.Folders);
+        Assert.Equal(ScriptState.Outdated, link.State);
+        Assert.Empty(link.Install());
+        Assert.Equal(["3.4", "3.4", "3.4"], link.InstalledVersions);
+        Assert.Equal(ScriptState.Installed, link.State);
+        Assert.True(File.Exists(theirs));
+        // Where Bitwig loaded it from counts once, however it's written.
+        var again = DawScripts.BitwigLink([chosen, documents], built, loadedFrom: Path.Combine(documents, "Extensions") + Path.DirectorySeparatorChar);
+        Assert.Equal(2, again.Folders.Count);
+        // and not once it's gone (Bitwig moved, or the drive isn't there).
+        Assert.Equal(2, DawScripts.BitwigLink([chosen, documents], built, loadedFrom: Path.Combine(root, "Gone", "Extensions")).Folders.Count);
+
+        // The chosen folder first, then each one found in Documents.
+        var folders = DawScripts.BitwigLinkFolders(chosen);
+        Assert.Equal(chosen, folders[0]);
+        Assert.Equal(DawScripts.BitwigUserFolders().Count + 1, folders.Count);
+        Assert.Equal(DawScripts.BitwigUserFolders(), DawScripts.BitwigLinkFolders(null));
+
+        // Only the extension in an Extensions folder says where Bitwig loads it from (not a copy Bitwig made elsewhere).
+        Assert.Equal(Path.Combine(documents, "Extensions"), DawScripts.BitwigExtensionsFolder(old));
+        Assert.Null(DawScripts.BitwigExtensionsFolder(Path.Combine(root, "cache", "MusicOrganiser.bwextension")));
+        Assert.Null(DawScripts.BitwigExtensionsFolder(theirs));
+        Assert.Null(DawScripts.BitwigExtensionsFolder(""));
+        Assert.Null(DawScripts.BitwigExtensionsFolder(null));
+    }
+
+    [Fact]
+    public void InstallKeepsTheScriptWhereTheExtensionCouldntGo()
+    {
+        // The chosen folder can't take the extension (here its Extensions is a file; on a PC, a drive that isn't there).
+        var root = Fixtures.TempDir();
+        var chosen = Path.Combine(root, "K", "Bitwig Studio");
+        var documents = Path.Combine(root, "Documents", "Bitwig Studio");
+        DawScripts.Bitwig([chosen, documents]).Install();
+        File.WriteAllText(Path.Combine(chosen, "Extensions"), "not a folder");
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.4");
+        var link = DawScripts.BitwigLink([chosen, documents], built);
+        Assert.Equal(2, link.Leftovers.Count);
+
+        var e = Assert.ThrowsAny<IOException>(link.Install);
+        // It still went where it could, and only the script beside it went.
+        Assert.Equal([Path.Combine(documents, "Extensions")], link.InstalledIn);
+        Assert.Equal([Path.Combine(chosen, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js")], link.Leftovers);
+        Assert.EndsWith($" It went into {Path.Combine(documents, "Extensions")}. Removed the old copy in " +
+                        $"{Path.Combine(documents, "Controller Scripts", "Music Organiser")}.", e.Message);
+        Assert.DoesNotContain("close it", e.Message);
+
+        // Bitwig's user folder can be a drive of its own.
+        var drive = Path.GetPathRoot(root)!;
+        Assert.True(DawScript.InUserFolderOf(Path.Combine(drive, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js"),
+                                             Path.Combine(drive, "Extensions")));
+        Assert.False(DawScript.InUserFolderOf(Path.Combine(documents, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js"),
+                                              Path.Combine(chosen, "Extensions")));
+    }
+
+    [Fact]
+    public void SaysWhichExtensionVersionInstallPutsIn()
+    {
+        var user = Fixtures.TempDir();
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.2");
+        var extension = DawScripts.BitwigExtension([user], built);
+        Assert.Equal("3.2", extension.Version);
+        Assert.Empty(extension.InstalledVersions);
+        extension.Install();
+        Assert.Equal(["3.2"], extension.InstalledVersions);
+
+        Extension(Path.Combine(user, "Extensions", "MusicOrganiser.bwextension"), "3.0");
+        Assert.Equal((ScriptState.Outdated, "3.0"), (extension.State, extension.InstalledVersions.Single()));
+        Assert.Null(DawScript.ExtensionVersion(Path.Combine(user, "nothing here.bwextension")));
+        Assert.Null(DawScripts.Bitwig(user).Version);   // the script has none
+    }
+
+    [Fact]
+    public void SaysWhenTheExtensionWasBuiltBeforeItsCodeChanged()
+    {
+        // Running the app with hot reload doesn't build the extension again, so Install would put in an old one.
+        var code = Directory.CreateDirectory(Path.Combine(Fixtures.TempDir(), "bitwig-java")).FullName;
+        var link = Path.Combine(Directory.CreateDirectory(Path.Combine(code, "src", "main", "java")).FullName, "Link.java");
+        File.WriteAllText(Path.Combine(code, "pom.xml"), "<project/>");
+        File.WriteAllText(link, "final class Link {}");
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.2");
+        var then = DateTime.UtcNow.AddHours(-1);
+        File.SetLastWriteTimeUtc(built, then);
+        foreach (var f in new[] { link, Path.Combine(code, "pom.xml") }) File.SetLastWriteTimeUtc(f, then.AddMinutes(-5));
+        var extension = DawScripts.BitwigExtension([Fixtures.TempDir()], built) with { Code = code };
+        Assert.Null(extension.ChangedSinceBuilt);
+
+        File.SetLastWriteTimeUtc(link, then.AddMinutes(1));
+        Assert.Equal(link, extension.ChangedSinceBuilt);
+        Assert.Null((extension with { Code = null }).ChangedSinceBuilt);   // an installed app has no code next to it
+    }
+
+    [Fact]
+    public async Task SaysWhereToLookWhenTheExtensionDidntBuildAgain()
+    {
+        // A build that fails (no JDK, a mistake in the code) leaves the old extension, so starting again doesn't help.
+        var code = Directory.CreateDirectory(Path.Combine(Fixtures.TempDir(), "bitwig-java")).FullName;
+        File.WriteAllText(Path.Combine(code, "pom.xml"), "<project/>");
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.3");
+        File.SetLastWriteTimeUtc(built, DateTime.UtcNow.AddHours(-1));
+        var link = new MusicOrganiser.ViewModels.DawLinkSetting("Bitwig Studio", () => "",
+            () => DawScripts.BitwigExtension([Fixtures.TempDir()], built) with { Code = code }, () => Task.FromResult(""), found: () => true);
+        await link.RefreshAsync();
+        Assert.EndsWith("close the app and start it again so it's built anew. If this stays, building it failed, and " +
+                        $"{Path.Combine(code, "build.log")} says why.", link.Status);
+    }
+
+    /// <summary>A stand-in for the built extension: a Java archive whose manifest gives its version.</summary>
+    internal static string Extension(string path, string version)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.Delete(path);
+        using var zip = System.IO.Compression.ZipFile.Open(path, System.IO.Compression.ZipArchiveMode.Create);
+        using var manifest = new StreamWriter(zip.CreateEntry("META-INF/MANIFEST.MF").Open());
+        manifest.Write($"Manifest-Version: 1.0\r\nImplementation-Title: Music Organiser\r\nImplementation-Version: {version}\r\n\r\n");
+        return path;
+    }
+
+    [Fact]
     public void KeepsTheFlStudioChangesSettingWhenUpdating()
     {
         var data = FlUserData(Fixtures.TempDir());
@@ -121,6 +253,34 @@ public class DawScriptTests
         Assert.DoesNotContain(found, f => f.StartsWith(root, StringComparison.Ordinal) && f != moved && f != chosen);
         Assert.Equal(Path.Combine(moved, "Settings", "Hardware", "Music Organiser"),
                      DawScripts.FlStudio(found).Folders.Single(f => f.StartsWith(moved, StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void TakesTheUserFolderAPickedFolderIsIn()
+    {
+        // Solomon's Bitwig user folder is on another drive, and the folder that came to mind was Extensions, where the link goes.
+        var root = Fixtures.TempDir();
+        var bitwig = Path.Combine(root, "K", "Bitwig Studio");
+        foreach (var sub in new[] { "Extensions", "Library", "Projects" }) Directory.CreateDirectory(Path.Combine(bitwig, sub));
+        Directory.CreateDirectory(Path.Combine(bitwig, "Library", "Presets", "Bass"));
+        Directory.CreateDirectory(Path.Combine(bitwig, "Extensions", "Library"));   // an extension's own, not Bitwig's
+        var installed = Directory.CreateDirectory(Path.Combine(root, "Program Files", "Bitwig Studio", "resources")).FullName;
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(bitwig));
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(bitwig + Path.DirectorySeparatorChar));
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(Path.Combine(bitwig, "Extensions")));
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(Path.Combine(bitwig, "Library", "Presets", "Bass")));
+        Assert.Null(DawScripts.BitwigUserFolderFrom(Path.Combine(root, "K")));
+        Assert.Null(DawScripts.BitwigUserFolderFrom(installed));   // where Bitwig is installed, not its user folder
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(Path.Combine(bitwig, "Extensions", "Library")));
+        // Folders with Bitwig's folder names that aren't in a Bitwig user folder.
+        foreach (var elsewhere in new[] { Path.Combine("D", "Music", "Projects"), Path.Combine("E", "Audio", "Library"), Path.Combine("SomeApp", "Extensions") })
+            Assert.Null(DawScripts.BitwigUserFolderFrom(Directory.CreateDirectory(Path.Combine(root, elsewhere)).FullName));
+
+        var fl = FlUserData(Path.Combine(root, "Image-Line", "FL Studio"));
+        var hardware = Directory.CreateDirectory(Path.Combine(fl, "Settings", "Hardware")).FullName;
+        Assert.Equal(fl, DawScripts.FlUserDataFrom(fl));
+        Assert.Equal(fl, DawScripts.FlUserDataFrom(hardware));
+        Assert.Null(DawScripts.FlUserDataFrom(Path.Combine(root, "Image-Line")));
     }
 
     static string FlUserData(string folder)
