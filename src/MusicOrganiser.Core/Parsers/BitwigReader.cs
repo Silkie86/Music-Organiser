@@ -83,7 +83,7 @@ public sealed partial class BitwigReader : IProjectReader
         if (doc?.Root is not null && doc.BodyError is null)
             ReadDecoded(doc, path, info);
         else
-            ReadByTextScan(raw, info, doc?.BodyError);
+            ReadByTextScan(raw, Path.GetDirectoryName(path) ?? ".", info, doc?.BodyError);
 
         if (doc is not null)
         {
@@ -378,7 +378,7 @@ public sealed partial class BitwigReader : IProjectReader
 
     // ---- Fallback: text scan ----------------------------------------------------------
 
-    void ReadByTextScan(byte[] raw, ProjectInfo info, string? why)
+    void ReadByTextScan(byte[] raw, string dir, ProjectInfo info, string? why)
     {
         info.Confidence = Confidence.Heuristic;
         if (!IsBitwig(raw))
@@ -400,10 +400,13 @@ public sealed partial class BitwigReader : IProjectReader
                     info.Version = s;
                 expectVersion = s.EndsWith("application_version_name", StringComparison.Ordinal);
                 if (TextScan.IsAudioPath(s))
-                    info.Samples.Add(s);
+                {
+                    if (ScannedPath(s) is { } p)
+                        info.Samples.Add(IsAbsolute(p) ? p : Path.GetFullPath(Path.Combine(dir, p)));
+                }
                 else if (TextScan.IsPluginPath(s))
                 {
-                    var p = PathStart().Match(s) is { Success: true } m ? s[m.Index..] : s;
+                    var p = ScannedPath(s) ?? s;
                     info.Plugins.Add(new PluginRef(TextScan.PluginNameFromPath(p), "", PluginKind.Unknown,
                                                    TextScan.PluginFormatFromPath(p), p));
                 }
@@ -418,6 +421,24 @@ public sealed partial class BitwigReader : IProjectReader
             }
         }
     }
+
+    /// <summary>
+    /// A path the text scan found, without what was read along with it: Bitwig writes a string's length just before
+    /// it, and a length that happens to be a readable character ("D" for 68) joins the text ("DF:\Samples\..."). Null for
+    /// a bare file name: those name the sounds inside a multisample or a Grid's sample list, not files on disk.
+    /// </summary>
+    internal static string? ScannedPath(string s)
+    {
+        if (DrivePath().Match(s) is { Success: true, Index: > 0 } m)
+            s = s[m.Index..];
+        else if (s.Length > 2 && s[0] == (char)((s.Length - 1) & 0xff) &&
+                 (s[1] == '/' || ProjectFolders.Any(f => s.AsSpan(1).StartsWith(f + "/", StringComparison.OrdinalIgnoreCase))))
+            s = s[1..];
+        return s.Contains('/') || s.Contains('\\') ? s : null;
+    }
+
+    /// <summary>The folders Bitwig keeps a project's own files in, next to the .bwproject.</summary>
+    static readonly string[] ProjectFolders = ["samples", "recordings", "bounce", "audio", "multi-samples", "wavetables"];
 
     /// <summary>The raw file plus any zlib streams embedded in it.</summary>
     static IEnumerable<ReadOnlyMemory<byte>> Blobs(byte[] raw)
@@ -451,6 +472,6 @@ public sealed partial class BitwigReader : IProjectReader
     [GeneratedRegex(@"^\d+(?:\.\d+)+$")]
     private static partial Regex VersionOnly();
 
-    [GeneratedRegex(@"[A-Za-z]:[\\/]|/")]
-    private static partial Regex PathStart();
+    [GeneratedRegex(@"[A-Za-z]:[\\/]")]
+    private static partial Regex DrivePath();
 }

@@ -345,6 +345,23 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void FollowsEveryClipThatSwitchesAChannelAndKeepsAutomatedEffectsOn()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir(), more: true));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 2));
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+        var bass = doc.Root!.Obj(0x4dd)!.List(0x4de).First();
+        Assert.Equal([1.0, 0.0, 0.0, 1.0, 0.0], Clips(bass).Select(c => c.Num(0x10f8) ?? 0));
+        Assert.Equal([("Serum", 1.0), ("Pro-Q 3", 1.0), ("WOW2", 1.0)], Chain(bass).Select(d => (Def(d).Str(0x9a), Def(d).Num(0xa3)!.Value)));
+        Assert.Contains("Bass: switched on and off by \"Bass - Mute / solo\" and \"Bass - Mute / solo #2\" in FL Studio, so what it plays while it's off is muted",
+                        result.Notes);
+        // The vox's clips are on a muted playlist track, so the one it switches off part of the way through doesn't play at all.
+        Assert.Contains("Vox: switched on and off by \"Vox - Mute / solo\" in FL Studio, so what it plays while it's off is muted", result.Notes);
+        Assert.Contains("WOW2 - On: automation left out (switching an effect on insert 1 on and off isn't carried over yet, so it stays on)", result.Notes);
+    }
+
+    [Fact]
     public void MutesSwitchedOffChannelsAndClipsOnMutedPlaylistTracks()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutedTracks(Fixtures.TempDir()));

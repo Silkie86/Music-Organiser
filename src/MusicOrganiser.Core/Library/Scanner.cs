@@ -54,22 +54,8 @@ public sealed class Scanner(LibraryDb db)
             return Readers.For(f) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
         }, SkipDir, ct: ct);
 
-    public static bool SampleFound(string sample, string projectPath)
-    {
-        if (sample.StartsWith('%')) return true;   // FL Studio factory content, e.g. %FLStudioFactoryData%
-        var projectDir = Path.GetDirectoryName(projectPath) ?? "";
-        try
-        {
-            if (Path.IsPathRooted(sample) && File.Exists(sample)) return true;
-            if (!Path.IsPathRooted(sample) && File.Exists(Path.Combine(projectDir, sample))) return true;
-            // Collected / consolidated copies next to the project.
-            var name = sample.Split('\\', '/')[^1];
-            foreach (var sub in new[] { "", "samples", "recordings", "Media", "Audio", "audio" })
-                if (File.Exists(Path.Combine(projectDir, sub, name))) return true;
-        }
-        catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException) { }
-        return false;
-    }
+    /// <summary>Whether a project's sample is on this PC: see <see cref="SampleLocator"/> for where it looks.</summary>
+    public static bool SampleFound(string sample, string projectPath) => SampleLocator.Shared.Found(sample, projectPath);
 
     public static LibraryDb.IndexedFile Analyse(string path)
     {
