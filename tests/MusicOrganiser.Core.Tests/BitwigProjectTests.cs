@@ -344,6 +344,31 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void MutesSwitchedOffChannelsAndClipsOnMutedPlaylistTracks()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutedTracks(Fixtures.TempDir()));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
+            p => new BitwigProject.SampleFile(1234, Md5, 48000, 2, p.EndsWith("Acapella.wav") ? 8 : 0.25));
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+        var tracks = doc.Root!.Obj(0x4dd)!.List(0x4de).ToList();
+        Assert.Equal(["Snare", "Hat", "Acapella", "Vox", "Vox 2"], tracks.Select(t => t.Str(0x15b)));
+
+        // The hat and the vox are switched off in FL, so their tracks' mute buttons are on, on both of the vox's tracks.
+        Assert.Equal([0.0, 1.0, 0.0, 1.0, 1.0], tracks.Select(t => t.Obj(0x165)!.Obj(0x1a6)!.Num(0xd2)!.Value));
+        // What's on muted playlist tracks 2 and 4 is muted: the pattern in bar 2, and the Acapella clips.
+        Assert.All(tracks.Take(2), t => Assert.Equal([0.0, 1.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
+        Assert.Equal([1.0, 1.0], Clips(tracks[2]).Select(c => c.Num(0x10f8) ?? 0));
+        Assert.All(tracks.Skip(3), t => Assert.Equal([0.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
+        Assert.Equal(["Hat: switched off in FL Studio's Channel Rack, so its track is muted",
+                      "Vox: its audio clips overlap in FL Studio, so they're on 2 tracks",
+                      "Vox: switched off in FL Studio's Channel Rack, so its tracks are muted",
+                      "Acapellas (playlist track 2): muted in FL Studio, so its clips are muted here too",
+                      "Playlist track 4: muted in FL Studio, so its clips are muted here too"],
+                     result.Notes);
+    }
+
+    [Fact]
     public void AudioClipsComeAcrossStretchedPitchedAndTrimmedAsInFl()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25AudioClips(Fixtures.TempDir()));

@@ -132,6 +132,20 @@ public static class Fixtures
     }
 
     /// <summary>
+    /// An FL 25 playlist track's settings (event 238, 70 bytes): its number (1 at the top), colour, icon, then 1 at
+    /// byte 12 when it plays, 0 when it's muted.
+    /// </summary>
+    public static byte[] PlaylistTrack(int number, bool muted = false)
+    {
+        var b = new byte[70];
+        BinaryPrimitives.WriteInt32LittleEndian(b, number);
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(4), 0x485156);
+        b[12] = (byte)(muted ? 0 : 1);
+        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(13), 1);
+        return b;
+    }
+
+    /// <summary>
     /// A channel's sampler settings (event 215, 168 bytes) as FL 25 writes them for an audio clip, with its time
     /// stretching: Time at 96, pitch in cents at 100, the multiplier at 104 (10000 = twice as long), the mode at 108.
     /// </summary>
@@ -351,9 +365,10 @@ public static class Fixtures
     /// <summary>
     /// An FL 25 song laid out like FL writes it, at 132 bpm: a sampler "Snare" (root key A4, pitch -2 semitones,
     /// pan 25%, volume 100%) with an automation clip on its volume in bar 2, and a Serum VST (root
-    /// key E5) with an automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2.
+    /// key E5) with an automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2. The volume's
+    /// automation clip can be switched off in the Channel Rack.
     /// </summary>
-    public static string FlStudio25Automation(string dir, bool volumePlacedTwice = false)
+    public static string FlStudio25Automation(string dir, bool volumePlacedTwice = false, bool volumeOff = false)
     {
         var b = new FlpBuilder()
             .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1)
@@ -365,7 +380,7 @@ public static class Fixtures
             .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare")
             .Dword(135, 57).Data(219, Levels(3200, 12800, -200))
             .Text(196, @"C:\Samples\Snare 01.wav")
-            .Word(64, 1).Byte(21, 5).Text(201, "").Text(203, "Snare - Channel volume")
+            .Word(64, 1).Byte(21, 5).Text(201, "").Text(203, "Snare - Channel volume").Byte(0, (byte)(volumeOff ? 0 : 1))
             .Data(219, Levels(0, 12800, 0)).Data(234, AutomationPoints((0, 0), (4, 1)))
             .Word(64, 2).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Serum")
@@ -411,6 +426,39 @@ public static class Fixtures
                      .. PlaylistItem25(6144, 2, 12288), .. PlaylistItem25(18432, 3, 12288),
                      .. PlaylistItem25(30720, 4, 3072, from: 16000, to: 32000), .. PlaylistItem25(33792, 5, 3072, muted: true)]);
         var path = Path.Combine(dir, "Audio clips.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// Like Solomon's civil_18: an FL 25 song whose playlist tracks 2 ("Acapellas") and 4 are muted, and whose "Hat" and
+    /// "Vox" channels are switched off in the Channel Rack. Pattern "Verse" (a snare note and a hat note) is on track 1
+    /// in bar 1 and on track 2 in bar 2. "Acapella" audio clips are on track 2 (bars 1 and 2) and track 4 (bar 3); "Vox"
+    /// clips on tracks 1 and 3 overlap. A second arrangement mutes its own track 1. As FL 25 does, the project has an
+    /// event 0 of its own (0) before the first channel.
+    /// </summary>
+    public static string FlStudio25MutedTracks(string dir)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 120_000).Byte(0, 0)
+            .Word(65, 1).Text(193, "Verse").Data(224, [.. Note(0, 0, 96, 60, 100), .. Note(0, 1, 48, 66, 100)])
+            .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare").Byte(0, 1).Text(196, @"C:\Samples\Snare 01.wav")
+            .Word(64, 1).Byte(21, 0).Text(201, "").Text(203, "Hat").Byte(0, 0).Text(196, @"C:\Samples\Hat 01.wav")
+            .Word(64, 2).Byte(21, 4).Byte(0, 1).Data(215, ChannelParams()).Text(203, "Acapella").Text(196, @"C:\Samples\Acapella.wav")
+            .Word(64, 3).Byte(21, 4).Byte(0, 0).Data(215, ChannelParams()).Text(203, "Vox").Text(196, @"C:\Samples\Vox.wav")
+            .Word(99, 0).Text(241, "Arrangement")
+            .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384, track: 498),
+                        .. PlaylistItem25(0, 2, 768, track: 498), .. PlaylistItem25(768, 2, 384, track: 496),
+                        .. PlaylistItem25(0, 3, 384), .. PlaylistItem25(192, 3, 384, track: 497)]);
+        for (var n = 1; n <= 500; n++)
+        {
+            b.Data(238, PlaylistTrack(n, muted: n is 2 or 4));
+            if (n == 2) b.Text(239, "Acapellas");
+        }
+        b.Word(99, 1).Text(241, "Arrangement 2").Data(233, PlaylistItem25(0, 20481, 384));
+        for (var n = 1; n <= 500; n++) b.Data(238, PlaylistTrack(n, muted: n == 1));
+        var path = Path.Combine(dir, "civil_18.flp");
         File.WriteAllBytes(path, b.Build());
         return path;
     }
@@ -836,6 +884,7 @@ public static class Fixtures
                 b.Obj(0x165); b.Begin(0xab);
                 b.BareRef(0x1a4, volume);
                 b.Obj(0x1a5); Param(0x4c3, "PANORAMA", 0.0);
+                b.Obj(0x1a6); b.Begin(0x4ce); b.Str(0x2bd, "MUTE"); b.Bool(0xd2, false); b.End();
                 b.List(0xa5); sends(); b.EndList();
                 b.End();
                 b.Obj(0x897); b.Begin(0x241); b.Named(0x89b); output(); b.StrVal("361"); b.End();

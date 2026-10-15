@@ -30,6 +30,13 @@ public static class DawProject
     /// <summary>What's said of a channel whose FL volume envelope is switched on.</summary>
     internal const string EnvelopeLeftOut = "its volume envelope (ADSR) isn't carried over yet, so it plays without one";
 
+    /// <summary>What's said of a channel switched off in FL's Channel Rack, whose <paramref name="tracks"/> tracks are muted.</summary>
+    internal static string SwitchedOff(int tracks) =>
+        $"switched off in FL Studio's Channel Rack, so {(tracks > 1 ? "its tracks are" : "its track is")} muted";
+
+    /// <summary>What's said of a muted playlist track some of whose clips came over: they're muted, on whichever tracks they went to.</summary>
+    internal static string MutedTrack(FlTrack t) => $"{t.Label}: muted in FL Studio, so its clips are muted here too";
+
     /// <summary>
     /// FL's channel volume knob (0..1, 0 dB at its default 78%) as a gain for a 0..2 linear fader.
     /// FL's curve isn't published; a square law keeps each channel's level relative to the default.
@@ -80,14 +87,15 @@ public static class DawProject
                 new XElement("State", new XAttribute("path", path)));
         }
 
-        XElement Channel(string role, string? destination, IEnumerable<XElement> devices, double volume = 1, double pan = 0.5) =>
+        XElement Channel(string role, string? destination, IEnumerable<XElement> devices, double volume = 1, double pan = 0.5,
+                         bool muted = false) =>
             new("Channel",
                 new XAttribute("id", Id()),
                 new XAttribute("role", role),
                 new XAttribute("audioChannels", 2),
                 destination is null ? null : new XAttribute("destination", destination),
                 new XElement("Devices", devices),
-                new XElement("Mute", new XAttribute("id", Id()), new XAttribute("value", "false")),
+                new XElement("Mute", new XAttribute("id", Id()), new XAttribute("value", muted ? "true" : "false")),
                 Param("Pan", "normalized", pan, 0, 1),
                 Param("Volume", "linear", volume, 0, 2));
 
@@ -145,6 +153,8 @@ public static class DawProject
         var lanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("timeUnit", "beats"));
         var setup = new List<string>();
         var placed = new Dictionary<int, (XElement Lanes, XElement Channel, XElement? Device)>();
+        // The playlist tracks that clips written here came from.
+        var written = new HashSet<int>();
         foreach (var c in playing)
         {
             var skipped = new List<string>();
@@ -168,15 +178,17 @@ public static class DawProject
                           $" (its FL root key was {NoteName(c.RootKey, flStudio: true)}).");
             }
             var ch = Channel("regular", insertChannels.GetValueOrDefault(c.Insert, masterId), device is null ? [] : [device],
-                             Gain(c.Volume), c.Pan);
+                             Gain(c.Volume), c.Pan, muted: !c.Enabled);
             var track = Track(c.Name, "notes", ch, skipped, todo);
             structure.Add(track);
+            if (!c.Enabled) notes.Add($"{c.Name}: {SwitchedOff(1)}");
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
             if (c.VolumeEnvelope is not null) notes.Add($"{c.Name}: {EnvelopeLeftOut}");
 
             var trackLanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("track", (string)track.Attribute("id")!));
             placed[c.Index] = (trackLanes, ch, device?.Name.LocalName is "Vst2Plugin" or "Vst3Plugin" ? device : null);
             lanes.Add(trackLanes);
+            written.UnionWith(c.Clips.Select(x => x.Track));
             var clips = FlClips.Of(c, song.Ppq);
             if (clips.Count == 0) continue;
 
@@ -253,6 +265,7 @@ public static class DawProject
         }
         foreach (var t in insertTracks) structure.Add(t);
         structure.Add(Track("Master", "audio notes", masterChannel, masterSkipped));
+        notes.AddRange(song.MutedTracks.Where(t => written.Contains(t.Number)).Select(MutedTrack));
         if (masterSkipped.Count > 0) notes.Add($"Master: left out {string.Join(", ", masterSkipped)}");
 
         var title = song.Title.Length > 0 ? song.Title : fallbackTitle;

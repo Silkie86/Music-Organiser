@@ -35,13 +35,20 @@ public sealed record FlChannel(int Index, string Name, FlPlugin? Instrument, str
 
     /// <summary>How the channel stretches and pitches its sample (its time stretching knobs), and whether it plays it backwards.</summary>
     public FlStretch Stretch { get; init; } = new();
+
+    /// <summary>False when the channel is switched off in the Channel Rack (its green light is off), so it plays nothing.</summary>
+    public bool Enabled { get; init; } = true;
 }
 
 /// <summary>
 /// An audio clip in the playlist: where it starts and how long it plays (song ticks), and where in the sample it
 /// starts playing, in seconds of the sample as recorded (0 when it plays from the start).
 /// </summary>
-public sealed record FlAudioClip(long Start, long Length, double From = 0, bool Muted = false);
+public sealed record FlAudioClip(long Start, long Length, double From = 0, bool Muted = false)
+{
+    /// <summary>The playlist track it's on, from 1 at the top; 0 when the file doesn't say.</summary>
+    public int Track { get; init; }
+}
 
 /// <summary>
 /// A channel's time stretching. The sample plays <paramref name="Multiplier"/> times as long (FL's Mul knob) and
@@ -76,7 +83,17 @@ public sealed record FlEnvelope(int Delay, int Attack, int Hold, int Decay, doub
 /// One pattern placed in the playlist, as one channel plays it: where it starts and how long it is (song
 /// ticks), and the channel's notes in it, timed from the clip's start.
 /// </summary>
-public sealed record FlClip(string Name, long Start, long Length, IReadOnlyList<NoteEvent> Notes, bool Muted = false);
+public sealed record FlClip(string Name, long Start, long Length, IReadOnlyList<NoteEvent> Notes, bool Muted = false)
+{
+    /// <summary>The playlist track it's on, from 1 at the top; 0 when the file doesn't say or the song has no playlist.</summary>
+    public int Track { get; init; }
+}
+
+/// <summary>A track (row) in FL's playlist, numbered from 1 at the top, with its name when it was given one.</summary>
+public sealed record FlTrack(int Number, string Name)
+{
+    public string Label => Name.Length > 0 ? $"{Name} (playlist track {Number})" : $"Playlist track {Number}";
+}
 
 /// <summary>What an automation clip moves.</summary>
 public enum FlControl { Volume, Pan, Pitch, PluginParameter, Other }
@@ -95,10 +112,15 @@ public sealed record FlInsert(int Index, string Name, IReadOnlyList<FlPlugin> Ef
 
 /// <summary>An FL Studio project laid out for moving to another DAW.</summary>
 public sealed record FlSong(string Title, int Ppq, double Tempo, IReadOnlyList<FlChannel> Channels, IReadOnlyList<FlInsert> Inserts,
-                           IReadOnlyList<FlAutomation> Automation);
+                           IReadOnlyList<FlAutomation> Automation)
+{
+    /// <summary>The playlist tracks that are muted and have something on them. Their clips are muted, and their automation left out.</summary>
+    public IReadOnlyList<FlTrack> MutedTracks { get; init; } = [];
+}
 
 public sealed partial class FlStudioReader
 {
+    const int EvChannelOn = 0;                  // BYTE: 0 when the channel is switched off in the Channel Rack, 1 when it plays
     const int EvChannelInsert = 22;             // BYTE: the mixer insert a channel is routed to (older versions)
     const int EvChannelFx = 70;                 // WORD: sample flags; 0x2 plays it backwards (PyFLP's reading, not yet seen in a save)
     const int EvChannelRoute = 104;             // WORD: the mixer insert a channel is routed to (seen from FL 20 to 25)
@@ -136,11 +158,13 @@ public sealed partial class FlStudioReader
         var types = new Dictionary<int, int>();
         var stretches = new Dictionary<int, FlStretch>();
         var reversed = new HashSet<int>();
+        var off = new HashSet<int>();
         var curves = new Dictionary<int, List<FlPoint>>();
         var links = new List<(int Clip, uint Target)>();
         var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
         var patternNames = new Dictionary<int, string>();
         ReadOnlyMemory<byte>? playlist = null;
+        var tracks = new PlaylistTracks();
         int? channel = null, pattern = null;
         var inMixer = false;
         var channelHasPlugin = false;
@@ -151,6 +175,7 @@ public sealed partial class FlStudioReader
 
         foreach (var e in flp.Events)
         {
+            tracks.Read(e, flp);
             switch (e.Id)
             {
                 case EvTempo: tempo = e.Int / 1000.0; break;
@@ -159,6 +184,9 @@ public sealed partial class FlStudioReader
                 case EvChannelNew:
                     channel = (int)e.Int; inMixer = false; channelHasPlugin = false;
                     if (!order.Contains(channel.Value)) order.Add(channel.Value);
+                    break;
+                case EvChannelOn when channel is not null && !inMixer:
+                    if (e.Int == 0) off.Add(channel.Value); else off.Remove(channel.Value);
                     break;
                 case EvChannelInsert or EvChannelRoute when channel is not null && !inMixer: routes[channel.Value] = (int)e.Int; break;
                 case EvChannelType when channel is not null && !inMixer: types[channel.Value] = (int)e.Int; break;
@@ -221,8 +249,8 @@ public sealed partial class FlStudioReader
             }
         }
 
-        var clips = PlaceClips(flp, rawNotes, playlist, order.ToHashSet(), patternNames);
-        var audioClips = PlaceAudioClips(playlist, order.Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation).ToHashSet());
+        var clips = PlaceClips(flp, rawNotes, playlist, tracks, order.ToHashSet(), patternNames);
+        var audioClips = PlaceAudioClips(playlist, tracks, order.Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation).ToHashSet());
         var channels = order
             .Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation)
             .Select(ch =>
@@ -237,14 +265,20 @@ public sealed partial class FlStudioReader
                     VolumeEnvelope = volumeEnvelopes.GetValueOrDefault(ch),
                     AudioClips = audioClips.GetValueOrDefault(ch) ?? [],
                     Stretch = (stretches.GetValueOrDefault(ch) ?? new FlStretch()) with { Reversed = reversed.Contains(ch) },
+                    Enabled = !off.Contains(ch),
                 };
             })
             .ToList();
-        var automation = PlaceAutomation(links, curves, names, playlist, flp.Ppq);
+        // An automation clip switched off in the Channel Rack doesn't play, like a muted one.
+        var automation = PlaceAutomation(links.Where(l => !off.Contains(l.Clip)).ToList(), curves, names, playlist, tracks, flp.Ppq);
+        var mutedTracks = playlist is { } pl
+            ? PlaylistItems(pl.Span).Select(i => tracks.At(i.Slot)).OfType<(FlTrack Track, bool Muted)>()
+                .Where(t => t.Muted).Select(t => t.Track).Distinct().OrderBy(t => t.Number).ToList()
+            : [];
         var inserts = effects.Keys.Union(insertNames.Keys).Union(channels.Select(c => c.Insert)).Distinct().Order()
             .Select(i => new FlInsert(i, insertNames.GetValueOrDefault(i, ""), effects.GetValueOrDefault(i) ?? []))
             .ToList();
-        return new FlSong(title, flp.Ppq, tempo ?? 140, channels, inserts, automation);
+        return new FlSong(title, flp.Ppq, tempo ?? 140, channels, inserts, automation) { MutedTracks = mutedTracks };
     }
 
     /// <summary>A channel's levels (event 219): pan and volume as 0..1 knob positions, and pitch in cents.</summary>
@@ -307,15 +341,15 @@ public sealed partial class FlStudioReader
     /// Automation clips placed where the playlist puts them, cut to each clip's length, joined per
     /// clip. A link (event 227) gives the clip's channel and its target: the low word is the control
     /// (0 volume, 1 pan, 4 pitch, 0x8000 + n plugin parameter n), the high word the channel it's on.
-    /// Clips that aren't in the playlist, or are muted there, don't play, so they're left out. A clip placed several times,
-    /// with gaps between, becomes one curve that holds its value through the gaps.
+    /// Clips that aren't in the playlist, or are muted there or on a muted track, don't play, so they're left out. A clip
+    /// placed several times, with gaps between, becomes one curve that holds its value through the gaps.
     /// </summary>
     static List<FlAutomation> PlaceAutomation(List<(int Clip, uint Target)> links, Dictionary<int, List<FlPoint>> curves,
-                                              Dictionary<int, string> names, ReadOnlyMemory<byte>? playlist, int ppq)
+                                              Dictionary<int, string> names, ReadOnlyMemory<byte>? playlist, PlaylistTracks tracks, int ppq)
     {
         var result = new List<FlAutomation>();
         if (playlist is not { } pl || ppq <= 0) return result;
-        var items = PlaylistItems(pl.Span).Where(i => i.Index <= PatternBase).OrderBy(i => i.At).ToList();
+        var items = PlaylistItems(pl.Span, tracks).Where(i => i.Index <= PatternBase).OrderBy(i => i.At).ToList();
         foreach (var (clip, target) in links)
         {
             if (!curves.TryGetValue(clip, out var curve) || curve.Count == 0) continue;
