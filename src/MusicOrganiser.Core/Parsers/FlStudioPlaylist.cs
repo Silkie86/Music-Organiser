@@ -111,7 +111,7 @@ public sealed partial class FlStudioReader
         if (playlist is { } pl)
         {
             var placed = PlaylistItems(pl.Span);
-            var top = TopSlot(flp.Version, placed.Select(i => i.Slot));
+            var top = TopSlot(flp.Version, placed.Select(i => i.Slot).ToList());
             foreach (var i in placed.Where(i => i.Length > 0).OrderBy(i => i.At))
                 items.Add(i.Index > PatternBase
                     ? new FlPlacement(Math.Max(0, top - i.Slot), i.At, i.Length, i.From, i.Muted, i.Index - PatternBase, null)
@@ -124,14 +124,16 @@ public sealed partial class FlStudioReader
     }
 
     /// <summary>
-    /// What FL saves for the first playlist track: tracks count down from it. FL 12.9.1 went from 199 tracks to 500,
-    /// so from then the first is 499 and before it 198. A file whose version can't be read goes by what it holds.
+    /// What FL saves for the first playlist track: tracks count down from it. From FL 12.9.1 (500 tracks) the first is
+    /// 499; before that 198 (199 tracks), though a 2012 song with all its clips on tracks 1 to 4 counted down from 98,
+    /// so an older song whose slots all fit under 99 is read that way. A file whose version can't be read goes by what it holds.
     /// </summary>
-    static int TopSlot(string version, IEnumerable<int> slots)
+    static int TopSlot(string version, IReadOnlyCollection<int> slots)
     {
         var parts = version.Split('.').Select(p => int.TryParse(p, out var n) ? n : -1).Concat([0, 0, 0]).Take(3).ToArray();
-        if (parts[0] >= 0) return (parts[0], parts[1], parts[2]).CompareTo((12, 9, 1)) >= 0 ? 499 : 198;
-        return slots.Any(s => s > 198) ? 499 : 198;
+        var highest = slots.DefaultIfEmpty(0).Max();
+        if (parts[0] >= 0 && (parts[0], parts[1], parts[2]).CompareTo((12, 9, 1)) >= 0) return 499;
+        return highest > 198 ? 499 : highest > 98 ? 198 : 98;
     }
 
     /// <summary>FL's 0x00BBGGRR colour as 0xRRGGBB.</summary>
