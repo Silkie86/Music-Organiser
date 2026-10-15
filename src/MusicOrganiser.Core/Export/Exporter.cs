@@ -49,10 +49,12 @@ public static class Exporter
     /// Sampler don't end with their sample (see <see cref="BitwigProject.FromFl"/>).
     /// </summary>
     /// <param name="upgrade">Swap older versions of the template's VST3 synth for it (see <see cref="BitwigProject.FromFl"/>).</param>
+    /// <param name="saveAs">The name to save it under (see <see cref="BitwigName"/>), or null for the project's own.</param>
     public static (string File, IReadOnlyList<string> LeftOut) BitwigFromFl(string project, string exportRoot, byte[] template,
-                                                                            bool stepsUntilNextNote = false, bool upgrade = false)
+                                                                            bool stepsUntilNextNote = false, bool upgrade = false,
+                                                                            string? saveAs = null)
     {
-        var name = TextScan.SafeFileName(Path.GetFileNameWithoutExtension(project));
+        var name = TextScan.SafeFileName(saveAs ?? Path.GetFileNameWithoutExtension(project));
         var result = BitwigProject.FromFl(Readers.FlStudio.ReadSong(project), template, stepsUntilNextNote: stepsUntilNextNote, upgrade: upgrade);
         var dir = Path.Combine(OutDir(exportRoot, project, "Bitwig"), name);
         Directory.CreateDirectory(dir);
@@ -72,6 +74,20 @@ public static class Exporter
             File.WriteAllLines(notesFile, [$"What didn't come across from FL Studio to Bitwig for {name}", "", .. result.Notes.Select(n => "  " + n)]);
         else if (File.Exists(notesFile)) File.Delete(notesFile);
         return (file, result.Notes);
+    }
+
+    /// <summary>
+    /// The name an FL Studio project's Bitwig copy is saved under: the project's own, or "Name (2)", "Name (3)" and so
+    /// on while Bitwig may have a copy with that name open (<paramref name="open"/>). Opening a project Bitwig already
+    /// has open only brings that copy forward, so a new convert saved over it would look unchanged.
+    /// </summary>
+    public static string BitwigName(string project, Func<string, bool> open)
+    {
+        var name = TextScan.SafeFileName(Path.GetFileNameWithoutExtension(project));
+        if (!open(name)) return name;
+        for (var n = 2; n < 1000; n++)
+            if ($"{name} ({n})" is var numbered && !open(numbered)) return numbered;
+        return name;
     }
 
     /// <summary>One MIDI file per channel (FL Studio) or track, named after it and what plays it.</summary>
