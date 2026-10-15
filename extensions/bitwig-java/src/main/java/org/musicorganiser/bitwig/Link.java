@@ -90,7 +90,9 @@ import java.util.stream.Collectors;
  * front) while it carried out every other change, whether the link ran them as a request came in or in a task it
  * scheduled. The same Save works for controllers such as DrivenByMoss, which run it while Bitwig handles a hardware
  * button. So the link can run such a command by a route ("via"): straight away, from Bitwig's flush, or through a MIDI
- * loopback, as a message it sent itself or a press of a button of its own coming back (see {@link #ROUTES}).
+ * loopback, as a message it sent itself or a press of a button of its own coming back (see {@link #ROUTES}). Save
+ * worked from Bitwig's flush (live run 20261015T185248Z), so that's the route a request gets when it doesn't name one
+ * (see {@link #DEFAULT_ROUTE}); copy and paste still didn't put a clip in the arranger by any route.
  */
 final class Link {
     static final int PORT = 19791;
@@ -148,8 +150,16 @@ final class Link {
      */
     static final List<String> ROUTES = List.of("direct", "flush", "midi", "button", "buttonCode");
     static final String DIRECT = "direct";
-    /** The commands the link has buttons for, in order: Bitwig's Save, Copy and Paste actions, and the two focus actions. */
-    static final List<String> ROUTED = List.of("Save", "Copy", "Paste", FOCUS_ARRANGER, FOCUS_LAUNCHER);
+    /**
+     * The route a request gets when it doesn't name one (extension 3.8; "direct" before): Bitwig's flush, the route Bitwig
+     * 6.1.3 carried out Save by (in 139 ms), where straight away it left the project unsaved.
+     */
+    static final String DEFAULT_ROUTE = "flush";
+    /**
+     * The commands the link has buttons for, in order: Bitwig's Save, Copy and Paste actions, the two focus actions, and
+     * (extension 3.8) Duplicate, which arrange's checks run.
+     */
+    static final List<String> ROUTED = List.of("Save", "Copy", "Paste", FOCUS_ARRANGER, FOCUS_LAUNCHER, "Duplicate");
     /** The MIDI channel the link's buttons listen on: 16 (Bitwig counts from 0). */
     static final int CHANNEL = 15;
     /**
@@ -228,6 +238,8 @@ final class Link {
     private Arranger arranger;
     private Clip arrangerClip;
     private Track arrangerClipTrack;
+    /** Where a file dropped after each track goes, for the filetrack experiment (null when Bitwig wouldn't make them). */
+    private InsertionPoint[] trackAfter;
     /**
      * The hue (0 to 1, round the colour wheel) of the colour arrange marked a launcher clip with last, so the next mark
      * differs from it. It starts from the clock, once, so the marks differ from one time Bitwig starts the link to the
@@ -308,6 +320,8 @@ final class Link {
         commands.put("selftest", Command.answer(false, (ask, request) -> reply(ask, selfTest("asked"), null)));
         // Extension 3.6: an experiment, which only the live tests send.
         commands.put("arrange", Command.job(this::arrange));
+        // Extension 3.8: another experiment, which only the live tests send.
+        commands.put("filetrack", Command.job(this::fileTrack));
     }
 
     // ---- Starting and stopping ----
@@ -550,6 +564,17 @@ final class Link {
                  + (arrangerClip.exists().get() ? "a clip on \"" + str(arrangerClipTrack.name().get()) + "\" is selected in the arranger"
                                                 : "no clip is selected in the arranger")
                  + ", and the play start is at beat " + Json.number(transport.playStartPosition().get()) + ".");
+
+        // For the filetrack experiment (extension 3.8): where a file goes when it's dropped after each track.
+        feature("files as tracks", () -> {
+            InsertionPoint[] made = new InsertionPoint[MAX_TRACKS];
+            for (int t = 0; t < MAX_TRACKS; t++) {
+                if (trackItems[t] == null) return;   // the track bank wasn't made: filetrack can't reach a track anyway
+                made[t] = trackItems[t].afterTrackInsertionPoint();
+            }
+            trackAfter = made;
+        }, () -> trackAfter == null ? "The track bank wasn't made, so there's nowhere to insert a file."
+                                    : "A file can go after any of the first " + MAX_TRACKS + " tracks, as a new track.");
 
         // The routes that run Bitwig's commands other than straight away (see ROUTES): the loopback's MIDI ports, and two
         // buttons for each command of ROUTED Bitwig has, which notes on channel 16 coming back through the loopback press.
@@ -1211,7 +1236,7 @@ final class Link {
 
     /**
      * Runs one of Bitwig's actions by its ID (as listed by the actions command), e.g. saving the project, by the route
-     * the request asks for as `via` (straight away when it doesn't say: see ROUTES). The answer (extension 3.7) says
+     * the request asks for as `via` (DEFAULT_ROUTE, Bitwig's flush, when it doesn't say: see ROUTES). The answer (extension 3.7) says
      * which project Bitwig had in front just before the action ran, as `project`: on Bitwig 6.1.3 Save once left the
      * test project unsaved while another project was open too, and which one is in front may be why. It's left out when
      * the link can't read it (the application part of the API didn't set up). `via` is the route, and `ran` whether the
@@ -1236,12 +1261,12 @@ final class Link {
     // ---- Routes (extension 3.7) ----
 
     /**
-     * The route a request asks for as `via`: "direct" when it doesn't say. Refuses one that isn't in ROUTES, and one
+     * The route a request asks for as `via`: DEFAULT_ROUTE when it doesn't say. Refuses one that isn't in ROUTES, and one
      * that needs the loopback's ports and buttons when Bitwig wouldn't let the link set them up.
      */
     private String route(Map<String, Object> request) {
         Object via = field(request, "via");
-        if (absent(via)) return DIRECT;
+        if (absent(via)) return DEFAULT_ROUTE;
         if (!(via instanceof String) || !ROUTES.contains(via))
             throw new LinkError("The route (via) has to be one of " + String.join(", ", ROUTES) + ", not " + Json.js(via) + ".");
         String route = (String) via;
@@ -1836,14 +1861,21 @@ final class Link {
      * it went in at `at`. Only the live tests send it, in their own project, so nothing is undone when it doesn't work.
      *
      * Extension 3.7: the request can ask for a route (`via`, see ROUTES) for the copy, the paste and the two focus actions.
-     * "direct" (when it doesn't say) runs them as before, with the API's copy and paste. Any other route runs Bitwig's
-     * Copy and Paste actions and the focus actions by that route. `ran` says, for each of those steps, whether it ran
-     * (null when the link didn't get that far, or Bitwig has no FOCUS_LAUNCHER). A step that didn't run doesn't stop
-     * the change with an error: the link answers with what Bitwig shows, and doesn't paste after a copy that didn't run.
+     * "direct" runs them as before, with the API's copy and paste. Any other route runs Bitwig's Copy and Paste actions and
+     * the focus actions by that route; without one, that's DEFAULT_ROUTE (from 3.8; "direct" before). `ran` says, for
+     * each of those steps, whether it ran (null when the link didn't get that far, or Bitwig has no FOCUS_LAUNCHER). A step
+     * that didn't run doesn't stop the change with an error: the link answers with what Bitwig shows, and doesn't paste
+     * after a copy that didn't run.
+     *
+     * Extension 3.8: with `checks` true, when the clip didn't land in the arranger, two more steps in the launcher say which
+     * step Bitwig dropped, a paste into an empty slot and a Duplicate, before the answer (see check).
      */
-    private void arrange(Map<String, Object> request, Finish finish) {
+    private void arrange(Map<String, Object> request, Finish asked) {
         String route = route(request);
         if (arranger == null) throw new LinkError("This Bitwig didn't let the link reach its arranger. A selftest says why.");
+        Object c = field(request, "checks");
+        if (!absent(c) && !(c instanceof Boolean)) throw new LinkError("checks is true or false, not " + Json.js(c) + ".");
+        boolean checks = Boolean.TRUE.equals(c);
         int t = checkTrack(field(request, "track"));
         Object s = field(request, "slot");
         if (!isIndex(s, SCENES))
@@ -1874,6 +1906,8 @@ final class Link {
         }
         Runnable copied = copyRun;
         Runnable pasted = pasteRun;
+        Action duplicate = checks ? app.getAction("Duplicate") : null;
+        if (duplicate != null && !route.equals(DIRECT)) checkButtons(route, List.of("Duplicate"));
         double at = absent(given) ? transport.playStartPosition().get() : (Double) given;
         Track track = trackItems[t];
         String name = str(track.name().get());
@@ -1907,6 +1941,13 @@ final class Link {
         ran.put("focus", null);
         ran.put("paste", null);
         m.put("ran", ran);
+        // With checks asked for, the answer waits for them when the clip didn't land in the arranger (see check). They
+        // need the mark the clip got, once it has one.
+        Mark[] marked = new Mark[1];
+        Finish finish = !checks ? asked : (result, error) -> {
+            if (error != null || Boolean.TRUE.equals(m.get("arranged"))) asked.done(result, error);
+            else check(route, t, index, track, launcherFocus, launcherShown, pasted, duplicate, marked[0], m, asked);
+        };
 
         // The Arrange layout, with its clip launcher showing.
         if (!arrangeLayout()) app.setPanelLayout(Application.PANEL_LAYOUT_ARRANGE);
@@ -1922,6 +1963,7 @@ final class Link {
                     if (!selected) throw new LinkError("Bitwig didn't select the clip in slot " + index + " of track " + t + ".");
                     // The clip in its marking colour, so the link can tell it once it's pasted.
                     mark(slot, m, mark -> {
+                        marked[0] = mark;
                         Runnable copy = () -> runBy(route, "Copy", copied, copyRan -> {
                             ran.put("copy", copyRan);
                             if (!copyRan) {
@@ -2107,6 +2149,159 @@ final class Link {
         }, finish);
     }
 
+    /**
+     * Arrange's checks (extension 3.8), run when the request asks for them and the clip didn't land in the arranger: two
+     * more steps by the same route, each in the clip launcher, that tell which of arrange's steps Bitwig dropped. Then it
+     * answers with `m`, which gets them as `checks`:
+     * <ul>
+     * <li>`launcherPaste`: the link selects an empty launcher slot on the track (the first that exists), gives the clip
+     * launcher the focus as arrange does, and pastes. A clip in the mark's colour appearing there (`made`, `colour`,
+     * `sameAsMark`) means Bitwig's Copy did copy the clip and its Paste works in the launcher, so what went wrong was the
+     * arranger's part. The clip it made is deleted again (`removed`), so the next go starts as this one did. Null when the
+     * track has no empty slot the link can reach.</li>
+     * <li>`duplicate`: the link selects the clip's slot again, gives the launcher the focus, and runs Bitwig's Duplicate
+     * action, which needs no clipboard. A new launcher clip (`launcher`, how many more the track has) means Bitwig's
+     * editing actions work in the launcher by this route; a new track (`tracks`) means Duplicate went to the track, so the
+     * launcher didn't have the focus. A new launcher clip is deleted again (`removed`); a new track is left. Null when
+     * Bitwig has no Duplicate action.</li>
+     * </ul>
+     * Each says whether its slot got `selected`, how many times the launcher's focus action ran (`focus`) and whether each
+     * step `ran` by the route. A check that can't go on (Bitwig won't show the launcher, say) leaves the rest out and
+     * puts what stopped it in `checks` as `error`, and arrange still answers with what it found.
+     */
+    private void check(String route, int t, int index, Track track, Action launcherFocus, SettableBooleanValue launcherShown,
+                       Runnable pasteRun, Action duplicate, Mark mark, Map<String, Object> m, Finish finish) {
+        Map<String, Object> checks = new LinkedHashMap<>();
+        checks.put("launcherPaste", null);
+        checks.put("duplicate", null);
+        m.put("checks", checks);
+        Finish done = (result, error) -> {
+            if (error != null) checks.put("error", error);
+            finish.ok(m);
+        };
+        Runnable duplicating = () -> duplicateCheck(route, t, index, track, launcherFocus, launcherShown, duplicate, checks, done);
+        ClipLauncherSlot[] slots = trackSlots[t];
+        int empty = -1;
+        for (int s = 0; s < slots.length && empty < 0; s++)
+            if (slots[s].exists().get() && !slots[s].hasContent().get()) empty = s;
+        if (empty < 0) {
+            duplicating.run();
+            return;
+        }
+        int e = empty;
+        ClipLauncherSlot slot = slots[e];
+        Map<String, Object> lp = new LinkedHashMap<>();
+        Map<String, Object> ran = new LinkedHashMap<>();
+        lp.put("slot", e);
+        lp.put("selected", false);
+        lp.put("focus", 0);
+        ran.put("focus", null);
+        ran.put("paste", null);
+        lp.put("ran", ran);
+        lp.put("made", false);
+        lp.put("colour", null);
+        lp.put("sameAsMark", false);
+        lp.put("removed", false);
+        checks.put("launcherPaste", lp);
+        inLauncher(route, t, slot, track, launcherFocus, launcherShown, lp, ran, duplicating, () -> runBy(route, "Paste", pasteRun, pasted -> {
+            ran.put("paste", pasted);
+            if (!pasted) {
+                duplicating.run();
+                return;
+            }
+            waitFor(() -> slot.hasContent().get(), CHANGE_WAIT, made -> {
+                if (!made) {
+                    duplicating.run();
+                    return;
+                }
+                settle(() -> hexColour(rgb(slot.color())), colour -> {
+                    lp.put("made", true);
+                    lp.put("colour", colour);
+                    lp.put("sameAsMark", mark != null && mark.took() && sameColour(rgb(slot.color()), mark.got()));
+                    slot.deleteObject();
+                    waitFor(() -> !slot.hasContent().get(), CHANGE_WAIT, removed -> {
+                        lp.put("removed", removed);
+                        duplicating.run();
+                    }, done);
+                }, done);
+            }, done);
+        }, done), done);
+    }
+
+    /** Arrange's second check: Bitwig's Duplicate on the clip in the launcher (see check). */
+    private void duplicateCheck(String route, int t, int index, Track track, Action launcherFocus, SettableBooleanValue launcherShown,
+                                Action duplicate, Map<String, Object> checks, Finish done) {
+        if (duplicate == null) {
+            done.ok(null);
+            return;
+        }
+        ClipLauncherSlot slot = trackSlots[t][index];
+        Map<String, Object> d = new LinkedHashMap<>();
+        Map<String, Object> ran = new LinkedHashMap<>();
+        d.put("selected", false);
+        d.put("focus", 0);
+        ran.put("focus", null);
+        ran.put("duplicate", null);
+        d.put("ran", ran);
+        d.put("launcher", 0);
+        d.put("tracks", 0);
+        d.put("removed", false);
+        checks.put("duplicate", d);
+        inLauncher(route, t, slot, track, launcherFocus, launcherShown, d, ran, () -> done.ok(null), () -> {
+            int count = tracks.itemCount().get();
+            boolean[] had = new boolean[SCENES];
+            for (int s = 0; s < SCENES; s++) had[s] = trackSlots[t][s].hasContent().get();
+            int clips = launcherClips(t);
+            runBy(route, "Duplicate", duplicate::invoke, duplicated -> {
+                ran.put("duplicate", duplicated);
+                if (!duplicated) {
+                    done.ok(null);
+                    return;
+                }
+                waitFor(() -> launcherClips(t) != clips || tracks.itemCount().get() != count, CHANGE_WAIT, changed -> {
+                    settle(() -> Arrays.asList(launcherClips(t), tracks.itemCount().get()), settled -> {
+                        d.put("launcher", launcherClips(t) - clips);
+                        d.put("tracks", tracks.itemCount().get() - count);
+                        int made = -1;
+                        for (int s = 0; s < SCENES && made < 0; s++)
+                            if (!had[s] && trackSlots[t][s].hasContent().get()) made = s;
+                        if (made < 0) {
+                            done.ok(null);
+                            return;
+                        }
+                        ClipLauncherSlot copy = trackSlots[t][made];
+                        copy.deleteObject();
+                        waitFor(() -> !copy.hasContent().get(), CHANGE_WAIT, removed -> {
+                            d.put("removed", removed);
+                            done.ok(null);
+                        }, done);
+                    }, done);
+                }, done);
+            }, done);
+        }, done);
+    }
+
+    /**
+     * For arrange's checks: selects a launcher slot on the track and gives the clip launcher the focus, as arrange does
+     * before it copies, then runs `then`. `c` gets whether the slot got `selected` and how many times the focus action ran
+     * (`focus`), and `ran` whether the route ran it (`focus`). When Bitwig doesn't select the slot, the check stops there
+     * and `skip` runs instead.
+     */
+    private void inLauncher(String route, int t, ClipLauncherSlot slot, Track track, Action launcherFocus, SettableBooleanValue launcherShown,
+                            Map<String, Object> c, Map<String, Object> ran, Runnable skip, Runnable then, Finish done) {
+        cursorTrack.selectChannel(track);
+        slot.select();
+        waitFor(() -> trackSelected[t].get() && slot.isSelected().get(), CHANGE_WAIT, selected -> {
+            c.put("selected", selected);
+            if (!selected) {
+                skip.run();
+                return;
+            }
+            if (launcherFocus == null) then.run();
+            else focusPanel(route, FOCUS_LAUNCHER, launcherFocus, launcherShown, "clip launcher", c, "focus", ran, times -> then.run(), done);
+        }, done);
+    }
+
     /** Answers arrange with what Bitwig shows now, after the paste or without one. */
     private void answer(int t, Map<String, Object> m, Shown shown, Finish finish) {
         shown.launcher.put("after", arranger.isClipLauncherVisible().get());
@@ -2142,6 +2337,86 @@ final class Link {
         for (ClipLauncherSlot slot : trackSlots[t])
             if (slot.hasContent().get()) count++;
         return count;
+    }
+
+    /** How many launcher clips each track the link sees has (in its first slots), for telling where a file or a paste went. */
+    private List<Integer> everyLauncherClip() {
+        List<Integer> counts = new ArrayList<>(MAX_TRACKS);
+        for (int t = 0; t < MAX_TRACKS; t++) counts.add(trackItems[t].exists().get() ? launcherClips(t) : 0);
+        return counts;
+    }
+
+    // ---- Files as tracks (an experiment, extension 3.8) ----
+
+    /**
+     * An experiment (extension 3.8): inserts a file (a MIDI file, say) after a track, as dropping it between two tracks
+     * does, and answers with where Bitwig put it. Copy and paste never put a launcher clip on the arranger timeline (live
+     * run 20261015T185248Z, by every route), while this is a direct call of the API, the kind Bitwig carries out. A MIDI
+     * file dropped on the arranger lands on its timeline, so Bitwig may make a new track with the clip there. When `at`
+     * is given (beats from the start), the play start moves there first, in case Bitwig puts the clip at the play start.
+     *
+     * The answer, once Bitwig stops changing (or after CHANGE_WAIT without a change): `added` (how many tracks Bitwig
+     * added), `index`, `name` and `type` (the first new track's, null without one), `tracksBefore` and `tracksAfter`
+     * (Bitwig's track count), `launcherClips` (the new track's clips in its first launcher slots: more than 0 means Bitwig
+     * put the file in the launcher), `selected` (whether the new track is the selected one), `arranger` (the clip selected
+     * in the arranger: `exists`, and its `track`'s name), `arrangerBefore` (the same before), `at` (the play start as the
+     * file went in), and `onTrack` (the given track's launcher clips `before` and `after`, in case Bitwig put the clip there
+     * instead). The API can't list the clips on the arranger timeline, so only a look at Bitwig says for sure.
+     */
+    private void fileTrack(Map<String, Object> request, Finish finish) {
+        if (trackAfter == null) throw new LinkError("This Bitwig didn't let the link insert files between tracks. A selftest says why.");
+        if (arranger == null) throw new LinkError("This Bitwig didn't let the link reach its arranger. A selftest says why.");
+        int t = checkTrack(field(request, "track"));
+        String path = given(field(request, "path"), "file");
+        Object given = field(request, "at");
+        if (!absent(given) && !(given instanceof Double && Double.isFinite((Double) given) && (Double) given >= 0))
+            throw new LinkError("Say where the play start goes as beats from the start (0 or more), not " + Json.js(given) + ".");
+        Runnable insert = () -> {
+            int count = tracks.itemCount().get();
+            List<String> before = trackList();
+            List<Integer> clipsBefore = everyLauncherClip();
+            Map<String, Object> arrangerBefore = arrangerClipState();
+            double at = transport.playStartPosition().get();
+            trackAfter[t].insertFile(path);
+            waitFor(() -> tracks.itemCount().get() != count || !trackList().equals(before) || !everyLauncherClip().equals(clipsBefore),
+                    CHANGE_WAIT, changed -> {
+                // Bitwig reports a change bit by bit, so what it did is read once it stops changing.
+                settle(() -> Arrays.asList(tracks.itemCount().get(), trackList(), everyLauncherClip(), arrangerClipState()), settled -> {
+                    int after = tracks.itemCount().get();
+                    int n = after > count ? firstDifference(before, trackList()) : -1;
+                    boolean seen = n >= 0 && trackItems[n].exists().get();
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("added", Math.max(0, after - count));
+                    m.put("index", seen ? n : null);
+                    m.put("name", seen ? str(trackItems[n].name().get()) : null);
+                    m.put("type", seen ? str(trackItems[n].trackType().get()) : null);
+                    m.put("tracksBefore", count);
+                    m.put("tracksAfter", after);
+                    m.put("launcherClips", seen ? launcherClips(n) : null);
+                    m.put("selected", seen && trackSelected[n].get());
+                    m.put("arranger", arrangerClipState());
+                    m.put("arrangerBefore", arrangerBefore);
+                    m.put("at", at);
+                    // The track given may have moved down, when Bitwig put the new one before it.
+                    int now = seen && n <= t ? t + Math.max(0, after - count) : t;
+                    Map<String, Object> on = new LinkedHashMap<>();
+                    on.put("before", clipsBefore.get(t));
+                    on.put("after", now < MAX_TRACKS && trackItems[now].exists().get() ? launcherClips(now) : null);
+                    m.put("onTrack", on);
+                    finish.ok(m);
+                }, finish);
+            }, finish);
+        };
+        if (absent(given)) {
+            insert.run();
+            return;
+        }
+        double at = (Double) given;
+        transport.playStartPosition().set(at);
+        waitFor(() -> Math.abs(transport.playStartPosition().get() - at) < 1e-6, CHANGE_WAIT, moved -> {
+            if (!moved) throw new LinkError("Bitwig didn't move the play start to beat " + Json.number(at) + ".");
+            insert.run();
+        }, finish);
     }
 
     // ---- Self-check ----

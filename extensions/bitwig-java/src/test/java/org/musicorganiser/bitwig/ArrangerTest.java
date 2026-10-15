@@ -15,6 +15,7 @@ import static org.musicorganiser.bitwig.Messages.obj;
 
 import com.bitwig.extension.controller.api.Application;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -102,8 +103,12 @@ class ArrangerTest {
         bitwig.refresh();
     }
 
+    /**
+     * Arrange, straight away (the "direct" route, with the API's copy and paste): these tests are about arrange's steps,
+     * and RoutesTest about the routes, the one a request without one gets among them.
+     */
     static Map<String, Object> arrange(Object id, Object track, Object slot, Object at) {
-        return obj("id", id, "cmd", "arrange", "track", track, "slot", slot, "at", at);
+        return obj("id", id, "cmd", "arrange", "track", track, "slot", slot, "at", at, "via", "direct");
     }
 
     /** The clip selected in the arranger, as the answer says it: on a track, or none (null). */
@@ -162,7 +167,7 @@ class ArrangerTest {
         // Without `at`, it goes where the play start is (still bar 5), and the clip selected in the arranger moves to Lead,
         // in Lead's clip's marking colour. The timeline has the focus after the paste: the launcher gets it back before the
         // copy.
-        Object next = app.waitFor(obj("id", 2, "cmd", "arrange", "track", 1, "slot", 0)).get("result");
+        Object next = app.waitFor(obj("id", 2, "cmd", "arrange", "track", 1, "slot", 0, "via", "direct")).get("result");
         assertJson(obj("arranged", true, "appeared", true, "sameAsSource", true, "copiedFromTimeline", false, "at", 16,
                        "mark", mark(CLIP_GREY, MARK_2, MARK_2, true, true), "launcherFocus", 1, "focus", 1, "before", clip("Bass"), "after", clip("Lead"),
                        "pastedColor", MARK_2),
@@ -181,7 +186,7 @@ class ArrangerTest {
             m.launcher = false;
             m.playStart = 8;
         });
-        Object result = app.waitFor(obj("id", 1, "cmd", "arrange", "track", 0, "slot", 0)).get("result");
+        Object result = app.waitFor(obj("id", 1, "cmd", "arrange", "track", 0, "slot", 0, "via", "direct")).get("result");
         assertJson(obj("arranged", true, "at", 8, "layout", "MIX", "launcher", shown(false, true), "launcherFocus", 1, "timeline", shown(false, true),
                        "focus", 1),
                    SelfCheckTest.pick(SelfCheckTest.map(result), "arranged", "at", "layout", "launcher", "launcherFocus", "timeline", "focus"));
@@ -456,13 +461,13 @@ class ArrangerTest {
         assertMatches(LinkTest.CHANGES_OFF, error(app.ask(arrange(1, 0, 0, BAR_5))));
         bitwig.allowChanges(true);
         assertEquals(LinkTest.elsewhere("MO Live Test", "Night Drive"),
-                     error(app.ask(obj("id", 2, "cmd", "arrange", "track", 0, "slot", 0, "onlyIn", "Night Drive"))));
+                     error(app.ask(obj("id", 2, "cmd", "arrange", "track", 0, "slot", 0, "onlyIn", "Night Drive", "via", "direct"))));
         assertEquals(List.of(), bitwig.calls);
 
         // Another project comes to the front once the clip is being selected: nothing is copied or pasted.
         bitwig.switchDuring("arrange", () -> calls().contains("selectSlot"), "My Song");
         assertJson(obj("id", 3, "ok", false, "error", LinkTest.elsewhere("My Song", "MO Live Test")),
-                   app.waitFor(obj("id", 3, "cmd", "arrange", "track", 0, "slot", 0, "onlyIn", "MO Live Test")));
+                   app.waitFor(obj("id", 3, "cmd", "arrange", "track", 0, "slot", 0, "onlyIn", "MO Live Test", "via", "direct")));
         assertEquals(List.of("selectChannel", "selectSlot"), calls());
         assertEquals(List.of(), bitwig.state.arranged);
     }
@@ -490,6 +495,193 @@ class ArrangerTest {
                                                                   .collect(Collectors.toList()));
         assertMatches("^Couldn't set it up: java.lang.AbstractMethodError: ", SelfCheckTest.detail(result, "arranger"));
         assertMatches("couldn't set up the arranger", bitwig.errors.get(0));
+        assertEquals(List.of(), bitwig.calls);
+    }
+
+    // ---- Checks (extension 3.8) ----
+
+    /** Arrange with its checks asked for, straight away (as {@link #arrange}). */
+    static Map<String, Object> arrangeChecked(Object id) {
+        Map<String, Object> request = arrange(id, 0, 0, BAR_5);
+        request.put("checks", true);
+        return request;
+    }
+
+    /** How a check says it selected its slot and gave the launcher the focus, and whether each step ran. */
+    static Map<String, Object> launcherPaste(int slot, int focus, boolean made, String colour, boolean same, boolean removed) {
+        return obj("slot", slot, "selected", true, "focus", focus, "ran", obj("focus", true, "paste", true), "made", made, "colour", colour,
+                   "sameAsMark", same, "removed", removed);
+    }
+
+    static Map<String, Object> duplicate(int focus, int launcher, int tracks, boolean removed) {
+        return obj("selected", true, "focus", focus, "ran", obj("focus", true, "duplicate", true), "launcher", launcher, "tracks", tracks,
+                   "removed", removed);
+    }
+
+    /** As {@link #studio(Consumer)}, with Bitwig's Duplicate action too. */
+    void studioWithDuplicate(Consumer<Model> extra) {
+        studio(m -> {
+            m.actions.add(action("Duplicate", "Duplicate", "Editing"));
+            extra.accept(m);
+        });
+    }
+
+    @Test
+    @DisplayName("runs no checks when the clip landed in the arranger, or when they weren't asked for")
+    void checksOnlyWhenAskedAndItFailed() {
+        studioWithDuplicate(m -> {});
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        assertEquals(true, result.get("arranged"));
+        assertFalse(result.containsKey("checks"));
+
+        studioWithDuplicate(m -> m.pasteIgnored = true);
+        result = SelfCheckTest.map(app.waitFor(arrange(1, 0, 0, BAR_5)).get("result"));
+        assertEquals(false, result.get("arranged"));
+        assertFalse(result.containsKey("checks"));
+    }
+
+    @Test
+    @DisplayName("checks a paste and a Duplicate in the launcher when the clip didn't land in the arranger, and tidies up after them")
+    void checksInTheLauncher() {
+        // Bitwig ignores the action that brings the arranger timeline to the front, so the paste goes into the launcher.
+        studioWithDuplicate(m -> m.focusIgnored.add(Link.FOCUS_ARRANGER));
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        assertJson(obj("arranged", false, "launcherClipsBefore", 1, "launcherClipsAfter", 2),
+                   SelfCheckTest.pick(result, "arranged", "launcherClipsBefore", "launcherClipsAfter"));
+        // The paste into an empty slot (2: arrange's own paste went into 1) made the clip in its marking colour, so the copy
+        // took; Duplicate made another launcher clip, so editing works in the launcher. The launcher was still in front each
+        // time (the timeline never got the focus), so its focus action hid it and ran again. Both clips the checks made
+        // were deleted.
+        assertJson(obj("launcherPaste", launcherPaste(2, 2, true, MARK_1, true, true), "duplicate", duplicate(2, 1, 0, true)), result.get("checks"));
+        assertEquals(Arrays.asList("C:\\MIDI\\Bass.mid", "C:\\MIDI\\Bass.mid", null), bitwig.state.tracks.get(0).slots.subList(0, 3));
+        assertEquals(List.of("selectChannel", "selectSlot", "invoke", "invoke", "paste", "deleteClip", "selectChannel", "selectSlot", "invoke",
+                             "invoke", "invoke", "deleteClip"),
+                     calls().subList(calls().lastIndexOf("playStart") + 3, calls().size()));
+        assertEquals(List.of("deleteClip", 0, 2), bitwig.calls.get(bitwig.calls.size() - 1));
+    }
+
+    @Test
+    @DisplayName("says so in its checks when the copy didn't take and the launcher never got the focus")
+    void checksWhenTheCopyDidntTake() {
+        // Bitwig ignores the launcher's focus action and another panel has the focus, so copy does nothing, and the paste
+        // puts down the clip someone copied in their own song (see tellsItsOwnClipFromWhatWasOnTheClipboard).
+        studioWithDuplicate(m -> {
+            m.clipboard = new Copied("D:\\Songs\\Night Drive\\Hook.mid", THEIRS);
+            m.focus = "";
+            m.focusIgnored.add(Link.FOCUS_LAUNCHER);
+        });
+        // The check's paste never reaches the empty slot, so it waits for Bitwig.
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(arrangeChecked(1), 30000).get("result"));
+        // The timeline kept the focus: the check's paste went into the arranger, not the empty slot, and Duplicate copied
+        // the arranger's clip, not the launcher's.
+        assertJson(obj("launcherPaste", launcherPaste(1, 1, false, null, false, false), "duplicate", duplicate(1, 0, 0, false)), result.get("checks"));
+        assertEquals(3, bitwig.state.arranged.size());
+    }
+
+    @Test
+    @DisplayName("says so in its checks when Duplicate went to the track, as no panel had the focus")
+    void checksWhenDuplicateWentToTheTrack() {
+        studioWithDuplicate(m -> {
+            m.focusIgnored.add(Link.FOCUS_LAUNCHER);
+            m.focusIgnored.add(Link.FOCUS_ARRANGER);
+        });
+        // Nothing is pasted, by arrange or its check, so each waits for Bitwig.
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(arrangeChecked(1), 30000).get("result"));
+        assertJson(obj("launcherPaste", launcherPaste(1, 1, false, null, false, false), "duplicate", duplicate(1, 0, 1, false)), result.get("checks"));
+        assertEquals(List.of("Bass", "Bass 2", "Lead", "Master"), bitwig.state.tracks.stream().map(t -> t.name).collect(Collectors.toList()));
+    }
+
+    @Test
+    @DisplayName("leaves out a check it can't run: no empty slot within reach, or no Duplicate in Bitwig")
+    void leavesOutChecksItCantRun() {
+        studio(m -> {
+            m.scenes = 2;
+            m.focusIgnored.add(Link.FOCUS_ARRANGER);
+        });
+        // Arrange's own paste went into the launcher's second slot, the last there is.
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        assertJson(obj("launcherPaste", null, "duplicate", null), result.get("checks"));
+    }
+
+    @Test
+    @DisplayName("still answers when a check can't go on, saying why")
+    void answersWhenACheckStops() {
+        studioWithDuplicate(m -> m.focusIgnored.add(Link.FOCUS_ARRANGER));
+        bitwig.switchDuring("arrange", () -> bitwig.calls.contains(List.of("invoke", "Duplicate")), "My Song");
+        Map<String, Object> request = arrangeChecked(1);
+        request.put("onlyIn", "MO Live Test");
+        Map<String, Object> reply = app.waitFor(request);
+        assertEquals(true, reply.get("ok"));
+        assertEquals(LinkTest.elsewhere("My Song", "MO Live Test"), at(reply, "result", "checks", "error"));
+        assertEquals(true, at(reply, "result", "checks", "duplicate", "ran", "duplicate"));
+    }
+
+    @Test
+    @DisplayName("refuses checks that aren't true or false")
+    void refusesOddChecks() {
+        studio();
+        Map<String, Object> request = arrange(1, 0, 0, BAR_5);
+        request.put("checks", "yes");
+        assertEquals("checks is true or false, not yes.", error(app.ask(request)));
+        assertEquals(List.of(), bitwig.calls);
+    }
+
+    // ---- Files as tracks (extension 3.8) ----
+
+    static Map<String, Object> fileTrack(Object id, Object track, Object path, Object at) {
+        return obj("id", id, "cmd", "filetrack", "track", track, "path", path, "at", at);
+    }
+
+    static final String LIVE_CLIP = "C:\\Tests\\Live Clip.mid";
+
+    @Test
+    @DisplayName("puts a MIDI file on a new track after the one given, with the play start moved first, and says where it went")
+    void putsAFileOnANewTrack() {
+        studio();
+        Map<String, Object> reply = app.waitFor(fileTrack(1, 0, LIVE_CLIP, BAR_5));
+        assertJson(obj("id", 1, "ok", true, "result", obj(
+                       "added", 1, "index", 1, "name", "Live Clip", "type", "Instrument", "tracksBefore", 3, "tracksAfter", 4, "launcherClips", 0,
+                       "selected", false, "arranger", clip("Live Clip"), "arrangerBefore", clip(null), "at", 16, "onTrack", obj("before", 1, "after", 1))),
+                   reply);
+        assertEquals(List.of(new Arranged(bitwig.state.tracks.get(1), BAR_5, LIVE_CLIP, CLIP_GREY)), bitwig.state.arranged);
+        assertEquals(List.of(List.of("playStart", BAR_5), List.of("insertFile", LIVE_CLIP, "after track 0")), bitwig.calls);
+    }
+
+    @Test
+    @DisplayName("says so when Bitwig put the file in the new track's launcher, or did nothing with it, and leaves the play start alone without `at`")
+    void saysWhereElseTheFileWent() {
+        studio(m -> {
+            m.fileGoes = "launcher";
+            m.playStart = 8;
+        });
+        Object result = app.waitFor(fileTrack(1, 1, LIVE_CLIP, null)).get("result");
+        assertJson(obj("added", 1, "index", 2, "name", "Live Clip", "launcherClips", 1, "arranger", clip(null), "at", 8, "onTrack", obj("before", 1, "after", 1)),
+                   SelfCheckTest.pick(SelfCheckTest.map(result), "added", "index", "name", "launcherClips", "arranger", "at", "onTrack"));
+        assertEquals(List.of(List.of("insertFile", LIVE_CLIP, "after track 1")), bitwig.calls);
+
+        studio(m -> m.fileGoes = "nothing");
+        app.send(fileTrack(1, 0, LIVE_CLIP, null));
+        bitwig.clock.advance(5000);
+        assertEquals(List.of(), app.take(), "waits for Bitwig");
+        bitwig.clock.advance(5000);
+        assertJson(obj("added", 0, "index", null, "name", null, "type", null, "tracksBefore", 3, "tracksAfter", 3, "launcherClips", null, "selected", false,
+                       "arranger", clip(null), "arrangerBefore", clip(null), "at", 0, "onTrack", obj("before", 1, "after", 1)),
+                   app.take().get(0).get("result"));
+    }
+
+    @Test
+    @DisplayName("refuses an odd track, file or place, needs changes turned on, and keeps to the project the request names")
+    void refusesOddFileTracks() {
+        studio();
+        assertMatches("no track 9", error(app.ask(fileTrack(1, 9, LIVE_CLIP, null))));
+        assertMatches("file", error(app.ask(fileTrack(2, 0, null, null))));
+        assertEquals("Say where the play start goes as beats from the start (0 or more), not -1.", error(app.ask(fileTrack(3, 0, LIVE_CLIP, -1.0))));
+        bitwig.allowChanges(false);
+        assertMatches(LinkTest.CHANGES_OFF, error(app.ask(fileTrack(4, 0, LIVE_CLIP, null))));
+        bitwig.allowChanges(true);
+        Map<String, Object> elsewhere = fileTrack(5, 0, LIVE_CLIP, null);
+        elsewhere.put("onlyIn", "Night Drive");
+        assertEquals(LinkTest.elsewhere("MO Live Test", "Night Drive"), error(app.ask(elsewhere)));
         assertEquals(List.of(), bitwig.calls);
     }
 
