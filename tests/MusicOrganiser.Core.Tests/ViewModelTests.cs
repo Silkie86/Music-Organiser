@@ -393,7 +393,8 @@ public class ViewModelTests : IDisposable
         Assert.Equal(Path.Combine(_root, "data", "probe"), options.ProbeFolder);
         Assert.Equal(settings.Probe.Folder, options.ProbeFolder);
         Assert.Contains(Path.Combine(_root, "plugins"), options.PluginFolders());
-        Assert.Equal([user], options.BitwigUserFolders());
+        // The chosen one, then each Bitwig Studio folder found in Documents (where Bitwig may be keeping other things).
+        Assert.Equal([user, .. DawScripts.BitwigUserFolders()], options.BitwigUserFolders());
         Assert.Equal(_db.Projects().Where(p => p.Daw == "Bitwig Studio").Select(p => p.Path), options.LibraryProjects());
         Assert.Single(options.LibraryProjects());
         Assert.Equal(drumMachine, options.DrumMachine!(default));

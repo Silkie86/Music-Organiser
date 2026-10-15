@@ -193,7 +193,8 @@ public sealed partial class SettingsViewModel : ObservableObject
             ProbeFolder = Probe.Folder,
             PluginFolders = () => plugins,
             ScannedProbes = _db.ScannedPluginsNamed(BitwigLiveTests.ProbeName),
-            BitwigUserFolders = () => DawScripts.BitwigUserFolders(_db.GetSetting(BitwigUserKey)),
+            BitwigUserFolders = () => DawScripts.BitwigLinkFolders(_db.GetSetting(BitwigUserKey)),
+            BringBitwigToFront = () => DawWindows.BringToFront("Bitwig"),
             LibraryProjects = () =>
             {
                 var drums = _db.ProjectsUsingPlugin(BitwigSend.DrumMachine).ToHashSet();

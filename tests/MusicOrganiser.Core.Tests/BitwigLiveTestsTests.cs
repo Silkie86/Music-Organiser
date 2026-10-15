@@ -55,6 +55,23 @@ public class BitwigLiveTestsTests
     static string Listing(BitwigProject p) => string.Join("; ", p.Tracks.Select(t => $"{t.Name}: {string.Join(", ", t.Devices.Select(d => d.Name))}"));
 
     [Fact]
+    public void LooksForTheSavedProjectWhereverTheLibrarysBitwigProjectsAre()
+    {
+        // Seen: Bitwig's extensions in Documents\Bitwig Studio, its projects on another drive, which the library has.
+        var dir = Fixtures.TempDir();
+        var documents = Directory.CreateDirectory(Path.Combine(dir, "Documents", "Bitwig Studio", "Projects")).Parent!.FullName;
+        var projects = Directory.CreateDirectory(Path.Combine(dir, "K", "Bitwig Studio", "Projects")).FullName;
+        string[] library =
+        [
+            Path.Combine(projects, "Night Drive", "Night Drive.bwproject"),
+            Path.Combine(projects, "Loop Idea", "Loop Idea.bwproject"),
+            Path.Combine(dir, "Exports", "Bounce.bwproject"),   // not in a Projects folder, so its folder isn't searched
+        ];
+        Assert.Equal([Path.Combine(documents, "Projects"), projects],
+                     BitwigLiveTests.ProjectFolders([documents, Path.Combine(dir, "Gone")], library));
+    }
+
+    [Fact]
     public async Task RunsEveryAreaInATestProject()
     {
         var dir = Fixtures.TempDir();
@@ -421,6 +438,15 @@ public class BitwigLiveTestsTests
         Assert.Equal(LiveOutcome.Failed, unfound.Outcome);
         Assert.Contains("the app didn't find the project's file to see whether it was written", unfound.Detail);
         Assert.Null(unfound.Data!["file"]);
+
+        // Whether Bitwig's window was in front, which Save may need.
+        LiveVerdict Front(bool? front) =>
+            BitwigLiveTests.SaveVerdict("MO Live Test", "Save", true, true, TimeSpan.FromMilliseconds(120), wait, file, then, then, front);
+        Assert.Contains($"didn't write {file}, though its window was in front.", Front(true).Detail);
+        Assert.Contains($"didn't write {file}. The app couldn't bring Bitwig's window to the front, which Save may need: click on Bitwig while " +
+                        "the run saves.", Front(false).Detail);
+        Assert.Equal(false, (bool?)Front(false).Data!["front"]);
+        Assert.Null(unfound.Data!["front"]);
     }
 
     [Fact]
