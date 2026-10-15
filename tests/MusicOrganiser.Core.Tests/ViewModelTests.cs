@@ -642,6 +642,35 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_folder_can_be_added_while_the_last_one_added_is_still_being_scanned()
+    {
+        var ui = (HeadlessUi)Ui.Current;
+        var picks = new Queue<TaskCompletionSource<string?>>();
+        ui.Picking = () => { var p = new TaskCompletionSource<string?>(); picks.Enqueue(p); return p.Task; };
+        try
+        {
+            var settings = new MainViewModel(_db, _sounds).Settings;
+            var (a, b) = (Path.Combine(_root, "Projects A"), Path.Combine(_root, "Projects B"));
+            Directory.CreateDirectory(a);
+            Directory.CreateDirectory(b);
+
+            var first = settings.AddProjectFolderCommand.ExecuteAsync(null);
+            Assert.True(settings.AddProjectFolderCommand.CanExecute(null));   // the button doesn't wait for the first add
+            var second = settings.AddProjectFolderCommand.ExecuteAsync(null);
+            picks.Dequeue().SetResult(a);
+            picks.Dequeue().SetResult(b);
+            await Task.WhenAll(first, second);
+
+            Assert.Contains(a, settings.ProjectFolders);
+            Assert.Contains(b, settings.ProjectFolders);
+            Assert.Contains(a, _db.Roots());
+            Assert.Contains(b, _db.Roots());
+            Assert.True(settings.AddSampleFolderCommand.CanExecute(null));
+        }
+        finally { ui.Picking = null; }
+    }
+
+    [Fact]
     public void A_held_arrow_key_plays_the_sounds_it_passes_a_little_each_and_the_last_in_full()
     {
         var played = new List<string>();
@@ -1158,7 +1187,9 @@ public class ViewModelTests : IDisposable
         public Func<IAudioPlayer> Player { get; set; } = () => new Silence();
         public IAudioPlayer CreateAudioPlayer() => Player();
         public string? PickedFolder { get; set; }
-        public Task<string?> PickFolder(string title) => Task.FromResult(PickedFolder);
+        /// <summary>When set, picking a folder waits on this instead (a test holds the dialog open).</summary>
+        public Func<Task<string?>>? Picking { get; set; }
+        public Task<string?> PickFolder(string title) => Picking?.Invoke() ?? Task.FromResult(PickedFolder);
         public string? PickedFile { get; set; }
         public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult(PickedFile);
         public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);

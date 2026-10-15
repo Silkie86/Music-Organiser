@@ -259,7 +259,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     static Task<string?> PickFolder(string title) => Ui.Current.PickFolder(title);
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
     async Task AddProjectFolder()
     {
         if (await PickFolder("Choose a folder with music projects") is not { } f || ProjectFolders.Contains(f)) return;
@@ -276,7 +276,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         ProjectFolders.Remove(f);
     }
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
     async Task AddSampleFolder()
     {
         if (await PickFolder("Choose a sample library folder") is not { } f || SampleFolders.Contains(f)) return;
@@ -293,14 +293,14 @@ public sealed partial class SettingsViewModel : ObservableObject
         _db.SetList(Scanner.SampleFoldersKey, SampleFolders);
     }
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
     async Task IndexSamples()
     {
         await _main.ScanAsync(false, plugins: false, samples: true);
         UpdateSampleIndexText();
     }
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
     async Task AddPluginFolder()
     {
         if (await PickFolder("Choose a plugin folder (VST3, CLAP or VST2)") is not { } f || PluginFolders.Contains(f)) return;
