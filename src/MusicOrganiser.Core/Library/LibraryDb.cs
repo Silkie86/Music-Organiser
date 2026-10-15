@@ -344,6 +344,7 @@ public sealed partial class LibraryDb : IDisposable
     }
 
     public void RemoveProject(long id) => Exec("DELETE FROM projects WHERE id = $id", ("$id", id));
+    public void RemoveProject(string path) => Exec("DELETE FROM projects WHERE path = $p", ("$p", path));
 
     // ---- installed plugins & sample index ----------------------------------------------
 

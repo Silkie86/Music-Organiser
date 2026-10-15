@@ -73,6 +73,42 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_fixed_copy_is_listed_with_its_song_and_still_asks_whether_it_loaded_after_leaving_it()
+    {
+        var lib = Path.Combine(_root, "Lib", "Drums");
+        Directory.CreateDirectory(lib);
+        File.WriteAllBytes(Path.Combine(lib, "Kick 01.wav"), [0]);
+        _db.SetList(Scanner.SampleFoldersKey, [Path.Combine(_root, "Lib")]);
+        new Scanner(_db).ScanSampleFolders();
+        ScanFixtures();
+        var projects = Main().Projects;
+        projects.Reload();
+        projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
+        var detail = projects.Detail!;
+
+        await detail.PlanFixCommand.ExecuteAsync(null);
+        var kick = detail.FixRows.Single(r => r.HasLookedFor);
+        Assert.Equal(@"FL Studio looked for: C:\Samples\Drums\Kick 01.wav", kick.LookedFor);
+        await detail.SaveFixedCommand.ExecuteAsync(null);
+
+        // Listed straight away as the song's newest save, still picked, still asking.
+        var song = projects.Items.Single(i => i.Daw == "FL Studio");
+        Assert.Equal("Night Drive (fixed)", song.FileName);
+        Assert.Equal(["Night Drive"], song.OlderSaves.Select(o => o.Name));
+        Assert.Same(song, projects.Selected);
+        Assert.True(projects.Detail!.HasPendingFix);
+
+        // Leave it and come back: the question is still there until it's answered.
+        projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
+        projects.Selected = song;
+        Assert.True(projects.Detail!.HasPendingFix);
+        projects.Detail.KeepFixedCommand.Execute(null);
+        projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
+        projects.Selected = song;
+        Assert.False(projects.Detail!.HasPendingFix);
+    }
+
+    [Fact]
     public void The_song_panel_takes_two_thirds_until_its_divider_is_moved_and_then_keeps_its_place()
     {
         Assert.Equal(2 / 3.0, Main().Projects.PanelShare, 3);
