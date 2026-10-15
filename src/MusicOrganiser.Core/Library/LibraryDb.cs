@@ -544,9 +544,25 @@ public sealed partial class LibraryDb : IDisposable
         };
     }
 
-    public void SaveOrganisation(ProjectSummary p) => Exec("""
-        UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
-        """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", p.Id));
+    public void SaveOrganisation(ProjectSummary p) => SaveOrganisation(p, []);
+
+    /// <summary>Your fields for a song: written to its newest save and to each of its other saves, so they stay the song's.</summary>
+    public void SaveOrganisation(ProjectSummary p, IEnumerable<long> otherSaves)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var id in otherSaves.Prepend(p.Id).Distinct())
+            {
+                using var cmd = Cmd("""
+                    UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
+                    """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", id));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
 
     public void SetTags(long id, IEnumerable<string> tags)
     {

@@ -350,7 +350,7 @@
                                     <TextBlock DockPanel.Dock="Right" Text="{Binding FixSummary}" FontSize="12" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
                                     <TextBlock Text="FIX: WHAT IT WILL DO" Classes="filterLabel" Margin="0" />
                                 </DockPanel>
-                                <ItemsControl ItemsSource="{Binding FixRows}">
+                                <ItemsControl Classes="longList" MaxHeight="440" ItemsSource="{Binding FixRows}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:FixRow">
                                             <Border Classes="listRow">
@@ -519,10 +519,13 @@
             </TabItem>
 
             <TabItem Header="Plugins">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="12,14,12,20">
-                        <TextBlock Text="{Binding PluginHeader}" Classes="sectionHeader" Margin="0,0,0,6" />
-                        <ItemsControl ItemsSource="{Binding VisiblePlugins}">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding PluginHeader}" Classes="sectionHeader" Margin="12,14,12,6" />
+                        <Button DockPanel.Dock="Bottom" Content="{Binding SilentToggleText}" Background="Transparent" Padding="8,4" Margin="4,4,12,12"
+                                HorizontalAlignment="Left" FontSize="12" Foreground="{StaticResource AccentBrush}"
+                                Command="{Binding ToggleSilentCommand}" ToolTip.Tip="Synths on channels that play no notes in the song"
+                                IsVisible="{Binding SilentCount, Converter={StaticResource NonZero}}" />
+                        <ItemsControl Classes="longList" Padding="12,0,12,8" ItemsSource="{Binding VisiblePlugins}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:PluginRow">
                                     <Border Classes="listRow">
@@ -574,19 +577,13 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <Button Content="{Binding SilentToggleText}" Background="Transparent" Padding="8,4" Margin="-8,4,0,0"
-                                HorizontalAlignment="Left" FontSize="12" Foreground="{StaticResource AccentBrush}"
-                                Command="{Binding ToggleSilentCommand}" ToolTip.Tip="Synths on channels that play no notes in the song"
-                                IsVisible="{Binding SilentCount, Converter={StaticResource NonZero}}" />
-                    </StackPanel>
-                </ScrollViewer>
+                    </DockPanel>
             </TabItem>
 
             <TabItem Header="Samples">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="12,14,12,20">
-                        <TextBlock Text="{Binding SampleHeader}" Classes="sectionHeader" Margin="0,0,0,6" />
-                        <ItemsControl ItemsSource="{Binding Samples}">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding SampleHeader}" Classes="sectionHeader" Margin="12,14,12,6" />
+                        <ItemsControl Classes="longList" Padding="12,0,12,20" ItemsSource="{Binding Samples}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:SampleRow">
                                     <Border Classes="listRow">
@@ -619,15 +616,13 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </StackPanel>
-                </ScrollViewer>
+                    </DockPanel>
             </TabItem>
 
             <TabItem Header="Saves" IsVisible="{Binding HasOlderSaves}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="12,14,12,20">
-                        <TextBlock Text="{Binding OlderSavesHeader}" Classes="sectionHeader" Margin="0,0,0,6" />
-                        <ItemsControl ItemsSource="{Binding OlderSaves}">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding OlderSavesHeader}" Classes="sectionHeader" Margin="12,14,12,6" />
+                        <ItemsControl Classes="longList" Padding="12,0,12,20" ItemsSource="{Binding OlderSaves}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="lib:ProjectSummary">
                                     <Border Classes="listRow" Padding="10,4">
@@ -649,8 +644,7 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </StackPanel>
-                </ScrollViewer>
+                    </DockPanel>
             </TabItem>
 
             <TabItem Header="Details">
