@@ -431,6 +431,23 @@
                 </StackPanel>
             </Border>
 
+            <!-- Sound output: where the app's sounds play. Hidden where the app can't choose (the WPF app). -->
+            <Border Classes="card settingsCard" DataContext="{Binding SoundOutput}" IsVisible="{Binding IsAvailable}">
+                <StackPanel x:DataType="vm:SoundOutputSetting" Spacing="8">
+                    <TextBlock Text="Sound output" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro" Margin="0"
+                               Text="Where the app plays sounds. Choose your audio interface to hear them through it, or keep the computer's default output and the app follows it when it changes." />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding Selected}" MinWidth="340" MaxWidth="560"
+                                  ToolTip.Tip="Sounds move here at once, even one that's playing" />
+                        <Button Content="Look again" Command="{Binding RefreshCommand}"
+                                ToolTip.Tip="Lists the outputs again, after plugging something in or switching it on" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding Note}" Classes="live" TextWrapping="Wrap" FontSize="12.5"
+                               IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                </StackPanel>
+            </Border>
+
             <Border Classes="card settingsCard">
                 <StackPanel>
                     <TextBlock Text="Your library" Classes="sectionHeader" />
