@@ -49,11 +49,18 @@ public sealed class Scanner(LibraryDb db)
 
     /// <summary>Every project file under these folders, found with all cores at once and sorted by path.</summary>
     public static List<string> FindProjects(IEnumerable<string> roots, CancellationToken ct = default) =>
-        Parallelism.FindFiles(roots, f =>
-        {
-            var name = Path.GetFileName(f);
-            return Readers.For(f) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
-        }, SkipDir, ct: ct);
+        FindProjectStamps(roots, ct).Select(f => f.Path).ToList();
+
+    /// <summary>The project files under these folders, with the size and modified time the folder listing gave.</summary>
+    public static List<Parallelism.FoundFile> FindProjectStamps(IEnumerable<string> roots, CancellationToken ct = default) =>
+        Parallelism.FindFileStamps(roots, IsProjectFile, SkipDir, ct: ct);
+
+    /// <summary>A file the library lists: one the readers know, leaving out macOS "._" shadows and DAW autosaves.</summary>
+    public static bool IsProjectFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        return Readers.For(path) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
+    }
 
     public static bool SampleFound(string sample, string projectPath)
     {
@@ -104,19 +111,12 @@ public sealed class Scanner(LibraryDb db)
 
         var roots = db.Roots().Where(Directory.Exists).ToList();
         progress?.Report(new("Finding projects", 0, 0, ""));
-        var files = FindProjects(roots, ct);
+        var found = FindProjectStamps(roots, ct);
+        var files = found.Select(f => f.Path).ToList();
         var known = db.KnownFiles();
-        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).WithCancellation(ct)
-            .Where(f =>
-            {
-                try
-                {
-                    var fi = new FileInfo(f);
-                    var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                    return full || !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length;
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
-            }).ToList();
+        // The folder listing already says each file's size and modified time: only new or changed files are read.
+        var todo = found.Where(f => full || !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
+                        .Select(f => f.Path).ToList();
 
         // Read the projects on every core; save them here, in path order, a batch at a time,
         // so a new numbered save always finds the earlier ones it takes its status from.
@@ -144,6 +144,37 @@ public sealed class Scanner(LibraryDb db)
         db.UpsertMany(batch);
         db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
         progress?.Report(new("Done", files.Count, files.Count, ""));
+    }
+
+    /// <summary>
+    /// Brings the library up to date with project files the folder watcher saw change (<see cref="FolderWatch"/>): new
+    /// or changed ones are read, gone ones marked missing, and nothing else is looked at. Returns how many of each.
+    /// </summary>
+    public (int Read, int Gone) Update(IEnumerable<string> paths)
+    {
+        var roots = db.Roots();
+        var known = db.KnownFiles();
+        var read = new List<LibraryDb.IndexedFile>();
+        var gone = 0;
+        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!IsProjectFile(path) || IsIgnored(path, roots)) continue;
+            try
+            {
+                var fi = new FileInfo(path);
+                if (!fi.Exists)
+                {
+                    if (known.ContainsKey(path) && db.MarkFileMissing(path)) gone++;
+                    continue;
+                }
+                var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+                if (known.TryGetValue(path, out var k) && k.Mtime == mtime && k.Size == fi.Length) continue;   // already read
+                read.Add(Parallelism.Background(() => Analyse(path)));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // still being written, or locked: the next change or scan gets it
+        }
+        db.UpsertMany(read);
+        return (read.Count, gone);
     }
 
     /// <summary>Refresh the list of plugins installed on this PC.</summary>

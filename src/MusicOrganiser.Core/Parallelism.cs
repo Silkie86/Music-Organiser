@@ -60,6 +60,9 @@ public static class Parallelism
 
     public static void Background(Action work) => Background(() => { work(); return 0; });
 
+    /// <summary>A file found by <see cref="FindFileStamps"/>: its size and last-modified time (Unix seconds) came with the folder listing.</summary>
+    public readonly record struct FoundFile(string Path, long Size, long Mtime);
+
     /// <summary>
     /// Walks folder trees with every core at once, a level at a time, and returns the files
     /// <paramref name="keepFile"/> accepts, sorted by path. <paramref name="skipDir"/> gets a
@@ -68,32 +71,46 @@ public static class Parallelism
     /// </summary>
     public static List<string> FindFiles(IEnumerable<string> roots, Func<string, bool> keepFile, Func<string, string, bool> skipDir,
                                          Action<int, string>? progress = null, CancellationToken ct = default,
-                                         ConcurrentBag<string>? unreadable = null)
+                                         ConcurrentBag<string>? unreadable = null) =>
+        FindFileStamps(roots, keepFile, skipDir, progress, ct, unreadable).Select(f => f.Path).ToList();
+
+    /// <summary>
+    /// <see cref="FindFiles"/> with each file's size and modified time. On Windows these come with the folder listing
+    /// itself, so checking 357,000 sounds for changes doesn't ask the disk about each file again.
+    /// </summary>
+    public static List<FoundFile> FindFileStamps(IEnumerable<string> roots, Func<string, bool> keepFile, Func<string, string, bool> skipDir,
+                                                 Action<int, string>? progress = null, CancellationToken ct = default,
+                                                 ConcurrentBag<string>? unreadable = null)
     {
-        var found = new ConcurrentBag<string>();
+        var found = new ConcurrentBag<FoundFile>();
         var folders = 0;
         var level = roots.Where(Directory.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        // As Directory.GetFiles lists them: hidden and system files too, and a folder that can't be read is an error.
+        var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false, RecurseSubdirectories = false };
         while (level.Count > 0)
         {
             var next = new ConcurrentBag<string>();
             Parallel.ForEach(level, Options(ct), dir => Background(() =>
             {
-                string[] files, dirs;
+                List<(string Path, bool IsDir, long Size, long Mtime)> entries;
                 try
                 {
-                    files = Directory.GetFiles(dir);
-                    dirs = Directory.GetDirectories(dir);
+                    entries = new System.IO.Enumeration.FileSystemEnumerable<(string, bool, long, long)>(dir,
+                        (ref System.IO.Enumeration.FileSystemEntry e) =>
+                            (e.ToFullPath(), e.IsDirectory, e.IsDirectory ? 0 : e.Length, e.LastWriteTimeUtc.ToUnixTimeSeconds()),
+                        options).ToList();
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { unreadable?.Add(dir); return; }
-                foreach (var f in files)
-                    if (keepFile(f)) found.Add(f);
                 var parent = Path.GetFileName(dir.TrimEnd('\\', '/'));
-                foreach (var d in dirs)
-                    if (!skipDir(Path.GetFileName(d), parent)) next.Add(d);
+                foreach (var e in entries)
+                {
+                    if (!e.IsDir) { if (keepFile(e.Path)) found.Add(new(e.Path, e.Size, e.Mtime)); }
+                    else if (!skipDir(Path.GetFileName(e.Path), parent)) next.Add(e.Path);
+                }
                 if (Interlocked.Increment(ref folders) % 200 == 0) progress?.Invoke(found.Count, dir);
             }));
             level = [.. next];
         }
-        return found.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        return found.DistinctBy(f => f.Path, StringComparer.OrdinalIgnoreCase).OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase).ToList();
     }
 }

@@ -269,6 +269,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (await PickFolder("Choose a folder with music projects") is not { } f || ProjectFolders.Contains(f)) return;
         _db.AddRoot(f);
         ProjectFolders.Add(f);
+        _main.WatchProjectFolders();
         await _main.ScanAsync(false);
     }
 
@@ -278,6 +279,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (SelectedProjectFolder is not { } f) return;
         _db.RemoveRoot(f);
         ProjectFolders.Remove(f);
+        _main.WatchProjectFolders();
     }
 
     [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
@@ -286,6 +288,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (await PickFolder("Choose a sample library folder") is not { } f || SampleFolders.Contains(f)) return;
         SampleFolders.Add(f);
         _db.SetList(Scanner.SampleFoldersKey, SampleFolders);
+        _main.Sounds.WatchSampleFolders();
         await IndexSamples();
     }
 
@@ -295,6 +298,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (SelectedSampleFolder is not { } f) return;
         SampleFolders.Remove(f);
         _db.SetList(Scanner.SampleFoldersKey, SampleFolders);
+        _main.Sounds.WatchSampleFolders();
     }
 
     [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued

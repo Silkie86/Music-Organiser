@@ -406,6 +406,13 @@ public class LearningTests
         Assert.Equal(5, picks.Count);
         Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
         Assert.All(picks, p => Assert.Equal("Kick", p.Sound.Type));
+        // When there's nothing to suggest, the page says why.
+        Assert.Empty(Rediscover.Suggest(org, new Rediscover.Options(Type: "Ride")));
+        Assert.StartsWith("No sounds are sorted as Ride", Rediscover.WhyNothing(org, new Rediscover.Options(Type: "Ride")));
+        org.ApplyUsage(org.Sounds.Select(s => (s.Path, 1)).ToList());
+        Assert.Empty(Rediscover.Suggest(org, new Rediscover.Options(Type: "Kick")));
+        Assert.Contains("Include", Rediscover.WhyNothing(org, new Rediscover.Options(Type: "Kick")));
+        org.ApplyUsage([(Path.Combine(samples, "Pack A", "Kicks", "Kick 00.wav"), 3), ("Kick 01.wav", 2), ("Kick 02.wav", 1)]);
 
         // Kits: each pad gets its type, locks hold, the export is written.
         var slots = KitBuilder.DefaultDrumKit().Take(4).ToList();
@@ -575,5 +582,31 @@ public class GalaxyMapTests
         var (hx, hy) = (hats.Average(k => k.Value.X), hats.Average(k => k.Value.Y));
         var p = placed[100];
         Assert.True(Math.Abs(p.X - kx) + Math.Abs(p.Y - ky) < Math.Abs(p.X - hx) + Math.Abs(p.Y - hy));
+    }
+}
+
+public class RediscoverScaleTests
+{
+    [Fact]
+    public void Shuffle_picks_from_a_library_of_a_hundred_thousand_sounds_in_a_moment()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-rediscover-").FullName;
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        var rng = new Random(7);
+        lib.Save(Enumerable.Range(0, 100_000).Select(i => new SoundLibrary.Analysed($"/lib/Pack {i / 500}/Kick {i}.wav", 1, 1,
+            new SoundAnalysis { Seconds = 0.5, Features = Enumerable.Range(0, 40).Select(_ => (float)rng.NextDouble()).ToArray() },
+            null, null, "Kick")));
+        using var org = new SoundOrganiser(lib);
+        org.ApplyUsage(Enumerable.Range(0, 300).Select(i => ($"/lib/Pack {i / 500}/Kick {i}.wav", 2)).ToList());
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var picks = Rediscover.Suggest(org, new Rediscover.Options(Count: 30, Seed: 1));
+        var folders = Rediscover.Folders(org);
+        clock.Stop();
+
+        Assert.Equal(30, picks.Count);
+        Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
+        Assert.Equal(200, folders.Count);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"Took {clock.Elapsed.TotalSeconds:0.0} s");
     }
 }
