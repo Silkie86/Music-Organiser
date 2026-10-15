@@ -95,46 +95,74 @@ public sealed partial class SoundsViewModel
         await MapGalaxyIfNeeded();
     }
 
-    /// <summary>The stars, with this colour scheme and the current filters (sounds filtered out stay as faint dust).</summary>
-    void BuildStars()
+    int _starsVersion;
+
+    sealed record StarsBuilt(Dictionary<long, StarPoint> Map, List<GalaxyStar> Stars, IReadOnlyList<GalaxyRegion> Regions,
+                             string Space, bool HasDeepListening, int NotDeepListened);
+
+    /// <summary>
+    /// The stars, with this colour scheme and the current filters (sounds filtered out stay as faint dust). Worked out
+    /// off the window's thread: with 357,000 sounds reading the map and colouring every star held the window up for seconds.
+    /// </summary>
+    async void BuildStars()
     {
         if (!IsGalaxy) return;
-        var map = _map ??= Org.Library.Map();
-        var newest = Items.Count == 0 ? [] : Items.OrderBy(s => s.Added).Select((s, i) => (s.Id, i)).ToDictionary(t => t.Id, t => t.i);
-        var stars = new List<GalaxyStar>(map.Count);
-        var keep = MakeFilter();
-        foreach (var s in Items)
+        var version = ++_starsVersion;
+        var (items, known, colourBy, placedBy, keep) = (Items, _map, ColourBy, PlacedBy, MakeFilter());
+        try
         {
-            if (!map.TryGetValue(s.Id, out var p)) continue;
-            var colour = ColourBy switch
+            var built = await UiWork.Run(() =>
             {
-                "Key" => StarColours.Key(s),
-                "Pack" => StarColours.Pack(s.Folder),
-                "Liked" => StarColours.Liked(s.LikedShare),
-                "Used" => StarColours.Used(s.UsedIn),
-                "Age" => StarColours.Age(Items.Count > 1 ? newest[s.Id] / (double)(Items.Count - 1) : 1),
-                _ => StarColours.Type(s.Type),
-            };
-            stars.Add(new GalaxyStar(s, p.X, p.Y, colour, keep(s)));
+                var map = known ?? Org.Library.Map();
+                var newest = colourBy != "Age" || items.Count == 0 ? []
+                    : items.OrderBy(s => s.Added).Select((s, i) => (s.Id, i)).ToDictionary(t => t.Id, t => t.i);
+                var stars = new List<GalaxyStar>(map.Count);
+                foreach (var s in items)
+                {
+                    if (!map.TryGetValue(s.Id, out var p)) continue;
+                    var colour = colourBy switch
+                    {
+                        "Key" => StarColours.Key(s),
+                        "Pack" => StarColours.Pack(s.Folder),
+                        "Liked" => StarColours.Liked(s.LikedShare),
+                        "Used" => StarColours.Used(s.UsedIn),
+                        "Age" => StarColours.Age(items.Count > 1 ? newest[s.Id] / (double)(items.Count - 1) : 1),
+                        _ => StarColours.Type(s.Type),
+                    };
+                    stars.Add(new GalaxyStar(s, p.X, p.Y, colour, keep(s)));
+                }
+                return new StarsBuilt(map, stars, FindRegions(stars, colourBy), Org.GalaxySpace(placedBy),
+                                      Org.HasDeepListening, Org.NotDeepListened);
+            });
+            if (version != _starsVersion) return;   // something changed meanwhile: newer stars are on their way
+            if (_map is null || ReferenceEquals(_map, known)) _map = built.Map;
+            Stars = built.Stars;
+            Regions = built.Regions;
+            BuildLegend(built.Stars);
+            OnPropertyChanged(nameof(ShownStars));
+            ShowGalaxyNotes(built);
         }
-        Stars = stars;
-        Regions = FindRegions(stars);
-        BuildLegend(stars);
-        OnPropertyChanged(nameof(ShownStars));
-        var space = Org.GalaxySpace(PlacedBy);
+        catch (Exception e)
+        {
+            Message = $"Couldn't draw the galaxy: {e.Message}";
+        }
+    }
+
+    void ShowGalaxyNotes(StarsBuilt built)
+    {
         GalaxyNote = Items.Count == 0 ? "Scan your sample folders and every sound becomes a star here."
-            : map.Count == 0 ? "Mapping your sounds…"
-            : space switch
+            : built.Map.Count == 0 ? "Mapping your sounds…"
+            : built.Space switch
             {
                 "clap" => "Placed by CLAP's listening: close stars are the same kind of sound.",
                 "clap+features" => "Placed by CLAP and the app's own measurements: close stars sound alike.",
                 _ => "Placed by the app's own measurements: close stars sound alike.",
             };
-        var todo = Org.NotDeepListened;
+        var todo = built.NotDeepListened;
         (GalaxyWarning, GalaxyWarningAction) =
             PlacedBy == SoundOrganiser.OwnOnly || Items.Count == 0 ? ("", "")
             : !ClapModel.IsInstalled() ? ("CLAP isn't installed on this computer, so the stars are placed by the app's own measurements.", "Download CLAP")
-            : !Org.HasDeepListening ? ($"CLAP hasn't analysed your sounds yet ({todo:N0} to go), so the stars are placed by the app's own measurements.", "Deep listen")
+            : !built.HasDeepListening ? ($"CLAP hasn't analysed your sounds yet ({todo:N0} to go), so the stars are placed by the app's own measurements.", "Deep listen")
             : todo > 0 ? ($"CLAP hasn't analysed {todo:N0} newer sound{(todo == 1 ? "" : "s")} yet; {(todo == 1 ? "it's" : "they're")} placed by the app's own measurements.", "Deep listen")
             : ("", "");
     }
@@ -179,13 +207,13 @@ public sealed partial class SoundsViewModel
     /// Names the galaxy's neighbourhoods: the map is cut into a 10 × 10 grid, each square takes the type (or pack) most of
     /// its stars share, and touching squares with the same answer become one region, labelled at its middle.
     /// </summary>
-    internal IReadOnlyList<GalaxyRegion> FindRegions(IReadOnlyList<GalaxyStar> stars)
+    internal static IReadOnlyList<GalaxyRegion> FindRegions(IReadOnlyList<GalaxyStar> stars, string colourBy)
     {
-        if (ColourBy is not ("Type" or "Pack")) return [];
+        if (colourBy is not ("Type" or "Pack")) return [];
         // Finer squares and bigger minimums for a big library, so its families still get their own names.
         var grid = (int)Math.Clamp(Math.Sqrt(stars.Count) / 20, 10, 24);
         var least = Math.Max(5, stars.Count / 3000);
-        string Name(GalaxyStar s) => ColourBy == "Pack" ? s.Sound.Folder : s.Sound.Type;
+        string Name(GalaxyStar s) => colourBy == "Pack" ? s.Sound.Folder : s.Sound.Type;
         var cells = stars.Where(s => s.Shown && Name(s) is not ("" or "Unknown"))
             .GroupBy(s => (X: Math.Min(grid - 1, (int)(s.X * grid)), Y: Math.Min(grid - 1, (int)(s.Y * grid))))
             .Select(g => (g.Key, Top: g.GroupBy(Name).MaxBy(t => t.Count())!, Count: g.Count()))
@@ -206,7 +234,7 @@ public sealed partial class SoundsViewModel
                     if (cells.TryGetValue(n, out var other) && other.Name == name && seen.Add(n)) queue.Enqueue(n);
             }
             if (members.Count < least) continue;
-            var colour = ColourBy == "Pack" ? StarColours.Pack(name) : StarColours.Type(name);
+            var colour = colourBy == "Pack" ? StarColours.Pack(name) : StarColours.Type(name);
             regions.Add(new GalaxyRegion(name, members.Average(m => m.X), members.Min(m => m.Y), members.Count, colour,
                                          members.Min(m => m.X), members.Max(m => m.X), members.Max(m => m.Y)));
         }

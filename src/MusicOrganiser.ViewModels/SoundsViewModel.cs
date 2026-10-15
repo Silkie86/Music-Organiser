@@ -151,9 +151,15 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _colourBy = db.GetSetting(GalaxyColourKey) is { } c && ColourChoices.Contains(c) ? c : "Type";
         _weights = LikedWeights.FromJson(db.GetSetting(LikedWeightsKey));
         _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), FollowPlayback);
-        Reload();
-        if (SampleFolders.Count > 0) _ = ScanAsync();
-        else if (IsGalaxy) _ = MapGalaxyIfNeeded();
+        _ = StartAsync();
+    }
+
+    /// <summary>The first load, in the background (it held the window up while the app opened), then a scan for new sounds.</summary>
+    async Task StartAsync()
+    {
+        await ReloadAsync();
+        if (SampleFolders.Count > 0) await ScanAsync();
+        else if (IsGalaxy) await MapGalaxyIfNeeded();
     }
 
     IReadOnlyList<string> SampleFolders => _db.GetList(Scanner.SampleFoldersKey);
@@ -169,10 +175,17 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// </summary>
     public async Task ReloadAsync()
     {
+        var version = ++_reloadVersion;
         var items = Org.Sounds;
-        try { Show(await UiWork.Run(() => LoadAll(items))); }
+        try
+        {
+            var loaded = await UiWork.Run(() => LoadAll(items));
+            if (version == _reloadVersion) Show(loaded);   // else a newer reload is on its way
+        }
         catch (Exception e) { Message = $"Couldn't reload the sounds: {e.Message}"; }
     }
+
+    int _reloadVersion;
 
     bool _showing;
 

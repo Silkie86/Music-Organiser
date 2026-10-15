@@ -153,7 +153,7 @@ public sealed class SoundOrganiser : IDisposable
         var unreadable = new ConcurrentBag<string>();
         var files = FindAudio(folders, ct, unreadable);
         var known = Library.KnownFiles();
-        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
+        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).WithCancellation(ct)
             .Select(f =>
             {
                 try
@@ -348,7 +348,7 @@ public sealed class SoundOrganiser : IDisposable
         else Library.SetSetting(TypeModelKey, null);
 
         var zeroShot = space == "clap" ? TypePrompts() : null;
-        var updates = _sounds.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).Select(s =>
+        var updates = _sounds.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).Select(s =>
         {
             var (type, source, conf) = Parallelism.Background(() => ResolveType(s, model, zeroShot, space));
             s.Type = type;
@@ -395,7 +395,7 @@ public sealed class SoundOrganiser : IDisposable
     public IReadOnlyList<(Sound Sound, string Thinks, double P)> Disagreements(int max = 100)
     {
         if (TypeModel is not { } model) return [];
-        return _sounds.AsParallel().WithDegreeOfParallelism(Parallelism.Cores)
+        return _sounds.AsParallel().WithDegreeOfParallelism(Parallelism.Workers)
             .Where(s => s.UserType is null && s.NameType is not null && RawVector(s, model.Space) is not null)
             .Select(s => (Sound: s, Top: model.Predict(RawVector(s, model.Space)!) is [var top, ..] ? top : default))
             .Where(t => t.Top.Label is not null && t.Top.Label != t.Sound.NameType && t.Top.P >= 0.7)
@@ -441,7 +441,7 @@ public sealed class SoundOrganiser : IDisposable
                 var examples = positives.Select(p => new TrainingExample(RawVector(p, space)!, "yes", 1f))
                     .Concat(negatives.Select(n => new TrainingExample(RawVector(n, space)!, "no", 1f))).ToList();
                 var model = SoundClassifier.Train(examples, space, new SoundClassifier.Options(Epochs: 60));
-                folds[fold] = (toScore.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores)
+                folds[fold] = (toScore.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers)
                     .Select(s => (s, P: model.Predict(RawVector(s, space)!).First(p => p.Label == "yes").P))
                     .Where(t => t.P >= 0.85).ToList(), model.HeldOutAccuracy);
             });
