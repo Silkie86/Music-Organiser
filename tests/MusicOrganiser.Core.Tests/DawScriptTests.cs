@@ -86,36 +86,43 @@ public class DawScriptTests
     }
 
     [Fact]
-    public void InstallTakesTheLinkOutOfBitwigsOtherUserFolders()
+    public void InstallPutsTheExtensionWhereverBitwigMayLoadIt()
     {
-        // The first install went to Documents\Bitwig Studio before Bitwig's own folder was chosen, and Bitwig mustn't load two.
+        // Seen on a PC: Bitwig loaded extensions from Documents\Bitwig Studio, while its projects were on another drive.
         var root = Fixtures.TempDir();
         var chosen = Path.Combine(root, "K", "Bitwig Studio");
-        var other = Path.Combine(root, "Documents", "Bitwig Studio");
-        var oldExtension = Extension(Path.Combine(other, "Extensions", "MusicOrganiser.bwextension"), "3.0");
-        var oldScript = Path.Combine(other, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js");
-        Directory.CreateDirectory(Path.GetDirectoryName(oldScript)!);
-        File.WriteAllText(oldScript, "// the old script");
-        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.3");
+        var documents = Path.Combine(root, "Documents", "Bitwig Studio");
+        var old = Extension(Path.Combine(documents, "Extensions", "MusicOrganiser.bwextension"), "3.0");
+        var theirs = Path.Combine(documents, "Extensions", "DrivenByMoss.bwextension");
+        File.WriteAllText(theirs, "another extension");
+        var seen = Directory.CreateDirectory(Path.Combine(root, "Elsewhere", "Extensions")).FullName;
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.4");
 
-        // Others found include the chosen one (it's in Documents too, say), which Install puts the link in, not takes it out of.
-        var link = DawScripts.BitwigLink([chosen], built, others: [chosen + Path.DirectorySeparatorChar, other]);
-        Assert.Equal([oldExtension, oldScript], link.Leftovers);
-        Assert.Equal([oldExtension, oldScript], link.Install());
-        Assert.Equal(["3.3"], link.InstalledVersions);
-        Assert.Empty(link.Leftovers);
-        // Bitwig's own folders stay, even empty; the script's folder goes once empty.
-        Assert.True(Directory.Exists(Path.Combine(other, "Extensions")));
-        Assert.True(Directory.Exists(Path.Combine(other, "Controller Scripts")));
-        Assert.False(Directory.Exists(Path.GetDirectoryName(oldScript)));
+        var link = DawScripts.BitwigLink([chosen, documents], built, loadedFrom: seen);
+        Assert.Equal([Path.Combine(chosen, "Extensions"), Path.Combine(documents, "Extensions"), seen], link.Folders);
+        Assert.Equal(ScriptState.Outdated, link.State);
         Assert.Empty(link.Install());
+        Assert.Equal(["3.4", "3.4", "3.4"], link.InstalledVersions);
+        Assert.Equal(ScriptState.Installed, link.State);
+        Assert.True(File.Exists(theirs));
+        // Where Bitwig loaded it from counts once, however it's written.
+        var again = DawScripts.BitwigLink([chosen, documents], built, loadedFrom: Path.Combine(documents, "Extensions") + Path.DirectorySeparatorChar);
+        Assert.Equal(2, again.Folders.Count);
+        // and not once it's gone (Bitwig moved, or the drive isn't there).
+        Assert.Equal(2, DawScripts.BitwigLink([chosen, documents], built, loadedFrom: Path.Combine(root, "Gone", "Extensions")).Folders.Count);
 
-        // Installing the script instead (an app built without a JDK) takes both out of the others too.
-        Extension(oldExtension, "3.0");
-        var script = DawScripts.BitwigLink([chosen], Path.Combine(root, "no extension.bwextension"), others: [other]);
-        Assert.Equal("MusicOrganiser.control.js", script.FileName);
-        Assert.Equal([oldExtension], script.Install());
-        Assert.True(File.Exists(Path.Combine(chosen, "Extensions", "MusicOrganiser.bwextension")));   // not one of the others
+        // The chosen folder first, then each one found in Documents.
+        var folders = DawScripts.BitwigLinkFolders(chosen);
+        Assert.Equal(chosen, folders[0]);
+        Assert.Equal(DawScripts.BitwigUserFolders().Count + 1, folders.Count);
+        Assert.Equal(DawScripts.BitwigUserFolders(), DawScripts.BitwigLinkFolders(null));
+
+        // Only the extension in an Extensions folder says where Bitwig loads it from (not a copy Bitwig made elsewhere).
+        Assert.Equal(Path.Combine(documents, "Extensions"), DawScripts.BitwigExtensionsFolder(old));
+        Assert.Null(DawScripts.BitwigExtensionsFolder(Path.Combine(root, "cache", "MusicOrganiser.bwextension")));
+        Assert.Null(DawScripts.BitwigExtensionsFolder(theirs));
+        Assert.Null(DawScripts.BitwigExtensionsFolder(""));
+        Assert.Null(DawScripts.BitwigExtensionsFolder(null));
     }
 
     [Fact]
@@ -153,6 +160,21 @@ public class DawScriptTests
         File.SetLastWriteTimeUtc(link, then.AddMinutes(1));
         Assert.Equal(link, extension.ChangedSinceBuilt);
         Assert.Null((extension with { Code = null }).ChangedSinceBuilt);   // an installed app has no code next to it
+    }
+
+    [Fact]
+    public async Task SaysWhereToLookWhenTheExtensionDidntBuildAgain()
+    {
+        // A build that fails (no JDK, a mistake in the code) leaves the old extension, so starting again doesn't help.
+        var code = Directory.CreateDirectory(Path.Combine(Fixtures.TempDir(), "bitwig-java")).FullName;
+        File.WriteAllText(Path.Combine(code, "pom.xml"), "<project/>");
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.3");
+        File.SetLastWriteTimeUtc(built, DateTime.UtcNow.AddHours(-1));
+        var link = new MusicOrganiser.ViewModels.DawLinkSetting("Bitwig Studio", () => "",
+            () => DawScripts.BitwigExtension([Fixtures.TempDir()], built) with { Code = code }, () => Task.FromResult(""), found: () => true);
+        await link.RefreshAsync();
+        Assert.EndsWith("close the app and start it again so it's built anew. If this stays, building it failed, and " +
+                        $"{Path.Combine(code, "build.log")} says why.", link.Status);
     }
 
     /// <summary>A stand-in for the built extension: a Java archive whose manifest gives its version.</summary>

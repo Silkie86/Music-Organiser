@@ -30,7 +30,10 @@ import com.bitwig.extension.controller.api.TrackBank;
 import com.bitwig.extension.controller.api.Transport;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.net.URISyntaxException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.CodeSource;
 import java.time.Clock;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -181,6 +184,13 @@ final class Link {
      * for Bitwig to make the change, so jobs run one at a time and answer when they're done.
      */
     private final Map<String, Command> commands = new HashMap<>();
+
+    /**
+     * The file Bitwig loaded the extension from, or "" when that can't be told. Bitwig may load extensions from another
+     * Bitwig Studio folder than the one holding the projects (Documents, while the projects are on another drive), so
+     * the app needs this to put a new version where Bitwig looks.
+     */
+    String loadedFrom = loadedFrom(Link.class);
 
     Link(ControllerHost host, Reports reports, Clock clock) {
         this.host = host;
@@ -431,6 +441,7 @@ final class Link {
 
         Map<String, Object> start = event("start");
         start.put("extension", MusicOrganiserExtensionDefinition.VERSION);
+        if (!loadedFrom.isEmpty()) start.put("loadedFrom", loadedFrom);
         start.put("bitwig", str(host.getHostVersion()));
         start.put("api", host.getHostApiVersion());
         start.put("port", port);
@@ -741,7 +752,21 @@ final class Link {
         // Additions in link version 3. ("engine" already says whether Bitwig's audio engine is on.)
         m.put("runtime", "java");
         m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
+        if (!loadedFrom.isEmpty()) m.put("loadedFrom", loadedFrom);
         return m;
+    }
+
+    /** The file a class was loaded from, when it's a file (an archive such as the .bwextension), else "". */
+    static String loadedFrom(Class<?> type) {
+        try {
+            CodeSource source = type.getProtectionDomain().getCodeSource();
+            if (source == null || source.getLocation() == null) return "";
+            Path file = Path.of(source.getLocation().toURI());
+            return Files.isRegularFile(file) ? file.toString() : "";
+        } catch (URISyntaxException | RuntimeException e) {
+            // Not a file: URL, or Bitwig doesn't allow asking.
+            return "";
+        }
     }
 
     /** The greeting for a new connection: what's known, even when part of Bitwig's API didn't start. */
@@ -759,6 +784,7 @@ final class Link {
             m.put("onlyIn", true);
             m.put("runtime", "java");
             m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
+            if (!loadedFrom.isEmpty()) m.put("loadedFrom", loadedFrom);
             m.put("error", failure(e) + " Ask for a selftest to see what's wrong.");
             return m;
         }
@@ -1419,6 +1445,7 @@ final class Link {
         m.put("why", why);
         m.put("ok", ok);
         m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
+        if (!loadedFrom.isEmpty()) m.put("loadedFrom", loadedFrom);
         m.put("link", LINK_VERSION);
         m.put("product", safely(() -> str(host.getHostProduct())));
         m.put("bitwig", safely(() -> str(host.getHostVersion())));

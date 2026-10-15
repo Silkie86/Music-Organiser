@@ -197,6 +197,7 @@ final class FakeBitwig {
         cursorTrack = new FakeTrack(-1);
         host = new Host();
         link = new Link((ControllerHost) host.api, new Reports(reports, clock), clock);
+        link.loadedFrom = model.loadedFrom;
     }
 
     /**
@@ -511,6 +512,8 @@ final class FakeBitwig {
 
     /** What the stand-in Bitwig has open, and what it makes of things the app inserts. */
     static final class Model {
+        /** The file Bitwig loaded the extension from, as the extension tells it ("" when it can't). */
+        String loadedFrom = "";
         String project = "Untitled";
         double tempo = 120;
         String timeSignature = "4/4";

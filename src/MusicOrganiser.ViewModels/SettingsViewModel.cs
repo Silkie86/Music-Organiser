@@ -16,9 +16,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>FL Studio's user data folder, when it was chosen here.</summary>
     public const string FlUserDataKey = "fl_user_data";
     public const string BitwigUserKey = "bitwig_user_folder";
+    /// <summary>The Extensions folder Bitwig was last seen loading the extension from, which Install puts it in too.</summary>
+    public const string BitwigLoadsFromKey = "bitwig_extensions_folder";
 
     readonly LibraryDb _db;
     readonly MainViewModel _main;
+    /// <summary>The <see cref="BitwigLoadsFromKey"/> setting as last read or kept, so each look doesn't read it again.</summary>
+    string? _bitwigLoadsFrom;
     /// <summary>Where the live tests' reports go: reports\live in the app's data folder.</summary>
     readonly string _liveReports;
 
@@ -120,15 +124,18 @@ public sealed partial class SettingsViewModel : ObservableObject
         SoundOutput = new SoundOutputSetting(db, Ui.Current.SoundOutputs);
         Links =
         [
-            // Into the chosen user folder, taking any copy out of the others found, so Bitwig can't load two.
+            // Into the chosen user folder, each one found in Documents, and the Extensions folder Bitwig loaded it from.
             new DawLinkSetting("Bitwig Studio", () => BitwigSteps,
-                               () => DawScripts.BitwigLink(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey)), others: DawScripts.BitwigUserFolders()),
+                               () => DawScripts.BitwigLink(DawScripts.BitwigLinkFolders(db.GetSetting(BitwigUserKey)),
+                                                           loadedFrom: db.GetSetting(BitwigLoadsFromKey)),
                                () => CheckBitwig(watch), new FolderChoice(
                 "Choose Bitwig's user folder (the Bitwig Studio folder that holds Extensions, Library and Projects; Bitwig shows it in Settings > Locations)",
                 DawScripts.BitwigUserFolderFrom,
                 "That isn't Bitwig's user folder or a folder in it. It's the Bitwig Studio folder that holds Extensions, Library and " +
                 "Projects, and Bitwig shows where it is in Settings > Locations.",
-                f => db.SetSetting(BitwigUserKey, f), "From now on Install puts the link there, and nowhere else."),
+                f => db.SetSetting(BitwigUserKey, f),
+                "From now on the app looks for Bitwig projects there. Install puts the link there too, as well as in each Bitwig Studio " +
+                "folder in Documents and where Bitwig was seen loading it from, as Bitwig may load extensions from another folder."),
                 liveTests: liveTests),
             new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), () => CheckFlStudio(watch), new FolderChoice(
                 "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
@@ -163,6 +170,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     public void ShowLive(LiveDawsViewModel live)
     {
         foreach (var link in Links) link.ShowLive(live.State(link.Daw));
+        // Where Bitwig loads the extension from, for Install to put the next version there.
+        if (DawScripts.BitwigExtensionsFolder(live.State(DawState.Bitwig)?.LoadedFrom) is { } folder &&
+            !string.Equals(folder, _bitwigLoadsFrom ??= _db.GetSetting(BitwigLoadsFromKey) ?? "", StringComparison.OrdinalIgnoreCase))
+            _db.SetSetting(BitwigLoadsFromKey, _bitwigLoadsFrom = folder);
     }
 
     /// <summary>
@@ -528,6 +539,8 @@ public sealed partial class DawLinkSetting : ObservableObject
     readonly FolderChoice? _folder;
     /// <summary>The extension version Install copies, from the last look (null for a script).</summary>
     string? _shipped;
+    /// <summary>Whether every folder had the app's own copy at the last look.</summary>
+    bool _current;
     DawState? _state;
 
     public string Daw { get; }
@@ -581,6 +594,7 @@ public sealed partial class DawLinkSetting : ObservableObject
             {
                 var script = _script();
                 _shipped = script.Version;
+                _current = script.State == ScriptState.Installed;
                 return Describe(script);
             });
             ShowLive(_state);
@@ -596,12 +610,17 @@ public sealed partial class DawLinkSetting : ObservableObject
     string Describe(DawScript script)
     {
         var copies = script.Version is { } v ? $"extension {v}" : null;
-        var older = script.InstalledVersions.Where(i => i.Length > 0 && i != script.Version).Distinct().ToList();
+        var others = script.InstalledVersions.Where(i => i.Length > 0 && i != script.Version).Distinct().ToList();
+        var newer = others.Where(i => Newer(i, script.Version)).ToList();
+        var older = others.Except(newer).ToList();
         var state = script.State switch
         {
             ScriptState.NotInstalled when script.Folders.Count == 0 =>
                 $"Not installed, and the app didn't find {Daw}'s folder for it. Install asks where it is.",
             ScriptState.NotInstalled => "Not installed." + (copies is null ? "" : $" Install puts in {copies}."),
+            // From a newer build of the app (another branch, say): Install would go back to this app's own.
+            ScriptState.Outdated when newer.Count > 0 =>
+                $"Installed, and newer ({string.Join(", ", newer)}) than the {copies} this app has: Install would put that older one back.",
             ScriptState.Outdated => "Installed, but an older version" + (older.Count > 0 ? $" ({string.Join(", ", older)})" : "") +
                                     (copies is null ? ". Install it again to update it." : $". Install it again to put in {copies}."),
             _ => $"Installed in {string.Join(" and ", script.InstalledIn)}" + (copies is null ? "." : $" ({copies})."),
@@ -611,9 +630,14 @@ public sealed partial class DawLinkSetting : ObservableObject
         // Running the app with hot reload (as the Music Organiser (latest) shortcut does) doesn't build the extension again.
         return script.ChangedSinceBuilt is { } changed
             ? state + $" The extension the app has was built before its code last changed ({Path.GetFileName(changed)}), so Install would " +
-              "put in an old one: close the app and start it again so it's built anew."
+              "put in an old one: close the app and start it again so it's built anew. If this stays, building it failed, and " +
+              $"{Path.Combine(script.Code!, "build.log")} says why."
             : state;
     }
+
+    /// <summary>Whether extension version <paramref name="a"/> is newer than <paramref name="b"/> (3.10 is newer than 3.9).</summary>
+    internal static bool Newer(string? a, string? b) =>
+        Version.TryParse(a, out var x) && Version.TryParse(b, out var y) && x > y;
 
     [RelayCommand]
     async Task Install()
@@ -733,11 +757,21 @@ public sealed partial class DawLinkSetting : ObservableObject
             ? $"✓ Answering now: {state.Version}" + (state.Project.Length > 0 ? $", with “{state.Project}” open." : ".") +
               (state.Daw == DawState.Bitwig && !state.Changes
                   ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "") +
-              (state.Extension is { } running && _shipped is { } shipped && running != shipped
-                  ? $" Bitwig is running extension {running}, and Install puts in {shipped}: press Install, then restart Bitwig." : "")
+              (state.LoadedFrom is { Length: > 0 } file ? $" Bitwig loads the extension from {Path.GetDirectoryName(file)}." : "") +
+              (state.Extension is { } running && _shipped is { } shipped && running != shipped ? Running(running, shipped) : "")
             : state.Running == true ? $"Not answering right now, though {Daw} is open. Check connection says what's missing."
             : "Not answering right now.";
     }
+
+    /// <summary>What to do when Bitwig runs another extension than the one Install puts in.</summary>
+    string Running(string running, string shipped) =>
+        Newer(running, shipped) ? $" Bitwig is running extension {running}, newer than the {shipped} this app has."
+        // Installed, yet Bitwig runs another: it hasn't restarted since, or it loads extensions from another user folder.
+        : _current ? $" Bitwig is running extension {running}, but {shipped} is installed: restart Bitwig to load it. If it still runs " +
+                     $"{running} after that, Bitwig loads extensions from another folder: use Choose folder… to pick the one Bitwig " +
+                     "shows in Settings > Locations."
+        // Windows won't replace an extension Bitwig has open.
+        : $" Bitwig is running extension {running}, and Install puts in {shipped}: close Bitwig, press Install, then open Bitwig again.";
 
     /// <summary>Asks the DAW to answer, through the script.</summary>
     [RelayCommand]

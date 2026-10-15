@@ -83,7 +83,7 @@ class LinkTest {
         MusicOrganiserExtensionDefinition definition = (MusicOrganiserExtensionDefinition) found.get(0);
 
         // The script's identity (MusicOrganiser.control.js's defineController), so Bitwig keeps the controller it has.
-        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.3"),
+        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.4"),
                      List.of(definition.getHardwareVendor(), definition.getHardwareModel(), definition.getName(), definition.getAuthor(),
                              definition.getVersion()));
         assertEquals(UUID.fromString("ed35e3c7-c544-49ed-936d-c236b0c9b73b"), definition.getId());
@@ -109,11 +109,27 @@ class LinkTest {
                        "project", "Night Drive", "modified", false, "engine", true, "changes", false,
                        "onlyIn", true,   // it honours a request's onlyIn
                        // Link version 3: which link this is.
-                       "runtime", "java", "extension", "3.3"),
+                       "runtime", "java", "extension", "3.4"),
                    hello.get("result"));
         assertJson(obj("id", 1, "ok", true, "result", hello.get("result")), app.ask(obj("id", 1, "cmd", "hello")));
         assertEquals(List.of(), bitwig.popups);
         assertEquals(List.of(), bitwig.errors);
+    }
+
+    @Test
+    @DisplayName("says which file Bitwig loaded it from, as Bitwig may load extensions from another folder than its projects'")
+    void saysWhereItWasLoadedFrom() {
+        Model model = song();
+        model.loadedFrom = "C:\\Users\\me\\Documents\\Bitwig Studio\\Extensions\\MusicOrganiser.bwextension";
+        FakeBitwig bitwig = start(model);
+        App app = bitwig.connect();
+        Map<String, Object> hello = app.take().get(0);
+        assertEquals(model.loadedFrom, ((Map<?, ?>) hello.get("result")).get("loadedFrom"));
+
+        // A class from an archive gives its file; the extension's own classes here come from a folder, which isn't one.
+        Path junit = Path.of(Link.loadedFrom(Test.class));
+        assertTrue(junit.getFileName().toString().endsWith(".jar"), junit.toString());
+        assertEquals("", Link.loadedFrom(Link.class));
     }
 
     @Test
