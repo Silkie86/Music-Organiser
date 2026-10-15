@@ -76,26 +76,29 @@ static class GalaxyGpu
             var feature = context.TryGetFeature<ISkiaSharpApiLeaseFeature>();
             using var lease = feature?.Lease();
             // No graphics card here (or Avalonia is drawing in software): the processor takes over.
-            if (lease?.GrContext is not { } gr) { GiveUp(); return; }
+            if (lease?.GrContext is not { } gr) { GiveUp("Avalonia isn't drawing with the graphics card here"); return; }
             var timer = System.Diagnostics.Stopwatch.StartNew();
             try { Draw(gr, lease.SkCanvas, frame); }
             catch (Exception e)
             {
                 // A driver that can't run the shader, say: the processor's picture is just as good, only slower.
                 Console.Error.WriteLine($"The galaxy couldn't draw on the graphics card, so it uses the processor: {e.Message}");
-                GiveUp();
+                GiveUp($"the graphics card couldn't draw it ({e.GetType().Name}: {e.Message})");
                 return;
             }
+            if (Available != true) MusicOrganiser.Core.AppLog.Info("Galaxy", "Drawing the stars on the graphics card");
             Available = true;
+            GalaxyTiming.Gpu(timer.Elapsed.TotalMilliseconds);
             if (Environment.GetEnvironmentVariable("MO_GALAXY_TIMING") is not null)
                 Console.Error.WriteLine($"galaxy gpu {timer.Elapsed.TotalMilliseconds:0.0} ms");
         }
     }
 
-    static void GiveUp()
+    static void GiveUp(string why)
     {
         if (Available == false) return;
         Available = false;
+        MusicOrganiser.Core.AppLog.Info("Galaxy", $"Drawing the stars on the processor: {why}");
         Dispatcher.UIThread.Post(() => Changed?.Invoke());
     }
 
@@ -184,5 +187,54 @@ static class GalaxyGpu
         using var shader = _effect.ToShader(uniforms, children);
         using var paint = new SKPaint { Shader = shader };
         target.DrawRect(new SKRect(0, 0, w, h), paint);
+    }
+}
+
+/// <summary>
+/// How long the galaxy's frames take, summed up in the run's log every few seconds while it's moving (Diagnostics:
+/// <see cref="MusicOrganiser.Core.AppLog"/>), so a slow galaxy on a big library shows where the time goes.
+/// </summary>
+static class GalaxyTiming
+{
+    const double Every = 10;   // seconds between notes
+    const double Slow = 33;    // a frame slower than this is a stutter you can see
+
+    static readonly object Gate = new();
+    static int _frames, _slow, _gpuFrames;
+    static double _total, _max, _gpuTotal, _gpuMax;
+    static DateTime _since = DateTime.UtcNow;
+
+    /// <summary>The graphics card's part of a frame (on the render thread).</summary>
+    public static void Gpu(double ms)
+    {
+        lock (Gate)
+        {
+            _gpuFrames++;
+            _gpuTotal += ms;
+            _gpuMax = Math.Max(_gpuMax, ms);
+        }
+    }
+
+    /// <summary>A frame worked out on the UI thread; writes the note once enough time has gone by.</summary>
+    public static void Frame(double ms, Func<string> view)
+    {
+        string? note = null;
+        lock (Gate)
+        {
+            _frames++;
+            _total += ms;
+            _max = Math.Max(_max, ms);
+            if (ms > Slow) _slow++;
+            var now = DateTime.UtcNow;
+            if ((now - _since).TotalSeconds < Every) return;
+            var drawn = GalaxyGpu.Available switch { true => "graphics card", false => "processor", _ => "not decided yet" };
+            note = $"{_frames} frames in {(now - _since).TotalSeconds:0} s on the {drawn}: UI thread average {_total / _frames:0.0} ms, " +
+                   $"slowest {_max:0.0} ms, {_slow} over {Slow:0} ms" +
+                   (_gpuFrames > 0 ? $"; graphics card average {_gpuTotal / _gpuFrames:0.0} ms, slowest {_gpuMax:0.0} ms" : "") + $". {view()}";
+            _frames = _slow = _gpuFrames = 0;
+            _total = _max = _gpuTotal = _gpuMax = 0;
+            _since = now;
+        }
+        MusicOrganiser.Core.AppLog.Info("Galaxy", note);
     }
 }
