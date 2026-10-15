@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -549,6 +550,8 @@ sealed class FakeProbe : IAsyncDisposable
     readonly CancellationTokenSource _stop = new();
     readonly string _status, _commands;
     readonly Thread _running;
+    /// <summary>What went wrong on its thread, given to the test as it's disposed: thrown there, it would end the whole test run.</summary>
+    ExceptionDispatchInfo? _failed;
     readonly string _host, _hostVersion;
     int _n, _handled;
 
@@ -592,6 +595,7 @@ sealed class FakeProbe : IAsyncDisposable
         _running.Join();
         File.Delete(_status);
         Directory.Delete(_commands, recursive: true);
+        _failed?.Throw();
         return ValueTask.CompletedTask;
     }
 
@@ -611,6 +615,11 @@ sealed class FakeProbe : IAsyncDisposable
             }
             // A reader had the status open: Windows won't replace it then (Access denied), so next time, as the probe does.
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            catch (Exception e)
+            {
+                _failed = ExceptionDispatchInfo.Capture(e);
+                return;
+            }
             _stop.Token.WaitHandle.WaitOne(5);
         }
     }

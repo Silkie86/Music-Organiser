@@ -126,10 +126,16 @@ public class PluginScannerTests : IDisposable
         }
         """;
 
-    string Bundle(string name, string? moduleInfo)
+    /// <summary>A plugin bundle (.vst3 unless <paramref name="name"/> says otherwise), with a library for this computer unless it's told not to.</summary>
+    string Bundle(string name, string? moduleInfo, bool library = true)
     {
-        var bundle = Path.Combine(_root, name + ".vst3");
-        Directory.CreateDirectory(Path.Combine(bundle, "Contents", "x86_64-win"));
+        var bundle = Path.Combine(_root, Path.HasExtension(name) ? name : name + ".vst3");
+        if (library)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Vst3ModuleInfo.LibraryIn(bundle))!);
+            File.WriteAllText(Vst3ModuleInfo.LibraryIn(bundle), "not really a library");
+        }
+        Directory.CreateDirectory(bundle);
         if (moduleInfo is not null)
         {
             Directory.CreateDirectory(Path.Combine(bundle, "Contents", "Resources"));
@@ -161,6 +167,14 @@ public class PluginScannerTests : IDisposable
         Assert.Null(Vst3ModuleInfo.Read(Bundle("Broken", ModuleInfo[..^40])));
         Assert.Null(Vst3ModuleInfo.Read(Bundle("Only an editor", ModuleInfo.Replace("Audio Module Class", "Something Else"))));
         Assert.Null(Vst3ModuleInfo.Read(Bundle("Bad ID", ModuleInfo.Replace("\"CID\": \"", "\"CID\": \"x"))));
+        // Listing only the one it can read would lose the other for good.
+        Assert.Null(Vst3ModuleInfo.Read(Bundle("One bad ID", ModuleInfo.Replace("0F1E2D3C4B5A69788796A5B4C3D2E1F0", "0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0"))));
+        // Built for another computer, or its library deleted: the scanner says why it can't be used.
+        Assert.Null(Vst3ModuleInfo.Read(Bundle("Not for here", ModuleInfo, library: false)));
+        Assert.Null(Vst3ModuleInfo.Read(Bundle("Twin Pack.vst", ModuleInfo)));   // a Mac VST2 bundle: mo-scan reads its own ID
+        var oldCodePage = Bundle("Not UTF-8", ModuleInfo);   // a name saved as Latin-1, not UTF-8
+        File.WriteAllBytes(Vst3ModuleInfo.FileIn(oldCodePage), System.Text.Encoding.Latin1.GetBytes(ModuleInfo.Replace("Twin Delay", "Twin Délay")));
+        Assert.Null(Vst3ModuleInfo.Read(oldCodePage));
         var file = Path.Combine(_root, "Single file.vst3");   // an old-style VST3 is just the library
         File.WriteAllText(file, "MZ");
         Assert.Null(Vst3ModuleInfo.Read(file));
