@@ -89,15 +89,15 @@ public sealed partial class SettingsViewModel : ObservableObject
         [
             new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.BitwigLink(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey))),
                                () => CheckBitwig(watch), new FolderChoice(
-                "Choose Bitwig's user folder (the Bitwig Studio folder Bitwig shows in Settings > Locations)",
-                DawScripts.IsBitwigUserFolder,
-                "That doesn't look like Bitwig's user folder: it's called Bitwig Studio, with Library or Projects folders in it. " +
-                "Bitwig shows where it is in Settings > Locations.",
+                "Choose Bitwig's user folder (the Bitwig Studio folder that holds Extensions, Library and Projects; Bitwig shows it in Settings > Locations)",
+                DawScripts.BitwigUserFolderFrom,
+                "That isn't Bitwig's user folder or a folder in it. It's the Bitwig Studio folder that holds Extensions, Library and " +
+                "Projects, and Bitwig shows where it is in Settings > Locations.",
                 f => db.SetSetting(BitwigUserKey, f), "From now on Install puts the link there, and nowhere else."),
                 liveTests: liveTests),
             new DawLinkSetting("FL Studio", () => FlSteps(flPort.Port), () => FlScript(db), () => CheckFlStudio(watch), new FolderChoice(
                 "Choose FL Studio's user data folder (the one with Settings, Presets and Projects in it)",
-                DawScripts.IsFlUserData,
+                DawScripts.FlUserDataFrom,
                 "That isn't FL Studio's user data folder: it has Settings, Presets and Projects folders in it. " +
                 "FL Studio shows where it is in Options > File settings.",
                 f => db.SetSetting(FlUserDataKey, f)), flPort),
@@ -387,11 +387,11 @@ public sealed partial class DawSetting : ObservableObject
 
 /// <summary>Where a DAW keeps its files, when the app has to ask.</summary>
 /// <param name="Prompt">What the folder picker asks for.</param>
-/// <param name="IsRight">Whether a folder is the right kind.</param>
+/// <param name="Find">The folder to keep, from the one picked: it, or the right one it's in. Null if it's neither.</param>
 /// <param name="Wrong">What to say when it isn't.</param>
 /// <param name="Save">Remembers the folder.</param>
 /// <param name="Chosen">What to say once a folder is chosen.</param>
-public sealed record FolderChoice(string Prompt, Func<string, bool> IsRight, string Wrong, Action<string> Save,
+public sealed record FolderChoice(string Prompt, Func<string, string?> Find, string Wrong, Action<string> Save,
                                   string Chosen = "Install puts the script there too.");
 
 /// <summary>
@@ -554,7 +554,7 @@ public sealed partial class DawLinkSetting : ObservableObject
             var script = await Task.Run(_script);
             if (script.Folders.Count == 0)
             {
-                if (!await ChooseFolderAsync()) return;
+                if (await ChooseFolderAsync() is null) return;
                 script = await Task.Run(_script);
             }
             var update = script.State != ScriptState.NotInstalled;
@@ -573,23 +573,24 @@ public sealed partial class DawLinkSetting : ObservableObject
     [RelayCommand]
     async Task ChooseFolder()
     {
-        if (await ChooseFolderAsync())
+        if (await ChooseFolderAsync() is { } folder)
         {
             await RefreshAsync();
-            Result = _folder!.Chosen;
+            Result = $"Using {folder}. {_folder!.Chosen}";
         }
     }
 
-    async Task<bool> ChooseFolderAsync()
+    /// <summary>Asks for the DAW's folder and keeps it. Returns the folder kept, or null.</summary>
+    async Task<string?> ChooseFolderAsync()
     {
-        if (_folder is null || await Ui.Current.PickFolder(_folder.Prompt) is not { } chosen) return false;
-        if (!_folder.IsRight(chosen))
+        if (_folder is null || await Ui.Current.PickFolder(_folder.Prompt) is not { } picked) return null;
+        if (_folder.Find(picked) is not { } folder)
         {
             Result = _folder.Wrong;
-            return false;
+            return null;
         }
-        _folder.Save(chosen);
-        return true;
+        _folder.Save(folder);
+        return folder;
     }
 
     /// <summary>

@@ -141,10 +141,34 @@ public static class DawScripts
                         .Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists).ToList();
     }
 
+    /// <summary>The folders Bitwig keeps in its user folder.</summary>
+    static readonly string[] BitwigFolders = ["Library", "Projects", "Extensions", "Controller Scripts"];
+
     /// <summary>Bitwig's user folder has Library, Projects or Extensions folders in it, or is called Bitwig Studio.</summary>
     public static bool IsBitwigUserFolder(string folder) =>
         Path.GetFileName(folder.TrimEnd('\\', '/')).Equals("Bitwig Studio", StringComparison.OrdinalIgnoreCase) ||
-        new[] { "Library", "Projects", "Extensions", "Controller Scripts" }.Any(d => Directory.Exists(Path.Combine(folder, d)));
+        BitwigFolders.Any(d => Directory.Exists(Path.Combine(folder, d)));
+
+    /// <summary>
+    /// Bitwig's user folder, from a folder picked in Settings: the folder itself, or the user folder it's in. People
+    /// pick Extensions (where the link goes, so it's the one they know) or a folder in Library or Projects. Null if
+    /// it's neither.
+    /// </summary>
+    public static string? BitwigUserFolderFrom(string picked)
+    {
+        var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(picked));
+        var parent = Path.GetDirectoryName(folder);
+        // Extensions or Controller Scripts first: one with a Library folder of its own in it would pass as a user folder.
+        if (parent is not null && BitwigFolders.Contains(Path.GetFileName(folder), StringComparer.OrdinalIgnoreCase) && IsBitwigUserFolder(parent))
+            return parent;
+        if (IsBitwigUserFolder(folder)) return folder;
+        // Deeper in: a Bitwig Studio folder with Bitwig's folders in it (not, say, the one Bitwig is installed in).
+        for (var up = parent; up is not null; up = Path.GetDirectoryName(up))
+            if (Path.GetFileName(up).Equals("Bitwig Studio", StringComparison.OrdinalIgnoreCase) &&
+                BitwigFolders.Any(d => Directory.Exists(Path.Combine(up, d))))
+                return up;
+        return null;
+    }
 
     /// <summary>The FL Studio script, for Settings\Hardware in each of FL Studio's user data folders.</summary>
     public static DawScript FlStudio(IReadOnlyList<string> userDataFolders) =>
@@ -178,4 +202,15 @@ public static class DawScripts
     public static bool IsFlUserData(string folder) =>
         Directory.Exists(Path.Combine(folder, "Settings")) && Directory.Exists(Path.Combine(folder, "Presets")) &&
         Directory.Exists(Path.Combine(folder, "Projects"));
+
+    /// <summary>
+    /// FL Studio's user data folder, from a folder picked in Settings: the folder itself, or the one it's in (people
+    /// pick Settings\Hardware, where the script goes). Null if it's neither.
+    /// </summary>
+    public static string? FlUserDataFrom(string picked)
+    {
+        for (string? up = Path.TrimEndingDirectorySeparator(Path.GetFullPath(picked)); up is not null; up = Path.GetDirectoryName(up))
+            if (IsFlUserData(up)) return up;
+        return null;
+    }
 }

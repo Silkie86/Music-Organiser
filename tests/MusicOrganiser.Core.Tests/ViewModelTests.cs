@@ -191,6 +191,26 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsKeepsTheBitwigUserFolderAPickedExtensionsFolderIsIn()
+    {
+        var bitwig = Path.Combine(_root, "K", "Bitwig Studio");
+        foreach (var sub in new[] { "Extensions", "Library", "Projects" }) Directory.CreateDirectory(Path.Combine(bitwig, sub));
+        var link = Main().Settings.Links.Single(l => l.Daw == "Bitwig Studio");
+        var ui = (HeadlessUi)Ui.Current;
+
+        ui.PickedFolder = Path.Combine(bitwig, "Extensions");
+        await link.ChooseFolderCommand.ExecuteAsync(null);
+        Assert.Equal(bitwig, _db.GetSetting(SettingsViewModel.BitwigUserKey));
+        Assert.StartsWith($"Using {bitwig}.", link.Result);
+
+        ui.PickedFolder = Path.Combine(_root, "K");
+        await link.ChooseFolderCommand.ExecuteAsync(null);
+        Assert.Equal(bitwig, _db.GetSetting(SettingsViewModel.BitwigUserKey));
+        Assert.StartsWith("That isn't Bitwig's user folder", link.Result);
+        ui.PickedFolder = null;
+    }
+
+    [Fact]
     public async Task SettingsRunsTheLiveTestsWhileBitwigAnswers()
     {
         using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
@@ -736,7 +756,8 @@ public class ViewModelTests : IDisposable
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
         public Func<IAudioPlayer> Player { get; set; } = () => new Silence();
         public IAudioPlayer CreateAudioPlayer() => Player();
-        public Task<string?> PickFolder(string title) => Task.FromResult<string?>(null);
+        public string? PickedFolder { get; set; }
+        public Task<string?> PickFolder(string title) => Task.FromResult(PickedFolder);
         public string? PickedFile { get; set; }
         public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult(PickedFile);
         public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);
