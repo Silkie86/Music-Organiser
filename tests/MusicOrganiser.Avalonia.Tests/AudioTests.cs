@@ -411,11 +411,13 @@ public sealed class AudioTests : IDisposable
         var clock = Stopwatch.StartNew();
         while (player.Playing is not null && clock.Elapsed < TimeSpan.FromSeconds(3)) Thread.Sleep(20);
 
+        Assert.Null(player.Playing);
         var log = File.ReadAllText(Path.Combine(AudioLog.Folder, "audio.log"));
         Assert.StartsWith(Path.GetTempPath(), AudioLog.Folder);
         Assert.Contains("Output: \"", log);
         Assert.Contains($"Play \"{path}\": streamed by WaveFileReader as 16 bit PCM: 8000Hz 1 channels, {0.3:0.00} s, 8000 Hz, mono", log);
-        Assert.Contains("(to its end)", log);
+        // The tests share one log: this sound's own timing line, after it started, not another test's.
+        Assert.Contains("(to its end)", log[log.LastIndexOf($"Play \"{path}\"", StringComparison.Ordinal)..]);
     }
 
     [AvaloniaFact]
