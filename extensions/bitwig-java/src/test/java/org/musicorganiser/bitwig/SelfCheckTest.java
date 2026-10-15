@@ -64,7 +64,8 @@ class SelfCheckTest {
         assertEquals("The app may make changes.", detail(result, "settings"));
         assertEquals("Waiting for the app on port 19791, with 1 connected now.", detail(result, "remote connection"));
         assertEquals("2 actions.", detail(result, "actions"));
-        assertEquals("Bitwig shows its ARRANGE layout, with the arranger timeline shown; no clip is selected there, and the play start is at beat 0.",
+        assertEquals("Bitwig shows its ARRANGE layout, with the arranger timeline shown and the Arrange layout's clip launcher shown; "
+                     + "no clip is selected in the arranger, and the play start is at beat 0.",
                      detail(result, "arranger"));
 
         assertJson(obj("why", "asked", "ok", true, "extension", "3.6", "link", 3, "product", "Bitwig Studio", "bitwig", "6.1.2", "api", 25,

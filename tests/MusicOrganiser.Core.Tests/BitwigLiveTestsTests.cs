@@ -503,21 +503,27 @@ public class BitwigLiveTestsTests
         var arranged = await link.ArrangeAsync(4, 0, 16);
         var sent = java.Requests.Last();
         Assert.Equal(("arrange", 4, 0, 16.0), ((string)sent["cmd"]!, (int)sent["track"]!, (int)sent["slot"]!, (double)sent["at"]!));
-        Assert.Equal(new BitwigArranged(true, 16, "ARRANGE", new(true, true), 1, new(false, null), new(false, null), new(true, "Sample 143012"), 1, 1),
+        Assert.Equal(new BitwigArranged(true, false, 16, "ARRANGE", new(false, true), 1, new(true, true), 1, new(false, null), new(false, null),
+                                        new(true, "Sample 143012"), 1, 1),
                      arranged);
 
-        // What the live test makes of it: where the clip went, and all the extension said, with whether Bitwig was in front.
+        // What the live test makes of it: what the link saw, where the clip was meant to go (which only a look at Bitwig can
+        // confirm), and all the extension said, with whether Bitwig was in front.
         var verdict = BitwigLiveTests.ArrangeVerdict(arranged, "Sample 143012", 0, 5, true);
         Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
-        Assert.Equal("Bitwig put a copy of the clip in launcher slot 1 into its arranger at bar 5 (beat 16) on “Sample 143012”: the clip selected in " +
-                     "the arranger moved to “Sample 143012”, and the track kept its 1 clip in the launcher.", verdict.Detail);
+        Assert.Equal("Bitwig pasted a copy of the clip in launcher slot 1 into its arranger on “Sample 143012”: the clip selected in the arranger " +
+                     "moved to “Sample 143012”, and the track kept its 1 clip in the launcher. It was meant to go in at bar 5 (beat 16), where the " +
+                     "link moved the play start, but the link can't read where an arranger clip starts: look at bar 5 on “Sample 143012” in " +
+                     "Bitwig's arranger and say whether it's there.", verdict.Detail);
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""
-            {"arranged":true,"at":16,"layout":"ARRANGE","timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},
-             "beforePaste":{"exists":false,"track":null},"after":{"exists":true,"track":"Sample 143012"},"launcherClipsBefore":1,"launcherClipsAfter":1,
-             "front":true}
+            {"arranged":true,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE","launcher":{"before":false,"after":true},"launcherFocus":1,
+             "timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},
+             "after":{"exists":true,"track":"Sample 143012"},"launcherClipsBefore":1,"launcherClipsAfter":1,"front":true}
             """), verdict.Data), verdict.Data!.ToJsonString());
-        Assert.EndsWith(" Bringing the arranger timeline to the front took two goes: the first hid it.",
-                        BitwigLiveTests.ArrangeVerdict(arranged with { Focus = 2 }, "Sample 143012", 0, 5, null).Detail);
+        Assert.Contains(" in the launcher (giving the clip launcher the focus took two goes: the first hid it). ",
+                        BitwigLiveTests.ArrangeVerdict(arranged with { LauncherFocus = 2 }, "Sample 143012", 0, 5, null).Detail);
+        Assert.Contains(" in the launcher (Bitwig has no focus_or_toggle_clip_launcher action to give the clip launcher the focus). ",
+                        BitwigLiveTests.ArrangeVerdict(arranged with { LauncherFocus = 0 }, "Sample 143012", 0, 5, null).Detail);
     }
 
     [Fact]
@@ -527,17 +533,15 @@ public class BitwigLiveTestsTests
         const string start = "Bitwig didn't put the clip into its arranger at bar 5 (beat 16) on “Sample 143012”: ";
         BitwigArrangerClip none = new(false, null), there = new(true, track), elsewhere = new(true, "Bass");
         static BitwigArranged Answer(BitwigArrangerClip beforePaste, BitwigArrangerClip after, int launcherAfter = 1, bool timelineAfter = true) =>
-            new(false, 16, "ARRANGE", new(true, timelineAfter), 1, beforePaste, beforePaste, after, 1, launcherAfter);
+            new(false, false, 16, "ARRANGE", new(true, true), 1, new(true, timelineAfter), 1, beforePaste, beforePaste, after, 1, launcherAfter);
         string Detail(BitwigArranged a, bool? front = true)
         {
             var verdict = BitwigLiveTests.ArrangeVerdict(a, track, 0, 5, front);
             Assert.Equal(LiveOutcome.Failed, verdict.Outcome);
             Assert.Equal(front, (bool?)verdict.Data!["front"]);
             // Only the person can see where the clip went, so each failure asks them to look.
-            const string ask = " Look at Bitwig's arranger at bar 5 on “Sample 143012” and say what you see there (the clip, nothing, or the clip " +
-                               "somewhere else), so the link can be put right.";
-            Assert.EndsWith(ask, verdict.Detail);
-            return verdict.Detail[..^ask.Length];
+            Assert.EndsWith(Ask, verdict.Detail);
+            return verdict.Detail[..^Ask.Length];
         }
 
         Assert.Equal(start + "it pasted into the clip launcher instead (“Sample 143012” has 2 clips there now, 1 before); no clip is selected in the arranger.",
@@ -552,6 +556,109 @@ public class BitwigLiveTestsTests
         Assert.Equal(start + "nothing appeared: no clip is selected in the arranger, and the launcher has the same clips; the arranger timeline is hidden " +
                      "now. The app couldn't bring Bitwig's window to the front, which copy and paste may need.",
                      Detail(Answer(none, none, timelineAfter: false), front: false));
+
+        // The timeline had the focus when the link copied: Bitwig copied from there, so the link didn't paste. Never Passed,
+        // even with the clip selected in the arranger on the track.
+        const string copied = "the arranger timeline had the focus when the link copied (bringing the timeline to the front hid it, which happens only " +
+                              "when it's in front already), so Bitwig copied from the timeline, not launcher slot 1, and the link didn't paste; ";
+        var fromTimeline = Answer(elsewhere, elsewhere) with { CopiedFromTimeline = true, Focus = 2, LauncherFocus = 0 };
+        Assert.Equal(start + copied + "Bitwig has no focus_or_toggle_clip_launcher action to give the clip launcher the focus.", Detail(fromTimeline));
+        Assert.Equal(start + copied + "the link ran focus_or_toggle_clip_launcher first, which didn't give the clip launcher the focus.",
+                     Detail(fromTimeline with { LauncherFocus = 1, Arranged = true, After = there }));
+    }
+
+    const string Ask = " Look at Bitwig's arranger at bar 5 on “Sample 143012” and say what you see there (the clip, nothing, or the clip somewhere " +
+                       "else), so the link can be put right.";
+
+    /// <summary>The Java extension 3.6 with a test project open, changes allowed.</summary>
+    const string ArrangingHello =
+        """{"link":3,"product":"Bitwig Studio","version":"6.1.3","api":23,"platform":"WINDOWS","port":19791,"project":"MO Live Test","modified":false,"engine":true,"changes":true,"runtime":"java","extension":"3.6","onlyIn":true}""";
+
+    /// <summary>A test project in 7/8 with the run's Sample track third (index 2).</summary>
+    static readonly Dictionary<string, string> SevenEight = new()
+    {
+        ["project"] = """{"name":"MO Live Test","modified":true,"tempo":124,"timeSignature":"7/8","playing":false,"position":0,"trackCount":4,"tracks":[""" +
+                      string.Join(",", new[] { "Devices 143012", "Bass", "Sample 143012", "Master" }.Select((name, i) =>
+                          $$"""{"index":{{i}},"name":"{{name}}","type":"Instrument","group":false,"color":"#3366cc","active":true,"mute":false,"solo":false,"arm":false,"volume":"0.0 dB","volumeValue":0.79,"pan":"C","panValue":0.5,"deviceCount":0,"devices":[]}""")) +
+                      "]}",
+    };
+
+    [Fact]
+    public async Task ClipToArrangerSendsTheClipToBar5()
+    {
+        await using var java = new FakeJavaBitwig(ArrangingHello, SevenEight);
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+        var asked = 0;
+        var verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 3, () => { asked++; return false; });
+
+        // The Sample track's index, the slot the MIDI clip went in, and bar 5 in 7/8: four bars of 3.5 beats.
+        var sent = java.Requests.Last();
+        Assert.Equal(("arrange", 2, 3, 14.0), ((string)sent["cmd"]!, (int)sent["track"]!, (int)sent["slot"]!, (double)sent["at"]!));
+        Assert.Equal(1, asked);
+        Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
+        Assert.StartsWith("Bitwig pasted a copy of the clip in launcher slot 4 into its arranger on “Sample 143012”", verdict.Detail);
+        Assert.False((bool?)verdict.Data!["front"]);
+        Assert.True((bool)verdict.Data["arranged"]!);
+    }
+
+    [Fact]
+    public async Task ClipToArrangerFailsAtAStepBitwigDidntGoAlongWith()
+    {
+        await using var java = new FakeJavaBitwig(ArrangingHello, SevenEight);
+        java.Errors["arrange"] = "Bitwig hid its arranger timeline, which was in front already, and didn't show it again.";
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+
+        var verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => false);
+        Assert.Equal(LiveOutcome.Failed, verdict.Outcome);
+        Assert.Equal("Bitwig hid its arranger timeline, which was in front already, and didn't show it again. The app couldn't bring Bitwig's window " +
+                     "to the front, which copy and paste may need." + Ask, verdict.Detail);
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""
+            {"error":"Bitwig hid its arranger timeline, which was in front already, and didn't show it again.","front":false}
+            """), verdict.Data), verdict.Data!.ToJsonString());
+
+        // With Bitwig's window in front, or when that can't be told, the error and the ask alone.
+        java.Errors["arrange"] = "Bitwig didn't switch to its Arrange layout.";
+        verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => null);
+        Assert.Equal("Bitwig didn't switch to its Arrange layout." + Ask, verdict.Detail);
+        Assert.Null(verdict.Data!["front"]);
+    }
+
+    [Fact]
+    public async Task ClipToArrangerSkipsWhatCantArrange()
+    {
+        // An extension older than 3.6 lets changes through, but has no arrange: it says to install it again, and sends nothing.
+        await using (var older = new FakeJavaBitwig(ArrangingHello.Replace("\"3.6\"", "\"3.5\""), SevenEight))
+        {
+            using var link = await BitwigLink.ConnectAsync(older.Port);
+            var verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true);
+            Assert.Equal((LiveOutcome.Skipped, "This needs the Music Organiser extension 3.6 or later, and Bitwig runs 3.5. " + BitwigLiveTests.Reinstall),
+                         (verdict.Outcome, verdict.Detail));
+            Assert.DoesNotContain(older.Requests, r => (string)r["cmd"]! == "arrange");
+        }
+
+        // An extension that doesn't say its version, and answers "Unknown command": the same.
+        await using (var unknown = new FakeJavaBitwig(ArrangingHello.Replace("\"3.6\"", "\"\""), SevenEight))
+        {
+            unknown.Errors["arrange"] = "Unknown command: \"arrange\"";
+            using var link = await BitwigLink.ConnectAsync(unknown.Port);
+            var verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true);
+            Assert.Equal((LiveOutcome.Skipped, "This needs the Music Organiser extension 3.6 or later, and Bitwig runs an older one. " +
+                                               BitwigLiveTests.Reinstall),
+                         (verdict.Outcome, verdict.Detail));
+        }
+
+        await using var java = new FakeJavaBitwig(ArrangingHello, SevenEight);
+        using (var link = await BitwigLink.ConnectAsync(java.Port))
+        {
+            // Without the MIDI clip, or its track, there's nothing to copy.
+            var front = 0;
+            Assert.Equal("This needs the MIDI clip, which an earlier test didn't get (see above).",
+                         (await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", null, () => { front++; return true; })).Detail);
+            Assert.Equal("This needs the MIDI clip, which an earlier test didn't get (see above).",
+                         (await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 999999", 0, () => { front++; return true; })).Detail);
+            Assert.Equal(0, front);
+            Assert.DoesNotContain(java.Requests, r => (string)r["cmd"]! == "arrange");
+        }
     }
 
     [Theory]
@@ -673,7 +780,8 @@ sealed class ProbeBridge(string folder, BitwigLinkTests.ScriptServer bitwig) : I
 
 /// <summary>
 /// The Java extension for Bitwig as the app sees it: the script's commands with its newer fields, and its own commands, in
-/// canned answers. Changes are off, unless a test gives a hello of its own.
+/// canned answers. Changes are off, unless a test gives a hello of its own; a test can give other answers too, or an error
+/// for a command (<see cref="Errors"/>).
 /// </summary>
 sealed class FakeJavaBitwig : IAsyncDisposable
 {
@@ -681,13 +789,18 @@ sealed class FakeJavaBitwig : IAsyncDisposable
     readonly CancellationTokenSource _stop = new();
     readonly Task _serving;
     readonly string _hello;
+    readonly Dictionary<string, string> _answers = new(Answers);
 
-    public FakeJavaBitwig(string? hello = null)
+    public FakeJavaBitwig(string? hello = null, IReadOnlyDictionary<string, string>? answers = null)
     {
         _hello = hello ?? Answers["hello"];
+        foreach (var (cmd, answer) in answers ?? new Dictionary<string, string>()) _answers[cmd] = answer;
         _server.Start();
         _serving = Task.Run(ServeAsync);
     }
+
+    /// <summary>Commands the stand-in answers with an error, by name: what the error says. Set before sending the command.</summary>
+    public Dictionary<string, string> Errors { get; } = new();
 
     public int Port => ((IPEndPoint)_server.LocalEndpoint).Port;
 
@@ -700,7 +813,7 @@ sealed class FakeJavaBitwig : IAsyncDisposable
         ["clicked"] = """{"exists":true,"name":"Cutoff","value":0.25,"display":"440 Hz","steps":-1,"origin":0,"automated":true,"locked":false}""",
         ["selftest"] = """{"time":"2026-10-14T14:30:12Z","why":"asked","ok":false,"extension":"3.0","link":3,"file":"C:\\reports\\bitwig\\x-selfcheck.json","checks":[{"name":"remote connection","ok":true,"detail":"listening on 19791","ms":1},{"name":"cursor device","ok":true,"detail":"","ms":0},{"name":"reports folder","ok":false,"detail":"Access is denied.","ms":2}]}""",
         // Extension 3.6's experiment, as it answers when Bitwig put the clip in its arranger.
-        ["arrange"] = """{"arranged":true,"at":16,"layout":"ARRANGE","timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},"after":{"exists":true,"track":"Sample 143012"},"launcherClipsBefore":1,"launcherClipsAfter":1}""",
+        ["arrange"] = """{"arranged":true,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE","launcher":{"before":false,"after":true},"launcherFocus":1,"timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},"after":{"exists":true,"track":"Sample 143012"},"launcherClipsBefore":1,"launcherClipsAfter":1}""",
     };
 
     /// <summary>Every request that came in, as it came.</summary>
@@ -737,7 +850,9 @@ sealed class FakeJavaBitwig : IAsyncDisposable
                     Requests.Enqueue(request);
                     var id = (int)request["id"]!;
                     var cmd = (string)request["cmd"]!;
-                    await SendAsync(stream, (cmd == "hello" ? _hello : Answers.GetValueOrDefault(cmd)) is { } answer
+                    await SendAsync(stream, Errors.TryGetValue(cmd, out var error)
+                        ? new JsonObject { ["id"] = id, ["ok"] = false, ["error"] = error }.ToJsonString()
+                        : (cmd == "hello" ? _hello : _answers.GetValueOrDefault(cmd)) is { } answer
                         ? $$"""{"id":{{id}},"ok":true,"result":{{answer}}}"""
                         : $$"""{"id":{{id}},"ok":false,"error":"Unknown command: {{cmd}}"}""");
                 }

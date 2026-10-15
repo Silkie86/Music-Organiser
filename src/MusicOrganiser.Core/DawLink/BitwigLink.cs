@@ -75,29 +75,38 @@ public sealed record BitwigPitch(string Device, double Value, string Display);
 /// <see cref="BitwigLink.ArrangeAsync"/>).
 /// </summary>
 /// <param name="Arranged">
-/// Whether it worked: the clip selected in the arranger moved to the clip's track (it wasn't there just before the paste),
-/// and the track's launcher clips are as they were.
+/// Whether it worked: after the paste, the clip selected in the arranger had moved to the clip's track (it wasn't there
+/// just before the paste), and the track's launcher clips were as they were. Where the clip starts can't be read.
+/// </param>
+/// <param name="CopiedFromTimeline">
+/// Whether the arranger timeline had the focus when the extension copied, so Bitwig copied from the timeline rather than
+/// the launcher clip: <paramref name="Focus"/> is 2 then. The extension doesn't paste when it is.
 /// </param>
 /// <param name="At">Where in the arranger it was meant to go, in beats (quarter notes) from the start.</param>
 /// <param name="Layout">The panel layout Bitwig showed before: ARRANGE, MIX or EDIT. The extension switches to ARRANGE.</param>
-/// <param name="Timeline">Whether Bitwig showed its arranger timeline before, and after the paste.</param>
+/// <param name="Launcher">Whether Bitwig showed the clip launcher in its Arrange layout before (the extension shows it), and at the end.</param>
+/// <param name="LauncherFocus">
+/// How many times the extension ran Bitwig's focus_or_toggle_clip_launcher action to give the clip launcher the focus
+/// before it copied: 0 when Bitwig has no such action, twice when the first hid the launcher (it was in front already).
+/// </param>
+/// <param name="Timeline">Whether Bitwig showed its arranger timeline before, and at the end.</param>
 /// <param name="Focus">
 /// How many times the extension ran Bitwig's focus_or_toggle_arranger action to bring the timeline to the front: twice when
 /// the first hid it, since it hides the timeline when that's in front already.
 /// </param>
 /// <param name="Before">The clip selected in the arranger before the extension did anything.</param>
-/// <param name="BeforePaste">The same just before the paste, which <paramref name="After"/> is compared with.</param>
+/// <param name="BeforePaste">The same just before the paste (or where the paste would have been), which <paramref name="After"/> is compared with.</param>
 /// <param name="After">The same once Bitwig had pasted, or once the extension had waited long enough.</param>
 /// <param name="LauncherClipsBefore">
 /// How many of the track's first 8 launcher slots had a clip before; more in <paramref name="LauncherClipsAfter"/> means
 /// Bitwig pasted into the launcher instead.
 /// </param>
-public sealed record BitwigArranged(bool Arranged, double At, string Layout, BitwigTimeline Timeline, int Focus,
-                                    BitwigArrangerClip Before, BitwigArrangerClip BeforePaste, BitwigArrangerClip After,
-                                    int LauncherClipsBefore, int LauncherClipsAfter);
+public sealed record BitwigArranged(bool Arranged, bool CopiedFromTimeline, double At, string Layout, BitwigShown Launcher, int LauncherFocus,
+                                    BitwigShown Timeline, int Focus, BitwigArrangerClip Before, BitwigArrangerClip BeforePaste,
+                                    BitwigArrangerClip After, int LauncherClipsBefore, int LauncherClipsAfter);
 
-/// <summary>Whether Bitwig showed its arranger timeline, before and after.</summary>
-public sealed record BitwigTimeline(bool Before, bool After);
+/// <summary>Whether Bitwig showed one of its panels (the arranger timeline, or the clip launcher), before and after.</summary>
+public sealed record BitwigShown(bool Before, bool After);
 
 /// <summary>The clip selected in Bitwig's arranger: whether there is one, and the name of the track it's on (null when there's none).</summary>
 public sealed record BitwigArrangerClip(bool Exists, string? Track);
@@ -356,10 +365,12 @@ public sealed class BitwigLink : IDisposable
     /// An experiment, for the live tests only (the Java extension, 3.6 and later): puts a copy of the clip in a launcher
     /// slot into Bitwig's arranger, on the same track, <paramref name="at"/> beats (quarter notes) from the start, or where
     /// the play start is when not given. Bitwig's API has no way to put a clip in the arranger, so the extension does what
-    /// a person would: select the clip, copy it, show the Arrange layout, move the play start there, bring the arranger
-    /// timeline to the front and paste. Nobody knows yet whether Bitwig goes along with that from an extension, so the
-    /// answer says what Bitwig showed either way (<see cref="BitwigArranged.Arranged"/> says whether it worked). Nothing is
-    /// undone when it doesn't work, and the play start stays where it was moved, which is why only a test project gets this.
+    /// a person would: show the Arrange layout and its clip launcher, select the clip, give the launcher the focus, copy it,
+    /// move the play start there, bring the arranger timeline to the front and paste. Nobody knows yet whether Bitwig goes
+    /// along with that from an extension, so the answer says what Bitwig showed either way
+    /// (<see cref="BitwigArranged.Arranged"/> says whether it worked). Copy replaces whatever was on Bitwig's clipboard,
+    /// nothing is undone when it doesn't work, and the play start stays where it was moved, which is why only a test
+    /// project gets this.
     /// </summary>
     public async Task<BitwigArranged> ArrangeAsync(int track, int slot, double? at = null, CancellationToken ct = default) =>
         Parse<BitwigArranged>(await ChangeAsync(new() { ["cmd"] = "arrange", ["track"] = track, ["slot"] = slot, ["at"] = at }, ct));

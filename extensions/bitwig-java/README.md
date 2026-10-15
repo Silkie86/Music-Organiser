@@ -56,10 +56,11 @@ The extension writes to the app's data folder, next to MO Probe's reports:
   of Bitwig's API the link uses or offers (`name`, `ok`, `detail`, `ms`): the application, project, transport,
   the selected track and device and its parameters, drum pads, the 128 tracks with their devices, clip slots
   and IDs, the Sampler and Note Transpose pitch, the popup browser, the settings, the remote controls, the last
-  clicked parameter, parameter steps, origins and automation, the master recorder, the arranger (its timeline,
-  the panel layout, the play start and the clip selected there, for `arrange`) and Bitwig's actions, then
-  whether the app can connect (port 19791) and whether the reports folder takes files. Each part is set up on
-  its own, so one that fails in a future Bitwig leaves the rest working, and the self-check says which and why.
+  clicked parameter, parameter steps, origins and automation, the master recorder, the arranger (its timeline
+  and clip launcher, the panel layout, the play start and the clip selected there, for `arrange`) and Bitwig's
+  actions, then whether the app can connect (port 19791) and whether the reports folder takes files. Each part
+  is set up on its own, so one that fails in a future Bitwig leaves the rest working, and the self-check says
+  which and why.
 
 Reports older than 14 days (by the date their names start with) are deleted when the extension starts; other
 files in the folder are left alone. Writing is best effort: a report that can't be written never stops the link,
@@ -86,8 +87,9 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
 - `arrange` ✎ with `track`, `slot` and `at` (optional, in beats): **an experiment** (extension 3.6), which only
   the live tests send. Bitwig's API can't put a clip on the arranger timeline, so the link copies a launcher
   clip and pastes it there, as a person would, and says what Bitwig showed before and after (`arranged`,
-  whether it worked; `layout`, `timeline`, `focus`, the clip selected in the arranger `before`, `beforePaste`
-  and `after`, and the track's `launcherClipsBefore` and `launcherClipsAfter`). See
+  whether it worked; `copiedFromTimeline`, when the timeline had the focus as it copied, so it didn't paste;
+  `layout`, `launcher`, `launcherFocus`, `timeline`, `focus`, the clip selected in the arranger `before`,
+  `beforePaste` and `after`, and the track's `launcherClipsBefore` and `launcherClipsAfter`). See
   [the extensions README](../README.md#clips-in-the-arranger-an-experiment).
 
 Not new to version 3, since the script does it too: any request can carry `onlyIn`, a project's name, and the
@@ -121,10 +123,12 @@ The live tests use it to keep their changes in their own project (see
   two apps at once and a connection that breaks.
 - `NewerApiTest`: link version 3's additions: track IDs, remote controls' `steps`, `stepNames`, `origin` and
   `automated`, `clicked` and `recorder`.
-- `ArrangerTest`: the `arrange` experiment, with the stand-in's arranger, clipboard and focused panel: a clip
-  copied into the arranger at bar 5, the Arrange layout switched to and a hidden timeline shown, the focus
-  action run twice when it hid the timeline, and the answers when Bitwig pastes into the launcher instead or
-  ignores paste, without its focus action, or without an arranger for extensions at all.
+- `ArrangerTest`: the `arrange` experiment, with the stand-in's arranger, clipboard and focused panel (copy and
+  paste work in the panel in front): a clip copied into the arranger at bar 5, the Arrange layout switched to
+  and a hidden clip launcher and timeline shown, the launcher given the focus first (twice when the first go
+  hid it), no paste when the timeline had the focus as the link copied, each step Bitwig doesn't go along
+  with (with nothing pasted), and the answers when Bitwig pastes into the launcher instead or ignores paste,
+  without its focus action, or without an arranger for extensions at all.
 - `SelfCheckTest`, `LinkLogTest`, `ReportsTest`: the self-check and the reports, in a temporary folder,
   including a Bitwig missing part of the API (each part fails on its own), another port, an older API and a
   folder that can't be written.

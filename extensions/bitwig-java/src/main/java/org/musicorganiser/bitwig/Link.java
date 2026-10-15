@@ -52,6 +52,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -109,7 +110,13 @@ final class Link {
     static final String NOTE_TRANSPOSE = "0815cd9e-3a31-4429-a268-dabd952a3b68";
     /** Bitwig's action that brings the arranger timeline to the front, or hides it when it's in front already. */
     static final String FOCUS_ARRANGER = "focus_or_toggle_arranger";
-    /** How long to wait to see whether that action hid the arranger timeline, rather than bringing it to the front. */
+    /**
+     * The same for the clip launcher, which arrange runs before it copies when Bitwig has an action by this ID: Bitwig
+     * copies from whichever panel has the focus. Nobody has seen it in Bitwig's list of actions yet, so arrange does
+     * without it when it isn't there.
+     */
+    static final String FOCUS_LAUNCHER = "focus_or_toggle_clip_launcher";
+    /** How long to wait to see whether such an action hid its panel, rather than bringing it to the front. */
     static final long TOGGLE_WAIT = 500;
     static final String CHANGES_OFF = "Changes are turned off. To let the app change things, turn on \"Let the app make changes\" "
                                       + "in Bitwig: Settings > Controllers > Music Organiser.";
@@ -441,11 +448,12 @@ final class Link {
             recorder = master;
         }, () -> recorder.isActive().get() ? "Recording, for " + recorder.duration().get() + " ms so far." : "Not recording.");
 
-        // For the arrange experiment: the arranger timeline, the panel layout, the play start, the clip selected in the
-        // arranger and which launcher slot is selected.
+        // For the arrange experiment: the arranger timeline and its clip launcher, the panel layout, the play start, the
+        // clip selected in the arranger and which launcher slot is selected.
         feature("arranger", () -> {
             Arranger made = host.createArranger();
             made.isTimelineVisible().markInterested();
+            made.isClipLauncherVisible().markInterested();
             app.panelLayout().markInterested();
             transport.playStartPosition().markInterested();
             // The clip's notes aren't read, so its grid can be as small as can be.
@@ -461,9 +469,10 @@ final class Link {
             arrangerClip = clip;
             arranger = made;
         }, () -> "Bitwig shows its " + str(app.panelLayout().get()) + " layout, with the arranger timeline "
-                 + (arranger.isTimelineVisible().get() ? "shown" : "hidden") + "; "
-                 + (arrangerClip.exists().get() ? "a clip on \"" + str(arrangerClipTrack.name().get()) + "\" is selected there"
-                                                : "no clip is selected there")
+                 + (arranger.isTimelineVisible().get() ? "shown" : "hidden") + " and the Arrange layout's clip launcher "
+                 + (arranger.isClipLauncherVisible().get() ? "shown" : "hidden") + "; "
+                 + (arrangerClip.exists().get() ? "a clip on \"" + str(arrangerClipTrack.name().get()) + "\" is selected in the arranger"
+                                                : "no clip is selected in the arranger")
                  + ", and the play start is at beat " + Json.number(transport.playStartPosition().get()) + ".");
 
         feature("remote connection", () -> {
@@ -1477,12 +1486,22 @@ final class Link {
     /**
      * An experiment (extension 3.6): puts a copy of a launcher clip in Bitwig's arranger, on the clip's own track, `at`
      * beats from the start (where the play start is, unless given). Bitwig's API has no way to put a clip in the arranger
-     * (only launcher slots have insertion points), so the link does what a person would: select the clip, copy it, show
-     * the Arrange layout, move the play start there, bring the arranger timeline to the front and paste. Nobody knows yet
-     * whether Bitwig does all that for an extension, so once the steps are through, the answer says what Bitwig showed
-     * before and after, whether or not it worked: `arranged` is whether the clip selected in the arranger moved to the
-     * track, with the track's launcher clips as they were. Only the live tests send it, in their own project, so nothing
-     * is undone when it doesn't work; and nothing is pasted unless the clip was copied first.
+     * (only launcher slots have insertion points), so the link does what a person would: show the Arrange layout with its
+     * clip launcher, select the clip, give the launcher the focus, copy, move the play start there, bring the arranger
+     * timeline to the front and paste. Bitwig copies and pastes in whichever of its panels has the focus, which the API
+     * can't read, so:
+     * <ul>
+     * <li>the link gives the clip launcher the focus with Bitwig's FOCUS_LAUNCHER action when Bitwig has one, and copies
+     * from whichever panel has the focus when it hasn't (`launcherFocus` says how many times it ran, 0 without one);</li>
+     * <li>when FOCUS_ARRANGER hid the arranger timeline rather than bringing it to the front (`focus` 2), the timeline had
+     * the focus when the link copied, as nothing in between moves it. Bitwig copied from the timeline, not the launcher
+     * clip, so the link doesn't paste, and says `copiedFromTimeline`.</li>
+     * </ul>
+     * Nobody knows yet whether Bitwig does all that for an extension, so once the steps are through, the answer says what
+     * Bitwig showed before and after, whether or not it worked: `arranged` is whether the clip selected in the arranger
+     * moved to the track after the paste, with the track's launcher clips as they were. Where the clip starts can't be
+     * read, so only a look at Bitwig shows whether it went in at `at`. Only the live tests send it, in their own project,
+     * so nothing is undone when it doesn't work; and nothing is pasted unless the clip was copied first.
      */
     private void arrange(Map<String, Object> request, Finish finish) {
         if (arranger == null) throw new LinkError("This Bitwig didn't let the link reach its arranger. A selftest says why.");
@@ -1499,19 +1518,22 @@ final class Link {
         Action focus = app.getAction(FOCUS_ARRANGER);
         if (focus == null)
             throw new LinkError("Bitwig has no action \"" + FOCUS_ARRANGER + "\", which the link runs to bring the arranger timeline to the front.");
+        Action launcherFocus = app.getAction(FOCUS_LAUNCHER);
         double at = absent(given) ? transport.playStartPosition().get() : (Double) given;
         Track track = trackItems[t];
         String name = str(track.name().get());
+        SettableBooleanValue launcherShown = arranger.isClipLauncherVisible();
 
         // The answer, in the order the app reads it, filled in as the steps go: first what Bitwig shows before.
-        Map<String, Object> timeline = new LinkedHashMap<>();
-        timeline.put("before", arranger.isTimelineVisible().get());
-        timeline.put("after", null);
+        Shown shown = new Shown(launcherShown.get(), arranger.isTimelineVisible().get());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("arranged", false);
+        m.put("copiedFromTimeline", false);
         m.put("at", at);
         m.put("layout", str(app.panelLayout().get()));
-        m.put("timeline", timeline);
+        m.put("launcher", shown.launcher);
+        m.put("launcherFocus", 0);
+        m.put("timeline", shown.timeline);
         m.put("focus", 0);
         m.put("before", arrangerClipState());
         m.put("beforePaste", null);
@@ -1520,21 +1542,54 @@ final class Link {
         m.put("launcherClipsBefore", launcherBefore);
         m.put("launcherClipsAfter", null);
 
-        cursorTrack.selectChannel(track);
-        slot.select();
-        waitFor(() -> trackSelected[t].get() && slot.isSelected().get(), CHANGE_WAIT, selected -> {
-            if (!selected) throw new LinkError("Bitwig didn't select the clip in slot " + index + " of track " + t + ".");
-            app.copy();
-            if (!arrangeLayout()) app.setPanelLayout(Application.PANEL_LAYOUT_ARRANGE);
-            waitFor(this::arrangeLayout, CHANGE_WAIT, arranging -> {
-                if (!arranging) throw new LinkError("Bitwig didn't switch to its Arrange layout.");
-                transport.playStartPosition().set(at);
-                waitFor(() -> Math.abs(transport.playStartPosition().get() - at) < 1e-6, CHANGE_WAIT, moved -> {
-                    if (!moved) throw new LinkError("Bitwig didn't move the play start to beat " + Json.number(at) + ".");
-                    focusTimeline(focus, m, () -> paste(t, name, launcherBefore, m, timeline, finish), finish);
+        // The Arrange layout, with its clip launcher showing.
+        if (!arrangeLayout()) app.setPanelLayout(Application.PANEL_LAYOUT_ARRANGE);
+        waitFor(this::arrangeLayout, CHANGE_WAIT, arranging -> {
+            if (!arranging) throw new LinkError("Bitwig didn't switch to its Arrange layout.");
+            if (!launcherShown.get()) launcherShown.set(true);
+            waitFor(launcherShown::get, CHANGE_WAIT, showing -> {
+                if (!showing) throw new LinkError("Bitwig didn't show the clip launcher in its Arrange layout.");
+                // The clip, selected in the launcher, which has the focus as the link copies (as far as it can tell).
+                cursorTrack.selectChannel(track);
+                slot.select();
+                waitFor(() -> trackSelected[t].get() && slot.isSelected().get(), CHANGE_WAIT, selected -> {
+                    if (!selected) throw new LinkError("Bitwig didn't select the clip in slot " + index + " of track " + t + ".");
+                    Runnable copy = () -> {
+                        app.copy();
+                        transport.playStartPosition().set(at);
+                        waitFor(() -> Math.abs(transport.playStartPosition().get() - at) < 1e-6, CHANGE_WAIT, moved -> {
+                            if (!moved) throw new LinkError("Bitwig didn't move the play start to beat " + Json.number(at) + ".");
+                            focusPanel(focus, arranger.isTimelineVisible(), "arranger timeline", m, "focus", times -> {
+                                if (times == 1) {
+                                    paste(t, name, launcherBefore, m, shown, finish);
+                                    return;
+                                }
+                                // It hid the timeline, which only happens when the timeline is in front: so it had the focus
+                                // as the link copied, and Bitwig's clipboard doesn't hold the launcher clip.
+                                m.put("copiedFromTimeline", true);
+                                m.put("beforePaste", arrangerClipState());
+                                answer(t, m, shown, finish);
+                            }, finish);
+                        }, finish);
+                    };
+                    if (launcherFocus == null) copy.run();
+                    else focusPanel(launcherFocus, launcherShown, "clip launcher", m, "launcherFocus", times -> copy.run(), finish);
                 }, finish);
             }, finish);
         }, finish);
+    }
+
+    /** Whether Bitwig showed its clip launcher (in the Arrange layout) and arranger timeline, before and after. */
+    private static final class Shown {
+        final Map<String, Object> launcher = new LinkedHashMap<>();
+        final Map<String, Object> timeline = new LinkedHashMap<>();
+
+        Shown(boolean launcherBefore, boolean timelineBefore) {
+            launcher.put("before", launcherBefore);
+            launcher.put("after", null);
+            timeline.put("before", timelineBefore);
+            timeline.put("after", null);
+        }
     }
 
     private boolean arrangeLayout() {
@@ -1542,27 +1597,29 @@ final class Link {
     }
 
     /**
-     * Brings Bitwig's arranger timeline to the front with its focus_or_toggle_arranger action, then runs `then`. The
-     * action hides the timeline when it's in front already, so when it does, the link runs it again to show it, in front.
-     * The answer's `focus` says how many times it ran.
+     * Brings one of Bitwig's panels (`what`, which `visible` says is shown or not) to the front with Bitwig's
+     * focus-or-toggle `action` for it, then hands `then` how many times the action ran, which the answer keeps under
+     * `key`. Such an action hides its panel when that's in front already, so when it does, the link runs it again to
+     * show the panel, in front.
      */
-    private void focusTimeline(Action focus, Map<String, Object> m, Runnable then, Finish finish) {
-        boolean shown = arranger.isTimelineVisible().get();
-        focus.invoke();
-        m.put("focus", 1);
-        // Hidden, the timeline comes into view. Shown, it stays (now in front) unless it was in front already: then it
-        // hides, which the link gives it a moment to do.
-        waitFor(() -> arranger.isTimelineVisible().get() != shown, shown ? TOGGLE_WAIT : CHANGE_WAIT, changed -> {
-            if (!shown && !changed) throw new LinkError("Bitwig didn't show its arranger timeline.");
+    private void focusPanel(Action action, BooleanValue visible, String what, Map<String, Object> m, String key, IntConsumer then,
+                            Finish finish) {
+        boolean shown = visible.get();
+        action.invoke();
+        m.put(key, 1);
+        // Hidden, the panel comes into view. Shown, it stays (now in front) unless it was in front already: then it hides,
+        // which the link gives it a moment to do.
+        waitFor(() -> visible.get() != shown, shown ? TOGGLE_WAIT : CHANGE_WAIT, changed -> {
+            if (!shown && !changed) throw new LinkError("Bitwig didn't show its " + what + ".");
             if (!shown || !changed) {
-                then.run();
+                then.accept(1);
                 return;
             }
-            focus.invoke();
-            m.put("focus", 2);
-            waitFor(() -> arranger.isTimelineVisible().get(), CHANGE_WAIT, again -> {
-                if (!again) throw new LinkError("Bitwig hid its arranger timeline, which was in front already, and didn't show it again.");
-                then.run();
+            action.invoke();
+            m.put(key, 2);
+            waitFor(visible::get, CHANGE_WAIT, again -> {
+                if (!again) throw new LinkError("Bitwig hid its " + what + ", which was in front already, and didn't show it again.");
+                then.accept(2);
             }, finish);
         }, finish);
     }
@@ -1572,21 +1629,26 @@ final class Link {
      * (where it wasn't just before), or for the track's launcher clips to change (Bitwig pasted there instead), and
      * answers with what Bitwig shows once it settles. When neither happens, it answers after CHANGE_WAIT all the same.
      */
-    private void paste(int t, String name, int launcherBefore, Map<String, Object> m, Map<String, Object> timeline, Finish finish) {
+    private void paste(int t, String name, int launcherBefore, Map<String, Object> m, Shown shown, Finish finish) {
         m.put("beforePaste", arrangerClipState());
         boolean there = clipOn(name);
         app.paste();
         waitFor(() -> (!there && clipOn(name)) || launcherClips(t) != launcherBefore, CHANGE_WAIT, seen -> {
             // Bitwig reports a change bit by bit, so what it did is read once it stops changing.
             settle(() -> List.of(arrangerClipState(), launcherClips(t)), settled -> {
-                int launcherAfter = launcherClips(t);
-                m.put("arranged", !there && clipOn(name) && launcherAfter == launcherBefore);
-                timeline.put("after", arranger.isTimelineVisible().get());
-                m.put("after", arrangerClipState());
-                m.put("launcherClipsAfter", launcherAfter);
-                finish.ok(m);
+                m.put("arranged", !there && clipOn(name) && launcherClips(t) == launcherBefore);
+                answer(t, m, shown, finish);
             }, finish);
         }, finish);
+    }
+
+    /** Answers arrange with what Bitwig shows now, after the paste or without one. */
+    private void answer(int t, Map<String, Object> m, Shown shown, Finish finish) {
+        shown.launcher.put("after", arranger.isClipLauncherVisible().get());
+        shown.timeline.put("after", arranger.isTimelineVisible().get());
+        m.put("after", arrangerClipState());
+        m.put("launcherClipsAfter", launcherClips(t));
+        finish.ok(m);
     }
 
     /** The clip selected in Bitwig's arranger: whether there is one, and the name of the track it's on (null without one). */

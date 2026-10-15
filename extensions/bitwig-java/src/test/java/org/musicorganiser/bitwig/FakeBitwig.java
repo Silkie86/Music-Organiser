@@ -132,18 +132,23 @@ final class FakeBitwig {
     /** The panels that can have the focus (copy and paste work on the one that has it), as {@link #focus} names them. */
     static final String LAUNCHER = "launcher";
     static final String TIMELINE = "timeline";
-    /** The panel layout Bitwig shows (Application.PANEL_LAYOUT_ARRANGE, _MIX or _EDIT), whether the arranger timeline shows, and the play start in beats. */
+    /**
+     * The panel layout Bitwig shows (Application.PANEL_LAYOUT_ARRANGE, _MIX or _EDIT), whether the arranger timeline and
+     * the Arrange layout's clip launcher show, and the play start in beats.
+     */
     final Value layout;
     final Value timeline;
+    final Value launcher;
     final Value playStart;
     private String layoutNow;
     private boolean timelineShown;
+    private boolean launcherShown;
     private double playStartAt;
     /** The panel with the focus: LAUNCHER, TIMELINE, or "" for another. */
     String focus;
     /** The launcher slot selected, as {track, scene}, or null. */
     private int[] slotSelected;
-    /** What Bitwig's clipboard holds: the copied launcher clip (the file it came from), or null. */
+    /** What Bitwig's clipboard holds: the clip copied last (the file it came from), or null. */
     String clipboard;
     /** The arranger's cursor clip: the clip selected in the arranger. */
     final ArrangerClip arrangerClip = new ArrangerClip();
@@ -208,11 +213,23 @@ final class FakeBitwig {
         signature = new Value(TimeSignatureValue.class, model.timeSignature);
         layoutNow = model.layout;
         timelineShown = model.timeline;
+        launcherShown = model.launcher;
         playStartAt = model.playStart;
         focus = model.focus;
         layout = new Value(StringValue.class, layoutNow);
         timeline = new Value(SettableBooleanValue.class, timelineShown, v -> later(20, () -> timelineShown = (Boolean) v));
-        playStart = new Value(SettableBeatTimeValue.class, playStartAt, v -> later(20, () -> playStartAt = Math.max(0, ((Number) v).doubleValue())));
+        launcher = new Value(SettableBooleanValue.class, launcherShown, v -> {
+            calls.add(Arrays.asList("showLauncher", v));
+            later(20, () -> {
+                if (!model.launcherIgnored) showLauncher((Boolean) v);
+            });
+        });
+        playStart = new Value(SettableBeatTimeValue.class, playStartAt, v -> {
+            calls.add(Arrays.asList("playStart", v));
+            later(20, () -> {
+                if (!model.playStartIgnored) playStartAt = Math.max(0, ((Number) v).doubleValue());
+            });
+        });
         builtIn.put(SAMPLER, device("Sampler").id(SAMPLER).kind("note_to_audio").param("TRANSPOSE", 0));
         builtIn.put(NOTE_TRANSPOSE, device("Note Transpose").id(NOTE_TRANSPOSE).kind("note_to_note").param("COARSE", 0));
         if (model.drumMachine != null) {
@@ -418,21 +435,37 @@ final class FakeBitwig {
         });
     }
 
-    /** Selects a launcher slot: the clip launcher gets the focus, unless the model says otherwise. */
+    /** Selects a launcher slot (unless the model says Bitwig ignores that), and gives the launcher the focus if the model says so. */
     private void selectSlot(int track, int scene) {
         calls.add(Arrays.asList("selectSlot", track, scene));
         later(20, () -> {
+            if (model.selectIgnored) return;
             slotSelected = new int[] {track, scene};
-            if (model.selectFocuses) focus = LAUNCHER;
+            if (model.selectFocuses && launcherShown) focus = LAUNCHER;
         });
     }
 
-    /** Copy: Bitwig's clipboard takes the launcher clip selected, if there's one. */
+    /** Shows or hides the clip launcher in the Arrange layout: hidden, it loses the focus. */
+    private void showLauncher(boolean shown) {
+        launcherShown = shown;
+        if (!shown && LAUNCHER.equals(focus)) focus = "";
+    }
+
+    /**
+     * Copy, in the panel with the focus: Bitwig's clipboard takes the launcher clip selected (with the clip launcher in
+     * front), or the clip selected in the arranger (with the arranger timeline in front). With another panel in front,
+     * or nothing selected, the clipboard keeps what it had.
+     */
     private void copy() {
         calls.add(List.of("copy"));
         later(20, () -> {
-            TrackSpec track = slotSelected == null ? null : trackSpec(slotSelected[0]);
-            String clip = track != null && slotSelected[1] < track.slots.size() ? track.slots.get(slotSelected[1]) : null;
+            String clip = null;
+            if (LAUNCHER.equals(focus) && launcherShown && slotSelected != null) {
+                TrackSpec track = trackSpec(slotSelected[0]);
+                clip = track != null && slotSelected[1] < track.slots.size() ? track.slots.get(slotSelected[1]) : null;
+            } else if (TIMELINE.equals(focus) && timelineShown && state.arrangerSelected != null) {
+                clip = state.arrangerSelected.clip();
+            }
             if (clip != null) clipboard = clip;
         });
     }
@@ -452,7 +485,7 @@ final class FakeBitwig {
                 Arranged made = new Arranged(track, playStartAt, clipboard);
                 state.arranged.add(made);
                 state.arrangerSelected = made;
-            } else if (LAUNCHER.equals(focus) || model.pasteInLauncher) {
+            } else if (LAUNCHER.equals(focus) && launcherShown || model.pasteInLauncher) {
                 int s = slotSelected != null && slotSelected[0] == cursorIndex ? slotSelected[1] + 1 : 0;
                 while (s < track.slots.size() && track.slots.get(s) != null) s++;
                 while (track.slots.size() <= s) track.slots.add(null);
@@ -462,15 +495,25 @@ final class FakeBitwig {
         });
     }
 
-    /** Bitwig's focus_or_toggle_arranger action: brings the arranger timeline to the front, or hides it when it's in front already. */
-    private void focusOrToggleArranger() {
+    /**
+     * Bitwig's focus_or_toggle_arranger and focus_or_toggle_clip_launcher actions (`id`): each brings its panel to the
+     * front, or hides it when it's in front already. The model can make Bitwig ignore one, or have it hide its panel but
+     * never show it.
+     */
+    private void focusOrToggle(String id) {
+        boolean arranger = id.equals(Link.FOCUS_ARRANGER);
+        String panel = arranger ? TIMELINE : LAUNCHER;
         later(20, () -> {
-            if (TIMELINE.equals(focus) && timelineShown) {
-                timelineShown = false;
+            if (model.focusIgnored.contains(id)) return;
+            boolean shown = arranger ? timelineShown : launcherShown;
+            if (panel.equals(focus) && shown) {
+                if (arranger) timelineShown = false;
+                else launcherShown = false;
                 focus = "";
-            } else {
-                timelineShown = true;
-                focus = TIMELINE;
+            } else if (shown || !model.focusOnlyHides.contains(id)) {
+                if (arranger) timelineShown = true;
+                else launcherShown = true;
+                focus = panel;
             }
         });
     }
@@ -479,6 +522,7 @@ final class FakeBitwig {
     private void sync() {
         layout.v = layoutNow;
         timeline.v = timelineShown;
+        launcher.v = launcherShown;
         playStart.v = playStartAt;
         Arranged selectedClip = state.arrangerSelected;
         arrangerClip.present.v = selectedClip != null;
@@ -659,14 +703,26 @@ final class FakeBitwig {
         // The arranger, for the arrange experiment.
         /** The panel layout Bitwig shows at first: Application.PANEL_LAYOUT_ARRANGE, _MIX or _EDIT. */
         String layout = Application.PANEL_LAYOUT_ARRANGE;
-        /** Whether the arranger timeline shows at first. */
+        /** Whether the arranger timeline, and the clip launcher in the Arrange layout, show at first. */
         boolean timeline = true;
+        boolean launcher = true;
         /** Where the play start is at first, in beats. */
         double playStart;
         /** The panel with the focus at first: LAUNCHER, TIMELINE, or "" for another. */
         String focus = "";
-        /** Whether selecting a launcher slot gives the clip launcher the focus, as clicking one in Bitwig does. */
-        boolean selectFocuses = true;
+        /**
+         * Whether selecting a launcher slot gives the clip launcher the focus, as clicking one in Bitwig does. Off, as
+         * selecting one from the API may not.
+         */
+        boolean selectFocuses;
+        /** Whether Bitwig ignores selecting a launcher slot, switching the panel layout, showing the clip launcher or moving the play start. */
+        boolean selectIgnored;
+        boolean layoutIgnored;
+        boolean launcherIgnored;
+        boolean playStartIgnored;
+        /** Bitwig's focus_or_toggle_ actions (by ID) it ignores, and those that hide their panel when it's in front but never show it. */
+        final Set<String> focusIgnored = new HashSet<>();
+        final Set<String> focusOnlyHides = new HashSet<>();
         /** Whether Bitwig ignores paste. */
         boolean pasteIgnored;
         /** Whether Bitwig pastes into the clip launcher, whichever panel has the focus. */
@@ -1884,7 +1940,7 @@ final class FakeBitwig {
 
             void invoke() {
                 calls.add(Arrays.asList("invoke", a.id()));
-                if (a.id().equals(Link.FOCUS_ARRANGER)) focusOrToggleArranger();
+                if (a.id().equals(Link.FOCUS_ARRANGER) || a.id().equals(Link.FOCUS_LAUNCHER)) focusOrToggle(a.id());
             }
         };
     }
@@ -1922,7 +1978,9 @@ final class FakeBitwig {
 
             void setPanelLayout(String name) {
                 calls.add(Arrays.asList("setPanelLayout", name));
-                later(20, () -> layoutNow = name);
+                later(20, () -> {
+                    if (!model.layoutIgnored) layoutNow = name;
+                });
             }
 
             void copy() {
@@ -1965,6 +2023,10 @@ final class FakeBitwig {
         private final Stand arranger = new Stand(Arranger.class) {
             Value isTimelineVisible() {
                 return timeline;
+            }
+
+            Value isClipLauncherVisible() {
+                return launcher;
             }
         };
 
