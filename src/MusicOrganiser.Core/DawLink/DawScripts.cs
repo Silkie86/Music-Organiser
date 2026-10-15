@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 using MusicOrganiser.Core.Export;
 
@@ -10,13 +11,59 @@ public enum ScriptState { NotInstalled, Installed, Outdated }
 /// <param name="Folders">Where it goes: one folder for each place the DAW may look.</param>
 /// <param name="Kept">The start of a setting line people may change in their copy, which updates keep.</param>
 /// <param name="Replaces">Older forms of the link to remove when this is installed, so the DAW doesn't run both.</param>
+/// <param name="Code">For a built extension, the folder of its code when the app runs from a copy of the repo, to tell
+/// when the build is older than the code.</param>
 public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> Folders, string? Kept = null,
-                               IReadOnlyList<string>? Replaces = null)
+                               IReadOnlyList<string>? Replaces = null, string? Code = null)
 {
     public string FileName => Path.GetFileName(Source);
 
     /// <summary>A built extension (Bitwig's .bwextension, a Java archive) rather than a script's text.</summary>
     public bool Binary => Path.GetExtension(Source).Equals(".bwextension", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The version of the extension Install copies, or null for a script.</summary>
+    public string? Version => Binary ? ExtensionVersion(Source) : null;
+
+    /// <summary>The versions of the extension installed, folder by folder ("" where one doesn't say).</summary>
+    public IReadOnlyList<string> InstalledVersions =>
+        Binary ? InstalledIn.Select(f => ExtensionVersion(Path.Combine(f, FileName)) ?? "").ToList() : [];
+
+    /// <summary>
+    /// The newest file of the extension's <see cref="Code"/> when it changed after the extension was built (so Install
+    /// would copy an old build: running the app with hot reload doesn't build it again), else null.
+    /// </summary>
+    public string? ChangedSinceBuilt
+    {
+        get
+        {
+            if (Code is null || !File.Exists(Source)) return null;
+            var built = File.GetLastWriteTimeUtc(Source);
+            var main = Path.Combine(Code, "src", "main");
+            var files = Directory.Exists(main) ? Directory.EnumerateFiles(main, "*", SearchOption.AllDirectories) : [];
+            return files.Append(Path.Combine(Code, "pom.xml")).Where(File.Exists)
+                        .Select(f => (File: f, Changed: File.GetLastWriteTimeUtc(f))).Where(f => f.Changed > built)
+                        .OrderByDescending(f => f.Changed).Select(f => f.File).FirstOrDefault();
+        }
+    }
+
+    /// <summary>The version a built extension gives in its manifest (Implementation-Version), or null if it doesn't say.</summary>
+    public static string? ExtensionVersion(string file)
+    {
+        try
+        {
+            using var zip = ZipFile.OpenRead(file);
+            if (zip.GetEntry("META-INF/MANIFEST.MF") is not { } manifest) return null;
+            using var reader = new StreamReader(manifest.Open());
+            for (var line = reader.ReadLine(); line is not null; line = reader.ReadLine())
+                if (line.StartsWith("Implementation-Version:", StringComparison.OrdinalIgnoreCase))
+                    return line["Implementation-Version:".Length..].Trim();
+            return null;
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>The folders that have the script in them.</summary>
     public IReadOnlyList<string> InstalledIn => Folders.Where(f => File.Exists(Path.Combine(f, FileName))).ToList();
@@ -104,12 +151,24 @@ public static class DawScripts
     /// The Bitwig extension (Java), for Extensions in each of these user folders. It takes over from the script, as the
     /// same controller, so installing it removes the script.
     /// </summary>
+    /// <param name="source">The built extension: unless given, the one next to the app (and then, when the app runs from
+    /// a copy of the repo, its code there too).</param>
     public static DawScript BitwigExtension(IReadOnlyList<string>? userFolders = null, string? source = null)
     {
         var folders = userFolders ?? BitwigUserFolders();
         return new("Bitwig Studio", source ?? Shipped("Bitwig", "MusicOrganiser.bwextension"),
                    folders.Select(f => Path.Combine(f, "Extensions")).ToList(),
-                   Replaces: Bitwig(folders).Folders.Select(f => Path.Combine(f, "MusicOrganiser.control.js")).ToList());
+                   Replaces: Bitwig(folders).Folders.Select(f => Path.Combine(f, "MusicOrganiser.control.js")).ToList(),
+                   Code: source is null ? ExtensionCode() : null);
+    }
+
+    /// <summary>The Bitwig extension's code (extensions/bitwig-java) in the repo the app runs from, or null.</summary>
+    static string? ExtensionCode()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+            if (File.Exists(Path.Combine(dir.FullName, "extensions", "bitwig-java", "pom.xml")))
+                return Path.Combine(dir.FullName, "extensions", "bitwig-java");
+        return null;
     }
 
     /// <summary>Bitwig's link: the extension when the build made it (it needs a JDK), else the script.</summary>

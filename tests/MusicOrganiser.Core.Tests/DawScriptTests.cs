@@ -86,6 +86,54 @@ public class DawScriptTests
     }
 
     [Fact]
+    public void SaysWhichExtensionVersionInstallPutsIn()
+    {
+        var user = Fixtures.TempDir();
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.2");
+        var extension = DawScripts.BitwigExtension([user], built);
+        Assert.Equal("3.2", extension.Version);
+        Assert.Empty(extension.InstalledVersions);
+        extension.Install();
+        Assert.Equal(["3.2"], extension.InstalledVersions);
+
+        Extension(Path.Combine(user, "Extensions", "MusicOrganiser.bwextension"), "3.0");
+        Assert.Equal((ScriptState.Outdated, "3.0"), (extension.State, extension.InstalledVersions.Single()));
+        Assert.Null(DawScript.ExtensionVersion(Path.Combine(user, "nothing here.bwextension")));
+        Assert.Null(DawScripts.Bitwig(user).Version);   // the script has none
+    }
+
+    [Fact]
+    public void SaysWhenTheExtensionWasBuiltBeforeItsCodeChanged()
+    {
+        // Running the app with hot reload doesn't build the extension again, so Install would put in an old one.
+        var code = Directory.CreateDirectory(Path.Combine(Fixtures.TempDir(), "bitwig-java")).FullName;
+        var link = Path.Combine(Directory.CreateDirectory(Path.Combine(code, "src", "main", "java")).FullName, "Link.java");
+        File.WriteAllText(Path.Combine(code, "pom.xml"), "<project/>");
+        File.WriteAllText(link, "final class Link {}");
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.2");
+        var then = DateTime.UtcNow.AddHours(-1);
+        File.SetLastWriteTimeUtc(built, then);
+        foreach (var f in new[] { link, Path.Combine(code, "pom.xml") }) File.SetLastWriteTimeUtc(f, then.AddMinutes(-5));
+        var extension = DawScripts.BitwigExtension([Fixtures.TempDir()], built) with { Code = code };
+        Assert.Null(extension.ChangedSinceBuilt);
+
+        File.SetLastWriteTimeUtc(link, then.AddMinutes(1));
+        Assert.Equal(link, extension.ChangedSinceBuilt);
+        Assert.Null((extension with { Code = null }).ChangedSinceBuilt);   // an installed app has no code next to it
+    }
+
+    /// <summary>A stand-in for the built extension: a Java archive whose manifest gives its version.</summary>
+    internal static string Extension(string path, string version)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.Delete(path);
+        using var zip = System.IO.Compression.ZipFile.Open(path, System.IO.Compression.ZipArchiveMode.Create);
+        using var manifest = new StreamWriter(zip.CreateEntry("META-INF/MANIFEST.MF").Open());
+        manifest.Write($"Manifest-Version: 1.0\r\nImplementation-Title: Music Organiser\r\nImplementation-Version: {version}\r\n\r\n");
+        return path;
+    }
+
+    [Fact]
     public void KeepsTheFlStudioChangesSettingWhenUpdating()
     {
         var data = FlUserData(Fixtures.TempDir());

@@ -479,6 +479,9 @@ public sealed partial class DawLinkSetting : ObservableObject
     readonly Func<Task<string>> _check;
     readonly Func<bool> _found;
     readonly FolderChoice? _folder;
+    /// <summary>The extension version Install copies, from the last look (null for a script).</summary>
+    string? _shipped;
+    DawState? _state;
 
     public string Daw { get; }
     /// <summary>What to do in the DAW once the script is installed.</summary>
@@ -527,7 +530,13 @@ public sealed partial class DawLinkSetting : ObservableObject
     {
         try
         {
-            Status = await Task.Run(() => Describe(_script()));
+            Status = await Task.Run(() =>
+            {
+                var script = _script();
+                _shipped = script.Version;
+                return Describe(script);
+            });
+            ShowLive(_state);
         }
         catch (Exception e)
         {
@@ -537,14 +546,25 @@ public sealed partial class DawLinkSetting : ObservableObject
         if (LiveTests is not null) await LiveTests.RefreshAsync();
     }
 
-    string Describe(DawScript script) => script.State switch
+    string Describe(DawScript script)
     {
-        ScriptState.NotInstalled when script.Folders.Count == 0 =>
-            $"Not installed, and the app didn't find {Daw}'s folder for it. Install asks where it is.",
-        ScriptState.NotInstalled => "Not installed.",
-        ScriptState.Outdated => "Installed, but an older version. Install it again to update it.",
-        _ => $"Installed in {string.Join(" and ", script.InstalledIn)}.",
-    };
+        var copies = script.Version is { } v ? $"extension {v}" : null;
+        var older = script.InstalledVersions.Where(i => i.Length > 0 && i != script.Version).Distinct().ToList();
+        var state = script.State switch
+        {
+            ScriptState.NotInstalled when script.Folders.Count == 0 =>
+                $"Not installed, and the app didn't find {Daw}'s folder for it. Install asks where it is.",
+            ScriptState.NotInstalled => "Not installed." + (copies is null ? "" : $" Install puts in {copies}."),
+            ScriptState.Outdated => "Installed, but an older version" + (older.Count > 0 ? $" ({string.Join(", ", older)})" : "") +
+                                    (copies is null ? ". Install it again to update it." : $". Install it again to put in {copies}."),
+            _ => $"Installed in {string.Join(" and ", script.InstalledIn)}" + (copies is null ? "." : $" ({copies})."),
+        };
+        // Running the app with hot reload (as the Music Organiser (latest) shortcut does) doesn't build the extension again.
+        return script.ChangedSinceBuilt is { } changed
+            ? state + $" The extension the app has was built before its code last changed ({Path.GetFileName(changed)}), so Install would " +
+              "put in an old one: close the app and start it again so it's built anew."
+            : state;
+    }
 
     [RelayCommand]
     async Task Install()
@@ -647,14 +667,17 @@ public sealed partial class DawLinkSetting : ObservableObject
         if (LiveTests is not null) LiveTests.Answering = value;
     }
 
-    internal void ShowLive(DawState? state)
+    public void ShowLive(DawState? state)
     {
         if (state is null) return;
+        _state = state;
         IsAnswering = state.Answering;
         Live = state.Answering
             ? $"✓ Answering now: {state.Version}" + (state.Project.Length > 0 ? $", with “{state.Project}” open." : ".") +
               (state.Daw == DawState.Bitwig && !state.Changes
-                  ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "")
+                  ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "") +
+              (state.Extension is { } running && _shipped is { } shipped && running != shipped
+                  ? $" Bitwig is running extension {running}, and Install puts in {shipped}: press Install, then restart Bitwig." : "")
             : state.Running == true ? $"Not answering right now, though {Daw} is open. Check connection says what's missing."
             : "Not answering right now.";
     }

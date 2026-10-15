@@ -607,6 +607,30 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsSaysWhichExtensionBitwigRunsAndWhichInstallPutsIn()
+    {
+        var user = Path.Combine(_root, "Bitwig Studio");
+        var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.2");
+        var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built),
+                                      () => Task.FromResult(""), found: () => true);
+
+        await link.RefreshAsync();
+        Assert.Equal("Not installed. Install puts in extension 3.2.", link.Status);
+        link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "MO Live Test 1", Changes: true, Extension: "3.0"));
+        Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3, with “MO Live Test 1” open. Bitwig is running extension 3.0, and Install puts in 3.2: " +
+                     "press Install, then restart Bitwig.", link.Live);
+
+        DawScriptTests.Extension(Path.Combine(user, "Extensions", "MusicOrganiser.bwextension"), "3.0");
+        await link.RefreshAsync();
+        Assert.Equal("Installed, but an older version (3.0). Install it again to put in extension 3.2.", link.Status);
+
+        await link.InstallCommand.ExecuteAsync(null);
+        Assert.Equal($"Installed in {Path.Combine(user, "Extensions")} (extension 3.2).", link.Status);
+        link.ShowLive(new DawState(DawState.Bitwig, true, true, "Bitwig Studio 6.1.3", "", Changes: true, Extension: "3.2"));
+        Assert.Equal("✓ Answering now: Bitwig Studio 6.1.3.", link.Live);
+    }
+
+    [Fact]
     public async Task SettingsShowsTheProbesRunningNow()
     {
         var reports = Path.Combine(_root, "probe");
