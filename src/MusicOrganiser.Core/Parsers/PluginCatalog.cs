@@ -171,8 +171,9 @@ public static partial class PluginCatalog
                     if (InsideBundle(e)) continue;
                     if (TextScan.IsPluginPath(e))
                     {
+                        // Two letters is a real name: KORG's M1 is M1.vst3 and M1.dll.
                         var name = TextScan.PluginNameFromPath(e);
-                        if (name.Length >= 3) found.TryAdd(Path.GetFullPath(e), new(name, TextScan.PluginFormatFromPath(e), e));
+                        if (name.Length >= 2) found.TryAdd(Path.GetFullPath(e), new(name, TextScan.PluginFormatFromPath(e), e));
                     }
                 }
             }

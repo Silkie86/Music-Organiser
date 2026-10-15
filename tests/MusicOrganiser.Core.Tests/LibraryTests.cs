@@ -129,6 +129,22 @@ public class LibraryTests : IDisposable
         Assert.Equal(["Diva", "Old Synth", "Serum", "Vital"], names);
     }
 
+    [Fact]
+    public void KeepsTwoLetterPluginNames()
+    {
+        // KORG's M1, as it installs on Windows: a VST3 bundle and a VST2 file.
+        var korg = Path.Combine(_root, "Plugins", "KORG");
+        Directory.CreateDirectory(Path.Combine(korg, "M1.vst3", "Contents", "x86_64-win"));
+        File.WriteAllText(Path.Combine(korg, "M1.dll"), "");
+        File.WriteAllText(Path.Combine(korg, "Polysix.dll"), "");
+
+        var files = PluginCatalog.ScanFiles([Path.Combine(_root, "Plugins")]);
+        Assert.Equal(["M1 VST2", "M1 VST3", "Polysix VST2"], files.Select(f => $"{f.Name} {f.Format}").Order());
+        // So a project naming it, with no path or an old one, finds it installed.
+        _db.ReplaceInstalledPlugins(PluginCatalog.Scan([Path.Combine(_root, "Plugins")]));
+        Assert.Contains(LibraryDb.NameKey("M1"), _db.InstalledKeys());
+    }
+
     [Theory]
     [InlineData("LFOTool", "LFOTool_x64")]
     [InlineData("Omnisphere (Automap)", "Omnisphere")]
