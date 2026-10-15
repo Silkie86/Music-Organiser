@@ -134,7 +134,12 @@ public sealed class SoundOrganiser : IDisposable
 
     public static List<string> FindAudio(IEnumerable<string> folders, CancellationToken ct = default,
                                          ConcurrentBag<string>? unreadable = null) =>
-        Parallelism.FindFiles(folders,
+        FindAudioStamps(folders, ct, unreadable).Select(f => f.Path).ToList();
+
+    /// <summary>The sounds in these folders, with the size and modified time the folder listing gave.</summary>
+    public static List<Parallelism.FoundFile> FindAudioStamps(IEnumerable<string> folders, CancellationToken ct = default,
+                                                              ConcurrentBag<string>? unreadable = null) =>
+        Parallelism.FindFileStamps(folders,
             f => AudioFile.CanRead(f) && !System.IO.Path.GetFileName(f).StartsWith("._"),
             (name, _) => name.StartsWith('.') || name.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase), ct: ct,
             unreadable: unreadable);
@@ -144,20 +149,13 @@ public sealed class SoundOrganiser : IDisposable
     {
         progress?.Report(new("Finding sounds", 0, 0));
         var unreadable = new ConcurrentBag<string>();
-        var files = FindAudio(folders, ct, unreadable);
+        var found = FindAudioStamps(folders, ct, unreadable);
+        var files = found.Select(f => f.Path).ToList();
         var known = Library.KnownFiles();
-        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).WithCancellation(ct)
-            .Select(f =>
-            {
-                try
-                {
-                    var fi = new FileInfo(f);
-                    var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                    return !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length ? (f, fi.Length, mtime) : default;
-                }
-                catch (IOException) { return default; }
-            })
-            .Where(t => t.f is not null).Select(t => (Path: t.f, Size: t.Length, Mtime: t.mtime)).ToList();
+        // The folder listing already says each file's size and modified time, so 357,000 unchanged sounds cost no
+        // extra trips to the disk.
+        var todo = found.Where(f => !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
+                        .Select(f => (f.Path, f.Size, f.Mtime)).ToList();
 
         var done = 0;
         var pending = new ConcurrentQueue<SoundLibrary.Analysed>();

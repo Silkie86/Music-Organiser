@@ -49,11 +49,18 @@ public sealed class Scanner(LibraryDb db)
 
     /// <summary>Every project file under these folders, found with all cores at once and sorted by path.</summary>
     public static List<string> FindProjects(IEnumerable<string> roots, CancellationToken ct = default) =>
-        Parallelism.FindFiles(roots, f =>
-        {
-            var name = Path.GetFileName(f);
-            return Readers.For(f) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
-        }, SkipDir, ct: ct);
+        FindProjectStamps(roots, ct).Select(f => f.Path).ToList();
+
+    /// <summary>The project files under these folders, with the size and modified time the folder listing gave.</summary>
+    public static List<Parallelism.FoundFile> FindProjectStamps(IEnumerable<string> roots, CancellationToken ct = default) =>
+        Parallelism.FindFileStamps(roots, IsProjectFile, SkipDir, ct: ct);
+
+    /// <summary>A file the library lists: one the readers know, leaving out macOS "._" shadows and DAW autosaves.</summary>
+    public static bool IsProjectFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        return Readers.For(path) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
+    }
 
     public static bool SampleFound(string sample, string projectPath)
     {
@@ -104,19 +111,12 @@ public sealed class Scanner(LibraryDb db)
 
         var roots = db.Roots().Where(Directory.Exists).ToList();
         progress?.Report(new("Finding projects", 0, 0, ""));
-        var files = FindProjects(roots, ct);
+        var found = FindProjectStamps(roots, ct);
+        var files = found.Select(f => f.Path).ToList();
         var known = db.KnownFiles();
-        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).WithCancellation(ct)
-            .Where(f =>
-            {
-                try
-                {
-                    var fi = new FileInfo(f);
-                    var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                    return full || !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length;
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
-            }).ToList();
+        // The folder listing already says each file's size and modified time: only new or changed files are read.
+        var todo = found.Where(f => full || !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
+                        .Select(f => f.Path).ToList();
 
         // Read the projects on every core; save them here, in path order, a batch at a time,
         // so a new numbered save always finds the earlier ones it takes its status from.

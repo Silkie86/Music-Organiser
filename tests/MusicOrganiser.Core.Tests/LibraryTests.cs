@@ -52,6 +52,12 @@ public class LibraryTests : IDisposable
         Assert.Equal(found.Order(StringComparer.OrdinalIgnoreCase), found);
         Assert.Subset(found.ToHashSet(), expected.ToHashSet());
         Assert.DoesNotContain(found, f => f.Contains("auto-backups") || f.Contains("(autosave)"));
+        // The size and modified time come with the folder listing, the same as asking for each file.
+        Assert.All(Scanner.FindProjectStamps([_root]), f =>
+        {
+            var fi = new FileInfo(f.Path);
+            Assert.Equal((fi.Length, new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds()), (f.Size, f.Mtime));
+        });
 
         new Scanner(_db).ScanProjects();
         var paths = _db.Projects().Select(p => p.Path).ToHashSet();
