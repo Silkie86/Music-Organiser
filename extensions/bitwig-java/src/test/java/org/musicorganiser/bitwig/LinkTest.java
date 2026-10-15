@@ -82,7 +82,7 @@ class LinkTest {
         MusicOrganiserExtensionDefinition definition = (MusicOrganiserExtensionDefinition) found.get(0);
 
         // The script's identity (MusicOrganiser.control.js's defineController), so Bitwig keeps the controller it has.
-        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.0"),
+        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.1"),
                      List.of(definition.getHardwareVendor(), definition.getHardwareModel(), definition.getName(), definition.getAuthor(),
                              definition.getVersion()));
         assertEquals(UUID.fromString("ed35e3c7-c544-49ed-936d-c236b0c9b73b"), definition.getId());
@@ -108,7 +108,7 @@ class LinkTest {
                        "project", "Night Drive", "modified", false, "engine", true, "changes", false,
                        "onlyIn", true,   // it honours a request's onlyIn
                        // Link version 3: which link this is.
-                       "runtime", "java", "extension", "3.0"),
+                       "runtime", "java", "extension", "3.1"),
                    hello.get("result"));
         assertJson(obj("id", 1, "ok", true, "result", hello.get("result")), app.ask(obj("id", 1, "cmd", "hello")));
         assertEquals(List.of(), bitwig.popups);
@@ -123,6 +123,36 @@ class LinkTest {
         FakeBitwig bitwig = start(m);
         assertMatches("port 19791 is taken", bitwig.popups.get(0));
         assertEquals(List.of("Music Organiser: waiting for the app on port 50123."), bitwig.printed);
+    }
+
+    @Test
+    @DisplayName("doesn't say the port is taken while Bitwig hasn't said which port it gave")
+    void waitsForBitwigToSayWhichPort() {
+        // Bitwig 6.1.3 says -1 straight after making the connection, and the app connects on 19791 all the same.
+        Model m = song();
+        m.portUnknown = 1000;
+        FakeBitwig bitwig = start(m);
+        bitwig.clock.advance(2000);
+        assertEquals(List.of(), bitwig.popups);
+        assertEquals(List.of("Music Organiser: waiting for the app on port 19791."), bitwig.printed);
+        App app = bitwig.connect();
+        assertEquals(19791, ((Number) at(app.take().get(0), "result", "port")).intValue());
+        assertEquals(List.of(), bitwig.popups);
+    }
+
+    @Test
+    @DisplayName("says the port is taken once Bitwig says it gave another")
+    void warnsOnceBitwigSaysWhichPort() {
+        Model m = song();
+        m.portUnknown = 1;
+        m.portInUse = 50123;
+        FakeBitwig bitwig = start(m);
+        assertEquals(List.of(), bitwig.popups);
+        bitwig.clock.advance(1000);
+        assertEquals(1, bitwig.popups.size());
+        assertMatches("port 19791 is taken", bitwig.popups.get(0));
+        bitwig.connect().take();
+        assertEquals(1, bitwig.popups.size());
     }
 
     @Test

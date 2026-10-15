@@ -64,6 +64,26 @@ test("warns in Bitwig when its port is taken", () => {
   assert.match(bitwig.popups[0], /port 19791 is taken/);
 });
 
+test("doesn't say the port is taken while Bitwig hasn't said which port it gave", () => {
+  // Bitwig 6.1.3 says -1 straight after making the connection, and the app connects on 19791 all the same.
+  const bitwig = startBitwig({ ...song, portUnknown: 1000 });
+  bitwig.clock.advance(2000);
+  assert.deepEqual(bitwig.popups, []);
+  const app = bitwig.connect();
+  assert.equal(app.take()[0].result.port, 19791);
+  assert.deepEqual(bitwig.popups, []);
+});
+
+test("says the port is taken once Bitwig says it gave another", () => {
+  const bitwig = startBitwig({ ...song, portUnknown: 1, portInUse: 50123 });
+  assert.deepEqual(bitwig.popups, []);
+  bitwig.clock.advance(1000);
+  assert.equal(bitwig.popups.length, 1);
+  assert.match(bitwig.popups[0], /port 19791 is taken/);
+  bitwig.connect().take();
+  assert.equal(bitwig.popups.length, 1);
+});
+
 test("lists the project's tracks and their devices", () => {
   const bitwig = startBitwig(song);
   const app = bitwig.connect();

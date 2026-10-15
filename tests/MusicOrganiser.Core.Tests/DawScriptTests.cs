@@ -123,6 +123,30 @@ public class DawScriptTests
                      DawScripts.FlStudio(found).Folders.Single(f => f.StartsWith(moved, StringComparison.Ordinal)));
     }
 
+    [Fact]
+    public void TakesTheUserFolderAPickedFolderIsIn()
+    {
+        // Solomon's Bitwig user folder is on another drive, and the folder that came to mind was Extensions, where the link goes.
+        var root = Fixtures.TempDir();
+        var bitwig = Path.Combine(root, "K", "Bitwig Studio");
+        foreach (var sub in new[] { "Extensions", "Library", "Projects" }) Directory.CreateDirectory(Path.Combine(bitwig, sub));
+        Directory.CreateDirectory(Path.Combine(bitwig, "Library", "Presets", "Bass"));
+        Directory.CreateDirectory(Path.Combine(bitwig, "Extensions", "Library"));   // an extension's own, not Bitwig's
+        var installed = Directory.CreateDirectory(Path.Combine(root, "Program Files", "Bitwig Studio", "resources")).FullName;
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(bitwig));
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(bitwig + Path.DirectorySeparatorChar));
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(Path.Combine(bitwig, "Extensions")));
+        Assert.Equal(bitwig, DawScripts.BitwigUserFolderFrom(Path.Combine(bitwig, "Library", "Presets", "Bass")));
+        Assert.Null(DawScripts.BitwigUserFolderFrom(Path.Combine(root, "K")));
+        Assert.Null(DawScripts.BitwigUserFolderFrom(installed));   // where Bitwig is installed, not its user folder
+
+        var fl = FlUserData(Path.Combine(root, "Image-Line", "FL Studio"));
+        var hardware = Directory.CreateDirectory(Path.Combine(fl, "Settings", "Hardware")).FullName;
+        Assert.Equal(fl, DawScripts.FlUserDataFrom(fl));
+        Assert.Equal(fl, DawScripts.FlUserDataFrom(hardware));
+        Assert.Null(DawScripts.FlUserDataFrom(Path.Combine(root, "Image-Line")));
+    }
+
     static string FlUserData(string folder)
     {
         foreach (var sub in new[] { "Settings", "Presets", "Projects" }) Directory.CreateDirectory(Path.Combine(folder, sub));

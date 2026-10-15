@@ -25,6 +25,8 @@ public sealed record MoProbeLive
     static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(25);
     /// <summary>How long a status can be missing before the probe counts as gone (it's replaced, never removed, while it runs).</summary>
     static readonly TimeSpan Missing = TimeSpan.FromMilliseconds(500);
+    /// <summary>The most a gap between two looks counts towards <see cref="Missing"/> (see <see cref="Absence"/>).</summary>
+    static readonly TimeSpan LongestGap = TimeSpan.FromMilliseconds(100);
     static readonly JsonSerializerOptions Json = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     static int _sent;
 
@@ -267,7 +269,7 @@ public sealed record MoProbeLive
         var file = StatusFile(instance, reportFolder);
         var limit = timeout ?? DefaultWait;
         var waited = Stopwatch.StartNew();
-        TimeSpan? missing = null;   // since when the status couldn't be read
+        var missing = new Absence();
         MoProbeLive? last = null;
         while (true)
         {
@@ -275,15 +277,15 @@ public sealed record MoProbeLive
             {
                 if (status.Gone(DateTimeOffset.UtcNow)) throw new DawLinkException(NotRunning(instance));
                 last = status;
-                missing = null;
+                missing.Found();
                 if (shown(status)) return (true, status);
             }
             // Gone for a while, not just unreadable once after a pause (a busy computer, or a slow check): on Windows
             // the status can't be read for the instant the probe swaps in a new one.
-            else if (waited.Elapsed - (missing ??= waited.Elapsed) > Missing) throw new DawLinkException(NotRunning(instance));
+            else if (missing.Miss(waited.Elapsed) > Missing) throw new DawLinkException(NotRunning(instance));
             // Out of time; but a status that can't be read now gets the rest of its moment first, so a probe that stopped
             // is said to have stopped, not to have not answered.
-            if (waited.Elapsed >= limit && last is not null && missing is null && Read(file) is not null) return (false, last);
+            if (waited.Elapsed >= limit && last is not null && !missing.Now && Read(file) is not null) return (false, last);
             await Task.Delay(Poll, ct);
         }
     }
@@ -307,12 +309,38 @@ public sealed record MoProbeLive
     public static async Task<MoProbeLive> ReadRunningAsync(string file, string instance, CancellationToken ct = default)
     {
         var waited = Stopwatch.StartNew();
+        var missing = new Absence();
         while (true)
         {
             if (Read(file) is { } status) return status;
-            if (waited.Elapsed > Missing) throw new DawLinkException(NotRunning(instance));
+            if (missing.Miss(waited.Elapsed) > Missing) throw new DawLinkException(NotRunning(instance));
             await Task.Delay(Poll, ct);
         }
+    }
+
+    /// <summary>
+    /// How long a status has been missing, as seen by looking for it again and again. A gap between two looks counts for
+    /// no more than <see cref="LongestGap"/>: after a pause (a long garbage collection, or a busy computer holding this
+    /// up) the status gets more looks before the probe counts as gone, as anything here that was to put it back was
+    /// held up as long.
+    /// </summary>
+    sealed class Absence
+    {
+        TimeSpan? _looked;
+        TimeSpan _missing;
+
+        /// <summary>Whether the last look found no status.</summary>
+        public bool Now => _looked is not null;
+
+        /// <summary>A look at <paramref name="at"/> found no status. Returns how long it's been missing.</summary>
+        public TimeSpan Miss(TimeSpan at)
+        {
+            if (_looked is { } before) _missing += TimeSpan.FromTicks(Math.Min((at - before).Ticks, LongestGap.Ticks));
+            _looked = at;
+            return _missing;
+        }
+
+        public void Found() => (_looked, _missing) = (null, TimeSpan.Zero);
     }
 
     public static string StatusFile(string instance, string? reportFolder = null) =>

@@ -435,6 +435,12 @@ class ParityTest {
         only.add(send(obj("id", 18, "cmd", "project")));
         runs.add(new Run("only in the project asked for", studio(), only));
 
+        // Bitwig 6.1.3 doesn't say at first which port it gave the link; the app connecting shows it's 19791.
+        Map<String, Object> unsaid = song();
+        unsaid.put("portUnknown", 1000);
+        runs.add(new Run("Bitwig doesn't say which port", unsaid, List.of(
+            advance(2000), send(obj("id", 1, "cmd", "hello")))));
+
         Map<String, Object> elsewhere = song();
         elsewhere.put("portInUse", 50123);
         elsewhere.put("modified", true);
@@ -472,6 +478,7 @@ class ParityTest {
         if (js.containsKey("padScroll")) m.padScroll = (int) number(js.get("padScroll"));
         m.browserOnNewTrack = Boolean.TRUE.equals(js.get("browserOnNewTrack"));
         if (js.containsKey("portInUse")) m.portInUse = (int) number(js.get("portInUse"));
+        if (js.containsKey("portUnknown")) m.portUnknown = (int) number(js.get("portUnknown"));
         return m;
     }
 

@@ -130,8 +130,12 @@ final class Link {
     private final InsertionPoint[] padInserts = new InsertionPoint[DRUM_PADS];
     private PopupBrowser popupBrowser;
     private SettableBooleanValue changesSetting;
+    private RemoteSocket socket;
+    /** The port Bitwig gave the link; 0 or less while Bitwig hasn't said (see {@link #knownPort}). */
     private int port = PORT;
     private boolean listening;
+    /** Whether Bitwig has been told the port is taken (once is enough). */
+    private boolean portWarned;
 
     // Newer API (version 20 to 23), each null when Bitwig wouldn't make it.
     private CursorRemoteControlsPage remoteControls;
@@ -390,20 +394,20 @@ final class Link {
         }, () -> recorder.isActive().get() ? "Recording, for " + recorder.duration().get() + " ms so far." : "Not recording.");
 
         feature("remote connection", () -> {
-            RemoteSocket socket = host.createRemoteConnection("Music Organiser", PORT);
+            socket = host.createRemoteConnection("Music Organiser", PORT);
             socket.setClientConnectCallback(this::connected);
             port = socket.getPort();
             listening = true;
         }, () -> {
-            if (port != PORT)
-                throw new LinkError("Port " + PORT + " is taken, so Bitwig gave the link port " + port + ", where the app doesn't look.");
-            return "Waiting for the app on port " + port + ", with " + clients.size() + " connected now.";
+            int now = knownPort();
+            if (now > 0 && now != PORT)
+                throw new LinkError("Port " + PORT + " is taken, so Bitwig gave the link port " + now + ", where the app doesn't look.");
+            if (now <= 0) return "Waiting for the app on port " + PORT + ", though Bitwig hasn't said yet which port it gave the link.";
+            return "Waiting for the app on port " + now + ", with " + clients.size() + " connected now.";
         });
         if (listening) {
-            host.println("Music Organiser: waiting for the app on port " + port + ".");
-            if (port != PORT)
-                host.showPopupNotification("Music Organiser: port " + PORT + " is taken, so the app can't connect. "
-                                           + "Close what's using it and restart Bitwig.");
+            host.println("Music Organiser: waiting for the app on port " + (port > 0 ? port : PORT) + ".");
+            warnIfPortTaken();
         } else {
             host.showPopupNotification("Music Organiser: Bitwig couldn't listen for the app. The self-check in " + reports.folder()
                                        + " says why.");
@@ -469,6 +473,7 @@ final class Link {
     private void connected(RemoteConnection connection) {
         Client client = new Client(connection);
         clients.add(client);
+        knownPort();
         connection.setDisconnectCallback(() -> {
             client.open = false;
             clients.remove(client);
@@ -480,6 +485,27 @@ final class Link {
         hello.put("event", "hello");
         hello.put("result", greeting());
         send(client, hello);
+    }
+
+    /**
+     * The port Bitwig gave the link, asked again while Bitwig hasn't said: Bitwig 6.1.3 says -1 straight after making
+     * the connection. The app connecting shows it's 19791, the only port the app tries. Warns in Bitwig when it's
+     * another.
+     */
+    private int knownPort() {
+        if (port <= 0 && socket != null) {
+            port = socket.getPort();
+            if (port <= 0 && !clients.isEmpty()) port = PORT;
+        }
+        warnIfPortTaken();
+        return port;
+    }
+
+    private void warnIfPortTaken() {
+        if (port <= 0 || port == PORT || portWarned) return;
+        portWarned = true;
+        host.showPopupNotification("Music Organiser: port " + PORT + " is taken, so the app can't connect. "
+                                   + "Close what's using it and restart Bitwig.");
     }
 
     /** Handles one request from the app. */
