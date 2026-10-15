@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
@@ -51,8 +52,26 @@ public sealed partial class LibraryDb : IDisposable
 
     readonly SqliteConnection _conn;
     readonly object _lock = new();
+    // Reads get connections of their own (the database is in WAL mode, so they never wait for a write): a page reading
+    // the library on the window's thread no longer stalls behind a scan's long write or a 357,000-row read.
+    readonly ConcurrentBag<SqliteConnection> _readers = [];
+    string? _readString;
+    volatile bool _disposed;
 
     public string FilePath { get; }
+
+    long _projectsRevision, _pluginsRevision, _sampleIndexRevision;
+    /// <summary>
+    /// Goes up whenever a scan changes the projects (added, re-read, gone, a plugin's installed answer). The pages compare
+    /// it after a scan and skip reading everything again when nothing changed, which is most scans.
+    /// </summary>
+    public long ProjectsRevision => Interlocked.Read(ref _projectsRevision);
+    /// <summary>Goes up when the installed plugins or what the plugin scanner found in them change.</summary>
+    public long PluginsRevision => Interlocked.Read(ref _pluginsRevision);
+    /// <summary>Goes up when the files in your sample folders change.</summary>
+    public long SampleIndexRevision => Interlocked.Read(ref _sampleIndexRevision);
+    void ProjectsChanged() => Interlocked.Increment(ref _projectsRevision);
+    void PluginsChanged() => Interlocked.Increment(ref _pluginsRevision);
 
     public static string DefaultPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "library.db");
@@ -63,6 +82,7 @@ public sealed partial class LibraryDb : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         _conn = new SqliteConnection($"Data Source={path}");
         _conn.Open();
+        _readString = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString();
         Exec(Schema);
         Exec(PluginScanSchema);
         AddColumn("projects", "detected_key", "TEXT");
@@ -83,7 +103,12 @@ public sealed partial class LibraryDb : IDisposable
     // first rather than having the connection closed under it.
     public void Dispose()
     {
-        lock (_lock) _conn.Dispose();
+        lock (_lock)
+        {
+            _disposed = true;
+            _conn.Dispose();
+            while (_readers.TryTake(out var r)) r.Dispose();
+        }
     }
 
     // ---- plumbing --------------------------------------------------------------
@@ -97,9 +122,11 @@ public sealed partial class LibraryDb : IDisposable
         }
     }
 
-    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args)
+    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args) => Cmd(_conn, sql, args);
+
+    static SqliteCommand Cmd(SqliteConnection conn, string sql, params (string Name, object? Value)[] args)
     {
-        var cmd = _conn.CreateCommand();
+        var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         foreach (var (n, v) in args) cmd.Parameters.AddWithValue(n, v ?? DBNull.Value);
         return cmd;
@@ -107,14 +134,34 @@ public sealed partial class LibraryDb : IDisposable
 
     List<T> Query<T>(string sql, Func<SqliteDataReader, T> map, params (string, object?)[] args)
     {
-        lock (_lock)
+        // Inside a write on this thread: its own connection, which sees the rows it hasn't committed yet.
+        if (Monitor.IsEntered(_lock) || _readString is null)
+            lock (_lock) return Read(_conn, sql, map, args);
+        var reader = Reader();
+        try { return Read(reader, sql, map, args); }
+        finally
         {
-            using var cmd = Cmd(sql, args);
-            using var r = cmd.ExecuteReader();
-            var list = new List<T>();
-            while (r.Read()) list.Add(map(r));
-            return list;
+            if (_disposed) reader.Dispose();
+            else _readers.Add(reader);
         }
+    }
+
+    static List<T> Read<T>(SqliteConnection conn, string sql, Func<SqliteDataReader, T> map, (string, object?)[] args)
+    {
+        using var cmd = Cmd(conn, sql, args);
+        using var r = cmd.ExecuteReader();
+        var list = new List<T>();
+        while (r.Read()) list.Add(map(r));
+        return list;
+    }
+
+    SqliteConnection Reader()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_readers.TryTake(out var reader)) return reader;
+        reader = new SqliteConnection(_readString);
+        reader.Open();
+        return reader;
     }
 
     static string Str(SqliteDataReader r, string col) => r[col] is string s ? s : "";
@@ -185,6 +232,7 @@ public sealed partial class LibraryDb : IDisposable
             foreach (var f in files) Upsert(tx, f, installed);
             tx.Commit();
         }
+        ProjectsChanged();
     }
 
     void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed)
@@ -339,11 +387,27 @@ public sealed partial class LibraryDb : IDisposable
         {
             if (present.Contains(path) || !roots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase))) continue;
             if (ignored?.Invoke(path) == true) RemoveProject(id);
-            else Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id));
+            else if (Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
         }
     }
 
-    public void RemoveProject(long id) => Exec("DELETE FROM projects WHERE id = $id", ("$id", id));
+    /// <summary>A project file that has gone (deleted, or moved out of your folders): it stays listed, marked missing.</summary>
+    public bool MarkFileMissing(string path)
+    {
+        if (Exec("UPDATE projects SET file_missing = 1 WHERE path = $p AND file_missing = 0", ("$p", path)) == 0) return false;
+        ProjectsChanged();
+        return true;
+    }
+
+    public void RemoveProject(long id)
+    {
+        if (Exec("DELETE FROM projects WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
+    }
+
+    public void RemoveProject(string path)
+    {
+        if (Exec("DELETE FROM projects WHERE path = $p", ("$p", path)) > 0) ProjectsChanged();
+    }
 
     // ---- installed plugins & sample index ----------------------------------------------
 
@@ -355,11 +419,17 @@ public sealed partial class LibraryDb : IDisposable
 
     public void ReplaceInstalledPlugins(IEnumerable<string> names)
     {
+        var list = names.ToList();
+        var now = Query("SELECT name, name_key FROM installed_plugins", r => (Name: (string)r["name"], Key: (string)r["name_key"])).ToList();
+        // The same list as last time (most scans): nothing to write, and every project's plugins keep their answers.
+        var keys = new Dictionary<string, string>();
+        foreach (var n in list) keys.TryAdd(NameKey(n), n);
+        if (now.Count == keys.Count && now.All(r => keys.TryGetValue(r.Key, out var n) && n == r.Name)) return;
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
             using (var del = Cmd("DELETE FROM installed_plugins")) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var n in names)
+            foreach (var n in list)
             {
                 using var cmd = Cmd("INSERT OR IGNORE INTO installed_plugins VALUES ($n, $k)", ("$n", n), ("$k", NameKey(n)));
                 cmd.Transaction = tx;
@@ -367,6 +437,7 @@ public sealed partial class LibraryDb : IDisposable
             }
             tx.Commit();
         }
+        PluginsChanged();
         RefreshInstalledFlags();
     }
 
@@ -387,6 +458,7 @@ public sealed partial class LibraryDb : IDisposable
                           .ToList();
         InBatches(changed, "UPDATE plugins SET installed = $i WHERE rowid = $r", ["$i", "$r"],
                   (row, p) => { p[0].Value = row.Now ? 1 : 0; p[1].Value = row.RowId; });
+        if (changed.Count > 0) ProjectsChanged();
     }
 
     /// <summary>
@@ -395,13 +467,35 @@ public sealed partial class LibraryDb : IDisposable
     /// </summary>
     public void ReplaceSampleIndex(IEnumerable<string> files)
     {
-        Exec("DELETE FROM sample_index");
-        InBatches(files, "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
+        // Only the difference is written: most scans find the same files, and rewriting 350,000 rows each time kept the
+        // disk and the database busy for nothing.
+        var now = Query("SELECT path FROM sample_index", r => (string)r["path"]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var found = files.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var gone = now.Where(f => !found.Contains(f)).ToList();
+        var added = found.Where(f => !now.Contains(f)).ToList();
+        InBatches(gone, "DELETE FROM sample_index WHERE path = $p", ["$p"], (f, p) => p[0].Value = f);
+        InBatches(added, "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
         {
             p[0].Value = f;
             p[1].Value = Path.GetFileName(f);
             p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
         });
+        if (gone.Count + added.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
+    }
+
+    /// <summary>The sample index brought up to date for files the sample folders' watcher saw change: there now, or gone.</summary>
+    public void UpdateSampleIndex(IEnumerable<string> paths)
+    {
+        var list = paths.Where(TextScan.IsAudioPath).ToList();
+        var gone = list.Where(f => !File.Exists(f)).ToList();
+        InBatches(gone, "DELETE FROM sample_index WHERE path = $p", ["$p"], (f, p) => p[0].Value = f);
+        InBatches(list.Except(gone), "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
+        {
+            p[0].Value = f;
+            p[1].Value = Path.GetFileName(f);
+            p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
+        });
+        if (list.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
     }
 
     /// <summary>Runs one statement for each item, a few thousand to a transaction, letting go of the database between them.</summary>
@@ -509,9 +603,25 @@ public sealed partial class LibraryDb : IDisposable
         };
     }
 
-    public void SaveOrganisation(ProjectSummary p) => Exec("""
-        UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
-        """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", p.Id));
+    public void SaveOrganisation(ProjectSummary p) => SaveOrganisation(p, []);
+
+    /// <summary>Your fields for a song: written to its newest save and to each of its other saves, so they stay the song's.</summary>
+    public void SaveOrganisation(ProjectSummary p, IEnumerable<long> otherSaves)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var id in otherSaves.Prepend(p.Id).Distinct())
+            {
+                using var cmd = Cmd("""
+                    UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
+                    """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", id));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
 
     public void SetTags(long id, IEnumerable<string> tags)
     {

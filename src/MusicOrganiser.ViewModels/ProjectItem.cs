@@ -21,11 +21,16 @@ public sealed partial class ProjectItem : ObservableObject
         var saves = OlderSaves.Prepend(p).ToList();
         Made = SongVersions.FirstMade(saves);
         Runs = SongVersions.Runs(saves);
-        _status = p.Status;
-        _rating = p.Rating;
-        _favourite = p.Favourite;
-        _musicalKey = p.MusicalKey;
-        _notes = p.Notes;
+        // Your fields belong to the song, but they're stored on the save you set them on. A newer save starts
+        // blank, so each field it hasn't got yet comes from the newest older save that has it.
+        var earlier = OlderSaves.OrderByDescending(o => o.Modified).ToList();
+        _status = p.Status != Statuses.All[0] ? p.Status : earlier.FirstOrDefault(o => o.Status != Statuses.All[0])?.Status ?? p.Status;
+        _rating = p.Rating > 0 ? p.Rating : earlier.FirstOrDefault(o => o.Rating > 0)?.Rating ?? 0;
+        _favourite = p.Favourite || earlier.Any(o => o.Favourite);
+        _musicalKey = !string.IsNullOrWhiteSpace(p.MusicalKey) ? p.MusicalKey
+            : earlier.FirstOrDefault(o => !string.IsNullOrWhiteSpace(o.MusicalKey))?.MusicalKey ?? p.MusicalKey;
+        _notes = !string.IsNullOrWhiteSpace(p.Notes) ? p.Notes
+            : earlier.FirstOrDefault(o => !string.IsNullOrWhiteSpace(o.Notes))?.Notes ?? p.Notes;
         _tags = p.Tags;
         _loading = false;
     }
@@ -147,7 +152,15 @@ public sealed partial class ProjectItem : ObservableObject
         _p.Favourite = Favourite;
         _p.MusicalKey = MusicalKey ?? "";
         _p.Notes = Notes ?? "";
-        _db.SaveOrganisation(_p);
+        _db.SaveOrganisation(_p, OlderSaves.Select(o => o.Id));
+        foreach (var o in OlderSaves)
+        {
+            o.Status = _p.Status;
+            o.Rating = _p.Rating;
+            o.Favourite = _p.Favourite;
+            o.MusicalKey = _p.MusicalKey;
+            o.Notes = _p.Notes;
+        }
     }
 
     /// <summary>

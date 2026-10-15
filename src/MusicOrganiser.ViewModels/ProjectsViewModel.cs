@@ -73,10 +73,13 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     public void Reload() => Show(Load(GroupSaves));
 
     /// <summary>Reload with the database work done in the background, so the window keeps answering.</summary>
-    public async Task ReloadAsync()
+    public Task ReloadAsync() => ReloadAsync(null);
+
+    /// <param name="select">Pick the row holding this file afterwards (when the one picked now is going away).</param>
+    public async Task ReloadAsync(string? select)
     {
         var group = GroupSaves;
-        Show(await Task.Run(() => Load(group)));
+        Show(await UiWork.Run(() => Load(group)), select);
     }
 
     /// <summary>The rows, read from the database and grouped into songs (on any thread).</summary>
@@ -89,7 +92,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         return (projects.Count, items, _db.AllTags().Select(t => t.Tag).ToList());
     }
 
-    void Show((int Saves, List<ProjectItem> Items, List<string> Tags) loaded)
+    void Show((int Saves, List<ProjectItem> Items, List<string> Tags) loaded, string? select = null)
     {
         var selectedId = Selected?.Id;
         _saveCount = loaded.Saves;
@@ -100,7 +103,9 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         Refill(TagFilters, loaded.Tags, TagFilter, v => TagFilter = v);
         Refill(HardwareFilters, Items.SelectMany(i => i.Hardware), HardwareFilter, v => HardwareFilter = v);
 
-        Selected = Items.FirstOrDefault(i => i.Id == selectedId || i.OlderSaves.Any(o => o.Id == selectedId));
+        Selected = select is not null
+            ? Items.FirstOrDefault(i => i.Path == select || i.OlderSaves.Any(o => o.Path == select))
+            : Items.FirstOrDefault(i => i.Id == selectedId || i.OlderSaves.Any(o => o.Id == selectedId));
         ApplyFilter();
         _main.Live.MarkProjects();
     }

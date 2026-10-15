@@ -589,17 +589,18 @@
                                             ToolTip.Tip="How adventurous: left sticks close to what you already use, right goes further afield" />
                                     <TextBlock Text="Adventurous" VerticalAlignment="Center" Margin="0,0,12,0" />
                                     <CheckBox Content="Include sounds used once" IsChecked="{Binding IncludeRarelyUsed}" Margin="0,0,12,0" />
-                                    <Button Content="Shuffle" Classes="accent" Command="{Binding ShuffleCommand}" VerticalAlignment="Center" />
+                                    <Button Content="{Binding ShuffleText}" Classes="accent" Command="{Binding ShuffleCommand}" VerticalAlignment="Center" />
                                 </WrapPanel>
-                                <TextBlock Text="{Binding Intro}" Classes="muted" FontSize="12" Margin="0,0,0,8" />
+                                <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="3" MinHeight="3" Margin="0,0,0,6" />
+                                <TextBlock Text="{Binding Intro}" Classes="muted" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap" />
                             </StackPanel>
                             <Border Classes="card" Padding="8">
                                 <Panel>
                                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32"
                                                 IsVisible="{Binding Suggestions.Count, Converter={StaticResource Zero}}">
                                         <TextBlock Text="⤨" FontSize="36" Foreground="{StaticResource FaintBrush}" HorizontalAlignment="Center" />
-                                        <TextBlock Text="Find sounds you've forgotten" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,4" />
-                                        <TextBlock Text="Pick a type and how adventurous to be, then press Shuffle." Classes="muted" TextAlignment="Center" />
+                                        <TextBlock Text="{Binding EmptyTitle}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,4" />
+                                        <TextBlock Text="{Binding EmptyText}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="420" />
                                     </StackPanel>
                                     <ListBox ItemsSource="{Binding Suggestions}" Background="Transparent" SelectionMode="Multiple"
                                              views:FileDrag.Source="{Binding Parent}">

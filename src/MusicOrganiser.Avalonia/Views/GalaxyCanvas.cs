@@ -65,7 +65,7 @@ public sealed class GalaxyCanvas : Control
 
     Point? _press;
     // Left held: sweeping (each star the pointer reaches plays). Middle or right held: dragging the view about.
-    bool _sweeping, _swept, _panning, _miniDrag;
+    bool _sweeping, _swept, _panning, _miniDrag, _gliding;
     Point _last;
     GalaxyStar? _hover;
     Dictionary<long, GalaxyStar> _byId = [];
@@ -272,6 +272,7 @@ public sealed class GalaxyCanvas : Control
             _cy += (_ty - _cy) * k;
         }
         var done = Math.Abs(Math.Log(_tz / _zoom)) < 0.002 && Math.Abs(_tx - _cx) * Scale < 0.3 && Math.Abs(_ty - _cy) * Scale < 0.3;
+        _gliding = !done;
         if (done)
         {
             _zoom = _tz;
@@ -758,14 +759,14 @@ public sealed class GalaxyCanvas : Control
         room = Math.Clamp(Math.Sqrt(w * h / Math.Max(inView, 1)) * 0.22, 1.6, 9);
 
         // The painted sky, repainted only when the view or the stars change.
-        // On the graphics card when there is one: the whole sky is redrawn every frame, it's that quick.
+        // On the graphics card when there is one: redrawn when the view changes, and slid along while you drag a big one.
         if (GalaxyGpu.Available != false && intro >= 1)
         {
             var area = Math.Max(w * h, 1);
             var gain = (float)Math.Clamp(1.7 / Math.Max(1, inView * 9.0 / area), 0.35, 1.7);
             ctx.Custom(new GalaxyGpu.Op(new Rect(0, 0, w, h), new GalaxyGpu.Frame(
                 _xs, _ys, _rgb, _weight, _cellStart, _cellItems, Grid, view, Scale, w / 2 - _cx * Scale, MidY - _cy * Scale,
-                (int)Math.Ceiling(w), (int)Math.Ceiling(h), painted, glow, gain)));
+                (int)Math.Ceiling(w), (int)Math.Ceiling(h), painted, glow, gain, _panning || _miniDrag || _gliding)));
         }
         else
         {

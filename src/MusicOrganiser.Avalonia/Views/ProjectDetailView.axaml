@@ -50,53 +50,126 @@
         <Style Selector="TextBlock.mark.different">
             <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
         </Style>
-        <Style Selector="Button.bigAction">
-            <Setter Property="Height" Value="48" />
-            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
-            <Setter Property="FontSize" Value="15" />
-            <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="HorizontalContentAlignment" Value="Center" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-        </Style>
-        <!-- Overview's glance column: plugin chips (missing ones red), each section linking to its full tab. -->
-        <Style Selector="Border.glanceChip">
-            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+        <!-- The toolbar: every way to open the song as even buttons on the left (its main DAW's in the accent colour),
+             then small buttons for the file, exports and repairs on the right. -->
+        <Style Selector="Button.open">
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
-            <Setter Property="Padding" Value="9,4" />
-            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-        <Style Selector="Border.glanceChip TextBlock">
-            <Setter Property="FontSize" Value="12" />
+        <Style Selector="Button.open Path.openIcon">
+            <Setter Property="Width" Value="11" />
+            <Setter Property="Height" Value="11" />
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="Fill" Value="{StaticResource MutedBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-        <Style Selector="Border.glanceChip.missing">
+        <Style Selector="Button.open.accent Path.openIcon">
+            <Setter Property="Fill" Value="{StaticResource OnAccentBrush}" />
+        </Style>
+        <Style Selector="Button.open Path.chevron">
+            <Setter Property="Width" Value="11" />
+            <Setter Property="Height" Value="11" />
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="Stroke" Value="{StaticResource MutedBrush}" />
+            <Setter Property="StrokeThickness" Value="2" />
+            <Setter Property="StrokeLineCap" Value="Round" />
+            <Setter Property="StrokeJoin" Value="Round" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="StackPanel.group">
+            <Setter Property="Orientation" Value="Horizontal" />
+            <Setter Property="Spacing" Value="6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="StackPanel.openGroup">
+            <Setter Property="Spacing" Value="8" />
+        </Style>
+        <!-- Thin lines between the groups that share a line. -->
+        <Style Selector="v|ToolbarPanel > Border">
+            <Setter Property="BorderThickness" Value="1,0,0,0" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Padding" Value="11,0,0,0" />
+        </Style>
+        <Style Selector="v|ToolbarPanel > Border.divided">
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+        </Style>
+        <!-- Fix stands out whenever something is missing (it only shows then). -->
+        <Style Selector="Button.tool.fix /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="{StaticResource MissingSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource TroubleBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{StaticResource MissingBrush}" />
         </Style>
-        <Style Selector="Border.glanceChip.missing TextBlock">
+        <Style Selector="Button.tool.fix:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#40F0616D" />
+            <Setter Property="Foreground" Value="{StaticResource MissingBrush}" />
+        </Style>
+        <Style Selector="Button.tool.fix TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <!-- The slim line of the song's own marks under its name. -->
+        <Style Selector="WrapPanel.fieldsLine > :is(Control)">
+            <Setter Property="Margin" Value="0,0,18,6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="ComboBox.slim, TextBox.slim">
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Padding" Value="10,4" />
+        </Style>
+        <Style Selector="ToggleButton.heart">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.heart:checked /template/ ContentPresenter#PART_ContentPresenter, ToggleButton.heart:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.heart Path">
+            <Setter Property="Width" Value="15" />
+            <Setter Property="Height" Value="15" />
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="Stroke" Value="{StaticResource FaintBrush}" />
+            <Setter Property="StrokeThickness" Value="1.6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="ToggleButton.heart:checked Path">
+            <Setter Property="Fill" Value="{StaticResource MissingBrush}" />
+            <Setter Property="Stroke" Value="{StaticResource MissingBrush}" />
+        </Style>
+        <!-- Overview's line of counts: each one a quiet link to its tab, with anything missing in red. -->
+        <Style Selector="Button.countLink">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding" Value="4,2" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="Button.countLink TextBlock.count">
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <Style Selector="Button.countLink:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.countLink:disabled TextBlock.count">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
+        <Style Selector="Button.countLink TextBlock.missing">
             <Setter Property="Foreground" Value="{StaticResource MissingBrush}" />
             <Setter Property="FontWeight" Value="SemiBold" />
         </Style>
-        <Style Selector="Border.glanceChip.silent">
-            <Setter Property="Opacity" Value="0.5" />
-        </Style>
-        <Style Selector="Button.seeAll">
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Padding" Value="6,2" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
-        </Style>
-        <Style Selector="TextBlock.newest">
-            <Setter Property="FontWeight" Value="SemiBold" />
-        </Style>
-        <!-- The song's actions: small labelled groups that wrap onto a second line when the panel is narrow. -->
-        <Style Selector="WrapPanel.actionGroups > StackPanel">
-            <Setter Property="Margin" Value="0,0,22,8" />
-        </Style>
-        <Style Selector="WrapPanel.actionGroups > StackPanel > TextBlock.filterLabel">
-            <Setter Property="Margin" Value="2,0,0,5" />
+        <Style Selector="TextBlock.countDot">
+            <Setter Property="Foreground" Value="{StaticResource FaintBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="4,0" />
         </Style>
         <Style Selector="Button.tool">
-            <Setter Property="Padding" Value="12,7" />
-            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="FontSize" Value="12.5" />
             <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
         </Style>
@@ -112,13 +185,6 @@
         </Style>
         <Style Selector="Button.tool.fix Path.toolIcon">
             <Setter Property="Stroke" Value="{StaticResource MissingBrush}" />
-        </Style>
-        <Style Selector="Border.trouble">
-            <Setter Property="Background" Value="{StaticResource MissingSoftBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource TroubleBorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
-            <Setter Property="Padding" Value="14,12" />
         </Style>
         <Style Selector="Border.fixBadge">
             <Setter Property="Background" Value="{StaticResource HoverBrush}" />
@@ -166,8 +232,8 @@
     </UserControl.Resources>
 
     <DockPanel>
-        <!-- Header: what it is, the one big action, then everything else in tabs. -->
-        <StackPanel DockPanel.Dock="Top" Margin="24,22,24,0">
+        <!-- Header: what it is and your own marks on it, then one toolbar with every way to open it and everything else. -->
+        <StackPanel DockPanel.Dock="Top" Margin="24,20,24,0">
             <WrapPanel>
                 <Border Classes="pill" Margin="0,0,8,0" Background="{Binding Item.Daw, Converter={StaticResource DawBrush}}">
                     <TextBlock Text="{Binding Item.Daw}" Classes="pillText" Foreground="{StaticResource InkBrush}" FontWeight="Bold" />
@@ -175,54 +241,61 @@
                 <Border Classes="pill" Margin="0,0,8,0" Background="{StaticResource OkSoftBrush}" IsVisible="{Binding IsLive}">
                     <TextBlock Text="{Binding LiveText}" Classes="pillText" Foreground="{StaticResource OkBrush}" />
                 </Border>
-                <TextBlock Text="{Binding DatesText}" Foreground="{StaticResource MutedBrush}"
+                <TextBlock Text="{Binding HeaderFacts}" Foreground="{StaticResource MutedBrush}"
                            FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <TextBlock Text="{Binding SavesText}" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"
                            TextWrapping="Wrap" IsVisible="{Binding HasOlderSaves}" />
                 <TextBlock Text="{Binding LiveText}" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"
                            TextWrapping="Wrap" Margin="8,0,0,0" IsVisible="{Binding OlderSaveOpen}" />
             </WrapPanel>
-            <TextBlock Text="{Binding Item.Name}" FontFamily="{DynamicResource TitleFont}" FontSize="25" FontWeight="Bold" TextWrapping="Wrap" Margin="0,10,0,0" />
-            <TextBlock Text="{Binding Item.DetailsLine}" FontSize="13" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,0" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding Item.Name}" FontFamily="{DynamicResource TitleFont}" FontSize="25" FontWeight="Bold" TextWrapping="Wrap" Margin="0,8,0,0" />
 
-            <!-- A split button: the big part opens the newest save; the arrow lists the other ways and older versions. -->
-            <Border CornerRadius="{DynamicResource RadiusL}" ClipToBounds="True" Margin="0,18,0,0">
-                <Grid ColumnDefinitions="*,Auto,Auto">
-                    <Button Classes="accent bigAction" CornerRadius="0" Command="{Binding OpenMainCommand}" HorizontalAlignment="Stretch"
-                            ToolTip.Tip="{Binding OpenMainTip}">
-                        <StackPanel Orientation="Horizontal" Spacing="10">
-                            <Path Data="M7,4 L20,12 L7,20 Z" Fill="{StaticResource OnAccentBrush}" Width="13" Height="13" Stretch="Uniform" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding OpenMainText}" VerticalAlignment="Center" />
+            <!-- Your own marks on the song, in one slim line: where it's at, stars, favourite and key (tags and notes are on Details). -->
+            <WrapPanel Classes="fieldsLine" Margin="0,10,0,0">
+                <ComboBox Classes="slim" MinWidth="132" HorizontalAlignment="Left" ItemsSource="{x:Static vm:ProjectsViewModel.StatusChoices}"
+                          SelectedItem="{Binding Item.Status}" ToolTip.Tip="Where it's at" />
+                <v:StarRating Value="{Binding Item.Rating}" />
+                <ToggleButton Classes="heart" IsChecked="{Binding Item.Favourite}" ToolTip.Tip="Favourite: the Favourites filter shows these">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Path Data="M12,20.5 C12,20.5 3,14.6 3,8.6 C3,5.6 5.3,3.5 8.1,3.5 C9.8,3.5 11.2,4.4 12,5.7 C12.8,4.4 14.2,3.5 15.9,3.5 C18.7,3.5 21,5.6 21,8.6 C21,14.6 12,20.5 12,20.5 Z" />
+                        <TextBlock Text="Favourite" VerticalAlignment="Center" />
+                    </StackPanel>
+                </ToggleButton>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="KEY" Classes="filterLabel" VerticalAlignment="Center" Margin="0" />
+                    <TextBox Classes="slim clearButton" Width="150" PlaceholderText="{Binding Item.KeyHint}"
+                             ToolTip.Tip="Worked out from the notes (drums left out) until you type one in"
+                             Text="{Binding Item.MusicalKey, UpdateSourceTrigger=LostFocus}" />
+                </StackPanel>
+            </WrapPanel>
+
+            <!-- One toolbar: the ways to open it on the left; file, export and repair on the right (wrapping under when narrow). -->
+            <v:ToolbarPanel x:Name="Toolbar" Margin="0,10,0,0">
+                <StackPanel Classes="group openGroup">
+                    <Button Classes="open accent" Command="{Binding OpenMainCommand}" ToolTip.Tip="{Binding OpenMainTip}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Path Data="M7,4 L20,12 L7,20 Z" Classes="openIcon" />
+                            <TextBlock Text="{Binding OpenMainText}" />
                         </StackPanel>
                     </Button>
-                    <Border Grid.Column="1" Width="1" Background="{StaticResource OnAccentBrush}" Opacity="0.25" IsVisible="{Binding HasOpenChoices}" />
-                    <Button Grid.Column="2" x:Name="OpenChoices" Classes="accent bigAction" CornerRadius="0" Width="46" Padding="0"
-                            IsVisible="{Binding HasOpenChoices}" ToolTip.Tip="{Binding OpenChoicesTip}">
-                        <Path Data="M6,9 L12,15 L18,9" Stroke="{StaticResource OnAccentBrush}" StrokeThickness="2.2" StrokeLineCap="Round"
-                              StrokeJoin="Round" Width="13" Height="13" Stretch="Uniform" />
+                    <Button Classes="open" Command="{Binding OpenInDawCommand}" IsVisible="{Binding IsFlStudio}" ToolTip.Tip="Open the newest save in FL Studio itself">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Path Data="M7,4 L20,12 L7,20 Z" Classes="openIcon" />
+                            <TextBlock Text="Open in FL Studio" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="OlderSaves" Classes="open" IsVisible="{Binding HasOlderSaves}" ToolTip.Tip="{Binding OlderSavesTip}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Older saves" />
+                            <Path Data="M6,9 L12,15 L18,9" Classes="chevron" />
+                        </StackPanel>
                         <Button.Flyout>
-                            <MenuFlyout Placement="BottomEdgeAlignedRight" />
+                            <MenuFlyout Placement="BottomEdgeAlignedLeft" />
                         </Button.Flyout>
                     </Button>
-                </Grid>
-            </Border>
-
-            <!-- Everything else you can do with the song, out in the open in small labelled groups (no ⋯ menu to hunt in). -->
-            <WrapPanel Classes="actionGroups" Margin="0,14,0,0">
-                <StackPanel IsVisible="{Binding IsFlStudio}">
-                    <TextBlock Text="OPEN" Classes="filterLabel" />
-                    <StackPanel Orientation="Horizontal">
-                        <Button Classes="tool" Command="{Binding OpenInDawCommand}" ToolTip.Tip="Open the newest save in FL Studio itself">
-                            <StackPanel Orientation="Horizontal" Spacing="7">
-                                <Path Data="M7,4 L20,12 L7,20 Z" Classes="toolIcon" />
-                                <TextBlock Text="In FL Studio" />
-                            </StackPanel>
-                        </Button>
-                    </StackPanel>
                 </StackPanel>
-                <StackPanel>
-                    <TextBlock Text="FILE" Classes="filterLabel" />
-                    <StackPanel Orientation="Horizontal">
+                <Border>
+                    <StackPanel Classes="group">
                         <Button Classes="tool" Command="{Binding RevealCommand}" ToolTip.Tip="Show the project file in its folder">
                             <StackPanel Orientation="Horizontal" Spacing="7">
                                 <Path Data="{StaticResource NavIcon.Projects}" Classes="toolIcon" />
@@ -236,28 +309,25 @@
                             </StackPanel>
                         </Button>
                     </StackPanel>
-                </StackPanel>
-                <StackPanel>
-                    <TextBlock Text="EXPORT" Classes="filterLabel" />
-                    <StackPanel Orientation="Horizontal">
+                </Border>
+                <Border>
+                    <StackPanel Classes="group">
                         <Button Classes="tool" Content="MIDI…" Command="{Binding ShowMidiCommand}" IsEnabled="{Binding CanExtractMidi}" ToolTip.Tip="{Binding MidiNote}" />
                         <Button Classes="tool" Content="Presets…" Command="{Binding ShowPresetsCommand}" IsEnabled="{Binding CanExtractPresets}"
                                 ToolTip.Tip="See the plugin settings saved in this project and export them as presets" />
                         <Button Classes="tool" Content="DAWproject" Command="{Binding ExportToBitwigCommand}" IsVisible="{Binding IsFlStudio}"
                                 ToolTip.Tip="Convert this FL Studio project into a DAWproject file, the open format Bitwig and Studio One import" />
                     </StackPanel>
-                </StackPanel>
-                <StackPanel>
-                    <StackPanel.IsVisible>
+                </Border>
+                <Border>
+                    <Border.IsVisible>
                         <MultiBinding Converter="{x:Static BoolConverters.Or}">
                             <Binding Path="CanFix" />
                             <Binding Path="CanCheckWithDaw" />
                         </MultiBinding>
-                    </StackPanel.IsVisible>
-                    <TextBlock Text="REPAIR AND CHECK" Classes="filterLabel" />
-                    <StackPanel Orientation="Horizontal">
-                        <Button Classes="tool fix" Command="{Binding PlanFixCommand}" IsVisible="{Binding CanFix}"
-                                ToolTip.Tip="Find what's missing on your drives and save a fixed copy next to the original">
+                    </Border.IsVisible>
+                    <StackPanel Classes="group">
+                        <Button Classes="tool fix" Command="{Binding PlanFixCommand}" IsVisible="{Binding CanFix}" ToolTip.Tip="{Binding FixTip}">
                             <StackPanel Orientation="Horizontal" Spacing="7">
                                 <Path Data="M14.7,6.3 a4,4 0 0 0 -5.4,5.4 L4,17 L7,20 L12.3,14.7 a4,4 0 0 0 5.4,-5.4 L15.5,11.5 L12.5,8.5 Z" Classes="toolIcon" />
                                 <TextBlock Text="{Binding FixButtonText}" />
@@ -266,8 +336,8 @@
                         <Button Classes="tool" Content="{Binding CheckWithDawText}" Command="{Binding CheckWithDawCommand}" IsVisible="{Binding CanCheckWithDaw}"
                                 ToolTip.Tip="Compare what the app read from this file with what the DAW shows for it" />
                     </StackPanel>
-                </StackPanel>
-            </WrapPanel>
+                </Border>
+            </v:ToolbarPanel>
             <Border Classes="note" Margin="0,10,0,0" Padding="12,8" CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource AccentFaintBrush}"
                     IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                 <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12" />
@@ -317,193 +387,113 @@
 
         <TabControl x:Name="Tabs" Margin="12,14,12,0" Classes="detailTabs">
             <TabItem Header="Overview" IsSelected="{Binding PreviewShown, Mode=OneWayToSource}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="12,14,12,20">
-                        <!-- Trouble first: what's missing, in one red card. -->
-                        <Border Classes="trouble" IsVisible="{Binding Item.HasMissing}" Margin="0,0,0,18">
-                            <DockPanel>
-                                <Border DockPanel.Dock="Left" Width="34" Height="34" CornerRadius="{DynamicResource RadiusM}" Background="#33F0616D" Margin="0,0,14,0">
-                                    <TextBlock Text="!" FontWeight="Bold" FontSize="16" Foreground="{StaticResource MissingBrush}"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                </Border>
-                                <Button DockPanel.Dock="Right" Classes="accent" Padding="16,8" VerticalAlignment="Center" Margin="12,0,0,0"
-                                        Command="{Binding PlanFixCommand}" IsVisible="{Binding CanFix}"
-                                        ToolTip.Tip="See what can be found on your drives, then save a fixed copy next to the original">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Path Data="M14.7,6.3 a4,4 0 0 0 -5.4,5.4 L4,17 L7,20 L12.3,14.7 a4,4 0 0 0 5.4,-5.4 L15.5,11.5 L12.5,8.5 Z"
-                                              Stroke="{StaticResource OnAccentBrush}" StrokeThickness="1.8" StrokeJoin="Round" Width="14" Height="14" Stretch="Uniform" />
-                                        <TextBlock Text="{Binding FixButtonText}" VerticalAlignment="Center" FontWeight="SemiBold" />
-                                    </StackPanel>
-                                </Button>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Item.MissingText, StringFormat='{}{0} missing'}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                    <TextBlock Text="It will open with gaps. Fix finds what it can and saves a repaired copy." FontSize="12"
-                                               Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
-                                </StackPanel>
+                <!-- A line of counts, then the arrangement filling the rest. Fix's list opens under it, with a divider to drag between them. -->
+                <Grid x:Name="OverviewGrid" Margin="12,10,12,12" RowDefinitions="Auto,*,Auto,Auto">
+                    <WrapPanel Margin="-4,0,0,8">
+                        <Button Classes="countLink" Tag="Plugins" Click="OnSeeAll" ToolTip.Tip="See every plugin on the Plugins tab">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Classes="count" Text="{Binding PluginsCountText}" />
+                                <TextBlock Classes="missing" Text="{Binding MissingPluginsText, StringFormat='({0})'}"
+                                           IsVisible="{Binding MissingPluginsText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            </StackPanel>
+                        </Button>
+                        <TextBlock Classes="countDot" Text="·" />
+                        <Button Classes="countLink" Tag="Samples" Click="OnSeeAll" ToolTip.Tip="See every sample on the Samples tab">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Classes="count" Text="{Binding SamplesCountText}" />
+                                <TextBlock Classes="missing" Text="{Binding MissingSamplesText, StringFormat='({0})'}"
+                                           IsVisible="{Binding MissingSamplesText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            </StackPanel>
+                        </Button>
+                        <TextBlock Classes="countDot" Text="·" />
+                        <Button Classes="countLink" Tag="Saves" Click="OnSeeAll" IsEnabled="{Binding HasOlderSaves}" ToolTip.Tip="See every save on the Saves tab">
+                            <TextBlock Classes="count" Text="{Binding SavesCountText}" />
+                        </Button>
+                        <TextBlock Classes="countDot" Text="·" />
+                        <Button Classes="countLink" Tag="Details" Click="OnSeeAll" ToolTip.Tip="See the tracks, your tags and notes, and the file's details">
+                            <TextBlock Classes="count" Text="{Binding TracksCountText}" />
+                        </Button>
+                    </WrapPanel>
+
+                    <!-- The arrangement. Read when Overview first shows; Full size opens it in its own window. -->
+                    <v:ArrangementPanel Grid.Row="1" Margin="-12,-4,-12,0" IsVisible="{Binding CanPreview}" />
+
+                    <GridSplitter x:Name="ArrangementDivider" Grid.Row="2" Height="14" Background="Transparent" ResizeDirection="Rows"
+                                  IsVisible="{Binding IsFixOpen}" DragCompleted="OnArrangementDividerMoved"
+                                  ToolTip.Tip="Drag to give the arrangement or Fix's list more room" />
+
+                    <!-- Fix's preview: one line per missing thing and the best guess, then save a fixed copy. -->
+                    <Border Grid.Row="3" Classes="panel fixPanel" IsVisible="{Binding IsFixOpen}">
+                        <DockPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding FixSummary}" FontSize="12" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="FIX: WHAT IT WILL DO" Classes="filterLabel" Margin="0" />
                             </DockPanel>
-                        </Border>
-
-                        <!-- Fix's preview: one line per missing thing and the best guess, then save a fixed copy. -->
-                        <Border Classes="panel fixPanel" IsVisible="{Binding IsFixOpen}" Margin="0,-6,0,18">
-                            <StackPanel Spacing="4">
-                                <DockPanel Margin="0,0,0,6">
-                                    <TextBlock DockPanel.Dock="Right" Text="{Binding FixSummary}" FontSize="12" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
-                                    <TextBlock Text="FIX: WHAT IT WILL DO" Classes="filterLabel" Margin="0" />
-                                </DockPanel>
-                                <ItemsControl ItemsSource="{Binding FixRows}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:FixRow">
-                                            <Border Classes="listRow">
-                                                <DockPanel>
-                                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding Ticked}" IsVisible="{Binding CanTick}" VerticalAlignment="Top"
-                                                              Margin="0,0,6,0" MinWidth="0" ToolTip.Tip="Use this file in the fixed copy" />
-                                                    <Border DockPanel.Dock="Left" Width="34" IsVisible="{Binding !CanTick}" />
-                                                    <Border DockPanel.Dock="Right" Classes="pill fixBadge" VerticalAlignment="Top" Margin="10,0,0,0"
-                                                            Classes.relink="{Binding IsRelink}" Classes.suggestion="{Binding IsSuggestion}" Classes.missing="{Binding IsMissing}">
-                                                        <TextBlock Text="{Binding ActionText}" Classes="pillText" />
-                                                    </Border>
-                                                    <StackPanel>
-                                                        <TextBlock TextWrapping="Wrap">
-                                                            <Run Text="{Binding KindText}" Foreground="{StaticResource MutedBrush}" FontSize="12" />
-                                                            <Run Text="  " />
-                                                            <Run Text="{Binding Name}" FontWeight="SemiBold" />
-                                                        </TextBlock>
-                                                        <TextBlock Text="{Binding Use, StringFormat='→ {0}'}" IsVisible="{Binding HasUse}" FontSize="12"
-                                                                   Foreground="{StaticResource AccentBrush}" TextTrimming="PrefixCharacterEllipsis" ToolTip.Tip="{Binding Use}" />
-                                                        <TextBlock Text="{Binding Note}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
-                                                    </StackPanel>
-                                                </DockPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <TextBlock Text="{Binding FixFootnote}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
-                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-                                    <Button Classes="accent" Content="Save fixed copy" Command="{Binding SaveFixedCommand}" Padding="16,8"
-                                            ToolTip.Tip="Write the ticked samples into a copy next to the original" />
-                                    <Button Content="Cancel" Command="{Binding CloseFixCommand}" Padding="16,8" />
-                                </StackPanel>
+                            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                                <Button Classes="accent" Content="Save fixed copy" Command="{Binding SaveFixedCommand}" Padding="16,8"
+                                        ToolTip.Tip="Write the ticked samples into a copy next to the original" />
+                                <Button Content="Cancel" Command="{Binding CloseFixCommand}" Padding="16,8" />
                             </StackPanel>
-                        </Border>
-
-                        <!-- The arrangement, big, the first thing you see. Read when Overview first shows; Full size opens it in its own window. -->
-                        <v:ArrangementPanel Height="340" Margin="-12,-12,-12,6" IsVisible="{Binding CanPreview}" />
-
-                        <!-- Below it: your own fields on the left, the song at a glance on the right (stacked when narrow). -->
-                        <Grid x:Name="OverviewColumns" ColumnDefinitions="*,28,*" RowDefinitions="Auto,Auto,Auto">
-                            <StackPanel x:Name="FieldsColumn">
-                                <TextBlock Text="WHERE IT'S AT" Classes="filterLabel" />
-                                <ListBox Classes="chips" ItemsSource="{x:Static vm:ProjectsViewModel.StatusChoices}" SelectedItem="{Binding Item.Status}"
-                                         Margin="0,2,0,16" AutoScrollToSelectedItem="False">
-                                    <ListBox.ItemsPanel>
-                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                                    </ListBox.ItemsPanel>
-                                </ListBox>
-
-                                <Grid ColumnDefinitions="*,16,*" Margin="0,0,0,16">
-                                    <StackPanel>
-                                        <TextBlock Text="RATING" Classes="filterLabel" />
-                                        <ComboBox HorizontalAlignment="Stretch" ItemsSource="{x:Static vm:ProjectsViewModel.RatingChoices}"
-                                                  SelectedItem="{Binding Item.Rating}">
-                                            <ComboBox.ItemTemplate>
-                                                <DataTemplate x:DataType="sys:Int32">
-                                                    <TextBlock Text="{Binding Converter={StaticResource RatingText}}" />
-                                                </DataTemplate>
-                                            </ComboBox.ItemTemplate>
-                                        </ComboBox>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="FAVOURITE" Classes="filterLabel" />
-                                        <ToggleSwitch IsChecked="{Binding Item.Favourite}" OnContent="Yes" OffContent="No" />
-                                    </StackPanel>
-                                </Grid>
-
-                                <Grid ColumnDefinitions="*,16,2*" Margin="0,0,0,16">
-                                    <StackPanel>
-                                        <TextBlock Text="KEY" Classes="filterLabel" />
-                                        <TextBox Classes="clearButton" PlaceholderText="{Binding Item.KeyHint}"
-                                                 ToolTip.Tip="Worked out from the notes (drums left out) until you type one in"
-                                                 Text="{Binding Item.MusicalKey, UpdateSourceTrigger=LostFocus}" />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="TAGS" Classes="filterLabel" />
-                                        <TextBox Classes="clearButton" PlaceholderText="techno, live set, collab"
-                                                 Text="{Binding Item.TagsText, UpdateSourceTrigger=LostFocus}" />
-                                    </StackPanel>
-                                </Grid>
-
-                                <TextBlock Text="NOTES" Classes="filterLabel" />
-                                <TextBox MinHeight="90" AcceptsReturn="True" TextWrapping="Wrap"
-                                         PlaceholderText="Ideas, to-dos, what this needs next…"
-                                         Text="{Binding Item.Notes, UpdateSourceTrigger=LostFocus}" />
-                            </StackPanel>
-
-                            <StackPanel x:Name="GlanceColumn" Grid.Column="2" Spacing="18">
-                                <StackPanel>
+                            <TextBlock DockPanel.Dock="Bottom" Text="{Binding FixFootnote}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                            <ItemsControl Classes="longList" ItemsSource="{Binding FixRows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:FixRow">
+                                <Border Classes="listRow">
                                     <DockPanel>
-                                        <Button DockPanel.Dock="Right" Classes="seeAll" Content="All plugins" Tag="Plugins" Click="OnSeeAll" />
-                                        <TextBlock Text="{Binding GlancePluginsLabel}" Classes="filterLabel" VerticalAlignment="Center" Margin="0" />
+                                        <CheckBox DockPanel.Dock="Left" IsChecked="{Binding Ticked}" IsVisible="{Binding CanTick}" VerticalAlignment="Top"
+                                                  Margin="0,0,6,0" MinWidth="0" ToolTip.Tip="Use this file in the fixed copy" />
+                                        <Border DockPanel.Dock="Left" Width="34" IsVisible="{Binding !CanTick}" />
+                                        <Border DockPanel.Dock="Right" Classes="pill fixBadge" VerticalAlignment="Top" Margin="10,0,0,0"
+                                                Classes.relink="{Binding IsRelink}" Classes.suggestion="{Binding IsSuggestion}" Classes.missing="{Binding IsMissing}">
+                                            <TextBlock Text="{Binding ActionText}" Classes="pillText" />
+                                        </Border>
+                                        <StackPanel>
+                                            <TextBlock TextWrapping="Wrap">
+                                                <Run Text="{Binding KindText}" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+                                                <Run Text="  " />
+                                                <Run Text="{Binding Name}" FontWeight="SemiBold" />
+                                            </TextBlock>
+                                            <!-- Where the project expected it: a clue to where it went (and selectable, to copy). -->
+                                            <SelectableTextBlock Text="{Binding LookedFor}" IsVisible="{Binding HasLookedFor}" FontSize="11.5"
+                                                                 Foreground="{StaticResource FaintBrush}" TextWrapping="Wrap" Margin="0,1,0,2" />
+                                            <TextBlock Text="{Binding Use, StringFormat='→ {0}'}" FontSize="12"
+                                                       Foreground="{StaticResource AccentBrush}" TextTrimming="PrefixCharacterEllipsis" ToolTip.Tip="{Binding Use}">
+                                                <TextBlock.IsVisible>
+                                                    <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                                        <Binding Path="HasUse" />
+                                                        <Binding Path="!HasChoices" />
+                                                    </MultiBinding>
+                                                </TextBlock.IsVisible>
+                                            </TextBlock>
+                                            <!-- Several copies or close matches: the best is picked, the others are a click away. -->
+                                            <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding Chosen}" IsVisible="{Binding HasChoices}"
+                                                      HorizontalAlignment="Stretch" FontSize="12" Margin="0,2,0,2" ToolTip.Tip="{Binding ChoicesTip}">
+                                                <ComboBox.ItemTemplate>
+                                                    <DataTemplate x:DataType="sys:String">
+                                                        <TextBlock Text="{Binding}" FontSize="12" TextTrimming="PrefixCharacterEllipsis" ToolTip.Tip="{Binding}" />
+                                                    </DataTemplate>
+                                                </ComboBox.ItemTemplate>
+                                            </ComboBox>
+                                            <TextBlock Text="{Binding Note}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                                        </StackPanel>
                                     </DockPanel>
-                                    <ItemsControl ItemsSource="{Binding GlancePlugins}" Margin="0,6,0,0">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="vm:PluginRow">
-                                                <Border Classes="glanceChip" Classes.missing="{Binding !Installed}" Classes.silent="{Binding Silent}"
-                                                        ToolTip.Tip="{Binding KindText}">
-                                                    <TextBlock Text="{Binding Name}" />
-                                                </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                    <TextBlock Text="{Binding GlancePluginsMore}" FontSize="12" Foreground="{StaticResource MutedBrush}"
-                                               IsVisible="{Binding GlancePluginsMore, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                </StackPanel>
-
-                                <StackPanel>
-                                    <DockPanel>
-                                        <Button DockPanel.Dock="Right" Classes="seeAll" Content="All samples" Tag="Samples" Click="OnSeeAll"
-                                                IsVisible="{Binding Samples.Count, Converter={StaticResource NonZero}}" />
-                                        <TextBlock Text="{Binding Samples.Count, StringFormat='SAMPLES · {0}'}" Classes="filterLabel" VerticalAlignment="Center" Margin="0" />
-                                    </DockPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
-                                        <Ellipse Width="8" Height="8" VerticalAlignment="Center" Fill="{StaticResource MissingBrush}"
-                                                 IsVisible="{Binding Item.MissingSamples, Converter={StaticResource NonZero}}" />
-                                        <TextBlock Text="{Binding GlanceSamples}" FontSize="13" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </StackPanel>
-
-                                <StackPanel>
-                                    <DockPanel>
-                                        <Button DockPanel.Dock="Right" Classes="seeAll" Content="All saves" Tag="Saves" Click="OnSeeAll"
-                                                IsVisible="{Binding HasOlderSaves}" />
-                                        <TextBlock Text="LATEST SAVES" Classes="filterLabel" VerticalAlignment="Center" Margin="0" />
-                                    </DockPanel>
-                                    <ItemsControl ItemsSource="{Binding GlanceSaves}" Margin="0,4,0,0">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="vm:SaveGlance">
-                                                <DockPanel Margin="0,3">
-                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding WhenText}" FontSize="12" Margin="10,0,0,0"
-                                                               FontFamily="{DynamicResource NumberFont}" Foreground="{StaticResource MutedBrush}" />
-                                                    <TextBlock Text="{Binding Name}" FontSize="13" TextTrimming="CharacterEllipsis"
-                                                               Classes.newest="{Binding Newest}" ToolTip.Tip="{Binding Name}" />
-                                                </DockPanel>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </StackPanel>
-                            </StackPanel>
-                        </Grid>
-                    </StackPanel>
-                </ScrollViewer>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </DockPanel>
+                    </Border>
+                </Grid>
             </TabItem>
 
             <TabItem Header="Plugins">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="12,14,12,20">
-                        <TextBlock Text="{Binding PluginHeader}" Classes="sectionHeader" Margin="0,0,0,6" />
-                        <ItemsControl ItemsSource="{Binding VisiblePlugins}">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding PluginHeader}" Classes="sectionHeader" Margin="12,14,12,6" />
+                        <Button DockPanel.Dock="Bottom" Content="{Binding SilentToggleText}" Background="Transparent" Padding="8,4" Margin="4,4,12,12"
+                                HorizontalAlignment="Left" FontSize="12" Foreground="{StaticResource AccentBrush}"
+                                Command="{Binding ToggleSilentCommand}" ToolTip.Tip="Synths on channels that play no notes in the song"
+                                IsVisible="{Binding SilentCount, Converter={StaticResource NonZero}}" />
+                        <ItemsControl Classes="longList" Padding="12,0,12,8" ItemsSource="{Binding VisiblePlugins}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:PluginRow">
                                     <Border Classes="listRow">
@@ -555,19 +545,13 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <Button Content="{Binding SilentToggleText}" Background="Transparent" Padding="8,4" Margin="-8,4,0,0"
-                                HorizontalAlignment="Left" FontSize="12" Foreground="{StaticResource AccentBrush}"
-                                Command="{Binding ToggleSilentCommand}" ToolTip.Tip="Synths on channels that play no notes in the song"
-                                IsVisible="{Binding SilentCount, Converter={StaticResource NonZero}}" />
-                    </StackPanel>
-                </ScrollViewer>
+                    </DockPanel>
             </TabItem>
 
             <TabItem Header="Samples">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="12,14,12,20">
-                        <TextBlock Text="{Binding SampleHeader}" Classes="sectionHeader" Margin="0,0,0,6" />
-                        <ItemsControl ItemsSource="{Binding Samples}">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding SampleHeader}" Classes="sectionHeader" Margin="12,14,12,6" />
+                        <ItemsControl Classes="longList" Padding="12,0,12,20" ItemsSource="{Binding Samples}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:SampleRow">
                                     <Border Classes="listRow">
@@ -600,15 +584,13 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </StackPanel>
-                </ScrollViewer>
+                    </DockPanel>
             </TabItem>
 
             <TabItem Header="Saves" IsVisible="{Binding HasOlderSaves}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="12,14,12,20">
-                        <TextBlock Text="{Binding OlderSavesHeader}" Classes="sectionHeader" Margin="0,0,0,6" />
-                        <ItemsControl ItemsSource="{Binding OlderSaves}">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding OlderSavesHeader}" Classes="sectionHeader" Margin="12,14,12,6" />
+                        <ItemsControl Classes="longList" Padding="12,0,12,20" ItemsSource="{Binding OlderSaves}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="lib:ProjectSummary">
                                     <Border Classes="listRow" Padding="10,4">
@@ -630,14 +612,21 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </StackPanel>
-                </ScrollViewer>
+                    </DockPanel>
             </TabItem>
 
             <TabItem Header="Details">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="12,14,12,20">
-                        <TextBlock Text="Tracks and channels" Classes="sectionHeader" Margin="0,0,0,8" />
+                        <TextBlock Text="Your notes" Classes="sectionHeader" Margin="0,0,0,8" />
+                        <TextBlock Text="TAGS" Classes="filterLabel" />
+                        <TextBox Classes="clearButton" PlaceholderText="techno, live set, collab"
+                                 Text="{Binding Item.TagsText, UpdateSourceTrigger=LostFocus}" />
+                        <TextBlock Text="NOTES" Classes="filterLabel" Margin="0,12,0,0" />
+                        <TextBox MinHeight="90" AcceptsReturn="True" TextWrapping="Wrap"
+                                 PlaceholderText="Ideas, to-dos, what this needs next…"
+                                 Text="{Binding Item.Notes, UpdateSourceTrigger=LostFocus}" />
+                        <TextBlock Text="Tracks and channels" Classes="sectionHeader" Margin="0,20,0,8" />
                         <ItemsControl ItemsSource="{Binding Tracks}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>

@@ -45,6 +45,36 @@ public class ViewModelTests : IDisposable
         new(_db, _sounds, watch, pluginScanner, Path.Combine(_root, "data"));
 
     [Fact]
+    public void A_new_save_keeps_the_songs_rating_and_clearing_it_sticks()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        ProjectItem Song() => Main().Projects.Items.Single(i => i.Name == "Didums");
+        Save("Didums_1", 1);
+        var first = Song();
+        first.Rating = 4;
+        first.Status = "Mixing";
+        first.Favourite = true;
+        first.Notes = "needs vocals";
+
+        Save("Didums_2", 2);
+        var song = Song();
+        Assert.Equal("Didums_2", song.FileName);
+        Assert.Equal((4, "Mixing", true, "needs vocals"), (song.Rating, song.Status, song.Favourite, song.Notes));
+
+        song.Rating = 0;
+        song.Favourite = false;
+        song = Song();
+        Assert.Equal((0, false), (song.Rating, song.Favourite));
+        Assert.All(_db.Projects(), p => Assert.Equal(0, p.Rating));
+    }
+
+    [Fact]
     public void A_song_sits_under_the_year_it_was_first_made_and_shows_its_rework()
     {
         ProjectSummary Save(string name, DateTime saved, int notes, string[] plugins) => new()
@@ -60,16 +90,51 @@ public class ViewModelTests : IDisposable
         Assert.EndsWith($"2 saves · reworked {newest.Modified.Year}", item.DetailsLine);
 
         var detail = new ProjectDetailViewModel(_db, item, Main());
-        Assert.True(detail.HasOpenChoices);
+        Assert.True(detail.HasRunChoices);
         Assert.Equal([$"{newest.Modified.Year} rework (newest) · Didums_77 · {newest.Modified:d MMM yyyy}", "2019 original · Didums_12 · 2 Feb 2019"],
                      detail.RunChoices.Select(r => r.Header));
         Assert.StartsWith("First made 2 Feb 2019 · saved ", detail.DatesText);
 
-        // Overview's glance: the newest save first, then the older ones by date.
-        Assert.Equal(["Didums_77", "Didums_12"], detail.GlanceSaves.Select(s => s.Name));
-        Assert.True(detail.GlanceSaves[0].Newest);
-        Assert.Equal("2 Feb 2019", detail.GlanceSaves[1].WhenText);
-        Assert.Equal("None used", detail.GlanceSamples);
+        // Overview's line of counts.
+        Assert.Equal("2 saves", detail.SavesCountText);
+        Assert.Equal("No samples", detail.SamplesCountText);
+        Assert.Equal("", detail.MissingSamplesText);
+    }
+
+    [Fact]
+    public async Task A_fixed_copy_is_listed_with_its_song_and_still_asks_whether_it_loaded_after_leaving_it()
+    {
+        var lib = Path.Combine(_root, "Lib", "Drums");
+        Directory.CreateDirectory(lib);
+        File.WriteAllBytes(Path.Combine(lib, "Kick 01.wav"), [0]);
+        _db.SetList(Scanner.SampleFoldersKey, [Path.Combine(_root, "Lib")]);
+        new Scanner(_db).ScanSampleFolders();
+        ScanFixtures();
+        var projects = Main().Projects;
+        projects.Reload();
+        projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
+        var detail = projects.Detail!;
+
+        await detail.PlanFixCommand.ExecuteAsync(null);
+        var kick = detail.FixRows.Single(r => r.HasLookedFor);
+        Assert.Equal(@"FL Studio looked for: C:\Samples\Drums\Kick 01.wav", kick.LookedFor);
+        await detail.SaveFixedCommand.ExecuteAsync(null);
+
+        // Listed straight away as the song's newest save, still picked, still asking.
+        var song = projects.Items.Single(i => i.Daw == "FL Studio");
+        Assert.Equal("Night Drive (fixed)", song.FileName);
+        Assert.Equal(["Night Drive"], song.OlderSaves.Select(o => o.Name));
+        Assert.Same(song, projects.Selected);
+        Assert.True(projects.Detail!.HasPendingFix);
+
+        // Leave it and come back: the question is still there until it's answered.
+        projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
+        projects.Selected = song;
+        Assert.True(projects.Detail!.HasPendingFix);
+        projects.Detail.KeepFixedCommand.Execute(null);
+        projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
+        projects.Selected = song;
+        Assert.False(projects.Detail!.HasPendingFix);
     }
 
     [Fact]
@@ -166,6 +231,59 @@ public class ViewModelTests : IDisposable
     {
         var main = Main();
         Assert.Same(main.Settings, main.SelectedNav.Page);
+    }
+
+    [Fact]
+    public async Task A_scan_that_finds_nothing_new_leaves_the_pages_as_they_are()
+    {
+        _db.AddRoot(_root);
+        var main = Main();
+        await main.ScanAsync(false, plugins: false);
+        var row = main.Projects.Items.First(i => i.Name == "Night Drive");
+        var plugins = main.Plugins.Items;
+
+        await main.ScanAsync(false, plugins: false);
+        Assert.Same(row, main.Projects.Items.First(i => i.Name == "Night Drive"));
+        Assert.Same(plugins, main.Plugins.Items);
+
+        // A changed project is read again, and the pages with it.
+        File.SetLastWriteTime(Path.Combine(_root, "Night Drive.flp"), DateTime.Now.AddMinutes(5));
+        await main.ScanAsync(false, plugins: false);
+        Assert.NotSame(row, main.Projects.Items.First(i => i.Name == "Night Drive"));
+        Assert.NotSame(plugins, main.Plugins.Items);
+    }
+
+    [Fact]
+    public async Task Projects_and_sounds_saved_while_the_app_is_open_are_taken_in_without_a_scan()
+    {
+        var quiet = (MainViewModel.ProjectWatchQuiet, SoundsViewModel.SampleWatchQuiet);
+        MainViewModel.ProjectWatchQuiet = SoundsViewModel.SampleWatchQuiet = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            var songs = Directory.CreateDirectory(Path.Combine(_root, "Songs")).FullName;
+            var lib = Directory.CreateDirectory(Path.Combine(_root, "Lib")).FullName;
+            _db.AddRoot(songs);
+            _db.SetList(Scanner.SampleFoldersKey, [lib]);
+            var main = Main();
+            await main.ScanAsync(false, plugins: false);
+            await Until(() => !main.Sounds.IsBusy);
+            Assert.Empty(main.Projects.Items);
+
+            // A song saved in a DAW, and a sound bounced into the sample folder (one in a hidden folder is left out).
+            Fixtures.FlStudioProject(songs, "Fresh Idea");
+            Synth.Write(Path.Combine(lib, "Bounce 01.wav"), Synth.Kick(1));
+            Directory.CreateDirectory(Path.Combine(lib, ".cache"));
+            Synth.Write(Path.Combine(lib, ".cache", "Temp.wav"), Synth.Kick(2));
+            await Until(() => main.Projects.Items.Any(i => i.Name == "Fresh Idea") && main.Sounds.Org.Sounds.Count == 1);
+            Assert.EndsWith("Bounce 01.wav", main.Sounds.Org.Sounds[0].Path);
+
+            // Deleted: the song stays listed, marked missing; the sound is forgotten.
+            File.Delete(Path.Combine(songs, "Fresh Idea.flp"));
+            File.Delete(Path.Combine(lib, "Bounce 01.wav"));
+            await Until(() => main.Projects.Items.Single().FileMissing && main.Sounds.Org.Sounds.Count == 0);
+            main.Shutdown();
+        }
+        finally { (MainViewModel.ProjectWatchQuiet, SoundsViewModel.SampleWatchQuiet) = quiet; }
     }
 
     [Fact]
