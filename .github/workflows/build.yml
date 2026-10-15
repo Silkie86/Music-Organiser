@@ -41,7 +41,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release
+      # A test that hangs fails after 10 minutes and is named in the log, instead of holding the runner.
+      - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release --blame-hang-timeout 10m --blame-hang-dump-type none
       # Builds the Avalonia app too, and runs its tests without a screen (or a sound card).
       - run: dotnet test tests/MusicOrganiser.Avalonia.Tests -c Release
         env:
