@@ -102,6 +102,7 @@ public sealed partial class SoundsViewModel
         var map = _map ??= Org.Library.Map();
         var newest = Items.Count == 0 ? [] : Items.OrderBy(s => s.Added).Select((s, i) => (s.Id, i)).ToDictionary(t => t.Id, t => t.i);
         var stars = new List<GalaxyStar>(map.Count);
+        var keep = MakeFilter();
         foreach (var s in Items)
         {
             if (!map.TryGetValue(s.Id, out var p)) continue;
@@ -114,7 +115,7 @@ public sealed partial class SoundsViewModel
                 "Age" => StarColours.Age(Items.Count > 1 ? newest[s.Id] / (double)(Items.Count - 1) : 1),
                 _ => StarColours.Type(s.Type),
             };
-            stars.Add(new GalaxyStar(s, p.X, p.Y, colour, Matches(s)));
+            stars.Add(new GalaxyStar(s, p.X, p.Y, colour, keep(s)));
         }
         Stars = stars;
         Regions = FindRegions(stars);

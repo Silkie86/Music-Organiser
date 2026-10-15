@@ -158,21 +158,56 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>Settings › Most liked: how much each sign of liking a sound counts.</summary>
     public const string LikedWeightsKey = "liked_weights";
 
-    public void Reload()
+    public void Reload() => Show(LoadAll(Org.Sounds));
+
+    /// <summary>
+    /// The same, with the database reads, scores and counts worked out off the UI thread: with 357,000 sounds they held
+    /// the window up for seconds.
+    /// </summary>
+    public async Task ReloadAsync()
+    {
+        var items = Org.Sounds;
+        try { Show(await UiWork.Run(() => LoadAll(items))); }
+        catch (Exception e) { Message = $"Couldn't reload the sounds: {e.Message}"; }
+    }
+
+    bool _showing;
+
+    sealed record Loaded(IReadOnlyList<Sound> Items, double[] Liked, IReadOnlyList<TypeCount> TypeCounts,
+                         IReadOnlyList<HistoryItem> History, ModelInfo Model);
+
+    /// <summary>Everything the page shows about the sounds, worked out on any thread. Changes nothing the window shows.</summary>
+    Loaded LoadAll(IReadOnlyList<Sound> items)
     {
         Org.ApplyUsage(_db.SampleUsageByAge(DateTime.Now.AddYears(-1)));
-        Items = Org.Sounds;
+        var weights = _weights;
+        var liked = items.Select(weights.Score).ToArray();
+        IReadOnlyList<TypeCount> types =
+            [new TypeCount("All sounds", items.Count), .. items.GroupBy(s => s.Type).OrderByDescending(g => g.Count()).Select(g => new TypeCount(g.Key, g.Count()))];
+        return new(items, liked, types, LoadHistory(items), LoadModelInfo(items.Count));
+    }
+
+    void Show(Loaded loaded)
+    {
+        Items = loaded.Items;
         foreach (var s in Items) _shuffle.TryAdd(s.Id, Random.Shared.Next());
-        Score();
-        View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
-        View.Filter = o => o is Sound s && Matches(s);
-        ApplySort();
-        LoadHistory();
+        var top = loaded.Liked.Length == 0 ? 0 : loaded.Liked.Max();
+        for (var i = 0; i < Items.Count; i++)
+        {
+            Items[i].Liked = loaded.Liked[i];
+            Items[i].LikedShare = top > 0 ? loaded.Liked[i] / top : 0;
+        }
+        HistoryItems = loaded.History;
+        OnPropertyChanged(nameof(HasHistory));
+        var type = SelectedType?.Type;
+        TypeCounts = loaded.TypeCounts;
+        _showing = true;   // the list is worked out once, just below
+        try { SelectedType = TypeCounts.FirstOrDefault(t => t.Type == type) ?? TypeCounts[0]; }
+        finally { _showing = false; }
+        UpdateList();
         BuildStars();
-        TypeCounts = [new TypeCount("All sounds", Items.Count), .. Items.GroupBy(s => s.Type).OrderByDescending(g => g.Count()).Select(g => new TypeCount(g.Key, g.Count()))];
-        SelectedType ??= TypeCounts[0];
         UpdateSummary();
-        UpdateModelInfo();
+        ShowModelInfo(loaded.Model);
     }
 
     /// <summary>
@@ -185,7 +220,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         var items = Items;
         if (items.Count == 0 || !ReferenceEquals(items, Org.Sounds))
         {
-            Reload();   // nothing showing yet, or the sounds themselves changed
+            await ReloadAsync();   // nothing showing yet, or the sounds themselves changed
             return;
         }
         var since = DateTime.Now.AddYears(-1);
@@ -218,75 +253,144 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             : $"{Items.Count:N0} sounds · {loops:N0} loops · {unused:N0} never used in a project";
     }
 
-    void UpdateModelInfo()
+    void UpdateModelInfo() => ShowModelInfo(LoadModelInfo(Items.Count));
+
+    sealed record ModelInfo(bool ClapInstalled, string ClapStatus, string ModelSummary,
+                            IReadOnlyList<Disagreement> Disagreements, IReadOnlyList<TagSummary> TagSummaries);
+
+    ModelInfo LoadModelInfo(int count)
     {
-        ClapInstalled = ClapModel.IsInstalled();
+        var installed = ClapModel.IsInstalled();
         var withClap = Org.Library.CountWithClap();
-        ClapStatus = !ClapInstalled
+        var clap = !installed
             ? "Not installed. Download it once (about 205 MB) to search by describing a sound, and for sharper sound-alikes and type guesses. It runs on this PC; nothing is uploaded."
-            : Items.Count == 0
+            : count == 0
                 ? $"Installed in {ClapModel.DefaultFolder}. Scan your sample folders, then Deep listen."
-            : withClap >= Items.Count && Items.Count > 0
+            : withClap >= count && count > 0
                 ? $"Installed. Every sound has been deep-listened ({withClap:N0})."
-                : $"Installed. {withClap:N0} of {Items.Count:N0} sounds deep-listened so far; run Deep listen to do the rest.";
+                : $"Installed. {withClap:N0} of {count:N0} sounds deep-listened so far; run Deep listen to do the rest.";
         var m = Org.TypeModel;
-        ModelSummary = m is null
+        var summary = m is null
             ? "Not trained yet: it needs at least 20 sounds whose folder or file names say what they are (or that you've labelled)."
             : $"Trained {m.Trained:g} on {m.Examples:N0} labelled sounds using {(m.Space == "clap" ? "deep-listening (CLAP) vectors" : "sound features")}, {m.Classes.Length} types" +
               (m.HeldOutAccuracy is { } acc ? $". Right {acc:P0} of the time on sounds it hadn't seen." : ".");
-        Disagreements = Org.Disagreements().Select(d => new Disagreement(d.Sound, d.Thinks, d.P)).ToList();
-        TagSummaries = Org.Library.TagCounts().Select(t => new TagSummary(t.Tag, t.Yours, t.Learned)).ToList();
+        return new(installed, clap, summary,
+                   Org.Disagreements().Select(d => new Disagreement(d.Sound, d.Thinks, d.P)).ToList(),
+                   Org.Library.TagCounts().Select(t => new TagSummary(t.Tag, t.Yours, t.Learned)).ToList());
+    }
+
+    void ShowModelInfo(ModelInfo info)
+    {
+        ClapInstalled = info.ClapInstalled;
+        ClapStatus = info.ClapStatus;
+        ModelSummary = info.ModelSummary;
+        Disagreements = info.Disagreements;
+        TagSummaries = info.TagSummaries;
     }
 
     // ---- filtering -----------------------------------------------------------------
 
-    bool Matches(Sound s)
+    /// <summary>
+    /// The filters as they are now, as a test for one sound. It keeps its own copy of every setting, so the list can be
+    /// worked out on another thread while you go on changing them (a newer list then replaces it).
+    /// </summary>
+    Func<Sound, bool> MakeFilter()
     {
-        if (SelectedType is { Type: var t } && t != "All sounds" && s.Type != t) return false;
-        if (LoopFilter == 1 && s.IsLoop) return false;
-        if (LoopFilter == 2 && !s.IsLoop) return false;
-        if (OnlyUnused && s.UsedIn > 0) return false;
-        if (OnlyFavourites && !s.Favourite) return false;
-        if (TagFilter.Length > 0 && !s.Tags.Any(x => x.Equals(TagFilter, StringComparison.OrdinalIgnoreCase))) return false;
-        if (KeyFilter != "Any key" && MusicTheory.ParseKey(KeyFilter) is { } k)
+        var type = SelectedType is { Type: var t } && t != "All sounds" ? t : null;
+        var loops = LoopFilter;
+        var unused = OnlyUnused;
+        var favourites = OnlyFavourites;
+        var tag = TagFilter;
+        var key = KeyFilter != "Any key" ? MusicTheory.ParseKey(KeyFilter) : null;
+        var compatible = key is { } k0 && CompatibleKeys ? MusicTheory.CompatibleKeys(k0.Tonic, k0.Minor).ToHashSet() : null;
+        double? lo = double.TryParse(BpmFrom, out var l) ? l : null;
+        double? hi = double.TryParse(BpmTo, out var h) ? h : null;
+        var described = _describeScores;
+        var words = SearchText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return s =>
         {
-            if (s.Analysis?.KeyTonic is not { } tonic) return false;
-            var ok = CompatibleKeys
-                ? MusicTheory.CompatibleKeys(k.Tonic, k.Minor).Contains((tonic, s.Analysis.KeyMinor))
-                : tonic == k.Tonic && s.Analysis.KeyMinor == k.Minor;
-            if (!ok) return false;
-        }
-        if (double.TryParse(BpmFrom, out var lo) && (s.Bpm ?? -1) < lo) return false;
-        if (double.TryParse(BpmTo, out var hi) && (s.Bpm is null || s.Bpm > hi)) return false;
-        if (_describeScores is not null) return _describeScores.ContainsKey(s.Id);
-        if (SearchText.Length > 0)
-            return SearchText.Split(' ', StringSplitOptions.RemoveEmptyEntries).All(w =>
+            if (type is not null && s.Type != type) return false;
+            if (loops == 1 && s.IsLoop) return false;
+            if (loops == 2 && !s.IsLoop) return false;
+            if (unused && s.UsedIn > 0) return false;
+            if (favourites && !s.Favourite) return false;
+            if (tag.Length > 0 && !s.Tags.Any(x => x.Equals(tag, StringComparison.OrdinalIgnoreCase))) return false;
+            if (key is { } k)
+            {
+                if (s.Analysis?.KeyTonic is not { } tonic) return false;
+                var ok = compatible is not null
+                    ? compatible.Contains((tonic, s.Analysis.KeyMinor))
+                    : tonic == k.Tonic && s.Analysis.KeyMinor == k.Minor;
+                if (!ok) return false;
+            }
+            if (lo is { } low && (s.Bpm ?? -1) < low) return false;
+            if (hi is { } high && (s.Bpm is null || s.Bpm > high)) return false;
+            if (described is not null) return described.ContainsKey(s.Id);
+            return words.All(w =>
                 s.Path.Contains(w, StringComparison.OrdinalIgnoreCase) || s.Type.Contains(w, StringComparison.OrdinalIgnoreCase) ||
                 s.Tags.Any(x => x.Contains(w, StringComparison.OrdinalIgnoreCase)) || s.Character.Contains(w, StringComparison.OrdinalIgnoreCase));
-        return true;
-    }
-
-    void ApplySort()
-    {
-        if (View is null) return;
-        View.CustomSort = _describeScores is { } scores
-            ? Comparer<object>.Create((a, b) => scores.GetValueOrDefault(((Sound)b).Id).CompareTo(scores.GetValueOrDefault(((Sound)a).Id)))
-            : Comparer<object>.Create((a, b) => Compare((Sound)a, (Sound)b));
-        BuildTiles();
-    }
-
-    int Compare(Sound a, Sound b)
-    {
-        var c = SortBy switch
-        {
-            MostLiked => b.Liked.CompareTo(a.Liked),
-            "Name" => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
-            "Type" => string.Compare(a.Type, b.Type, StringComparison.OrdinalIgnoreCase),
-            "Key" => KeyOrder(a).CompareTo(KeyOrder(b)),
-            "Newest" => b.Added.CompareTo(a.Added),
-            _ => _shuffle.GetValueOrDefault(a.Id).CompareTo(_shuffle.GetValueOrDefault(b.Id)),
         };
-        return c != 0 ? c : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The order chosen now, kept the same way as <see cref="MakeFilter"/>.</summary>
+    Comparison<Sound> MakeOrder()
+    {
+        if (_describeScores is { } scores)
+            return (a, b) => scores.GetValueOrDefault(b.Id).CompareTo(scores.GetValueOrDefault(a.Id));
+        var sort = SortBy;
+        var shuffle = _shuffle;
+        return (a, b) =>
+        {
+            var c = sort switch
+            {
+                MostLiked => b.Liked.CompareTo(a.Liked),
+                "Name" => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
+                "Type" => string.Compare(a.Type, b.Type, StringComparison.OrdinalIgnoreCase),
+                "Key" => KeyOrder(a).CompareTo(KeyOrder(b)),
+                "Newest" => b.Added.CompareTo(a.Added),
+                _ => shuffle.GetValueOrDefault(a.Id).CompareTo(shuffle.GetValueOrDefault(b.Id)),
+            };
+            return c != 0 ? c : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+        };
+    }
+
+    void ApplySort() => UpdateList();
+
+    int _listVersion;
+
+    /// <summary>
+    /// Works out the list (filtered and in order) and its tiles off the UI thread, then swaps the finished list in at
+    /// once. Filtering and sorting 357,000 sounds on the UI thread froze the window, and the list went blank meanwhile.
+    /// </summary>
+    async void UpdateList()
+    {
+        var version = ++_listVersion;
+        var items = Items;
+        var keep = MakeFilter();
+        var order = MakeOrder();
+        var columns = TileColumns;
+        var tiles = IsTiles;
+        try
+        {
+            var (shown, map, rows) = await UiWork.Run(() =>
+            {
+                var list = items.Where(keep).ToList();
+                list.Sort(order);
+                if (!tiles) return (list, new Dictionary<long, SoundTile>(), (IReadOnlyList<TileRow>)[]);
+                var map = list.ToDictionary(s => s.Id, s => new SoundTile(s));
+                return (list, map, list.Chunk(columns).Select(c => new TileRow(c.Select(s => map[s.Id]).ToList())).ToList());
+            });
+            if (version != _listVersion) return;   // something changed meanwhile: a newer list is on its way
+            Shown = shown;
+            View = Ui.Current.CreateView(shown);
+            _tiles = map;
+            TileRows = rows;
+            if (Selected is { } picked && _tiles.TryGetValue(picked.Id, out var tile)) tile.IsSelected = true;
+        }
+        catch (Exception e)
+        {
+            Message = $"Couldn't show the sounds: {e.Message}";
+        }
     }
 
     // Keys in note order, major before minor; sounds with no key last.
@@ -318,8 +422,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>The filter or something it depends on changed: the list and the tiles follow.</summary>
     void Refresh()
     {
-        View?.Refresh();
-        BuildTiles();
+        UpdateList();
         BuildStars();
     }
 
@@ -327,10 +430,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     void BuildTiles()
     {
-        if (View is null || !IsTiles) return;
-        Shown = View.Cast<Sound>().ToList();
-        _tiles = Shown.ToDictionary(s => s.Id, s => new SoundTile(s) { IsSelected = s == Selected });
-        TileRows = Shown.Chunk(TileColumns).Select(c => new TileRow(c.Select(s => _tiles[s.Id]).ToList())).ToList();
+        if (IsTiles) UpdateList();
     }
 
     /// <summary>The row of tiles holding a sound, to scroll it into view.</summary>
@@ -355,9 +455,16 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     void LoadHistory()
     {
-        var byId = Items.ToDictionary(s => s.Id);
-        HistoryItems = Org.Library.History().Where(h => byId.ContainsKey(h.Id)).Select(h => new HistoryItem(byId[h.Id], h.At)).ToList();
+        HistoryItems = LoadHistory(Items);
         OnPropertyChanged(nameof(HasHistory));
+    }
+
+    IReadOnlyList<HistoryItem> LoadHistory(IReadOnlyList<Sound> items)
+    {
+        var history = Org.Library.History();
+        if (history.Count == 0) return [];
+        var byId = items.ToDictionary(s => s.Id);
+        return history.Where(h => byId.ContainsKey(h.Id)).Select(h => new HistoryItem(byId[h.Id], h.At)).ToList();
     }
 
     partial void OnHistorySelectedChanged(HistoryItem? value)
@@ -389,7 +496,10 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Refresh();
     }
 
-    partial void OnSelectedTypeChanged(TypeCount? value) => Refresh();
+    partial void OnSelectedTypeChanged(TypeCount? value)
+    {
+        if (!_showing) Refresh();
+    }
     partial void OnLoopFilterChanged(int value) => Refresh();
     partial void OnKeyFilterChanged(string value) => Refresh();
     partial void OnCompatibleKeysChanged(bool value) => Refresh();
@@ -543,9 +653,52 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// </summary>
     public void PlayPicked()
     {
-        if (!AutoPlay || Selected is not { } s || _player.Playing == s.Path) return;
-        try { Start(s, 0, count: false); }
-        catch (Exception e) { Message = $"Can't play {s.Name}: {e.Message}"; }
+        _passingNext = null;
+        if (!AutoPlay || Selected is not { } s || IsPreviewing(s)) return;
+        StartPreview(s);
+    }
+
+    /// <summary>
+    /// An arrow key held down moved onto another sound: with Autoplay on, each sound it passes plays, a short piece
+    /// each (a new one starts at most every <see cref="PassingEveryMs"/> ms, the newest winning), and the sound the key
+    /// is let go on plays in full (<see cref="PlayPicked"/>, from the key coming up).
+    /// </summary>
+    public void PlayPassing()
+    {
+        if (!AutoPlay || Selected is not { } s || IsPreviewing(s)) return;
+        if (System.Diagnostics.Stopwatch.GetElapsedTime(_passingStarted).TotalMilliseconds >= PassingEveryMs)
+        {
+            StartPreview(s);
+            return;
+        }
+        _passingNext = s;
+        (_passingTimer ??= Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(PassingEveryMs), PlayNextPassing)).Start();
+    }
+
+    /// <summary>How often a held arrow key starts the next sound: long enough to hear a little of each.</summary>
+    public const int PassingEveryMs = 150;
+
+    long _passingStarted;
+    Sound? _passingNext;
+    IUiTimer? _passingTimer;
+
+    void PlayNextPassing()
+    {
+        _passingTimer?.Stop();
+        if (_passingNext is { } next && next == Selected && !IsPreviewing(next)) StartPreview(next);
+        _passingNext = null;
+    }
+
+    /// <summary>The sound is playing, or still being opened to play.</summary>
+    bool IsPreviewing(Sound s) => _player.Playing == s.Path || _previews is { Busy: true } p && p.Latest == s.Path;
+
+    /// <summary>A preview (not a deliberate play): opened off the UI thread, so the arrow keys never wait for the disk.</summary>
+    void StartPreview(Sound s)
+    {
+        _passingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        _preview = s.Path;
+        Previews.Play(s.Path);
+        _clock.Start();
     }
 
     /// <summary>
@@ -687,7 +840,9 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     // ---- long jobs ------------------------------------------------------------------
 
     /// <param name="done">The card's words once the job has finished, worked out then.</param>
-    async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null)
+    /// <param name="always">False: the page reloads only if the job read the sounds in again (a scan that found nothing new doesn't).</param>
+    async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null,
+                        bool always = true)
     {
         if (IsBusy) return;
         IsBusy = true;
@@ -714,7 +869,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         {
             IsBusy = false;
             BusyPercent = 0;
-            Reload();
+            if (always || !ReferenceEquals(Items, Org.Sounds)) await ReloadAsync();
         }
     }
 
@@ -729,7 +884,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         }
         var count = 0;
         await RunAsync("Scanning sample folders", (p, ct) => count = Org.Scan(folders, p, ct),
-                       () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"Analysed {count:N0} new or changed sounds"));
+                       () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"Analysed {count:N0} new or changed sounds"), always: false);
         if (count > 0) Message = $"Analysed {count:N0} new or changed sounds.";
         if (count > 0 || IsGalaxy) await MapGalaxyIfNeeded();
     }

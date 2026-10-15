@@ -617,6 +617,30 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void A_held_arrow_key_plays_the_sounds_it_passes_a_little_each_and_the_last_in_full()
+    {
+        var played = new List<string>();
+        ((HeadlessUi)Ui.Current).Player = () => new Recorder(played);
+        var lab = new MainViewModel(_db, _sounds).Sounds;
+        lab.AutoPlay = true;
+        var (kick, snare, hat) = (new Sound { Path = "kick.wav" }, new Sound { Path = "snare.wav" }, new Sound { Path = "hat.wav" });
+
+        // Key repeats come every 30 ms or so: the first sound plays at once, the ones passed straight after wait their turn...
+        lab.Selected = kick;
+        lab.PlayPassing();
+        lab.Selected = snare;
+        lab.PlayPassing();
+        lab.Selected = hat;
+        lab.PlayPassing();
+        Assert.Equal(["kick.wav"], played);
+
+        // ...and the sound the key is let go on plays.
+        lab.PlayPicked();
+        Assert.Equal(["kick.wav", "hat.wav"], played);
+        Assert.Equal(0, hat.Plays);   // still only a preview
+    }
+
+    [Fact]
     public async Task KitGoesOnADrumMachineInBitwig()
     {
         using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
@@ -1002,8 +1026,12 @@ public class ViewModelTests : IDisposable
 
     sealed class HeadlessUi : IPlatformUi
     {
-        // Sweep previews play straight away here, so a test can check what played, in order.
-        static HeadlessUi() => PreviewWorker.InBackground = false;
+        // Sweep previews and the Sounds list are worked out straight away here, so a test can check them at once.
+        static HeadlessUi()
+        {
+            PreviewWorker.InBackground = false;
+            UiWork.InBackground = false;
+        }
 
         public IItemsView CreateView(IList items) => new ListView(items);
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
