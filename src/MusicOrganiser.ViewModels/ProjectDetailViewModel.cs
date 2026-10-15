@@ -88,6 +88,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         if (item.Error is { } err) facts.Add(new("Couldn't read", err));
         Facts = facts;
         if (item.Daw == "FL Studio" && CanExtractMidi) _ = FindSilentSynthsAsync();
+        LoadPendingFix();
     }
 
     /// <summary>

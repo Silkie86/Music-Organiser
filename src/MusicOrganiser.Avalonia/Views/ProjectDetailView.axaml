@@ -73,6 +73,28 @@
             <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
             <Setter Property="Padding" Value="14,12" />
         </Style>
+        <Style Selector="Border.fixBadge">
+            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+        </Style>
+        <Style Selector="Border.fixBadge.relink">
+            <Setter Property="Background" Value="{StaticResource OkSoftBrush}" />
+        </Style>
+        <Style Selector="Border.fixBadge.relink TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource OkBrush}" />
+        </Style>
+        <Style Selector="Border.fixBadge.suggestion TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+        </Style>
+        <Style Selector="Border.fixBadge.missing TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource MissingBrush}" />
+        </Style>
+        <Style Selector="Border.fixPanel">
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.18" />
+                </Transitions>
+            </Setter>
+        </Style>
         <Style Selector="TabControl.detailTabs TabItem">
             <Setter Property="FontSize" Value="14" />
             <Setter Property="FontWeight" Value="Bold" />
@@ -149,6 +171,8 @@
                     </StackPanel>
                     <Button.Flyout>
                         <MenuFlyout Placement="BottomEdgeAlignedRight">
+                            <MenuItem Header="Fix missing…" Command="{Binding PlanFixCommand}" IsVisible="{Binding CanFix}"
+                                      ToolTip.Tip="Find what's missing on your drives and save a fixed copy next to the original" />
                             <MenuItem Header="MIDI…" Command="{Binding ShowMidiCommand}" IsEnabled="{Binding CanExtractMidi}" ToolTip.Tip="{Binding MidiNote}" />
                             <MenuItem Header="Presets…" Command="{Binding ShowPresetsCommand}" IsEnabled="{Binding CanExtractPresets}"
                                       ToolTip.Tip="See the plugin settings saved in this project and export them as presets" />
@@ -163,6 +187,21 @@
             <Border Classes="note" Margin="0,10,0,0" Padding="12,8" CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource AccentFaintBrush}"
                     IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                 <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12" />
+            </Border>
+            <!-- A fixed copy waiting for its verdict: open it, then Keep or Delete fixed copy. -->
+            <Border Classes="panel" Margin="0,10,0,0" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1" IsVisible="{Binding HasPendingFix}">
+                <StackPanel Spacing="10">
+                    <StackPanel>
+                        <TextBlock Text="{Binding PendingFixText}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding PendingFixDetail}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <WrapPanel Classes="actions">
+                        <Button Content="{Binding Item.Daw, StringFormat='Open in {0}'}" Command="{Binding OpenFixedCommand}"
+                                Classes.accent="{Binding !PendingFixOpened}" />
+                        <Button Content="Keep" Classes="accent" Command="{Binding KeepFixedCommand}" IsVisible="{Binding PendingFixOpened}" />
+                        <Button Content="Delete fixed copy" Command="{Binding DeleteFixedCommand}" IsVisible="{Binding PendingFixOpened}" />
+                    </WrapPanel>
+                </StackPanel>
             </Border>
             <!-- The last check with the DAW: what it shows, against what the app read -->
             <Border Classes="panel" Margin="0,6,0,0" IsVisible="{Binding HasCheckLines}">
@@ -203,12 +242,64 @@
                                     <TextBlock Text="!" FontWeight="Bold" FontSize="16" Foreground="{StaticResource MissingBrush}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </Border>
+                                <Button DockPanel.Dock="Right" Classes="accent" Padding="16,8" VerticalAlignment="Center" Margin="12,0,0,0"
+                                        Command="{Binding PlanFixCommand}" IsVisible="{Binding CanFix}"
+                                        ToolTip.Tip="See what can be found on your drives, then save a fixed copy next to the original">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Path Data="M14.7,6.3 a4,4 0 0 0 -5.4,5.4 L4,17 L7,20 L12.3,14.7 a4,4 0 0 0 5.4,-5.4 L15.5,11.5 L12.5,8.5 Z"
+                                              Stroke="{StaticResource OnAccentBrush}" StrokeThickness="1.8" StrokeJoin="Round" Width="14" Height="14" Stretch="Uniform" />
+                                        <TextBlock Text="{Binding FixButtonText}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Button>
                                 <StackPanel VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Item.MissingText, StringFormat='{}{0} missing'}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                    <TextBlock Text="It will open with gaps. The Plugins and Samples tabs say what to do." FontSize="12"
+                                    <TextBlock Text="It will open with gaps. Fix finds what it can and saves a repaired copy." FontSize="12"
                                                Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </DockPanel>
+                        </Border>
+
+                        <!-- Fix's preview: one line per missing thing and the best guess, then save a fixed copy. -->
+                        <Border Classes="panel fixPanel" IsVisible="{Binding IsFixOpen}" Margin="0,-6,0,18">
+                            <StackPanel Spacing="4">
+                                <DockPanel Margin="0,0,0,6">
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding FixSummary}" FontSize="12" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Text="FIX: WHAT IT WILL DO" Classes="filterLabel" Margin="0" />
+                                </DockPanel>
+                                <ItemsControl ItemsSource="{Binding FixRows}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:FixRow">
+                                            <Border Classes="listRow">
+                                                <DockPanel>
+                                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding Ticked}" IsVisible="{Binding CanTick}" VerticalAlignment="Top"
+                                                              Margin="0,0,6,0" MinWidth="0" ToolTip.Tip="Use this file in the fixed copy" />
+                                                    <Border DockPanel.Dock="Left" Width="34" IsVisible="{Binding !CanTick}" />
+                                                    <Border DockPanel.Dock="Right" Classes="pill fixBadge" VerticalAlignment="Top" Margin="10,0,0,0"
+                                                            Classes.relink="{Binding IsRelink}" Classes.suggestion="{Binding IsSuggestion}" Classes.missing="{Binding IsMissing}">
+                                                        <TextBlock Text="{Binding ActionText}" Classes="pillText" />
+                                                    </Border>
+                                                    <StackPanel>
+                                                        <TextBlock TextWrapping="Wrap">
+                                                            <Run Text="{Binding KindText}" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+                                                            <Run Text="  " />
+                                                            <Run Text="{Binding Name}" FontWeight="SemiBold" />
+                                                        </TextBlock>
+                                                        <TextBlock Text="{Binding Use, StringFormat='→ {0}'}" IsVisible="{Binding HasUse}" FontSize="12"
+                                                                   Foreground="{StaticResource AccentBrush}" TextTrimming="PrefixCharacterEllipsis" ToolTip.Tip="{Binding Use}" />
+                                                        <TextBlock Text="{Binding Note}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="{Binding FixFootnote}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                                    <Button Classes="accent" Content="Save fixed copy" Command="{Binding SaveFixedCommand}" Padding="16,8"
+                                            ToolTip.Tip="Write the ticked samples into a copy next to the original" />
+                                    <Button Content="Cancel" Command="{Binding CloseFixCommand}" Padding="16,8" />
+                                </StackPanel>
+                            </StackPanel>
                         </Border>
 
                         <TextBlock Text="WHERE IT'S AT" Classes="filterLabel" />
