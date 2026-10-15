@@ -694,17 +694,21 @@ function setParameter(client, id, request) {
  * Runs one of Bitwig's actions by its ID (as listed by the actions command), e.g. saving the project. The
  * answer says which project Bitwig had in front just before the action ran, as `project` (the Java
  * extension says the same from 3.7), so the app can tell which project an action such as Save went to
- * when more than one is open.
+ * when more than one is open. It also says the route the action ran by and that it ran (`via` and `ran`,
+ * as the Java extension 3.7 does): the script only runs an action straight away ("direct"), so it
+ * refuses a request for any other route, which only the Java extension has.
  * @param {Client} client
  * @param {any} id
- * @param {{ action: string }} request
+ * @param {{ action: string, via?: any }} request
  */
 function runAction(client, id, request) {
+    if (request.via !== undefined && request.via !== null && request.via !== "direct")
+        throw new LinkError("This needs the Java extension 3.7.");
     var action = typeof request.action === "string" ? app.getAction(request.action) : null;
     if (!action) throw new LinkError("Bitwig has no action " + request.action + ".");
     var front = str(app.projectName().get());
     action.invoke();
-    reply(client, id, { project: front });
+    reply(client, id, { project: front, via: "direct", ran: true });
 }
 
 // ---- Changes that wait for Bitwig ----

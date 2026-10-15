@@ -53,7 +53,12 @@ public class BitwigLinkTests
         Assert.Null(selected.Params[2].Value);   // Bitwig couldn't read it
 
         Assert.Equal("Save", (await link.ActionsAsync()).Single().Id);
-        Assert.Equal("Night Drive", await link.RunActionAsync("Save"));   // the project in front as Save ran
+        // The project in front as Save ran, and that the script ran it straight away.
+        Assert.Equal(new BitwigActionRun("Night Drive", "direct", true), await link.RunActionAsync("Save"));
+        Assert.Equal(new BitwigActionRun("Night Drive", "direct", true), await link.RunActionAsync("Save", "direct"));
+        // The script runs actions straight away only: the other routes are the Java extension's.
+        var refused = await Assert.ThrowsAsync<DawLinkException>(() => link.RunActionAsync("Save", "button"));
+        Assert.Equal("This needs the Java extension 3.7.", refused.Message);
         await link.SetParameterAsync("CONTENTS/PID3e8", 0.5);
         await link.InsertPluginAsync("VST2", "MoB2");
         await link.InsertVst2Async(1234);
@@ -75,17 +80,57 @@ public class BitwigLinkTests
     [Fact]
     public async Task RunsAnActionThroughALinkThatDoesntSayWhichProjectWasInFront()
     {
-        // An extension before 3.7 answers an action with {}, and one that couldn't read the name leaves it out too.
+        // An extension before 3.7 answers an action with {}, and one that couldn't read the name leaves it out too: it ran the
+        // action straight away, the only way it has.
         await using (var older = new FakeJavaBitwig(answers: new Dictionary<string, string> { ["action"] = "{}" }))
         {
             using var link = await BitwigLink.ConnectAsync(older.Port);
-            Assert.Null(await link.RunActionAsync("Save"));
+            Assert.Equal(new BitwigActionRun(null, "direct", true), await link.RunActionAsync("Save"));
             Assert.Equal("Save", (string?)older.Requests.Last()["action"]);
+            // Without a route, the request carries none, so an older link isn't sent a field it doesn't know.
+            Assert.False(older.Requests.Last().AsObject().ContainsKey("via"));
         }
         await using (var newer = new FakeJavaBitwig(answers: new Dictionary<string, string> { ["action"] = """{"project":"MO Live Test"}""" }))
         {
             using var link = await BitwigLink.ConnectAsync(newer.Port);
-            Assert.Equal("MO Live Test", await link.RunActionAsync("Save"));
+            Assert.Equal(new BitwigActionRun("MO Live Test", "direct", true), await link.RunActionAsync("Save"));
+        }
+    }
+
+    [Fact]
+    public async Task RunsAnActionByTheRouteAsked()
+    {
+        // The extension 3.7 says the route, and whether it ran the action by it.
+        await using var java = new FakeJavaBitwig(answers: new Dictionary<string, string>
+        {
+            ["action"] = """{"project":"MO Live Test","via":"midi","ran":false}""",
+        });
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+        Assert.Equal(new BitwigActionRun("MO Live Test", "midi", false), await link.RunActionAsync("Save", "midi"));
+        Assert.Equal(("Save", "midi"), ((string?)java.Requests.Last()["action"], (string?)java.Requests.Last()["via"]));
+
+        // Arrange takes the same routes, and says whether each step ran.
+        java.Answer = request => (string)request["cmd"]! == "arrange"
+            ? """{"arranged":false,"appeared":false,"sameAsSource":false,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE","launcher":{"before":true,"after":true},"mark":{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true,"exact":true},"launcherFocus":0,"timeline":{"before":true,"after":true},"focus":0,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},"after":{"exists":false,"track":null},"pastedColor":null,"launcherClipsBefore":1,"launcherClipsAfter":1,"via":"button","ran":{"launcherFocus":false,"copy":false,"focus":null,"paste":null}}"""
+            : null;
+        var arranged = await link.ArrangeAsync(0, 0, 16, "button");
+        Assert.Equal("button", (string?)java.Requests.Last()["via"]);
+        Assert.Equal(("button", new BitwigArrangeRan(false, false, null, null)), (arranged.Via, arranged.Ran));
+    }
+
+    [Fact]
+    public async Task ReadsWhetherTheLoopbackWorksFromTheHello()
+    {
+        await using (var java = new FakeJavaBitwig(FakeJavaBitwig.Hello("""{"extension":"3.7","loopback":true}""")))
+        {
+            using var link = await BitwigLink.ConnectAsync(java.Port);
+            Assert.True(link.Hello.Loopback);
+        }
+        // An older link doesn't say.
+        await using (var older = new FakeJavaBitwig())
+        {
+            using var link = await BitwigLink.ConnectAsync(older.Port);
+            Assert.Null(link.Hello.Loopback);
         }
     }
 

@@ -688,6 +688,21 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsDoesntSayBitwigLoadsTheExtensionFromACopyOfItsOwn()
+    {
+        // Bitwig ran the extension from a copy it made in a temp folder, which isn't where Install puts the next version.
+        var copy = System.Text.Json.JsonSerializer.Serialize(Path.Combine(_root, "Temp", "bitwig-extensions", "MusicOrganiser.bwextension"));
+        await using var bitwig = new FakeJavaBitwig($$"""{"link":3,"product":"Bitwig Studio","version":"6.1.3","api":23,"platform":"WINDOWS","port":19791,"project":"","modified":false,"engine":true,"changes":true,"runtime":"java","extension":"3.4","onlyIn":true,"loadedFrom":{{copy}}}""");
+        using var watch = new DawWatch(bitwig.Port, flOpen: () => false, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
+        var main = Main(watch);
+        await PollUntil(main.Live, () => main.Live.Rows[0].Answering);
+
+        Assert.StartsWith("✓ Answering now: Bitwig Studio 6.1.3.", main.Settings.Links[0].Live);
+        Assert.DoesNotContain("loads the extension from", main.Settings.Links[0].Live);
+        Assert.Null(_db.GetSetting(SettingsViewModel.BitwigLoadsFromKey));
+    }
+
+    [Fact]
     public async Task SettingsShowsTheProbesRunningNow()
     {
         var reports = Path.Combine(_root, "probe");

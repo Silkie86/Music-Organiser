@@ -21,6 +21,8 @@ import static org.musicorganiser.bitwig.Messages.listAt;
 import static org.musicorganiser.bitwig.Messages.obj;
 
 import com.bitwig.extension.ExtensionDefinition;
+import com.bitwig.extension.api.PlatformType;
+import com.bitwig.extension.controller.AutoDetectionMidiPortNamesList;
 import com.bitwig.extension.controller.api.ControllerHost;
 import java.io.InputStream;
 import java.net.URL;
@@ -95,7 +97,15 @@ class LinkTest {
         assertEquals(UUID.fromString("ed35e3c7-c544-49ed-936d-c236b0c9b73b"), definition.getId());
         assertEquals(4, definition.getId().version());
         assertEquals(23, definition.getRequiredAPIVersion());
-        assertEquals(List.of(0, 0), List.of(definition.getNumMidiInPorts(), definition.getNumMidiOutPorts()));
+        // Extension 3.7: one MIDI in and one out, for the loopback, which Bitwig offers to set to the loopMIDI port of that name.
+        assertEquals(List.of(1, 1), List.of(definition.getNumMidiInPorts(), definition.getNumMidiOutPorts()));
+        for (PlatformType platform : PlatformType.values()) {
+            AutoDetectionMidiPortNamesList ports = new AutoDetectionMidiPortNamesList();
+            definition.listAutoDetectionMidiPortNames(ports, platform);
+            assertEquals(1, ports.getCount());
+            assertEquals(List.of("Music Organiser Bitwig"), List.of(ports.getPortNamesAt(0).getInputNames()));
+            assertEquals(List.of("Music Organiser Bitwig"), List.of(ports.getPortNamesAt(0).getOutputNames()));
+        }
 
         // Making it touches nothing in Bitwig until Bitwig starts it.
         FakeBitwig bitwig = start(song());
@@ -115,7 +125,9 @@ class LinkTest {
                        "project", "Night Drive", "modified", false, "engine", true, "changes", false,
                        "onlyIn", true,   // it honours a request's onlyIn
                        // Link version 3: which link this is.
-                       "runtime", "java", "extension", "3.7"),
+                       "runtime", "java", "extension", "3.7",
+                       // Extension 3.7: whether the link's own MIDI has come back through the loopback (it isn't set up here).
+                       "loopback", false),
                    hello.get("result"));
         assertJson(obj("id", 1, "ok", true, "result", hello.get("result")), app.ask(obj("id", 1, "cmd", "hello")));
         assertEquals(List.of(), bitwig.popups);
@@ -363,12 +375,14 @@ class LinkTest {
                         obj("id", "toggle_metronome", "name", "Toggle Metronome", "category", "Transport", "menu", "Toggle Metronome")),
                    app.ask(obj("id", 1, "cmd", "actions")).get("result"));
         bitwig.allowChanges(true);
-        // The answer names the project Bitwig had in front as the action ran.
-        assertJson(obj("id", 2, "ok", true, "result", obj("project", "Night Drive")), app.ask(obj("id", 2, "cmd", "action", "action", "Save")));
+        // The answer names the project Bitwig had in front as the action ran, and the route it ran by: straight away.
+        assertJson(obj("id", 2, "ok", true, "result", obj("project", "Night Drive", "via", "direct", "ran", true)),
+                   app.ask(obj("id", 2, "cmd", "action", "action", "Save")));
         assertEquals(List.of(List.of("invoke", "Save")), bitwig.calls);
         assertMatches("no action Format C:", error(app.ask(obj("id", 3, "cmd", "action", "action", "Format C:"))));
         bitwig.projectName.v = "My Song";
-        assertJson(obj("project", "My Song"), app.ask(obj("id", 4, "cmd", "action", "action", "toggle_metronome")).get("result"));
+        assertJson(obj("project", "My Song", "via", "direct", "ran", true),
+                   app.ask(obj("id", 4, "cmd", "action", "action", "toggle_metronome", "via", "direct")).get("result"));
     }
 
     @Test
@@ -380,7 +394,7 @@ class LinkTest {
         app.take();
         // As if the application part of Bitwig's API had only half set up: its project name can't be read.
         bitwig.projectName.interested = false;
-        assertJson(obj("id", 1, "ok", true, "result", obj()), app.ask(obj("id", 1, "cmd", "action", "action", "Save")));
+        assertJson(obj("id", 1, "ok", true, "result", obj("via", "direct", "ran", true)), app.ask(obj("id", 1, "cmd", "action", "action", "Save")));
         assertEquals(List.of(List.of("invoke", "Save")), bitwig.calls);
     }
 

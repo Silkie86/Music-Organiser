@@ -139,101 +139,252 @@ public static class BitwigLiveTests
         new Suite(options ?? new(), progress, ct).RunAsync();
 
     /// <summary>
-    /// How long the run waits, once Save has left the project unsaved, before it runs Save a second time. On Bitwig 6.1.3
-    /// one Save once left the test project unsaved, so the run tries again to see whether a second one does it.
+    /// The routes the run tries Save by, in turn, until one works (see <see cref="BitwigLink.RunActionAsync"/>): straight
+    /// away, from Bitwig's flush, then through the MIDI loopback (the extension's own MIDI message, a press of its own
+    /// button that the extension runs Save for, and one Bitwig runs Save for itself). Bitwig 6.1.3 ignored Save run straight
+    /// away, from a request or a task the extension scheduled, while it carried it out for a controller's hardware button.
+    /// Clip to arranger tries its copy and paste by the same routes, in the same order.
     /// </summary>
-    public static readonly TimeSpan SecondSaveAfter = TimeSpan.FromSeconds(1);
+    public static readonly IReadOnlyList<string> Routes = ["direct", "flush", "midi", "buttonCode", "button"];
 
-    /// <summary>What the run's second Save did, when the first left the project unsaved and its file unwritten.</summary>
-    /// <param name="Project">The project Bitwig said it had in front as the second Save ran, or null when the link didn't say.</param>
-    /// <param name="Cleared">Whether Bitwig's unsaved changes cleared within the wait after it.</param>
-    /// <param name="Took">How long they took to clear, or the whole wait when they didn't.</param>
-    /// <param name="WrittenAfter">When the project's file was written, as the app saw it after that wait (null if it wasn't there).</param>
-    public sealed record SecondSave(string? Project, bool Cleared, TimeSpan Took, DateTime? WrittenAfter);
+    /// <summary>The first extension that takes a route other than "direct", and has the MIDI loopback.</summary>
+    static readonly Version RoutesFrom = new(3, 7);
+
+    /// <summary>Whether the link in Bitwig takes routes: the Java extension 3.7 or later.</summary>
+    static bool HasRoutes(BitwigHello h) => IsNewer(h) && Version.TryParse(h.Extension, out var v) && v >= RoutesFrom;
+
+    /// <summary>The routes through the MIDI loopback, which only run once it's set up (<see cref="LoopbackSetup"/>).</summary>
+    static readonly HashSet<string> LoopbackRoutes = ["midi", "buttonCode", "button"];
+
+    /// <summary>How to set up the MIDI loopback the routes through it need.</summary>
+    public const string LoopbackSetup =
+        "To set up the loopback: in loopMIDI, add a port called “Music Organiser Bitwig” (the FL Studio link has its own port, “Music " +
+        "Organiser”, which Bitwig must never use). Then in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out " +
+        "to “Music Organiser Bitwig” (the loopMIDI port), never “Music Organiser” (FL Studio's), and run the live tests again.";
+
+    /// <summary>What a run says when only Save straight away was tried, as the link in Bitwig takes no other route.</summary>
+    const string OnlyDirect =
+        " Only Save straight away was tried: the other routes (from Bitwig's flush, and through a MIDI loopback) need the Music Organiser " +
+        "extension 3.7 or later.";
+
+    /// <summary>A route in plain words, with its name: "straight away (direct)".</summary>
+    static string RouteName(string via) => via switch
+    {
+        "direct" => "straight away (direct)",
+        "flush" => "from Bitwig's flush (flush)",
+        "midi" => "on the link's own MIDI message (midi)",
+        "buttonCode" => "on a press of the link's own button, run by the link (buttonCode)",
+        "button" => "by the link's own hardware button, run by Bitwig (button)",
+        _ => $"via {via}",
+    };
+
+    /// <summary>How the link ran Save by a route, in plain words: "when the link pressed its own hardware button for Save".</summary>
+    static string SaveHow(string via) => via switch
+    {
+        "direct" => "when the link ran Save straight away",
+        "flush" => "when the link ran Save from Bitwig's flush",
+        "midi" => "when the link ran Save as its own MIDI message came back through the loopback",
+        "buttonCode" => "when the link ran Save for a press of its own hardware button",
+        "button" => "when the link pressed its own hardware button for Save",
+        _ => $"when the link ran Save via {via}",
+    };
+
+    /// <summary>"a", "a and b", "a, b and c".</summary>
+    static string Join(IReadOnlyList<string> items) =>
+        items.Count <= 1 ? string.Join("", items) : string.Join(", ", items.Take(items.Count - 1)) + " and " + items[^1];
+
+    /// <summary>A sentence's first letter as a capital.</summary>
+    static string Capital(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+
+    /// <summary>One go at Save by a route (see <see cref="Routes"/>).</summary>
+    /// <param name="Via">The route.</param>
+    /// <param name="Project">The project Bitwig said it had in front as Save ran, or null when the link didn't say.</param>
+    /// <param name="Ran">
+    /// Whether the link ran Save by that route: one through Bitwig's flush or the loopback may not come back, and then the run
+    /// tries the next straight away.
+    /// </param>
+    /// <param name="Cleared">Whether Bitwig's unsaved changes cleared within the wait after it (false when it didn't run).</param>
+    /// <param name="Written">Whether the project's file had been written since before the run's first Save, after the wait.</param>
+    /// <param name="Took">How long the changes took to clear, else how long the run waited (for the route to run, and then for them).</param>
+    /// <param name="Error">What the link said when it refused the route (the MIDI ports weren't set up, say), or null.</param>
+    public sealed record SaveAttempt(string Via, string? Project, bool Ran, bool Cleared, bool Written, TimeSpan Took, string? Error = null);
 
     /// <summary>
-    /// What Save did: Passed when Bitwig's unsaved changes cleared, or when it wrote the project's file (if the app found
-    /// it) even though they didn't; else Failed. The file says more than the flag: on Bitwig 6.1.3 a run saw the flag stay
-    /// on after Save, with no Save As window, and couldn't tell whether the project was saved. When the first Save did
-    /// neither, the run saves again (<paramref name="second"/>): Passed when that one worked, saying only the second did,
-    /// else Failed, saying a second Save didn't help either.
+    /// The live test Changes › Save: tries Save by one route after another (<see cref="Routes"/>; only "direct" with a link older
+    /// than the extension 3.7), stopping at the first that clears Bitwig's unsaved changes or writes the project's file, and
+    /// says how that went (<see cref="SaveVerdict"/>). A route that didn't run is noted and the next tried at once, without
+    /// waiting for the changes to clear. Each Save is a change like any other, so it goes through the same checks
+    /// (<see cref="BitwigLink.BeforeChange"/>) and carries the test project's name (<see cref="BitwigLink.OnlyIn"/>).
+    /// </summary>
+    /// <param name="wait">How long Bitwig has to clear its unsaved changes after each Save that ran.</param>
+    /// <param name="findFile">The project's file written since the time given, or null when the app can't find one.</param>
+    /// <param name="bringBitwigToFront">Brings Bitwig's window to the front: whether it's in front, or null when that can't be told.</param>
+    /// <param name="closed">Whether the run may no longer change the project: a route the link refuses then stops the test.</param>
+    public static async Task<LiveVerdict> SaveByRoutesAsync(BitwigLink link, string action, TimeSpan wait, Func<DateTime, string?> findFile,
+                                                            Func<bool?> bringBitwigToFront, Func<Task<bool>>? closed = null,
+                                                            CancellationToken ct = default)
+    {
+        var project = link.Hello.Project;
+        var wasModified = link.Hello.Modified;
+        var routes = HasRoutes(link.Hello);
+        // The project's file, if the app can find it: whether Save wrote it says more than Bitwig's unsaved changes.
+        var file = findFile(DateTime.MinValue);
+        DateTime? Written() => file is not null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : null;
+        var before = Written();
+        var front = bringBitwigToFront();
+        var savedAt = DateTime.UtcNow;
+        var attempts = new List<SaveAttempt>();
+        foreach (var via in routes ? Routes : ["direct"])
+        {
+            var took = Stopwatch.StartNew();
+            BitwigActionRun run;
+            try
+            {
+                // An older link gets no route, which it would refuse (the script) or not know.
+                run = await link.RunActionAsync(action, routes ? via : null, ct);
+            }
+            catch (DawLinkException e) when (via != "direct")
+            {
+                // Refused because the run may no longer change the project: the test stops there, saying why.
+                if (closed is not null && await closed()) throw;
+                attempts.Add(new SaveAttempt(via, null, false, false, false, took.Elapsed, e.Message));
+                continue;
+            }
+            if (!run.Ran)
+            {
+                attempts.Add(new SaveAttempt(via, run.Project, false, false, false, took.Elapsed));
+                continue;
+            }
+            var modified = await StillModifiedAsync(link, took, wait, ct);
+            var tookNow = took.Elapsed;
+            // A project saved for the first time has no file until Save writes one.
+            file ??= findFile(savedAt.AddSeconds(-2));
+            var written = Wrote(file, before, Written());
+            attempts.Add(new SaveAttempt(via, run.Project, true, !modified, written, tookNow));
+            if (!modified || written) break;
+        }
+        return SaveVerdict(project, action, wasModified, attempts, wait, file, before, Written(), front, routes);
+    }
+
+    /// <summary>
+    /// Asks Bitwig until its unsaved changes clear, or until <paramref name="wait"/> has gone by since Save ran (<paramref
+    /// name="took"/>): whether they're still there.
+    /// </summary>
+    static async Task<bool> StillModifiedAsync(BitwigLink link, Stopwatch took, TimeSpan wait, CancellationToken ct)
+    {
+        bool modified;
+        while ((modified = (await link.HelloAsync(ct)).Modified) && took.Elapsed <= wait) await Task.Delay(100, ct);
+        return modified;
+    }
+
+    /// <summary>
+    /// What Save did, tried by one route after another (<paramref name="attempts"/>, in order) until one worked: Passed when
+    /// Bitwig's unsaved changes cleared, or when it wrote the project's file (if the app found it) even though they didn't,
+    /// naming the route that did it and saying the routes before it didn't work; else Failed, with a line for each route, and
+    /// how to set up the MIDI loopback when the routes through it didn't run. The file says more than the flag: on Bitwig
+    /// 6.1.3 a run saw the flag stay on after Save, with no Save As window, and couldn't tell whether the project was saved.
     /// </summary>
     /// <param name="project">The test project, which the run saves.</param>
+    /// <param name="attempts">Each go at Save, in the order the run tried the routes (at least one).</param>
+    /// <param name="wait">How long the run waited for the unsaved changes to clear after each Save that ran.</param>
     /// <param name="file">The project's file as the app found it before Save (or after, for a first save), or null.</param>
-    /// <param name="before">When <paramref name="file"/> was written before Save (null if it wasn't there), and after the wait.</param>
+    /// <param name="before">When <paramref name="file"/> was written before Save (null if it wasn't there), and after the last go.</param>
     /// <param name="front">Whether Bitwig's window was in front when Save ran, or null when that couldn't be told.</param>
-    /// <param name="activeAtSave">The project Bitwig said it had in front as Save ran, or null when the link didn't say (an
-    /// extension before 3.7).</param>
-    /// <param name="second">What a second Save did, or null when the run didn't need one.</param>
-    public static LiveVerdict SaveVerdict(string project, string action, bool wasModified, bool stillModified, TimeSpan took, TimeSpan wait,
-                                          string? file, DateTime? before, DateTime? after, bool? front = null, string? activeAtSave = null,
-                                          SecondSave? second = null)
+    /// <param name="routes">Whether the link in Bitwig takes routes (the extension 3.7): when it doesn't, only "direct" was tried.</param>
+    public static LiveVerdict SaveVerdict(string project, string action, bool wasModified, IReadOnlyList<SaveAttempt> attempts, TimeSpan wait,
+                                          string? file, DateTime? before, DateTime? after, bool? front = null, bool routes = true)
     {
-        var written = Wrote(file, before, after);
-        var secondWrote = second is not null && Wrote(file, before, second.WrittenAfter);
+        var worked = attempts.FirstOrDefault(a => a.Ran && (a.Cleared || a.Written));
+        var last = worked ?? attempts[^1];
+        var stillModified = worked is not { Cleared: true };
+        var atSave = attempts[0].Project;
         var data = new JsonObject
         {
-            ["action"] = action, ["modifiedBefore"] = wasModified, ["modifiedAfter"] = stillModified, ["tookMs"] = Math.Round(took.TotalMilliseconds),
-            ["file"] = file, ["writtenBefore"] = Utc(before), ["writtenAfter"] = Utc(after), ["front"] = front, ["projectAtSave"] = activeAtSave,
-            ["secondSave"] = second is null ? null : new JsonObject
+            ["action"] = action, ["modifiedBefore"] = wasModified, ["modifiedAfter"] = stillModified, ["tookMs"] = Math.Round(last.Took.TotalMilliseconds),
+            ["file"] = file, ["writtenBefore"] = Utc(before), ["writtenAfter"] = Utc(after), ["front"] = front, ["projectAtSave"] = atSave,
+            ["via"] = worked?.Via,
+            ["attempts"] = new JsonArray(attempts.Select(a =>
             {
-                ["project"] = second.Project, ["cleared"] = second.Cleared, ["tookMs"] = Math.Round(second.Took.TotalMilliseconds),
-                ["written"] = secondWrote, ["writtenAfter"] = Utc(second.WrittenAfter),
-            },
+                var o = new JsonObject
+                {
+                    ["via"] = a.Via, ["project"] = a.Project, ["ran"] = a.Ran, ["cleared"] = a.Cleared, ["written"] = a.Written,
+                    ["tookMs"] = Math.Round(a.Took.TotalMilliseconds),
+                };
+                if (a.Error is not null) o["error"] = a.Error;
+                return (JsonNode)o;
+            }).ToArray()),
         };
-        var wrote = file is null ? "" : written ? $", and wrote {file}" : $", though {file} wasn't written again";
-        if (!stillModified)
-            return LiveVerdict.Pass(wasModified
-                ? $"Bitwig saved “{project}”: its unsaved changes cleared {Ms(took.TotalMilliseconds)} after Save{wrote}."
-                : $"Bitwig ran Save. “{project}” had no unsaved changes before, so this only shows they stayed clear{wrote}.", data);
-        if (written)
-            return LiveVerdict.Pass($"Bitwig wrote {file} after Save, but still showed unsaved changes {wait.TotalSeconds:0} s later: something " +
-                                    $"changed “{project}” again straight away, or Bitwig didn't clear them.", data);
+        var older = routes ? "" : OnlyDirect;
         var seconds = $"{wait.TotalSeconds:0} s";
-        var unwritten = file is null ? ", and the app didn't find the project's file to see whether it was written" : $", and didn't write {file}";
-        if (second is { } s && (s.Cleared || secondWrote))
+        if (worked is not null)
         {
-            var window = front switch
-            {
-                true => ", with its window in front",
-                false => ", with its window not in front (the app couldn't bring it there)",
-                null => "",
-            };
-            var how = s.Cleared
-                ? $"cleared them {Ms(s.Took.TotalMilliseconds)} after it ran{(secondWrote ? $", and wrote {file}" : "")}"
-                : $"wrote {file}, though Bitwig still showed unsaved changes {seconds} after it";
-            return LiveVerdict.Pass($"Only the second Save worked. Bitwig still showed unsaved changes {seconds} after the first Save (“{action}”)" +
-                                    $"{unwritten}{window}; a second Save, run {SecondSaveAfter.TotalSeconds:0} s after that, {how}. That matters for " +
-                                    "how the app saves projects in Bitwig: one Save wasn't enough." + ActiveProject(project, activeAtSave, s, onlyWhenOther: true),
-                                    data);
+            var how = SaveHow(worked.Via);
+            var earlier = Earlier(attempts.TakeWhile(a => a != worked).ToList()) + older + ActiveProject(project, attempts, onlyWhenOther: true);
+            var wrote = file is null ? "" : worked.Written ? $", and wrote {file}" : $", though {file} wasn't written again";
+            if (worked.Cleared)
+                return LiveVerdict.Pass(wasModified
+                    ? $"Bitwig saved “{project}” {how}: its unsaved changes cleared {Ms(worked.Took.TotalMilliseconds)} after Save{wrote}." + earlier
+                    : $"Bitwig ran Save {RouteName(worked.Via)}. “{project}” had no unsaved changes before, so this only shows they stayed " +
+                      $"clear{wrote}." + earlier,
+                    data);
+            return LiveVerdict.Pass($"Bitwig wrote {file} {how}, but still showed unsaved changes {seconds} later: something changed “{project}” " +
+                                    "again straight away, or Bitwig didn't clear them." + earlier, data);
         }
+        var unwritten = file is null ? ", and the app didn't find the project's file to see whether it was written" : $", and didn't write {file}";
+        var tried = routes
+            ? $" The link tried Save {attempts.Count} ways, one after another, and none worked: {Join(attempts.Select(a => RouteName(a.Via)).ToList())}."
+            : older;
+        var loopback = attempts.Any(a => LoopbackRoutes.Contains(a.Via) && !a.Ran)
+            ? " The routes through the MIDI loopback didn't run. " + LoopbackSetup
+            : "";
         return LiveVerdict.Fail($"Bitwig still showed unsaved changes {seconds} after Save (“{action}”){unwritten}" +
                                 (front switch
                                 {
                                     true => ", though its window was in front",
                                     false => ". The app couldn't bring Bitwig's window to the front, which Save may need: click on Bitwig while the run saves",
                                     null => "",
-                                }) + "." +
-                                (second is null ? "" : $" A second Save, run {SecondSaveAfter.TotalSeconds:0} s after that, didn't help either: Bitwig still " +
-                                                       $"showed unsaved changes {seconds} after it{(file is null ? "" : $", and {file} wasn't written")}.") +
-                                ActiveProject(project, activeAtSave, second, onlyWhenOther: false) +
-                                $" If Bitwig opened a Save As window, the project hasn't been saved yet: save it as “{TestProject}”, then run again.", data);
+                                }) + "." + tried + loopback + ActiveProject(project, attempts, onlyWhenOther: false) +
+                                $" If Bitwig opened a Save As window, the project hasn't been saved yet: save it as “{TestProject}”, then run again.", data)
+            with { Lines = attempts.Select(a => SaveLine(a, wait)).ToList() };
 
         static string? Utc(DateTime? t) => t?.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
     }
+
+    /// <summary>What the routes tried before the one that worked did, as a sentence (nothing when it was the first).</summary>
+    static string Earlier(IReadOnlyList<SaveAttempt> earlier)
+    {
+        if (earlier.Count == 0) return "";
+        var parts = new List<string>();
+        var ran = earlier.Where(a => a.Ran).Select(a => RouteName(a.Via)).ToList();
+        if (ran.Count > 0) parts.Add($"Save run {Join(ran)} left the unsaved changes");
+        var notRun = earlier.Where(a => !a.Ran).Select(a => RouteName(a.Via)).ToList();
+        if (notRun.Count > 0) parts.Add($"Save {Join(notRun)} didn't run");
+        return $" The routes before it didn't work: {string.Join("; ", parts)}.";
+    }
+
+    /// <summary>A line for the report saying what Save by one route did.</summary>
+    static string SaveLine(SaveAttempt a, TimeSpan wait) =>
+        $"- {Capital(RouteName(a.Via))}: " + (a.Error is { } error ? $"the link refused it: {error}"
+            : !a.Ran ? a.Via == "flush" ? "didn't run, as Bitwig didn't call the link's flush in time"
+                                        : "didn't run, as nothing came back through the loopback within a second"
+            : a.Cleared ? $"its unsaved changes cleared {Ms(a.Took.TotalMilliseconds)} after Save"
+            : a.Written ? "Bitwig wrote the project's file, but still showed unsaved changes"
+            : $"ran, but Bitwig still showed unsaved changes {wait.TotalSeconds:0} s later");
 
     /// <summary>Whether <paramref name="file"/> was written since <paramref name="before"/>, going by when it was written <paramref name="after"/>.</summary>
     static bool Wrote(string? file, DateTime? before, DateTime? after) => file is not null && after is { } a && a != before;
 
     /// <summary>
-    /// Which project Bitwig said it had in front as Save ran, as a sentence: whether it was the test project, and, at the second
-    /// Save, another one if it said so. With <paramref name="onlyWhenOther"/>, nothing when it was the test project throughout.
+    /// Which project Bitwig said it had in front as Save ran, as a sentence: whether it was the test project, and another one
+    /// if it said so at a later Save. With <paramref name="onlyWhenOther"/>, nothing when it was the test project throughout.
     /// </summary>
-    static string ActiveProject(string project, string? atSave, SecondSave? second, bool onlyWhenOther)
+    static string ActiveProject(string project, IReadOnlyList<SaveAttempt> attempts, bool onlyWhenOther)
     {
+        var atSave = attempts[0].Project;
         if (atSave is null)
             return onlyWhenOther ? "" : " The link in Bitwig didn't say which project was active when Save ran (an older extension doesn't).";
-        var then = second?.Project is { } again && again != atSave ? $" At the second Save it said “{again}”." : "";
+        var then = attempts.Skip(1).Select(a => a.Project).FirstOrDefault(p => p is not null && p != atSave) is { } again
+            ? $" At a later Save it said “{again}”." : "";
         if (atSave != project)
             return $" Bitwig said “{atSave}” was the active project when Save ran, not the test project, “{project}”." + then;
         return onlyWhenOther ? then : $" Bitwig said the test project, “{project}”, was the active project when Save ran." + then;
@@ -252,6 +403,24 @@ public static class BitwigLiveTests
 
     static LiveVerdict Needs(string what) => LiveVerdict.Skip($"This needs {what}, which an earlier test didn't get (see above).");
 
+    /// <summary>
+    /// The live test Link › MIDI loopback (the Java extension 3.7 or later; Skipped with an older one): Passed when the
+    /// extension's own MIDI has come back to it through the loopback (its hello's "loopback"), so it can run Bitwig's
+    /// commands by the routes through it (see <see cref="Routes"/>); else Failed, saying how to set the loopback up.
+    /// </summary>
+    public static LiveVerdict LoopbackVerdict(BitwigHello h)
+    {
+        if (!HasRoutes(h) || h.Loopback is not { } loopback)
+            return LiveVerdict.Skip($"This needs the Music Organiser extension {RoutesFrom} or later, and Bitwig runs " +
+                                    $"{(h.Extension is { Length: > 0 } running ? running : "an older one")}. {Reinstall}");
+        var data = new JsonObject { ["loopback"] = loopback, ["extension"] = h.Extension };
+        if (loopback)
+            return LiveVerdict.Pass("The extension's own MIDI came back to it through the loopback, so it can run Bitwig's commands on its own " +
+                                    "MIDI messages and by pressing its own buttons.", data);
+        return LiveVerdict.Fail("The extension's own MIDI hasn't come back to it through the loopback, so it can only run Bitwig's commands " +
+                                "straight away or from Bitwig's flush, which Bitwig 6.1.3 ignored for Save, copy and paste. " + LoopbackSetup, data);
+    }
+
     static LiveVerdict NeedsArrange(string? running) =>
         LiveVerdict.Skip($"This needs the Music Organiser extension {ArrangeFrom} or later, and Bitwig runs " +
                          $"{(running is { Length: > 0 } ? running : "an older one")}. {Reinstall}");
@@ -262,11 +431,16 @@ public static class BitwigLiveTests
     /// project's time signature), with Bitwig's window brought to the front first, and says what Bitwig did (<see
     /// cref="ArrangeVerdict"/>). Skipped without the Java extension 3.6 or later, or without the clip. When the extension
     /// stops at a step Bitwig didn't go along with, Failed with its reason, still asking the person to look.
+    ///
+    /// With the extension 3.7 or later, it tries the copy, the paste and the focus actions by one route after another (<see
+    /// cref="Routes"/>) until one puts the clip there, each go marking the launcher clip with a fresh colour: Passed names
+    /// the route that did it; else the verdict on the last go, with a line for each route.
     /// </summary>
     /// <param name="clipSlot">The launcher slot the MIDI clip test put the clip in, or null when it didn't.</param>
     /// <param name="bringBitwigToFront">Brings Bitwig's window to the front: whether it's in front, or null when that can't be told.</param>
+    /// <param name="closed">Whether the run may no longer change the project: a route the link refuses then stops the test.</param>
     public static async Task<LiveVerdict> ClipToArrangerAsync(BitwigLink link, string track, int? clipSlot, Func<bool?> bringBitwigToFront,
-                                                              CancellationToken ct = default)
+                                                              CancellationToken ct = default, Func<Task<bool>>? closed = null)
     {
         var hello = link.Hello;
         if (!IsNewer(hello)) return LiveVerdict.Skip(NeedsJava);
@@ -279,24 +453,94 @@ public static class BitwigLiveTests
         var at = (bar - 1) * BarBeats(p.TimeSignature);
         // Copy and paste go to the panel in front inside Bitwig, which may need Bitwig's own window in front too.
         var front = bringBitwigToFront();
-        BitwigArranged arranged;
-        try
+        var routes = HasRoutes(hello);
+        var attempts = new List<ArrangeAttempt>();
+        foreach (var via in routes ? Routes : ["direct"])
         {
-            arranged = await link.ArrangeAsync(on.Index, slot, at, ct);
+            try
+            {
+                var arranged = await link.ArrangeAsync(on.Index, slot, at, routes ? via : null, ct);
+                attempts.Add(new ArrangeAttempt(via, arranged, null));
+                if (arranged is { Arranged: true, CopiedFromTimeline: false }) break;
+            }
+            catch (DawLinkException e) when (e.Message.StartsWith("Unknown command", StringComparison.Ordinal))
+            {
+                return NeedsArrange(hello.Extension);
+            }
+            catch (DawLinkException e)
+            {
+                // A step Bitwig didn't go along with (the layout, the clip launcher, the selection, the play start, the timeline),
+                // with what's needed to tell why. A change refused because another project came to the front is Failed here too,
+                // and the suite's Change still turns that into Stopped part way.
+                if (!routes)
+                    return LiveVerdict.Fail(e.Message + Window(front) + LookAt(bar, track), new JsonObject { ["error"] = e.Message, ["front"] = front });
+                if (closed is not null && await closed()) throw;
+                attempts.Add(new ArrangeAttempt(via, null, e.Message));
+            }
         }
-        catch (DawLinkException e) when (e.Message.StartsWith("Unknown command", StringComparison.Ordinal))
+        if (!routes) return ArrangeVerdict(attempts[0].Answer!, track, slot, bar, front);
+
+        var tries = new JsonArray(attempts.Select(a =>
         {
-            return NeedsArrange(hello.Extension);
-        }
-        catch (DawLinkException e)
+            var o = new JsonObject { ["via"] = a.Via, ["error"] = a.Error };
+            o["answer"] = a.Answer is null ? null : JsonSerializer.SerializeToNode(a.Answer, AnswerJson);
+            return (JsonNode)o;
+        }).ToArray());
+        var lines = attempts.Select(ArrangeLine).ToList();
+        if (attempts.LastOrDefault(a => a.Answer is not null) is not { Answer: { } answered } seen)
         {
-            // A step Bitwig didn't go along with (the layout, the clip launcher, the selection, the play start, the timeline),
-            // with what's needed to tell why. A change refused because another project came to the front is Failed here too,
-            // and the suite's Change still turns that into Stopped part way.
-            return LiveVerdict.Fail(e.Message + Window(front) + LookAt(bar, track), new JsonObject { ["error"] = e.Message, ["front"] = front });
+            var first = attempts[0].Error!;
+            return LiveVerdict.Fail(first + Window(front) + LookAt(bar, track), new JsonObject { ["error"] = first, ["front"] = front, ["attempts"] = tries })
+                with { Lines = lines };
         }
-        return ArrangeVerdict(arranged, track, slot, bar, front);
+        var worked = attempts.FirstOrDefault(a => a.Answer is { Arranged: true, CopiedFromTimeline: false });
+        var verdict = ArrangeVerdict(worked?.Answer ?? answered, track, slot, bar, front);
+        // The data is the deciding go's whole answer (its route among it), with every go's.
+        var data = verdict.Data!.AsObject();
+        data["attempts"] = tries;
+        if (worked is not null)
+        {
+            var before = attempts.TakeWhile(a => a != worked).Select(a => RouteName(a.Via)).ToList();
+            return verdict with
+            {
+                Detail = verdict.Detail + $" The link ran the copy, the paste and the focus actions {RouteName(worked.Via)}" +
+                         (before.Count > 0 ? $", after {Join(before)} didn't put the clip there." : "."),
+            };
+        }
+        var loopback = attempts.Any(a => LoopbackRoutes.Contains(a.Via) && (a.Error is not null || NotRun(a.Answer) is { Length: > 0 }))
+            ? " The routes through the MIDI loopback didn't all run. " + LoopbackSetup
+            : "";
+        return verdict with
+        {
+            Detail = verdict.Detail + $" The link tried the copy, the paste and the focus actions {attempts.Count} ways, one after another, and " +
+                     $"none put the clip there (this is what the last, {RouteName(seen.Via)}, found)." + loopback,
+            Lines = [.. verdict.Lines, .. lines],
+        };
     }
+
+    /// <summary>One go at the arrange experiment by a route: what the extension answered, or what it said when it stopped.</summary>
+    sealed record ArrangeAttempt(string Via, BitwigArranged? Answer, string? Error);
+
+    /// <summary>The steps of an arrange the route didn't run, in plain words ("" when they all ran, or the extension doesn't say).</summary>
+    static string NotRun(BitwigArranged? a)
+    {
+        if (a?.Ran is not { } ran) return "";
+        var steps = new List<string>();
+        if (ran.LauncherFocus == false) steps.Add("giving the clip launcher the focus");
+        if (ran.Copy == false) steps.Add("the copy");
+        if (ran.Focus == false) steps.Add("bringing the arranger timeline to the front");
+        if (ran.Paste == false) steps.Add("the paste");
+        return Join(steps);
+    }
+
+    /// <summary>A line for the report saying what the arrange experiment did by one route.</summary>
+    static string ArrangeLine(ArrangeAttempt a) =>
+        $"- {Capital(RouteName(a.Via))}: " + (a.Error is { } error ? $"the extension stopped: {error}"
+            : NotRun(a.Answer) is { Length: > 0 } steps ? $"{steps} didn't run"
+            : a.Answer is { Arranged: true, CopiedFromTimeline: false } ? "put the clip in the arranger"
+            : a.Answer!.CopiedFromTimeline ? "Bitwig copied from the arranger timeline, so the extension didn't paste"
+            : a.Answer.Appeared ? "a clip appeared on the track, but the extension couldn't be sure it was the run's"
+            : "nothing appeared in the arranger");
 
     /// <summary>What a Failed arrange adds when Bitwig's window wasn't in front.</summary>
     static string Window(bool? front) =>
@@ -744,6 +988,9 @@ public static class BitwigLiveTests
                         with { Lines = failed.Select(c => $"- {Text(c, "name")}: {Text(c, "detail")}").ToList() };
                 return LiveVerdict.Pass($"All {checks.Count} of the extension's own checks passed.{where}", data);
             });
+
+            // Extension 3.7: whether the MIDI loopback works, which Save and Clip to arranger try routes through.
+            await ReadNewer(Link, "MIDI loopback", async (link, t) => LoopbackVerdict(await link.HelloAsync(t)));
         }
 
         // ---- Changes: only in a project made for the tests ----
@@ -819,7 +1066,9 @@ public static class BitwigLiveTests
 
             // An experiment: the API can't put a clip in the arranger, so the extension copies and pastes it there as a person
             // would, and says what Bitwig did.
-            await Change(Changes, "Clip to arranger", (link, t) => ClipToArrangerAsync(link, SampleTrack, _clipSlot, options.BringBitwigToFront, t));
+            await Change(Changes, "Clip to arranger", (link, t) => ClipToArrangerAsync(link, SampleTrack, _clipSlot, options.BringBitwigToFront, t,
+                                                                                       async () => await ClosedSinceAsync(link) is not null),
+                         ArrangeTime);
 
             await Change(Changes, "Drum Machine by ID", async (link, t) =>
             {
@@ -1065,37 +1314,10 @@ public static class BitwigLiveTests
             {
                 if (_save is null) return LiveVerdict.Fail("Bitwig listed no Save action (see Link › Actions), so the run couldn't save.");
                 var project = link.Hello.Project;
-                var wasModified = link.Hello.Modified;
-                // The project's file, if the app can find it: whether Save wrote it says more than Bitwig's unsaved changes.
-                var file = FindSaved(project, DateTime.MinValue, options.LibraryProjects(), SavedFolders());
-                DateTime? Written() => file is not null && File.Exists(file) ? File.GetLastWriteTimeUtc(file) : null;
-                var before = Written();
-                var front = options.BringBitwigToFront();
                 _savedAt = DateTime.UtcNow;
-                var took = Stopwatch.StartNew();
-                // The project Bitwig had in front as Save ran (null from an older link), for the report: with more than one
-                // project open, it says which one Save went to.
-                var active = await link.RunActionAsync(_save, t);
-                var modified = await StillModifiedAsync(link, took, t);
-                var tookFirst = took.Elapsed;
-                // A project saved for the first time has no file until Save writes one.
-                file ??= FindSaved(project, _savedAt.AddSeconds(-2), options.LibraryProjects(), SavedFolders());
-                var after = Written();
-                SecondSave? second = null;
-                if (modified && !Wrote(file, before, after))
-                {
-                    // Bitwig 6.1.3 once left the test project unsaved after Save: try once more, a moment later, to see whether
-                    // a second Save does it. It's a change like the first, so it goes through the same checks (BeforeChange),
-                    // and carries the test project's name (onlyIn).
-                    await Task.Delay(SecondSaveAfter, t);
-                    var again = Stopwatch.StartNew();
-                    var activeAgain = await link.RunActionAsync(_save, t);
-                    var cleared = !await StillModifiedAsync(link, again, t);
-                    var tookAgain = again.Elapsed;
-                    file ??= FindSaved(project, _savedAt.AddSeconds(-2), options.LibraryProjects(), SavedFolders());
-                    second = new SecondSave(activeAgain, cleared, tookAgain, Written());
-                }
-                var verdict = SaveVerdict(project, _save, wasModified, modified, tookFirst, options.SaveWait, file, before, after, front, active, second);
+                var verdict = await SaveByRoutesAsync(link, _save, options.SaveWait,
+                                                      since => FindSaved(project, since, options.LibraryProjects(), SavedFolders()),
+                                                      options.BringBitwigToFront, async () => await ClosedSinceAsync(link) is not null, t);
                 if (verdict.Outcome == LiveOutcome.Passed)
                 {
                     _saved = true;
@@ -1131,19 +1353,11 @@ public static class BitwigLiveTests
             });
         }
 
-        /// <summary>How long Save gets: two waits for the unsaved changes to clear (when the first Save didn't do it), and time to spare.</summary>
-        TimeSpan SaveTime => options.SaveWait * 2 + SecondSaveAfter + TimeSpan.FromSeconds(15);
+        /// <summary>How long Save gets: a wait for the unsaved changes to clear after Save by each route, and time to spare.</summary>
+        TimeSpan SaveTime => options.SaveWait * Routes.Count + TimeSpan.FromSeconds(30);
 
-        /// <summary>
-        /// Asks Bitwig until its unsaved changes clear, or until <see cref="BitwigLiveOptions.SaveWait"/> has gone by since
-        /// Save ran (<paramref name="took"/>): whether they're still there.
-        /// </summary>
-        async Task<bool> StillModifiedAsync(BitwigLink link, Stopwatch took, CancellationToken t)
-        {
-            bool modified;
-            while ((modified = (await link.HelloAsync(t)).Modified) && took.Elapsed <= options.SaveWait) await Task.Delay(100, t);
-            return modified;
-        }
+        /// <summary>How long Clip to arranger gets: a go by each route, each with a few of the extension's waits.</summary>
+        static TimeSpan ArrangeTime => TimeSpan.FromSeconds(30) * Routes.Count;
 
         IEnumerable<string> SavedFolders() => ProjectFolders(options.BitwigUserFolders(), options.LibraryProjects());
 

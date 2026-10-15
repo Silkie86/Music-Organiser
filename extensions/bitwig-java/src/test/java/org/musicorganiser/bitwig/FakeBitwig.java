@@ -8,6 +8,7 @@ import com.bitwig.extension.callback.DirectParameterNameChangedCallback;
 import com.bitwig.extension.callback.DirectParameterNormalizedValueChangedCallback;
 import com.bitwig.extension.callback.NoArgsCallback;
 import com.bitwig.extension.callback.StringArrayValueChangedCallback;
+import com.bitwig.extension.callback.SysexMidiDataReceivedCallback;
 import com.bitwig.extension.controller.api.Action;
 import com.bitwig.extension.controller.api.ActionCategory;
 import com.bitwig.extension.controller.api.Application;
@@ -26,10 +27,18 @@ import com.bitwig.extension.controller.api.DoubleValue;
 import com.bitwig.extension.controller.api.DrumPad;
 import com.bitwig.extension.controller.api.DrumPadBank;
 import com.bitwig.extension.controller.api.EnumValue;
+import com.bitwig.extension.controller.api.HardwareAction;
+import com.bitwig.extension.controller.api.HardwareActionBindable;
+import com.bitwig.extension.controller.api.HardwareActionMatcher;
+import com.bitwig.extension.controller.api.HardwareBinding;
+import com.bitwig.extension.controller.api.HardwareButton;
+import com.bitwig.extension.controller.api.HardwareSurface;
 import com.bitwig.extension.controller.api.InsertionPoint;
 import com.bitwig.extension.controller.api.IntegerValue;
 import com.bitwig.extension.controller.api.LastClickedParameter;
 import com.bitwig.extension.controller.api.MasterRecorder;
+import com.bitwig.extension.controller.api.MidiIn;
+import com.bitwig.extension.controller.api.MidiOut;
 import com.bitwig.extension.controller.api.Parameter;
 import com.bitwig.extension.controller.api.PinnableCursorDevice;
 import com.bitwig.extension.controller.api.PopupBrowser;
@@ -64,6 +73,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -97,6 +107,12 @@ import java.util.regex.Pattern;
  * and what's new to the extension: tracks' IDs, a device's remote controls page, the last clicked parameter, the
  * master recorder, the arranger (with copy and paste, for the arrange experiment, and launcher and arranger clips' colours,
  * which copy and paste carry with the clip), and parts of the API that fail, as in a Bitwig that changed.
+ *
+ * For the routes (extension 3.7), it has MIDI ports, which the model can loop back (what goes out comes back in a moment
+ * later, as through a loopMIDI port set as both), and a hardware surface whose buttons a note coming back in presses. It
+ * keeps track of where each call into the extension comes from (see {@link Context}), and the model says in which of
+ * those Bitwig carries out the commands of its user interface: Bitwig 6.1.3 ignored them everywhere but, it seems, while
+ * it handled a hardware button.
  */
 final class FakeBitwig {
     static final String SAMPLER = Link.SAMPLER;
@@ -116,6 +132,17 @@ final class FakeBitwig {
     final List<String> printed = new ArrayList<>();
     /** The notifications it showed in Bitwig. */
     final List<String> popups = new ArrayList<>();
+    /** What the extension sent on its MIDI out: ["sysex", hex as sent] and ["midi", status, data1, data2]. */
+    final List<List<Object>> midi = new ArrayList<>();
+    /** The user interface commands Bitwig ignored, as "<command> in <context>" (see Model.honoured). */
+    final List<String> ignored = new ArrayList<>();
+    /** Where the extension's code is running now: what called into it (see Context). */
+    Context context = Context.TEST;
+    /** The extension's buttons, on its hardware surface. */
+    final List<Button> buttons = new ArrayList<>();
+    private SysexMidiDataReceivedCallback sysexCallback;
+    /** The size the extension gave its hardware surface, once it has. */
+    double[] surfaceSize;
     final State state;
     final Link link;
 
@@ -186,6 +213,34 @@ final class FakeBitwig {
     private Link.Job lastJob;
 
     private record Switch(String cmd, BooleanSupplier when, String project) {}
+
+    /**
+     * What called into the extension: Bitwig starting it (INIT), the app's connection (SOCKET), a task it scheduled
+     * (TASK), Bitwig's flush (FLUSH), a SysEx message on its MIDI in (SYSEX), a press of one of its hardware buttons
+     * (HARDWARE), or the test itself (TEST).
+     */
+    enum Context { INIT, SOCKET, TASK, FLUSH, SYSEX, HARDWARE, TEST }
+
+    /** Runs `code` as called from `where` (see Context). */
+    void in(Context where, Runnable code) {
+        Context before = context;
+        context = where;
+        try {
+            code.run();
+        } finally {
+            context = before;
+        }
+    }
+
+    /**
+     * Whether Bitwig carries out a command of its user interface (`what`: Save, copy, paste, a focus action) asked for
+     * where the extension is running now: the model says where it does. One it ignores goes in `ignored`.
+     */
+    private boolean honoured(String what) {
+        if (model.honoured.contains(context)) return true;
+        ignored.add(what + " in " + context);
+        return false;
+    }
 
     /** The project as the stand-in keeps it: a test can change it, then refresh(). */
     static final class State {
@@ -274,7 +329,7 @@ final class FakeBitwig {
      */
     static FakeBitwig start(Model model, Path reports) {
         FakeBitwig bitwig = new FakeBitwig(model, reports);
-        bitwig.link.init();
+        bitwig.in(Context.INIT, bitwig.link::init);
 
         // Fill in the project after init, as Bitwig does.
         bitwig.sync();
@@ -466,13 +521,18 @@ final class FakeBitwig {
         if (!shown && LAUNCHER.equals(focus)) focus = "";
     }
 
+    /** The API's copy, which Bitwig carries out only where the model says (see copied). */
+    private void copy() {
+        calls.add(List.of("copy"));
+        if (honoured("copy")) copied();
+    }
+
     /**
      * Copy, in the panel with the focus: Bitwig's clipboard takes the launcher clip selected (with the clip launcher in
      * front), or the clip selected in the arranger (with the arranger timeline in front), with its colour. With another
      * panel in front, or nothing selected, the clipboard keeps what it had.
      */
-    private void copy() {
-        calls.add(List.of("copy"));
+    private void copied() {
         later(20, () -> {
             Copied copied = null;
             if (LAUNCHER.equals(focus) && launcherShown && slotSelected != null) {
@@ -499,6 +559,12 @@ final class FakeBitwig {
         return String.format(Locale.ROOT, "#%02X%02X%02X", Math.round(rgb[0] * 255), Math.round(rgb[1] * 255), Math.round(rgb[2] * 255));
     }
 
+    /** The API's paste, which Bitwig carries out only where the model says (see pasted). */
+    private void paste() {
+        calls.add(List.of("paste"));
+        if (honoured("paste")) pasted();
+    }
+
     /**
      * Paste: with the arranger timeline shown and in front, a copy of the clip goes on the selected track at the play
      * start, and is selected there (so the arranger's cursor clip follows it); with the clip launcher in front, it goes in
@@ -506,8 +572,7 @@ final class FakeBitwig {
      * copied. With another panel in front, nothing happens. The model can make Bitwig ignore paste, or paste into the
      * launcher whichever panel is in front.
      */
-    private void paste() {
-        calls.add(List.of("paste"));
+    private void pasted() {
         later(40, () -> {
             TrackSpec track = cursorSpec();
             if (model.pasteIgnored || clipboard == null || track == null) return;
@@ -624,7 +689,7 @@ final class FakeBitwig {
                     received.add(message(bytes));
                 }
             };
-            connect.connectionEstablished((RemoteConnection) connection.api);
+            in(Context.SOCKET, () -> connect.connectionEstablished((RemoteConnection) connection.api));
         }
 
         /** Messages that arrived since the last call. */
@@ -637,7 +702,7 @@ final class FakeBitwig {
         /** Sends a request (a map, written as JSON, or text as it is) as Bitwig would hand it over: UTF-8 bytes. */
         void send(Object request) {
             String text = request instanceof String ? (String) request : Json.write(request);
-            receive.dataReceived(text.getBytes(StandardCharsets.UTF_8));
+            in(Context.SOCKET, () -> receive.dataReceived(text.getBytes(StandardCharsets.UTF_8)));
         }
 
         /** Sends a request and returns the one reply to it. */
@@ -658,7 +723,7 @@ final class FakeBitwig {
         }
 
         void close() {
-            disconnect.call();
+            in(Context.SOCKET, disconnect::call);
         }
 
         /** Breaks the connection without Bitwig noticing, so the extension's next send fails. */
@@ -770,6 +835,29 @@ final class FakeBitwig {
         boolean colourSnaps;
         /** The hue the link's marking colours start from (see Link.markHue), so a test knows which colours come. */
         double markHue;
+
+        // The routes (extension 3.7).
+        /**
+         * Where Bitwig carries out the commands of its user interface (Save, its Copy and Paste actions, the API's copy and
+         * paste, the focus actions): everywhere unless a test says otherwise. Elsewhere it ignores them, as Bitwig 6.1.3 did.
+         */
+        final Set<Context> honoured = EnumSet.allOf(Context.class);
+        /** Whether the extension's MIDI out comes back on its MIDI in (a loopMIDI port set as both), and after how many milliseconds. */
+        boolean loopback;
+        long loopbackDelay = 5;
+        /** Whether Bitwig never calls the extension's flush, however often it asks. */
+        boolean noFlush;
+
+        /**
+         * Has Bitwig carry out the commands of its user interface only while it handles a hardware button, and (when
+         * `sysex` is true) a SysEx message on the MIDI in, which may count as hardware too.
+         */
+        Model onlyHardware(boolean sysex) {
+            honoured.clear();
+            honoured.add(Context.HARDWARE);
+            if (sysex) honoured.add(Context.SYSEX);
+            return this;
+        }
 
         Model tracks(TrackSpec... list) {
             tracks.addAll(Arrays.asList(list));
@@ -2022,11 +2110,173 @@ final class FakeBitwig {
                 };
             }
 
+            /**
+             * Runs the action. Save, Copy, Paste and the focus actions are commands of Bitwig's user interface, which it
+             * carries out only where the model says: Save leaves the project without unsaved changes a moment later.
+             */
             void invoke() {
                 calls.add(Arrays.asList("invoke", a.id()));
-                if (a.id().equals(Link.FOCUS_ARRANGER) || a.id().equals(Link.FOCUS_LAUNCHER)) focusOrToggle(a.id());
+                switch (a.id()) {
+                    case Link.FOCUS_ARRANGER, Link.FOCUS_LAUNCHER -> {
+                        if (honoured(a.id())) focusOrToggle(a.id());
+                    }
+                    case "Save" -> {
+                        if (honoured("Save")) later(20, () -> modified.v = false);
+                    }
+                    case "Copy" -> {
+                        if (honoured("Copy")) copied();
+                    }
+                    case "Paste" -> {
+                        if (honoured("Paste")) pasted();
+                    }
+                    default -> {}
+                }
             }
         };
+    }
+
+    // ---- MIDI and hardware (the routes) ----
+
+    /** The extension's MIDI in: it takes a SysEx callback and makes the matchers its buttons listen with. */
+    private final Stand midiIn = new Stand(MidiIn.class) {
+        void setSysexCallback(SysexMidiDataReceivedCallback callback) {
+            sysexCallback = callback;
+        }
+
+        Matcher createNoteOnActionMatcher(int channel, int note) {
+            return new Matcher(channel, note);
+        }
+    };
+
+    /**
+     * The extension's MIDI out. What it sends goes in `midi`, and when the model loops it back, comes in again a moment
+     * later: a SysEx message to the SysEx callback, a note on to the buttons listening for it.
+     */
+    private final Stand midiOut = new Stand(MidiOut.class) {
+        void sendSysex(Object data) {
+            String hex = data instanceof byte[] bytes ? hexBytes(bytes) : (String) data;
+            midi.add(Arrays.asList("sysex", hex));
+            if (!model.loopback) return;
+            // As Bitwig hands it over: lower case, without spaces.
+            String back = hex.replace(" ", "").toLowerCase(Locale.ROOT);
+            clock.schedule(() -> {
+                if (sysexCallback != null) in(Context.SYSEX, () -> sysexCallback.sysexDataReceived(back));
+            }, model.loopbackDelay);
+        }
+
+        void sendMidi(int status, int data1, int data2) {
+            midi.add(Arrays.asList("midi", status, data1, data2));
+            if (!model.loopback || (status & 0xF0) != 0x90 || data2 == 0) return;
+            clock.schedule(() -> press(status & 0x0F, data1), model.loopbackDelay);
+        }
+    };
+
+    private static String hexBytes(byte[] bytes) {
+        StringBuilder text = new StringBuilder();
+        for (byte b : bytes) text.append(String.format("%02X", b & 0xFF));
+        return text.toString();
+    }
+
+    /** A note on `note` (0 up) on MIDI channel `channel` (0 to 15) came in: presses each button listening for it. */
+    void press(int channel, int note) {
+        for (Button button : new ArrayList<>(buttons)) {
+            Matcher m = button.pressed.matcher;
+            if (m != null && m.channel == channel && m.note == note) in(Context.HARDWARE, button.pressed::run);
+        }
+    }
+
+    /** Presses the extension's button called `id` (as made with createHardwareButton), as a note coming in would. */
+    void pressButton(String id) {
+        for (Button button : new ArrayList<>(buttons))
+            if (button.id.equals(id)) in(Context.HARDWARE, button.pressed::run);
+    }
+
+    /** Sends a SysEx message (as hex) to the extension's MIDI in, as one coming back through the loopback would. */
+    void sysexIn(String hex) {
+        in(Context.SYSEX, () -> sysexCallback.sysexDataReceived(hex));
+    }
+
+    /** What a button listens for: a note on, on a channel (0 to 15). */
+    static final class Matcher extends Stand {
+        final int channel;
+        final int note;
+
+        Matcher(int channel, int note) {
+            super(HardwareActionMatcher.class);
+            this.channel = channel;
+            this.note = note;
+        }
+    }
+
+    /** One of the extension's buttons: its ID, and what pressing it does. */
+    final class Button extends Stand {
+        final String id;
+        final Press pressed = new Press();
+
+        Button(String id) {
+            super(HardwareButton.class);
+            this.id = id;
+        }
+
+        Press pressedAction() {
+            return pressed;
+        }
+    }
+
+    /** A button's press: the matcher it listens with, and what it's bound to, which a press runs in order. */
+    final class Press extends Stand {
+        Matcher matcher;
+        final List<Object> bindings = new ArrayList<>();
+
+        Press() {
+            super(HardwareAction.class);
+        }
+
+        void setActionMatcher(Matcher m) {
+            matcher = m;
+        }
+
+        Stand addBinding(Object bindable) {
+            bindings.add(bindable);
+            return binding(bindable);
+        }
+
+        Stand setBinding(Object bindable) {
+            bindings.clear();
+            return addBinding(bindable);
+        }
+
+        void clearBindings() {
+            bindings.clear();
+        }
+
+        private Stand binding(Object bindable) {
+            return new Stand(HardwareBinding.class) {
+                void removeBinding() {
+                    bindings.remove(bindable);
+                }
+            };
+        }
+
+        /** A press: runs each of Bitwig's actions bound, and each of the extension's own (made with createAction). */
+        void run() {
+            for (Object bound : new ArrayList<>(bindings)) {
+                if (bound instanceof Callback callback) callback.run.run();
+                else ((HardwareActionBindable) ((Stand) bound).api).invoke();
+            }
+        }
+    }
+
+    /** One of the extension's own actions (made with createAction), which a button runs when it's bound to it. */
+    static final class Callback extends Stand {
+        final Runnable run;
+        final String name;
+
+        Callback(Runnable run, String name) {
+            super(HardwareActionBindable.class);
+            this.run = run;
+            this.name = name;
+        }
     }
 
     /** Bitwig itself, as the extension's ControllerHost. */
@@ -2235,8 +2485,43 @@ final class FakeBitwig {
         }
 
         void scheduleTask(Runnable task, long ms) {
-            clock.schedule(task, ms);
+            clock.schedule(() -> in(Context.TASK, task), ms);
             waiting();
+        }
+
+        Stand getMidiInPort(int index) {
+            if (index != 0) throw new IllegalArgumentException("The extension has one MIDI in, not " + (index + 1) + ".");
+            return midiIn;
+        }
+
+        Stand getMidiOutPort(int index) {
+            if (index != 0) throw new IllegalArgumentException("The extension has one MIDI out, not " + (index + 1) + ".");
+            return midiOut;
+        }
+
+        Stand createHardwareSurface() {
+            return new Stand(HardwareSurface.class) {
+                void setPhysicalSize(double width, double height) {
+                    surfaceSize = new double[] {width, height};
+                }
+
+                Button createHardwareButton(String id) {
+                    Button button = new Button(id);
+                    buttons.add(button);
+                    return button;
+                }
+            };
+        }
+
+        @SuppressWarnings("unchecked")
+        Callback createAction(Object run, Supplier<?> name) {
+            return new Callback((Runnable) run, String.valueOf(name.get()));
+        }
+
+        /** Bitwig calls the extension's flush a moment later (unless the model says it never does). */
+        void requestFlush() {
+            if (model.noFlush) return;
+            clock.schedule(() -> in(Context.FLUSH, link::flush), 0);
         }
     }
 
