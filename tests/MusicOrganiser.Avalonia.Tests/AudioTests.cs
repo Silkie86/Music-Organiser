@@ -206,17 +206,17 @@ public sealed class AudioTests : IDisposable
 
         WithOutput(() => connected, _ => { reopened++; return connected = true; }, () =>
         {
+            var clock = Stopwatch.StartNew();   // from the start, so a slow machine's longer sleeps count too
             player.Play(path);
             Thread.Sleep(300);
             connected = false;
-            var clock = Stopwatch.StartNew();
             Thread.Sleep(400);
             var position = player.Position;
 
             Assert.Equal(1, reopened);
             Assert.Equal(path, player.Playing);
             // Picks up from the piece it was playing, then keeps time: no racing through in silence.
-            Assert.InRange(position ?? 0, 0.15, 0.3 + clock.Elapsed.TotalSeconds + 0.1);
+            Assert.InRange(position ?? 0, 0.15, clock.Elapsed.TotalSeconds + 0.1);
         });
     }
 
@@ -232,10 +232,10 @@ public sealed class AudioTests : IDisposable
 
         WithOutput(() => connected, _ => connected = true, () =>
         {
+            var clock = Stopwatch.StartNew();   // from the start, so a slow machine's longer sleeps count too
             sounds.Play(first);
             preview.Play(second);
             Thread.Sleep(200);
-            var clock = Stopwatch.StartNew();
             connected = false;
             Thread.Sleep(300);
 
@@ -244,7 +244,7 @@ public sealed class AudioTests : IDisposable
             Assert.Contains($"Started \"{first}\" again", log);
             Assert.Contains($"Started \"{second}\" again", log);
             foreach (var player in new[] { sounds, preview })
-                Assert.InRange(player.Position ?? 0, 0.1, 0.2 + clock.Elapsed.TotalSeconds + 0.1);
+                Assert.InRange(player.Position ?? 0, 0.1, clock.Elapsed.TotalSeconds + 0.1);
         });
     }
 
@@ -298,17 +298,17 @@ public sealed class AudioTests : IDisposable
 
         WithOutput(null, name => { lock (moves) moves.Add(name); return true; }, () =>
         {
+            var clock = Stopwatch.StartNew();   // from the start, so a slow machine's longer sleeps count too
             player.Play(path);
             Thread.Sleep(100);
             lock (moves) moves.Clear();
-            var clock = Stopwatch.StartNew();
 
             OpenAlPlayer.ChooseOutput("Focusrite USB");
             Thread.Sleep(300);
 
             lock (moves) Assert.Equal(["Focusrite USB"], moves);
             Assert.Equal(path, player.Playing);
-            Assert.InRange(player.Position ?? 0, 0.1, 0.1 + clock.Elapsed.TotalSeconds + 0.1);   // plays on in time
+            Assert.InRange(player.Position ?? 0, 0.1, clock.Elapsed.TotalSeconds + 0.1);   // plays on in time
             Assert.StartsWith("Sounds play through", OpenAlPlayer.CheckOutput());
             lock (moves) Assert.Single(moves);   // already there: looking again moves nothing
         }, outputs: () => ["Speakers (HDMI)", "Focusrite USB"]);
