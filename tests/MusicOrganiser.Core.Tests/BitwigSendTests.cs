@@ -150,6 +150,10 @@ public class BitwigSendTests
         Assert.Null(again.Track);
         Assert.Equal([49], again.Filled.Select(p => p.Note));
         Assert.Equal([36, 37, 38, 42], again.Skipped.Select(p => p.Note));
+
+        // The link says what's on a pad it leaves alone.
+        var kick = await link.FillPadsAsync([new BitwigPad(36, @"C:\Kit\Kick 2.wav")]);
+        Assert.Equal([new BitwigPadContents(36, "Kick", 1, "Sampler")], kick.Taken!);
     }
 
     [Fact]

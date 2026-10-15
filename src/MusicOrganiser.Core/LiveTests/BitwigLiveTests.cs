@@ -563,12 +563,19 @@ public static class BitwigLiveTests
                     ["filled"] = new JsonArray(filled.Filled.Select(n => (JsonNode)n).ToArray()),
                     ["skipped"] = new JsonArray(filled.Skipped.Select(n => (JsonNode)n).ToArray()),
                     ["failed"] = new JsonArray(filled.Failed.Select(n => (JsonNode)n).ToArray()),
+                    ["taken"] = filled.Taken is { } taken
+                        ? new JsonArray(taken.Select(p => (JsonNode)new JsonObject { ["note"] = p.Note, ["name"] = p.Name, ["devices"] = p.Devices, ["first"] = p.First }).ToArray())
+                        : null,
                 };
                 string On(IEnumerable<int> notes) => string.Join(", ", pads.Where(p => notes.Contains(p.Note)).Select(p => $"{p.Name} on {DawProject.NoteName(p.Note)}"));
                 if (filled.Filled.Count == pads.Count) return LiveVerdict.Pass($"Bitwig put each sample on its pad: {On(filled.Filled)}.", data);
                 var missed = new List<string>();
                 if (filled.Failed.Count > 0) missed.Add($"it didn't load {On(filled.Failed)}");
-                if (filled.Skipped.Count > 0) missed.Add($"it said {On(filled.Skipped)} already had something on them");
+                if (filled.Skipped.Count > 0)
+                    missed.Add($"it said {On(filled.Skipped)} already had something on them" + (filled.Taken is { Count: > 0 } shown
+                        ? " (" + string.Join("; ", shown.Select(p => $"{DawProject.NoteName(p.Note)} showed “{p.Name}” with {p.Devices} " +
+                                                                     $"device{(p.Devices == 1 ? "" : "s")}, the first “{p.First}”")) + ")"
+                        : ""));
                 return LiveVerdict.Fail($"Not every sample went on its pad: {string.Join("; ", missed)}.", data);
             });
 

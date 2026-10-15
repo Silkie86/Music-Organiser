@@ -56,8 +56,15 @@ public sealed record BitwigInserted(bool Added, int? Index, BitwigDevice? Device
 /// <summary>A sample for a Drum Machine pad: the MIDI note the pad plays on, and the name to give the pad.</summary>
 public sealed record BitwigPad(int Note, string Path, string Name = "");
 
-/// <summary>The pads (by note) that got their sample, that already had something on them, and that Bitwig didn't fill.</summary>
-public sealed record BitwigPadsFilled(IReadOnlyList<int> Filled, IReadOnlyList<int> Skipped, IReadOnlyList<int> Failed);
+/// <summary>
+/// The pads (by note) that got their sample, that already had something on them, and that Bitwig didn't fill; and
+/// what was on each pad left alone (the link has said since extension 3.2).
+/// </summary>
+public sealed record BitwigPadsFilled(IReadOnlyList<int> Filled, IReadOnlyList<int> Skipped, IReadOnlyList<int> Failed,
+                                      IReadOnlyList<BitwigPadContents>? Taken = null);
+
+/// <summary>What Bitwig showed on a pad: its name, how many devices, and the first one's name.</summary>
+public sealed record BitwigPadContents(int Note, string Name, int Devices, string First);
 
 /// <summary>A pitch Bitwig set: on which device, in semitones, and as Bitwig shows it ("-3.50 st").</summary>
 public sealed record BitwigPitch(string Device, double Value, string Display);
