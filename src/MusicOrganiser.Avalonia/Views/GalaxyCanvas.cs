@@ -197,8 +197,9 @@ public sealed class GalaxyCanvas : Control
 
     // ---- camera -----------------------------------------------------------------------------------------
 
-    // Room kept clear at the top (the star count) and bottom (the colour key) when the whole galaxy is showing.
-    const double TopRoom = 64, BottomRoom = 56;
+    // A little room kept at the top and bottom when the whole galaxy is showing. The star count and colour key sit in
+    // the corners, which a round galaxy leaves empty, so it can use nearly the full height.
+    const double TopRoom = 24, BottomRoom = 24;
     // The view's size, read once a frame (asking Avalonia for Bounds per star was most of a frame's time).
     double _w, _h;
     double Fitted => Math.Min(_w, Math.Max(40, _h - TopRoom - BottomRoom));
@@ -829,7 +830,9 @@ public sealed class GalaxyCanvas : Control
         if (Regions is { Count: > 0 } regions && regionFade > 0.02)
         {
             var taken = Covered();
-            foreach (var r in regions)   // biggest first, so a smaller neighbour is the one that moves
+            // Only as many names as the galaxy's size has room for, so they label the clouds rather than cover them.
+            var names = (int)Math.Clamp(Scale * 0.86 / 55, 4, 16);
+            foreach (var r in regions.Take(names))   // biggest first, so a smaller neighbour is the one that moves
                 Label(ctx, taken, r.Name, r.Count, r.Colour, ToScreen(r.X, r.Y), regionFade * intro, bg,
                       new Rect(r.Left, r.Y, r.Right - r.Left, r.Bottom - r.Y), big: true);
         }
@@ -894,7 +897,7 @@ public sealed class GalaxyCanvas : Control
         if (!fits || box.Right < 0 || box.Bottom < 0 || box.X > _w || box.Y > _h) return;
         taken.Add(box);
         // A soft backing so the name reads over a bright cloud; it lights up in the cloud's colour under the mouse.
-        ctx.DrawRectangle(new ImmutableSolidColorBrush(hovered ? WithAlpha(Blend(bg, c, 0.22), (byte)(220 * fade)) : WithAlpha(bg, (byte)(110 * fade))),
+        ctx.DrawRectangle(new ImmutableSolidColorBrush(hovered ? WithAlpha(Blend(bg, c, 0.22), (byte)(220 * fade)) : WithAlpha(bg, (byte)(70 * fade))),
                           null, box.Inflate(new Thickness(8, 3)), 6, 6);
         ctx.DrawText(ft, box.TopLeft);
         if (fade > 0.5) _labels.Add((box, area));
@@ -948,7 +951,7 @@ public sealed class GalaxyCanvas : Control
         if (_miniVersion != _version || _mini is null)
         {
             _mini = Bitmap(_mini, (int)MiniSize, (int)MiniSize);
-            Paint(_mini, (0, 0, Grid - 1, Grid - 1), MiniSize, 0, 0, null, 1f, 0.5f);
+            Paint(_mini, (0, 0, Grid - 1, Grid - 1), MiniSize, 0, 0, null, 1.3f, 0.15f);
             _miniVersion = _version;
         }
         // One panel: how far in and how many in view along the top, the map below.
