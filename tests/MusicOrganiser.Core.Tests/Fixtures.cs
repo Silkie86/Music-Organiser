@@ -434,8 +434,8 @@ public static class Fixtures
     /// Like Solomon's civil_18: an FL 25 song whose playlist tracks 2 ("Acapellas") and 4 are muted, and whose "Hat" and
     /// "Vox" channels are switched off in the Channel Rack. Pattern "Verse" (a snare note and a hat note) is on track 1
     /// in bar 1 and on track 2 in bar 2. "Acapella" audio clips are on track 2 (bars 1 and 2) and track 4 (bar 3); "Vox"
-    /// clips on tracks 1 and 3 overlap. A second arrangement mutes its own track 1. As FL 25 does, the project has an
-    /// event 0 of its own (0) before the first channel.
+    /// clips on tracks 1 and 3 overlap. Pattern "Pad" is only on track 4 (bar 3). A second arrangement mutes its own
+    /// track 1. As FL 25 does, the project has an event 0 of its own (0) before the first channel.
     /// </summary>
     public static string FlStudio25MutedTracks(string dir)
     {
@@ -443,14 +443,16 @@ public static class Fixtures
             .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
             .Text(192, "FL Studio 25.2.5.5319").Dword(156, 120_000).Byte(0, 0)
             .Word(65, 1).Text(193, "Verse").Data(224, [.. Note(0, 0, 96, 60, 100), .. Note(0, 1, 48, 66, 100)])
+            .Word(65, 2).Text(193, "Pad").Data(224, Note(0, 4, 192, 64, 100))
             .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare").Byte(0, 1).Text(196, @"C:\Samples\Snare 01.wav")
             .Word(64, 1).Byte(21, 0).Text(201, "").Text(203, "Hat").Byte(0, 0).Text(196, @"C:\Samples\Hat 01.wav")
             .Word(64, 2).Byte(21, 4).Byte(0, 1).Data(215, ChannelParams()).Text(203, "Acapella").Text(196, @"C:\Samples\Acapella.wav")
             .Word(64, 3).Byte(21, 4).Byte(0, 0).Data(215, ChannelParams()).Text(203, "Vox").Text(196, @"C:\Samples\Vox.wav")
+            .Word(64, 4).Byte(21, 0).Text(201, "").Text(203, "Pad").Byte(0, 1).Text(196, @"C:\Samples\Pad.wav")
             .Word(99, 0).Text(241, "Arrangement")
             .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384, track: 498),
                         .. PlaylistItem25(0, 2, 768, track: 498), .. PlaylistItem25(768, 2, 384, track: 496),
-                        .. PlaylistItem25(0, 3, 384), .. PlaylistItem25(192, 3, 384, track: 497)]);
+                        .. PlaylistItem25(0, 3, 384), .. PlaylistItem25(192, 3, 384, track: 497), .. PlaylistItem25(768, 20482, 384, track: 496)]);
         for (var n = 1; n <= 500; n++)
         {
             b.Data(238, PlaylistTrack(n, muted: n is 2 or 4));

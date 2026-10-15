@@ -16,7 +16,7 @@ public sealed record FlPlugin(string Name, string Vendor, string Format, string 
 
 /// <summary>
 /// A channel in the Channel Rack: what plays it, which mixer insert it feeds, and the notes it plays across
-/// the song (in song ticks, without muted notes or clips). <paramref name="RootKey"/> is the MIDI note the
+/// the song (in song ticks, without muted notes, muted clips or clips on muted playlist tracks). <paramref name="RootKey"/> is the MIDI note the
 /// sample plays at its own pitch (60, FL's C5, unless changed); <paramref name="PitchCents"/> the channel's
 /// pitch knob. Volume and pan are FL's 0..1 knob positions.
 /// </summary>
@@ -48,6 +48,9 @@ public sealed record FlAudioClip(long Start, long Length, double From = 0, bool 
 {
     /// <summary>The playlist track it's on, from 1 at the top; 0 when the file doesn't say.</summary>
     public int Track { get; init; }
+
+    /// <summary>Whether that playlist track is muted, so the clip doesn't play even when it isn't <see cref="Muted"/> itself.</summary>
+    public bool OnMutedTrack { get; init; }
 }
 
 /// <summary>
@@ -87,12 +90,16 @@ public sealed record FlClip(string Name, long Start, long Length, IReadOnlyList<
 {
     /// <summary>The playlist track it's on, from 1 at the top; 0 when the file doesn't say or the song has no playlist.</summary>
     public int Track { get; init; }
+
+    /// <summary>Whether that playlist track is muted, so the clip doesn't play even when it isn't <see cref="Muted"/> itself.</summary>
+    public bool OnMutedTrack { get; init; }
 }
 
 /// <summary>A track (row) in FL's playlist, numbered from 1 at the top, with its name when it was given one.</summary>
 public sealed record FlTrack(int Number, string Name)
 {
-    public string Label => Name.Length > 0 ? $"{Name} (playlist track {Number})" : $"Playlist track {Number}";
+    /// <summary>How a note names it: "playlist track 4", or "Vocals, playlist track 4" when it has a name.</summary>
+    public string Label => Name.Length > 0 ? $"{Name}, playlist track {Number}" : $"playlist track {Number}";
 }
 
 /// <summary>What an automation clip moves.</summary>
@@ -114,7 +121,7 @@ public sealed record FlInsert(int Index, string Name, IReadOnlyList<FlPlugin> Ef
 public sealed record FlSong(string Title, int Ppq, double Tempo, IReadOnlyList<FlChannel> Channels, IReadOnlyList<FlInsert> Inserts,
                            IReadOnlyList<FlAutomation> Automation)
 {
-    /// <summary>The playlist tracks that are muted and have something on them. Their clips are muted, and their automation left out.</summary>
+    /// <summary>The playlist tracks that are muted and have something on them: their clips are <see cref="FlClip.OnMutedTrack"/>, and their automation is left out.</summary>
     public IReadOnlyList<FlTrack> MutedTracks { get; init; } = [];
 }
 

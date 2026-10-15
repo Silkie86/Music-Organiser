@@ -352,19 +352,22 @@ public class BitwigProjectTests
         var doc = Decode(result.Bytes);
         Assert.Null(doc.BodyError);
         var tracks = doc.Root!.Obj(0x4dd)!.List(0x4de).ToList();
-        Assert.Equal(["Snare", "Hat", "Acapella", "Vox", "Vox 2"], tracks.Select(t => t.Str(0x15b)));
+        Assert.Equal(["Snare", "Hat", "Acapella", "Vox", "Vox 2", "Pad"], tracks.Select(t => t.Str(0x15b)));
 
         // The hat and the vox are switched off in FL, so their tracks' mute buttons are on, on both of the vox's tracks.
-        Assert.Equal([0.0, 1.0, 0.0, 1.0, 1.0], tracks.Select(t => t.Obj(0x165)!.Obj(0x1a6)!.Num(0xd2)!.Value));
-        // What's on muted playlist tracks 2 and 4 is muted: the pattern in bar 2, and the Acapella clips.
-        Assert.All(tracks.Take(2), t => Assert.Equal([0.0, 1.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
-        Assert.Equal([1.0, 1.0], Clips(tracks[2]).Select(c => c.Num(0x10f8) ?? 0));
+        // The Acapella's and the Pad's clips are all on muted playlist tracks, so their tracks are muted, not their clips.
+        Assert.Equal([0.0, 1.0, 1.0, 1.0, 1.0, 1.0], tracks.Select(t => t.Obj(0x165)!.Obj(0x1a6)!.Num(0xd2)!.Value));
+        Assert.Equal([0.0, 0.0], Clips(tracks[2]).Select(c => c.Num(0x10f8) ?? 0));
         Assert.All(tracks.Skip(3), t => Assert.Equal([0.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
-        Assert.Equal(["Hat: switched off in FL Studio's Channel Rack, so its track is muted",
+        // The snare and the hat also play on track 1, so only their clip from muted track 2 is muted.
+        Assert.All(tracks.Take(2), t => Assert.Equal([0.0, 1.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
+        Assert.Equal(["Snare: its clips on a muted playlist track in FL Studio (Acapellas, playlist track 2) are muted, as it also has clips from other playlist tracks",
+                      "Hat: its clips on a muted playlist track in FL Studio (Acapellas, playlist track 2) are muted, as it also has clips from other playlist tracks",
+                      "Hat: switched off in FL Studio's Channel Rack, so its track is muted",
+                      "Acapella: muted, because its clips are all on muted playlist tracks in FL Studio (Acapellas, playlist track 2; playlist track 4)",
                       "Vox: its audio clips overlap in FL Studio, so they're on 2 tracks",
                       "Vox: switched off in FL Studio's Channel Rack, so its tracks are muted",
-                      "Acapellas (playlist track 2): muted in FL Studio, so its clips are muted here too",
-                      "Playlist track 4: muted in FL Studio, so its clips are muted here too"],
+                      "Pad: muted, because its clips are all on a muted playlist track in FL Studio (playlist track 4)"],
                      result.Notes);
     }
 

@@ -176,8 +176,6 @@ public static class BitwigProject
         var instruments = new Dictionary<int, (BwObject Device, FlPlugin Plugin)>();
         // How many of each channel's tracks have their own copy of its insert's effects.
         var effectCopies = new Dictionary<int, int>();
-        // The playlist tracks that clips written here came from.
-        var written = new HashSet<int>();
 
         // The VST effects of the FL insert a channel feeds, after what's on its track.
         void InsertEffects(FlChannel c, List<BwObject> devices, List<string> skipped)
@@ -231,10 +229,13 @@ public static class BitwigProject
             InsertEffects(c, devices, skipped);
             Chain(track, devices);
             track.Set(0x15b, c.Name);
-            Mixer(track, c);
-            written.UnionWith(c.Clips.Select(x => x.Track));
-            foreach (var clip in FlClips.Of(c, song.Ppq))
+            // When all its clips are on muted FL playlist tracks, the track is muted rather than its clips.
+            var trackMuted = FlClips.AllOnMutedTracks(c.Clips);
+            Mixer(track, c, trackMuted);
+            foreach (var clip in FlClips.Of(c with { Clips = FlClips.OnMutedTracks(c.Clips, trackMuted) }, song.Ppq))
                 t.AddClip(track, clip with { Notes = FlClips.Lengthen(clip.Notes, clip.Length, sampleLength) }, song.Ppq);
+            if (DawProject.OnMutedTracks(c.Name, c.Clips.Where(x => x.OnMutedTrack).Select(x => x.Track), song.MutedTracks, trackMuted) is { } onMuted)
+                notes.Add(onMuted);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
             if (c.VolumeEnvelope is not null) notes.Add($"{c.Name}: {DawProject.EnvelopeLeftOut}");
             return track;
@@ -246,24 +247,29 @@ public static class BitwigProject
         {
             var skipped = new List<string>();
             var info = readSample(c.Sample);
-            var lanes = new List<(BwObject Track, long End)>();
+            var lanes = new List<List<FlAudioClip>>();
             foreach (var clip in c.AudioClips.OrderBy(x => x.Start))
             {
-                var lane = lanes.FindIndex(l => l.End <= clip.Start);
-                if (lane < 0)
-                {
-                    var track = t.NewAudioTrack();
-                    var devices = new List<BwObject>();
-                    InsertEffects(c, devices, lanes.Count == 0 ? skipped : []);
-                    Chain(track, devices);
-                    track.Set(0x15b, lanes.Count == 0 ? c.Name : $"{c.Name} {lanes.Count + 1}");
-                    Mixer(track, c);
-                    lanes.Add((track, 0));
-                    lane = lanes.Count - 1;
-                }
-                t.AddAudioClip(lanes[lane].Track, c, clip, info, song.Tempo, song.Ppq);
-                written.Add(clip.Track);
-                lanes[lane] = (lanes[lane].Track, clip.Start + clip.Length);
+                var lane = lanes.FindIndex(l => l[^1].Start + l[^1].Length <= clip.Start);
+                if (lane < 0) lanes.Add([clip]);
+                else lanes[lane].Add(clip);
+            }
+            var made = new List<BwObject>();
+            foreach (var clips in lanes)
+            {
+                var track = t.NewAudioTrack();
+                var devices = new List<BwObject>();
+                InsertEffects(c, devices, made.Count == 0 ? skipped : []);
+                Chain(track, devices);
+                var name = made.Count == 0 ? c.Name : $"{c.Name} {made.Count + 1}";
+                track.Set(0x15b, name);
+                // When all its clips are on muted FL playlist tracks, the track is muted rather than its clips.
+                var trackMuted = FlClips.AllOnMutedTracks(clips);
+                Mixer(track, c, trackMuted);
+                foreach (var clip in FlClips.OnMutedTracks(clips, trackMuted)) t.AddAudioClip(track, c, clip, info, song.Tempo, song.Ppq);
+                if (DawProject.OnMutedTracks(name, clips.Where(x => x.OnMutedTrack).Select(x => x.Track), song.MutedTracks, trackMuted) is { } onMuted)
+                    notes.Add(onMuted);
+                made.Add(track);
             }
             if (lanes.Count > 1) notes.Add($"{c.Name}: its audio clips overlap in FL Studio, so they're on {lanes.Count} tracks");
             if (info is null)
@@ -275,7 +281,7 @@ public static class BitwigProject
                 notes.Add($"{c.Name}: its channel pitch knob ({c.PitchCents / 100.0:+0.##;-0.##} semitones) isn't carried over to its audio clips; " +
                           "the pitch in its time stretching is");
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
-            return lanes.Select(l => l.Track).ToList();
+            return made;
         }
 
         foreach (var c in song.Channels)
@@ -297,7 +303,6 @@ public static class BitwigProject
             placed[c.Index] = (c, own);
         }
 
-        notes.AddRange(song.MutedTracks.Where(t => written.Contains(t.Number)).Select(DawProject.MutedTrack));
 
         // The master insert's effects on Bitwig's master.
         var masterSkipped = new List<string>();
@@ -461,15 +466,16 @@ public static class BitwigProject
         (long)Math.Ceiling(seconds / Math.Pow(2, semitones / 12) * tempo / 60 * ppq - 1e-6);
 
     /// <summary>
-    /// Channel volume and pan on the track's mixer, and its mute when the channel is switched off. Bitwig's fader holds
-    /// the cube root of the gain; its mute button is on when MUTE's value (0xd2) is 1.
+    /// Channel volume and pan on the track's mixer, and its mute when the channel is switched off or the track is
+    /// <paramref name="muted"/>. Bitwig's fader holds the cube root of the gain; its mute button is on when MUTE's value (0xd2) is 1.
     /// </summary>
-    static void Mixer(BwObject track, FlChannel c)
+    static void Mixer(BwObject track, FlChannel c, bool muted)
     {
         var mixer = track.Obj(0x165);
         mixer?.Obj(0x1a4)?.Set(0x2c8, Math.Cbrt(DawProject.Gain(c.Volume)));
         mixer?.Obj(0x1a5)?.Set(0x2c8, Math.Clamp((c.Pan - 0.5) * 2, -1, 1));
-        if (mixer?.Obj(0x1a6) is { } mute && (!c.Enabled || mute.Has(0xd2))) mute.Set(0xd2, (byte)(c.Enabled ? 0 : 1), 0x05);
+        muted |= !c.Enabled;
+        if (mixer?.Obj(0x1a6) is { } mute && (muted || mute.Has(0xd2))) mute.Set(0xd2, (byte)(muted ? 1 : 0), 0x05);
     }
 
     static BwObject? Def(BwObject device) => device.Obj(0x197);
