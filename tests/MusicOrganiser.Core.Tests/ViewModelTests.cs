@@ -90,16 +90,15 @@ public class ViewModelTests : IDisposable
         Assert.EndsWith($"2 saves · reworked {newest.Modified.Year}", item.DetailsLine);
 
         var detail = new ProjectDetailViewModel(_db, item, Main());
-        Assert.True(detail.HasOpenChoices);
+        Assert.True(detail.HasRunChoices);
         Assert.Equal([$"{newest.Modified.Year} rework (newest) · Didums_77 · {newest.Modified:d MMM yyyy}", "2019 original · Didums_12 · 2 Feb 2019"],
                      detail.RunChoices.Select(r => r.Header));
         Assert.StartsWith("First made 2 Feb 2019 · saved ", detail.DatesText);
 
-        // Overview's glance: the newest save first, then the older ones by date.
-        Assert.Equal(["Didums_77", "Didums_12"], detail.GlanceSaves.Select(s => s.Name));
-        Assert.True(detail.GlanceSaves[0].Newest);
-        Assert.Equal("2 Feb 2019", detail.GlanceSaves[1].WhenText);
-        Assert.Equal("None used", detail.GlanceSamples);
+        // Overview's line of counts.
+        Assert.Equal("2 saves", detail.SavesCountText);
+        Assert.Equal("No samples", detail.SamplesCountText);
+        Assert.Equal("", detail.MissingSamplesText);
     }
 
     [Fact]
