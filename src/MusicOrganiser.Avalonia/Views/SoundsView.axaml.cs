@@ -117,6 +117,10 @@ public partial class SoundsView : UserControl
 
     void OnHistoryDoubleTapped(object? sender, TappedEventArgs e) => Vm?.AuditionCommand.Execute(null);
 
+    void OnGalaxyZoomIn(object? sender, RoutedEventArgs e) => Galaxy.ZoomBy(1.5);
+    void OnGalaxyZoomOut(object? sender, RoutedEventArgs e) => Galaxy.ZoomBy(1 / 1.5);
+    void OnGalaxyFit(object? sender, RoutedEventArgs e) => Galaxy.Fit();
+
     void OnHistoryKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Space) return;

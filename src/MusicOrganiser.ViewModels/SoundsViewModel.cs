@@ -89,14 +89,14 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>Tiles or List: how the sounds were shown last time.</summary>
     public const string ViewKey = "sounds_view";
     public const string Tiles = "Tiles", List = "List", History = "History";
-    public static IReadOnlyList<string> ViewChoices { get; } = [Tiles, List, History];
+    public static IReadOnlyList<string> ViewChoices { get; } = [Tiles, List, Galaxy, History];
 
     public const string Shuffled = "Shuffled", MostLiked = "Most liked";
     /// <summary>The orders on offer. The page opens shuffled, a new order every time, to stumble on forgotten sounds.</summary>
     public static IReadOnlyList<string> SortChoices { get; } = [Shuffled, MostLiked, "Name", "Type", "Key", "Newest"];
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsTiles), nameof(IsList), nameof(IsHistory))]
+    [NotifyPropertyChangedFor(nameof(IsTiles), nameof(IsList), nameof(IsHistory), nameof(IsGalaxy), nameof(ShowsOrder))]
     string _viewMode;
     public bool IsTiles => ViewMode == Tiles;
     public bool IsList => ViewMode == List;
@@ -143,11 +143,14 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
-        _viewMode = db.GetSetting(ViewKey) == List ? List : Tiles;
+        _viewMode = db.GetSetting(ViewKey) is List or Galaxy ? db.GetSetting(ViewKey)! : Tiles;
+        _placedBy = db.GetSetting(GalaxyBasisKey) is { } basis && PlacedByChoices.Contains(basis) ? basis : SoundOrganiser.Both;
+        _colourBy = db.GetSetting(GalaxyColourKey) is { } c && ColourChoices.Contains(c) ? c : "Type";
         _weights = LikedWeights.FromJson(db.GetSetting(LikedWeightsKey));
         _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), FollowPlayback);
         Reload();
         if (SampleFolders.Count > 0) _ = ScanAsync();
+        else if (IsGalaxy) _ = MapGalaxyIfNeeded();
     }
 
     IReadOnlyList<string> SampleFolders => _db.GetList(Scanner.SampleFoldersKey);
@@ -165,6 +168,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         View.Filter = o => o is Sound s && Matches(s);
         ApplySort();
         LoadHistory();
+        BuildStars();
         TypeCounts = [new TypeCount("All sounds", Items.Count), .. Items.GroupBy(s => s.Type).OrderByDescending(g => g.Count()).Select(g => new TypeCount(g.Key, g.Count()))];
         SelectedType ??= TypeCounts[0];
         var loops = Items.Count(s => s.IsLoop);
@@ -265,6 +269,11 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if (value != History) _db.SetSetting(ViewKey, value);
         if (value == Tiles) BuildTiles();
         if (value == History) LoadHistory();
+        if (value == Galaxy)
+        {
+            BuildStars();
+            _ = MapGalaxyIfNeeded();
+        }
     }
 
     /// <summary>The filter or something it depends on changed: the list and the tiles follow.</summary>
@@ -272,6 +281,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         View?.Refresh();
         BuildTiles();
+        BuildStars();
     }
 
     Dictionary<long, SoundTile> _tiles = [];
@@ -407,6 +417,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Disagreement d => d.Sound,
         SoundTile t => t.Sound,
         HistoryItem h => h.Sound,
+        GalaxyStar g => g.Sound,
         _ => null,
     };
 
@@ -417,7 +428,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>The original files, so the DAW gets the sound exactly as it is on disk.</summary>
     public DragPayload? MakeDrag(IReadOnlyList<object> items)
     {
-        var sounds = items.Select(SoundOf).OfType<Sound>().Where(s => File.Exists(s.Path)).DistinctBy(s => s.Path).ToList();
+        var sounds = items.SelectMany(i => i is TrailDrag t ? t.Sounds.Cast<object>() : [i]).Select(SoundOf).OfType<Sound>().Where(s => File.Exists(s.Path)).DistinctBy(s => s.Path).ToList();
         if (sounds.Count == 0) return null;
         Record(sounds, SoundEvent.Drag);
         return new DragPayload(sounds.Select(s => s.Path).ToList(), sounds.Select(Card).ToList(),
@@ -680,6 +691,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         await RunAsync("Scanning sample folders", (p, ct) => count = Org.Scan(folders, p, ct),
                        () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"Analysed {count:N0} new or changed sounds"));
         if (count > 0) Message = $"Analysed {count:N0} new or changed sounds.";
+        if (count > 0 || IsGalaxy) await MapGalaxyIfNeeded();
     }
 
     [RelayCommand]
@@ -691,6 +703,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             return;
         }
         await RunAsync("Deep listening", (p, ct) => Org.DeepListen(p, ct), () => ("Deep listening finished", "Searching by description now covers these sounds"));
+        await MapGalaxyIfNeeded();   // the galaxy redraws itself from the sharper fingerprints
     }
 
     [RelayCommand]

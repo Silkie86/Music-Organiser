@@ -91,9 +91,13 @@ public static class Appearance
 
     static StyleInclude? _motion;
 
+    /// <summary>False when Settings › Less motion is on: hand-drawn animation (the galaxy's) skips itself too.</summary>
+    public static bool Motion { get; private set; } = true;
+
     /// <summary>Motion.axaml in or out of the app's styles.</summary>
     static void SetMotion(Application app, bool on)
     {
+        Motion = on;
         _motion ??= app.Styles.OfType<StyleInclude>().FirstOrDefault(s => s.Source?.OriginalString.EndsWith("Motion.axaml") == true);
         if (_motion is null) return;
         var present = app.Styles.Contains(_motion);

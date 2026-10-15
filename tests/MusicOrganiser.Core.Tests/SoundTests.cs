@@ -518,3 +518,51 @@ public class LearningTests
         Assert.Equal(LikedWeights.Default, LikedWeights.FromJson("not json"));
     }
 }
+
+public class GalaxyMapTests
+{
+    // Three families of 20 sounds (kicks, hats, pads), each a noisy copy of its own fingerprint.
+    static Dictionary<long, float[]> Families(int dim = 40)
+    {
+        var rng = new Random(3);
+        var centres = Enumerable.Range(0, 3).Select(_ => Enumerable.Range(0, dim).Select(_ => (float)(rng.NextDouble() * 2 - 1)).ToArray()).ToArray();
+        var result = new Dictionary<long, float[]>();
+        for (var i = 0; i < 60; i++)
+            result[i] = VectorIndex.Unit(centres[i / 20].Select(c => c + (float)(rng.NextDouble() - 0.5) * 0.3f).ToArray());
+        return result;
+    }
+
+    [Fact]
+    public void Sounds_that_sound_alike_land_together_and_the_map_is_the_same_every_time()
+    {
+        var vectors = Families();
+        var map = GalaxyMap.Layout(vectors);
+        Assert.Equal(60, map.Count);
+        Assert.All(map.Values, p => Assert.InRange(p.X, 0f, 1f));
+
+        static double D(StarPoint a, StarPoint b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
+        double Mean(Func<long, long, bool> pair) =>
+            map.SelectMany(a => map.Where(b => b.Key > a.Key && pair(a.Key, b.Key)).Select(b => D(a.Value, b.Value))).Average();
+        var within = Mean((a, b) => a / 20 == b / 20);
+        var between = Mean((a, b) => a / 20 != b / 20);
+        Assert.True(between > within * 3, $"families should sit apart: within {within:0.000}, between {between:0.000}");
+
+        Assert.Equal(map, GalaxyMap.Layout(vectors));   // same library, same galaxy
+    }
+
+    [Fact]
+    public void A_new_sound_lands_beside_its_sound_alikes()
+    {
+        var vectors = Families();
+        var map = GalaxyMap.Layout(vectors);
+        vectors[100] = vectors[5].ToArray();   // a new copy of a kick
+        var placed = GalaxyMap.PlaceNew(vectors, map);
+        Assert.Equal([100L], placed.Keys);
+        var kicks = map.Where(kv => kv.Key < 20).ToList();
+        var (kx, ky) = (kicks.Average(k => k.Value.X), kicks.Average(k => k.Value.Y));
+        var hats = map.Where(kv => kv.Key is >= 20 and < 40).ToList();
+        var (hx, hy) = (hats.Average(k => k.Value.X), hats.Average(k => k.Value.Y));
+        var p = placed[100];
+        Assert.True(Math.Abs(p.X - kx) + Math.Abs(p.Y - ky) < Math.Abs(p.X - hx) + Math.Abs(p.Y - hy));
+    }
+}

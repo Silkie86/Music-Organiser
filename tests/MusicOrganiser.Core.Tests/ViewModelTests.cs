@@ -482,6 +482,65 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void The_galaxy_places_sounds_plays_what_you_sweep_and_turns_the_trail_into_a_kit()
+    {
+        var played = new List<string>();
+        ((HeadlessUi)Ui.Current).Player = () => new Recorder(played);
+        float[] Kickish(int i) => [1, 0.1f * i, 0, 0, 0, 0];
+        float[] Padish(int i) => [0, 0, 0, 1, 0.1f * i, 0];
+        _soundDb.Save(Enumerable.Range(0, 6).SelectMany(i => new[]
+        {
+            new SoundLibrary.Analysed($"/samples/Kicks/Kick {i}.wav", 1, 1, new SoundAnalysis { Features = Kickish(i) }, null, null, "Kick"),
+            new SoundLibrary.Analysed($"/samples/Pads/Pad {i}.wav", 1, 1, new SoundAnalysis { Features = Padish(i) }, null, null, "Pad"),
+        }));
+        _sounds.Reload();
+        _sounds.UpdateGalaxy(SoundOrganiser.Both);
+        Assert.False(_sounds.GalaxyOutOfDate(SoundOrganiser.Both));
+
+        var lab = Main().Sounds;
+        lab.ViewMode = SoundsViewModel.Galaxy;
+        Assert.Equal(12, lab.Stars.Count);
+        Assert.Equal(12, lab.ShownStars);
+        // No CLAP here: Both falls back to the app's own measurements, and says so.
+        Assert.True(lab.HasGalaxyWarning);
+        Assert.Contains("own measurements", lab.GalaxyWarning);
+        lab.PlacedBy = SoundOrganiser.OwnOnly;
+        Assert.False(lab.HasGalaxyWarning);
+
+        // Filters dim stars rather than removing them, so the galaxy keeps its shape.
+        lab.SearchText = "Kick";
+        Assert.Equal(12, lab.Stars.Count);
+        Assert.Equal(6, lab.ShownStars);
+        lab.SearchText = "";
+
+        // Colours: by type, then by pack, with a key to match.
+        Assert.Contains(lab.Legend, l => l.Label == "Kick");
+        lab.ColourBy = "Pack";
+        Assert.Contains(lab.Legend, l => l.Label == "Pads");
+        Assert.Equal("Pack", Main().Sounds.ColourBy);   // remembered
+
+        // Sweeping previews (not a deliberate play) and builds a trail, newest first, without repeats.
+        Sound Named(string n) => lab.Items.Single(s => s.Name == n);
+        lab.SweepCommand.Execute(Named("Kick 1"));
+        lab.SweepCommand.Execute(Named("Pad 2"));
+        lab.SweepCommand.Execute(Named("Kick 1"));
+        Assert.Equal(["Kick 1", "Pad 2"], lab.Trail.Select(s => s.Name));
+        Assert.Equal(0, Named("Kick 1").Plays);
+        Assert.Equal(3, played.Count);
+        // Clicking the star that's previewing makes it count.
+        lab.PickStarCommand.Execute(Named("Kick 1"));
+        Assert.Equal(1, Named("Kick 1").Plays);
+        Assert.Equal(Named("Kick 1"), lab.Selected);
+
+        // The trail becomes a kit, oldest first, with every pad locked, and the Kit builder opens.
+        lab.TrailToKitCommand.Execute(null);
+        Assert.Equal(["Pad 2", "Kick 1"], lab.Kit.Slots.Select(s => s.SoundName));
+        Assert.All(lab.Kit.Slots, s => Assert.True(s.Locked));
+        Assert.Equal(2, lab.TabIndex);
+        Assert.Equal(2, lab.TrailDrag.Sounds.Count);
+    }
+
+    [Fact]
     public void AutoplayPlaysTheSoundYouPickButNotOnesTheListSelectsByItself()
     {
         var played = new List<string>();

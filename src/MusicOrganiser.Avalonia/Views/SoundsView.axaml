@@ -54,6 +54,25 @@
             <Setter Property="CornerRadius" Value="2" />
             <Setter Property="Background" Value="{StaticResource AccentBrush}" />
         </Style>
+        <Style Selector="Button.galaxyTool">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="Button.trailChip">
+            <Setter Property="Padding" Value="10,4,12,5" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
     </UserControl.Styles>
 
     <Grid RowDefinitions="Auto,Auto,*">
@@ -83,7 +102,7 @@
             <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12.5" />
         </Border>
 
-        <TabControl Grid.Row="2" Margin="0,10,0,0">
+        <TabControl Grid.Row="2" Margin="0,10,0,0" SelectedIndex="{Binding TabIndex}">
             <!-- ============ Library ============ -->
             <TabItem Header="Library">
                 <Grid ColumnDefinitions="Auto,*,350" Margin="0,8,0,0">
@@ -142,10 +161,10 @@
                         </DockPanel>
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                             <ListBox DockPanel.Dock="Left" Classes="chips" ItemsSource="{x:Static vm:SoundsViewModel.ViewChoices}" SelectedItem="{Binding ViewMode}"
-                                     ToolTip.Tip="Tiles, a compact list, or the sounds you played lately">
+                                     ToolTip.Tip="Tiles, a compact list, the sound galaxy (sound-alikes close together), or the sounds you played lately">
                                 <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
                             </ListBox>
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding !IsHistory}">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding ShowsOrder}">
                                 <CheckBox Content="Autoplay" IsChecked="{Binding AutoPlay}" VerticalAlignment="Center"
                                           ToolTip.Tip="Play each sound as soon as you click it or arrow onto it" />
                                 <TextBlock Text="Order" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0" />
@@ -159,6 +178,11 @@
                                         <TextBlock Text="Shuffle" />
                                     </StackPanel>
                                 </Button>
+                            </StackPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsGalaxy}">
+                                <TextBlock Text="Placed by" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                <ComboBox ItemsSource="{x:Static vm:SoundsViewModel.PlacedByChoices}" SelectedItem="{Binding PlacedBy}" MinWidth="170"
+                                          ToolTip.Tip="What decides where each star sits. Both: CLAP (what kind of sound it is) and the app's own measurements (brightness, attack, length, tone). If CLAP hasn't listened to your sounds, the app's measurements are used." />
                             </StackPanel>
                             <Panel />
                         </DockPanel>
@@ -260,6 +284,119 @@
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Border>
+
+                            <!-- The galaxy: every sound a star, sound-alikes close together. -->
+                            <Grid IsVisible="{Binding IsGalaxy}" RowDefinitions="Auto,Auto,*,Auto">
+                                <DockPanel Margin="0,0,0,8">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="Colour by" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                        <ListBox Classes="chips" ItemsSource="{x:Static vm:SoundsViewModel.ColourChoices}" SelectedItem="{Binding ColourBy}"
+                                                 ToolTip.Tip="What the colours show: the type of sound, its key (Camelot wheel), its pack, how much you like it, whether a project uses it, or how new it is">
+                                            <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
+                                        </ListBox>
+                                    </StackPanel>
+                                </DockPanel>
+
+                                <!-- CLAP was asked for but hasn't listened: say so, with the fix one click away. -->
+                                <Border Grid.Row="1" IsVisible="{Binding HasGalaxyWarning}" Background="{StaticResource MissingSoftBrush}"
+                                        BorderBrush="{StaticResource WarningBrush}" BorderThickness="1" CornerRadius="{DynamicResource RadiusM}"
+                                        Padding="12,8" Margin="0,0,0,8">
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="{Binding GalaxyWarningAction}" Command="{Binding FixGalaxyWarningCommand}" Margin="12,0,0,0" />
+                                        <TextBlock DockPanel.Dock="Left" Text="⚠" Foreground="{StaticResource WarningBrush}" FontSize="15" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                        <TextBlock Text="{Binding GalaxyWarning}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                </Border>
+
+                                <Border Grid.Row="2" CornerRadius="{DynamicResource RadiusM}" ClipToBounds="True" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1">
+                                    <Panel>
+                                        <views:GalaxyCanvas x:Name="Galaxy" Stars="{Binding Stars}" Regions="{Binding Regions}" Trail="{Binding Trail}"
+                                                            Constellation="{Binding Constellation}" Selected="{Binding Selected}"
+                                                            SweepCommand="{Binding SweepCommand}" PickCommand="{Binding PickStarCommand}" />
+                                        <!-- What placed the stars, and how many show. -->
+                                        <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10" Padding="10,6,12,7" IsHitTestVisible="False"
+                                                CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource SurfaceBrush}" Opacity="0.88">
+                                        <StackPanel>
+                                            <TextBlock FontFamily="{DynamicResource NumberFont}" FontSize="12" Foreground="{StaticResource TextBrush}">
+                                                <Run Text="{Binding ShownStars, StringFormat={}{0:N0}}" /><Run Text=" stars" Foreground="{StaticResource MutedBrush}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding GalaxyNote}" FontSize="11.5" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" MaxWidth="340" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        </Border>
+                                        <!-- Zoom and fit. -->
+                                        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10" Spacing="6">
+                                            <Button Classes="galaxyTool" Content="+" Click="OnGalaxyZoomIn" ToolTip.Tip="Zoom in (or scroll, or +)" />
+                                            <Button Classes="galaxyTool" Content="−" Click="OnGalaxyZoomOut" ToolTip.Tip="Zoom out (or scroll, or −)" />
+                                            <Button Classes="galaxyTool" Click="OnGalaxyFit" ToolTip.Tip="See the whole galaxy (Home)">
+                                                <Path Data="M4,9 L4,4 L9,4 M15,4 L20,4 L20,9 M20,15 L20,20 L15,20 M9,20 L4,20 L4,15" Stroke="{Binding $parent[Button].Foreground}"
+                                                      StrokeThickness="1.8" StrokeLineCap="Round" Width="13" Height="13" Stretch="Uniform" />
+                                            </Button>
+                                            <Button Classes="galaxyTool" Command="{Binding RemapCommand}" ToolTip.Tip="Lay the galaxy out again from scratch">
+                                                <Path Data="M20,11 A8,8 0 1 0 17.6,16.6 M20,5 L20,11 L14,11" Stroke="{Binding $parent[Button].Foreground}"
+                                                      StrokeThickness="1.8" StrokeLineCap="Round" StrokeJoin="Round" Width="13" Height="13" Stretch="Uniform" />
+                                            </Button>
+                                        </StackPanel>
+                                        <!-- The key to the colours. -->
+                                        <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12" Padding="12,8" CornerRadius="{DynamicResource RadiusM}"
+                                                Background="{StaticResource SurfaceBrush}" Opacity="0.92" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1"
+                                                MaxWidth="500" IsHitTestVisible="False">
+                                            <StackPanel Spacing="4">
+                                                <ItemsControl ItemsSource="{Binding Legend}">
+                                                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="vm:LegendItem">
+                                                            <StackPanel Orientation="Horizontal" Margin="0,2,12,2">
+                                                                <Ellipse Width="8" Height="8" Fill="{Binding Colour, Converter={StaticResource HexBrush}}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                                                <TextBlock Text="{Binding Label}" FontSize="11.5" MaxWidth="120" TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <TextBlock Text="{Binding LegendNote}" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                                           IsVisible="{Binding LegendNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="14,10" FontSize="11" Foreground="{StaticResource FaintBrush}"
+                                                   IsHitTestVisible="False" Text="Sweep to listen · click to pick · drag to move · scroll to zoom" />
+                                    </Panel>
+                                </Border>
+
+                                <!-- The trail: what you swept past, newest first. -->
+                                <Border Grid.Row="3" Classes="card" Margin="0,8,0,0" Padding="12,8">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Left" Text="Trail" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasTrail}" Margin="12,0,0,0">
+                                            <Border Classes="dragChip" Margin="0" DataContext="{Binding TrailDrag}"
+                                                    views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
+                                                    ToolTip.Tip="Drag every sound on the trail into your DAW at once">
+                                                <TextBlock Text="Drag all out" FontSize="12.5" />
+                                            </Border>
+                                            <Button Classes="accent" Content="Make a kit" Command="{Binding TrailToKitCommand}"
+                                                    ToolTip.Tip="A pad for each sound on the trail, in the Kit builder" />
+                                            <Button Content="Clear" Command="{Binding ClearTrailCommand}" />
+                                        </StackPanel>
+                                        <TextBlock Classes="muted" VerticalAlignment="Center" IsVisible="{Binding !HasTrail}"
+                                                   Text="Sweep over the stars: the sounds you pass collect here, so a good one is never lost." />
+                                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" IsVisible="{Binding HasTrail}">
+                                            <ItemsControl ItemsSource="{Binding Trail}">
+                                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="snd:Sound">
+                                                        <Button Classes="trailChip" Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).PickStarCommand}"
+                                                                CommandParameter="{Binding}" ToolTip.Tip="{Binding Path}"
+                                                                views:FileDrag.Source="{Binding $parent[UserControl].DataContext}">
+                                                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                                                <Ellipse Width="7" Height="7" VerticalAlignment="Center" Fill="{Binding Type, Converter={StaticResource TypeBrush}}" />
+                                                                <TextBlock Text="{Binding Name}" FontSize="12.5" MaxWidth="150" TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </DockPanel>
+                                </Border>
+                            </Grid>
 
                             <!-- History: what you played on purpose, newest first. -->
                             <Border Classes="card" Padding="8,10,8,8" IsVisible="{Binding IsHistory}">

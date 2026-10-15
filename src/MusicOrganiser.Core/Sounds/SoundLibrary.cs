@@ -93,6 +93,10 @@ public sealed class SoundLibrary : IDisposable
             kind TEXT NOT NULL, at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS ix_sound_events ON sound_events(kind, at);
+        CREATE TABLE IF NOT EXISTS sound_map (
+            sound_id INTEGER PRIMARY KEY REFERENCES sounds(id) ON DELETE CASCADE,
+            x REAL NOT NULL, y REAL NOT NULL
+        );
         """;
 
     readonly SqliteConnection _conn;
@@ -300,6 +304,34 @@ public sealed class SoundLibrary : IDisposable
                 // A sound forgotten since (its file gone in a rescan) is skipped.
                 using var cmd = Cmd("INSERT INTO sound_events SELECT $id, $k, $t WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $id)",
                                     ("$id", id), ("$k", kind), ("$t", at));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    /// <summary>Where each sound sits on the galaxy map (see <see cref="GalaxyMap"/>).</summary>
+    public Dictionary<long, StarPoint> Map() =>
+        Query("SELECT sound_id, x, y FROM sound_map", r => ((long)r["sound_id"], new StarPoint((float)(double)r["x"], (float)(double)r["y"])))
+            .ToDictionary(t => t.Item1, t => t.Item2);
+
+    /// <summary>Saves galaxy positions; <paramref name="replace"/> throws the old map away first (a fresh layout).</summary>
+    public void SaveMap(IReadOnlyDictionary<long, StarPoint> points, bool replace)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            if (replace)
+            {
+                using var clear = Cmd("DELETE FROM sound_map");
+                clear.Transaction = tx;
+                clear.ExecuteNonQuery();
+            }
+            foreach (var (id, p) in points)
+            {
+                using var cmd = Cmd("INSERT OR REPLACE INTO sound_map SELECT $id, $x, $y WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $id)",
+                                    ("$id", id), ("$x", (double)p.X), ("$y", (double)p.Y));
                 cmd.Transaction = tx;
                 cmd.ExecuteNonQuery();
             }

@@ -187,29 +187,8 @@ public sealed class Scale : IValueConverter
 /// </summary>
 public sealed class TypeBrush : IValueConverter
 {
-    static readonly Dictionary<string, Color> Known = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["Kick"] = Color.Parse("#FF6B5B"), ["808"] = Color.Parse("#FF8A4C"), ["Snare"] = Color.Parse("#FFB547"),
-        ["Clap"] = Color.Parse("#FFD15C"), ["Hat"] = Color.Parse("#E8E36A"), ["Cymbal"] = Color.Parse("#C9E46A"),
-        ["Perc"] = Color.Parse("#F59ABF"), ["Tom"] = Color.Parse("#F07C9E"),
-        ["Bass"] = Color.Parse("#7C8CFF"), ["Lead"] = Color.Parse("#4FB3FF"), ["Pad"] = Color.Parse("#5CD6E0"),
-        ["Keys"] = Color.Parse("#3DDC97"), ["Pluck"] = Color.Parse("#7FE0B0"), ["Chord"] = Color.Parse("#62C9A8"),
-        ["Vocal"] = Color.Parse("#C792EA"), ["FX"] = Color.Parse("#B39DDB"), ["Loop"] = Color.Parse("#9AB8D6"),
-        ["Guitar"] = Color.Parse("#E0A86A"), ["Texture"] = Color.Parse("#8FA3B8"),
-    };
-    static readonly Color[] Spare = [Color.Parse("#8FA3B8"), Color.Parse("#A8B88F"), Color.Parse("#B89A8F"), Color.Parse("#9F8FB8")];
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        var type = value as string ?? "";
-        if (type is "" or "Unknown") return new ImmutableSolidColorBrush(Color.Parse("#6E6E6E"));
-        if (!Known.TryGetValue(type, out var c))
-        {
-            var match = Known.Keys.FirstOrDefault(k => type.Contains(k, StringComparison.OrdinalIgnoreCase));
-            c = match is not null ? Known[match] : Spare[type.ToLowerInvariant().Sum(ch => ch) % Spare.Length];
-        }
-        return new ImmutableSolidColorBrush(c);
-    }
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        new ImmutableSolidColorBrush(Color.FromUInt32(StarColours.Type(value as string)));
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }

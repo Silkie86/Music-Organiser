@@ -228,6 +228,79 @@ public sealed class SoundOrganiser : IDisposable
         return missing.Count;
     }
 
+    // ---- the sound galaxy ---------------------------------------------------------------------
+
+    public const string GalaxySpaceKey = "galaxy_space";
+
+    /// <summary>What can place the galaxy's stars: CLAP and the measurements together, CLAP alone, or the measurements alone.</summary>
+    public const string Both = "Both", ClapOnly = "CLAP", OwnOnly = "Own measurements";
+
+    /// <summary>What the stars are placed by this time: the wish, unless deep listening hasn't covered the library, when it's the measurements.</summary>
+    public string GalaxySpace(string wanted) =>
+        !HasDeepListening || wanted == OwnOnly ? "features" : wanted == ClapOnly ? "clap" : "clap+features";
+
+    /// <summary>How many analysed sounds CLAP hasn't listened to yet.</summary>
+    public int NotDeepListened => _features is null ? 0 : _features.Units.Keys.Count(id => _clapIndex?.Contains(id) != true);
+
+    /// <summary>
+    /// The fingerprints the galaxy is laid out from. "clap+features" joins CLAP's "what it is" (80 %) to the measured
+    /// "how it sounds" (brightness, attack, length, tone: 60 %), so neighbours match in kind and in character. A sound
+    /// CLAP hasn't heard yet falls back to its measurements in every mode.
+    /// </summary>
+    public Dictionary<long, float[]> GalaxyVectors(string space)
+    {
+        var result = new Dictionary<long, float[]>();
+        if (_features is null) return result;
+        var clap = space == "features" ? null : _clapIndex;
+        var clapDim = clap?.Units.Values.FirstOrDefault()?.Length ?? 0;
+        foreach (var (id, f) in _features.Units)
+        {
+            if (clap is null) { result[id] = f; continue; }
+            var v = new float[clapDim + f.Length];
+            var c = clap.Get(id) is { } cv && cv.Length == clapDim ? cv : null;
+            var (wc, wf) = c is null ? (0f, 1f) : space == "clap" ? (1f, 0f) : (0.8f, 0.6f);
+            if (c is not null) for (var i = 0; i < clapDim; i++) v[i] = c[i] * wc;
+            for (var i = 0; i < f.Length; i++) v[clapDim + i] = f[i] * wf;
+            result[id] = VectorIndex.Unit(v);
+        }
+        return result;
+    }
+
+    /// <summary>True when the saved map is missing, made from the other kind of fingerprint, or lacks some sounds.</summary>
+    public bool GalaxyOutOfDate(string wanted)
+    {
+        if (_features is not { Count: > 0 } f) return false;
+        if (Library.GetSetting(GalaxySpaceKey) != GalaxySpace(wanted)) return true;
+        var map = Library.Map();
+        return f.Units.Keys.Any(id => !map.ContainsKey(id));
+    }
+
+    /// <summary>
+    /// Brings the galaxy up to date and returns it. It's laid out afresh when there's no map yet, the fingerprints
+    /// changed kind (deep listening finished) or more than a fifth of the sounds are new; otherwise the new sounds are
+    /// placed beside their sound-alikes, so the stars you know stay where they were.
+    /// </summary>
+    public Dictionary<long, StarPoint> UpdateGalaxy(string wanted, IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
+    {
+        var space = GalaxySpace(wanted);
+        var vectors = GalaxyVectors(space);
+        var map = Library.Map();
+        var missing = vectors.Keys.Count(id => !map.ContainsKey(id));
+        if (map.Count == 0 || Library.GetSetting(GalaxySpaceKey) != space || missing > vectors.Count / 5)
+        {
+            map = GalaxyMap.Layout(vectors, progress, ct);
+            Library.SaveMap(map, replace: true);
+            Library.SetSetting(GalaxySpaceKey, space);
+        }
+        else if (missing > 0)
+        {
+            var added = GalaxyMap.PlaceNew(vectors, map);
+            Library.SaveMap(added, replace: false);
+            foreach (var (id, p) in added) map[id] = p;
+        }
+        return map;
+    }
+
     // ---- learning types and tags ------------------------------------------------------------
 
     string Space => HasDeepListening ? "clap" : "features";
@@ -435,6 +508,8 @@ public sealed class VectorIndex
 
     public int Count => _unit.Count;
     public bool Contains(long id) => _unit.ContainsKey(id);
+    /// <summary>Every vector, made unit length (and standardised and weighted, when the index does that).</summary>
+    public IReadOnlyDictionary<long, float[]> Units => _unit;
     public float[]? Get(long id) => _unit.GetValueOrDefault(id);
     public float[]? Raw(long id) => _raw.GetValueOrDefault(id);
 
