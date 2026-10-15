@@ -50,6 +50,9 @@ public sealed class MidiIndex : IDisposable
         CREATE INDEX IF NOT EXISTS ix_phrases_hash ON phrases(hash);
         -- What you said a part is, by its notes, so it holds for every copy and survives reading the file again.
         CREATE TABLE IF NOT EXISTS your_roles (hash TEXT PRIMARY KEY, role TEXT NOT NULL);
+        -- What CLaMP 3 heard in each set of notes (768 signed bytes), by note hash like your_roles, so copies share one and
+        -- reading a file again keeps them. model says which export made it; another export's are dropped.
+        CREATE TABLE IF NOT EXISTS clamp (hash TEXT PRIMARY KEY, model TEXT NOT NULL, vec BLOB NOT NULL);
         """;
 
     readonly SqliteConnection _write, _read;
@@ -243,6 +246,67 @@ public sealed class MidiIndex : IDisposable
             cmd.Parameters.AddWithValue("$r", (object?)role ?? DBNull.Value);
             cmd.ExecuteNonQuery();
         }
+    }
+
+    // ---- CLaMP 3 embeddings ----
+
+    /// <summary>One phrase for each set of notes that has no embedding from <paramref name="model"/> yet, newest files first.</summary>
+    public List<(long Id, string Hash, bool Drums, double? Tempo)> WithoutEmbedding(string model)
+    {
+        var list = new List<(long, string, bool, double?)>();
+        lock (_readLock)
+        {
+            using var cmd = _read.CreateCommand();
+            cmd.CommandText = """
+                SELECT MIN(ph.id), ph.hash, MAX(ph.drums), MAX(s.tempo), MAX(s.mtime) AS newest
+                FROM phrases ph JOIN sources s ON s.path = ph.source
+                WHERE NOT EXISTS (SELECT 1 FROM clamp c WHERE c.hash = ph.hash AND c.model = $m)
+                GROUP BY ph.hash ORDER BY newest DESC
+                """;
+            cmd.Parameters.AddWithValue("$m", model);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) list.Add((r.GetInt64(0), r.GetString(1), r.GetInt32(2) == 1, r.IsDBNull(3) ? null : r.GetDouble(3)));
+        }
+        return list;
+    }
+
+    /// <summary>Saves embeddings (each a packed 768-byte vector) and drops any made by another export of the model.</summary>
+    public void SetEmbeddings(string model, IReadOnlyList<(string Hash, byte[] Vector)> batch)
+    {
+        if (batch.Count == 0) return;
+        lock (_writeLock)
+        {
+            using var tx = _write.BeginTransaction();
+            Exec(tx, "DELETE FROM clamp WHERE model <> $m", ("$m", model));
+            using var cmd = _write.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "INSERT INTO clamp (hash, model, vec) VALUES ($h, $m, $v) ON CONFLICT(hash) DO UPDATE SET model = $m, vec = $v";
+            var h = cmd.Parameters.Add(new SqliteParameter("$h", ""));
+            cmd.Parameters.AddWithValue("$m", model);
+            var v = cmd.Parameters.Add(new SqliteParameter("$v", Array.Empty<byte>()));
+            foreach (var (hash, vec) in batch)
+            {
+                h.Value = hash;
+                v.Value = vec;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    /// <summary>Every embedding from <paramref name="model"/>, by note hash.</summary>
+    public Dictionary<string, sbyte[]> Embeddings(string model)
+    {
+        var map = new Dictionary<string, sbyte[]>();
+        lock (_readLock)
+        {
+            using var cmd = _read.CreateCommand();
+            cmd.CommandText = "SELECT hash, vec FROM clamp WHERE model = $m";
+            cmd.Parameters.AddWithValue("$m", model);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) map[r.GetString(0)] = Clamp3Model.Unpack((byte[])r[1]);
+        }
+        return map;
     }
 
     void Exec(SqliteTransaction tx, string sql, params (string Name, object? Value)[] args)
