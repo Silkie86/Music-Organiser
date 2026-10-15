@@ -86,6 +86,39 @@ public class DawScriptTests
     }
 
     [Fact]
+    public void InstallTakesTheLinkOutOfBitwigsOtherUserFolders()
+    {
+        // The first install went to Documents\Bitwig Studio before Bitwig's own folder was chosen, and Bitwig mustn't load two.
+        var root = Fixtures.TempDir();
+        var chosen = Path.Combine(root, "K", "Bitwig Studio");
+        var other = Path.Combine(root, "Documents", "Bitwig Studio");
+        var oldExtension = Extension(Path.Combine(other, "Extensions", "MusicOrganiser.bwextension"), "3.0");
+        var oldScript = Path.Combine(other, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js");
+        Directory.CreateDirectory(Path.GetDirectoryName(oldScript)!);
+        File.WriteAllText(oldScript, "// the old script");
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.3");
+
+        // Others found include the chosen one (it's in Documents too, say), which Install puts the link in, not takes it out of.
+        var link = DawScripts.BitwigLink([chosen], built, others: [chosen + Path.DirectorySeparatorChar, other]);
+        Assert.Equal([oldExtension, oldScript], link.Leftovers);
+        Assert.Equal([oldExtension, oldScript], link.Install());
+        Assert.Equal(["3.3"], link.InstalledVersions);
+        Assert.Empty(link.Leftovers);
+        // Bitwig's own folders stay, even empty; the script's folder goes once empty.
+        Assert.True(Directory.Exists(Path.Combine(other, "Extensions")));
+        Assert.True(Directory.Exists(Path.Combine(other, "Controller Scripts")));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(oldScript)));
+        Assert.Empty(link.Install());
+
+        // Installing the script instead (an app built without a JDK) takes both out of the others too.
+        Extension(oldExtension, "3.0");
+        var script = DawScripts.BitwigLink([chosen], Path.Combine(root, "no extension.bwextension"), others: [other]);
+        Assert.Equal("MusicOrganiser.control.js", script.FileName);
+        Assert.Equal([oldExtension], script.Install());
+        Assert.True(File.Exists(Path.Combine(chosen, "Extensions", "MusicOrganiser.bwextension")));   // not one of the others
+    }
+
+    [Fact]
     public void SaysWhichExtensionVersionInstallPutsIn()
     {
         var user = Fixtures.TempDir();

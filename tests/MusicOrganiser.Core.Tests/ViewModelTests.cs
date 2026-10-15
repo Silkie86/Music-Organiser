@@ -929,6 +929,33 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsSaysWhichOldCopiesInstallRemoved()
+    {
+        var user = Path.Combine(_root, "K", "Bitwig Studio");
+        var other = Path.Combine(_root, "Documents", "Bitwig Studio");
+        var old = Path.Combine(other, "Extensions");
+        var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.3");
+        var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built, others: [user, other]),
+                                      () => Task.FromResult("Connected to Bitwig Studio 6.1.3."), found: () => true);
+        DawScriptTests.Extension(Path.Combine(old, "MusicOrganiser.bwextension"), "3.0");
+
+        await link.RefreshAsync();
+        Assert.Equal($"Not installed. Install puts in extension 3.3. There's an old copy in {old} too, which Install removes so Bitwig Studio " +
+                     "can't load two.", link.Status);
+        await link.InstallCommand.ExecuteAsync(null);
+        Assert.Equal($"Installed. Now set it up in Bitwig Studio as described above. Removed the old copy in {old}, so Bitwig Studio can't load two.",
+                     link.Result);
+        Assert.Equal($"Installed in {Path.Combine(user, "Extensions")} (extension 3.3).", link.Status);
+
+        // Set up both takes out one that turns up again, though the link is installed.
+        DawScriptTests.Extension(Path.Combine(old, "MusicOrganiser.bwextension"), "3.0");
+        await link.SetUpAsync();
+        Assert.Equal($"The extension was already installed. Removed the old copy in {old}, so Bitwig Studio can't load two. " +
+                     "Connected to Bitwig Studio 6.1.3.", link.Result);
+        Assert.False(File.Exists(Path.Combine(old, "MusicOrganiser.bwextension")));
+    }
+
+    [Fact]
     public async Task SettingsShowsTheProbesRunningNow()
     {
         var reports = Path.Combine(_root, "probe");

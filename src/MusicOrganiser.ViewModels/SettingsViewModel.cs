@@ -120,7 +120,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         SoundOutput = new SoundOutputSetting(db, Ui.Current.SoundOutputs);
         Links =
         [
-            new DawLinkSetting("Bitwig Studio", () => BitwigSteps, () => DawScripts.BitwigLink(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey))),
+            // Into the chosen user folder, taking any copy out of the others found, so Bitwig can't load two.
+            new DawLinkSetting("Bitwig Studio", () => BitwigSteps,
+                               () => DawScripts.BitwigLink(DawScripts.BitwigUserFolders(db.GetSetting(BitwigUserKey)), others: DawScripts.BitwigUserFolders()),
                                () => CheckBitwig(watch), new FolderChoice(
                 "Choose Bitwig's user folder (the Bitwig Studio folder that holds Extensions, Library and Projects; Bitwig shows it in Settings > Locations)",
                 DawScripts.BitwigUserFolderFrom,
@@ -604,6 +606,8 @@ public sealed partial class DawLinkSetting : ObservableObject
                                     (copies is null ? ". Install it again to update it." : $". Install it again to put in {copies}."),
             _ => $"Installed in {string.Join(" and ", script.InstalledIn)}" + (copies is null ? "." : $" ({copies})."),
         };
+        if (Folders(script.Leftovers) is { Length: > 0 } leftovers)
+            state += $" There's an old copy in {leftovers} too, which Install removes so {Daw} can't load two.";
         // Running the app with hot reload (as the Music Organiser (latest) shortcut does) doesn't build the extension again.
         return script.ChangedSinceBuilt is { } changed
             ? state + $" The extension the app has was built before its code last changed ({Path.GetFileName(changed)}), so Install would " +
@@ -623,8 +627,9 @@ public sealed partial class DawLinkSetting : ObservableObject
                 script = await Task.Run(_script);
             }
             var update = script.State != ScriptState.NotInstalled;
-            await Task.Run(script.Install);
-            Result = update ? $"Updated. Restart {Daw} to load the new version." : $"Installed. Now set it up in {Daw} as described above.";
+            var removed = await Task.Run(script.Install);
+            Result = (update ? $"Updated. Restart {Daw} to load the new version." : $"Installed. Now set it up in {Daw} as described above.") +
+                     Removed(removed);
             // The port shows how it stands with the choice above it.
             if (MidiPort is not null) await MidiPort.SetUpAsync();
         }
@@ -634,6 +639,13 @@ public sealed partial class DawLinkSetting : ObservableObject
         }
         await RefreshAsync();
     }
+
+    /// <summary>The folders these files are in, for a sentence.</summary>
+    static string Folders(IEnumerable<string> files) => string.Join(" and ", files.Select(Path.GetDirectoryName).Distinct());
+
+    /// <summary>What Install removed, as a sentence to add, or "".</summary>
+    string Removed(IReadOnlyList<string> removed) =>
+        removed.Count == 0 ? "" : $" Removed the old {(removed.Count == 1 ? "copy" : "copies")} in {Folders(removed)}, so {Daw} can't load two.";
 
     [RelayCommand]
     async Task ChooseFolder()
@@ -675,15 +687,15 @@ public sealed partial class DawLinkSetting : ObservableObject
         var what = "the script";   // or Bitwig's extension, when the app was built with it
         try
         {
-            var (script, state) = await Task.Run(() => { var s = _script(); return (s, s.State); });
+            var (script, state, leftovers) = await Task.Run(() => { var s = _script(); return (s, s.State, s.Leftovers.Count > 0); });
             if (script.Binary) what = "the extension";
-            if (state != ScriptState.Installed) await Task.Run(script.Install);
+            IReadOnlyList<string> removed = state != ScriptState.Installed || leftovers ? await Task.Run(script.Install) : [];
             done = state switch
             {
                 ScriptState.NotInstalled => $"Installed {what}.",
                 ScriptState.Outdated => $"Updated {what}: restart {Daw} to load the new version.",
                 _ => $"{char.ToUpperInvariant(what[0])}{what[1..]} was already installed.",
-            };
+            } + Removed(removed);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
