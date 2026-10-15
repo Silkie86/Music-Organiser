@@ -175,7 +175,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     static string BitwigSteps =>
         "Then open Settings > Controllers in Bitwig, click Add controller and pick Music Organiser > DAW link. " +
         "If it isn't in the list, restart Bitwig. (When the app has its Bitwig extension, Install puts that in place of " +
-        "the script: it's the same controller, so one that's set up already stays set up once Bitwig restarts.)" +
+        "the script: it's the same controller, so one that's set up already stays set up once Bitwig restarts.) " +
+        $"Then set that controller's MIDI in and MIDI out to the MIDI port “{BitwigLink.LoopbackPort}”" +
+        (OperatingSystem.IsWindows() ? " (make it in loopMIDI first)" : "") +
+        ", never to “Music Organiser”, FL Studio's: Bitwig only saves for the app once they're set." +
         (OperatingSystem.IsWindows() ? " If Windows asks whether Bitwig may use the network, you can say no: the app only talks to it on this PC." : "");
 
     static string FlSteps(FlMidiPort port) =>
@@ -197,7 +200,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     static async Task<string> CheckBitwig(DawWatch watch)
     {
         using var link = await watch.ConnectBitwigAsync();
-        return $"Connected to {link.Hello.Product} {link.Hello.Version} through {link.Hello.Answering}, with “{link.Hello.Project}” open.";
+        return $"Connected to {link.Hello.Product} {link.Hello.Version} through {link.Hello.Answering}, with “{link.Hello.Project}” open." +
+               (BitwigLink.LoopbackMissing(link.Hello) is { } setUp ? " " + setUp : "");
     }
 
     static async Task<string> CheckFlStudio(DawWatch watch)

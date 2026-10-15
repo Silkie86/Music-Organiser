@@ -68,8 +68,9 @@ public final class MusicOrganiserExtensionDefinition extends ControllerExtension
      * seems to carry out some commands (Save, copy and paste, bringing a panel to the front) only while it handles input
      * from a device. Both have to be the loopMIDI port called "Music Organiser Bitwig" ({@link #LOOPBACK_PORT}), never
      * "Music Organiser", which is the FL Studio link's: FL Studio must never see these messages. Only the routes that go
-     * through MIDI use them, but whether Bitwig starts the extension at all while they're unassigned isn't known yet
-     * (Bitwig stops a controller whose device goes away): see "Still to confirm" in extensions/README.md.
+     * through MIDI send anything through them, but Bitwig 6.1.3 saved for the link by no route until they were set, the
+     * flush included (it starts the extension, and the link answers, with them unassigned): see "Routes and the MIDI
+     * loopback" in extensions/README.md.
      */
     @Override
     public int getNumMidiInPorts() {
