@@ -67,50 +67,13 @@ public static class DuplicateFinder
     const int MaxChecksPerSound = 8;
 
     // ---- staying out of the way --------------------------------------------------------------------
-    // The first run on a big library takes a long while, and the app must stay smooth meanwhile (Solomon's rule):
-    // the work leaves two cores free, runs below normal priority, tells the page how it's going at most four
-    // times a second, and asks the garbage collector not to stop the whole app while it runs.
-
-    /// <summary>Leaves two cores for the app (and whatever else Solomon is doing).</summary>
-    static ParallelOptions Options(CancellationToken ct)
-    {
-        var o = Parallelism.Options(ct);
-        o.MaxDegreeOfParallelism = Math.Clamp(Parallelism.Cores - 2, 1, o.MaxDegreeOfParallelism > 0 ? o.MaxDegreeOfParallelism : int.MaxValue);
-        return o;
-    }
-
-    /// <summary>Runs one piece of the work below normal priority, so the app's own threads come first.</summary>
-    static T Low<T>(Func<T> work)
-    {
-        var thread = Thread.CurrentThread;
-        var before = thread.Priority;
-        thread.Priority = ThreadPriority.BelowNormal;
-        try { return Parallelism.Background(work); }
-        finally { thread.Priority = before; }
-    }
-
-    /// <summary>Passes progress on at most every 250 ms (and always the last of each stage).</summary>
-    sealed class Throttled(IProgress<SoundProgress> inner) : IProgress<SoundProgress>
-    {
-        long _next;
-        string? _stage;
-        public void Report(SoundProgress p)
-        {
-            var now = Environment.TickCount64;
-            lock (this)
-            {
-                var last = p.Total > 0 && p.Done >= p.Total;
-                if (p.Stage == _stage && !last && now < _next) return;
-                (_stage, _next) = (p.Stage, now + 250);
-            }
-            inner.Report(p);
-        }
-    }
+    // The first run on a big library takes a long while, and the app must stay smooth meanwhile (Solomon's rule).
+    // Each piece of work runs through Parallelism.Background, in the slots every job shares (two cores stay free,
+    // below normal priority), and the garbage collector is asked not to stop the whole app while it runs.
 
     /// <summary>Prints new and changed sounds and finds their copies. Returns how many sounds were printed.</summary>
     public static int Update(SoundOrganiser org, IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
     {
-        if (progress is not null) progress = new Throttled(progress);
         // Without this a long run's garbage collections pause every thread, the UI's too, for up to a second at a time.
         var latency = System.Runtime.GCSettings.LatencyMode;
         if (latency is System.Runtime.GCLatencyMode.Interactive or System.Runtime.GCLatencyMode.Batch)
@@ -163,12 +126,12 @@ public static class DuplicateFinder
         {
             try
             {
-                Parallel.ForEach(todo, Options(ct), t =>
+                Parallel.ForEach(todo, Parallelism.Options(ct), t =>
                 {
                     Printed p;
                     try
                     {
-                        var (print, query) = Low(() =>
+                        var (print, query) = Parallelism.Background(() =>
                         {
                             var made = SoundPrint.Make(AudioFile.Read(t.Path, SoundPrint.ReadSeconds), out var q);
                             return (made, q);
@@ -209,7 +172,7 @@ public static class DuplicateFinder
                 // Each against everything printed before, then against the rest of its own batch.
                 var own = new InMemoryModelService();
                 foreach (var b in withSfp) own.Insert(new TrackInfo(b.Id.ToString(), "", ""), new AVHashes(SoundPrint.Unpack(b.Print!.Sfp!), null));
-                Parallel.ForEach(withSfp, Options(ct), b => Low(() =>
+                Parallel.ForEach(withSfp, Parallelism.Options(ct), b => Parallelism.Background(() =>
                 {
                     if (stored > 0) Look(b, store, matches);
                     Look(b, own, matches);
@@ -296,14 +259,14 @@ public static class DuplicateFinder
         var bands = lib.PrintBands(pairs.SelectMany(p => new[] { p.Item1, p.Item2 }));
         // Lookalikes (a pack's worth of similar hi-hats) can be many, and each costs two file reads to rule out,
         // so each sound has only its closest few checked. Real copies are always among the closest.
-        var close = pairs.AsParallel().WithCancellation(ct).WithDegreeOfParallelism(Options(ct).MaxDegreeOfParallelism)
-            .Select<(long, long), ((long, long) Pair, double Sim)>(p =>
+        var close = pairs.AsParallel().WithCancellation(ct).WithDegreeOfParallelism(Parallelism.Workers)
+            .Select<(long, long), ((long, long) Pair, double Sim)>(p => Parallelism.Background(() =>
             {
                 if (!bands.TryGetValue(p.Item1, out var a) || !bands.TryGetValue(p.Item2, out var b)) return (p, 0.0);
                 var sim = SoundPrint.Similarity(a.Frames, a.Bands, b.Frames, b.Bands);
                 if (sim < PrintThreshold) return (p, 0.0);
                 return SoundPrint.WaveSimilarity(SoundPrint.FromSketch(a.Sketch), SoundPrint.FromSketch(b.Sketch)) >= SketchThreshold ? (p, sim) : (p, 0.0);
-            })
+            }))
             .Where(t => t.Sim > 0).ToList();
         var closest = close.SelectMany(t => new[] { (Id: t.Pair.Item1, t.Pair, t.Sim), (Id: t.Pair.Item2, t.Pair, t.Sim) })
             .GroupBy(t => t.Id)
@@ -318,10 +281,10 @@ public static class DuplicateFinder
         foreach (var chunk in likely.Chunk(2000))
         {
             var found = new ConcurrentBag<SoundMatch>();
-            Parallel.ForEach(chunk, Options(ct), p =>
+            Parallel.ForEach(chunk, Parallelism.Options(ct), p =>
             {
                 if (org.Get(p.Item1) is { } sa && org.Get(p.Item2) is { } sb &&
-                    Low(() => starts.Similarity(sa, sb)) is var w && w >= WaveThreshold)
+                    Parallelism.Background(() => starts.Similarity(sa, sb)) is var w && w >= WaveThreshold)
                 {
                     var (da, db) = (seconds[p.Item1], seconds[p.Item2]);
                     var kind = SameLength(da, db, sa.Path, sb.Path) ? CopyKind.Converted : CopyKind.Trimmed;
@@ -350,10 +313,10 @@ public static class DuplicateFinder
         foreach (var chunk in todo.Chunk(256))
         {
             var checks = new ConcurrentBag<(long, long, double, double)>();
-            Parallel.ForEach(chunk, Options(ct), p =>
+            Parallel.ForEach(chunk, Parallelism.Options(ct), p =>
             {
                 var (typical, apart) = org.Get(p.A) is { } a && org.Get(p.B) is { } b
-                    ? Low(() => a.Seconds <= b.Seconds ? HowFarApart(a.Path, b.Path, p.Offset) : HowFarApart(b.Path, a.Path, p.Offset))
+                    ? Parallelism.Background(() => a.Seconds <= b.Seconds ? HowFarApart(a.Path, b.Path, p.Offset) : HowFarApart(b.Path, a.Path, p.Offset))
                     : (Unreadable, Unreadable);
                 checks.Add((p.A, p.B, typical, apart));
             });
