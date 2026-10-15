@@ -1941,11 +1941,11 @@ final class Link {
         ran.put("focus", null);
         ran.put("paste", null);
         m.put("ran", ran);
-        // With checks asked for, the answer waits for them when the clip didn't land in the arranger (see check). They
-        // need the mark the clip got, once it has one.
+        // With checks asked for, the answer waits for them when they can tell something (see worthChecking and check).
+        // They need the mark the clip got, once it has one.
         Mark[] marked = new Mark[1];
         Finish finish = !checks ? asked : (result, error) -> {
-            if (error != null || Boolean.TRUE.equals(m.get("arranged"))) asked.done(result, error);
+            if (error != null || !worthChecking(m, launcherFocus)) asked.done(result, error);
             else check(route, t, index, track, launcherFocus, launcherShown, pasted, duplicate, marked[0], m, asked);
         };
 
@@ -2150,9 +2150,25 @@ final class Link {
     }
 
     /**
-     * Arrange's checks (extension 3.8), run when the request asks for them and the clip didn't land in the arranger: two
-     * more steps by the same route, each in the clip launcher, that tell which of arrange's steps Bitwig dropped. Then it
-     * answers with `m`, which gets them as `checks`:
+     * Whether arrange's checks can tell anything after it (`m` is its answer so far), without putting down what the link
+     * can't take back: only when its own paste ran (so the copy ran, from the launcher, and the timeline was brought to the
+     * front) and put nothing in the arranger (no clip appeared on the track, and the clip selected there is as it was),
+     * and Bitwig has the launcher's focus action, which keeps the checks' paste and Duplicate in the launcher. Otherwise
+     * a check's paste could put down what Bitwig's clipboard held before, or a clip in the arranger, which the link would
+     * neither see nor delete, and would hide a clip a later go put there.
+     */
+    private static boolean worthChecking(Map<String, Object> m, Action launcherFocus) {
+        Map<?, ?> ran = (Map<?, ?>) m.get("ran");
+        Object after = m.get("after");
+        boolean inArranger = Boolean.TRUE.equals(m.get("appeared"))
+                || (after instanceof Map && Boolean.TRUE.equals(((Map<?, ?>) after).get("exists")) && !after.equals(m.get("beforePaste")));
+        return launcherFocus != null && Boolean.TRUE.equals(ran.get("paste")) && !inArranger;
+    }
+
+    /**
+     * Arrange's checks (extension 3.8), run when the request asks for them and arrange's paste ran but put nothing in the
+     * arranger (see worthChecking): two more steps by the same route, each in the clip launcher, that tell which of
+     * arrange's steps Bitwig dropped. Then it answers with `m`, which gets them as `checks`:
      * <ul>
      * <li>`launcherPaste`: the link selects an empty launcher slot on the track (the first that exists), gives the clip
      * launcher the focus as arrange does, and pastes. A clip in the mark's colour appearing there (`made`, `colour`,
@@ -2166,8 +2182,11 @@ final class Link {
      * Bitwig has no Duplicate action.</li>
      * </ul>
      * Each says whether its slot got `selected`, how many times the launcher's focus action ran (`focus`) and whether each
-     * step `ran` by the route. A check that can't go on (Bitwig won't show the launcher, say) leaves the rest out and
-     * puts what stopped it in `checks` as `error`, and arrange still answers with what it found.
+     * step `ran` by the route. A check stops before its paste or Duplicate when Bitwig doesn't select its slot or the
+     * route doesn't run the launcher's focus action, since either could go to another panel then. A paste or Duplicate
+     * that goes anywhere but the launcher (or a new track) all the same isn't seen, and is left. A check that can't go on
+     * (Bitwig won't show the launcher, say) leaves the rest out and puts what stopped it in `checks` as `error`, and
+     * arrange still answers with what it found.
      */
     private void check(String route, int t, int index, Track track, Action launcherFocus, SettableBooleanValue launcherShown,
                        Runnable pasteRun, Action duplicate, Mark mark, Map<String, Object> m, Finish finish) {
@@ -2284,8 +2303,9 @@ final class Link {
     /**
      * For arrange's checks: selects a launcher slot on the track and gives the clip launcher the focus, as arrange does
      * before it copies, then runs `then`. `c` gets whether the slot got `selected` and how many times the focus action ran
-     * (`focus`), and `ran` whether the route ran it (`focus`). When Bitwig doesn't select the slot, the check stops there
-     * and `skip` runs instead.
+     * (`focus`), and `ran` whether the route ran it (`focus`). When Bitwig doesn't select the slot, or the route doesn't
+     * run the focus action (or its second go, which leaves the launcher hidden), the check stops there and `skip` runs
+     * instead.
      */
     private void inLauncher(String route, int t, ClipLauncherSlot slot, Track track, Action launcherFocus, SettableBooleanValue launcherShown,
                             Map<String, Object> c, Map<String, Object> ran, Runnable skip, Runnable then, Finish done) {
@@ -2298,7 +2318,10 @@ final class Link {
                 return;
             }
             if (launcherFocus == null) then.run();
-            else focusPanel(route, FOCUS_LAUNCHER, launcherFocus, launcherShown, "clip launcher", c, "focus", ran, times -> then.run(), done);
+            else focusPanel(route, FOCUS_LAUNCHER, launcherFocus, launcherShown, "clip launcher", c, "focus", ran, times -> {
+                if (Boolean.FALSE.equals(ran.get("focus"))) skip.run();
+                else then.run();
+            }, done);
         }, done);
     }
 

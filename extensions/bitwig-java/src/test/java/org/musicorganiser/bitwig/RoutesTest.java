@@ -439,6 +439,29 @@ class RoutesTest {
     }
 
     @Test
+    @DisplayName("stops arrange's checks before their paste and Duplicate when the launcher's focus action doesn't come back (extension 3.8)")
+    void stopsChecksWithoutTheLaunchersFocus() {
+        // The timeline's focus action is ignored, so arrange pastes into the launcher; then the loopback goes, so the
+        // checks' focus actions never run, and neither does anything after them.
+        studio(m -> {
+            m.actions.add(action("Duplicate", "Duplicate", "Editing"));
+            m.focusIgnored.add(Link.FOCUS_ARRANGER);
+            m.loopbackCut = () -> bitwig.calls.contains(List.of("invoke", "Paste"));
+        });
+        Map<String, Object> request = arrange(1, "midi");
+        request.put("checks", true);
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(request, 30000).get("result"));
+        assertEquals(2.0, result.get("launcherClipsAfter"));
+        assertJson(obj("launcherPaste", obj("slot", 2, "selected", true, "focus", 0, "ran", obj("focus", false, "paste", null), "made", false,
+                                            "colour", null, "sameAsMark", false, "removed", false),
+                       "duplicate", obj("selected", true, "focus", 0, "ran", obj("focus", false, "duplicate", null), "launcher", 0, "tracks", 0,
+                                        "removed", false)),
+                   result.get("checks"));
+        assertEquals(1, invoked("Paste"));
+        assertEquals(0, invoked("Duplicate"));
+    }
+
+    @Test
     @DisplayName("refuses to arrange by a route it can't take, before changing anything")
     void refusesToArrangeByARouteItCantTake() {
         studio();

@@ -38,8 +38,9 @@ Music Organiser → DAW link.
 ### The MIDI loopback (3.7)
 
 The extension has one MIDI in and one MIDI out, only for its loopback: it sends itself MIDI through the out, and
-Bitwig hands it back on the in as if a device had sent it. Bitwig 6.1.3 ignored Save, copy and paste run by the
-link otherwise, while it carried them out for a controller's hardware button. To set it up: in loopMIDI, add a
+Bitwig hands it back on the in as if a device had sent it. Bitwig 6.1.3 ignored Save, copy and paste run straight
+away by the link, while it carried them out for a controller's hardware button (it turned out to save from its flush
+too, which 3.8 makes the default route). To set it up: in loopMIDI, add a
 port called **Music Organiser Bitwig**, then in Bitwig, Settings → Controllers → Music Organiser, set both MIDI
 in and MIDI out to it. Bitwig can fill them in by itself when it finds the port (the extension offers it for
 auto-detection). Never use **Music Organiser**, the FL Studio link's port: FL Studio must never get what the
@@ -71,7 +72,7 @@ The extension writes to the app's data folder, next to MO Probe's reports:
   and IDs, the Sampler and Note Transpose pitch, the popup browser, the settings, the remote controls, the last
   clicked parameter, parameter steps, origins and automation, the master recorder, the arranger (its timeline
   and clip launcher, the panel layout, the play start, the clip selected there and launcher clips' colours, for
-  `arrange`) and Bitwig's
+  `arrange`), where a file can go after each track (for `filetrack`) and Bitwig's
   actions, the command routes (the loopback's MIDI ports, the buttons the link made, and whether its own MIDI
   has come back, with how to set the loopback up when it hasn't), then whether the app can connect (port 19791)
   and whether the reports folder takes files. Each part
@@ -114,9 +115,10 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   `launcherFocus`, `timeline`, `focus`, the clip selected in the arranger `before`, `beforePaste` and `after`,
   its `pastedColor`, and the track's `launcherClipsBefore` and `launcherClipsAfter`. From 3.7 it takes `via`
   too (below), and says `via` and `ran` (whether each of `launcherFocus`, `copy`, `focus` and `paste` ran by
-  it). From 3.8 it takes `checks: true`: when the clip didn't land in the arranger, it then checks a paste into
-  an empty launcher slot and Bitwig's Duplicate on the launcher clip by the same route, deletes the clips they
-  made, and says what each found in `checks`. See
+  it). From 3.8 it takes `checks: true`: when its paste ran but put nothing in the arranger, and Bitwig has the
+  launcher's focus action, it then checks a paste into an empty launcher slot and Bitwig's Duplicate on the
+  launcher clip by the same route, deletes a clip either makes in the launcher (a track Duplicate makes is left),
+  and says what each found in `checks`. See
   [the extensions README](../README.md#clips-in-the-arranger-an-experiment).
 - `filetrack` ✎ with `track`, `path` and `at` (optional, in beats): **an experiment** (extension 3.8), which only
   the live tests send. It inserts the file after the track as a new track (the track's
@@ -135,7 +137,7 @@ Earlier versions answer `{}`. If the link can't read the project's name, it stil
 `project` out.
 
 New in 3.7, the command routes: `action` and `arrange` take `via`, the route to run Bitwig's commands by (Save,
-Copy, Paste and the two focus actions): `direct` (straight away, the default before 3.8 and the only route the
+Copy, Paste, the two focus actions and, from 3.8, Duplicate, which arrange's checks run): `direct` (straight away, the default before 3.8 and the only route the
 script has), `flush` (from Bitwig's next flush, the default from 3.8, as Bitwig 6.1.3 saved from there), `midi` (when a SysEx message the link sent itself comes back through
 the loopback), `buttonCode` (when a press of one of its own hardware buttons comes back, from a note on channel
 16, and the link runs the command) and `button` (another button, which Bitwig runs the command for itself). The
@@ -186,7 +188,8 @@ the app connects.
   clip that was on the clipboard in the colour Bitwig rounded the mark to looks just the same), and a fresh
   colour for each arrange. From 3.8, the checks: a paste in the launcher that made the marked clip and a
   Duplicate there (both clips deleted again), a copy that didn't take, a Duplicate that went to the track, a check
-  with nothing to work on, a check stopped part way, no checks unless asked or when the clip landed; and
+  with nothing to work on, a check stopped part way, and no checks unless asked, when arrange didn't paste, when its
+  paste put something in the arranger (rounded mark or not) or without the launcher's focus action; and
   `filetrack`, with the file going to the arranger, the launcher, or nowhere.
 - `RoutesTest`: the command routes: Save by every route, the MIDI each sends, a route that never comes back
   (`ran: false`, and a late message or press doesn't run it, nor does a stale message or the link's own ping that
@@ -194,7 +197,8 @@ the app connects.
   only in SysEx, the callback each route runs in, an unknown route, `onlyIn` and changes checked again as a
   routed command runs, `hello`'s `loopback`, the self-check's detail, a Bitwig without MIDI ports, and `arrange`
   by the buttons, refused routes and no paste when the copy didn't run. From 3.8, a command with no route runs
-  from the flush.
+  from the flush, and arrange's checks stop before their paste and Duplicate when the launcher's focus action
+  doesn't come back.
 - `SelfCheckTest`, `LinkLogTest`, `ReportsTest`: the self-check and the reports, in a temporary folder,
   including a Bitwig missing part of the API (each part fails on its own), another port, an older API and a
   folder that can't be written.

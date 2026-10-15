@@ -619,7 +619,8 @@ public class BitwigLiveTestsTests
         var broken = BitwigLiveTests.LoopbackVerdict(Hello("3.7", false));
         Assert.Equal(LiveOutcome.Failed, broken.Outcome);
         Assert.Equal("The extension's own MIDI hasn't come back to it through the loopback, so it can only run Bitwig's commands straight away or " +
-                     "from Bitwig's flush, which Bitwig 6.1.3 ignored for Save, copy and paste. " + BitwigLiveTests.LoopbackSetup, broken.Detail);
+                     "from Bitwig's flush. Bitwig 6.1.3 ignored Save, copy and paste run straight away, though it saved from its flush. " +
+                     BitwigLiveTests.LoopbackSetup, broken.Detail);
         // The setup names the loopMIDI port, and warns off FL Studio's.
         Assert.Contains("set both MIDI in and MIDI out to “Music Organiser Bitwig” (the loopMIDI port), never “Music Organiser” (FL Studio's)",
                         BitwigLiveTests.LoopbackSetup);
@@ -1278,7 +1279,8 @@ public class BitwigLiveTestsTests
     public async Task ClipToArrangerChecksEachGoThatDidntWorkThroughTheExtension38()
     {
         // The extension 3.8: no route puts the clip there. From the flush the copy took and Duplicate worked in the launcher;
-        // straight away neither did; on the link's own MIDI message the checks stopped; the rest ran no checks.
+        // straight away neither did; on the link's own MIDI message the checks stopped. By the buttons the checks' colours
+        // say nothing for sure: Bitwig didn't colour the launcher clip, then rounded its colour.
         await using var java = new FakeJavaBitwig(ArrangingHello.Replace("\"3.6\"", "\"3.8\""), SevenEight);
         java.Answer = request =>
         {
@@ -1290,7 +1292,14 @@ public class BitwigLiveTestsTests
                 "flush" => JsonNode.Parse(CopyTook),
                 "direct" => JsonNode.Parse(CopyDidntTake),
                 "midi" => JsonNode.Parse("""{"launcherPaste":null,"duplicate":{"selected":false,"focus":0,"ran":{"focus":null,"duplicate":null},"launcher":0,"tracks":0,"removed":false},"error":"Bitwig has “My Song” open now."}"""),
-                _ => null,
+                "buttonCode" => JsonNode.Parse(CopyDidntTake),
+                _ => JsonNode.Parse(CopyTook),
+            };
+            a["mark"] = via switch
+            {
+                "buttonCode" => JsonNode.Parse("""{"before":"#3366CC","asked":"#416DD9","got":"#3366CC","took":false,"exact":false}"""),
+                "button" => JsonNode.Parse("""{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true,"exact":false}"""),
+                _ => a["mark"]!.DeepClone(),
             };
             return a.ToJsonString();
         };
@@ -1318,7 +1327,16 @@ public class BitwigLiveTestsTests
                       "  - Duplicate in the launcher: Bitwig didn't select the launcher clip again, so the check stopped there",
                       "  - The checks stopped: Bitwig has “My Song” open now.",
                       "- On a press of the link's own button, run by the link (buttonCode): nothing appeared in the arranger",
-                      "- By the link's own hardware button, run by Bitwig (button): nothing appeared in the arranger"],
+                      "  - Paste into the launcher: a paste into empty slot 3 put down a clip (#3366CC), but Bitwig didn't let the link colour the " +
+                      "launcher clip, so it can't tell whether that's the launcher clip's copy or what Bitwig's clipboard held before (the link " +
+                      "couldn't delete it again, so it's still in slot 3)",
+                      "  - Duplicate in the launcher: Duplicate copied the whole track instead, so the clip launcher didn't have the focus (the copy " +
+                      "is left in the test project)",
+                      "- By the link's own hardware button, run by Bitwig (button): nothing appeared in the arranger",
+                      "  - Paste into the launcher: a paste into empty slot 3 put down a clip in the launcher clip's colour (#416DD9), but Bitwig " +
+                      "rounded that colour to one of its own, which other clips can have too, so it can't tell for sure whether the copy took",
+                      "  - Duplicate in the launcher: Duplicate made a copy of the clip in the launcher, so Bitwig's editing actions work in the " +
+                      "launcher by this route (the link deleted the copy again)"],
                      verdict.Lines);
         Assert.Equal("#416DD9", (string?)verdict.Data["attempts"]![0]!["answer"]!["checks"]!["launcherPaste"]!["colour"]);
     }
@@ -1525,11 +1543,11 @@ public class BitwigLiveTestsTests
         Assert.Equal((LiveOutcome.Noted, "Bitwig put Live Clip.mid on a new track, “Live Clip” (track 4), with no clip in its launcher, but no clip on " +
                                          "it is selected in the arranger, so the link can't tell whether the clip went there. " + look),
                      (unseen.Outcome, unseen.Detail));
-        // An earlier run's “Live Clip” clip was selected already: the same clip selected after says nothing.
+        // An earlier run's “Live Clip” clip was selected already: a clip selected after on a track of that name says nothing.
         var same = Verdict(a => a["arrangerBefore"] = JsonNode.Parse("""{"exists":true,"track":"Live Clip"}"""));
-        Assert.Equal((LiveOutcome.Noted, "Bitwig put Live Clip.mid on a new track, “Live Clip” (track 4), with no clip in its launcher, but the clip " +
-                                         "selected in the arranger is the one selected before (on “Live Clip”), so the link can't tell whether a new " +
-                                         "one appeared. " + look),
+        Assert.Equal((LiveOutcome.Noted, "Bitwig put Live Clip.mid on a new track, “Live Clip” (track 4), with no clip in its launcher, but a clip on a " +
+                                         "track called “Live Clip” was selected in the arranger before too, and the link tells those clips apart only " +
+                                         "by their track's name, so it can't tell whether a new one appeared. " + look),
                      (same.Outcome, same.Detail));
         var lost = Verdict(a => a["index"] = null);
         Assert.Equal((LiveOutcome.Noted, "Bitwig added 1 track for Live Clip.mid, but the link couldn't find the new one in its listing. Look after " +

@@ -139,8 +139,8 @@ public sealed record BitwigPitch(string Device, double Value, string Display);
 /// <param name="Via">The route the extension copied, pasted and ran the focus actions by (extension 3.7), or null when it doesn't say.</param>
 /// <param name="Ran">Whether each of those steps ran by that route (extension 3.7), or null when the extension doesn't say.</param>
 /// <param name="Checks">
-/// What the extension's checks found, when they were asked for and the clip didn't land in the arranger (extension 3.8);
-/// else null.
+/// What the extension's checks found (extension 3.8), when they were asked for and could tell something: arrange's paste
+/// ran but put nothing in the arranger, and Bitwig has the launcher's focus action. Else null.
 /// </param>
 public sealed record BitwigArranged(bool Arranged, bool Appeared, bool SameAsSource, bool CopiedFromTimeline, double At, string Layout,
                                     BitwigShown Launcher, BitwigClipMark Mark, int LauncherFocus, BitwigShown Timeline, int Focus,
@@ -149,8 +149,8 @@ public sealed record BitwigArranged(bool Arranged, bool Appeared, bool SameAsSou
                                     BitwigArrangeChecks? Checks = null);
 
 /// <summary>
-/// What the arrange experiment's checks found (extension 3.8), run by the same route once the clip didn't land in the
-/// arranger, to tell which part failed: the copy, or the arranger's part.
+/// What the arrange experiment's checks found (extension 3.8), run by the same route once arrange's paste ran but put
+/// nothing in the arranger, to tell which part failed: the copy, or the arranger's part.
 /// </summary>
 /// <param name="LauncherPaste">
 /// A paste into an empty launcher slot on the track, which needs no arranger: null when the track had no empty slot the
@@ -162,8 +162,10 @@ public sealed record BitwigArrangeChecks(BitwigLauncherPasteCheck? LauncherPaste
 
 /// <summary>
 /// The arrange experiment's paste into an empty launcher slot (extension 3.8): the link selects the slot, gives the clip
-/// launcher the focus and pastes. A clip in the launcher clip's marking colour there means the copy took, so the
-/// arranger's part is what fails; a clip in another colour means Bitwig pasted what its clipboard held before.
+/// launcher the focus and pastes. When the mark took (and is exact), a clip in the launcher clip's marking colour there
+/// means the copy took, so the arranger's part is what fails, and a clip in another colour means Bitwig pasted what its
+/// clipboard held before. The check stops before the paste when Bitwig doesn't select the slot or the route doesn't run
+/// the launcher's focus action.
 /// </summary>
 /// <param name="Slot">The empty slot (0 is the first).</param>
 /// <param name="Selected">Whether Bitwig selected it. When it didn't, the check stopped there.</param>
@@ -549,9 +551,9 @@ public sealed class BitwigLink : IDisposable
     /// runs them from Bitwig's flush from 3.8, and straight away before): see <see cref="RunActionAsync"/>.
     /// </param>
     /// <param name="checks">
-    /// Whether to check, when the clip doesn't land in the arranger, whether a paste into an empty launcher slot and Bitwig's
-    /// Duplicate work by the same route (the extension 3.8; <see cref="BitwigArranged.Checks"/>). Each check's clip is
-    /// deleted again, but a track Duplicate made is left.
+    /// Whether to check, when arrange's paste ran but put nothing in the arranger, whether a paste into an empty launcher
+    /// slot and Bitwig's Duplicate work by the same route (the extension 3.8; <see cref="BitwigArranged.Checks"/>). A clip
+    /// either makes in the launcher is deleted again; a track Duplicate made, or anything that went elsewhere, is left.
     /// </param>
     public async Task<BitwigArranged> ArrangeAsync(int track, int slot, double? at = null, string? via = null, bool checks = false,
                                                    CancellationToken ct = default)

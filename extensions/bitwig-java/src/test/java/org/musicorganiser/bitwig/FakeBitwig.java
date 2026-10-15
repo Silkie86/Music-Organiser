@@ -533,6 +533,7 @@ final class FakeBitwig {
      * panel in front, or nothing selected, the clipboard keeps what it had.
      */
     private void copied() {
+        if (model.copyIgnored) return;
         later(20, () -> {
             Copied copied = null;
             if (LAUNCHER.equals(focus) && launcherShown && slotSelected != null) {
@@ -878,8 +879,9 @@ final class FakeBitwig {
         /** Bitwig's focus_or_toggle_ actions (by ID) it ignores, and those that hide their panel when it's in front but never show it. */
         final Set<String> focusIgnored = new HashSet<>();
         final Set<String> focusOnlyHides = new HashSet<>();
-        /** Whether Bitwig ignores paste. */
+        /** Whether Bitwig ignores paste, and copy (its clipboard keeps what it held). */
         boolean pasteIgnored;
+        boolean copyIgnored;
         /** Whether Bitwig ignores Duplicate (extension 3.8's checks run it). */
         boolean duplicateIgnored;
         /**
@@ -913,6 +915,8 @@ final class FakeBitwig {
         /** Whether the extension's MIDI out comes back on its MIDI in (a loopMIDI port set as both), and after how many milliseconds. */
         boolean loopback;
         long loopbackDelay = 5;
+        /** Once this says true, the loopback brings nothing more back, as if its port went away part way (null: never). */
+        BooleanSupplier loopbackCut;
         /** Whether Bitwig never calls the extension's flush, however often it asks. */
         boolean noFlush;
 
@@ -2242,7 +2246,7 @@ final class FakeBitwig {
         void sendSysex(Object data) {
             String hex = data instanceof byte[] bytes ? hexBytes(bytes) : (String) data;
             midi.add(Arrays.asList("sysex", hex));
-            if (!model.loopback) return;
+            if (!loopsBack()) return;
             // As Bitwig hands it over: lower case, without spaces.
             String back = hex.replace(" ", "").toLowerCase(Locale.ROOT);
             clock.schedule(() -> {
@@ -2252,10 +2256,14 @@ final class FakeBitwig {
 
         void sendMidi(int status, int data1, int data2) {
             midi.add(Arrays.asList("midi", status, data1, data2));
-            if (!model.loopback || (status & 0xF0) != 0x90 || data2 == 0) return;
+            if (!loopsBack() || (status & 0xF0) != 0x90 || data2 == 0) return;
             clock.schedule(() -> press(status & 0x0F, data1), model.loopbackDelay);
         }
     };
+
+    private boolean loopsBack() {
+        return model.loopback && (model.loopbackCut == null || !model.loopbackCut.getAsBoolean());
+    }
 
     private static String hexBytes(byte[] bytes) {
         StringBuilder text = new StringBuilder();

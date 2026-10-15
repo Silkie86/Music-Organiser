@@ -477,7 +477,8 @@ public static class BitwigLiveTests
             return LiveVerdict.Pass("The extension's own MIDI came back to it through the loopback, so it can run Bitwig's commands on its own " +
                                     "MIDI messages and by pressing its own buttons.", data);
         return LiveVerdict.Fail("The extension's own MIDI hasn't come back to it through the loopback, so it can only run Bitwig's commands " +
-                                "straight away or from Bitwig's flush, which Bitwig 6.1.3 ignored for Save, copy and paste. " + LoopbackSetup, data);
+                                "straight away or from Bitwig's flush. Bitwig 6.1.3 ignored Save, copy and paste run straight away, though it " +
+                                "saved from its flush. " + LoopbackSetup, data);
     }
 
     static LiveVerdict NeedsArrange(string? running) => NeedsExtension(ArrangeFrom, running);
@@ -499,9 +500,9 @@ public static class BitwigLiveTests
     /// puts anything down (<see cref="Pasted"/>): another paste would land where that one did, and the clip it left
     /// selected there would hide whether a new one appeared, so the routes after it aren't tried. The verdict is that go's,
     /// naming its route (Passed when it put the clip there); else the last go's, with a line for each route. With the
-    /// extension 3.8, the first go is by the flush (<see cref="RouteOrder"/>), and each go that doesn't put the clip there
-    /// checks a paste into an empty launcher slot and Bitwig's Duplicate by the same route (<see cref="BitwigArrangeChecks"/>),
-    /// whose lines say whether the copy took and whether editing works in the launcher.
+    /// extension 3.8, the first go is by the flush (<see cref="RouteOrder"/>), and each go whose paste ran but put nothing
+    /// in the arranger checks a paste into an empty launcher slot and Bitwig's Duplicate by the same route (<see
+    /// cref="BitwigArrangeChecks"/>), whose lines say whether the copy took and whether editing works in the launcher.
     /// </summary>
     /// <param name="clipSlot">The launcher slot the MIDI clip test put the clip in, or null when it didn't.</param>
     /// <param name="bringBitwigToFront">Brings Bitwig's window to the front: whether it's in front, or null when that can't be told.</param>
@@ -632,13 +633,16 @@ public static class BitwigLiveTests
     {
         yield return ArrangeLine(a);
         if (a.Answer?.Checks is not { } checks) yield break;
-        if (checks.LauncherPaste is { } paste) yield return "  - Paste into the launcher: " + PasteCheck(paste);
+        if (checks.LauncherPaste is { } paste) yield return "  - Paste into the launcher: " + PasteCheck(paste, a.Answer.Mark);
         if (checks.Duplicate is { } duplicate) yield return "  - Duplicate in the launcher: " + DuplicateCheck(duplicate);
         if (checks.Error is { } error) yield return "  - The checks stopped: " + error;
     }
 
-    /// <summary>What the check's paste into an empty launcher slot found, in plain words.</summary>
-    static string PasteCheck(BitwigLauncherPasteCheck c)
+    /// <summary>
+    /// What the check's paste into an empty launcher slot found, in plain words. Its colour only says whose clip it is when
+    /// the link's mark on the launcher clip (<paramref name="mark"/>, arrange's) took, and is the very colour asked for.
+    /// </summary>
+    static string PasteCheck(BitwigLauncherPasteCheck c, BitwigClipMark? mark)
     {
         var slot = $"empty slot {c.Slot + 1}";
         if (!c.Selected) return $"Bitwig didn't select {slot}, so the check stopped there";
@@ -647,6 +651,12 @@ public static class BitwigLiveTests
         if (!pasted) return $"the paste into {slot} didn't run";
         if (!c.Made) return $"a paste into {slot} put nothing there";
         var left = c.Removed ? "" : $" (the link couldn't delete it again, so it's still in slot {c.Slot + 1})";
+        if (mark is not { Took: true })
+            return $"a paste into {slot} put down a clip ({c.Colour ?? "unknown"}), but Bitwig didn't let the link colour the launcher clip, so " +
+                   "it can't tell whether that's the launcher clip's copy or what Bitwig's clipboard held before" + left;
+        if (c.SameAsMark && !mark.Exact)
+            return $"a paste into {slot} put down a clip in the launcher clip's colour ({c.Colour}), but Bitwig rounded that colour to one of " +
+                   "its own, which other clips can have too, so it can't tell for sure whether the copy took" + left;
         return c.SameAsMark
             ? $"a paste into {slot} put the launcher clip's copy there, in its marking colour ({c.Colour}), so the copy took and pasting " +
               "works in the launcher: it's putting it in the arranger that fails" + left
@@ -843,7 +853,8 @@ public static class BitwigLiveTests
             return LiveVerdict.Pass($"{made}, with no clip in its launcher, and the clip selected in the arranger is on that track now, so the " +
                                     $"clip went in the arranger. The link can't read where an arranger clip starts: {look}", data);
         var why = f.Arranger is { Exists: true } same && same == f.ArrangerBefore
-            ? $"the clip selected in the arranger is the one selected before (on “{same.Track}”), so the link can't tell whether a new one appeared"
+            ? $"a clip on a track called “{same.Track}” was selected in the arranger before too, and the link tells those clips apart only by " +
+              "their track's name, so it can't tell whether a new one appeared"
             : "no clip on it is selected in the arranger, so the link can't tell whether the clip went there";
         return LiveVerdict.Note($"{made}, with no clip in its launcher, but {why}. {Capital(look)}", data);
     }
@@ -1206,7 +1217,7 @@ public static class BitwigLiveTests
                 var p = await _link.ProjectAsync(t);
                 var detail = $"Bitwig lets the app make changes, and has “{p.Name}” open, so the run can change it.";
                 if (p.TrackCount > 100)
-                    detail += $" It has {p.TrackCount} tracks, and each run adds about six: make a fresh “{TestProject}” project now and then, " +
+                    detail += $" It has {p.TrackCount} tracks, and each run adds about seven (more when Clip to arranger's checks copy a track): make a fresh “{TestProject}” project now and then, " +
                               "since Bitwig lists only the first 128 to the app.";
                 return LiveVerdict.Pass(detail);
             });

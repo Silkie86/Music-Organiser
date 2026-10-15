@@ -561,21 +561,67 @@ class ArrangerTest {
     }
 
     @Test
-    @DisplayName("says so in its checks when the copy didn't take and the launcher never got the focus")
+    @DisplayName("says so in its checks when the copy didn't take")
     void checksWhenTheCopyDidntTake() {
-        // Bitwig ignores the launcher's focus action and another panel has the focus, so copy does nothing, and the paste
-        // puts down the clip someone copied in their own song (see tellsItsOwnClipFromWhatWasOnTheClipboard).
+        // Bitwig ignores copy, so its clipboard still holds the clip someone copied in their own song, and the timeline's
+        // focus action, so arrange's paste puts that clip in the launcher.
+        studioWithDuplicate(m -> {
+            m.copyIgnored = true;
+            m.clipboard = new Copied("D:\\Songs\\Night Drive\\Hook.mid", THEIRS);
+            m.focusIgnored.add(Link.FOCUS_ARRANGER);
+        });
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        // The check's paste into the empty slot made a clip in their colour, not the mark's (deleted again), while
+        // Duplicate worked in the launcher.
+        assertJson(obj("launcherPaste", launcherPaste(2, 2, true, THEIRS, false, true), "duplicate", duplicate(2, 1, 0, true)), result.get("checks"));
+        assertEquals(Arrays.asList("C:\\MIDI\\Bass.mid", "D:\\Songs\\Night Drive\\Hook.mid", null), bitwig.state.tracks.get(0).slots.subList(0, 3));
+        assertEquals(List.of(), bitwig.state.arranged);
+    }
+
+    @Test
+    @DisplayName("runs no checks when arrange didn't paste, when its paste put something in the arranger, or without the launcher's focus action")
+    void checksOnlyWhereTheyCantLeaveAnythingBehind() {
+        // The timeline had the focus as the link copied, so arrange didn't paste: a check's paste would put down what the
+        // timeline's copy left on the clipboard.
+        studioWithDuplicate(m -> {
+            m.focus = FakeBitwig.TIMELINE;
+            m.focusIgnored.add(Link.FOCUS_LAUNCHER);
+        });
+        leadClipSelectedInTheArranger();
+        Map<String, Object> result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        assertEquals(true, result.get("copiedFromTimeline"));
+        assertFalse(result.containsKey("checks"));
+        assertEquals(1, bitwig.state.arranged.size(), "only Lead's clip");
+        assertFalse(bitwig.calls.contains(List.of("invoke", "Duplicate")));
+
+        // Arrange's paste put the clip someone copied in their own song in the arranger: another paste would land where
+        // that one did.
         studioWithDuplicate(m -> {
             m.clipboard = new Copied("D:\\Songs\\Night Drive\\Hook.mid", THEIRS);
             m.focus = "";
             m.focusIgnored.add(Link.FOCUS_LAUNCHER);
         });
-        // The check's paste never reaches the empty slot, so it waits for Bitwig.
-        Map<String, Object> result = SelfCheckTest.map(app.waitFor(arrangeChecked(1), 30000).get("result"));
-        // The timeline kept the focus: the check's paste went into the arranger, not the empty slot, and Duplicate copied
-        // the arranger's clip, not the launcher's.
-        assertJson(obj("launcherPaste", launcherPaste(1, 1, false, null, false, false), "duplicate", duplicate(1, 0, 0, false)), result.get("checks"));
-        assertEquals(3, bitwig.state.arranged.size());
+        result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        assertJson(obj("arranged", false, "appeared", true, "sameAsSource", false), SelfCheckTest.pick(result, "arranged", "appeared", "sameAsSource"));
+        assertFalse(result.containsKey("checks"));
+        assertEquals(1, bitwig.state.arranged.size());
+
+        // The clip landed, but Bitwig rounded its mark, so arrange can't say it's the launcher clip's copy.
+        studioWithDuplicate(m -> m.colourSnaps = true);
+        result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        assertJson(obj("arranged", false, "appeared", true, "sameAsSource", true), SelfCheckTest.pick(result, "arranged", "appeared", "sameAsSource"));
+        assertFalse(result.containsKey("checks"));
+
+        // Without the launcher's focus action, nothing keeps a check's paste or Duplicate in the launcher.
+        studioWithoutLauncherFocus(m -> {
+            m.actions.add(action("Duplicate", "Duplicate", "Editing"));
+            m.focusIgnored.add(Link.FOCUS_ARRANGER);
+            m.selectFocuses = true;
+        });
+        result = SelfCheckTest.map(app.waitFor(arrangeChecked(1)).get("result"));
+        assertEquals(2.0, result.get("launcherClipsAfter"), "arrange pasted into the launcher");
+        assertFalse(result.containsKey("checks"));
+        assertFalse(bitwig.calls.contains(List.of("invoke", "Duplicate")));
     }
 
     @Test
