@@ -359,9 +359,13 @@ public static class ProbeKnobCheck
         if (touched.Count == 0) return [];
         List<(int Knob, BitwigParam Param, double Plain)> Away(MoProbeLive s) =>
             touched.Where(t => !(s.Knobs.TryGetValue(t.Knob, out var v) && ProbeKnobs.Same(t.Knob, v, t.Plain))).ToList();
+        // Only a status written after they were sent back counts. One from before (the probe writes every half second, and
+        // a busy computer can hold it up) may show a knob as it was before its last turn, which looks just like back.
+        Task<(bool Back, MoProbeLive Status)> BackAsync(DateTimeOffset sent) =>
+            MoProbeLive.UntilAsync(probe.Instance, s => s.Time > sent && Away(s).Count == 0, probe.ReportFolder, wait);
         try
         {
-            var (back, status) = await MoProbeLive.UntilAsync(probe.Instance, s => Away(s).Count == 0, probe.ReportFolder, wait);
+            var (back, status) = await BackAsync(DateTimeOffset.UtcNow);
             if (back) return [];
             if (dawCanSet)
             {
@@ -371,7 +375,7 @@ public static class ProbeKnobCheck
                         try { await daw.SetAsync(t.Param.Id, was); }
                         catch (DawLinkException) { }
                     }
-                (back, status) = await MoProbeLive.UntilAsync(probe.Instance, s => Away(s).Count == 0, probe.ReportFolder, wait);
+                (back, status) = await BackAsync(DateTimeOffset.UtcNow);
                 if (back) return [];
             }
             return [.. Away(status).Select(t => $"{MoProbe.KnobName(t.Knob)} didn't go back to {ProbeKnobs.Text(t.Knob, t.Plain)}: set it back by hand.")];
