@@ -71,6 +71,7 @@ public sealed partial class MainViewModel : ObservableObject
         ];
         _selectedNav = StartPage();
         _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
+        _projectsShown = _soundsShown = db.ProjectsRevision;   // those two pages read the library as they open
 
         // First run: send people to Settings to add their project folders.
         if (_db.Roots().Count == 0 && _db.GetList(Scanner.SampleFoldersKey).Count == 0) SelectedNav = Nav[^1];
@@ -119,13 +120,18 @@ public sealed partial class MainViewModel : ObservableObject
         Settings.Probe.StartLive();
     }
 
-    /// <summary>Every page reads the library again, in the background (see <see cref="RefreshAllAsync"/>).</summary>
+    /// <summary>The pages whose part of the library changed read it again, in the background (see <see cref="RefreshAllAsync"/>).</summary>
     public void RefreshAll() => _ = RefreshAllAsync();
 
+    // The library revision each page last read (-1: not yet), so a scan that changed nothing leaves the pages alone.
+    long _projectsShown, _soundsShown, _samplesShown = -1;
+    (long, long) _pluginsShown = (-1, -1);
+
     /// <summary>
-    /// After a scan (or a DAW saving a project): each page reads the database in the background, then shows the result,
-    /// so a library of 16,000 projects and 357,000 sounds doesn't hold the window up ("Not responding"). The sounds
-    /// themselves don't change in a project scan, only how many projects use each one.
+    /// After a scan (or a DAW saving a project): each page whose part of the library changed reads it again in the
+    /// background, then shows the result, so a library of 16,000 projects and 357,000 sounds doesn't hold the window up
+    /// ("Not responding"). Most scans find nothing new, and then no page reads anything. The sounds themselves don't
+    /// change in a project scan, only how many projects use each one.
     /// </summary>
     public async Task RefreshAllAsync()
     {
@@ -137,12 +143,32 @@ public sealed partial class MainViewModel : ObservableObject
             await reload();
             times.Add($"{page} {(timer.Elapsed - start).TotalSeconds:0.00} s");
         }
-        await Time("Projects", Projects.ReloadAsync);
-        await Time("Plugins", Plugins.ReloadAsync);
-        await Time("Samples", Samples.ReloadAsync);
-        await Time("Sounds", Sounds.RefreshUsageAsync);
+        var projects = _db.ProjectsRevision;
+        var plugins = (projects, _db.PluginsRevision);
+        if (projects != _projectsShown)
+        {
+            _projectsShown = projects;
+            await Time("Projects", Projects.ReloadAsync);
+        }
+        if (plugins != _pluginsShown)
+        {
+            _pluginsShown = plugins;
+            await Time("Plugins", Plugins.ReloadAsync);
+        }
+        if (projects != _samplesShown)
+        {
+            _samplesShown = projects;
+            await Time("Samples", Samples.ReloadAsync);
+        }
+        if (projects != _soundsShown)
+        {
+            _soundsShown = projects;
+            await Time("Sounds", Sounds.RefreshUsageAsync);
+        }
         Live.Match();   // the library may have the projects the DAWs have open now
-        AppLog.Info("Pages", $"Refreshed in {timer.Elapsed.TotalSeconds:0.00} s: {string.Join(", ", times)}");
+        AppLog.Info("Pages", times.Count == 0
+            ? "Nothing new in the library, so the pages were left as they are"
+            : $"Refreshed in {timer.Elapsed.TotalSeconds:0.00} s: {string.Join(", ", times)}");
     }
 
     [RelayCommand]

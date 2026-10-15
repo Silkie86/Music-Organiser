@@ -235,6 +235,26 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_scan_that_finds_nothing_new_leaves_the_pages_as_they_are()
+    {
+        _db.AddRoot(_root);
+        var main = Main();
+        await main.ScanAsync(false, plugins: false);
+        var row = main.Projects.Items.First(i => i.Name == "Night Drive");
+        var plugins = main.Plugins.Items;
+
+        await main.ScanAsync(false, plugins: false);
+        Assert.Same(row, main.Projects.Items.First(i => i.Name == "Night Drive"));
+        Assert.Same(plugins, main.Plugins.Items);
+
+        // A changed project is read again, and the pages with it.
+        File.SetLastWriteTime(Path.Combine(_root, "Night Drive.flp"), DateTime.Now.AddMinutes(5));
+        await main.ScanAsync(false, plugins: false);
+        Assert.NotSame(row, main.Projects.Items.First(i => i.Name == "Night Drive"));
+        Assert.NotSame(plugins, main.Plugins.Items);
+    }
+
+    [Fact]
     public void OpensOnThePagePickedInSettings()
     {
         _db.AddRoot(_root);

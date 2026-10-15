@@ -361,4 +361,23 @@ public class LibraryTests : IDisposable
         var presets = Exporter.Presets(Readers.FlStudio, flp, outRoot);
         Assert.Contains("Serum - Lead.fxp", presets.Files);
     }
+
+    [Fact]
+    public void The_same_plugins_and_sample_files_again_change_nothing()
+    {
+        _db.ReplaceInstalledPlugins(["Serum", "Vital"]);
+        _db.ReplaceSampleIndex(["/s/Kick.wav", "/s/Snare.wav"]);
+        var before = (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision);
+
+        _db.ReplaceInstalledPlugins(["Vital", "Serum"]);
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Kick.wav"]);
+        Assert.Equal(before, (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision));
+
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Hat.wav"]);
+        Assert.Equal(before.SampleIndexRevision + 1, _db.SampleIndexRevision);
+        Assert.Equal(["/s/Hat.wav", "/s/Snare.wav"], _db.SampleIndex().Select(s => s.Path).Order());
+        _db.ReplaceInstalledPlugins(["Vital"]);
+        Assert.Equal(before.PluginsRevision + 1, _db.PluginsRevision);
+        Assert.Equal(["Vital"], _db.InstalledNames());
+    }
 }
