@@ -865,14 +865,6 @@ public static class VstPreset
     public static byte[] Build(ReadOnlySpan<byte> classId, byte[] component, byte[] controller) =>
         Build(ClassIdString(classId), component, controller);
 
-    /// <summary>The same preset for another plugin: its header's class id (32 hex digits, as written) replaced.</summary>
-    public static byte[] Relabel(byte[] preset, string classId)
-    {
-        var copy = (byte[])preset.Clone();
-        Encoding.ASCII.GetBytes(classId).CopyTo(copy, 8);
-        return copy;
-    }
-
     /// <param name="classId">The class id as a .vstpreset writes it (see <see cref="ClassIdString"/>).</param>
     public static byte[] Build(string classId, byte[] component, byte[] controller)
     {
