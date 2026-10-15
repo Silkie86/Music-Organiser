@@ -11,11 +11,58 @@ public static class Parallelism
 {
     public static int Cores => Environment.ProcessorCount;
 
-    /// <summary>How many pieces of background work may run at once, across every job together: two cores stay free for the window and playback.</summary>
-    public static int Workers { get; } = Math.Max(1, Environment.ProcessorCount - 2);
+    /// <summary>How hard background work may push the computer (Settings › Performance).</summary>
+    public enum Pace { Gentle, Balanced, Fast }
 
-    // Shared by every job, so a scan and Deep listen running together still leave the cores above free.
-    static readonly SemaphoreSlim Slots = new(Workers, Workers);
+    public const string Gentle = "Gentle", Balanced = "Balanced", Fast = "Fast";
+
+    /// <summary>Settings › Performance's choices, as saved.</summary>
+    public static IReadOnlyList<string> PaceChoices { get; } = [Gentle, Balanced, Fast];
+
+    static Pace _pace = Pace.Gentle;
+    static volatile bool _inBackground;
+    static volatile int _workers = LimitFor(Pace.Gentle, false);
+
+    /// <summary>
+    /// Gentle (the default): half the processor's threads, so the window, the galaxy and playback stay smooth even on
+    /// a processor whose threads share cores (Solomon, 2026-10-15: "its still laggy while scanning sample folder the cpu
+    /// is at max all threads"). Balanced: all but two. Fast: every thread while the app is in the background, Balanced
+    /// while you're using it.
+    /// </summary>
+    public static Pace Mode
+    {
+        get => _pace;
+        set { _pace = value; Update(); }
+    }
+
+    /// <summary>Set by the window: true while it's minimised or another app is in front, which is when Fast uses everything.</summary>
+    public static bool AppInBackground
+    {
+        get => _inBackground;
+        set { _inBackground = value; Update(); }
+    }
+
+    public static Pace ParsePace(string? saved) => saved switch { Balanced => Pace.Balanced, Fast => Pace.Fast, _ => Pace.Gentle };
+
+    static int LimitFor(Pace pace, bool background) => pace switch
+    {
+        Pace.Fast when background => Cores,
+        Pace.Gentle => Math.Max(1, Cores / 2),
+        _ => Math.Max(1, Cores - 2),
+    };
+
+    static void Update()
+    {
+        _workers = LimitFor(_pace, _inBackground);
+        lock (Gate) Monitor.PulseAll(Gate);   // more room: the work waiting for a slot can go
+    }
+
+    /// <summary>How many pieces of background work may run at once, across every job together (see <see cref="Mode"/>).</summary>
+    public static int Workers => _workers;
+
+    // Shared by every job, so a scan and Deep listen running together still stay within the limit.
+    static readonly object Gate = new();
+    static int _running;
     [ThreadStatic] static int _depth;
 
     static Parallelism()
@@ -23,7 +70,7 @@ public static class Parallelism
         // Jobs waiting for a slot hold thread-pool threads; enough threads up front means the window's own
         // background reads (Task.Run) never queue behind them while the pool slowly grows.
         ThreadPool.GetMinThreads(out var worker, out var io);
-        ThreadPool.SetMinThreads(Math.Max(worker, Cores + 2 * Workers), io);
+        ThreadPool.SetMinThreads(Math.Max(worker, 3 * Cores), io);
     }
 
     public static ParallelOptions Options(CancellationToken ct = default) =>
@@ -41,7 +88,11 @@ public static class Parallelism
         // Already in a slot: work started from background work never waits on itself. And the window's own thread (the
         // only one with a synchronisation context) takes part in a search it started without waiting or being slowed.
         if (_depth > 0 || SynchronizationContext.Current is not null) return work();
-        Slots.Wait();
+        lock (Gate)
+        {
+            while (_running >= _workers) Monitor.Wait(Gate);
+            _running++;
+        }
         _depth++;
         var thread = Thread.CurrentThread;
         var before = thread.Priority;
@@ -54,7 +105,11 @@ public static class Parallelism
         {
             thread.Priority = before;
             _depth--;
-            Slots.Release();
+            lock (Gate)
+            {
+                _running--;
+                Monitor.Pulse(Gate);
+            }
         }
     }
 

@@ -45,6 +45,27 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     /// <summary>Which page the app opens on: a page's title, or <see cref="LastPageChoice"/>.</summary>
     public const string StartPageKey = "start_page";
+
+    /// <summary>Settings › Performance: how hard scans, Deep listen and other background work may push the computer.</summary>
+    public const string PerformanceKey = "performance";
+
+    public static IReadOnlyList<string> PerformanceChoices => Parallelism.PaceChoices;
+
+    [ObservableProperty] string _performance = Parallelism.Gentle;
+
+    partial void OnPerformanceChanged(string value)
+    {
+        OnPropertyChanged(nameof(PerformanceTip));
+        _db.SetSetting(PerformanceKey, value);
+        Parallelism.Mode = Parallelism.ParsePace(value);
+    }
+
+    public string PerformanceTip => Performance switch
+    {
+        Parallelism.Balanced => $"Background work uses up to {Math.Max(1, Parallelism.Cores - 2)} of your {Parallelism.Cores} processor threads.",
+        Parallelism.Fast => $"All {Parallelism.Cores} processor threads while you're in another app or the window is minimised; {Math.Max(1, Parallelism.Cores - 2)} while you're using it.",
+        _ => $"Background work uses up to {Math.Max(1, Parallelism.Cores / 2)} of your {Parallelism.Cores} processor threads, so the app stays smooth while it works.",
+    };
     public const string LastPageChoice = "Last page I used";
     public static IReadOnlyList<string> StartPageChoices { get; } =
         ["Projects", "Sound Lab", "Plugins", "Settings", LastPageChoice];
@@ -91,6 +112,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _bitwigTemplateNote = TemplateNote(_bitwigTemplate);
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
         _upgradeSynths = db.GetSetting(ProjectDetailViewModel.UpgradeSynthsKey) == "1";
+        _performance = Parallelism.Mode.ToString();
         _startPage = db.GetSetting(StartPageKey) is { } start ? start == "Samples" ? "Sound Lab" : start : "Projects";   // Samples is on the Sounds page now
         if (!StartPageChoices.Contains(_startPage)) _startPage = "Projects";
         UpdateSampleIndexText();

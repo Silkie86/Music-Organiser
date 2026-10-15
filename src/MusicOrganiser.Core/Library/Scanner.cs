@@ -102,8 +102,8 @@ public sealed class Scanner(LibraryDb db)
         }
     }
 
-    /// <summary>Index new and changed projects under every library folder.</summary>
-    public void ScanProjects(IProgress<ScanProgress>? progress = null, bool full = false, CancellationToken ct = default)
+    /// <summary>Index new and changed projects under every library folder. Returns how many project files were new.</summary>
+    public int ScanProjects(IProgress<ScanProgress>? progress = null, bool full = false, CancellationToken ct = default)
     {
         Readers.Bitwig.KnownPlugins = db.InstalledNames() is { Count: > 0 } names
             ? names.Union(PluginCatalog.AlwaysKnown, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase)
@@ -144,6 +144,7 @@ public sealed class Scanner(LibraryDb db)
         db.UpsertMany(batch);
         db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
         progress?.Report(new("Done", files.Count, files.Count, ""));
+        return todo.Count(f => !known.ContainsKey(f));
     }
 
     /// <summary>
@@ -209,7 +210,7 @@ public sealed class Scanner(LibraryDb db)
                                            IProgress<ScanProgress>? progress = null, CancellationToken ct = default)
     {
         var done = 0;
-        await Parallel.ForEachAsync(paths, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, async (path, token) =>
+        await Parallel.ForEachAsync(paths, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(4, Parallelism.Workers), CancellationToken = ct }, async (path, token) =>
         {
             var stamp = PluginScanner.Stamp(path);
             var scan = await scanner.ScanAsync(path, ct: token);
@@ -229,7 +230,7 @@ public sealed class Scanner(LibraryDb db)
         var todo = db.PluginsWithoutParameters();
         int done = 0, read = 0, failed = 0;
         progress?.Report(new("Reading parameters", 0, todo.Count, ""));
-        await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, async (plugin, token) =>
+        await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(4, Parallelism.Workers), CancellationToken = ct }, async (plugin, token) =>
         {
             var result = await scanner.ReadParametersAsync(plugin, token);
             db.SaveScannedPlugin(result);
