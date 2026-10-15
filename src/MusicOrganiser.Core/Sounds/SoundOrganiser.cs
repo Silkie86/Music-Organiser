@@ -19,6 +19,7 @@ public sealed class SoundOrganiser : IDisposable
     public SoundLibrary Library { get; }
 
     List<Sound> _sounds = [];
+    List<Sound> _visible = [];
     Dictionary<long, Sound> _byId = [];
     VectorIndex? _features;
     VectorIndex? _clapIndex;
@@ -39,7 +40,10 @@ public sealed class SoundOrganiser : IDisposable
         _transcriber?.Dispose();
     }
 
-    public IReadOnlyList<Sound> Sounds => _sounds;
+    /// <summary>Your sounds, less the copies you've hidden on the Duplicates tab.</summary>
+    public IReadOnlyList<Sound> Sounds => _visible;
+    /// <summary>Every sound, hidden copies included.</summary>
+    public IReadOnlyList<Sound> Everything => _sounds;
     public Sound? Get(long id) => _byId.GetValueOrDefault(id);
     public SoundClassifier? TypeModel => SoundClassifier.FromJson(Library.GetSetting(TypeModelKey));
 
@@ -50,6 +54,9 @@ public sealed class SoundOrganiser : IDisposable
     {
         _sounds = Library.All();
         _byId = _sounds.ToDictionary(s => s.Id);
+        var hidden = Library.HiddenIds();
+        foreach (var s in _sounds) s.Hidden = hidden.Contains(s.Id);
+        _visible = hidden.Count == 0 ? _sounds : _sounds.Where(s => !s.Hidden).ToList();
         _features = VectorIndex.Build(Library.Vectors("features"), standardise: true, ChromaDownweight);
         var clap = Library.Vectors("clap");
         _clapIndex = clap.Count > 0 ? VectorIndex.Build(clap, standardise: false) : null;
@@ -460,7 +467,7 @@ public sealed class SoundOrganiser : IDisposable
         if (index is null || !index.Contains(s.Id)) index = _features;
         if (index is null || !index.Contains(s.Id)) return [];
         return index.Nearest(index.Get(s.Id)!, max * 3)
-            .Where(h => h.Id != s.Id && _byId.ContainsKey(h.Id))
+            .Where(h => h.Id != s.Id && _byId.TryGetValue(h.Id, out var x) && !x.Hidden)
             .Select(h => new SimilarSound(_byId[h.Id], Math.Round(h.Score, 3)))
             .Where(h => !sameTypeOnly || h.Sound.Type == s.Type)
             .Take(max).ToList();
@@ -472,7 +479,7 @@ public sealed class SoundOrganiser : IDisposable
         if (_clapIndex is null || Clap is not { } clap || string.IsNullOrWhiteSpace(text)) return [];
         var q = clap.EmbedText(text);
         return _clapIndex.Nearest(q, max, normaliseQuery: false)
-            .Where(h => _byId.ContainsKey(h.Id))
+            .Where(h => _byId.TryGetValue(h.Id, out var x) && !x.Hidden)
             .Select(h => new SimilarSound(_byId[h.Id], Math.Round(h.Score, 3))).ToList();
     }
 

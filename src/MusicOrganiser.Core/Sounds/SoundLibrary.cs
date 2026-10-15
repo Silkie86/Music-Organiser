@@ -26,6 +26,8 @@ public sealed class Sound
 
     public List<string> Tags { get; set; } = [];
     public bool Favourite { get; set; }
+    /// <summary>A copy you've hidden on the Duplicates tab: the file stays, the app just doesn't list it.</summary>
+    public bool Hidden { get; set; }
     public int Rating { get; set; }
     public int Plays { get; set; }
     /// <summary>When the file was last changed: what "Newest" sorts by.</summary>
@@ -69,7 +71,7 @@ public sealed record SoundActivity(int Plays, int OlderPlays, int Drags, int Old
 /// results, neural embeddings, your labels and tags, and the trained models.
 /// Kept apart from the project library so each can evolve on its own.
 /// </summary>
-public sealed class SoundLibrary : IDisposable
+public sealed partial class SoundLibrary : IDisposable
 {
     const string Schema = """
         PRAGMA journal_mode = WAL;
