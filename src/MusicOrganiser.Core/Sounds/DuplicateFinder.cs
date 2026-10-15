@@ -302,7 +302,7 @@ public static class DuplicateFinder
         {
             var sounds = ids.Select(org.Get).OfType<Sound>().ToList();
             if (sounds.Count < 2) continue;
-            var keep = sounds.OrderByDescending(s => s.UsedIn)
+            var keep = sounds.OrderBy(s => s.Hidden).ThenByDescending(s => s.UsedIn)
                 .ThenByDescending(s => Lossless.Contains(System.IO.Path.GetExtension(s.Path)))
                 .ThenByDescending(s => Math.Round(s.Seconds, 2))
                 .ThenBy(s => s.Added)

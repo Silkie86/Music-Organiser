@@ -694,6 +694,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         await RunAsync("Scanning sample folders", (p, ct) => count = Org.Scan(folders, p, ct),
                        () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"Analysed {count:N0} new or changed sounds"));
         if (count > 0) Message = $"Analysed {count:N0} new or changed sounds.";
+        if (count > 0 && Duplicates.AfterScan) await Duplicates.FindAsync();
         if (count > 0 || IsGalaxy) await MapGalaxyIfNeeded();
     }
 

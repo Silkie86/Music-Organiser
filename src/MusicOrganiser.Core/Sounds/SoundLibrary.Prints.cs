@@ -32,6 +32,10 @@ public sealed partial class SoundLibrary
             PRIMARY KEY (a, b)
         );
         CREATE INDEX IF NOT EXISTS ix_sound_matches_b ON sound_matches(b);
+        CREATE TABLE IF NOT EXISTS sound_hidden (
+            sound_id INTEGER PRIMARY KEY REFERENCES sounds(id) ON DELETE CASCADE,
+            batch TEXT NOT NULL, at INTEGER NOT NULL
+        );
         """;
 
     bool _printsReady;
@@ -176,6 +180,60 @@ public sealed partial class SoundLibrary
             SELECT sound_id, hex(exact) AS h FROM sound_prints
             WHERE exact IN (SELECT exact FROM sound_prints WHERE exact IS NOT NULL GROUP BY exact HAVING COUNT(*) > 1)
             """, r => ((long)r["sound_id"], (string)r["h"]));
+    }
+
+    // ---- copies hidden from the app (the files stay where they are) ------------------------------
+
+    public HashSet<long> HiddenIds()
+    {
+        EnsurePrints();
+        return Query("SELECT sound_id FROM sound_hidden", r => (long)r["sound_id"]).ToHashSet();
+    }
+
+    /// <summary>Hides sounds from the app's lists, together as one batch (so they can be shown again together).</summary>
+    public void Hide(IEnumerable<long> ids, string batch)
+    {
+        EnsurePrints();
+        var at = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var id in ids)
+            {
+                using var cmd = Cmd("INSERT OR REPLACE INTO sound_hidden SELECT $id, $b, $t WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $id)",
+                                    ("$id", id), ("$b", batch), ("$t", at));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    public void Unhide(IEnumerable<long> ids)
+    {
+        EnsurePrints();
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var id in ids)
+            {
+                using var cmd = Cmd("DELETE FROM sound_hidden WHERE sound_id = $id", ("$id", id));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    /// <summary>The most recent batch of hidden copies: its name, when, and which sounds.</summary>
+    public (string Batch, DateTime At, IReadOnlyList<long> Ids)? LastHidden()
+    {
+        EnsurePrints();
+        var last = Query("SELECT batch, MAX(at) AS at FROM sound_hidden GROUP BY batch ORDER BY at DESC LIMIT 1",
+                         r => ((string)r["batch"], Long(r, "at"))).FirstOrDefault();
+        if (last.Item1 is null) return null;
+        var ids = Query("SELECT sound_id FROM sound_hidden WHERE batch = $b", r => (long)r["sound_id"], ("$b", last.Item1));
+        return (last.Item1, DateTimeOffset.FromUnixTimeSeconds(last.Item2).LocalDateTime, ids);
     }
 
     /// <summary>File sizes in bytes, by sound.</summary>

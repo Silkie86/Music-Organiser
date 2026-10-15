@@ -22,6 +22,16 @@
         <Style Selector="Border.copy.keep">
             <Setter Property="Background" Value="{StaticResource OkSoftBrush}" />
         </Style>
+        <Style Selector="Border.copy.hidden">
+            <Setter Property="Opacity" Value="0.55" />
+        </Style>
+        <Style Selector="Border.badge.hiddenBadge">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+        </Style>
+        <Style Selector="Border.badge.hiddenBadge TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
         <!-- How each file is a copy: green to keep, accent for exact, plain for converted, amber outline for trimmed. -->
         <Style Selector="Border.badge">
             <Setter Property="Width" Value="92" />
@@ -59,16 +69,18 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid RowDefinitions="Auto,Auto,*">
+    <Grid RowDefinitions="Auto,Auto,Auto,*">
         <DockPanel Margin="0,0,0,10">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
                 <TextBox Classes="clearButton" Width="300" PlaceholderText="Search names and folders…" Text="{Binding SearchText}" Margin="0,0,10,0" />
                 <Button Content="Find duplicates" Classes="accent" Command="{Binding FindCommand}" IsEnabled="{Binding !Parent.IsBusy}"
-                        ToolTip.Tip="Listens to new and changed sounds and finds their copies. Only lists them: nothing is moved or deleted." />
+                        ToolTip.Tip="Listens to new and changed sounds and finds their copies. Your files are never moved or deleted." />
             </StackPanel>
             <StackPanel Margin="0,0,16,0">
                 <TextBlock Text="Copies of the same sound" Classes="sectionHeader" />
                 <TextBlock Text="{Binding Summary}" Classes="muted" />
+                <CheckBox Content="Look for copies of new sounds after each scan" IsChecked="{Binding AfterScan}" Margin="0,6,0,0"
+                          ToolTip.Tip="When a scan finds new or changed sounds, check them for copies straight away" />
             </StackPanel>
         </DockPanel>
 
@@ -81,7 +93,27 @@
             </ListBox>
         </DockPanel>
 
-        <Panel Grid.Row="2" Margin="0,4,0,0">
+        <!-- Batch: tick groups, then hide their extra copies from the app (the files stay put). -->
+        <Border Grid.Row="2" Classes="card" Padding="12,8" Margin="0,2,0,8" IsVisible="{Binding !IsEmpty}">
+            <StackPanel Spacing="6">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button Content="Select all" Command="{Binding SelectAllCommand}" ToolTip.Tip="Tick every group showing (use the filters first to pick, say, only exact copies)" />
+                        <Button Content="Select none" Command="{Binding SelectNoneCommand}" />
+                        <Button Content="Hide extra copies" Classes="accent" Command="{Binding HideCopiesCommand}"
+                                ToolTip.Tip="Hides every copy but the one to keep from the app's lists. Your files are not moved or deleted." />
+                    </StackPanel>
+                    <TextBlock Text="{Binding SelectionText}" Classes="muted" VerticalAlignment="Center" Margin="0,0,12,0" />
+                </DockPanel>
+                <DockPanel IsVisible="{Binding HasBatchMessage}">
+                    <TextBlock Text="{Binding BatchMessage}" FontSize="12.5" Foreground="{StaticResource OkBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                </DockPanel>
+                <Button Classes="link" Content="{Binding UndoText}" Command="{Binding UndoCommand}" IsVisible="{Binding CanUndo}"
+                        Padding="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource AccentBrush}" FontSize="12.5" />
+            </StackPanel>
+        </Border>
+
+        <Panel Grid.Row="3" Margin="0,4,0,0">
             <!-- Nothing to show yet: what this does, and the job's progress while it runs. -->
             <Border Classes="card" IsVisible="{Binding IsEmpty}">
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32" MaxWidth="520">
@@ -102,6 +134,8 @@
                         <Border Classes="card" Padding="12,10,12,8">
                             <StackPanel>
                                 <DockPanel Margin="6,0,0,6">
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsTicked}" Margin="0,0,4,0" MinWidth="0"
+                                              ToolTip.Tip="Tick to include this group when hiding extra copies" />
                                     <Ellipse DockPanel.Dock="Left" Width="9" Height="9" Margin="0,0,10,0" VerticalAlignment="Center"
                                              Fill="{Binding Type, Converter={StaticResource TypeBrush}}" />
                                     <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
@@ -110,8 +144,8 @@
                                 <ItemsControl ItemsSource="{Binding Members}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:DuplicateMemberItem">
-                                            <Border Classes="copy" Classes.keep="{Binding Keep}">
-                                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="12">
+                                            <Border Classes="copy" Classes.keep="{Binding IsKeep}" Classes.hidden="{Binding IsHidden}">
+                                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="12">
                                                     <Button Classes="playCopy" Content="▶" ToolTip.Tip="Play / stop"
                                                             Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).PlayCommand}"
                                                             CommandParameter="{Binding}" />
@@ -125,14 +159,24 @@
                                                         <TextBlock Text="{Binding Why}" FontSize="11.5" HorizontalAlignment="Right" Foreground="{StaticResource FaintBrush}" />
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="3" VerticalAlignment="Center" Width="92">
-                                                        <Border Classes="pill badge" Classes.keep="{Binding Keep}" Classes.exact="{Binding IsExact}"
+                                                        <Border Classes="pill badge" Classes.keep="{Binding IsKeep}" Classes.hiddenBadge="{Binding IsHidden}" Classes.exact="{Binding IsExact}"
                                                                 Classes.converted="{Binding IsConverted}" Classes.trimmed="{Binding IsTrimmed}">
                                                             <TextBlock Text="{Binding Badge}" Classes="pillText" HorizontalAlignment="Center" />
                                                         </Border>
                                                         <TextBlock Text="{Binding UsedText}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"
                                                                    Foreground="{StaticResource MutedBrush}" IsVisible="{Binding UsedText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                                                     </StackPanel>
-                                                    <Button Grid.Column="4" Content="Show" Padding="10,3" VerticalAlignment="Center" ToolTip.Tip="Show the file in its folder"
+                                                    <Panel Grid.Column="4" Width="96" VerticalAlignment="Center">
+                                                        <Button Content="Keep this" Padding="10,3" HorizontalAlignment="Stretch" IsVisible="{Binding CanKeep}"
+                                                                ToolTip.Tip="Keep this copy instead, so the others are the extra ones"
+                                                                Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).KeepThisCommand}"
+                                                                CommandParameter="{Binding}" />
+                                                        <Button Content="Show again" Padding="10,3" HorizontalAlignment="Stretch" IsVisible="{Binding IsHidden}"
+                                                                ToolTip.Tip="List this sound in the app again"
+                                                                Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).UnhideCommand}"
+                                                                CommandParameter="{Binding}" />
+                                                    </Panel>
+                                                    <Button Grid.Column="5" Content="Folder" Padding="10,3" VerticalAlignment="Center" ToolTip.Tip="Open the folder this file is in"
                                                             Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).RevealCommand}"
                                                             CommandParameter="{Binding}" />
                                                 </Grid>

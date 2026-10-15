@@ -87,6 +87,19 @@ public class DuplicateTests
         Assert.DoesNotContain(groups, g => g.Members.Count(m => m.Sound.Name.StartsWith("Hat")) > 0);
         Assert.DoesNotContain(groups, g => g.Members.Any(m => m.Sound.Name == "Other groove"));
 
+        // Hiding a copy takes it out of the app's lists (not off the disk), and it still shows in its group.
+        var bd = org.Everything.Single(s => s.Name == "BD heavy");
+        lib.Hide([bd.Id], "test");
+        org.Reload();
+        Assert.DoesNotContain(org.Sounds, s => s.Name == "BD heavy");
+        Assert.True(File.Exists(bd.Path));
+        Assert.True(DuplicateFinder.Groups(org).Single(g => g.Members.Any(m => m.Sound.Name == "BD heavy")).Members.Single(m => m.Sound.Name == "BD heavy").Sound.Hidden);
+        Assert.Equal([bd.Id], lib.LastHidden()!.Value.Ids);
+        lib.Unhide([bd.Id]);
+        org.Reload();
+        Assert.Contains(org.Sounds, s => s.Name == "BD heavy");
+        Assert.Null(lib.LastHidden());
+
         // Nothing new: nothing printed again, same answer.
         Assert.Equal(0, DuplicateFinder.Update(org));
         Assert.Equal(groups.Count, DuplicateFinder.Groups(org).Count);
