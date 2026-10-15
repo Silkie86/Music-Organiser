@@ -145,14 +145,18 @@ sealed class StreamSource(WaveStream stream) : PcmSource
     public override int SampleRate => stream.WaveFormat.SampleRate;
     public override int Channels => Math.Min(_fileChannels, 2);
 
-    public override string Describe() => $"streamed by {stream.GetType().Name} as {stream.WaveFormat}, {stream.TotalTime.TotalSeconds:0.00} s";
+    // Timed by whole frames, not the header's bytes a second: a WAV can say 0 there and still play (NAudio's TotalTime
+    // then throws), and a log line or a seek mustn't stop it.
+    int Align => Math.Max(1, stream.WaveFormat.BlockAlign);
+
+    public override string Describe() =>
+        $"streamed by {stream.GetType().Name} as {stream.WaveFormat}, {stream.Length / Align / (double)Math.Max(1, SampleRate):0.00} s";
 
     /// <summary>Moves to a time, on a whole sample frame so the channels stay in step.</summary>
     public override void SeekTo(double seconds)
     {
-        var align = Math.Max(1, stream.WaveFormat.BlockAlign);
-        var bytes = (long)(Math.Clamp(seconds, 0, stream.TotalTime.TotalSeconds) * stream.WaveFormat.AverageBytesPerSecond);
-        stream.Position = Math.Min(bytes - bytes % align, Math.Max(0, stream.Length - stream.Length % align));
+        var frame = (long)(Math.Max(0, seconds) * SampleRate);
+        stream.Position = Math.Min(frame * Align, Math.Max(0, stream.Length - stream.Length % Align));
     }
 
     public override int Read(float[] interleaved)
