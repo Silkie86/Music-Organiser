@@ -174,7 +174,7 @@
                             </ListBox>
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding ShowsOrder}">
                                 <CheckBox Content="Autoplay" IsChecked="{Binding AutoPlay}" VerticalAlignment="Center"
-                                          ToolTip.Tip="Play each sound as soon as you click it or arrow onto it" />
+                                          ToolTip.Tip="Play each sound as you arrow onto it (a click always plays)" />
                                 <TextBlock Text="Order" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0" />
                                 <ComboBox ItemsSource="{x:Static vm:SoundsViewModel.SortChoices}" SelectedItem="{Binding SortBy}" MinWidth="130"
                                           ToolTip.Tip="Shuffled is a new order each time the app opens, to stumble on sounds you'd forgotten. Most liked counts projects, drags, sends, plays and favourites (weights in Settings)." />

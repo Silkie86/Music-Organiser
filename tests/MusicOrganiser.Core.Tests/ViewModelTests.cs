@@ -584,7 +584,7 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public void AutoplayPlaysTheSoundYouPickButNotOnesTheListSelectsByItself()
+    public void A_click_always_plays_and_Autoplay_plays_what_you_arrow_onto_but_not_what_the_list_selects_by_itself()
     {
         var played = new List<string>();
         var player = new Recorder(played);
@@ -594,13 +594,17 @@ public class ViewModelTests : IDisposable
 
         lab.Selected = kick;
         lab.PlayPicked();
-        Assert.Empty(played);   // off by default
+        Assert.Empty(played);   // arrowing onto it: Autoplay is off by default
+        lab.PlayClicked();      // a click always plays, Autoplay or not
+        Assert.Equal(["kick.wav"], played);
+        player.Stop();
+        played.Clear();
 
         lab.AutoPlay = true;
         lab.Selected = snare;   // as when a sort or filter moves the selection
         Assert.Empty(played);
-        lab.PlayPicked();       // a click on the row, or arrowing onto it
-        lab.PlayPicked();       // clicking it again while it plays doesn't restart it
+        lab.PlayPicked();       // arrowing onto it
+        lab.PlayClicked();      // clicking it while it plays doesn't restart it
         Assert.Equal(["snare.wav"], played);
         Assert.Equal(0, snare.Plays);   // a preview isn't a play Rediscover learns from...
 
@@ -610,7 +614,7 @@ public class ViewModelTests : IDisposable
         Assert.Equal(1, snare.Plays);
 
         player.Stop();          // it finished; clicking the selected row plays it again
-        lab.PlayPicked();
+        lab.PlayClicked();
         Assert.Equal(["snare.wav", "snare.wav"], played);
 
         Assert.True(new MainViewModel(_db, _sounds).Sounds.AutoPlay);

@@ -14,8 +14,8 @@ public partial class SoundsView : UserControl
     public SoundsView()
     {
         InitializeComponent();
-        // Autoplay follows your clicks and arrow keys, not every selection change: the grid
-        // re-selects rows by itself when you sort or come back to this page.
+        // A click always plays the sound; Autoplay follows the arrow keys. Neither follows every selection
+        // change: the grid re-selects rows by itself when you sort or come back to this page.
         SoundGrid.AddHandler(PointerReleasedEvent, OnRowClicked, RoutingStrategies.Bubble, handledEventsToo: true);
         // Held arrow keys play each sound they pass (after the grid has moved on to it); letting go plays the one you stop on.
         SoundGrid.AddHandler(KeyDownEvent, OnGridKeyMoved, RoutingStrategies.Bubble, handledEventsToo: true);
@@ -24,6 +24,7 @@ public partial class SoundsView : UserControl
         TileList.AddHandler(KeyDownEvent, OnTilesKeyDown, RoutingStrategies.Tunnel);
         TileList.AddHandler(KeyUpEvent, OnTilesKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
         HistoryList.AddHandler(KeyDownEvent, OnHistoryKeyDown, RoutingStrategies.Tunnel);
+        HistoryList.AddHandler(PointerReleasedEvent, OnHistoryClicked, RoutingStrategies.Bubble, handledEventsToo: true);
     }
 
     void OnGridDoubleTapped(object? sender, TappedEventArgs e)
@@ -43,7 +44,7 @@ public partial class SoundsView : UserControl
     {
         if (DataContext is not SoundsViewModel vm || e.InitialPressMouseButton != MouseButton.Left || e.KeyModifiers != KeyModifiers.None) return;
         if (e.Source is not Visual source || source.FindAncestorOfType<Button>(true) is not null) return;
-        if (source.FindAncestorOfType<DataGridRow>(true) is { } row && row.DataContext == vm.Selected) vm.PlayPicked();
+        if (source.FindAncestorOfType<DataGridRow>(true) is { } row && row.DataContext == vm.Selected) vm.PlayClicked();
     }
 
     static bool Moves(KeyEventArgs e) =>
@@ -77,7 +78,7 @@ public partial class SoundsView : UserControl
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
         TileList.Focus();
         vm.Selected = tile.Sound;
-        if (e.ClickCount == 1) vm.PlayPicked();
+        if (e.ClickCount == 1) vm.PlayClicked();
     }
 
     void OnTileDoubleTapped(object? sender, TappedEventArgs e) => Vm?.AuditionCommand.Execute(null);
@@ -132,6 +133,13 @@ public partial class SoundsView : UserControl
     // ---- history ----
 
     void OnHistoryDoubleTapped(object? sender, TappedEventArgs e) => Vm?.AuditionCommand.Execute(null);
+
+    void OnHistoryClicked(object? sender, PointerReleasedEventArgs e)
+    {
+        if (Vm is not { } vm || e.InitialPressMouseButton != MouseButton.Left || e.KeyModifiers != KeyModifiers.None) return;
+        if (e.Source is not Visual source || source.FindAncestorOfType<Button>(true) is not null) return;
+        if (source.FindAncestorOfType<ListBoxItem>(true) is { DataContext: HistoryItem h } && h.Sound == vm.Selected) vm.PlayClicked();
+    }
 
     void OnGalaxyZoomIn(object? sender, RoutedEventArgs e) => Galaxy.ZoomBy(1.5);
     void OnGalaxyZoomOut(object? sender, RoutedEventArgs e) => Galaxy.ZoomBy(1 / 1.5);
