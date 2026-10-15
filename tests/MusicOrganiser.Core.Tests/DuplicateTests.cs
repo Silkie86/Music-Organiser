@@ -51,6 +51,8 @@ public class DuplicateTests
         WavWriter.Write(Path.Combine(c, "Kick 1 (48k).wav"), [Gain(Dsp.Resample(Synth.Kick(1), 44100, 48000), 0.5f)], 48000, 24);
         Synth.Write(Path.Combine(b, "Snare 2 edit.wav"), Cut(Pad(Synth.Snare(2), 0.04), 0, 0.25));
         Synth.Write(Path.Combine(b, "Groove bars 3-6.wav"), Cut(Loop(1), 2.0, 5.5));
+        // And a kick that starts like Kick 3 but dies away sooner: very similar, not the same sound.
+        Synth.Write(Path.Combine(b, "Kick 3 short.wav"), Shorter(Synth.Kick(3)));
         foreach (var f in Directory.GetFiles(b).Concat(Directory.GetFiles(c))) File.SetLastWriteTime(f, DateTime.Now.AddDays(1));   // the copies came later
 
         using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
@@ -60,7 +62,7 @@ public class DuplicateTests
 
         var groups = DuplicateFinder.Groups(org);
         string Names(DuplicateGroup g) => string.Join(" + ", g.Members.Select(m => m.Sound.Name));
-        Assert.True(groups.Count == 4, string.Join("\n", groups.Select(Names)));
+        Assert.True(groups.Count == 5, string.Join("\n", groups.Select(Names)));
 
         DuplicateGroup With(string name) => groups.Single(g => g.Members.Any(m => m.Sound.Name == name));
         var exact = With("BD heavy");
@@ -68,15 +70,28 @@ public class DuplicateTests
         Assert.Equal(CopyKind.Exact, exact.Kind);
         Assert.Equal("Exact copy, renamed", exact.Members[1].Why);
         Assert.Equal(new FileInfo(Path.Combine(b, "BD heavy.wav")).Length, exact.SpareBytes);
+        Assert.True(exact.Members[1].Same);
 
         var converted = With("Kick 1 (48k)");
         Assert.Equal("Kick 1", converted.Members[0].Sound.Name);   // both WAVs the same length, so the older one
         Assert.Equal(CopyKind.Converted, converted.Kind);
+        Assert.True(converted.Members[1].Same, converted.Members[1].Why);   // another rate, depth and level, but the same sound
+        Assert.Equal(1, converted.SameCopies);
+
+        // Only very similar: listed, but not the same sound, so it's never offered for hiding.
+        var shorter = With("Kick 3 short");
+        Assert.Equal("Kick 3", shorter.Members[0].Sound.Name);
+        Assert.False(shorter.Members[1].Same);
+        Assert.Equal(0, shorter.SameCopies);
+        Assert.True(shorter.HasSimilar);
+        Assert.Equal(0, shorter.SpareBytes);
+        Assert.StartsWith("Very similar", shorter.Members[1].Why);
 
         var snare = With("Snare 2 edit");
         Assert.Equal("Snare 2", snare.Members[0].Sound.Name);   // the full-length one
         Assert.Equal(CopyKind.Trimmed, snare.Kind);
         Assert.Equal(0, snare.SpareBytes);
+        Assert.False(snare.Members[1].Same);
 
         var groove = With("Groove bars 3-6");
         Assert.Equal("Groove", groove.Members[0].Sound.Name);
@@ -110,8 +125,42 @@ public class DuplicateTests
         org.Scan([Path.Combine(root, "Samples")]);
         Assert.Equal(1, DuplicateFinder.Update(org));
         var after = DuplicateFinder.Groups(org);
-        Assert.Equal(2, after.Count);
+        Assert.Equal(3, after.Count);
         Assert.DoesNotContain(after, g => g.Members.Any(m => m.Sound.Name is "Snare 2 edit" or "Kick 0"));
+    }
+
+    static float[] Shorter(float[] x, double factor = 0.7, int sr = 44100)
+    {
+        var y = (float[])x.Clone();
+        for (var i = (int)(0.12 * sr); i < y.Length; i++) y[i] *= (float)Math.Pow(factor, (i - 0.12 * sr) / (0.1 * sr));
+        return y;
+    }
+
+    static float[] Low(float[] x, float c)
+    {
+        var y = (float[])x.Clone();
+        float s = 0;
+        for (var i = 0; i < y.Length; i++) { s += c * (y[i] - s); y[i] = s; }
+        return y;
+    }
+
+    [Fact]
+    public void Same_sound_is_told_from_very_similar()
+    {
+        const int sr = 44100;
+        static double Apart(float[] a, float[] b, int rateB = sr) =>
+            SoundPrint.SpectralDistance(SoundPrint.WaveStart(a, sr, 20, sr), SoundPrint.WaveStart(rateB == sr ? b : Dsp.Resample(b, rateB, sr), sr, 20, sr), sr);
+        foreach (var x in new[] { Synth.Kick(4), Synth.Snare(3), Synth.Hat(2) })
+        {
+            // The same sound: resampled, quieter, with silence before it.
+            Assert.InRange(Apart(x, Pad(Gain(Dsp.Resample(x, sr, 48000), 0.5f), 0.05, 48000), 48000), 0, 0.2);
+            // Very similar: another EQ, more drive.
+            Assert.True(Apart(x, Low(x, 0.6f)) > DuplicateFinder.SameDbLossy, $"{Apart(x, Low(x, 0.6f))}");
+            Assert.True(Apart(x, x.Select(v => (float)Math.Tanh(3 * v) / 1.2f).ToArray()) > DuplicateFinder.SameDbLossy);
+        }
+        // A tail that dies away sooner.
+        Assert.True(Apart(Synth.Kick(4), Shorter(Synth.Kick(4), 0.85)) > DuplicateFinder.SameDbLossy);
+        Assert.True(Apart(Synth.Snare(3), Shorter(Synth.Snare(3), 0.85)) > DuplicateFinder.SameDbLossy);
     }
 
     [Fact]

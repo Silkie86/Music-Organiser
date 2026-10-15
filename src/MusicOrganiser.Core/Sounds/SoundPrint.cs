@@ -174,15 +174,15 @@ public sealed record SoundPrint(byte[] Exact, int Frames, byte[] Bands, ushort[]
     /// A sound's waveform from 3 ms before its start, at 11,025 Hz: <paramref name="seconds"/> of it (silence where the
     /// file runs out or starts right on it), scaled so its peak is 1.
     /// </summary>
-    public static float[] WaveStart(float[] mono, int rate, double seconds)
+    public static float[] WaveStart(float[] mono, int rate, double seconds, int toRate = WaveRate)
     {
         var start = Onset(mono, out var peak);
         if (peak <= 0) return [];
-        var before = (int)Math.Ceiling((double)LeadIn * rate / WaveRate);
+        var before = (int)Math.Ceiling((double)(toRate * 3 / 1000) * rate / toRate);
         var piece = new float[before + Math.Min(mono.Length - start, (int)(seconds * rate))];
         var from = Math.Max(0, start - before);
         mono.AsSpan(from, start - from + piece.Length - before).CopyTo(piece.AsSpan(before - (start - from)));
-        var y = Resampler.Resample(piece, rate, WaveRate);
+        var y = Resampler.Resample(piece, rate, toRate);
         var scale = 1 / peak;
         for (var i = 0; i < y.Length; i++) y[i] *= scale;
         return y;
@@ -219,6 +219,79 @@ public sealed record SoundPrint(byte[] Exact, int Frames, byte[] Bands, ushort[]
             if (xx > 0 && yy > 0) best = Math.Max(best, Math.Abs(xy) / Math.Sqrt(xx * yy));
         }
         return best;
+    }
+
+    /// <summary>
+    /// How far apart two waveforms from <see cref="WaveStart"/> sound, in dB: after lining them up to the sample and
+    /// taking away any level change, how much their loudness differs in 32 bands from 40 Hz to 9 kHz, frame by frame
+    /// (the 90th percentile, so a few odd frames don't count but a changed tail or top end does). Unlike a correlation
+    /// it hears the highs and the tail as much as the hit, so a copy with another EQ, more drive or a shorter tail is
+    /// told apart from the same sound in another file, which comes out near 0 (an MP3 within about a dB).
+    /// </summary>
+    public static double SpectralDistance(float[] x, float[] y, int rate)
+    {
+        // Line them up: WaveStart starts both at their onset, give or take a few milliseconds.
+        var maxLag = rate * 3 / 1000;
+        var probe = Math.Min(Math.Min(x.Length, y.Length) - maxLag, rate);
+        if (probe <= maxLag) return double.PositiveInfinity;
+        var (best, lag) = (-1.0, 0);
+        for (var l = -maxLag; l <= maxLag; l++)
+        {
+            double xy = 0, xx = 0, yy = 0;
+            for (var i = maxLag; i < probe; i++) { var j = i + l; xy += x[i] * y[j]; xx += x[i] * x[i]; yy += y[j] * y[j]; }
+            var c = xx > 0 && yy > 0 ? Math.Abs(xy) / Math.Sqrt(xx * yy) : 0;
+            if (c > best) (best, lag) = (c, l);
+        }
+        if (lag > 0) y = y[lag..]; else if (lag < 0) x = x[-lag..];
+
+        const int bands = 32;
+        var nFft = rate > 32000 ? 2048 : 1024;   // about 46 ms frames
+        var hop = nFft / 4;
+        var sx = Dsp.PowerSpectrogram(x, nFft, hop, center: false);
+        var sy = Dsp.PowerSpectrogram(y, nFft, hop, center: false);
+        var frames = Math.Min(sx.Length, sy.Length);
+        if (frames == 0) return double.PositiveInfinity;
+        var top = Math.Min(9000, rate * 0.45);
+        var edges = new int[bands + 1];
+        for (var b = 0; b <= bands; b++)
+            edges[b] = Math.Clamp((int)Math.Round(40 * Math.Pow(top / 40, (double)b / bands) * nFft / rate), 1, nFft / 2);
+        double[,] Db(float[][] s)
+        {
+            var d = new double[frames, bands];
+            for (var f = 0; f < frames; f++)
+                for (var b = 0; b < bands; b++)
+                {
+                    double e = 0;
+                    for (var k = edges[b]; k < Math.Max(edges[b] + 1, edges[b + 1]); k++) e += s[f][k];
+                    d[f, b] = 10 * Math.Log10(e + 1e-12);
+                }
+            return d;
+        }
+        var (dx, dy) = (Db(sx), Db(sy));
+        var loudest = double.NegativeInfinity;
+        var bandLoudest = new double[bands];
+        Array.Fill(bandLoudest, double.NegativeInfinity);
+        for (var f = 0; f < frames; f++)
+            for (var b = 0; b < bands; b++)
+            {
+                var m = Math.Max(dx[f, b], dy[f, b]);
+                loudest = Math.Max(loudest, m);
+                bandLoudest[b] = Math.Max(bandLoudest[b], m);
+            }
+        // The cells that matter: within 50 dB of the loudest overall, and 30 dB of the loudest in their band.
+        var diffs = new List<double>();
+        for (var f = 0; f < frames; f++)
+            for (var b = 0; b < bands; b++)
+            {
+                var m = Math.Max(dx[f, b], dy[f, b]);
+                if (m >= loudest - 50 && m >= bandLoudest[b] - 30) diffs.Add(dx[f, b] - dy[f, b]);
+            }
+        if (diffs.Count == 0) return double.PositiveInfinity;
+        // A level change isn't a different sound: take away the typical difference first.
+        var sorted = diffs.Order().ToList();
+        var level = sorted[sorted.Count / 2];
+        var apart = diffs.Select(d => Math.Min(20, Math.Abs(d - level))).Order().ToList();
+        return apart[apart.Count * 9 / 10];
     }
 
     // ---- buckets ------------------------------------------------------------------------

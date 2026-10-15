@@ -32,7 +32,7 @@
         <Style Selector="Border.badge.hiddenBadge TextBlock">
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
         </Style>
-        <!-- How each file is a copy: green to keep, accent for exact, plain for converted, amber outline for trimmed. -->
+        <!-- How each file is a copy: green to keep, accent for exact, plain for the same sound in another file, amber outline for very similar or trimmed (never hidden). -->
         <Style Selector="Border.badge">
             <Setter Property="Width" Value="92" />
             <Setter Property="HorizontalAlignment" Value="Center" />
@@ -52,11 +52,11 @@
             <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
         </Style>
-        <Style Selector="Border.badge.trimmed">
+        <Style Selector="Border.badge.similar">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="{StaticResource WarningBrush}" />
         </Style>
-        <Style Selector="Border.badge.trimmed TextBlock">
+        <Style Selector="Border.badge.similar TextBlock">
             <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
         </Style>
         <Style Selector="Button.playCopy">
@@ -101,7 +101,7 @@
                         <Button Content="Select all" Command="{Binding SelectAllCommand}" ToolTip.Tip="Tick every group showing (use the filters first to pick, say, only exact copies)" />
                         <Button Content="Select none" Command="{Binding SelectNoneCommand}" />
                         <Button Content="Hide extra copies" Classes="accent" Command="{Binding HideCopiesCommand}"
-                                ToolTip.Tip="Hides every copy but the one to keep from the app's lists. Your files are not moved or deleted." />
+                                ToolTip.Tip="Hides the copies that are the same sound as the one to keep from the app's lists. Very similar ones stay. Your files are not moved or deleted." />
                     </StackPanel>
                     <TextBlock Text="{Binding SelectionText}" Classes="muted" VerticalAlignment="Center" Margin="0,0,12,0" />
                 </DockPanel>
@@ -134,8 +134,8 @@
                         <Border Classes="card" Padding="12,10,12,8">
                             <StackPanel>
                                 <DockPanel Margin="6,0,0,6">
-                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsTicked}" Margin="0,0,4,0" MinWidth="0"
-                                              ToolTip.Tip="Tick to include this group when hiding extra copies" />
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsTicked}" IsEnabled="{Binding CanTick}" Margin="0,0,4,0" MinWidth="0"
+                                              ToolTip.Tip="Tick to hide this group's copies that are the same sound (very similar ones stay)" />
                                     <Ellipse DockPanel.Dock="Left" Width="9" Height="9" Margin="0,0,10,0" VerticalAlignment="Center"
                                              Fill="{Binding Type, Converter={StaticResource TypeBrush}}" />
                                     <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
@@ -160,7 +160,7 @@
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="3" VerticalAlignment="Center" Width="92">
                                                         <Border Classes="pill badge" Classes.keep="{Binding IsKeep}" Classes.hiddenBadge="{Binding IsHidden}" Classes.exact="{Binding IsExact}"
-                                                                Classes.converted="{Binding IsConverted}" Classes.trimmed="{Binding IsTrimmed}">
+                                                                Classes.converted="{Binding IsConverted}" Classes.similar="{Binding IsSimilar}">
                                                             <TextBlock Text="{Binding Badge}" Classes="pillText" HorizontalAlignment="Center" />
                                                         </Border>
                                                         <TextBlock Text="{Binding UsedText}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"
