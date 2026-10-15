@@ -160,6 +160,15 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         else if (IsGalaxy) await MapGalaxyIfNeeded();
     }
 
+    /// <summary>Rediscover fills itself the first time it's opened, so it never greets you empty.</summary>
+    partial void OnTabIndexChanged(int value)
+    {
+        if (value == RediscoverTab && Rediscover.Suggestions.Count == 0 && !Rediscover.IsBusy && Org.Sounds.Count > 0)
+            Rediscover.ShuffleCommand.Execute(null);
+    }
+
+    public const int RediscoverTab = 1;
+
     FolderWatch? _sampleWatch;
     readonly HashSet<string> _changedSounds = new(StringComparer.OrdinalIgnoreCase);
     bool _sampleFoldersOverflowed;
@@ -1103,19 +1112,50 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     [ObservableProperty] IReadOnlyList<Suggestion> _suggestions = [];
     [ObservableProperty] IReadOnlyList<FolderUse> _folders = [];
     [ObservableProperty] string _intro = "";
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(ShuffleText))] bool _isBusy;
+    [ObservableProperty] string _emptyTitle = "Find sounds you've forgotten";
+    [ObservableProperty] string _emptyText = "Pick a type and how adventurous to be, then press Shuffle.";
+
+    public string ShuffleText => IsBusy ? "Shuffling…" : "Shuffle";
 
     [RelayCommand]
     async Task Shuffle()
     {
         var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, 30, Adventure, 0, IncludeRarelyUsed ? 1 : 0);
-        var suggesting = Task.Run(() => Core.Sounds.Rediscover.Suggest(parent.Org, o));
-        var folders = Task.Run(() => Core.Sounds.Rediscover.Folders(parent.Org).Take(40).ToList());
-        Suggestions = await suggesting;
-        Folders = await folders;
-        var used = parent.Org.Sounds.Count(s => s.UsedIn > 0);
-        Intro = used == 0
-            ? "None of your sounds show up in scanned projects yet, so these are a varied pick. Star favourites or scan your projects to teach it your taste."
-            : $"Learned from the {used:N0} sounds your projects use, plus your favourites and plays.";
+        var org = parent.Org;
+        IsBusy = true;
+        Intro = $"Looking through {org.Sounds.Count:N0} sounds…";
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            // The folders are quick: they show while the sounds are still being picked.
+            var suggesting = Task.Run(() => Core.Sounds.Rediscover.Suggest(org, o));
+            Folders = await Task.Run(() => Core.Sounds.Rediscover.Folders(org).Take(40).ToList());
+            Suggestions = await suggesting;
+            if (Suggestions.Count == 0)
+            {
+                EmptyTitle = "Nothing to suggest";
+                EmptyText = await Task.Run(() => Core.Sounds.Rediscover.WhyNothing(org, o));
+                Intro = "";
+            }
+            else
+            {
+                var used = org.Sounds.Count(s => s.UsedIn > 0);
+                Intro = used == 0
+                    ? "None of your sounds show up in scanned projects yet, so these are a varied pick. Star favourites or scan your projects to teach it your taste."
+                    : $"Learned from the {used:N0} sounds your projects use, plus your favourites and plays.";
+            }
+            AppLog.Info("Rediscover", $"{Suggestions.Count} suggestions from {org.Sounds.Count:N0} sounds in {clock.Elapsed.TotalSeconds:0.00} s");
+        }
+        catch (Exception e)
+        {
+            Suggestions = [];
+            EmptyTitle = "Couldn't pick sounds";
+            EmptyText = e.Message;
+            Intro = "";
+            AppLog.Info("Rediscover", $"Failed: {e}");
+        }
+        finally { IsBusy = false; }
     }
 }
 

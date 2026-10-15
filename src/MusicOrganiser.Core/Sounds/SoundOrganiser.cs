@@ -44,16 +44,24 @@ public sealed class SoundOrganiser : IDisposable
     public SoundClassifier? TypeModel => SoundClassifier.FromJson(Library.GetSetting(TypeModelKey));
 
     /// <summary>True once CLAP embeddings exist for most of the library.</summary>
-    public bool HasDeepListening => _clapIndex is { Count: > 0 } c && c.Count >= _sounds.Count(s => s.Analysis is not null) * 0.9;
+    /// <remarks>
+    /// Worked out when the sounds are read in, not each time it's asked: it was asked once per sound while picking
+    /// (Rediscover, kits), and counting 357,000 sounds each time made Shuffle run for ever.
+    /// </remarks>
+    public bool HasDeepListening { get; private set; }
 
     public void Reload()
     {
-        _sounds = Library.All();
-        _byId = _sounds.ToDictionary(s => s.Id);
-        _features = VectorIndex.Build(Library.Vectors("features"), standardise: true, ChromaDownweight);
+        // Everything is built first and swapped in together, so a search running meanwhile (Rediscover during Deep
+        // listen) sees either the old library or the new one, not half of each.
+        var sounds = Library.All();
+        var byId = sounds.ToDictionary(s => s.Id);
+        var features = VectorIndex.Build(Library.Vectors("features"), standardise: true, ChromaDownweight);
         var clap = Library.Vectors("clap");
-        _clapIndex = clap.Count > 0 ? VectorIndex.Build(clap, standardise: false) : null;
-        ApplyUsage(_lastUsage);
+        var clapIndex = clap.Count > 0 ? VectorIndex.Build(clap, standardise: false) : null;
+        var deep = clapIndex is { Count: > 0 } c && c.Count >= sounds.Count(s => s.Analysis is not null) * 0.9;
+        ApplyUsage(sounds, _lastUsage);
+        (_sounds, _byId, _features, _clapIndex, HasDeepListening) = (sounds, byId, features, clapIndex, deep);
     }
 
     /// <summary>Chroma (the last 12 features) says which notes are present; it matters less than timbre for "sounds like".</summary>
@@ -114,7 +122,9 @@ public sealed class SoundOrganiser : IDisposable
     /// store samples by full path, relative path or just a file name (Bitwig collects copies), so a full-path match is
     /// used when there is one, otherwise the file name.
     /// </summary>
-    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage)
+    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage) => ApplyUsage(_sounds, usage);
+
+    void ApplyUsage(List<Sound> sounds, IReadOnlyList<(string Path, int Projects, int Recent)> usage)
     {
         _lastUsage = usage;
         var byPath = new Dictionary<string, (int All, int Recent)>(StringComparer.OrdinalIgnoreCase);
@@ -126,7 +136,7 @@ public sealed class SoundOrganiser : IDisposable
             var name = p.Split('\\', '/')[^1];
             byName[name] = Add(byName.GetValueOrDefault(name), n, r);
         }
-        foreach (var s in _sounds)
+        foreach (var s in sounds)
             (s.UsedIn, s.UsedInRecently) = byPath.TryGetValue(s.Path, out var u) ? u : byName.GetValueOrDefault(System.IO.Path.GetFileName(s.Path));
     }
 
