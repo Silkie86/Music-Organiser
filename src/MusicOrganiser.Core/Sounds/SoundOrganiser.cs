@@ -202,10 +202,12 @@ public sealed class SoundOrganiser : IDisposable
         static string Dir(string d) => System.IO.Path.EndsInDirectorySeparator(d) ? d : d + System.IO.Path.DirectorySeparatorChar;
         var keep = folders.Where(f => !Directory.Exists(f)).Concat(unreadable).Select(Dir).ToList();
         var listed = folders.Select(Dir).ToList();
-        Library.RemoveMissing(files.ToHashSet(StringComparer.OrdinalIgnoreCase),
+        var removed = Library.RemoveMissing(files.ToHashSet(StringComparer.OrdinalIgnoreCase),
             p => keep.Any(k => p.StartsWith(k, StringComparison.OrdinalIgnoreCase)) ||
                  !AudioFile.CanRead(p) && listed.Any(f => p.StartsWith(f, StringComparison.OrdinalIgnoreCase)) && File.Exists(p));
-        Reload();
+        // Nothing new and nothing gone: the sounds in memory are still right, so they aren't read in again (with
+        // 357,000 sounds that takes about 10 s, and the Sounds page would rebuild its list for nothing).
+        if (todo.Count > 0 || removed > 0 || _sounds.Count == 0) Reload();
         UpdateTypes(progress);
         return todo.Count;
     }
