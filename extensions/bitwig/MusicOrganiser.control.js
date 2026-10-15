@@ -31,6 +31,8 @@ var MAX_DEVICES = 16;
 var SCENES = 8;
 /** A Drum Machine's pads: one for each MIDI note. */
 var DRUM_PADS = 128;
+/** How many of each pad's devices the link sees: enough to tell an empty Sampler with effects after it from a pad that plays. */
+var PAD_DEVICES = 4;
 /** Devices at the start of each track whose pitch the app can set (a Sampler or a Note Transpose). */
 var TUNED_DEVICES = 2;
 /** How long to wait for the selected device's parameter values to arrive, in milliseconds. */
@@ -145,12 +147,17 @@ function init() {
         var pad = drumPads.getItemAt(p);
         pad.exists().markInterested();
         pad.name().markInterested();
-        var chain = pad.createDeviceBank(1);
+        var chain = pad.createDeviceBank(PAD_DEVICES);
         chain.itemCount().markInterested();
         var first = chain.getItemAt(0);
         first.exists().markInterested();
         first.name().markInterested();
         first.sampleName().markInterested();
+        for (var d = 1; d < PAD_DEVICES; d++) {
+            var after = chain.getItemAt(d);
+            after.exists().markInterested();
+            after.deviceType().markInterested();
+        }
         padItems.push(pad);
         padDevices.push(chain);
         padFirst.push(first);
@@ -940,15 +947,30 @@ function padTaken(note) {
 
 /**
  * Whether a pad holds a Sampler with no sample, as a Drum Machine preset can put on every pad
- * (Solomon's default Drum Machine does), and still has the name it came with, not a sample's: such a
- * pad is free.
+ * (Solomon's default Drum Machine does), still has the name it came with, not a sample's, and has
+ * nothing after it but effects: such a pad is free.
  * @param {number} note
  */
 function emptySampler(note) {
     var first = str(padFirst[note].name().get());
     var name = str(padItems[note].name().get());
     return padTaken(note) && first === "Sampler" && str(padFirst[note].sampleName().get()) === "" &&
-           (name === "" || name === first);
+           (name === "" || name === first) && onlyEffectsAfter(note);
+}
+
+/**
+ * Whether all a pad has after its first device are audio effects, so nothing else on it makes a sound. A
+ * pad with more devices than the link sees (PAD_DEVICES) doesn't count.
+ * @param {number} note
+ */
+function onlyEffectsAfter(note) {
+    var count = Number(padDevices[note].itemCount().get());
+    if (count > PAD_DEVICES) return false;
+    for (var d = 1; d < count; d++) {
+        var after = padDevices[note].getItemAt(d);
+        if (after.exists().get() && str(after.deviceType().get()) !== "audio_to_audio") return false;
+    }
+    return true;
 }
 
 /**

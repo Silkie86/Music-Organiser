@@ -91,13 +91,32 @@ public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> 
     }
 
     /// <summary>
-    /// Removes the <see cref="Leftovers"/>, then copies the app's script into every folder, keeping the <see cref="Kept"/>
-    /// setting each copy has. Returns the leftovers it removed.
+    /// Copies the app's script into every folder, keeping the <see cref="Kept"/> setting each copy has, then removes the
+    /// <see cref="Leftovers"/> in the user folders it went into. Returns the leftovers it removed.
     /// </summary>
+    /// <exception cref="IOException">A folder couldn't take the script (a drive that isn't there now, or the DAW holding
+    /// its copy open), or a leftover couldn't be removed. The script still went into every folder that could take it.</exception>
     public IReadOnlyList<string> Install()
     {
+        var shipped = Binary ? null : File.ReadAllText(Source);
+        var went = new List<string>();
+        (Exception Error, string Folder)? failed = null;
+        foreach (var folder in Folders)
+        {
+            try
+            {
+                CopyInto(folder, shipped);
+                went.Add(folder);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                failed ??= (e, folder);
+            }
+        }
+        // An old copy goes only once the new one is in the same user folder, so a folder that can't take the new one never
+        // leaves the DAW with neither.
         var removed = new List<string>();
-        foreach (var old in Leftovers)
+        foreach (var old in Leftovers.Where(o => went.Any(f => InUserFolderOf(o, f))))
         {
             try { File.Delete(old); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -109,32 +128,40 @@ public sealed record DawScript(string Daw, string Source, IReadOnlyList<string> 
             var folder = Path.GetDirectoryName(old)!;
             if (Path.GetFileName(folder) == "Music Organiser" && !Directory.EnumerateFileSystemEntries(folder).Any()) Directory.Delete(folder);
         }
-        if (Binary)
-        {
-            foreach (var folder in Folders)
-            {
-                Directory.CreateDirectory(folder);
-                try { File.Copy(Source, Path.Combine(folder, FileName), overwrite: true); }
-                catch (IOException e) when (File.Exists(Path.Combine(folder, FileName)))
-                {
-                    // Windows won't replace a file a program has open, and the DAW may keep its extensions open.
-                    throw new IOException($"{e.Message} If {Daw} is open, close it, then press Install again.", e);
-                }
-            }
-            return removed;
-        }
-        var shipped = File.ReadAllText(Source);
-        foreach (var folder in Folders)
-        {
-            var target = Path.Combine(folder, FileName);
-            var text = shipped;
-            if (Kept is { } kept && File.Exists(target) && Setting(File.ReadAllText(target), kept) is { } theirs)
-                text = new Regex("^" + Regex.Escape(kept) + "[^\r\n]*", RegexOptions.Multiline).Replace(text, theirs.Replace("$", "$$"), 1);
-            Directory.CreateDirectory(folder);
-            File.WriteAllText(target, text);
-        }
+        if (failed is ({ } error, { } at))
+            // Windows won't replace a file a program has open (a sharing violation, not access denied), and Bitwig keeps
+            // its extensions open; a script's text it reads and lets go.
+            throw new IOException(error.Message + (Binary && error is IOException && File.Exists(Path.Combine(at, FileName))
+                                                       ? $" If {Daw} is open, close it, then press Install again." : "") +
+                                  (went.Count > 0 ? $" It went into {string.Join(" and ", went)}." : "") +
+                                  (removed.Count > 0 ? $" Removed the old copy in {string.Join(" and ", removed.Select(Path.GetDirectoryName).Distinct())}." : ""),
+                                  error);
         return removed;
     }
+
+    void CopyInto(string folder, string? shipped)
+    {
+        var target = Path.Combine(folder, FileName);
+        Directory.CreateDirectory(folder);
+        if (shipped is null)
+        {
+            File.Copy(Source, target, overwrite: true);
+            return;
+        }
+        var text = shipped;
+        if (Kept is { } kept && File.Exists(target) && Setting(File.ReadAllText(target), kept) is { } theirs)
+            text = new Regex("^" + Regex.Escape(kept) + "[^\r\n]*", RegexOptions.Multiline).Replace(text, theirs.Replace("$", "$$"), 1);
+        File.WriteAllText(target, text);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="file"/> is in the user folder that <paramref name="folder"/> is in: Bitwig's Extensions and
+    /// Controller Scripts are both in its user folder, which can be a drive of its own (K:\).
+    /// </summary>
+    public static bool InUserFolderOf(string file, string folder) =>
+        Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder))) is { Length: > 0 } user &&
+        Path.GetFullPath(file).StartsWith(Path.EndsInDirectorySeparator(user) ? user : user + Path.DirectorySeparatorChar,
+                                          StringComparison.OrdinalIgnoreCase);
 
     IEnumerable<string> Lines(string text) =>
         text.ReplaceLineEndings("\n").TrimEnd('\n').Split('\n').Where(l => Kept is null || !l.StartsWith(Kept, StringComparison.Ordinal));

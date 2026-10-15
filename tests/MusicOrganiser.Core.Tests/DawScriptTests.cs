@@ -126,6 +126,35 @@ public class DawScriptTests
     }
 
     [Fact]
+    public void InstallKeepsTheScriptWhereTheExtensionCouldntGo()
+    {
+        // The chosen folder can't take the extension (here its Extensions is a file; on a PC, a drive that isn't there).
+        var root = Fixtures.TempDir();
+        var chosen = Path.Combine(root, "K", "Bitwig Studio");
+        var documents = Path.Combine(root, "Documents", "Bitwig Studio");
+        DawScripts.Bitwig([chosen, documents]).Install();
+        File.WriteAllText(Path.Combine(chosen, "Extensions"), "not a folder");
+        var built = Extension(Path.Combine(Fixtures.TempDir(), "MusicOrganiser.bwextension"), "3.4");
+        var link = DawScripts.BitwigLink([chosen, documents], built);
+        Assert.Equal(2, link.Leftovers.Count);
+
+        var e = Assert.ThrowsAny<IOException>(link.Install);
+        // It still went where it could, and only the script beside it went.
+        Assert.Equal([Path.Combine(documents, "Extensions")], link.InstalledIn);
+        Assert.Equal([Path.Combine(chosen, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js")], link.Leftovers);
+        Assert.EndsWith($" It went into {Path.Combine(documents, "Extensions")}. Removed the old copy in " +
+                        $"{Path.Combine(documents, "Controller Scripts", "Music Organiser")}.", e.Message);
+        Assert.DoesNotContain("close it", e.Message);
+
+        // Bitwig's user folder can be a drive of its own.
+        var drive = Path.GetPathRoot(root)!;
+        Assert.True(DawScript.InUserFolderOf(Path.Combine(drive, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js"),
+                                             Path.Combine(drive, "Extensions")));
+        Assert.False(DawScript.InUserFolderOf(Path.Combine(documents, "Controller Scripts", "Music Organiser", "MusicOrganiser.control.js"),
+                                              Path.Combine(chosen, "Extensions")));
+    }
+
+    [Fact]
     public void SaysWhichExtensionVersionInstallPutsIn()
     {
         var user = Fixtures.TempDir();
