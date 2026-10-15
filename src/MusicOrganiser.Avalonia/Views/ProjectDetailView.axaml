@@ -393,7 +393,7 @@
                             <StackPanel x:Name="FieldsColumn">
                                 <TextBlock Text="WHERE IT'S AT" Classes="filterLabel" />
                                 <ListBox Classes="chips" ItemsSource="{x:Static vm:ProjectsViewModel.StatusChoices}" SelectedItem="{Binding Item.Status}"
-                                         Margin="0,2,0,16">
+                                         Margin="0,2,0,16" AutoScrollToSelectedItem="False">
                                     <ListBox.ItemsPanel>
                                         <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                                     </ListBox.ItemsPanel>
