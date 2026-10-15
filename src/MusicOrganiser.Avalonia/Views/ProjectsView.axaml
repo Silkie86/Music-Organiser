@@ -4,12 +4,13 @@
              xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.ProjectsView"
              x:DataType="vm:ProjectsViewModel">
-    <Grid RowDefinitions="Auto,Auto,*">
-        <!-- The splitter can't squeeze the list or the selected project's panel to nothing. -->
+    <Grid x:Name="Page" RowDefinitions="Auto,Auto,*">
+        <!-- The song's panel takes most of the width (its arrangement wants it; a list row is one line). The splitter
+             can't squeeze either to nothing, and where it's left is remembered. -->
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" MinWidth="420" />
+            <ColumnDefinition Width="*" MinWidth="380" />
             <ColumnDefinition Width="16" />
-            <ColumnDefinition Width="440" MinWidth="340" />
+            <ColumnDefinition Width="2*" MinWidth="440" />
         </Grid.ColumnDefinitions>
 
         <!-- One big search box, and how many songs it leaves. -->
@@ -133,7 +134,8 @@
             </DataGrid>
         </DockPanel>
 
-        <GridSplitter Grid.Row="2" Grid.Column="1" Width="16" Background="Transparent" ResizeDirection="Columns" />
+        <GridSplitter x:Name="Splitter" Grid.Row="2" Grid.Column="1" Width="16" Background="Transparent" ResizeDirection="Columns"
+                      DragCompleted="OnSplitterMoved" ToolTip.Tip="Drag to give the list or the song more room" />
 
         <!-- Selected project -->
         <Border Grid.Row="2" Grid.Column="2" Classes="card" Padding="0">

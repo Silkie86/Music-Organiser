@@ -61,6 +61,20 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public string PluginHeader => $"Plugins ({Plugins.Count}{(Item.MissingPlugins > 0 ? $", {Item.MissingPlugins} missing" : "")})";
     public string SampleHeader => $"Samples ({Samples.Count}{(Item.MissingSamples > 0 ? $", {Item.MissingSamples} missing" : "")})";
 
+    /// <summary>Overview's glance at the plugins: missing ones first and synths that never play last, as many as fit a few lines of chips.</summary>
+    public IReadOnlyList<PluginRow> GlancePlugins => Plugins.OrderBy(p => p.Installed).ThenBy(p => p.Silent).Take(GlanceChipCount).ToList();
+    public string GlancePluginsMore => Plugins.Count > GlanceChipCount ? $"+{Plugins.Count - GlanceChipCount} more" : "";
+    public string GlancePluginsLabel => Item.MissingPlugins > 0 ? $"PLUGINS · {Plugins.Count}, {Item.MissingPlugins} MISSING" : $"PLUGINS · {Plugins.Count}";
+    public const int GlanceChipCount = 12;
+    /// <summary>"23 found, 2 missing", or "None used" for a song made only of synths.</summary>
+    public string GlanceSamples => Samples.Count == 0 ? "None used"
+        : Item.MissingSamples == 0 ? $"All {Samples.Count} found"
+        : $"{Samples.Count - Item.MissingSamples} found, {Item.MissingSamples} missing";
+    /// <summary>This save and the few before it, newest first.</summary>
+    public IReadOnlyList<SaveGlance> GlanceSaves =>
+        Item.OlderSaves.OrderByDescending(s => s.Modified).Take(3).Select(s => new SaveGlance(s.Name, s.Modified, false))
+            .Prepend(new SaveGlance(Item.FileName, Item.Modified, true)).ToList();
+
     [ObservableProperty] string _message = "";
 
     public ProjectDetailViewModel(LibraryDb db, ProjectItem item, MainViewModel main)
@@ -104,7 +118,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         {
             var players = await Task.Run(() => MidiChannel.Players(reader.ExtractChannels(Item.Path)));
             if (players.Count == 0) return;
-            foreach (var p in Plugins) p.Silent = p.IsInstrument && !players.Contains(p.Name);
+            foreach (var p in Plugins) p.Silent = p.IsInstrument && p.Installed && !players.Contains(p.Name);   // a missing one stays in sight
             SilentCount = Plugins.Count(p => p.Silent);
             ApplyPluginFilter();
         }
@@ -117,6 +131,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     {
         VisiblePlugins = ShowSilent ? Plugins : Plugins.Where(p => !p.Silent).ToList();
         OnPropertyChanged(nameof(SilentToggleText));
+        OnPropertyChanged(nameof(GlancePlugins));
     }
 
     [RelayCommand]
@@ -444,6 +459,12 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         _db.Upsert(Scanner.Analyse(Item.Path));
         _main.RefreshAll();
     }
+}
+
+/// <summary>One save in Overview's glance; the newest is the one the Open button opens.</summary>
+public sealed record SaveGlance(string Name, DateTime When, bool Newest)
+{
+    public string WhenText => When.ToString("d MMM yyyy");
 }
 
 public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p, IReadOnlySet<string> installed) : ObservableObject
