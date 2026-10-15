@@ -14,6 +14,9 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <!-- Hot reload (below) is for Debug builds only; this keeps its XAML reader out of Release builds too. -->
     <HotAvaloniaIncludeXamlLoader Condition="'$(Configuration)' != 'Debug'">false</HotAvaloniaIncludeXamlLoader>
+    <!-- One memory heap that's cleaned up in the background while the window keeps drawing (the desktop-app setting). -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>

@@ -60,6 +60,29 @@ public class ResponsivenessTests
     }
 
     [Fact]
+    public void Gentle_uses_half_the_processor_and_Fast_everything_only_while_the_app_is_in_the_background()
+    {
+        try
+        {
+            Parallelism.Mode = Parallelism.Pace.Gentle;
+            Assert.Equal(Math.Max(1, Parallelism.Cores / 2), Parallelism.Workers);
+            Parallelism.Mode = Parallelism.Pace.Balanced;
+            Assert.Equal(Math.Max(1, Parallelism.Cores - 2), Parallelism.Workers);
+            Parallelism.Mode = Parallelism.Pace.Fast;
+            Assert.Equal(Math.Max(1, Parallelism.Cores - 2), Parallelism.Workers);
+            Parallelism.AppInBackground = true;
+            Assert.Equal(Parallelism.Cores, Parallelism.Workers);
+            Assert.Equal(Parallelism.Pace.Fast, Parallelism.ParsePace("Fast"));
+            Assert.Equal(Parallelism.Pace.Gentle, Parallelism.ParsePace(null));
+        }
+        finally
+        {
+            Parallelism.AppInBackground = false;
+            Parallelism.Mode = Parallelism.Pace.Gentle;
+        }
+    }
+
+    [Fact]
     public async Task Reading_the_library_never_waits_for_a_long_write()
     {
         var dir = Fixtures.TempDir();

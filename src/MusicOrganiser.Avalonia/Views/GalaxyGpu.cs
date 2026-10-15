@@ -24,7 +24,7 @@ static class GalaxyGpu
     public sealed record Frame(
         float[] Xs, float[] Ys, float[] Rgb, float[] Weight, int[] CellStart, int[] CellItems, int Grid,
         (int X0, int Y0, int X1, int Y1) Cells, double Scale, double OffsetX, double OffsetY,
-        int Width, int Height, float Core, float Glow, float Gain);
+        int Width, int Height, float Core, float Glow, float Gain, bool Moving = false);
 
     // Stamps are stored at a fraction of their brightness so a crowd can pile onto one pixel before the layer runs out
     // of room; the shader scales back up.
@@ -47,7 +47,14 @@ static class GalaxyGpu
 
     static SKRuntimeEffect? _effect;
     static SKImage? _dot;
-    static (GRContext Gr, int W, int H, SKSurface Full, SKSurface Small, SKSurface Blurred)? _surfaces;
+    static (GRContext Gr, int W, int H, SKSurface Full, SKSurface Small, SKSurface Blurred, SKSurface Sky)? _surfaces;
+
+    // The last sky drawn, and what it showed. Stamping 366,000 stars is the slow part (Skia turns each into its own
+    // pair of triangles on the processor, every time), so a frame showing the same view (a hover, a pulse, the trail
+    // moving) reuses the sky, and while you drag a slow view the sky slides along and is redrawn when you let go.
+    static object? _skyKey;
+    static (double X, double Y, double Scale, (int, int, int, int) Cells) _skyAt;
+    static double _stampMs;
 
     /// <summary>A soft white dot, 16 pixels across, that each star is stamped with.</summary>
     static SKImage Dot()
@@ -110,12 +117,34 @@ static class GalaxyGpu
         int w = f.Width, h = f.Height, sw = w / 4 + 1, sh = h / 4 + 1;
         if (_surfaces is not { } s || s.Gr != gr || s.W != w || s.H != h)
         {
-            if (_surfaces is { } old) { old.Full.Dispose(); old.Small.Dispose(); old.Blurred.Dispose(); }
+            if (_surfaces is { } old) { old.Full.Dispose(); old.Small.Dispose(); old.Blurred.Dispose(); old.Sky.Dispose(); }
             SKSurface Make(int width, int height) =>
                 SKSurface.Create(gr, false, new SKImageInfo(width, height, SKColorType.RgbaF16, SKAlphaType.Premul))
                 ?? throw new InvalidOperationException("The graphics card couldn't make a drawing layer.");
-            _surfaces = s = (gr, w, h, Make(w, h), Make(sw, sh), Make(sw, sh));
+            _surfaces = s = (gr, w, h, Make(w, h), Make(sw, sh), Make(sw, sh), Make(w, h));
+            _skyKey = null;
         }
+
+        var key = (f.Xs, f.Rgb, f.Weight, w, h, f.Core, f.Glow, f.Gain);
+        var stars = (f.Xs, f.Rgb, f.Weight, w, h);
+        if (_skyKey is ValueTuple<float[], float[], float[], int, int, float, float, float> last && (last.Item1, last.Item2, last.Item3, last.Item4, last.Item5) == stars)
+        {
+            var same = Equals(key, _skyKey) && _skyAt == (f.OffsetX, f.OffsetY, f.Scale, f.Cells);
+            // Moving (dragged, or the camera gliding to a zoom) and slow to stamp: the last sky moves and scales with
+            // the camera, and the stars are stamped again once it stops.
+            if (same || f.Moving && _stampMs > 25)
+            {
+                var ratio = (float)(f.Scale / _skyAt.Scale);
+                using var sky = s.Sky.Snapshot();
+                target.Save();
+                target.Translate((float)(f.OffsetX - _skyAt.X * ratio), (float)(f.OffsetY - _skyAt.Y * ratio));
+                target.Scale(ratio);
+                target.DrawImage(sky, 0, 0, new SKSamplingOptions(SKFilterMode.Linear));
+                target.Restore();
+                return;
+            }
+        }
+        var stamping = System.Diagnostics.Stopwatch.StartNew();
 
         // Every star in view: where its dot goes (centred, about 4 pixels across) and its colour times its brightness.
         var count = 0;
@@ -186,7 +215,13 @@ static class GalaxyGpu
         var children = new SKRuntimeEffectChildren(_effect) { ["stars"] = starsShader, ["glow"] = glowShader };
         using var shader = _effect.ToShader(uniforms, children);
         using var paint = new SKPaint { Shader = shader };
-        target.DrawRect(new SKRect(0, 0, w, h), paint);
+        var skyCanvas = s.Sky.Canvas;
+        skyCanvas.Clear(SKColors.Transparent);
+        skyCanvas.DrawRect(new SKRect(0, 0, w, h), paint);
+        using (var sky = s.Sky.Snapshot()) target.DrawImage(sky, 0, 0);
+        _skyKey = key;
+        _skyAt = (f.OffsetX, f.OffsetY, f.Scale, f.Cells);
+        _stampMs = stamping.Elapsed.TotalMilliseconds;
     }
 }
 

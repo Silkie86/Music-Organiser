@@ -1,3 +1,4 @@
+using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Sounds;
 
 namespace MusicOrganiser.Core.Midi;
@@ -20,10 +21,20 @@ public sealed class MidiEntry
 
     public long Id => Phrase.Id;
 
-    /// <summary>Whether this file has these notes (as the newest copy or one of the others).</summary>
-    public bool IsIn(string path) =>
-        Phrase.Source.Path.Equals(path, StringComparison.OrdinalIgnoreCase) ||
-        OtherSources?.Any(o => o.Equals(path, StringComparison.OrdinalIgnoreCase)) == true;
+    /// <summary>
+    /// Whether this song has these notes, in this save or any other save of it (Song_2 … Song_36 in the same folder),
+    /// as the newest copy or one of the others.
+    /// </summary>
+    public bool IsIn(string path) => IsInSong(SongOf(path));
+
+    string[]? _songs;
+    /// <summary><see cref="IsIn"/> for a song already worked out with <see cref="SongOf"/>.</summary>
+    public bool IsInSong(string song) =>
+        Array.IndexOf(_songs ??= [SongOf(Phrase.Source.Path), .. OtherSources?.Select(SongOf) ?? []], song) >= 0;
+
+    /// <summary>The song a file is a save of: its folder and its name without the save number.</summary>
+    public static string SongOf(string path) =>
+        Path.Combine(Path.GetDirectoryName(path) ?? "", SongVersions.Split(Path.GetFileNameWithoutExtension(path)).Song).ToLowerInvariant();
     public string Role => YourRole ?? Phrase.Role;
     public bool IsProject => Phrase.Source.Kind == MidiSource.Project;
     public string SourceName => Path.GetFileNameWithoutExtension(Phrase.Source.Path);
@@ -105,11 +116,12 @@ public sealed class MidiCatalogue
     public IReadOnlyList<MidiHit> Search(MidiQuery q, out int matching, CancellationToken ct = default)
     {
         var words = q.Text.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var leave = q.Leave is null ? null : MidiEntry.SongOf(q.Leave);
         var pool = Entries.Where(e =>
-            (q.Role is null || e.Role == q.Role) &&
+            (q.Role is null ? q.Fit is null || e.Role != MidiRoles.Drums : e.Role == q.Role) &&   // drums have no harmony to fit
             (q.From is null || (q.From == "projects") == e.IsProject) &&
             !ReferenceEquals(e, q.Like) &&
-            (q.Leave is null || !e.IsIn(q.Leave)) &&
+            (leave is null || !e.IsInSong(leave)) &&
             words.All(w => e.SearchText.Contains(w, StringComparison.Ordinal))).ToList();
         matching = pool.Count;
         ct.ThrowIfCancellationRequested();

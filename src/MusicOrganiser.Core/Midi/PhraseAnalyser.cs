@@ -132,29 +132,54 @@ public static partial class PhraseAnalyser
     public static int BarsOf(IReadOnlyList<NoteEvent> notes) =>
         notes.Count == 0 ? 0 : (int)Math.Max(1, Math.Ceiling(notes.Max(n => n.Start + n.Length) / (double)Bar - 0.01));
 
+    /// <summary>This many empty bars or more inside a part split it into sections, each kept on its own.</summary>
+    public const int GapBars = 4;
+
     /// <summary>
-    /// A part as phrases: itself when it's <see cref="MaxBars"/> bars or shorter, else <see cref="SplitBars"/>-bar
-    /// pieces with notes in them, each with where it starts ("bars 9–16"). Pieces with the same notes are kept once.
+    /// A part as phrases, with no empty bars before or after any of them (Solomon, 2026-10-15: "midi with a lot of space
+    /// either side truncate them"). <see cref="GapBars"/> or more empty bars split it into sections; a section longer than
+    /// <see cref="MaxBars"/> bars is cut into <see cref="SplitBars"/>-bar pieces. Each comes with where it starts in the
+    /// part ("bars 9–16"), or "" when it's the whole part. Pieces with the same notes are kept once.
     /// </summary>
     public static IEnumerable<(string Where, List<NoteEvent> Notes)> Split(List<NoteEvent> notes)
     {
         if (notes.Count == 0) yield break;
-        if (BarsOf(notes) <= MaxBars)
-        {
-            yield return ("", notes.Count > MaxNotes ? notes[..MaxNotes] : notes);
-            yield break;
-        }
-        const long piece = SplitBars * (long)Bar;
+        var sections = Sections(notes);
+        var whole = sections.Count == 1 && BarsOf(notes) <= MaxBars;
         var seen = new HashSet<string>();
-        foreach (var group in notes.GroupBy(n => n.Start / piece))
+        foreach (var section in sections)
         {
-            var from = group.Key * piece;
-            var part = group.Select(n => n with { Start = n.Start - from, Length = Math.Min(n.Length, piece - (n.Start - from)) })
-                            .Take(MaxNotes).ToList();
-            if (part.Count < 3 || !seen.Add(HashOf(part))) continue;
-            var first = (int)(group.Key * SplitBars) + 1;
-            yield return ($"bars {first}–{first + SplitBars - 1}", part);
+            var pieces = BarsOf(section) - section[0].Start / Bar <= MaxBars
+                ? [section]
+                : section.GroupBy(n => n.Start / (SplitBars * (long)Bar)).Select(g =>
+                  {
+                      var end = (g.Key + 1) * SplitBars * (long)Bar;   // notes held past the piece are cut at its end
+                      return g.Select(n => n with { Length = Math.Min(n.Length, end - n.Start) }).ToList();
+                  }).ToList();
+            foreach (var piece in pieces)
+            {
+                if (!whole && piece.Count < 3) continue;
+                var firstBar = piece[0].Start / Bar;
+                var trimmed = piece.Select(n => n with { Start = n.Start - firstBar * Bar }).Take(MaxNotes).ToList();
+                if (!seen.Add(HashOf(trimmed))) continue;
+                var lastBar = firstBar + BarsOf(trimmed);
+                yield return (whole ? "" : firstBar + 1 == lastBar ? $"bar {lastBar}" : $"bars {firstBar + 1}–{lastBar}", trimmed);
+            }
         }
+    }
+
+    /// <summary>The part cut wherever <see cref="GapBars"/> or more bars go by with no note playing.</summary>
+    static List<List<NoteEvent>> Sections(List<NoteEvent> notes)
+    {
+        var sections = new List<List<NoteEvent>> { new() };
+        long playingUntil = 0;
+        foreach (var n in notes)
+        {
+            if (sections[^1].Count > 0 && n.Start / Bar - (playingUntil + Bar - 1) / Bar >= GapBars) sections.Add([]);
+            sections[^1].Add(n);
+            playingUntil = Math.Max(playingUntil, n.Start + n.Length);
+        }
+        return sections;
     }
 
     // ---- what kind of part ----

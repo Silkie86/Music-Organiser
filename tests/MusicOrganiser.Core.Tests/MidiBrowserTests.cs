@@ -256,7 +256,94 @@ public class MidiBrowserTests
         Assert.DoesNotContain(index.All(), p => p.Source.Kind == MidiSource.File);
     }
 
-    static string FlProjectWithChords(string dir)
+    [Fact]
+    public void Empty_bars_either_side_are_cut_off_and_long_gaps_split_a_part()
+    {
+        // Bars 3–4 play, then 6 empty bars, then bars 11–12: two phrases, each starting on its first bar.
+        var notes = Chords(AMinor[0], AMinor[1]).Select(n => n with { Start = n.Start + 2 * Bar })
+            .Concat(Chords(AMinor[2], AMinor[3]).Select(n => n with { Start = n.Start + 10 * Bar })).ToList();
+        var parts = PhraseAnalyser.Split(notes).ToList();
+        Assert.Equal(["bars 3–4", "bars 11–12"], parts.Select(p => p.Where));
+        Assert.All(parts, p => Assert.Equal(0, p.Notes[0].Start));
+        Assert.All(parts, p => Assert.Equal(2, PhraseAnalyser.BarsOf(p.Notes)));
+
+        // A short gap stays inside the phrase; a part on its own is the whole part.
+        var close = Chords(AMinor[0]).Concat(Chords(AMinor[1]).Select(n => n with { Start = n.Start + 3 * Bar })).ToList();
+        Assert.Equal([""], PhraseAnalyser.Split(close).Select(p => p.Where));
+
+        // A long part's 8-bar pieces lose their empty bars too: notes only in bars 15–16 of 9–16 come out as "bars 15–16".
+        var song = Chords([.. AMinor, .. AMinor]).Concat(Chords(CMinor[0], CMinor[1]).Select(n => n with { Start = n.Start + 14 * Bar })).ToList();
+        var pieces = PhraseAnalyser.Split(song).ToList();
+        Assert.Equal(["bars 1–8", "bars 15–16"], pieces.Select(p => p.Where));
+        Assert.Equal(2, PhraseAnalyser.BarsOf(pieces[1].Notes));
+    }
+
+    [Fact]
+    public void Each_track_of_a_midi_file_is_its_own_part_to_fit()
+    {
+        var dir = Fixtures.TempDir();
+        var clip = new MidiClip { Name = "Full idea", Ppq = 96 };
+        clip.Track("Keys").AddRange(Chords(CMinor));
+        clip.Track("Bass").AddRange(Line(Bar, 36, 32, 39, 34));
+        clip.Track("Lead").AddRange(Line(Beat, 72, 75, 79, 77, 75, 72, 70, 72, 75, 79, 82, 79));
+        var file = Path.Combine(dir, "Full idea.mid");
+        File.WriteAllBytes(file, MidiWriter.Write(clip, 120));
+
+        var phrases = MidiIndexer.FromFile(file, [dir]);
+        Assert.Equal(["Keys", "Bass", "Lead"], phrases.Select(p => p.Part));
+        Assert.Equal([MidiRoles.Chords, MidiRoles.Bass, MidiRoles.Melody], phrases.Select(p => p.Analysis.Role));
+        // Each one fits a song on its own: the chords and the bassline both move down 3 into A minor.
+        var song = HarmonyTarget.FromChannels("Song", [new MidiChannel("Keys", "", Ppq, Chords(AMinor), Plugin: "Serum")])!;
+        Assert.Equal(-3, HarmonyMatcher.Fit(phrases[0].Analysis.Chroma, phrases[0].Analysis.Chords, song).Semitones);
+        Assert.Equal(-3, HarmonyMatcher.Fit(phrases[1].Analysis.Chroma, phrases[1].Analysis.Chords, song).Semitones);
+    }
+
+    [Fact]
+    public void Only_the_newest_save_of_a_song_is_read_and_failed_files_can_be_tried_again()
+    {
+        var dir = Fixtures.TempDir();
+        var first = FlProjectWithChords(dir);
+        var second = Path.Combine(dir, "Chords Song_2.flp");
+        File.Copy(first, second);
+        File.SetLastWriteTimeUtc(second, File.GetLastWriteTimeUtc(first).AddHours(1));
+        var lib = Path.Combine(dir, "MIDI");
+        Directory.CreateDirectory(lib);
+        var broken = Path.Combine(lib, "Broken.mid");
+        File.WriteAllText(broken, "RIFF0000WAVE");
+
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.SetList(MidiIndexer.FoldersKey, [lib]);
+        db.Upsert(Scanner.Analyse(first));
+        db.Upsert(Scanner.Analyse(second));
+        using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));
+        var indexer = new MidiIndexer(index, db);
+
+        var run = indexer.Run();
+        Assert.Equal(1, run.Failed);
+        Assert.Equal([second], index.All().Select(p => p.Source.Path).Distinct());
+        var failed = Assert.Single(index.Failures());
+        Assert.Equal("Broken.mid", failed.Name);
+        Assert.Contains("damaged", failed.Why);
+
+        // An unchanged failure isn't read again on its own, only when asked; once fixed it leaves the list.
+        Assert.Equal(0, indexer.Run().Read);
+        var retry = indexer.Run(retryFailed: true);
+        Assert.Equal((1, 1), (retry.Read, retry.Failed));
+        var fixedClip = new MidiClip { Name = "x", Ppq = 96 };
+        fixedClip.Track("Keys").AddRange(Chords(AMinor));
+        File.WriteAllBytes(broken, MidiWriter.Write(fixedClip));
+        Assert.Equal(1, indexer.Run().Read);
+        Assert.Empty(index.Failures());
+
+        // Every save, when asked for.
+        db.SetSetting(MidiIndexer.OlderSavesKey, "1");
+        Assert.Equal(1, indexer.Run().Read);
+        Assert.Contains(index.All(), p => p.Source.Path == first);
+        db.SetSetting(MidiIndexer.OlderSavesKey, "0");
+        Assert.Equal(1, indexer.Run().Forgotten);
+    }
+
+    internal static string FlProjectWithChords(string dir)
     {
         var notes = AMinor.SelectMany((c, bar) => c.Select(k => Fixtures.Note((uint)(bar * Bar), 0, Bar, (ushort)k, 100))).SelectMany(b => b).ToArray();
         var b = new Fixtures.FlpBuilder()

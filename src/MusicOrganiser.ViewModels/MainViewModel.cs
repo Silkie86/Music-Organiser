@@ -60,6 +60,7 @@ public sealed partial class MainViewModel : ObservableObject
                          string? dataFolder = null)
     {
         _db = db;
+        Parallelism.Mode = Parallelism.ParsePace(db.GetSetting(SettingsViewModel.PerformanceKey));
         DataFolder = dataFolder ?? LiveReports.DataFolder;
         SoundLibrary = sounds.Library;
         PluginScanner = pluginScanner ?? new();
@@ -121,6 +122,7 @@ public sealed partial class MainViewModel : ObservableObject
             var (read, gone) = await Task.Run(() => _scanner.Update(changes.Files));
             if (read + gone == 0) return;
             await RefreshAllAsync();
+            _ = Midi.AfterScanAsync();   // a saved song's MIDI is read again too
             var name = Path.GetFileNameWithoutExtension(changes.Files.First());
             Activities.Done(read + gone == 1 ? $"Updated {name}" : $"Updated {read + gone} projects",
                             gone == 0 ? "Saved in their folders, so the app read them again"
@@ -373,7 +375,7 @@ public sealed partial class MainViewModel : ObservableObject
         _scanCts = new CancellationTokenSource();
         var ct = _scanCts.Token;
         _scanCard = Activities.Start(full ? "Re-reading everything" : "Looking for new and changed projects", cancel: CancelScan);
-        var songsBefore = Projects.Items.Count;
+        var added = 0;
         var progress = ProgressInStatus();
         try
         {
@@ -387,7 +389,7 @@ public sealed partial class MainViewModel : ObservableObject
                     ((IProgress<ScanProgress>)progress).Report(new("Checking installed plugins", 0, 0, ""));
                     _scanner.ScanInstalledPlugins(out pluginFiles);
                 }
-                _scanner.ScanProjects(progress, full, ct);
+                added = _scanner.ScanProjects(progress, full, ct);
                 sampling.GetAwaiter().GetResult();
             }, ct);
 
@@ -423,9 +425,9 @@ public sealed partial class MainViewModel : ObservableObject
         }
         if (_scanCard.IsRunning)
         {
-            var added = Projects.Items.Count - songsBefore;
+            // Counted by the scan itself: the list may still have been loading when it started.
             _scanCard.Finish("Library up to date",
-                added > 0 ? $"{added} new song{(added == 1 ? "" : "s")} · {Projects.Items.Count} in all" : $"{Projects.Items.Count} songs, nothing new");
+                added > 0 ? $"{added} new project file{(added == 1 ? "" : "s")} · {Projects.Items.Count} songs in all" : $"{Projects.Items.Count} songs, nothing new");
         }
         // The MIDI browser reads new and changed projects' MIDI on its own, at the lowest priority.
         _ = Midi.AfterScanAsync();

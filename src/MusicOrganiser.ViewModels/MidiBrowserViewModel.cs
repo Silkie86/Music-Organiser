@@ -35,7 +35,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     CancellationTokenSource? _indexCts;
     Task? _indexing;
     int _searchRequest, _listenRequest;
-    bool _loading;
+    bool _loading, _indexAgain, _retryFailed;
 
     public MidiBrowserViewModel(LibraryDb db, MainViewModel main, MidiIndex? index = null)
     {
@@ -46,6 +46,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         Folders = new ObservableCollection<string>(db.GetList(MidiIndexer.FoldersKey));
         RoleChips = MidiRoles.All.Prepend("All").Select(r => new RoleChip(r == "All" ? "All" : MidiRoles.Plural(r), r)).ToList();
         _selectedRole = RoleChips[0];
+        _includeOlderSaves = db.GetSetting(MidiIndexer.OlderSavesKey) == "1";
     }
 
     public MidiIndex Index => _index;
@@ -67,6 +68,23 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [ObservableProperty] string _indexText = "";
     [ObservableProperty] double _indexPercent;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsEmpty))] bool _hasParts;
+
+    /// <summary>Read every save of a song, not just its newest (off: one save per song, as Projects' "One row per song" shows).</summary>
+    [ObservableProperty] bool _includeOlderSaves;
+
+    /// <summary>Projects and MIDI files that couldn't be read, and why.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasFailures), nameof(FailedText))] IReadOnlyList<MidiFailure> _failures = [];
+    public bool HasFailures => Failures.Count > 0;
+    public string FailedText => $"{Failures.Count:N0} couldn't be read";
+
+    partial void OnIncludeOlderSavesChanged(bool value)
+    {
+        _db.SetSetting(MidiIndexer.OlderSavesKey, value ? "1" : "0");
+        Message = value
+            ? "Reading every save of each song too. Songs saved many times add a lot of near-identical parts, kept as one where the notes are the same."
+            : "Reading only the newest save of each song. Parts from older saves are taken out of the list; the files themselves are untouched.";
+        _ = IndexAsync();
+    }
 
     public bool HasSelection => Selected is not null;
     /// <summary>Nothing to show yet, and nothing being read: say how to get MIDI in.</summary>
@@ -127,9 +145,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             foreach (var chip in RoleChips)
                 chip.Count = chip.Role == "All" ? catalogue.Entries.Count : counts.GetValueOrDefault(chip.Role);
             var files = catalogue.Entries.Select(e => e.Phrase.Source.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            Failures = await UiWork.Run(_index.Failures);
             Summary = catalogue.Entries.Count == 0
                 ? "No MIDI found yet."
                 : $"{catalogue.Entries.Count:N0} MIDI parts from {files:N0} files" +
+                  (IncludeOlderSaves ? "" : " · newest save of each song") +
                   (catalogue.PhraseCount > catalogue.Entries.Count ? $" · {catalogue.PhraseCount - catalogue.Entries.Count:N0} copies kept as one" : "");
             await RefreshAsync();
         }
@@ -164,20 +184,43 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [RelayCommand]
     Task Reindex() => IndexAsync();
 
+    /// <summary>Reads again just the files that failed last time (and anything new or changed).</summary>
+    [RelayCommand]
+    Task RetryFailed() => IndexAsync(retryFailed: true);
+
     [RelayCommand]
     void StopIndexing() => _indexCts?.Cancel();
 
-    public Task IndexAsync()
+    public Task IndexAsync(bool retryFailed = false)
     {
-        if (_indexing is { IsCompleted: false }) return _indexing;
+        _retryFailed |= retryFailed;
+        if (_indexing is { IsCompleted: false })
+        {
+            // A setting changed (or a retry was asked for) part way: go round once more when this run ends.
+            _indexAgain = true;
+            return _indexing;
+        }
         return _indexing = RunIndexAsync();
     }
 
     async Task RunIndexAsync()
     {
+        do
+        {
+            _indexAgain = false;
+            var retry = _retryFailed;
+            _retryFailed = false;
+            await IndexOnceAsync(retry);
+        } while (_indexAgain && _indexCts is { IsCancellationRequested: false });
+    }
+
+    async Task IndexOnceAsync(bool retryFailed)
+    {
         IsIndexing = true;
         _indexCts = new CancellationTokenSource();
-        var card = _main.Activities.Start("Reading MIDI", "Looking for new and changed projects and MIDI files", _indexCts.Cancel);
+        var card = _main.Activities.Start(retryFailed ? "Trying the failed MIDI again" : "Reading MIDI",
+                                          retryFailed ? $"Reading the {Failures.Count:N0} that couldn't be read" : "Looking for new and changed projects and MIDI files",
+                                          _indexCts.Cancel);
         var progress = new ThrottledProgress<ScanProgress>(p =>
         {
             IndexPercent = p.Total > 0 ? 100.0 * p.Done / p.Total : 0;
@@ -187,12 +230,16 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         try
         {
             var token = _indexCts.Token;
-            var result = await Task.Run(() => _indexer.Run(progress, token), token);
+            var result = await Task.Run(() => _indexer.Run(progress, token, retryFailed), token);
             if (result.Read > 0 || result.Forgotten > 0 || _catalogue is null) await LoadAsync();
+            else Failures = await UiWork.Run(_index.Failures);
             card.Finish(result.Read == 0 ? "MIDI up to date" : "MIDI read",
                         result.Read == 0 ? $"{_catalogue?.Entries.Count ?? 0:N0} parts" :
                         $"{result.Read:N0} file{(result.Read == 1 ? "" : "s")}, {result.Phrases:N0} parts" +
                         (result.Failed > 0 ? $"; {result.Failed} couldn't be read" : ""));
+            if (retryFailed)
+                Message = result.Failed == 0 ? "Every file that failed before has now been read."
+                    : $"{result.Failed:N0} still couldn't be read. Click \"{FailedText}\" to see why.";
         }
         catch (OperationCanceledException)
         {
@@ -244,22 +291,33 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// <summary>Ranks every part by how well it fits this project's harmony (from the Projects page too).</summary>
     public async Task FitToProjectAsync(string path, string name)
     {
-        if (Readers.For(path) is not { } reader) return;
         Message = $"Listening to the harmony of {name}…";
+        var (target, why) = await HarmonyOfAsync(path, name);
+        if (target is null) Message = why;
+        else FitToHarmony(target, leave: path);
+    }
+
+    /// <summary>A project's harmony (its pitched channels' notes and chords), or why there isn't one.</summary>
+    public static async Task<(HarmonyTarget? Target, string Why)> HarmonyOfAsync(string path, string name)
+    {
+        if (Readers.For(path) is not { } reader) return (null, $"The app can't read the notes of {name} yet.");
         try
         {
             var target = await UiWork.Run(() => HarmonyTarget.FromChannels(name, reader.ExtractChannels(path)));
-            if (target is null)
-            {
-                Message = $"{name} has too few pitched notes to fit MIDI to.";
-                return;
-            }
-            FitToHarmony(target, leave: path);
+            return (target, target is null ? $"{name} has too few pitched notes to fit MIDI to." : "");
         }
         catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
         {
-            Message = $"Couldn't read {name}: {e.Message}";
+            return (null, $"Couldn't read {name}: {e.Message}");
         }
+    }
+
+    /// <summary>Every part, read from the index the first time it's wanted (by this page or a song's MIDI tab).</summary>
+    public async Task<MidiCatalogue?> CatalogueAsync()
+    {
+        if (_catalogue is null && !_loading) Opened();
+        while (_loading && _catalogue is null) await Task.Delay(50);
+        return _catalogue;
     }
 
     /// <summary>"What goes with this?": parts that fit the selected part's harmony.</summary>
