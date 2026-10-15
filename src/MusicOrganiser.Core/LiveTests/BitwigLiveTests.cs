@@ -194,11 +194,12 @@ public static class BitwigLiveTests
         $"to “{BitwigLink.LoopbackPort}” (the loopMIDI port), never “Music Organiser” (FL Studio's), and run the live tests again.";
 
     /// <summary>
-    /// What the 3.7 runs found about the loopback's ports: without them Bitwig 6.1.3 didn't save for the extension by any
-    /// route, though the link answered; with them it saved from its flush (but still not straight away).
+    /// What the runs so far found about the loopback's ports: without them (extensions 3.3 and 3.6, which have none) Bitwig
+    /// 6.1.3 ignored Save run straight away, the only route those had; with them it saved from its flush both times, and
+    /// straight away once in two. The flush was never tried without them.
     /// </summary>
     const string PortsNeeded =
-        "Bitwig 6.1.3 saved for the extension only once its MIDI in and out were set (then from its flush), so every route needs them. ";
+        "Bitwig 6.1.3 has only saved for the extension once its MIDI in and out were set (from its flush, and once straight away), so set them whichever route the app uses. ";
 
     /// <summary>What a run says when only Save straight away was tried, as the link in Bitwig takes no other route.</summary>
     const string OnlyDirect =
@@ -484,9 +485,8 @@ public static class BitwigLiveTests
             return LiveVerdict.Pass("The extension's own MIDI came back to it through the loopback, so it can run Bitwig's commands on its own " +
                                     "MIDI messages and by pressing its own buttons.", data);
         return LiveVerdict.Fail("The extension's own MIDI hasn't come back to it through the loopback, so its MIDI in and out aren't set to " +
-                                $"“{BitwigLink.LoopbackPort}”, or that port isn't working, and Bitwig may not carry out the commands the app runs " +
-                                "by any route: Bitwig 6.1.3 ignored Save, copy and paste run straight away, and saved for the extension only once " +
-                                "its MIDI in and out were set (then from its flush). " + LoopbackSetup, data);
+                                $"“{BitwigLink.LoopbackPort}”, or that port isn't working. The routes through MIDI need them, and Bitwig 6.1.3 " +
+                                "has only saved for the extension once they were set: without them it ignored Save run straight away. " + LoopbackSetup, data);
     }
 
     static LiveVerdict NeedsArrange(string? running) => NeedsExtension(ArrangeFrom, running);

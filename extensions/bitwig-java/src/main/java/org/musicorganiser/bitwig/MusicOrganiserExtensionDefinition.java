@@ -65,11 +65,11 @@ public final class MusicOrganiserExtensionDefinition extends ControllerExtension
     /**
      * One MIDI in port and one MIDI out port, only for the link's loopback (see Link's command routes): the link sends
      * itself MIDI through the out port, and Bitwig hands it back on the in port as if a device had sent it, since Bitwig
-     * seems to carry out some commands (Save, copy and paste, bringing a panel to the front) only while it handles input
-     * from a device. Both have to be the loopMIDI port called "Music Organiser Bitwig" ({@link #LOOPBACK_PORT}), never
-     * "Music Organiser", which is the FL Studio link's: FL Studio must never see these messages. Only the routes that go
-     * through MIDI send anything through them, but Bitwig 6.1.3 saved for the link by no route until they were set, the
-     * flush included (it starts the extension, and the link answers, with them unassigned): see "Routes and the MIDI
+     * may carry out some commands (Save, say) only while it handles input from a device. Both have to be the loopMIDI port
+     * called "Music Organiser Bitwig" ({@link #LOOPBACK_PORT}), never "Music Organiser", which is the FL Studio link's: FL
+     * Studio must never see these messages. Only the routes that go through MIDI send anything through them, and Bitwig
+     * 6.1.3 starts the extension, and the link answers, with them unassigned, but it has only saved for the link once they
+     * were set (from its flush, and once straight away; the flush was never tried without them): see "Routes and the MIDI
      * loopback" in extensions/README.md.
      */
     @Override

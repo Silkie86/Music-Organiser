@@ -186,7 +186,7 @@ public class BitwigLinkTests
                                     Loopback: false);
         var setUp = BitwigLink.LoopbackMissing(hello)!;
         Assert.StartsWith("The extension's own MIDI hasn't come back to it through the MIDI port “Music Organiser Bitwig”, so its MIDI in and out " +
-                          "may not be set to that port yet (or the port isn't working), and Bitwig only saves for the app once they are: ", setUp);
+                          "may not be set to that port yet (or the port isn't working), and Bitwig has only saved for the app once they were: ", setUp);
         Assert.EndsWith("in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it (never to FL Studio's port, " +
                         "“Music Organiser”).", setUp);
         Assert.Equal(OperatingSystem.IsWindows(), setUp.Contains("in loopMIDI"));

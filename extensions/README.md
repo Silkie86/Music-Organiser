@@ -33,8 +33,8 @@ to the app (`Extensions` in its folder), and installing copies them where the DA
   folder the extension last said Bitwig loaded it from (`loadedFrom` in its hello). Every copy is the same, so it
   doesn't matter which Bitwig loads. Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
   With the extension, also set that controller's MIDI in and MIDI out to the MIDI port **Music Organiser Bitwig**
-  (make it in loopMIDI on Windows), never to FL Studio's port, **Music Organiser**: Bitwig only saves for the app
-  once they're set (see [Routes and the MIDI loopback](#routes-and-the-midi-loopback)).
+  (make it in loopMIDI on Windows), never to FL Studio's port, **Music Organiser**: Bitwig has only saved for the
+  app once they were set (see [Routes and the MIDI loopback](#routes-and-the-midi-loopback)).
 - **FL Studio**: `Settings\Hardware\Music Organiser` in FL Studio's user data folder (normally
   `Documents\Image-Line\FL Studio`). The app also finds user data folders elsewhere from where your FL
   projects are, and **Choose folder…** points it at one. FL Studio only runs a script for a MIDI input, and
@@ -191,15 +191,15 @@ none (and so the app's own commands take it):
 | `buttonCode` | When a press of one of the link's own hardware buttons comes back through the loopback: the link sends a note on MIDI channel 16 (from note 110, one for each command), Bitwig presses the button, and the link runs the command. |
 | `button` | The same with another of the link's buttons (from note 100), which Bitwig runs the command for itself, as for a controller's button; the link only hears of the press. |
 
-The last three need the loopback, and Save from `flush` turned out to need its ports set too. In loopMIDI, add a port called **Music Organiser Bitwig**, then in Bitwig,
+The last three need the loopback. In loopMIDI, add a port called **Music Organiser Bitwig**, then in Bitwig,
 Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it. Never set them to **Music
 Organiser**: that's the FL Studio link's port, and FL Studio must never get the notes and messages the Bitwig link
 sends itself. The extension asks Bitwig for one MIDI in and one MIDI out, only for the loopback, and offers the
 Music Organiser Bitwig port for both, so Bitwig can fill them in when it finds the port (auto-detection).
-Bitwig 6.1.3 starts the extension with them unassigned, and the link answers, but in the live runs it saved for
-the link by no route until they were set; once they were, it saved from its flush (still not straight away). That
-fits Bitwig carrying out these commands only for a controller with a device. So set them after installing 3.7 or
-later, whichever route the app uses: the steps Settings shows after *Install* ask for them, and *Check
+Bitwig 6.1.3 starts the extension with them unassigned, and the link answers. In the live runs without them
+(extensions 3.3 and 3.6, which have no ports, so only `direct`) Save did nothing; with them set (3.7 and 3.8) Save
+worked from the flush both times and straight away once in two. Nobody has tried the flush without them, so set
+them after installing 3.7 or later, whichever route the app uses: the steps Settings shows after *Install* ask for them, and *Check
 connection* says when the extension's own MIDI hasn't come back through them (the hello's `loopback` is false),
 as while they aren't set; the extension can't tell that from a port that doesn't hand its MIDI back. A Mac or
 Linux has no loopMIDI; a virtual MIDI port there (an IAC bus on a Mac) may do instead, which nobody has tried.
@@ -299,6 +299,17 @@ between tracks, and Bitwig may make a new track with the file's clip in the arra
 does for a drop. The answer says whether a track came, and whether the clip went to its launcher instead or the
 clip selected in the arranger moved to it; only a look at Bitwig shows where it starts. The live tests try it
 with their MIDI file (*Changes › MIDI file as a track*).
+
+What the live runs found (6.1.3, 2026-10-15). Everything `arrange` does through the API works: the clip takes
+each mark colour, exactly as asked, and the play start moves to `at`. Bitwig's Copy, Paste and Duplicate don't
+act on what the API selected, though: they act on Bitwig's own selection, whatever was last clicked. In the two
+runs that started with nothing selected (3.7 at 18:52, 3.8), by every route, Copy, Paste and Duplicate changed
+nothing at all, in the arranger, the launcher or the track list (3.8 had just restarted Bitwig, so its clipboard
+was empty too). The 3.7 run at 22:19 started with Bitwig's selection on a track, and there Paste ran (from the
+flush, then on the link's MIDI) and put whole tracks in the track list, copies of “Send 185248” and “Devices
+221955”, just above the clip's track. The link, which reads tracks by their place in its track bank, then looked
+at a pasted track and took the clip for gone. `filetrack` made no track: Bitwig ignores a MIDI
+file inserted after a track, while the same file into a launcher slot works.
 
 ### Sending into Bitwig
 
@@ -539,15 +550,16 @@ Bitwig:
       Save, copy and paste run straight away, from a request or a task the extension scheduled; the live tests'
       *Changes › Save* now tries each route in turn and names the one that works, recording the project in
       front as Save ran (`project` in the answer). The 3.7 run saved from the flush, which 3.8 makes the
-      default: check that holds with no route named.
-- [ ] Arrange's checks (3.8): whether a paste lands in an empty launcher slot, in the launcher clip's colour,
-      and whether Duplicate copies the launcher clip, by each route; which says whether Bitwig copies for the
-      link at all, and whether its editing actions reach the launcher.
-- [ ] `filetrack` (3.8): whether a MIDI file inserted after a track makes a new track with its clip on the
-      arranger at the play start (as a drop between tracks does), in its launcher, or nothing.
-- [x] The MIDI loopback's ports (extension 3.7, Bitwig 6.1.3, 2026-10-15): Bitwig starts the extension, and the
-      link answers, with its MIDI in and out unassigned, but it saved for the link by no route until they were
-      set, and then from its flush (not straight away).
+      default, and the 3.8 run saved with no route named (2026-10-15).
+- [x] Arrange's checks (3.8, Bitwig 6.1.3, 2026-10-15): by all five routes, a paste into an empty launcher slot
+      put nothing there and Duplicate changed nothing, while the clip took every mark colour and the play start
+      moved: Bitwig's Copy, Paste and Duplicate act on its own selection, not the one the API makes ([what the
+      runs found](#clips-in-the-arranger-an-experiment)).
+- [x] `filetrack` (3.8, 2026-10-15): a MIDI file inserted after a track made nothing, no track and no clip.
+- [x] The MIDI loopback's ports (Bitwig 6.1.3, 2026-10-15): Bitwig starts the extension, and the link answers,
+      with its MIDI in and out unassigned. Save has only worked for the link once they were set: from its flush
+      (twice) and straight away (once in two). Without them only straight away was tried (3.3 and 3.6), and it
+      didn't save; whether the flush saves without them is untried.
 - [ ] Whether Bitwig still starts the extension, and the link answers, with its MIDI in and out set to “Music
       Organiser Bitwig” while that port isn't there (loopMIDI not running): Bitwig stops a controller whose device
       goes away, so it may not. *Bitwig isn't answering* says to check the port, in case.

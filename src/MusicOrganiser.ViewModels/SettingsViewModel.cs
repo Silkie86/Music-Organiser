@@ -180,7 +180,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         (extension
             ? $" Then set that controller's MIDI in and MIDI out to the MIDI port “{BitwigLink.LoopbackPort}”" +
               (OperatingSystem.IsWindows() ? " (make it in loopMIDI first)" : " (make it first as a virtual MIDI port: on a Mac, an IAC bus in Audio MIDI Setup may do)") +
-              ", never to FL Studio's port, “Music Organiser”. Bitwig only saves for the app once they're set."
+              ", never to FL Studio's port, “Music Organiser”. Bitwig has only saved for the app once they were set."
             : "") +
         (OperatingSystem.IsWindows() ? " If Windows asks whether Bitwig may use the network, you can say no: the app only talks to it on this PC." : "");
 
