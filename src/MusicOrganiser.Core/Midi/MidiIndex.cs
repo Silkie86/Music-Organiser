@@ -11,6 +11,12 @@ public sealed record MidiSource(string Path, string Kind, string Daw, long Mtime
 }
 
 /// <summary>One MIDI part ready to save: where it's from, its notes (at <see cref="PhraseAnalyser.Ppq"/>) and what it is.</summary>
+/// <summary>A file the MIDI browser couldn't read: <see cref="Why"/> is the error, in a few words.</summary>
+public sealed record MidiFailure(string Path, string Kind, string Why)
+{
+    public string Name => System.IO.Path.GetFileName(Path);
+}
+
 public sealed record IndexedPhrase(string Part, string Clip, IReadOnlyList<NoteEvent> Notes, PhraseAnalysis Analysis, bool Drums);
 
 /// <summary>A saved phrase as the browser lists it: everything but its notes, which are read when it's shown.</summary>
@@ -88,6 +94,20 @@ public sealed class MidiIndex : IDisposable
             while (r.Read()) map[r.GetString(0)] = (r.GetInt64(1), r.GetInt64(2), r.IsDBNull(3) ? 0 : r.GetInt32(3));
         }
         return map;
+    }
+
+    /// <summary>The files that couldn't be read last time, and why, by name.</summary>
+    public IReadOnlyList<MidiFailure> Failures()
+    {
+        var list = new List<MidiFailure>();
+        lock (_readLock)
+        {
+            using var cmd = _read.CreateCommand();
+            cmd.CommandText = "SELECT path, kind, error FROM sources WHERE error IS NOT NULL";
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) list.Add(new MidiFailure(r.GetString(0), r.GetString(1), r.GetString(2)));
+        }
+        return list.OrderBy(f => System.IO.Path.GetFileName(f.Path), StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     /// <summary>Saves what was read from a file, replacing what was there before.</summary>

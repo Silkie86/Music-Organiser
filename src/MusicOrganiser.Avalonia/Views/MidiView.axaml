@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:MusicOrganiser.ViewModels"
              xmlns:views="using:MusicOrganiser.Avalonia.Views"
+             xmlns:core="using:MusicOrganiser.Core.Midi"
              x:Class="MusicOrganiser.Avalonia.Views.MidiView"
              x:DataType="vm:MidiBrowserViewModel">
     <UserControl.Styles>
@@ -39,6 +40,36 @@
                     </StackPanel>
                 </Border>
                 <Button Content="Stop" Command="{Binding StopIndexingCommand}" IsVisible="{Binding IsIndexing}" />
+                <!-- Projects and MIDI files that couldn't be read: why, and a button to try just those again. -->
+                <Button IsVisible="{Binding HasFailures}" ToolTip.Tip="Some files couldn't be read. Click to see why and try them again.">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <Ellipse Width="8" Height="8" Fill="{StaticResource MissingBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding FailedText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <Button.Flyout>
+                        <Flyout Placement="BottomEdgeAlignedRight">
+                            <StackPanel Width="440" Spacing="8">
+                                <TextBlock Text="Couldn't be read" FontWeight="SemiBold" />
+                                <TextBlock Text="These were skipped, so their MIDI isn't in the list. Trying again reads only these (and anything new). If one keeps failing, it may be open in your DAW or saved by a version the reader doesn't know yet."
+                                           TextWrapping="Wrap" Classes="small" TextTrimming="None" />
+                                <ScrollViewer MaxHeight="300">
+                                    <ItemsControl ItemsSource="{Binding Failures}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="core:MidiFailure">
+                                                <StackPanel Margin="0,4" ToolTip.Tip="{Binding Path}">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12.5" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Why}" Foreground="{StaticResource MutedBrush}" FontSize="12" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                                <Button Content="Try the failed ones again" Classes="accent" Command="{Binding RetryFailedCommand}"
+                                        IsEnabled="{Binding !IsIndexing}" HorizontalAlignment="Left" />
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
                 <Button Content="Read MIDI again" Command="{Binding ReindexCommand}" IsVisible="{Binding !IsIndexing}"
                         ToolTip.Tip="Look for new and changed projects and MIDI files. Only those are read." />
                 <Button Content="MIDI folders" Classes="accent"
@@ -62,6 +93,11 @@
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
                                 <Button Content="Add a MIDI folder…" Command="{Binding AddFolderCommand}" HorizontalAlignment="Left" />
+                                <Border Height="1" Background="{StaticResource StrokeBrush}" Margin="0,6" />
+                                <TextBlock Text="Your projects" FontWeight="SemiBold" />
+                                <CheckBox Content="Include older saves of each song" IsChecked="{Binding IncludeOlderSaves}" />
+                                <TextBlock Text="Off: only the newest save of each song is read (Song_36 rather than Song_2 … Song_35), the same songs Projects shows with &quot;One row per song&quot;. Turn it on to read every save too."
+                                           TextWrapping="Wrap" Classes="small" TextTrimming="None" />
                             </StackPanel>
                         </Flyout>
                     </Button.Flyout>

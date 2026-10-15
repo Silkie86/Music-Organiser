@@ -5,30 +5,42 @@ using MusicOrganiser.Core.Parsers;
 namespace MusicOrganiser.Core.Midi;
 
 /// <summary>
-/// Fills the MIDI browser's index: every pattern or clip in the projects the library knows, and every .mid file in your
-/// MIDI library folders, read where it is (nothing is moved, copied or changed). Only new and changed files are read.
-/// It runs on a couple of lowest-priority threads, so the app and your DAW always come first.
+/// Fills the MIDI browser's index: every pattern or clip in the newest save of each song the library knows (or every
+/// save, with <see cref="OlderSavesKey"/>), and every .mid file in your MIDI library folders, read where it is (nothing
+/// is moved, copied or changed). Only new and changed files are read, and files that failed are only tried again when
+/// asked. It runs on a couple of lowest-priority threads in the app's shared background slots, so the app and your DAW
+/// always come first.
 /// </summary>
 public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
 {
     /// <summary>The MIDI library folders, a list in the library's settings.</summary>
     public const string FoldersKey = "midi_folders";
 
+    /// <summary>
+    /// "1": read every save of a song, not just its newest. Off by default: a song saved 36 times is mostly the same MIDI
+    /// 36 times (Solomon, 2026-10-15: "if there is a long list of projects that are just different versions just do the
+    /// midi extraction for those").
+    /// </summary>
+    public const string OlderSavesKey = "midi_older_saves";
+
     /// <summary>Raised when the analysis changes, so every file is read again once.</summary>
-    public const int Version = 1;
+    public const int Version = 2;   // 2: empty bars trimmed and long gaps split (2026-10-15)
 
     /// <summary>At most this many files are read at once: a quarter of the cores, and never more than 3.</summary>
     public static int Workers => Math.Clamp(Environment.ProcessorCount / 4, 1, 3);
 
     public sealed record Result(int Read, int Failed, int Forgotten, int Phrases);
 
-    public Result Run(IProgress<ScanProgress>? progress = null, CancellationToken ct = default)
+    /// <param name="retryFailed">Also read again the files that failed last time, though they haven't changed.</param>
+    public Result Run(IProgress<ScanProgress>? progress = null, CancellationToken ct = default, bool retryFailed = false)
     {
         progress?.Report(new("Finding MIDI", 0, 0, ""));
         var wanted = new Dictionary<string, MidiSource>(StringComparer.OrdinalIgnoreCase);
-        foreach (var p in library.Projects())
-            if (!p.FileMissing && p.Error is null && Readers.For(p.Path) is not null)
-                wanted[p.Path] = new MidiSource(p.Path, MidiSource.Project, p.Daw, p.Mtime, p.Size, p.Tempo);
+        var readable = library.Projects().Where(p => !p.FileMissing && p.Error is null && Readers.For(p.Path) is not null).ToList();
+        // The same song grouping as the Projects page's "One row per song", so its newest save is the one read.
+        var projects = library.GetSetting(OlderSavesKey) == "1" ? readable : SongVersions.Group(readable).Select(g => g.Latest);
+        foreach (var p in projects)
+            wanted[p.Path] = new MidiSource(p.Path, MidiSource.Project, p.Daw, p.Mtime, p.Size, p.Tempo);
         var folders = library.GetList(FoldersKey).Where(Directory.Exists).ToList();
         foreach (var f in Parallelism.FindFiles(folders, MidiFileReader.IsMidiPath, (name, _) => name.StartsWith('.'), ct: ct))
         {
@@ -41,10 +53,12 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         }
 
         var known = index.Sources();
+        var failedBefore = retryFailed ? index.Failures().Select(f => f.Path).ToHashSet(StringComparer.OrdinalIgnoreCase) : [];
         var forget = known.Keys.Where(k => !wanted.ContainsKey(k)).ToList();
         if (forget.Count > 0) index.Forget(forget);
         var todo = new ConcurrentQueue<MidiSource>(wanted.Values
-            .Where(s => !known.TryGetValue(s.Path, out var k) || k.Mtime != s.Mtime || k.Size != s.Size || k.Version != Version)
+            .Where(s => !known.TryGetValue(s.Path, out var k) || k.Mtime != s.Mtime || k.Size != s.Size || k.Version != Version ||
+                        failedBefore.Contains(s.Path))
             .OrderByDescending(s => s.Mtime));   // newest first: what you made lately shows up first
         var total = todo.Count;
         if (total == 0) return new(0, 0, forget.Count, 0);
@@ -59,14 +73,16 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                 {
                     try
                     {
-                        var found = source.Kind == MidiSource.File ? FromFile(source.Path, folders) : FromProject(source.Path);
+                        // In one of the app's shared background slots, so a scan or Deep listen running too still leaves cores free.
+                        var found = Parallelism.Background(() => source.Kind == MidiSource.File ? FromFile(source.Path, folders) : FromProject(source.Path));
                         results.Add((source, Version, found, null), ct);
                     }
                     catch (OperationCanceledException) { break; }
                     catch (Exception e)   // one unreadable file never stops the rest
                     {
                         Interlocked.Increment(ref failed);
-                        try { results.Add((source, Version, [], $"{e.GetType().Name}: {e.Message}"), ct); }
+                        AppLog.Info("MIDI", $"Couldn't read {source.Path}: {e}");
+                        try { results.Add((source, Version, [], Why(e)), ct); }
                         catch (OperationCanceledException) { break; }
                     }
                 }
@@ -113,6 +129,17 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         progress?.Report(new("Done", total, total, ""));
         return new(read, failed, forget.Count, phrases);
     }
+
+    /// <summary>Why a file couldn't be read, in a few plain words, for the list of failed ones.</summary>
+    public static string Why(Exception e) => e switch
+    {
+        UnauthorizedAccessException => "Windows didn't allow reading it",
+        FileNotFoundException or DirectoryNotFoundException => "It isn't there any more",
+        EndOfStreamException or InvalidDataException or FormatException or ArgumentOutOfRangeException or IndexOutOfRangeException
+            => $"It looks cut short or damaged, or saved in a way the reader doesn't know yet ({e.GetType().Name})",
+        IOException => $"It couldn't be opened, maybe because another program had it open ({e.Message})",
+        _ => $"{e.GetType().Name}: {e.Message}",
+    };
 
     /// <summary>Each pattern (FL Studio) or clip (Bitwig, Studio One) as one phrase per channel or track with notes.</summary>
     public static IReadOnlyList<IndexedPhrase> FromProject(string path)
