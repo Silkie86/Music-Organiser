@@ -1341,6 +1341,44 @@ public class ViewModelTests : IDisposable
         Assert.Equal(Core.Midi.MidiRoles.Melody, Assert.Single(midi.Index.All()).YourRole);
     }
 
+    [Fact]
+    public async Task A_songs_midi_tab_lists_parts_that_fit_it_already_moved_and_not_its_own()
+    {
+        const int bar = 4 * 96;
+        int[][] cMinor = [[60, 63, 67], [56, 60, 63], [51, 55, 58], [58, 62, 65]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Moody", Ppq = 96 };
+        chords.Track("Piano").AddRange(cMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Moody Cm.mid"), Core.Export.MidiWriter.Write(chords));
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        var project = MidiBrowserTests.FlProjectWithChords(songs);   // Am F C G on Serum
+        _db.Upsert(Core.Library.Scanner.Analyse(project));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var tab = new SongMidiViewModel(main.Midi, main, project, "Chords Song");
+        await tab.LoadAsync();
+
+        var row = Assert.Single(tab.Rows);   // the song's own chords are left out
+        Assert.Equal("Moody Cm", row.Title);
+        Assert.Equal("down 3 semitones", row.MoveText);
+        Assert.Equal(1, tab.GoodCount);
+        Assert.Equal("1 good fit", tab.CountText);
+        Assert.Contains("Am", tab.Status);
+
+        tab.Kind = SongMidiViewModel.Kinds.First(k => k.Role == Core.Midi.MidiRoles.Melody);
+        await Task.Yield();
+        Assert.Empty(tab.Rows);
+
+        // The same list on the MIDI page, fitted to this song.
+        await tab.OpenInMidiPageCommand.ExecuteAsync(null);
+        Assert.Same(main.Midi, main.SelectedNav.Page);
+        Assert.Equal("Chords Song", main.Midi.Fit!.Name);
+    }
+
     sealed class HeadlessUi : IPlatformUi
     {
         // Sweep previews and the Sounds list are worked out straight away here, so a test can check them at once.

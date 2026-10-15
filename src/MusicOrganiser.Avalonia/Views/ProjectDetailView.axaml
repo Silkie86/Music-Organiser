@@ -646,6 +646,11 @@
                     </DockPanel>
             </TabItem>
 
+            <!-- MIDI from your other projects and MIDI folders that fits this song's harmony, already in its key. -->
+            <TabItem Header="MIDI that fits">
+                <ContentControl Margin="12,14,12,12" Content="{Binding SongMidi}" />
+            </TabItem>
+
             <TabItem Header="Details">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="12,14,12,20">

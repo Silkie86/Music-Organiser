@@ -115,6 +115,7 @@ public sealed partial class MainViewModel : ObservableObject
             var (read, gone) = await Task.Run(() => _scanner.Update(changes.Files));
             if (read + gone == 0) return;
             await RefreshAllAsync();
+            _ = Midi.AfterScanAsync();   // a saved song's MIDI is read again too
             var name = Path.GetFileNameWithoutExtension(changes.Files.First());
             Activities.Done(read + gone == 1 ? $"Updated {name}" : $"Updated {read + gone} projects",
                             gone == 0 ? "Saved in their folders, so the app read them again"

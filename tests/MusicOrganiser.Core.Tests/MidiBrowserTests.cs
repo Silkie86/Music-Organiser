@@ -343,7 +343,7 @@ public class MidiBrowserTests
         Assert.Equal(1, indexer.Run().Forgotten);
     }
 
-    static string FlProjectWithChords(string dir)
+    internal static string FlProjectWithChords(string dir)
     {
         var notes = AMinor.SelectMany((c, bar) => c.Select(k => Fixtures.Note((uint)(bar * Bar), 0, Bar, (ushort)k, 100))).SelectMany(b => b).ToArray();
         var b = new Fixtures.FlpBuilder()

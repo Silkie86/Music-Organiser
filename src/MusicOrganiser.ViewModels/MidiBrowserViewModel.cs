@@ -291,22 +291,33 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// <summary>Ranks every part by how well it fits this project's harmony (from the Projects page too).</summary>
     public async Task FitToProjectAsync(string path, string name)
     {
-        if (Readers.For(path) is not { } reader) return;
         Message = $"Listening to the harmony of {name}…";
+        var (target, why) = await HarmonyOfAsync(path, name);
+        if (target is null) Message = why;
+        else FitToHarmony(target, leave: path);
+    }
+
+    /// <summary>A project's harmony (its pitched channels' notes and chords), or why there isn't one.</summary>
+    public static async Task<(HarmonyTarget? Target, string Why)> HarmonyOfAsync(string path, string name)
+    {
+        if (Readers.For(path) is not { } reader) return (null, $"The app can't read the notes of {name} yet.");
         try
         {
             var target = await UiWork.Run(() => HarmonyTarget.FromChannels(name, reader.ExtractChannels(path)));
-            if (target is null)
-            {
-                Message = $"{name} has too few pitched notes to fit MIDI to.";
-                return;
-            }
-            FitToHarmony(target, leave: path);
+            return (target, target is null ? $"{name} has too few pitched notes to fit MIDI to." : "");
         }
         catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
         {
-            Message = $"Couldn't read {name}: {e.Message}";
+            return (null, $"Couldn't read {name}: {e.Message}");
         }
+    }
+
+    /// <summary>Every part, read from the index the first time it's wanted (by this page or a song's MIDI tab).</summary>
+    public async Task<MidiCatalogue?> CatalogueAsync()
+    {
+        if (_catalogue is null && !_loading) Opened();
+        while (_loading && _catalogue is null) await Task.Delay(50);
+        return _catalogue;
     }
 
     /// <summary>"What goes with this?": parts that fit the selected part's harmony.</summary>
