@@ -291,6 +291,20 @@
         <Style Selector="ListBoxItem:pointerover Path.grip">
             <Setter Property="Opacity" Value="1" />
         </Style>
+        <!-- A long list that scrolls by itself and builds only the rows in view, so a project with thousands of
+             samples opens at once. Give it the space left in a DockPanel or Grid row, not a StackPanel. -->
+        <Style Selector="ItemsControl.longList">
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                        <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}" Margin="{TemplateBinding Padding}" />
+                    </ScrollViewer>
+                </ControlTemplate>
+            </Setter>
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate>
+            </Setter>
+        </Style>
         <!-- Chips: small round filters under a search box. A ListBox.chips is a pick-one row; ToggleButton.chip is on/off. -->
         <Style Selector="ListBox.chips">
             <Setter Property="Background" Value="Transparent" />

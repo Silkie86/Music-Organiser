@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
@@ -51,6 +52,11 @@ public sealed partial class LibraryDb : IDisposable
 
     readonly SqliteConnection _conn;
     readonly object _lock = new();
+    // Reads get connections of their own (the database is in WAL mode, so they never wait for a write): a page reading
+    // the library on the window's thread no longer stalls behind a scan's long write or a 357,000-row read.
+    readonly ConcurrentBag<SqliteConnection> _readers = [];
+    string? _readString;
+    volatile bool _disposed;
 
     public string FilePath { get; }
 
@@ -63,6 +69,7 @@ public sealed partial class LibraryDb : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         _conn = new SqliteConnection($"Data Source={path}");
         _conn.Open();
+        _readString = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString();
         Exec(Schema);
         Exec(PluginScanSchema);
         AddColumn("projects", "detected_key", "TEXT");
@@ -83,7 +90,12 @@ public sealed partial class LibraryDb : IDisposable
     // first rather than having the connection closed under it.
     public void Dispose()
     {
-        lock (_lock) _conn.Dispose();
+        lock (_lock)
+        {
+            _disposed = true;
+            _conn.Dispose();
+            while (_readers.TryTake(out var r)) r.Dispose();
+        }
     }
 
     // ---- plumbing --------------------------------------------------------------
@@ -97,9 +109,11 @@ public sealed partial class LibraryDb : IDisposable
         }
     }
 
-    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args)
+    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args) => Cmd(_conn, sql, args);
+
+    static SqliteCommand Cmd(SqliteConnection conn, string sql, params (string Name, object? Value)[] args)
     {
-        var cmd = _conn.CreateCommand();
+        var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         foreach (var (n, v) in args) cmd.Parameters.AddWithValue(n, v ?? DBNull.Value);
         return cmd;
@@ -107,14 +121,34 @@ public sealed partial class LibraryDb : IDisposable
 
     List<T> Query<T>(string sql, Func<SqliteDataReader, T> map, params (string, object?)[] args)
     {
-        lock (_lock)
+        // Inside a write on this thread: its own connection, which sees the rows it hasn't committed yet.
+        if (Monitor.IsEntered(_lock) || _readString is null)
+            lock (_lock) return Read(_conn, sql, map, args);
+        var reader = Reader();
+        try { return Read(reader, sql, map, args); }
+        finally
         {
-            using var cmd = Cmd(sql, args);
-            using var r = cmd.ExecuteReader();
-            var list = new List<T>();
-            while (r.Read()) list.Add(map(r));
-            return list;
+            if (_disposed) reader.Dispose();
+            else _readers.Add(reader);
         }
+    }
+
+    static List<T> Read<T>(SqliteConnection conn, string sql, Func<SqliteDataReader, T> map, (string, object?)[] args)
+    {
+        using var cmd = Cmd(conn, sql, args);
+        using var r = cmd.ExecuteReader();
+        var list = new List<T>();
+        while (r.Read()) list.Add(map(r));
+        return list;
+    }
+
+    SqliteConnection Reader()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_readers.TryTake(out var reader)) return reader;
+        reader = new SqliteConnection(_readString);
+        reader.Open();
+        return reader;
     }
 
     static string Str(SqliteDataReader r, string col) => r[col] is string s ? s : "";
@@ -510,9 +544,25 @@ public sealed partial class LibraryDb : IDisposable
         };
     }
 
-    public void SaveOrganisation(ProjectSummary p) => Exec("""
-        UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
-        """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", p.Id));
+    public void SaveOrganisation(ProjectSummary p) => SaveOrganisation(p, []);
+
+    /// <summary>Your fields for a song: written to its newest save and to each of its other saves, so they stay the song's.</summary>
+    public void SaveOrganisation(ProjectSummary p, IEnumerable<long> otherSaves)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var id in otherSaves.Prepend(p.Id).Distinct())
+            {
+                using var cmd = Cmd("""
+                    UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
+                    """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", id));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
 
     public void SetTags(long id, IEnumerable<string> tags)
     {

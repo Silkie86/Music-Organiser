@@ -45,6 +45,36 @@ public class ViewModelTests : IDisposable
         new(_db, _sounds, watch, pluginScanner, Path.Combine(_root, "data"));
 
     [Fact]
+    public void A_new_save_keeps_the_songs_rating_and_clearing_it_sticks()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        ProjectItem Song() => Main().Projects.Items.Single(i => i.Name == "Didums");
+        Save("Didums_1", 1);
+        var first = Song();
+        first.Rating = 4;
+        first.Status = "Mixing";
+        first.Favourite = true;
+        first.Notes = "needs vocals";
+
+        Save("Didums_2", 2);
+        var song = Song();
+        Assert.Equal("Didums_2", song.FileName);
+        Assert.Equal((4, "Mixing", true, "needs vocals"), (song.Rating, song.Status, song.Favourite, song.Notes));
+
+        song.Rating = 0;
+        song.Favourite = false;
+        song = Song();
+        Assert.Equal((0, false), (song.Rating, song.Favourite));
+        Assert.All(_db.Projects(), p => Assert.Equal(0, p.Rating));
+    }
+
+    [Fact]
     public void A_song_sits_under_the_year_it_was_first_made_and_shows_its_rework()
     {
         ProjectSummary Save(string name, DateTime saved, int notes, string[] plugins) => new()

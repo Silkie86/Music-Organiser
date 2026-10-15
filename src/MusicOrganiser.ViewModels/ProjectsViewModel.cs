@@ -79,7 +79,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     public async Task ReloadAsync(string? select)
     {
         var group = GroupSaves;
-        Show(await Task.Run(() => Load(group)), select);
+        Show(await UiWork.Run(() => Load(group)), select);
     }
 
     /// <summary>The rows, read from the database and grouped into songs (on any thread).</summary>
