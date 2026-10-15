@@ -1,0 +1,110 @@
+using Avalonia.Logging;
+using MusicOrganiser.Avalonia.Diagnostics;
+using Xunit;
+
+namespace MusicOrganiser.Avalonia.Tests;
+
+/// <summary>The run diary (logs\) and F12's notes for Claude (notes\), which Claude reads from Solomon's computer.</summary>
+public sealed class DiagnosticsTests : IDisposable
+{
+    readonly string _dir = Directory.CreateTempSubdirectory("mo-diag-").FullName;
+
+    public void Dispose() => Directory.Delete(_dir, recursive: true);
+
+    [Fact]
+    public void A_log_starts_with_the_build_and_holds_what_happened()
+    {
+        string path;
+        using (var log = new SessionLog(_dir, new DateTime(2026, 10, 15, 19, 30, 5)))
+        {
+            log.Info("Page", "Sounds");
+            log.Error("App", "Something broke", new InvalidOperationException("bad state"));
+            path = log.Path;
+        }
+
+        Assert.Equal("session-2026-10-15_19-30-05.log", Path.GetFileName(path));
+        var text = File.ReadAllText(path);
+        Assert.Contains("Music Organiser started 2026-10-15 19:30:05", text);
+        Assert.Contains("Version:", text);
+        Assert.Contains("[Page] Sounds", text);
+        Assert.Contains("Something broke: System.InvalidOperationException: bad state", text);
+        Assert.Contains("[App] Closed", text);
+    }
+
+    [Fact]
+    public void A_message_that_keeps_coming_is_counted_not_repeated()
+    {
+        string path;
+        using (var log = new SessionLog(_dir))
+        {
+            for (var i = 0; i < 100; i++) log.Warning("Binding", "Could not find Title on Row   ");
+            path = log.Path;
+        }
+
+        var lines = File.ReadAllLines(path).Where(l => l.Contains("[Binding]")).ToList();
+        Assert.Equal(5, lines.Count);   // three times, then at 10 and 100
+        Assert.EndsWith("Could not find Title on Row", lines[0]);   // without Avalonia's padding
+        Assert.Contains("(said 10 times now)", lines[3]);
+        Assert.Contains("(said 100 times now)", lines[4]);
+    }
+
+    [Fact]
+    public void Only_the_newest_runs_are_kept()
+    {
+        for (var i = 0; i < SessionLog.Kept + 5; i++)
+            new SessionLog(_dir, new DateTime(2026, 1, 1).AddMinutes(i)).Dispose();
+
+        var kept = Directory.GetFiles(_dir, "session-*.log").Select(Path.GetFileName).Order(StringComparer.Ordinal).ToList();
+        Assert.Equal(SessionLog.Kept, kept.Count);
+        Assert.Equal("session-2026-01-01_00-05-00.log", kept[0]);
+    }
+
+    [Fact]
+    public void Two_runs_in_the_same_second_get_a_file_each()
+    {
+        var now = new DateTime(2026, 10, 15, 8, 0, 0);
+        using var a = new SessionLog(_dir, now);
+        using var b = new SessionLog(_dir, now);
+        Assert.NotEqual(a.Path, b.Path);
+    }
+
+    [Fact]
+    public void Avalonia_warnings_go_into_the_log_with_their_values()
+    {
+        using var log = new SessionLog(_dir);
+        var sink = new SessionLog.Sink(log, next: null);
+
+        Assert.True(sink.IsEnabled(LogEventLevel.Warning, "Binding"));
+        Assert.False(sink.IsEnabled(LogEventLevel.Debug, "Layout"));
+        sink.Log(LogEventLevel.Warning, "Binding", this, "Could not find {Property} on {Type}", "Title", "Row");
+        sink.Log(LogEventLevel.Information, "Layout", null, "Measured {Count}", 3);
+
+        var recent = log.Recent();
+        Assert.Contains(recent, l => l.EndsWith("Warning [Binding] Could not find Title on Row (in DiagnosticsTests)"));
+        Assert.DoesNotContain(recent, l => l.Contains("Measured"));
+    }
+
+    [Fact]
+    public void A_note_is_saved_with_its_picture_and_page()
+    {
+        var path = NoteForClaude.Save(_dir, "  The tiles look squashed  ", "Sounds", [1, 2, 3], new DateTime(2026, 10, 15, 20, 1, 2));
+
+        Assert.Equal(Path.Combine(_dir, "note-2026-10-15_20-01-02.md"), path);
+        var text = File.ReadAllText(path);
+        Assert.Contains("The tiles look squashed\n", text.ReplaceLineEndings("\n"));
+        Assert.Contains("- Page: Sounds", text);
+        Assert.Contains("- Picture: note-2026-10-15_20-01-02.png", text);
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(Path.Combine(_dir, "note-2026-10-15_20-01-02.png")));
+    }
+
+    [Fact]
+    public void A_note_without_words_or_picture_still_says_so()
+    {
+        var text = File.ReadAllText(NoteForClaude.Save(_dir, "", "", null, new DateTime(2026, 10, 15)));
+
+        Assert.Contains("(no words)", text);
+        Assert.Contains("- Page: ?", text);
+        Assert.DoesNotContain("Picture:", text);
+        Assert.Empty(Directory.GetFiles(_dir, "*.png"));
+    }
+}

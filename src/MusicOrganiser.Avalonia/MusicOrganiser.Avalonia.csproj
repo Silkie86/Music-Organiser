@@ -12,6 +12,8 @@
     <RootNamespace>MusicOrganiser.Avalonia</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- Hot reload (below) is for Debug builds only; this keeps its XAML reader out of Release builds too. -->
+    <HotAvaloniaIncludeXamlLoader Condition="'$(Configuration)' != 'Debug'">false</HotAvaloniaIncludeXamlLoader>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,6 +29,11 @@
          audio codecs, as in the WPF app. Unused on a Mac or Linux. -->
     <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
     <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
+    <!-- Hot reload for the screens (.axaml): in a Debug build, a saved change to a screen shows in the running
+         app within a second, from Visual Studio, Rider, `dotnet watch` or tools/run-latest. Release builds
+         don't include it. Alt+F5 in the app reloads every screen. C# changes go through .NET's own Hot Reload. -->
+    <PackageReference Include="Avalonia.Markup.Xaml.Loader" Version="12.1.4" PrivateAssets="All" Publish="True" />
+    <PackageReference Include="HotAvalonia" Version="3.1.5" PrivateAssets="All" Publish="True" />
   </ItemGroup>
 
   <ItemGroup>

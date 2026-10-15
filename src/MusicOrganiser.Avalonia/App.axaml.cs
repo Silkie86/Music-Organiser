@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using MusicOrganiser.Avalonia.Diagnostics;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Sounds;
 using MusicOrganiser.ViewModels;
@@ -33,6 +34,18 @@ public partial class App : Application
             var window = new MainWindow { DataContext = main };
             desktop.MainWindow = window;
             Views.Appearance.Follow(main.Settings.Appearance, window.Scaler);
+            // F12: a note to Claude about what's on screen; and each page opened goes in the log, so a note or an
+            // error there says where Solomon was.
+            window.KeyDown += async (_, e) =>
+            {
+                if (!NoteForClaude.Gesture.Matches(e)) return;
+                e.Handled = true;
+                await NoteForClaude.AskAsync(window, main);
+            };
+            main.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(MainViewModel.SelectedNav)) SessionLog.Current?.Info("Page", main.SelectedNav?.Title ?? "");
+            };
             desktop.Exit += (_, _) =>
             {
                 main.Shutdown();
@@ -53,6 +66,7 @@ public partial class App : Application
     async void OnUnhandled(object? sender, DispatcherUnhandledExceptionEventArgs e)
     {
         e.Handled = true;
+        SessionLog.Current?.Error("App", "Error shown to the user", e.Exception);
         if (_errors.Contains(e.Exception.Message)) return;
         _errors.Add(e.Exception.Message);
         if (_errors.Count > 1) return;   // already showing one; this one waits its turn
