@@ -1210,6 +1210,54 @@ public class ViewModelTests : IDisposable
             if (waited.Elapsed > TimeSpan.FromSeconds(20)) Assert.Fail("Timed out.");
     }
 
+    [Fact]
+    public async Task The_midi_page_finds_parts_and_fits_them_to_a_project_already_moved()
+    {
+        // A MIDI pack with the song's progression in C minor, and a bassline; and a project in A minor.
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        int[][] cMinor = [[60, 63, 67], [56, 60, 63], [51, 55, 58], [58, 62, 65]];
+        var pack = Path.Combine(_root, "Packs", "Chords");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Moody", Ppq = 96 };
+        chords.Track("Piano").AddRange(cMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Moody Cm.mid"), Core.Export.MidiWriter.Write(chords));
+        var song = new Core.Parsers.MidiChannel("Keys", "", 96,
+            aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))).ToList(), Plugin: "Serum");
+
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [Path.Combine(_root, "Packs")]);
+        _db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "exports"));
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        Assert.Contains(midi.Results, r => r.Title == "Moody Cm");
+
+        midi.SelectedRole = midi.RoleChips.First(c => c.Role == Core.Midi.MidiRoles.Chords);
+        midi.Search = "moody";
+        await midi.RefreshAsync();
+        var row = Assert.Single(midi.Results);
+        var key = row.KeyText;   // C minor or its relative, E flat major: the same notes
+        Assert.Contains(key, new[] { "Cm", "D#" });
+
+        // Fitted to the A minor song: moved down 3, and shown, played and dragged out that way.
+        midi.FitToHarmony(Core.Midi.HarmonyTarget.FromChannels("Fit me", [song])!);
+        await midi.RefreshAsync();
+        row = Assert.Single(midi.Results);
+        Assert.Equal("down 3 semitones", row.MoveText);
+        Assert.Equal(key == "Cm" ? "Cm → Am" : "D# → C", row.KeyText);
+        Assert.Equal(51 - 3, row.Channel.Notes.Min(n => n.Key));
+        var drag = midi.MakeDrag([row])!;
+        var written = Core.Midi.MidiFileReader.Read(drag.Files.Single());
+        Assert.Equal(51 - 3, written.Single().Notes.Min(n => n.Key));
+        Assert.EndsWith("(-3).mid", drag.Files.Single());
+        Assert.StartsWith(Path.Combine(_root, "exports"), drag.Files.Single());
+
+        // The pack's file is untouched, and saying what a part is sticks.
+        midi.Selected = row;
+        await midi.SetRoleCommand.ExecuteAsync(Core.Midi.MidiRoles.Melody);
+        Assert.Equal(Core.Midi.MidiRoles.Melody, Assert.Single(midi.Index.All()).YourRole);
+    }
+
     sealed class HeadlessUi : IPlatformUi
     {
         // Sweep previews and the Sounds list are worked out straight away here, so a test can check them at once.

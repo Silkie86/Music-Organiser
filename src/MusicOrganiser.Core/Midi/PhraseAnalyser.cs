@@ -219,28 +219,31 @@ public static partial class PhraseAnalyser
 
     /// <summary>Measurements of a part's notes that say what kind of part it is.</summary>
     sealed record Shape(int Notes, int Onsets, double ChordShare, double Voices, double PerBeat, double MedianBeats,
-                        int MedianKey, int Distinct, double Evenness, double RepeatShare, double[] Intervals)
+                        int MedianKey, int Distinct, double Evenness, double RepeatShare, double[] Intervals, double NotesPerBar)
     {
         public static Shape Of(IReadOnlyList<NoteEvent> notes)
         {
-            if (notes.Count == 0) return new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, new double[13]);
+            if (notes.Count == 0) return new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, new double[13], 0);
             // Notes starting within a 64th of each other are struck together.
             var onsets = new List<List<NoteEvent>>();
             foreach (var n in notes.OrderBy(n => n.Start))
                 if (onsets.Count > 0 && n.Start - onsets[^1][0].Start <= Ppq / 16) onsets[^1].Add(n);
                 else onsets.Add([n]);
-            var chordShare = onsets.Count(o => o.Select(n => n.Key).Distinct().Count() >= 3) / (double)onsets.Count;
+            // Three or more notes at once, not all the same note in octaves (a doubled lead is still a melody).
+            var chordShare = onsets.Count(o => o.Select(n => n.Key).Distinct().Count() >= 3 &&
+                                               o.Select(n => n.Key % 12).Distinct().Count() >= 2) / (double)onsets.Count;
 
-            // How many notes sound at once, on average, while anything sounds.
+            // How many different notes sound at once, on average, while anything sounds (octave doublings count once).
+            var single = notes.DistinctBy(n => (n.Start, n.Key % 12)).OrderBy(n => n.Start).ToList();
             long covered = 0, coverEnd = long.MinValue;
-            foreach (var n in notes.OrderBy(n => n.Start))
+            foreach (var n in single)
             {
                 var end = n.Start + n.Length;
                 if (end <= coverEnd) continue;
                 covered += end - Math.Max(n.Start, coverEnd);
                 coverEnd = end;
             }
-            var voices = covered <= 0 ? 1 : notes.Sum(n => (double)n.Length) / covered;
+            var voices = covered <= 0 ? 1 : single.Sum(n => (double)n.Length) / covered;
 
             var beats = Math.Max(1, BarsOf(notes) * 4);
             var lengths = notes.Select(n => n.Length / (double)Ppq).Order().ToList();
@@ -264,8 +267,11 @@ public static partial class PhraseAnalyser
             var repeatShare = steps == 0 ? 1 : intervals[0] / steps;
             if (steps > 0) for (var i = 0; i < 13; i++) intervals[i] /= steps;
 
+            // How many different notes each bar uses: an arp keeps to its chord, a tune wanders through the scale.
+            var perBar = notes.GroupBy(n => n.Start / Bar).Average(g => g.Select(n => n.Key % 12).Distinct().Count());
+
             return new(notes.Count, onsets.Count, chordShare, voices, onsets.Count / (double)beats, lengths[lengths.Count / 2],
-                       keys[keys.Count / 2], keys.Distinct().Count(), evenness, repeatShare, intervals);
+                       keys[keys.Count / 2], keys.Distinct().Count(), evenness, repeatShare, intervals, perBar);
         }
     }
 
@@ -309,15 +315,15 @@ public static partial class PhraseAnalyser
             return s.MedianKey <= 52 ? (MidiRoles.Bass, "One low note, repeated") : (MidiRoles.Other, "One note, repeated");
         if (s.MedianKey <= 50 && s.ChordShare < 0.2) return (MidiRoles.Bass, "Single notes, low down");
         if (s.Onsets >= 8 && s.ChordShare < 0.15 && s.PerBeat >= 1.5 && s.MedianBeats <= 0.5 && s.Evenness >= 0.6 &&
-            s.RepeatShare < 0.5 && s.Distinct >= 3)
-            return (MidiRoles.Arp, "Fast, evenly spaced single notes");
+            s.RepeatShare < 0.5 && s.Distinct >= 3 && s.NotesPerBar <= 4.5)
+            return (MidiRoles.Arp, "Fast, evenly spaced notes of one chord at a time");
         return (MidiRoles.Melody, "Single notes, one after another");
     }
 
     // ---- harmony ----
 
     /// <summary>
-    /// The chords, a half bar at a time, in order: the notes sounding for at least a quarter of each half bar. A chord
+    /// The chords, a half bar at a time, in order: the notes that sound for a good share of each half bar (short stabs count). A chord
     /// held for four bars is one chord, the same as one struck once, so only the harmony counts, not the rhythm.
     /// </summary>
     /// <param name="twoNoteChords">Count two notes as a chord too (power chords and thirds in a chord part).</param>
@@ -340,7 +346,7 @@ public static partial class PhraseAnalyser
             {
                 var n = sorted[i];
                 var overlap = Math.Min(n.Start + n.Length, w + window) - Math.Max(n.Start, w);
-                if (overlap < window / 4) continue;
+                if (overlap < window / 16) continue;   // a grace note or a flam, not part of the harmony
                 weights[n.Key % 12] += overlap;
                 lowest = Math.Min(lowest, n.Key);
             }

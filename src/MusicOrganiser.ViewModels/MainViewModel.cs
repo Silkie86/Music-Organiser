@@ -26,6 +26,8 @@ public sealed partial class MainViewModel : ObservableObject
     public PluginsViewModel Plugins { get; }
     public SamplesViewModel Samples { get; }
     public SoundsViewModel Sounds { get; }
+    /// <summary>The MIDI page: every MIDI part in your projects and MIDI libraries.</summary>
+    public MidiBrowserViewModel Midi { get; }
     public SettingsViewModel Settings { get; }
 
     /// <summary>Bitwig and FL Studio as they are now, through their links (the sidebar's "In your DAWs").</summary>
@@ -61,15 +63,18 @@ public sealed partial class MainViewModel : ObservableObject
         Samples = new SamplesViewModel(db, this);
         Settings = new SettingsViewModel(db, this, dataFolder);
         Sounds = new SoundsViewModel(db, sounds, this);
+        Midi = new MidiBrowserViewModel(db, this);
         Settings.Liked.Changed += Sounds.WeightsChanged;
         Nav =
         [
             new("Projects", "", Projects),
             new("Sound Lab", "\uE8D6", Sounds),
+            new("MIDI", "", Midi),
             new("Plugins", "", Plugins),
             new("Settings", "", Settings),
         ];
         _selectedNav = StartPage();
+        if (_selectedNav.Page == Midi) Midi.Opened();
         Projects.Reload();
 
         // First run: send people to Settings to add their project folders.
@@ -106,6 +111,7 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnSelectedNavChanged(NavItem value)
     {
         _db.SetSetting(LastPageKey, value.Title);
+        if (value.Page == Midi) Midi.Opened();
         // The MO Probes running now are followed only while Settings shows them.
         if (value.Page != Settings)
         {
@@ -172,6 +178,7 @@ public sealed partial class MainViewModel : ObservableObject
     public void Shutdown()
     {
         CancelScan();
+        Midi.Dispose();
         PluginScanner.StopAll();
     }
 
@@ -349,6 +356,8 @@ public sealed partial class MainViewModel : ObservableObject
             _scanCard.Finish("Library up to date",
                 added > 0 ? $"{added} new song{(added == 1 ? "" : "s")} · {Projects.Items.Count} in all" : $"{Projects.Items.Count} songs, nothing new");
         }
+        // The MIDI browser reads new and changed projects' MIDI on its own, at the lowest priority.
+        _ = Midi.AfterScanAsync();
         await RunQueuedScanAsync();
     }
 }
