@@ -32,8 +32,8 @@ public sealed partial class DuplicatesViewModel : ObservableObject
     /// <summary>While a step of the job doesn't know how long it'll take, its bar just shows activity.</summary>
     public bool StepUnknown => parent.IsBusy && parent.BusyPercent <= 0;
 
-    public const string AllKinds = "All", ExactOnly = "Exact copies", ConvertedOnly = "Converted", TrimmedOnly = "Trimmed", HiddenOnly = "Hidden";
-    public static IReadOnlyList<string> KindChoices { get; } = [AllKinds, ExactOnly, ConvertedOnly, TrimmedOnly, HiddenOnly];
+    public const string AllKinds = "All", SameOnly = "Same sound", SimilarOnly = "Very similar", HiddenOnly = "Hidden";
+    public static IReadOnlyList<string> KindChoices { get; } = [AllKinds, SameOnly, SimilarOnly, HiddenOnly];
 
     [ObservableProperty] string _kind = AllKinds;
     [ObservableProperty] string _searchText = "";
@@ -79,7 +79,8 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         : _all.Count > 0 ? "Try another filter or search."
         : HasLooked ? "None of your sounds is a copy of another. New sounds are checked after each scan, or when you press Find duplicates."
         : "Finds copies of the same sound across your sample folders, even renamed, converted to another format or trimmed. "
-          + "Play each copy to compare, then tick groups to hide their extra copies from the app. Your files are never moved or deleted. "
+          + "Play each copy to compare, then tick groups to hide the copies that are the same sound from the app (very similar ones are only listed). "
+          + "Your files are never moved or deleted. "
           + "The first time it listens to every sound, which takes a while; after that only new ones.";
 
     IReadOnlyList<DuplicateGroup> _all = [];
@@ -88,8 +89,8 @@ public sealed partial class DuplicatesViewModel : ObservableObject
     readonly HashSet<long> _ticked = [];
     readonly Dictionary<long, long> _keep = [];
 
-    partial void OnKindChanged(string value) => Filter();
-    partial void OnSearchTextChanged(string value) => Filter();
+    partial void OnKindChanged(string value) => _ = Filter();
+    partial void OnSearchTextChanged(string value) => _ = Filter();
 
     /// <summary>Shows what was found last time, the first time the tab opens.</summary>
     public void EnsureLoaded()
@@ -105,14 +106,15 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         try
         {
             var org = parent.Org;
-            var (all, counts) = await Task.Run(() => (DuplicateFinder.Groups(org), org.Library.PrintCounts()));
+            var (all, counts, toCheck) = await Task.Run(() => (DuplicateFinder.Groups(org), org.Library.PrintCounts(), org.Library.SamenessToCheck().Count));
             _all = all;
             var keys = all.Select(g => g.Members[0].Sound.Id).ToHashSet();
             _ticked.IntersectWith(keys);
             foreach (var k in _keep.Keys.Where(k => !keys.Contains(k)).ToList()) _keep.Remove(k);
             HasLooked = counts.Total > 0 && counts.Printed >= counts.Total;
             Summarise(counts);
-            Filter();
+            if (toCheck > 0) Summary += $" Press Find duplicates to check whether {toCheck:N0} converted copies are the same sound or only very similar.";
+            await Filter();
         }
         catch (Exception e) { Summary = $"Couldn't read the duplicates: {e.Message}"; }
         finally { IsLoading = false; }
@@ -127,30 +129,36 @@ public sealed partial class DuplicatesViewModel : ObservableObject
             return;
         }
         var left = counts.Total - counts.Printed;
-        var copies = _all.Sum(g => g.Members.Count - 1);
+        var same = _all.Sum(g => g.SameCopies);
+        var similar = _all.Sum(g => g.Members.Count(m => !m.Keep && !m.Same));
         var hidden = _all.Sum(g => g.Members.Count(m => m.Sound.Hidden));
         Summary = _all.Count == 0
             ? $"No copies found among {counts.Printed:N0} sounds."
-            : $"{_all.Count:N0} sounds have copies: {copies:N0} extra files" + (hidden > 0 ? $", {hidden:N0} of them hidden." : ".");
+            : $"{_all.Count:N0} sounds have copies: {same:N0} the same sound, {similar:N0} only very similar"
+              + (hidden > 0 ? $", {hidden:N0} hidden." : ".");
         if (left > 0) Summary += $" {left:N0} sounds haven't been looked at yet.";
     }
 
-    void Filter()
+    int _filtering;
+
+    /// <summary>Rebuilds the list for the chips and search, off the UI thread (a big library can have thousands of groups).</summary>
+    async Task Filter()
     {
-        var words = SearchText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var shown = _all.Where(g => Kind switch
+        var run = ++_filtering;
+        var (all, kind, words) = (_all, Kind, SearchText.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        var shown = await Task.Run(() => all.Where(g => kind switch
             {
-                ExactOnly => g.Members.Skip(1).Any(m => m.Kind == CopyKind.Exact),
-                ConvertedOnly => g.Members.Skip(1).Any(m => m.Kind == CopyKind.Converted),
-                TrimmedOnly => g.Members.Skip(1).Any(m => m.Kind == CopyKind.Trimmed),
+                SameOnly => g.SameCopies > 0,
+                SimilarOnly => g.HasSimilar,
                 HiddenOnly => g.Members.Any(m => m.Sound.Hidden),
                 _ => true,
             })
             .Where(g => words.Length == 0 || g.Members.Any(m => words.All(w => m.Sound.Path.Contains(w, StringComparison.OrdinalIgnoreCase))))
             .Select(g => new DuplicateGroupItem(g, this))
-            .ToList();
+            .ToList());
+        if (run != _filtering) return;   // a newer filter is on its way
         Groups = shown;
-        ShownText = shown.Count == _all.Count ? "" : $"Showing {shown.Count:N0} of {_all.Count:N0}";
+        ShownText = shown.Count == all.Count ? "" : $"Showing {shown.Count:N0} of {all.Count:N0}";
         UpdateSelection();
     }
 
@@ -173,24 +181,32 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         UpdateSelection();
     }
 
-    /// <summary>The ticked groups' extra copies still showing: every file but the one to keep.</summary>
-    List<Sound> TickedExtras() => _all.Where(g => _ticked.Contains(g.Members[0].Sound.Id))
-        .SelectMany(g => { var keep = KeepOf(g); return g.Members.Where(m => m.Sound.Id != keep && !m.Sound.Hidden).Select(m => m.Sound); })
-        .ToList();
+    /// <summary>
+    /// The ticked groups' copies to hide: the ones still showing that are the same sound as the one to keep. Very
+    /// similar ones are never hidden, and if you keep a very similar one, nothing in its group is.
+    /// </summary>
+    List<Sound> TickedExtras() => _all.Where(g => _ticked.Contains(g.Members[0].Sound.Id)).SelectMany(SameExtras).ToList();
+
+    internal IEnumerable<Sound> SameExtras(DuplicateGroup g)
+    {
+        var keep = KeepOf(g);
+        if (!g.Members.Any(m => m.Sound.Id == keep && m.Same)) return [];
+        return g.Members.Where(m => m.Same && m.Sound.Id != keep && !m.Sound.Hidden).Select(m => m.Sound);
+    }
 
     void UpdateSelection()
     {
         var extras = TickedExtras();
         HasSelection = extras.Count > 0;
         SelectionText = _ticked.Count == 0
-            ? "Tick groups, or Select all, to hide their extra copies from the app together. Your files stay where they are."
-            : $"{_ticked.Count:N0} groups ticked: {extras.Count:N0} extra copies to hide.";
+            ? "Tick groups, or Select all, to hide the copies that are the same sound from the app together. Very similar ones stay. Your files stay where they are."
+            : $"{_ticked.Count:N0} groups ticked: {extras.Count:N0} copies that are the same sound to hide.";
     }
 
     [RelayCommand]
     void SelectAll()
     {
-        foreach (var g in Groups) { _ticked.Add(g.Key); g.Refresh(); }
+        foreach (var g in Groups.Where(g => g.CanTick)) { _ticked.Add(g.Key); g.Refresh(); }
         UpdateSelection();
     }
 
@@ -317,23 +333,36 @@ public sealed partial class DuplicateGroupItem : ObservableObject
         set { _owner.SetTicked(Key, value); OnPropertyChanged(); }
     }
 
-    internal void Refresh() => OnPropertyChanged(nameof(IsTicked));
+    internal void Refresh()
+    {
+        OnPropertyChanged(nameof(IsTicked));
+        OnPropertyChanged(nameof(CanTick));
+    }
+
+    /// <summary>Only groups with copies that are the same sound (and still showing) can be ticked for hiding.</summary>
+    public bool CanTick => _owner.SameExtras(Group).Any();
 
     internal void Keep(DuplicateMemberItem keep)
     {
         _owner.SetKeep(Group, keep.Sound.Id);
         foreach (var m in Members) m.IsKeep = m == keep;
+        if (!CanTick && IsTicked) IsTicked = false;
+        Refresh();
     }
 
     public string Detail
     {
         get
         {
-            var n = Group.Members.Count - 1;
+            var same = Group.SameCopies;
+            var similar = Group.Members.Count - 1 - same;
             var hidden = Group.Members.Count(m => m.Sound.Hidden);
-            var text = n == 1 ? "1 copy" : $"{n} copies";
-            if (hidden > 0) return $"{text} · {hidden} hidden";
-            return Group.SpareBytes > 0 ? $"{text} · {DuplicatesViewModel.Size(Group.SpareBytes)} in copies" : text;
+            var bits = new List<string>();
+            if (same > 0) bits.Add(same == 1 ? "1 the same sound" : $"{same} the same sound");
+            if (similar > 0) bits.Add($"{similar} very similar");
+            if (hidden > 0) bits.Add($"{hidden} hidden");
+            else if (Group.SpareBytes > 0) bits.Add($"{DuplicatesViewModel.Size(Group.SpareBytes)} in copies");
+            return string.Join(" · ", bits);
         }
     }
 }
@@ -347,20 +376,23 @@ public sealed partial class DuplicateMemberItem(DuplicateMember member, Duplicat
 
     /// <summary>The one this group keeps: the suggested one, unless you picked another.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(Badge), nameof(IsExact), nameof(IsConverted), nameof(IsTrimmed), nameof(CanKeep), nameof(Why))]
+    [NotifyPropertyChangedFor(nameof(Badge), nameof(IsExact), nameof(IsConverted), nameof(IsSimilar), nameof(CanKeep), nameof(Why))]
     bool _isKeep;
 
     /// <summary>"Keep this one" is offered on copies still showing.</summary>
     public bool CanKeep => !IsKeep && !IsHidden;
-    public bool IsExact => !IsKeep && !IsHidden && member.Kind == CopyKind.Exact;
-    public bool IsConverted => !IsKeep && !IsHidden && member.Kind == CopyKind.Converted;
-    public bool IsTrimmed => !IsKeep && !IsHidden && member.Kind == CopyKind.Trimmed;
+    /// <summary>The same sound as the suggested one to keep (so it can be hidden), not just very like it.</summary>
+    public bool IsSame => member.Same;
+    public bool IsExact => !IsKeep && !IsHidden && member.Same && member.Kind == CopyKind.Exact;
+    public bool IsConverted => !IsKeep && !IsHidden && member.Same && member.Kind != CopyKind.Exact;
+    public bool IsSimilar => !IsKeep && !IsHidden && !member.Same;
     public string Badge => IsKeep ? "Keep" : IsHidden ? "Hidden" : member.Kind switch
     {
         null => "Suggested",
-        CopyKind.Exact => "Exact copy",
-        CopyKind.Converted => "Converted",
-        _ => "Trimmed",
+        CopyKind.Exact when member.Same => "Exact copy",
+        _ when member.Same => "Same sound",
+        CopyKind.Trimmed => "Trimmed",
+        _ => "Very similar",
     };
     public string Name => System.IO.Path.GetFileName(member.Sound.Path);
     public string Folder => System.IO.Path.GetDirectoryName(member.Sound.Path) ?? "";

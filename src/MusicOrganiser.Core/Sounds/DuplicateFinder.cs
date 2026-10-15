@@ -6,17 +6,27 @@ using SoundFingerprinting.InMemory;
 
 namespace MusicOrganiser.Core.Sounds;
 
-/// <summary>One sound in a group of copies. <see cref="Kind"/> says how it's a copy of the one to keep (null for that one).</summary>
-public sealed record DuplicateMember(Sound Sound, long Size, bool Keep, CopyKind? Kind, string Why)
+/// <summary>
+/// One sound in a group of copies. <see cref="Kind"/> says how it's a copy of the one to keep (null for that one).
+/// <see cref="Same"/>: it's the same sound as the one to keep (an exact copy, or the same audio in another file),
+/// not just very like it; only these are offered for hiding.
+/// </summary>
+public sealed record DuplicateMember(Sound Sound, long Size, bool Keep, CopyKind? Kind, string Why, bool Same)
 {
     public string Format => System.IO.Path.GetExtension(Sound.Path).TrimStart('.').ToUpperInvariant();
 }
 
 /// <summary>
 /// Sounds that are copies of each other, the suggested one to keep first. <see cref="SpareBytes"/>: the space the
-/// exact and converted copies take (trimmed ones may be cut that way on purpose, so they don't count).
+/// copies that are the same sound take (very similar and trimmed ones may differ on purpose, so they don't count).
 /// </summary>
-public sealed record DuplicateGroup(IReadOnlyList<DuplicateMember> Members, CopyKind Kind, long SpareBytes);
+public sealed record DuplicateGroup(IReadOnlyList<DuplicateMember> Members, CopyKind Kind, long SpareBytes)
+{
+    /// <summary>How many of the copies are the same sound as the one to keep.</summary>
+    public int SameCopies => Members.Count(m => !m.Keep && m.Same);
+    /// <summary>Whether some copies are only very similar (or trimmed), not the same sound.</summary>
+    public bool HasSimilar => Members.Any(m => !m.Keep && !m.Same);
+}
 
 /// <summary>
 /// Finds sounds in your library that are copies of each other, even renamed, converted or trimmed. It never moves
@@ -35,6 +45,12 @@ public static class DuplicateFinder
     public const double SketchThreshold = 0.8;
     /// <summary>Waveforms at least this alike (a correlation, after lining up their starts) are the same sound.</summary>
     public const double WaveThreshold = 0.95;
+    /// <summary>
+    /// Converted copies are the same sound when their whole sounds are at most this far apart, in dB (see
+    /// <see cref="SoundPrint.SpectralDistance"/>); otherwise they're only very similar. An MP3 or similar
+    /// shifts the sound a little (up to about 1 dB at 128 kbit/s), so it gets <see cref="SameDbLossy"/>.
+    /// </summary>
+    public const double SameDb = 0.5, SameDbLossy = 1.2;
     /// <summary>SoundFingerprinting must find this share of the shorter sound in the longer one.</summary>
     public const double CoverThreshold = 0.7;
     /// <summary>Buckets up to this size are compared all against all; bigger ones only along their line.</summary>
@@ -55,6 +71,7 @@ public static class DuplicateFinder
             PrintAndFingerprint(org, todo, progress, ct);
         }
         CompareLikelyCopies(org, progress, ct);
+        CheckSameness(org, progress, ct);
         return todo.Count;
     }
 
@@ -247,6 +264,50 @@ public static class DuplicateFinder
         lib.MarkCompared();
     }
 
+    // ---- same sound, or only very similar ----------------------------------------------------------
+
+    /// <summary>Compares the whole sounds of converted copies, so the ones that are only very similar aren't offered for hiding.</summary>
+    static void CheckSameness(SoundOrganiser org, IProgress<SoundProgress>? progress, CancellationToken ct)
+    {
+        var todo = org.Library.SamenessToCheck();
+        if (todo.Count == 0) return;
+        var done = 0;
+        foreach (var chunk in todo.Chunk(256))
+        {
+            var checks = new ConcurrentBag<(long, long, double)>();
+            Parallel.ForEach(chunk, Parallelism.Options(ct), p =>
+            {
+                var apart = org.Get(p.A) is { } a && org.Get(p.B) is { } b ? Parallelism.Background(() => HowFarApart(a.Path, b.Path)) : Unreadable;
+                checks.Add((p.A, p.B, apart));
+            });
+            org.Library.SaveSameness(checks);
+            done += chunk.Length;
+            progress?.Report(new("Checking which copies are the same sound", done, todo.Count));
+        }
+    }
+
+    /// <summary>What's saved for a pair whose files can't be read: as far apart as can be.</summary>
+    const double Unreadable = 99;
+    const int SameRate = 44100;
+
+    /// <summary>How far apart two files sound, in dB, over their first <see cref="SoundPrint.ReadSeconds"/> seconds.</summary>
+    public static double HowFarApart(string a, string b)
+    {
+        try { return Math.Min(Unreadable, SoundPrint.SpectralDistance(Wave(a), Wave(b), SameRate)); }
+        catch (Exception) { return Unreadable; }
+        static float[] Wave(string path)
+        {
+            // Dsp.Resample is slower than the prints' resampler but exact, which the highs need here.
+            var x = AudioFile.Read(path, SoundPrint.ReadSeconds);
+            var mono = x.SampleRate == SameRate ? x.Mono() : Dsp.Resample(x.Mono(), x.SampleRate, SameRate);
+            return SoundPrint.WaveStart(mono, SameRate, SoundPrint.ReadSeconds, SameRate);
+        }
+    }
+
+    static bool IsSame(SoundMatch m, string? pathA, string? pathB) =>
+        m.Kind == CopyKind.Converted && m.Apart is { } apart &&
+        apart <= (Lossy.Contains(System.IO.Path.GetExtension(pathA ?? "")) || Lossy.Contains(System.IO.Path.GetExtension(pathB ?? "")) ? SameDbLossy : SameDb);
+
     static readonly HashSet<string> Lossy = new(StringComparer.OrdinalIgnoreCase) { ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wma" };
 
     /// <summary>
@@ -285,13 +346,23 @@ public static class DuplicateFinder
         }
         void Join(long a, long b) { var (ra, rb) = (Find(a), Find(b)); if (ra != rb) parent[ra] = rb; }
 
+        // Sounds that are the same sound as each other: exact copies, and converted copies whose whole sounds match.
+        var sameParent = new Dictionary<long, long>();
+        long Root(long x)
+        {
+            if (!sameParent.TryGetValue(x, out var p)) return sameParent[x] = x;
+            return p == x ? x : sameParent[x] = Root(p);
+        }
+        void Same(long a, long b) { var (ra, rb) = (Root(a), Root(b)); if (ra != rb) sameParent[ra] = rb; }
+
         var hashOf = exact.ToDictionary(e => e.Id, e => e.Hash);
         foreach (var g in exact.GroupBy(e => e.Hash))
-            foreach (var e in g.Skip(1)) Join(g.First().Id, e.Id);
+            foreach (var e in g.Skip(1)) { Join(g.First().Id, e.Id); Same(g.First().Id, e.Id); }
         var links = new Dictionary<long, List<(long Other, CopyKind Kind)>>();
         foreach (var m in matches)
         {
             Join(m.A, m.B);
+            if (IsSame(m, org.Get(m.A)?.Path, org.Get(m.B)?.Path)) Same(m.A, m.B);
             (links.TryGetValue(m.A, out var la) ? la : links[m.A] = []).Add((m.B, m.Kind));
             (links.TryGetValue(m.B, out var lb) ? lb : links[m.B] = []).Add((m.A, m.Kind));
         }
@@ -302,7 +373,9 @@ public static class DuplicateFinder
         {
             var sounds = ids.Select(org.Get).OfType<Sound>().ToList();
             if (sounds.Count < 2) continue;
+            var sameSize = sounds.GroupBy(s => Root(s.Id)).ToDictionary(g => g.Key, g => g.Count());
             var keep = sounds.OrderBy(s => s.Hidden).ThenByDescending(s => s.UsedIn)
+                .ThenByDescending(s => sameSize[Root(s.Id)] > 1)   // one of the copies that are the same sound, so the others can go
                 .ThenByDescending(s => Lossless.Contains(System.IO.Path.GetExtension(s.Path)))
                 .ThenByDescending(s => Math.Round(s.Seconds, 2))
                 .ThenBy(s => s.Added)
@@ -316,12 +389,14 @@ public static class DuplicateFinder
                 if (own.FirstOrDefault(l => l.Other == keep.Id) is { Other: > 0 } direct) return direct.Kind;
                 return own.Count > 0 ? own.Max(l => l.Kind) : CopyKind.Exact;
             }
-            var members = new List<DuplicateMember> { new(keep, sizes.GetValueOrDefault(keep.Id), true, null, KeepReason(keep, sounds)) };
+            var keepRoot = Root(keep.Id);
+            var members = new List<DuplicateMember> { new(keep, sizes.GetValueOrDefault(keep.Id), true, null, KeepReason(keep, sounds), true) };
             members.AddRange(sounds.Where(s => s != keep)
-                .Select(s => (Sound: s, Kind: KindOf(s)))
-                .OrderBy(t => t.Kind).ThenBy(t => t.Sound.Path, StringComparer.OrdinalIgnoreCase)
-                .Select(t => new DuplicateMember(t.Sound, sizes.GetValueOrDefault(t.Sound.Id), false, t.Kind, Describe(t.Kind, t.Sound, keep))));
-            var spare = members.Where(m => m.Kind is CopyKind.Exact or CopyKind.Converted).Sum(m => m.Size);
+                .Select(s => (Sound: s, Kind: KindOf(s), Same: Root(s.Id) == keepRoot))
+                .Select(t => t.Same && t.Kind == CopyKind.Trimmed ? t with { Kind = CopyKind.Converted } : t)   // same via another copy
+                .OrderByDescending(t => t.Same).ThenBy(t => t.Kind).ThenBy(t => t.Sound.Path, StringComparer.OrdinalIgnoreCase)
+                .Select(t => new DuplicateMember(t.Sound, sizes.GetValueOrDefault(t.Sound.Id), false, t.Kind, Describe(t.Kind, t.Same, t.Sound, keep), t.Same)));
+            var spare = members.Where(m => !m.Keep && m.Same).Sum(m => m.Size);
             groups.Add(new DuplicateGroup(members, members.Skip(1).Max(m => m.Kind!.Value), spare));
         }
         return groups.OrderByDescending(g => g.SpareBytes).ThenByDescending(g => g.Members.Count).ToList();
@@ -338,10 +413,11 @@ public static class DuplicateFinder
         return "Best to keep: the oldest copy";
     }
 
-    static string Describe(CopyKind kind, Sound s, Sound keep) => kind switch
+    static string Describe(CopyKind kind, bool same, Sound s, Sound keep) => kind switch
     {
-        CopyKind.Exact => s.Name == keep.Name ? "Exact copy" : "Exact copy, renamed",
-        CopyKind.Converted => Changes(s, keep) is { Length: > 0 } c ? $"Same sound, {c}" : "Same sound, another file",
+        CopyKind.Exact when same => s.Name == keep.Name ? "Exact copy" : "Exact copy, renamed",
+        CopyKind.Converted when same => Changes(s, keep) is { Length: > 0 } c ? $"Same sound, {c}" : "Same sound, another file",
+        CopyKind.Exact or CopyKind.Converted => "Very similar, but not the same sound all the way through",
         _ => s.Seconds < keep.Seconds ? $"Trimmed: {s.Seconds:0.##} s of {keep.Seconds:0.##} s" : $"Longer version ({s.Seconds:0.##} s)",
     };
 
