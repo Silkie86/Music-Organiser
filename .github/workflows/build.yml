@@ -41,8 +41,32 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      # A test that hangs fails after 10 minutes and is named in the log, instead of holding the runner.
-      - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release --blame-hang-timeout 10m --blame-hang-dump-type none
+      # These take about 2 minutes. On macOS they have sometimes stalled until the runner was lost at 45 minutes, with no
+      # log. So: each test is named as it passes, a test that hangs fails after 5 minutes and is named, the step stops at
+      # 12 minutes (well before the runner is lost, so the log is kept), and on macOS the disk, memory and busiest
+      # programs are logged every minute. The blame files (which tests ran, in order) are kept as a download on failure.
+      - name: Core tests
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            (set +e; while sleep 60; do
+              echo "--- $(date -u +%T): $(df -h / | tail -1)"
+              vm_stat | grep -E 'free|compressor|Swap' | tr -s ' ' | tr '\n' ';'; echo
+              ps -Ao pid,rss,%cpu,etime,comm -r | head -6
+            done) &
+            monitor=$!
+            trap 'pkill -P $monitor; kill $monitor 2>/dev/null || true' EXIT
+          fi
+          dotnet test tests/MusicOrganiser.Core.Tests -c Release --blame-hang-timeout 5m --blame-hang-dump-type none \
+            --logger "console;verbosity=normal" --results-directory TestResults
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-results-${{ matrix.os }}
+          path: TestResults/
+          if-no-files-found: ignore
+          retention-days: 14
       # Builds the Avalonia app too, and runs its tests without a screen (or a sound card).
       - run: dotnet test tests/MusicOrganiser.Avalonia.Tests -c Release
         env:

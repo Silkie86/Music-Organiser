@@ -409,7 +409,8 @@ final class FakeBitwig {
                 pad.present.v = p != null;
                 pad.title.v = p != null ? p.name : "";
                 pad.chain.count.v = p != null ? p.devices.size() : 0;
-                ((FakeDevice) pad.chain.items.get(0)).load(p != null && !p.devices.isEmpty() ? p.devices.get(0) : null);
+                for (int d = 0; d < pad.chain.items.size(); d++)
+                    ((FakeDevice) pad.chain.items.get(d)).load(p != null && d < p.devices.size() ? p.devices.get(d) : null);
             }
         }
         lastClicked.parameter.show(clicked);
@@ -1352,13 +1353,13 @@ final class FakeBitwig {
         final int index;
         final Value present = new Value(BooleanValue.class, false);
         final Value title;
-        final Bank chain;
+        /** The pad's devices, as many as the extension asks to see: the first can be replaced by a sample. */
+        Bank chain = new Bank(DeviceBank.class, List.of());
         final Point point;
 
         Pad(int index) {
             super(DrumPad.class);
             this.index = index;
-            chain = new Bank(DeviceBank.class, List.of(new PadDevice(index)));
             title = new Value(SettableStringValue.class, "", name -> later(20, () -> {
                 PadSpec pad = padAt(index);
                 if (pad != null) pad.name = (String) name;
@@ -1387,6 +1388,10 @@ final class FakeBitwig {
         }
 
         Bank createDeviceBank(int n) {
+            List<FakeDevice> devices = new ArrayList<>();
+            devices.add(new PadDevice(index));
+            for (int i = 1; i < n; i++) devices.add(new FakeDevice());
+            chain = new Bank(DeviceBank.class, devices);
             return chain;
         }
 

@@ -46,7 +46,7 @@ class LinkLogTest {
         for (Map<String, Object> line : lines) assertEquals("2026-10-14T", ((String) line.get("time")).substring(0, 11), Json.write(line));
         List<Object> events = lines.stream().filter(l -> l.containsKey("event")).map(l -> l.get("event")).collect(Collectors.toList());
         assertEquals(List.of("start", "connected", "disconnected", "stop"), events);
-        assertJson(obj("event", "start", "extension", "3.4", "bitwig", "6.1.2", "api", 25, "port", 19791), without(lines.get(0), "time"));
+        assertJson(obj("event", "start", "extension", "3.5", "bitwig", "6.1.2", "api", 25, "port", 19791), without(lines.get(0), "time"));
 
         List<Object> commands = lines.stream().filter(l -> l.containsKey("cmd")).map(l -> list(l.get("cmd"), l.get("ok"), l.get("error")))
                                      .collect(Collectors.toList());

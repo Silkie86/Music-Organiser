@@ -30,7 +30,9 @@ import com.bitwig.extension.controller.api.TrackBank;
 import com.bitwig.extension.controller.api.Transport;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.CodeSource;
@@ -87,6 +89,8 @@ final class Link {
     static final int SCENES = 8;
     /** A Drum Machine's pads: one for each MIDI note. */
     static final int DRUM_PADS = 128;
+    /** How many of each pad's devices the link sees: enough to tell an empty Sampler with effects after it from a pad that plays. */
+    static final int PAD_DEVICES = 4;
     /** Devices at the start of each track whose pitch the app can set (a Sampler or a Note Transpose). */
     static final int TUNED_DEVICES = 2;
     /** The selected device's remote controls the link reads steps, origins and automation from (one page). */
@@ -271,12 +275,17 @@ final class Link {
                 DrumPad pad = (DrumPad) drumPads.getItemAt(p);
                 pad.exists().markInterested();
                 pad.name().markInterested();
-                DeviceBank chain = pad.createDeviceBank(1);
+                DeviceBank chain = pad.createDeviceBank(PAD_DEVICES);
                 chain.itemCount().markInterested();
                 Device first = (Device) chain.getItemAt(0);
                 first.exists().markInterested();
                 first.name().markInterested();
                 first.sampleName().markInterested();
+                for (int d = 1; d < PAD_DEVICES; d++) {
+                    Device after = (Device) chain.getItemAt(d);
+                    after.exists().markInterested();
+                    after.deviceType().markInterested();
+                }
                 padItems[p] = pad;
                 padDevices[p] = chain;
                 padFirst[p] = first;
@@ -761,11 +770,24 @@ final class Link {
         try {
             CodeSource source = type.getProtectionDomain().getCodeSource();
             if (source == null || source.getLocation() == null) return "";
-            Path file = Path.of(source.getLocation().toURI());
+            Path file = Path.of(uri(source.getLocation()));
             return Files.isRegularFile(file) ? file.toString() : "";
         } catch (URISyntaxException | RuntimeException e) {
             // Not a file: URL, or Bitwig doesn't allow asking.
             return "";
+        }
+    }
+
+    /**
+     * A URL as a URI. Bitwig makes its extensions' URLs from their files without escaping them (File.toURL), so one in a
+     * folder with a space in its name ("Bitwig Studio") isn't a URI as it stands: its parts are escaped here instead.
+     */
+    static URI uri(URL url) throws URISyntaxException {
+        try {
+            return url.toURI();
+        } catch (URISyntaxException e) {
+            String authority = url.getAuthority();
+            return new URI(url.getProtocol(), authority == null || authority.isEmpty() ? null : authority, url.getPath(), null, null);
         }
     }
 
@@ -1310,13 +1332,28 @@ final class Link {
 
     /**
      * Whether a pad holds a Sampler with no sample, as a Drum Machine preset can put on every pad (Solomon's
-     * default Drum Machine does), and still has the name it came with, not a sample's: such a pad is free.
+     * default Drum Machine does), still has the name it came with, not a sample's, and has nothing after it but
+     * effects: such a pad is free.
      */
     private boolean emptySampler(int note) {
         String first = str(padFirst[note].name().get());
         String name = str(padItems[note].name().get());
         return padTaken(note) && first.equals("Sampler") && str(padFirst[note].sampleName().get()).isEmpty()
-               && (name.isEmpty() || name.equals(first));
+               && (name.isEmpty() || name.equals(first)) && onlyEffectsAfter(note);
+    }
+
+    /**
+     * Whether all a pad has after its first device are audio effects, so nothing else on it makes a sound. A pad with
+     * more devices than the link sees ({@link #PAD_DEVICES}) doesn't count.
+     */
+    private boolean onlyEffectsAfter(int note) {
+        int count = padDevices[note].itemCount().get();
+        if (count > PAD_DEVICES) return false;
+        for (int d = 1; d < count; d++) {
+            Device after = (Device) padDevices[note].getItemAt(d);
+            if (after.exists().get() && !"audio_to_audio".equals(str(after.deviceType().get()))) return false;
+        }
+        return true;
     }
 
     /** What's on a pad: its name, how many devices, the first one's name and its sample, as Bitwig shows them. */

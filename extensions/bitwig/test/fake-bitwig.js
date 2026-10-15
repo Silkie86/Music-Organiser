@@ -246,7 +246,8 @@ class DrumPad {
       const pad = world.padAt(index);
       if (pad) pad.name = name;
     }));
-    this.chain = new Bank([new PadDevice(world, index)]);
+    /** The pad's devices, as many as the extension asks to see: the first can be replaced by a sample. */
+    this.chain = new Bank([]);
     this.point = insertionPoint(world.calls, `pad ${index}`, (m, arg) => {
       const device = world.padDevice();
       if (m !== "insertFile" || !AUDIO.test(arg) || !device) return;
@@ -261,7 +262,12 @@ class DrumPad {
   }
   exists() { return this.present; }
   name() { return this.title; }
-  createDeviceBank() { return this.chain; }
+  createDeviceBank(n) {
+    const devices = [new PadDevice(this.world, this.index)];
+    for (let i = 1; i < n; i++) devices.push(new Device(this.world));
+    this.chain = new Bank(devices);
+    return this.chain;
+  }
   insertionPoint() { return this.point; }
 }
 
@@ -618,7 +624,7 @@ function startBitwig(model = {}) {
         pad.present.v = !!p;
         pad.title.v = p ? p.name : "";
         pad.chain.count.v = p ? p.devices.length : 0;
-        pad.chain.items[0].load(p ? p.devices[0] : null);
+        pad.chain.items.forEach((d, n) => d.load(p && n < p.devices.length ? p.devices[n] : null));
       });
     }
   }

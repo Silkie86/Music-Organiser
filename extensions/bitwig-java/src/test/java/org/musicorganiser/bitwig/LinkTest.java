@@ -22,6 +22,10 @@ import static org.musicorganiser.bitwig.Messages.obj;
 
 import com.bitwig.extension.ExtensionDefinition;
 import com.bitwig.extension.controller.api.ControllerHost;
+import java.io.InputStream;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,6 +34,8 @@ import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -83,7 +89,7 @@ class LinkTest {
         MusicOrganiserExtensionDefinition definition = (MusicOrganiserExtensionDefinition) found.get(0);
 
         // The script's identity (MusicOrganiser.control.js's defineController), so Bitwig keeps the controller it has.
-        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.4"),
+        assertEquals(List.of("Music Organiser", "DAW link", "Music Organiser", "Music Organiser", "3.5"),
                      List.of(definition.getHardwareVendor(), definition.getHardwareModel(), definition.getName(), definition.getAuthor(),
                              definition.getVersion()));
         assertEquals(UUID.fromString("ed35e3c7-c544-49ed-936d-c236b0c9b73b"), definition.getId());
@@ -109,7 +115,7 @@ class LinkTest {
                        "project", "Night Drive", "modified", false, "engine", true, "changes", false,
                        "onlyIn", true,   // it honours a request's onlyIn
                        // Link version 3: which link this is.
-                       "runtime", "java", "extension", "3.4"),
+                       "runtime", "java", "extension", "3.5"),
                    hello.get("result"));
         assertJson(obj("id", 1, "ok", true, "result", hello.get("result")), app.ask(obj("id", 1, "cmd", "hello")));
         assertEquals(List.of(), bitwig.popups);
@@ -130,6 +136,28 @@ class LinkTest {
         Path junit = Path.of(Link.loadedFrom(Test.class));
         assertTrue(junit.getFileName().toString().endsWith(".jar"), junit.toString());
         assertEquals("", Link.loadedFrom(Link.class));
+    }
+
+    /** A class with nothing it needs, for loading from an archive of its own. */
+    public static final class Loaded {}
+
+    @Test
+    @DisplayName("says where it was loaded from when Bitwig's URL for it isn't escaped (a folder with a space in its name)")
+    @SuppressWarnings("deprecation")   // File.toURL, as Bitwig uses it
+    void saysWhereItWasLoadedFromAFolderWithASpace(@TempDir Path dir) throws Exception {
+        Path extension = Files.createDirectories(dir.resolve("Bitwig Studio").resolve("Extensions")).resolve("MusicOrganiser.bwextension");
+        String name = Loaded.class.getName().replace('.', '/') + ".class";
+        try (InputStream in = Loaded.class.getClassLoader().getResourceAsStream(name);
+             JarOutputStream jar = new JarOutputStream(Files.newOutputStream(extension))) {
+            jar.putNextEntry(new JarEntry(name));
+            in.transferTo(jar);
+        }
+        URL url = extension.toFile().toURL();
+        assertTrue(url.toString().contains("Bitwig Studio"), url.toString());   // not escaped, so not a URI
+        try (URLClassLoader bitwig = new URLClassLoader(new URL[] {url}, ClassLoader.getPlatformClassLoader())) {
+            Class<?> loaded = bitwig.loadClass(Loaded.class.getName());
+            assertEquals(extension.toString(), Link.loadedFrom(loaded));
+        }
     }
 
     @Test
@@ -595,6 +623,17 @@ class LinkTest {
                    app.waitFor(obj("id", 4, "cmd", "pads", "track", 1, "device", 0,
                                    "pads", list(obj("note", 36, "path", "C:\\Kit\\Kick 2.wav"), obj("note", 40, "path", "C:\\Kit\\Rim.wav")))).get("result"));
         assertEquals("C:\\Kit\\Kick.wav", pads.get(36).devices.get(0).sample);
+
+        // Nor is one whose empty Sampler has an instrument after it, which plays; effects after it don't.
+        pads.get(42).devices.add(device("Polymer").kind("note_to_audio"));
+        pads.get(44).devices.add(device("Delay+"));
+        bitwig.clock.advance(100);
+        assertJson(obj("filled", list(44), "replaced", list(44), "skipped", list(42), "failed", list(),
+                       "taken", list(obj("note", 42, "name", "Sampler", "devices", 3, "first", "Sampler", "sample", ""))),
+                   app.waitFor(obj("id", 5, "cmd", "pads", "track", 1, "device", 0,
+                                   "pads", list(obj("note", 42, "path", "C:\\Kit\\Hat.wav"), obj("note", 44, "path", "C:\\Kit\\Clap.wav")))).get("result"));
+        assertEquals(List.of("Sampler", "Compressor", "Polymer"), pads.get(42).devices.stream().map(d -> d.name).collect(Collectors.toList()));
+        assertNull(pads.get(42).devices.get(0).sample);
     }
 
     @Test
