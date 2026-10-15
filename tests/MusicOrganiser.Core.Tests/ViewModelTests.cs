@@ -1358,6 +1358,29 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_part_that_comes_in_late_in_its_bar_shows_and_plays_from_its_first_note_but_drags_out_from_the_bar()
+    {
+        // A pickup: three notes on the last beat of the bar, then a held chord in the next bar.
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var clip = new Core.Parsers.MidiClip { Name = "Pickup", Ppq = 96 };
+        clip.Track("Keys").AddRange([
+            new(3 * 96, 32, 60, 100), new(3 * 96 + 32, 32, 62, 100), new(3 * 96 + 64, 32, 64, 100),
+            new(4 * 96, 384, 60, 100), new(4 * 96, 384, 64, 100), new(4 * 96, 384, 67, 100)]);
+        File.WriteAllBytes(Path.Combine(pack, "Pickup.mid"), Core.Export.MidiWriter.Write(clip));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        _db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "exports"));
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+
+        var row = Assert.Single(midi.Results);
+        Assert.Equal(0, row.Channel.Notes.Min(n => n.Start));   // shown and played from its first note, with no silence first
+        var written = Core.Midi.MidiFileReader.Read(midi.MakeDrag([row])!.Files.Single()).Single();
+        Assert.Equal(3 * 96, written.Notes.Min(n => n.Start));   // the file keeps the pickup before the bar line
+    }
+
+    [Fact]
     public async Task A_songs_midi_tab_lists_parts_that_fit_it_already_moved_and_not_its_own()
     {
         const int bar = 4 * 96;

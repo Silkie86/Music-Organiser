@@ -509,7 +509,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         var name = TextScan.SafeFileName(row.Title + (row.Fit is { Semitones: not 0 } f ? $" ({(f.Semitones > 0 ? "+" : "")}{f.Semitones})" : ""));
         var file = Path.Combine(dir, name + ".mid");
-        File.WriteAllBytes(file, MidiWriter.Write(row.Channel.ToClip(), row.Entry.Phrase.Source.Tempo));
+        File.WriteAllBytes(file, MidiWriter.Write(row.FileClip(), row.Entry.Phrase.Source.Tempo));
         return file;
     }
 
@@ -518,7 +518,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         if (Selected is not { } row) return;
         if (await Ui.Current.PickSaveFile(TextScan.SafeFileName(row.Title) + ".mid", "MIDI file", "mid", ExportFolder()) is not { } file) return;
-        File.WriteAllBytes(file, MidiWriter.Write(row.Channel.ToClip(), row.Entry.Phrase.Source.Tempo));
+        File.WriteAllBytes(file, MidiWriter.Write(row.FileClip(), row.Entry.Phrase.Source.Tempo));
         Message = $"Saved {Path.GetFileName(file)}";
     }
 
@@ -601,13 +601,28 @@ public sealed partial class MidiRow : ObservableObject
           (Entry.Chords.Count > 8 ? " …" : "");
 
     /// <summary>Its notes, moved into the fitted key when fitting; read when first shown.</summary>
-    public MidiChannel Channel => _channel ??= MakeChannel();
+    /// <summary>
+    /// The part as shown and played: moved into the fitted key, and starting right at its first note, so a part that
+    /// only comes in at the end of its bar doesn't sit squashed at the end of the roll or play silence first
+    /// (Solomon, 2026-10-15: "midi with alot of space either side truncate them").
+    /// </summary>
+    public MidiChannel Channel => _channel ??= MakeChannel(fromFirstNote: true);
 
-    MidiChannel MakeChannel()
+    /// <summary>
+    /// The part as written to a .mid file: the same, but from the start of its first note's bar, so a pickup still lands
+    /// before the beat when it's dropped on a bar line in the DAW.
+    /// </summary>
+    public MidiClip FileClip() => MakeChannel(fromFirstNote: false).ToClip();
+
+    MidiChannel MakeChannel(bool fromFirstNote)
     {
         var notes = _owner.NotesOf(Entry);
-        if (Fit is { Semitones: not 0 } f)
-            notes = notes.Select(n => n with { Key = Math.Clamp(n.Key + f.Semitones, 0, 127) }).ToList();
+        var lead = fromFirstNote && notes.Count > 0 ? notes.Min(n => n.Start) : 0;
+        if (Fit is { Semitones: not 0 } || lead > 0)
+        {
+            var move = Fit?.Semitones ?? 0;
+            notes = notes.Select(n => n with { Start = n.Start - lead, Key = Math.Clamp(n.Key + move, 0, 127) }).ToList();
+        }
         // Named "Drums" for drum parts so the preview plays them as hits rather than tones.
         return new MidiChannel(Entry.Role == MidiRoles.Drums ? $"Drums · {Title}" : Title, "", PhraseAnalyser.Ppq, notes);
     }
