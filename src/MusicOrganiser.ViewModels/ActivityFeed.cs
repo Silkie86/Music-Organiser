@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using MusicOrganiser.Core;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -24,13 +25,20 @@ public sealed class ActivityFeed
     /// <summary>Most cards on screen at once: the oldest finished ones make way.</summary>
     const int MaxCards = 4;
 
+    /// <summary>The window's thread, when the feed is made there: cards leave on it, wherever their job finished.</summary>
+    readonly SynchronizationContext? _ui = SynchronizationContext.Current;
+    readonly Lock _lock = new();
+
     /// <summary>A job is starting: its card shows a spinner until it is finished, stopped or failed.</summary>
     /// <param name="cancel">What Stop does, if the job can be stopped.</param>
     public Activity Start(string title, string detail = "", Action? cancel = null)
     {
         var a = new Activity(this, title, detail, cancel);
-        Items.Add(a);
-        while (Items.Count > MaxCards && Items.FirstOrDefault(i => !i.IsRunning) is { } old) Items.Remove(old);
+        lock (_lock)
+        {
+            Items.Add(a);
+            while (Items.Count > MaxCards && Items.FirstOrDefault(i => !i.IsRunning) is { } old) Items.Remove(old);
+        }
         return a;
     }
 
@@ -41,14 +49,36 @@ public sealed class ActivityFeed
     /// <summary>Something couldn't be done.</summary>
     public Activity Failed(string title, string detail = "") => Start(title).Fail(title, detail);
 
+    // async void: nothing may escape it, or it takes the whole app down. Two cards retiring at once off the window's
+    // thread (a job finished in the background; in tests, which have no window) once removed at the same moment and did.
     internal async void Retire(Activity a, TimeSpan after)
     {
-        var version = a.Version;
-        if (after > TimeSpan.Zero) await Task.Delay(after);
-        if (a.Version != version || a.IsRunning) return;   // reused or restarted since
-        a.IsLeaving = true;
-        if (FadeOut > TimeSpan.Zero) await Task.Delay(FadeOut);
-        Items.Remove(a);
+        try
+        {
+            var version = a.Version;
+            if (after > TimeSpan.Zero) await Task.Delay(after);
+            if (a.Version != version || a.IsRunning) return;   // reused or restarted since
+            a.IsLeaving = true;
+            if (FadeOut > TimeSpan.Zero) await Task.Delay(FadeOut);
+            if (_ui is not null && SynchronizationContext.Current != _ui) _ui.Post(_ => Remove(a), null);
+            else Remove(a);
+        }
+        catch (Exception e)
+        {
+            AppLog.Info("Activity", $"A card couldn't be taken away: {e.Message}");
+        }
+    }
+
+    void Remove(Activity a)
+    {
+        try
+        {
+            lock (_lock) Items.Remove(a);
+        }
+        catch (Exception e)
+        {
+            AppLog.Info("Activity", $"A card couldn't be taken away: {e.Message}");
+        }
     }
 }
 
@@ -95,6 +125,7 @@ public sealed partial class Activity : ObservableObject
     /// <summary>How far it has got: <paramref name="percent"/> below 0 when it can't say.</summary>
     public Activity Report(double percent, string? detail = null)
     {
+        if (!IsRunning) return this;   // a late report doesn't undo "done"
         Percent = Math.Clamp(percent, -1, 100);
         if (detail is not null) Detail = detail;
         return this;

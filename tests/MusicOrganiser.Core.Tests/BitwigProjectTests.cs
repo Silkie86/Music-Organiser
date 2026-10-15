@@ -121,6 +121,70 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void SerumCanBeSwappedForTheTemplatesSerum2AtItsDefaultSound()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var serum1 = song.Channels[1].Instrument!;
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+
+        // The template's Serum 2, as it is (VST3, its id and its file), on the Serum channel's track.
+        var track = doc.Root!.Obj(0x4dd)!.List(0x4de).Single(t => t.Str(0x15b) == "Serum");
+        var serum2 = Def(Chain(track).Last());
+        Assert.Equal(("Serum 2", "56534558667350736572756D20320000"), (serum2.Str(0x9a), serum2[0xce4]));
+
+        // No state handed to it: Serum 2 refuses Serum's sound as its own and then doesn't load at all.
+        Assert.Equal("", serum2.Str(0xbe5));
+        Assert.DoesNotContain(result.Notes, n => n.Contains("opens at its defaults"));
+
+        // Serum 1's settings are numbered differently from Serum 2's, so its automation is left out and says why.
+        Assert.Empty(track.Obj(0x2dc9)!.List(0x4ba));
+        Assert.Contains(result.Notes, n => n.StartsWith("Serum - Cutoff: automation left out") && n.Contains("newer version"));
+        Assert.Contains(result.Notes, n => n.StartsWith("Serum: Serum swapped for Serum 2, which opens with its default sound") &&
+                                           n.Contains("\"Serum (Serum)\""));
+        var (channel, sound) = Assert.Single(result.Upgraded!);
+        Assert.Equal(("Serum", serum1.State!.Data), (channel, sound.Data));
+    }
+
+    [Fact]
+    public void ConvertingWithTheSwapSavesTheOldSoundsNextToTheProject()
+    {
+        var dir = Fixtures.TempDir();
+        var project = Fixtures.FlStudio25Automation(dir);
+        var (file, _) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Exports"), Fixtures.BitwigTemplate(), upgrade: true);
+        var saved = Assert.Single(Directory.GetFiles(Path.Combine(Path.GetDirectoryName(file)!, BitwigProject.UpgradedFolder)));
+        Assert.Equal("Serum (Serum).fxp", Path.GetFileName(saved));
+        Assert.Equal("CcnK", System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(saved), 0, 4));
+
+        // Without it, Serum stays Serum and nothing extra is saved.
+        var (plain, _) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Plain"), Fixtures.BitwigTemplate());
+        Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(plain)!, BitwigProject.UpgradedFolder)));
+    }
+
+    [Fact]
+    public void ANewConvertGetsAFreshNameWhileBitwigMayHaveTheOldOneOpen()
+    {
+        // Bitwig only brings a project it has open forward, so a convert saved over it would look unchanged.
+        Assert.Equal("civil_18", Exporter.BitwigName("civil_18.flp", _ => false));
+        Assert.Equal("civil_18 (2)", Exporter.BitwigName("civil_18.flp", n => n == "civil_18"));
+        Assert.Equal("civil_18 (3)", Exporter.BitwigName("civil_18.flp", n => n is "civil_18" or "civil_18 (2)"));
+        // Only the names it may have open count: a later number that's closed is used again.
+        Assert.Equal("civil_18", Exporter.BitwigName("civil_18.flp", n => n == "civil_18 (2)"));
+
+        var dir = Fixtures.TempDir();
+        var project = Fixtures.FlStudio25Automation(dir);
+        var name = Path.GetFileNameWithoutExtension(project);
+        var exports = Path.Combine(dir, "Exports");
+        var (first, _) = Exporter.BitwigFromFl(project, exports, Fixtures.BitwigTemplate());
+        var (second, _) = Exporter.BitwigFromFl(project, exports, Fixtures.BitwigTemplate(), saveAs: $"{name} (2)");
+        // Each in its own folder named like it, the layout Bitwig opens without asking, next to the first.
+        Assert.Equal(Path.Combine(exports, name, "Bitwig", $"{name} (2)", $"{name} (2).bwproject"), second);
+        Assert.True(File.Exists(first));
+        Assert.Equal(Path.GetDirectoryName(Path.GetDirectoryName(first)), Path.GetDirectoryName(Path.GetDirectoryName(second)));
+    }
+
+    [Fact]
     public void KeepsMutedNotesAndClipsMutedAndPlaysStepsUntilTheirSoundEnds()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir()));

@@ -41,8 +41,65 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      # A test that hangs fails after 10 minutes and is named in the log, instead of holding the runner.
-      - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release --blame-hang-timeout 10m --blame-hang-dump-type none
+      # These take about 2 minutes. On macOS the runner has sometimes been lost a few minutes in, and GitHub then keeps
+      # no log, only which step was running. So the tests run in groups, one step each (.github/scripts/core-tests.sh),
+      # and the next loss names its group. A test that hangs fails after 5 minutes and is named. On macOS memory is
+      # written down every 20 seconds and shown at the end, with any program macOS stopped for lack of memory. The
+      # blame files (which tests ran, in order) are kept as a download on failure.
+      - id: build
+        run: dotnet build tests/MusicOrganiser.Core.Tests -c Release
+      - name: Watch memory
+        continue-on-error: true   # only for finding the Mac stalls; never fails the run
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          nohup bash -c 'while true; do
+            echo "--- $(date -u +%T) free $(sysctl -n kern.memorystatus_level)%"
+            vm_stat | grep -E "free|compressor|Swap" | tr -s " " | tr "\n" ";"; echo
+            ps -Ao pid,rss,%cpu,etime,comm -m | head -5
+            sleep 20
+          done' > "$RUNNER_TEMP/memory.log" 2>&1 &
+      - name: Core tests (DAW links)
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh links
+      - name: Core tests (live tests and probes)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh live
+      - name: Core tests (view models)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh viewmodels
+      - name: Core tests (sounds)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh sounds
+      - name: Core tests (the rest)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh rest
+      - name: Memory log
+        continue-on-error: true
+        if: always() && runner.os == 'macOS'
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          cat "$RUNNER_TEMP/memory.log" || true
+          echo "--- Programs macOS stopped for lack of memory in the last 20 minutes:"
+          sudo -n log show --last 20m --style compact \
+            --predicate 'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus_kill"' | tail -40 || true
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-results-${{ matrix.os }}
+          path: TestResults/
+          if-no-files-found: ignore
+          retention-days: 14
       # Builds the Avalonia app too, and runs its tests without a screen (or a sound card).
       - run: dotnet test tests/MusicOrganiser.Avalonia.Tests -c Release
         env:

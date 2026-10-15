@@ -65,7 +65,7 @@ class SelfCheckTest {
         assertEquals("Waiting for the app on port 19791, with 1 connected now.", detail(result, "remote connection"));
         assertEquals("2 actions.", detail(result, "actions"));
 
-        assertJson(obj("why", "asked", "ok", true, "extension", "3.0", "link", 3, "product", "Bitwig Studio", "bitwig", "6.1.2", "api", 25,
+        assertJson(obj("why", "asked", "ok", true, "extension", "3.5", "link", 3, "product", "Bitwig Studio", "bitwig", "6.1.2", "api", 25,
                        "apiUsed", 23, "java", System.getProperty("java.version"), "platform", "WINDOWS", "changes", true, "port", 19791,
                        "connections", 1, "folder", reports.toString()),
                    pick(result, "why", "ok", "extension", "link", "product", "bitwig", "api", "apiUsed", "java", "platform", "changes", "port",
@@ -148,9 +148,25 @@ class SelfCheckTest {
         Map<String, Object> result = bitwig.link.selfCheck("test");
         assertEquals(false, result.get("ok"));
         assertEquals("Bitwig offers API 22; the link needs 23.", detail(result, "API version"));
-        assertEquals("Port 19791 is taken, so Bitwig gave the link port 50123, where the app doesn't look.", detail(result, "remote connection"));
+        assertEquals("Port 19791 is taken, so Bitwig gave the link port 50123, where the app doesn't look. " + Link.TWICE, detail(result, "remote connection"));
         assertEquals(List.of("API version", "remote connection"),
                      listAt(result, "checks").stream().filter(c -> !(Boolean) at(c, "ok")).map(c -> at(c, "name")).collect(Collectors.toList()));
+    }
+
+    @Test
+    @DisplayName("asks Bitwig again which port it gave the link, when it didn't say at first")
+    void asksAgainWhichPort() {
+        Model m = LinkTest.song();
+        m.portUnknown = 2;
+        bitwig = FakeBitwig.start(m, reports);
+        // Bitwig still doesn't know: that's not the port being taken.
+        assertEquals("Waiting for the app on port 19791, though Bitwig hasn't said yet which port it gave the link.",
+                     detail(bitwig.link.selfCheck("test"), "remote connection"));
+        Map<String, Object> result = bitwig.link.selfCheck("test");
+        assertEquals(true, result.get("ok"));
+        assertEquals("Waiting for the app on port 19791, with 0 connected now.", detail(result, "remote connection"));
+        assertEquals(19791, ((Number) result.get("port")).intValue());
+        assertEquals(List.of(), bitwig.popups);
     }
 
     @Test

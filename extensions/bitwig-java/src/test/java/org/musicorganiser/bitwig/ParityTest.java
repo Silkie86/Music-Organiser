@@ -122,7 +122,7 @@ class ParityTest {
 
     /**
      * The extension's answers as the script would give them: link version 3 adds to hello (`link` is 3, with
-     * `runtime` and `extension`) and to device (the remote controls `page` and its `controls`), and nothing else.
+     * `runtime`, `extension` and `loadedFrom`) and to device (the remote controls `page` and its `controls`), and nothing else.
      */
     static Object normalise(Object value) {
         if (value instanceof Map) {
@@ -132,6 +132,7 @@ class ParityTest {
                 m.put("link", 2.0);
                 m.remove("runtime");
                 m.remove("extension");
+                m.remove("loadedFrom");
             }
             if (m.containsKey("params") && m.containsKey("drumPads")) {
                 m.remove("page");
@@ -435,6 +436,28 @@ class ParityTest {
         only.add(send(obj("id", 18, "cmd", "project")));
         runs.add(new Run("only in the project asked for", studio(), only));
 
+        // Bitwig 6.1.3 doesn't say at first which port it gave the link; the app connecting shows it's 19791.
+        Map<String, Object> unsaid = song();
+        unsaid.put("portUnknown", 1000);
+        runs.add(new Run("Bitwig doesn't say which port", unsaid, List.of(
+            advance(2000), send(obj("id", 1, "cmd", "hello")))));
+
+        // Solomon's default Drum Machine has an empty Sampler on every pad.
+        Map<String, Object> preset = studio();
+        preset.put("drumPads", list(obj("name", "Sampler", "id", Link.SAMPLER, "kind", "note_to_audio"), obj("name", "Compressor")));
+        List<Map<String, Object>> kit = new ArrayList<>(List.of(allowChanges()));
+        for (Map<String, Object> request : List.of(
+                obj("id", 1, "cmd", "insert", "track", 0, "at", "start", "kind", "bitwig", "device", DRUM_MACHINE),
+                obj("id", 2, "cmd", "pads", "track", 0, "device", 0, "pads", list(
+                    obj("note", 36, "path", "C:\\Kit\\Kick.wav", "name", "Kick"), obj("note", 38, "path", "C:\\Kit\\notes.txt"))),
+                obj("id", 3, "cmd", "pads", "track", 0, "device", 0, "pads", list(
+                    obj("note", 36, "path", "C:\\Kit\\Kick 2.wav"), obj("note", 37, "path", "C:\\Kit\\Rim.wav"))),
+                obj("id", 4, "cmd", "project"))) {
+            kit.add(send(request));
+            kit.add(advance(10000));
+        }
+        runs.add(new Run("a default Drum Machine with an empty Sampler on each pad", preset, kit));
+
         Map<String, Object> elsewhere = song();
         elsewhere.put("portInUse", 50123);
         elsewhere.put("modified", true);
@@ -472,6 +495,8 @@ class ParityTest {
         if (js.containsKey("padScroll")) m.padScroll = (int) number(js.get("padScroll"));
         m.browserOnNewTrack = Boolean.TRUE.equals(js.get("browserOnNewTrack"));
         if (js.containsKey("portInUse")) m.portInUse = (int) number(js.get("portInUse"));
+        if (js.containsKey("portUnknown")) m.portUnknown = (int) number(js.get("portUnknown"));
+        if (js.containsKey("drumPads")) m.drumPads = items(js.get("drumPads")).stream().map(d -> device(map(d))).collect(Collectors.toList());
         return m;
     }
 

@@ -285,6 +285,9 @@
                     <CheckBox Content="Steps play until the next note or the end of the clip" IsChecked="{Binding StepsUntilNextNote}" Margin="0,12,0,0" />
                     <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
                                Text="Notes from FL's step sequencer have no length. Plugin tracks always play them until the next note on the same key or the end of the clip. On a Sampler they also stop where the sample ends, unless this is ticked." />
+                    <CheckBox Content="Swap Serum for Serum 2 (try-out)" IsChecked="{Binding UpgradeSynths}" Margin="0,12,0,0" />
+                    <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                               Text="Swaps an older version of your template's synth for the template's own. It opens with its default sound: each old sound is saved as a preset in a 'Sounds from older plugins' folder next to the converted project, to load in the new synth's preset browser. Your FL projects are never changed." />
                 </StackPanel>
             </Border>
 
@@ -312,24 +315,30 @@
                                                IsVisible="{Binding Live, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                                     <TextBlock Text="{Binding Steps}" Margin="18,4,0,0" TextWrapping="Wrap" FontSize="12.5"
                                                Foreground="{StaticResource MutedBrush}" />
+                                    <!-- Only FL Studio's row has a MIDI port to choose and only Bitwig's has live tests: those parts
+                                         take the row's MidiPort or LiveTests as theirs, so the other rows have nothing to bind. -->
                                     <StackPanel Margin="18,10,0,0" IsVisible="{Binding CanChoosePort}">
+                                      <StackPanel DataContext="{Binding MidiPort}" x:DataType="vm:FlPortSetting">
                                         <TextBlock Text="The MIDI port for the script" FontSize="12.5" Margin="0,0,0,6" />
                                         <RadioButton Margin="0,0,0,4"
-                                                     IsChecked="{Binding MidiPort.Choice, Converter={StaticResource IndexToBool}, ConverterParameter=0}">
+                                                     IsChecked="{Binding Choice, Converter={StaticResource IndexToBool}, ConverterParameter=0}">
                                             <TextBlock TextWrapping="Wrap" FontSize="12.5"
                                                        Text="loopMIDI: a free app you install, then make the port in. Works on any Windows." />
                                         </RadioButton>
-                                        <RadioButton IsChecked="{Binding MidiPort.Choice, Converter={StaticResource IndexToBool}, ConverterParameter=1}">
+                                        <RadioButton IsChecked="{Binding Choice, Converter={StaticResource IndexToBool}, ConverterParameter=1}">
                                             <TextBlock TextWrapping="Wrap" FontSize="12.5"
                                                        Text="Windows' own MIDI system: Install makes the port, with nothing else to install. Needs Windows 11 25H2 or later, fully updated." />
                                         </RadioButton>
-                                        <TextBlock Text="{Binding MidiPort.Note}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
-                                                   IsVisible="{Binding MidiPort.Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                        <TextBlock Text="{Binding Note}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                   IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                      </StackPanel>
                                     </StackPanel>
                                     <WrapPanel Classes="buttons" Margin="18,10,0,0">
                                         <Button Content="Install" Command="{Binding InstallCommand}" />
-                                        <Button Content="Get loopMIDI" Command="{Binding MidiPort.GetLoopMidiCommand}" IsVisible="{Binding ShowGetLoopMidi}"
-                                                ToolTip.Tip="Opens loopMIDI's page in your browser, to download it" />
+                                        <Panel IsVisible="{Binding ShowGetLoopMidi}">
+                                            <Button Content="Get loopMIDI" DataContext="{Binding MidiPort}" x:DataType="vm:FlPortSetting"
+                                                    Command="{Binding GetLoopMidiCommand}" ToolTip.Tip="Opens loopMIDI's page in your browser, to download it" />
+                                        </Panel>
                                         <Button Content="Choose folder…" Command="{Binding ChooseFolderCommand}" IsVisible="{Binding CanChooseFolder}"
                                                 ToolTip.Tip="{Binding ChooseFolderTip}" />
                                         <Button Content="Check connection" Command="{Binding CheckCommand}" />
@@ -340,19 +349,21 @@
                                         <TextBlock Text="Live tests" FontSize="12.5" Margin="0,0,0,4" />
                                         <TextBlock TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}"
                                                    Text="Tries out what the app does with Bitwig, in the Bitwig open now, and writes a report. It only reads, unless Bitwig lets the app make changes and the open project's name starts with “MO Live Test”: then it adds a few tracks to that project and saves it, so your own projects are never touched." />
+                                      <StackPanel DataContext="{Binding LiveTests}" x:DataType="vm:LiveTestsViewModel">
                                         <WrapPanel Classes="buttons" Margin="0,10,0,0">
-                                            <Button Content="Run live tests" Command="{Binding LiveTests.RunCommand}"
+                                            <Button Content="Run live tests" Command="{Binding RunCommand}"
                                                     ToolTip.Tip="Runs the live tests while Bitwig is answering. They take about a minute, a few more with MO Probe installed." />
-                                            <Button Content="Stop" Command="{Binding LiveTests.StopCommand}" IsVisible="{Binding LiveTests.Running}"
+                                            <Button Content="Stop" Command="{Binding StopCommand}" IsVisible="{Binding Running}"
                                                     ToolTip.Tip="Stops after the test running now, which puts back anything it was in the middle of. The report is still written." />
-                                            <Button Content="Open report" Command="{Binding LiveTests.OpenReportCommand}"
+                                            <Button Content="Open report" Command="{Binding OpenReportCommand}"
                                                     ToolTip.Tip="Opens the newest run's report. The reports are kept in reports/live in the app's data folder." />
                                         </WrapPanel>
-                                        <TextBlock Text="{Binding LiveTests.ProgressLine}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                        <TextBlock Text="{Binding ProgressLine}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
                                                    Foreground="{StaticResource MutedBrush}"
-                                                   IsVisible="{Binding LiveTests.ProgressLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                        <TextBlock Text="{Binding LiveTests.Summary}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
-                                                   IsVisible="{Binding LiveTests.Summary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                                   IsVisible="{Binding ProgressLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                        <TextBlock Text="{Binding Summary}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                   IsVisible="{Binding Summary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                      </StackPanel>
                                     </StackPanel>
                                 </StackPanel>
                             </DataTemplate>
@@ -417,6 +428,24 @@
                         <Button Content="Refresh" Command="{Binding RefreshCommand}" />
                         <Button Content="Open reports folder" Command="{Binding OpenFolderCommand}" />
                     </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Sound output: where the app's sounds play. Hidden where the app can't choose (the WPF app). -->
+            <Border Classes="card settingsCard" DataContext="{Binding SoundOutput}" IsVisible="{Binding IsAvailable}">
+                <StackPanel x:DataType="vm:SoundOutputSetting" Spacing="8">
+                    <TextBlock Text="Sound output" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro" Margin="0"
+                               Text="Where the app plays sounds. Choose your audio interface to hear them through it, or keep the computer's default output and the app follows it when it changes." />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding Selected}" MinWidth="340" MaxWidth="560"
+                                  ToolTip.Tip="Sounds move here at once, even one that's playing" />
+                        <Button Content="Look again" Command="{Binding RefreshCommand}"
+                                ToolTip.Tip="Lists the outputs again, after plugging something in or switching it on" />
+                        <ProgressBar IsIndeterminate="True" Width="60" VerticalAlignment="Center" IsVisible="{Binding Busy}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding Note}" Classes="live" TextWrapping="Wrap" FontSize="12.5"
+                               IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                 </StackPanel>
             </Border>
 

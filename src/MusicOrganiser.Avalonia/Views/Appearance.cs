@@ -44,6 +44,8 @@ public static class Appearance
         Recolour(app, "DataGridColumnHeaderForegroundBrush", t.Muted);
         Recolour(app, "DataGridColumnHeaderHoveredBackgroundBrush", t.Hover);
         Recolour(app, "DataGridColumnHeaderPressedBackgroundBrush", t.Stroke);
+        // A row under the pointer gets half the theme's hover tint: a full one flashed bright as the pointer crossed a list.
+        app.Resources["DataGridRowHoveredBackgroundColor"] = Mix(Color.Parse(t.Background), Color.Parse(t.Hover), 0.5);
         foreach (var key in new[] { "DataGridRowSelectedBackgroundBrush", "DataGridRowSelectedHoveredBackgroundBrush",
                                     "DataGridRowSelectedUnfocusedBackgroundBrush", "DataGridRowSelectedHoveredUnfocusedBackgroundBrush" })
             Recolour(app, key, accent);
@@ -111,6 +113,9 @@ public static class Appearance
     {
         if (app.Resources.TryGetResource(key, null, out var value) && value is SolidColorBrush brush) brush.Color = colour;
     }
+
+    static Color Mix(Color a, Color b, double t) =>
+        Color.FromRgb((byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
 
     static Color WithAlpha(Color c, byte alpha) => Color.FromArgb(alpha, c.R, c.G, c.B);
 }

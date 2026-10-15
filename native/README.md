@@ -67,7 +67,9 @@ like Waves holds many):
   the plugin shows it, and flags (automatable, stepped, list, hidden, bypass).
 - `--no-params` only lists the plugins in the file. CLAP and VST3 plugins aren't even started, and a
   VST2 shell's plugins are listed without opening each one, so this is quick. The app reads every
-  plugin file this way in the background, and a plugin's parameters only when you ask.
+  plugin file this way in the background, and a plugin's parameters only when you ask. A VST3 whose
+  bundle has a `Contents/Resources/moduleinfo.json` (VST3 SDK 3.7.5 and later) isn't scanned at all
+  for that: the app lists it from that file (`Vst3ModuleInfo.cs`).
 - `--only <id>` reads one plugin from the file, e.g. one from a Waves shell.
 - `--state` adds the plugin's default state (base64), for working out how its settings are stored.
   (Scanning the probe with `--state` writes a probe report, since saving its state counts as using it.)

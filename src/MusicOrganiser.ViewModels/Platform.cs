@@ -18,6 +18,9 @@ public interface IPlatformUi
 
     IAudioPlayer CreateAudioPlayer();
 
+    /// <summary>The computer's sound outputs, for Settings › Sound output; null where the app can't choose one.</summary>
+    ISoundOutputs? SoundOutputs => null;
+
     Task<string?> PickFolder(string title);
 
     /// <summary>Asks for an existing file; <paramref name="extension"/> is without the dot, e.g. "bwproject".</summary>
@@ -94,4 +97,26 @@ public interface IAudioPlayer : IDisposable
     void Play(string path, double startSeconds = 0);
     void Play(float[] mono, int sampleRate, string key, double startSeconds = 0);
     void Stop();
+}
+
+/// <summary>
+/// The computer's sound outputs and the one the app plays through: the one chosen in Settings while it's there,
+/// otherwise the computer's default, following it when it changes.
+/// </summary>
+public interface ISoundOutputs
+{
+    /// <summary>The outputs there are now, by name, the computer's default first. It looks afresh, so it can take a moment.</summary>
+    IReadOnlyList<string> List();
+
+    /// <summary>Remembers the output to use (null: the computer's default) for when sound first plays, opening nothing yet.</summary>
+    void Prefer(string? name);
+
+    /// <summary>
+    /// Plays through this output from now on (null: the computer's default), moving a sound that's playing, and says
+    /// where sounds go now, or why they can't go there.
+    /// </summary>
+    string Choose(string? name);
+
+    /// <summary>Looks again (moving back to the chosen output if it's returned) and says where sounds go now.</summary>
+    string Check();
 }

@@ -70,15 +70,15 @@
         <SolidColorBrush x:Key="DataGridColumnHeaderPressedBackgroundBrush" Color="#FF323232" />
         <SolidColorBrush x:Key="DataGridScrollBarsSeparatorBackground" Color="Transparent" />
         <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="Transparent" />
-        <Color x:Key="DataGridRowHoveredBackgroundColor">#FF2A2A2A</Color>
+        <Color x:Key="DataGridRowHoveredBackgroundColor">#FF1E1E1E</Color>
         <SolidColorBrush x:Key="DataGridRowSelectedBackgroundBrush" Color="#FF3DDC97" />
         <SolidColorBrush x:Key="DataGridRowSelectedHoveredBackgroundBrush" Color="#FF3DDC97" />
         <SolidColorBrush x:Key="DataGridRowSelectedUnfocusedBackgroundBrush" Color="#FF3DDC97" />
         <SolidColorBrush x:Key="DataGridRowSelectedHoveredUnfocusedBackgroundBrush" Color="#FF3DDC97" />
-        <x:Double x:Key="DataGridRowSelectedBackgroundOpacity">0.22</x:Double>
-        <x:Double x:Key="DataGridRowSelectedHoveredBackgroundOpacity">0.28</x:Double>
-        <x:Double x:Key="DataGridRowSelectedUnfocusedBackgroundOpacity">0.16</x:Double>
-        <x:Double x:Key="DataGridRowSelectedHoveredUnfocusedBackgroundOpacity">0.22</x:Double>
+        <x:Double x:Key="DataGridRowSelectedBackgroundOpacity">0.16</x:Double>
+        <x:Double x:Key="DataGridRowSelectedHoveredBackgroundOpacity">0.2</x:Double>
+        <x:Double x:Key="DataGridRowSelectedUnfocusedBackgroundOpacity">0.12</x:Double>
+        <x:Double x:Key="DataGridRowSelectedHoveredUnfocusedBackgroundOpacity">0.16</x:Double>
         <SolidColorBrush x:Key="DataGridCellFocusVisualPrimaryBrush" Color="Transparent" />
         <SolidColorBrush x:Key="DataGridCellFocusVisualSecondaryBrush" Color="Transparent" />
         <SolidColorBrush x:Key="DataGridCurrencyVisualPrimaryBrush" Color="Transparent" />

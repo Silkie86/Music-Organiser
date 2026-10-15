@@ -226,13 +226,16 @@ public sealed partial class DuplicatesViewModel : ObservableObject
     /// <summary>Looks for copies of new and changed sounds; the Sounds page calls this after a scan when <see cref="AfterScan"/> is on.</summary>
     public async Task FindAsync()
     {
-        await parent.RunAsync("Finding duplicate sounds", (p, ct) => DuplicateFinder.Update(parent.Org, p, ct), () =>
+        var (groups, extra) = (0, 0);
+        await parent.RunAsync("Finding duplicate sounds", (p, ct) =>
         {
-            var groups = DuplicateFinder.Groups(parent.Org);
-            return ("Duplicate sounds checked", groups.Count == 0
-                ? "No copies found"
-                : $"{groups.Count:N0} sounds have copies ({groups.Sum(g => g.Members.Count - 1):N0} extra files)");
-        });
+            DuplicateFinder.Update(parent.Org, p, ct);
+            var found = DuplicateFinder.Groups(parent.Org);   // here, off the UI thread: on a big library this takes a while
+            (groups, extra) = (found.Count, found.Sum(g => g.Members.Count - 1));
+        }, () => ("Duplicate sounds checked", groups == 0
+            ? "No copies found"
+            : $"{groups:N0} sounds have copies ({extra:N0} extra files)"),
+            always: false);   // nothing in the library itself changes, so the Sounds lists aren't rebuilt   // nothing in the library itself changes, so the Sounds lists aren't rebuilt
         _loaded = true;
         await Load();
     }

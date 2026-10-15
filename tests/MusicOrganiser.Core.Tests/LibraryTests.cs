@@ -129,6 +129,22 @@ public class LibraryTests : IDisposable
         Assert.Equal(["Diva", "Old Synth", "Serum", "Vital"], names);
     }
 
+    [Fact]
+    public void KeepsTwoLetterPluginNames()
+    {
+        // KORG's M1, as it installs on Windows: a VST3 bundle and a VST2 file.
+        var korg = Path.Combine(_root, "Plugins", "KORG");
+        Directory.CreateDirectory(Path.Combine(korg, "M1.vst3", "Contents", "x86_64-win"));
+        File.WriteAllText(Path.Combine(korg, "M1.dll"), "");
+        File.WriteAllText(Path.Combine(korg, "Polysix.dll"), "");
+
+        var files = PluginCatalog.ScanFiles([Path.Combine(_root, "Plugins")]);
+        Assert.Equal(["M1 VST2", "M1 VST3", "Polysix VST2"], files.Select(f => $"{f.Name} {f.Format}").Order());
+        // So a project naming it, with no path or an old one, finds it installed.
+        _db.ReplaceInstalledPlugins(PluginCatalog.Scan([Path.Combine(_root, "Plugins")]));
+        Assert.Contains(LibraryDb.NameKey("M1"), _db.InstalledKeys());
+    }
+
     [Theory]
     [InlineData("LFOTool", "LFOTool_x64")]
     [InlineData("Omnisphere (Automap)", "Omnisphere")]
@@ -155,6 +171,8 @@ public class LibraryTests : IDisposable
     [InlineData("a_2_3", "a_2", 3)]
     [InlineData("130", "130", 1)]
     [InlineData("_5", "_5", 1)]
+    [InlineData("civil war_5 (fixed)", "civil war", 5)]   // Fix's copy sits with the save it was made from
+    [InlineData("Didums (Fixed 2)", "Didums", 1)]
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
 
@@ -314,9 +332,10 @@ public class LibraryTests : IDisposable
         var fl = _db.Project(_db.Projects().First(x => x.Daw == "FL Studio").Id)!;
         var missing = fl.Samples.Single(s => !s.Found);
         var matches = MatchFinder.ForSample(_db, missing.Path);
-        Assert.Equal(("Same file name", 1.0), (matches[0].Reason, matches[0].Score));
+        // The project looked in a "Drums" folder too, which counts in their favour.
+        Assert.Equal(("Same file name, in matching folders", 1.0), (matches[0].Reason, matches[0].Score));
         Assert.EndsWith("Kick 01.wav", matches[0].Candidate);
-        Assert.Contains(matches, m => m.Candidate.EndsWith("Kick 02.wav") && m.Reason == "Similar name");
+        Assert.Contains(matches, m => m.Candidate.EndsWith("Kick 02.wav") && m.Reason == "Similar name, in matching folders");
         Assert.DoesNotContain(matches, m => m.Candidate.EndsWith("Hat.wav"));
         Assert.Contains("Kick%2001.wav", MatchFinder.SampleSearchUrl(missing.Path));
     }

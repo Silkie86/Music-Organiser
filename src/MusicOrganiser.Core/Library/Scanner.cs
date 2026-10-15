@@ -106,7 +106,7 @@ public sealed class Scanner(LibraryDb db)
         progress?.Report(new("Finding projects", 0, 0, ""));
         var files = FindProjects(roots, ct);
         var known = db.KnownFiles();
-        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
+        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).WithCancellation(ct)
             .Where(f =>
             {
                 try
@@ -120,7 +120,7 @@ public sealed class Scanner(LibraryDb db)
 
         // Read the projects on every core; save them here, in path order, a batch at a time,
         // so a new numbered save always finds the earlier ones it takes its status from.
-        var analysed = todo.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
+        var analysed = todo.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).WithCancellation(ct)
             .Select(f =>
             {
                 try { return Parallelism.Background(() => Analyse(f)); }

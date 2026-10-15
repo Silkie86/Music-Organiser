@@ -1,27 +1,91 @@
 namespace MusicOrganiser.Core.Library;
 
-public sealed record Match(string Candidate, double Score, string Reason);
+/// <summary>
+/// A possible replacement. <paramref name="Score"/> is how alike the names are; <paramref name="Folders"/> (0..1) is how
+/// many of the missing file's folder names the candidate's path shares, nearest folder counting most.
+/// </summary>
+public sealed record Match(string Candidate, double Score, string Reason, double Folders = 0)
+{
+    /// <summary>What the list is ordered by: the name first, then a nudge for sitting in the same pack's folders.</summary>
+    public double Rank => Score + 0.3 * Folders;
+}
 
 /// <summary>Suggests replacements for missing samples and plugins, locally and online.</summary>
 public static class MatchFinder
 {
     /// <summary>Audio files in your indexed sample folders that could be the missing sample.</summary>
+    /// <remarks>
+    /// The project only stores where the file was, so there's no sound to compare: names and folders are all there is.
+    /// Copies with the same name come first, the one in the most similar folders ("Soundscan 46 - 70's Breakbeats",
+    /// "drumhits2") leading; then similar names, nudged up when their folders match too.
+    /// </remarks>
     public static IReadOnlyList<Match> ForSample(LibraryDb db, string missingPath, int max = 15)
     {
         var fileName = missingPath.Split('\\', '/')[^1];
-        var results = db.SamplesNamed(fileName).Select(p => new Match(p, 1.0, "Same file name")).ToList();
+        var folders = FolderKeys(missingPath);
+        var results = db.SamplesNamed(fileName)
+            .Select(p => FolderMatch(folders, p) is var f && f > 0
+                ? new Match(p, 1.0, "Same file name, in matching folders", f)
+                : new Match(p, 1.0, "Same file name"))
+            .OrderByDescending(m => m.Folders).ToList();
         var stem = LibraryDb.NameKey(Path.GetFileNameWithoutExtension(fileName));
-        if (stem.Length == 0) return results;
+        if (stem.Length == 0) return results.Take(max).ToList();
 
         var exact = results.Select(r => r.Candidate).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var fuzzy = db.SampleIndex()
             .Where(s => !exact.Contains(s.Path))
             .Select(s => (s.Path, Score: Similarity(stem, s.StemKey)))
-            .Where(x => x.Score >= 0.6)
-            .OrderByDescending(x => x.Score)
-            .Take(max)
-            .Select(x => new Match(x.Path, x.Score, "Similar name"));
+            .Where(x => x.Score >= 0.5)
+            .Select(x => (x.Path, x.Score, Folders: FolderMatch(folders, x.Path)))
+            // A weaker name is only worth showing when it sits in the same pack's folders.
+            .Where(x => x.Score >= 0.6 || x.Folders >= 0.5)
+            .Select(x => new Match(x.Path, x.Score, x.Folders > 0 ? "Similar name, in matching folders" : "Similar name", x.Folders))
+            .OrderByDescending(m => m.Rank)
+            .Take(max);
         return results.Concat(fuzzy).Take(max).ToList();
+    }
+
+    /// <summary>Folder names too common to say anything about which pack a sample came from.</summary>
+    static readonly HashSet<string> CommonFolders =
+    [
+        "users", "user", "documents", "mydocuments", "desktop", "downloads", "music", "programfiles", "programfilesx86",
+        "programdata", "appdata", "roaming", "local", "imageline", "flstudio", "data", "patches", "packs", "pack",
+        "samples", "sample", "sounds", "sound", "audio", "library", "libraries", "content", "splice", "projects",
+        "recorded", "rendered", "sliced", "bitwigstudio", "studioone", "presonus", "wav", "wavs",
+    ];
+
+    /// <summary>The folder names a path sits in, nearest first, normalised, without drives and generic names.</summary>
+    static List<string> FolderKeys(string path)
+    {
+        var parts = path.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        var keys = new List<string>();
+        for (var i = parts.Length - 2; i >= 0; i--)
+        {
+            if (parts[i].EndsWith(':')) continue;
+            if (i > 0 && LibraryDb.NameKey(parts[i - 1]) is "users" or "home") continue;   // the account name is in every path
+            var key = LibraryDb.NameKey(parts[i]);
+            if (key.Length >= 3 && !CommonFolders.Contains(key)) keys.Add(key);
+        }
+        return keys;
+    }
+
+    /// <summary>
+    /// 0..1: how many of the missing file's folders turn up in the candidate's path (alike enough counts, so
+    /// "Soundscan 46 - 70's Breakbeats" finds "Soundscan Vol 46 70s Breakbeats"). The nearest folder weighs most.
+    /// </summary>
+    static double FolderMatch(List<string> missing, string candidate)
+    {
+        if (missing.Count == 0) return 0;
+        var theirs = FolderKeys(candidate);
+        if (theirs.Count == 0) return 0;
+        double got = 0, total = 0;
+        for (var i = 0; i < missing.Count && i < 4; i++)
+        {
+            var weight = 1.0 / (i + 1);
+            total += weight;
+            if (theirs.Any(t => t == missing[i] || Similarity(t, missing[i]) >= 0.8)) got += weight;
+        }
+        return got / total;
     }
 
     /// <summary>Installed plugins whose names are close to a missing plugin's (e.g. a newer version).</summary>
