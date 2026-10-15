@@ -23,6 +23,7 @@ public sealed partial class ProjectDetailViewModel
     [ObservableProperty] string _fixSummary = "";
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(FixButtonText))] bool _fixBusy;
     public string FixButtonText => FixBusy ? "Looking…" : "Fix…";
+    public string FixTip => $"{Item.MissingText} missing, so it will open with gaps. Fix finds what it can on your drives and saves a repaired copy next to the original.";
     [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SaveFixedCommand))] int _fixTicked;
 
     public string FixedName => System.IO.Path.GetFileName(ProjectFixer.FixedPath(Item.Path));
