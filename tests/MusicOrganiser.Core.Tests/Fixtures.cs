@@ -447,11 +447,13 @@ public static class Fixtures
     /// off in the Channel Rack, but an automation clip switches it on and off: off for beats 0-4, on 4-8, off 8-12, then on,
     /// its last points a few millionths of a beat past the clip's end as FL saves them. Pattern "Bass" (notes on beats 1
     /// and 3) plays at beats 0, 4 and 10. The "Vox" audio clip channel is switched off from beat 2 by another, and plays
-    /// clips at beats 0-4 and 4-6. Insert 1 has Pro-Q 3 in slot 1 and WOW2, switched off, in slot 2; its fader is moved.
+    /// clips at beats 0-4 and 4-6. Insert 1 has Pro-Q 3 in slot 0 and WOW2, switched off, in slot 1; its fader is moved.
     /// Automation clips also move Pro-Q 3's fourth setting, the tempo and insert 1's fader. FL 25 numbers its mixer
-    /// settings from 0x7000.
+    /// settings from 0x7000. With <paramref name="more"/>: a second clip switches the bass off at beat 16 and on at 20
+    /// (the pattern plays at 16 and 20 too), another switches WOW2 on and off, and the bass volume rises 0 to 1 over
+    /// beats 0-4 and jumps back to 0 at the clip's end, placed twice in a row; and playlist track 3, the vox's, is muted.
     /// </summary>
-    public static string FlStudio25SwitchedAndMixer(string dir)
+    public static string FlStudio25SwitchedAndMixer(string dir, bool more = false)
     {
         const uint insert1 = 0x7040u << 16;
         var b = new FlpBuilder()
@@ -462,7 +464,10 @@ public static class Fixtures
             .Data(227, AutomationLink(3, 2u << 16 | 7))
             .Data(227, AutomationLink(4, insert1 | 0x8003))
             .Data(227, AutomationLink(5, 0x40000005))
-            .Data(227, AutomationLink(6, insert1 | 0x1fc0))
+            .Data(227, AutomationLink(6, insert1 | 0x1fc0));
+        if (more)
+            b.Data(227, AutomationLink(7, 0u << 16 | 7)).Data(227, AutomationLink(8, 0x7041u << 16 | 0x1f00)).Data(227, AutomationLink(9, 0u << 16 | 0));
+        b
             .Word(64, 0).Byte(21, 2).Byte(0, 0).Word(104, 1)
             .Text(201, "Fruity Wrapper").Text(203, "Bass")
             .Data(213, WrapperBlob("Serum", @"C:\VstPlugins\Serum_x64.dll", "Xfer Records", FlVst2State([1, 2, 3]), version: 12, kind: 4, fourCc: "XfsX"))
@@ -473,7 +478,12 @@ public static class Fixtures
             .Data(234, AutomationPoints((0, 1), (2, 0)))
             .Word(64, 4).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Pro-Q 3 - Gain").Data(234, AutomationPoints((0, 0.25), (4, 0.75)))
             .Word(64, 5).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Tempo").Data(234, AutomationPoints((0, 0.5), (4, 1)))
-            .Word(64, 6).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Insert 1 - Volume").Data(234, AutomationPoints((0, 0.8), (4, 0.2)))
+            .Word(64, 6).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Insert 1 - Volume").Data(234, AutomationPoints((0, 0.8), (4, 0.2)));
+        if (more)
+            b.Word(64, 7).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Bass - Mute / solo #2").Data(234, AutomationPoints((0, 0), (4, 1)))
+             .Word(64, 8).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "WOW2 - On").Data(234, AutomationPoints((0, 1), (8, 0)))
+             .Word(64, 9).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Bass - Volume").Data(234, AutomationPoints((0, 0), (4, 1), (0, 0)));
+        b
             .Data(236, [0, 0, 0, 0])
             .Data(236, [0, 0, 0, 0])
             .Text(201, "Fruity Wrapper")
@@ -490,7 +500,12 @@ public static class Fixtures
             .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(960, 20481, 384),
                         .. PlaylistItem25(0, 1, 1152, track: 498), .. PlaylistItem25(0, 2, 384, track: 497), .. PlaylistItem25(384, 2, 192, track: 497),
                         .. PlaylistItem25(0, 3, 768, track: 496), .. PlaylistItem25(0, 4, 384, track: 495), .. PlaylistItem25(0, 5, 384, track: 494),
-                        .. PlaylistItem25(0, 6, 384, track: 493)]);
+                        .. PlaylistItem25(0, 6, 384, track: 493),
+                        .. more ? [.. PlaylistItem25(1536, 20481, 384), .. PlaylistItem25(1920, 20481, 384), .. PlaylistItem25(1536, 7, 768, track: 492),
+                                   .. PlaylistItem25(0, 8, 1536, track: 491), .. PlaylistItem25(0, 9, 384, track: 490), .. PlaylistItem25(384, 9, 384, track: 490)]
+                                : Array.Empty<byte>()]);
+        if (more)
+            for (var n = 1; n <= 500; n++) b.Data(238, PlaylistTrack(n, muted: n == 3));
         var path = Path.Combine(dir, "Switched.flp");
         File.WriteAllBytes(path, b.Build());
         return path;
@@ -621,6 +636,16 @@ public static class Fixtures
         ms.Write([0, 0, 0x05]);
         ms.Write(Encoding.ASCII.GetBytes("Serum"));
         ms.Write([0, 0]);
+        // Bitwig writes a string's length just before it, and a length that is a readable character
+        // joins the text: ">" (62) before this drive path, "-" (45) before the path in the project folder.
+        // A bare name is a sound inside a multisample or a Grid's sample list.
+        foreach (var text in new[] { $@"F:\Bitwig Studio\Projects\{name}\recordings\Syntakt 2-1.wav", "recordings/Untitled Project [0m27s-1m22s].wav",
+                                     "BASSDRUM_0002 from the Kick Selector.wav" })
+        {
+            ms.Write([0, 0, 0, (byte)text.Length]);
+            ms.Write(Encoding.ASCII.GetBytes(text));
+        }
+        ms.Write([0, 0]);
         // A compressed section, as some Bitwig versions store parts of the project that way.
         using (var z = new MemoryStream())
         {
@@ -690,6 +715,14 @@ public static class Fixtures
             U32(v.Length);
             Span<byte> b = stackalloc byte[4];
             foreach (var f in v) { BinaryPrimitives.WriteSingleBigEndian(b, f); S.Write(b); }
+        }
+        /// <summary>A list of doubles (type 0x18), as Bitwig 6.1 saves a Sampler sample's analysis.</summary>
+        public void Doubles(int fid, params double[] v)
+        {
+            Type(fid, 0x18);
+            U32(v.Length);
+            Span<byte> b = stackalloc byte[8];
+            foreach (var f in v) { BinaryPrimitives.WriteDoubleBigEndian(b, f); S.Write(b); }
         }
 
         public static byte[] File(Action<BwWriter> meta, Action<BwWriter> body, byte[]? zip)

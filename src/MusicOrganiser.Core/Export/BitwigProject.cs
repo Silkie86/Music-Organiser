@@ -320,7 +320,7 @@ public static class BitwigProject
                 notes.Add($"{c.Name}: each of its {copies} tracks has its own copy of {InsertName(inserts[c.Insert])}'s effects, " +
                           "which FL Studio runs once on all of them");
             if (!c.Enabled) notes.Add($"{c.Name}: {DawProject.SwitchedOff(own.Count)}");
-            if (c.SwitchedBy.Length > 0) notes.Add($"{c.Name}: {DawProject.SwitchedOnAndOff(c, audio.Contains(c))}");
+            if (c.SwitchedBy.Count > 0) notes.Add($"{c.Name}: {DawProject.SwitchedOnAndOff(c, audio.Contains(c) && t.AudioTrack is not null)}");
             tracks.AddRange(own);
             placed[c.Index] = (c, own);
         }

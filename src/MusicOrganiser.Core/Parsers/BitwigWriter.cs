@@ -144,6 +144,7 @@ public static partial class BitwigFormat
                 Guid g => ids.GetValueOrDefault(g, g),
                 int[] a => a.ToArray(),
                 float[] a => a.ToArray(),
+                double[] a => a.ToArray(),
                 List<string> l => l.ToList(),
                 _ => v,
             };
@@ -270,6 +271,7 @@ public static partial class BitwigFormat
             Dictionary<string, object?> => 0x14,
             Guid => 0x15,
             float[] => 0x16,
+            double[] => 0x18,
             List<string> => 0x19,
             KeyValuePair<object?, string> => 0x1a,
             _ => throw new InvalidDataException($"can't write a {v.GetType().Name}"),
@@ -319,6 +321,10 @@ public static partial class BitwigFormat
                 case 0x17:
                     U32(((float[])v!).Length);
                     foreach (var c in (float[])v!) { BinaryPrimitives.WriteSingleBigEndian(_b, c); Out.Write(_b, 0, 4); }
+                    break;
+                case 0x18:
+                    U32(((double[])v!).Length);
+                    foreach (var c in (double[])v!) { BinaryPrimitives.WriteDoubleBigEndian(_b, c); Out.Write(_b, 0, 8); }
                     break;
                 case 0x19:
                     var strings = (List<string>)v!;

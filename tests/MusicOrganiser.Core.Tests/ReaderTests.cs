@@ -208,16 +208,17 @@ public class FlStudioTests
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir()));
 
         // The on/off holds each point's value until the next, and the points just past the clip's end (as FL saves its
-        // sums of point gaps) count as at its end: off 0-4, on 4-8, off 8-12, then on.
+        // sums of point gaps) count as at its end, jump and all: off 0-4, on 4-8, off 8-12, then on.
         var onOff = song.Automation.Single(a => a.Name == "Bass - Mute / solo");
         Assert.Equal((0, FlControl.OnOff), (onOff.Channel, onOff.Control));
-        Assert.Equal([(0.0, 0.0), (4.0, 1.0), (8.0, 0.0), (12.0, 0.97)], onOff.Points.Select(p => (p.Beat, p.Value)));
+        Assert.Equal([(0.0, 0.0), (4.0, 1.0), (8.0, 0.0), (12.0, 0.0), (12.0, 0.97)], onOff.Points.Select(p => (p.Beat, p.Value)));
 
         // The bass is switched off in the Channel Rack, but that's only where the automation left it: it plays while it's
         // on. The clip at beats 0-4 is off all the way through, so it's muted; at 4-8 it plays; at 10-14 only its first
         // note (beat 10) starts while it's off.
         var bass = song.Channels.Single(c => c.Name == "Bass");
-        Assert.Equal((true, "Bass - Mute / solo"), (bass.Enabled, bass.SwitchedBy));
+        Assert.True(bass.Enabled);
+        Assert.Equal(["Bass - Mute / solo"], bass.SwitchedBy);
         Assert.Equal([(0L, true), (384L, false), (960L, false)], bass.Clips.Select(c => (c.Start, c.Muted)));
         Assert.Equal([true, false], bass.Clips[2].Notes.Select(n => n.Muted));
         Assert.Equal([384L, 576L, 1152L], bass.Notes.Select(n => n.Start));
@@ -225,6 +226,24 @@ public class FlStudioTests
         // The vox is off from beat 2: its clip at 0-4 plays part of the way, the one at 4-6 is muted.
         var vox = song.Channels.Single(c => c.Name == "Vox");
         Assert.Equal([(false, true), (true, false)], vox.AudioClips.Select(c => (c.Muted, c.PartlyOff)));
+    }
+
+    [Fact]
+    public void FollowsEveryClipThatSwitchesAChannelAndKeepsAutomatedEffectsOn()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir(), more: true));
+
+        // The first clip leaves the bass on from beat 12; the second switches it off at 16 and on again at 20.
+        var bass = song.Channels.Single(c => c.Name == "Bass");
+        Assert.Equal(["Bass - Mute / solo", "Bass - Mute / solo #2"], bass.SwitchedBy);
+        Assert.Equal([(0L, true), (384L, false), (960L, false), (1536L, true), (1920L, false)], bass.Clips.Select(c => (c.Start, c.Muted)));
+
+        // WOW2 was off when the song was saved, but automation switches it, so it stays on.
+        Assert.Equal([true, true], song.Inserts.Single(i => i.Index == 1).Effects.Select(e => e.Enabled));
+
+        // A rise that jumps back down at the clip's end rises each time the clip plays.
+        Assert.Equal([(0.0, 0.0), (4.0, 1.0), (4.0, 0.0), (8.0, 1.0), (8.0, 0.0)],
+                     song.Automation.Single(a => a.Name == "Bass - Volume").Points.Select(p => (p.Beat, p.Value)));
     }
 
     [Fact]
@@ -431,6 +450,11 @@ public class BitwigTests
         Assert.DoesNotContain("Serum", names);   // not installed, so plain text isn't trusted as a plugin
         Assert.Contains(@"D:\Splice\Snare 808.wav", info.Samples);   // from the compressed section
         Assert.Contains(info.Samples, s => s.EndsWith("Recorded Bass.wav"));
+        // What the text scan reads next to a path doesn't stick to it, and bare names aren't files.
+        Assert.Contains(@"F:\Bitwig Studio\Projects\Loop Idea\recordings\Syntakt 2-1.wav", info.Samples);
+        Assert.Contains(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, "recordings/Untitled Project [0m27s-1m22s].wav")), info.Samples);
+        Assert.DoesNotContain(info.Samples, s => s.Contains("BASSDRUM"));
+        Assert.All(info.Samples, s => Assert.True(s.StartsWith("D:") || s.StartsWith("F:") || Path.IsPathRooted(s), s));
         Assert.False(info.CanExtractMidi);
         Assert.Empty(new BitwigReader().ExtractMidi(path));
 
