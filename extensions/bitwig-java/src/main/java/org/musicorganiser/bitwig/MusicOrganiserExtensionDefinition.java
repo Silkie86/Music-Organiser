@@ -15,12 +15,17 @@ import java.util.UUID;
 public final class MusicOrganiserExtensionDefinition extends ControllerExtensionDefinition {
     /** The ID the JavaScript script (extensions/bitwig/MusicOrganiser.control.js) was defined with. */
     static final UUID ID = UUID.fromString("ed35e3c7-c544-49ed-936d-c236b0c9b73b");
-    static final String VERSION = "3.6";
+    static final String VERSION = "3.7";
     /**
      * API 23 (Bitwig 6.1) has everything the link uses: parameter steps and names, origins, automation, channel
      * IDs, the last clicked parameter and the master recorder. Nothing newer (and no beta method) is used.
      */
     static final int API_VERSION = 23;
+    /**
+     * The loopMIDI port the link's MIDI in and out are set to, for its loopback. It's not "Music Organiser", the port the FL
+     * Studio link uses: FL Studio must never see what the Bitwig link sends itself.
+     */
+    static final String LOOPBACK_PORT = "Music Organiser Bitwig";
 
     @Override
     public String getName() {
@@ -57,19 +62,29 @@ public final class MusicOrganiserExtensionDefinition extends ControllerExtension
         return "DAW link";
     }
 
+    /**
+     * One MIDI in port and one MIDI out port, only for the link's loopback (see Link's command routes): the link sends
+     * itself MIDI through the out port, and Bitwig hands it back on the in port as if a device had sent it, since Bitwig
+     * seems to carry out some commands (Save, copy and paste, bringing a panel to the front) only while it handles input
+     * from a device. Both have to be the loopMIDI port called "Music Organiser Bitwig" ({@link #LOOPBACK_PORT}), never
+     * "Music Organiser", which is the FL Studio link's: FL Studio must never see these messages. Only the routes that go
+     * through MIDI use them, but whether Bitwig starts the extension at all while they're unassigned isn't known yet
+     * (Bitwig stops a controller whose device goes away): see "Still to confirm" in extensions/README.md.
+     */
     @Override
     public int getNumMidiInPorts() {
-        return 0;
+        return 1;
     }
 
     @Override
     public int getNumMidiOutPorts() {
-        return 0;
+        return 1;
     }
 
+    /** Offers the loopback port for both, on every platform, so Bitwig can fill them in when it finds the port. */
     @Override
     public void listAutoDetectionMidiPortNames(AutoDetectionMidiPortNamesList list, PlatformType platformType) {
-        // Nothing to detect: the link has no MIDI ports, so it's added by hand.
+        list.add(new String[] {LOOPBACK_PORT}, new String[] {LOOPBACK_PORT});
     }
 
     @Override

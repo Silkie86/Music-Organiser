@@ -7,8 +7,8 @@ controller already added in Bitwig stays added, with its *Let the app make chang
 other, not both.
 
 What it does, its commands and their answers are in [the extensions README](../README.md#bitwig-link). It talks
-to the app exactly as the script does, and adds what only an extension can do: Bitwig's newer API, and reports
-written to files.
+to the app exactly as the script does, and adds what only an extension can do: Bitwig's newer API, reports
+written to files, and (from 3.7) a MIDI loopback to run Bitwig's commands as a hardware controller would.
 
 ## Building
 
@@ -35,6 +35,19 @@ Settings → DAW links → Bitwig Studio puts the extension in place of the scri
 extension up by itself (restart Bitwig if it doesn't). If the controller isn't added yet: Settings → Controllers → Add controller →
 Music Organiser → DAW link.
 
+### The MIDI loopback (3.7)
+
+The extension has one MIDI in and one MIDI out, only for its loopback: it sends itself MIDI through the out, and
+Bitwig hands it back on the in as if a device had sent it. Bitwig 6.1.3 ignored Save, copy and paste run by the
+link otherwise, while it carried them out for a controller's hardware button. To set it up: in loopMIDI, add a
+port called **Music Organiser Bitwig**, then in Bitwig, Settings → Controllers → Music Organiser, set both MIDI
+in and MIDI out to it. Bitwig can fill them in by itself when it finds the port (the extension offers it for
+auto-detection). Never use **Music Organiser**, the FL Studio link's port: FL Studio must never get what the
+Bitwig link sends itself. The self-check and `hello`'s `loopback` say whether the loopback works. Whether
+Bitwig starts the extension at all with its MIDI in and out unassigned isn't known yet: it may not, which would
+stop the whole link, so set them after installing 3.7. See
+[Routes and the MIDI loopback](../README.md#routes-and-the-midi-loopback).
+
 ## Reports
 
 The extension writes to the app's data folder, next to MO Probe's reports:
@@ -59,7 +72,9 @@ The extension writes to the app's data folder, next to MO Probe's reports:
   clicked parameter, parameter steps, origins and automation, the master recorder, the arranger (its timeline
   and clip launcher, the panel layout, the play start, the clip selected there and launcher clips' colours, for
   `arrange`) and Bitwig's
-  actions, then whether the app can connect (port 19791) and whether the reports folder takes files. Each part
+  actions, the command routes (the loopback's MIDI ports, the buttons the link made, and whether its own MIDI
+  has come back, with how to set the loopback up when it hasn't), then whether the app can connect (port 19791)
+  and whether the reports folder takes files. Each part
   is set up on its own, so one that fails in a future Bitwig leaves the rest working, and the self-check says
   which and why.
 
@@ -97,13 +112,30 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   as it copied, so it didn't paste; `layout`, `launcher`, `mark` (the clip's colour `before`, the one `asked`
   for, the one it `got`, whether it `took` and whether it's `exact`, the very colour asked for),
   `launcherFocus`, `timeline`, `focus`, the clip selected in the arranger `before`, `beforePaste` and `after`,
-  its `pastedColor`, and the track's `launcherClipsBefore` and `launcherClipsAfter`. See
-  [the extensions README](../README.md#clips-in-the-arranger-an-experiment).
+  its `pastedColor`, and the track's `launcherClipsBefore` and `launcherClipsAfter`. From 3.7 it takes `via`
+  too (below), and says `via` and `ran` (whether each of `launcherFocus`, `copy`, `focus` and `paste` ran by
+  it). See [the extensions README](../README.md#clips-in-the-arranger-an-experiment).
 
 Not new to version 3, since the script does it too: any request can carry `onlyIn`, a project's name, and the
 link refuses it, or stops a change part way, unless Bitwig has that project open; `hello` says `onlyIn: true`.
 The live tests use it to keep their changes in their own project (see
 [the extensions README](../README.md#only-in-one-project)).
+
+Also not new to version 3: from extension 3.7, `action` answers with `project`, the project Bitwig had in front
+just before the action ran (the script does the same), so the live tests can tell which project a Save went to.
+Earlier versions answer `{}`. If the link can't read the project's name, it still runs the action and leaves
+`project` out.
+
+New in 3.7, the command routes: `action` and `arrange` take `via`, the route to run Bitwig's commands by (Save,
+Copy, Paste and the two focus actions): `direct` (straight away, the default and the only route the script
+has), `flush` (from Bitwig's next flush), `midi` (when a SysEx message the link sent itself comes back through
+the loopback), `buttonCode` (when a press of one of its own hardware buttons comes back, from a note on channel
+16, and the link runs the command) and `button` (another button, which Bitwig runs the command for itself). The
+answer says `via` and `ran`. A route that hasn't come back within a second is dropped, so a late message or
+press never runs the command, except a late `button` press, whose command Bitwig runs itself before the link
+hears of it. `hello` says `loopback`:
+whether the link's own MIDI has come back, from the message it sends itself as Bitwig starts it and each time
+the app connects.
 
 ## Code
 
@@ -111,8 +143,8 @@ The live tests use it to keep their changes in their own project (see
 
 - `MusicOrganiserExtensionDefinition`: who the extension is to Bitwig (listed in
   `META-INF/services/com.bitwig.extension.ExtensionDefinition`).
-- `Link`: the link itself, a port of `MusicOrganiser.control.js` function by function, plus the newer API
-  and the self-check. Everything runs on Bitwig's controller thread.
+- `Link`: the link itself, a port of `MusicOrganiser.control.js` function by function, plus the newer API,
+  the self-check and the command routes. Everything runs on Bitwig's controller thread.
 - `Json`, `Framing`: a small JSON reader and writer (so the extension needs nothing but the JDK) and how
   messages travel.
 - `Reports`: the reports folder and its files. The folder and the clock are handed in, so tests use their own.
@@ -126,7 +158,11 @@ The live tests use it to keep their changes in their own project (see
   interesting in init fails, changes happen a moment after they're asked for and reach the extension bit by
   bit, and time only passes when a test says so. Calling anything it doesn't stand in for fails and names it.
   The tests talk to the extension as the app does: requests in through the connection's receive callback,
-  answers checked as plain ASCII JSON lines.
+  answers checked as plain ASCII JSON lines. It also stands in for the MIDI ports, the hardware surface and its
+  buttons, and a loopback (on by default, with a delay, or off), and knows which Bitwig callback is running
+  (init, the connection, a task, the flush, SysEx, a hardware press, or the test itself), so a test can have it
+  honour Save, copy, paste and the focus actions only in some of them, as Bitwig 6.1.3 seemed to. Its MIDI never
+  leaves the test.
 - `LinkTest`: every scenario of the script's tests (`../bitwig/test/link.test.js`), under the same names, plus
   two apps at once and a connection that breaks.
 - `NewerApiTest`: link version 3's additions: track IDs, remote controls' `steps`, `stepNames`, `origin` and
@@ -141,6 +177,12 @@ The live tests use it to keep their changes in their own project (see
   (appeared, but not the same clip), a colour Bitwig ignores or rounds to its own (never `arranged` then, as a
   clip that was on the clipboard in the colour Bitwig rounded the mark to looks just the same), and a fresh
   colour for each arrange.
+- `RoutesTest`: the command routes: Save by every route, the MIDI each sends, a route that never comes back
+  (`ran: false`, and a late message or press doesn't run it, nor does a stale message or the link's own ping that
+  comes back while a newer command waits), a Bitwig that honours commands only for hardware or
+  only in SysEx, the callback each route runs in, an unknown route, `onlyIn` and changes checked again as a
+  routed command runs, `hello`'s `loopback`, the self-check's detail, a Bitwig without MIDI ports, and `arrange`
+  by the buttons, refused routes and no paste when the copy didn't run.
 - `SelfCheckTest`, `LinkLogTest`, `ReportsTest`: the self-check and the reports, in a temporary folder,
   including a Bitwig missing part of the API (each part fails on its own), another port, an older API and a
   folder that can't be written.

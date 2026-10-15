@@ -16,9 +16,13 @@ import com.bitwig.extension.controller.api.DeviceBank;
 import com.bitwig.extension.controller.api.DirectParameterValueDisplayObserver;
 import com.bitwig.extension.controller.api.DrumPad;
 import com.bitwig.extension.controller.api.DrumPadBank;
+import com.bitwig.extension.controller.api.HardwareButton;
+import com.bitwig.extension.controller.api.HardwareSurface;
 import com.bitwig.extension.controller.api.InsertionPoint;
 import com.bitwig.extension.controller.api.LastClickedParameter;
 import com.bitwig.extension.controller.api.MasterRecorder;
+import com.bitwig.extension.controller.api.MidiIn;
+import com.bitwig.extension.controller.api.MidiOut;
 import com.bitwig.extension.controller.api.Parameter;
 import com.bitwig.extension.controller.api.PinnableCursorDevice;
 import com.bitwig.extension.controller.api.PopupBrowser;
@@ -81,6 +85,12 @@ import java.util.stream.Collectors;
  * host.scheduleTask. Bitwig's objects can only be made in init, and values reach the extension a moment after
  * Bitwig changes them, so every value read later is marked as interesting in init, and a change waits for
  * Bitwig to report it.
+ *
+ * Bitwig 6.1.3 ignored every command of its user interface the link ran (Save, copy, paste, bringing a panel to the
+ * front) while it carried out every other change, whether the link ran them as a request came in or in a task it
+ * scheduled. The same Save works for controllers such as DrivenByMoss, which run it while Bitwig handles a hardware
+ * button. So the link can run such a command by a route ("via"): straight away, from Bitwig's flush, or through a MIDI
+ * loopback, as a message it sent itself or a press of a button of its own coming back (see {@link #ROUTES}).
  */
 final class Link {
     static final int PORT = 19791;
@@ -128,6 +138,37 @@ final class Link {
     static final int SAME_COLOUR = 2;
     /** How far apart one of them has to be (out of 255) for a colour to look clearly different. */
     static final int OTHER_COLOUR = 64;
+    /**
+     * The routes the link can run one of Bitwig's commands by (extension 3.7): "direct" runs it straight away (in the
+     * socket's callback, or a task the link scheduled), "flush" from Bitwig's next flush, "midi" when a SysEx message the
+     * link sent itself comes back through the loopback, "button" by pressing one of the link's own hardware buttons through
+     * the loopback, which Bitwig runs the command for itself, and "buttonCode" by pressing another, whose press the link
+     * runs the command for. The last three need the controller's MIDI in and out set to the loopMIDI port called
+     * "Music Organiser Bitwig".
+     */
+    static final List<String> ROUTES = List.of("direct", "flush", "midi", "button", "buttonCode");
+    static final String DIRECT = "direct";
+    /** The commands the link has buttons for, in order: Bitwig's Save, Copy and Paste actions, and the two focus actions. */
+    static final List<String> ROUTED = List.of("Save", "Copy", "Paste", FOCUS_ARRANGER, FOCUS_LAUNCHER);
+    /** The MIDI channel the link's buttons listen on: 16 (Bitwig counts from 0). */
+    static final int CHANNEL = 15;
+    /**
+     * The notes of the link's buttons, the nth command of ROUTED on the nth note up from each: from NOTE_BOUND for the
+     * "button" route (Bitwig runs the command bound to it), from NOTE_CODE for "buttonCode" (the link runs it).
+     */
+    static final int NOTE_BOUND = 100;
+    static final int NOTE_CODE = 110;
+    /** How long a route other than "direct" has to come back (through Bitwig's flush, or the loopback) before the link gives up on it. */
+    static final long LOOPBACK_WAIT = 1000;
+    /**
+     * The start of every SysEx message the link sends itself: F0, then 7D (the ID for non-commercial use, so no maker's
+     * device takes it for its own), then "MOB" (4D 4F 42). Three bytes of the message's number follow, then F7.
+     */
+    static final String SYSEX_START = "F07D4D4F42";
+    /** How to set up the loopback, for the self-check and the answers that need it. */
+    static final String LOOPBACK_SETUP = "In Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to \""
+                                         + MusicOrganiserExtensionDefinition.LOOPBACK_PORT + "\" (the loopMIDI port), never \"Music Organiser\", "
+                                         + "which is the FL Studio link's.";
     static final String CHANGES_OFF = "Changes are turned off. To let the app change things, turn on \"Let the app make changes\" "
                                       + "in Bitwig: Settings > Controllers > Music Organiser.";
 
@@ -193,6 +234,20 @@ final class Link {
      * next as well. The tests' stand-in Bitwig sets it, to know which colours come.
      */
     double markHue = Math.floorMod(System.nanoTime(), 1_000_000L) / 1_000_000.0;
+    /** The loopback's MIDI ports (null when Bitwig wouldn't give them), the link's buttons, and the commands they're for. */
+    private MidiIn midiIn;
+    private MidiOut midiOut;
+    private HardwareSurface surface;
+    /** The commands of ROUTED Bitwig has, each with its place in ROUTED (which sets its buttons' notes). */
+    private Map<String, Integer> buttons;
+    /** Whether any of the link's own loopback messages (a SysEx or a button press) has come back since it started. */
+    private boolean loopback;
+    /** The number of the last SysEx message the link sent itself (1 up). */
+    private int lastToken;
+    /** Commands on their way by a route other than "direct": by their message's number, by button, and for the next flush. */
+    private final Map<Integer, Sent> tokens = new HashMap<>();
+    private final Map<String, Sent> presses = new HashMap<>();
+    private final List<Sent> flushing = new ArrayList<>();
     /** Whether parameters carry their steps, origin and automation (marked as interesting in init). */
     private boolean details;
     /** Whether tracks carry their IDs. */
@@ -245,7 +300,8 @@ final class Link {
         commands.put("clip", Command.job(this::addClip));
         commands.put("pads", Command.job(this::fillPads));
         commands.put("transpose", Command.job(this::transpose));
-        commands.put("action", Command.answer(true, this::runAction));
+        // A job since extension 3.7: a route other than "direct" waits for the command to come back.
+        commands.put("action", Command.job(this::runAction));
         // Link version 3.
         commands.put("clicked", Command.answer(false, this::clicked));
         commands.put("recorder", Command.job(this::useRecorder));
@@ -495,6 +551,39 @@ final class Link {
                                                 : "no clip is selected in the arranger")
                  + ", and the play start is at beat " + Json.number(transport.playStartPosition().get()) + ".");
 
+        // The routes that run Bitwig's commands other than straight away (see ROUTES): the loopback's MIDI ports, and two
+        // buttons for each command of ROUTED Bitwig has, which notes on channel 16 coming back through the loopback press.
+        feature("command routes", () -> {
+            MidiIn in = host.getMidiInPort(0);
+            MidiOut out = host.getMidiOutPort(0);
+            in.setSysexCallback(this::received);
+            HardwareSurface made = host.createHardwareSurface();
+            made.setPhysicalSize(60, 20);
+            Map<String, Integer> found = new LinkedHashMap<>();
+            for (int i = 0; i < ROUTED.size(); i++) {
+                String id = ROUTED.get(i);
+                Action action = app.getAction(id);
+                if (action == null) continue;
+                // Bitwig runs the command bound to this one itself, as for DrivenByMoss's buttons; the link only hears of the press.
+                HardwareButton bound = made.createHardwareButton("MO_BUTTON_" + id);
+                bound.pressedAction().setActionMatcher(in.createNoteOnActionMatcher(CHANNEL, NOTE_BOUND + i));
+                bound.pressedAction().addBinding(action);
+                bound.pressedAction().addBinding(host.createAction(() -> pressed(id, "button"), () -> "Music Organiser: " + id + " pressed"));
+                // The link runs the command for a press of this one, while Bitwig handles it.
+                HardwareButton code = made.createHardwareButton("MO_CODE_" + id);
+                code.pressedAction().setActionMatcher(in.createNoteOnActionMatcher(CHANNEL, NOTE_CODE + i));
+                code.pressedAction().setBinding(host.createAction(() -> pressed(id, "buttonCode"), () -> "Music Organiser: run " + id));
+                found.put(id, i);
+            }
+            midiIn = in;
+            midiOut = out;
+            surface = made;
+            buttons = found;
+        }, () -> "Buttons for " + (buttons.isEmpty() ? "none of Bitwig's commands" : String.join(", ", buttons.keySet())) + " on MIDI channel "
+                 + (CHANNEL + 1) + " (notes from " + NOTE_BOUND + " and from " + NOTE_CODE + "). "
+                 + (loopback ? "The link has had its own MIDI back, so the loopback works."
+                             : "The link hasn't had its own MIDI back, so only the direct and flush routes work. " + LOOPBACK_SETUP));
+
         feature("remote connection", () -> {
             socket = host.createRemoteConnection("Music Organiser", PORT);
             socket.setClientConnectCallback(this::connected);
@@ -522,6 +611,8 @@ final class Link {
         start.put("api", host.getHostApiVersion());
         start.put("port", port);
         reports.log(start);
+        // So the link knows early on whether the loopback works (hello's "loopback").
+        ping();
         host.scheduleTask(() -> {
             try {
                 selfTest("start");
@@ -531,12 +622,19 @@ final class Link {
         }, SELF_CHECK_DELAY);
     }
 
-    void flush() {}
+    /** Bitwig's flush: runs the commands waiting for it (the "flush" route). */
+    void flush() {
+        if (flushing.isEmpty()) return;
+        List<Sent> due = new ArrayList<>(flushing);
+        flushing.clear();
+        for (Sent sent : due) run(sent);
+    }
 
     void exit() {
         for (Client client : clients) client.open = false;
         clients.clear();
         jobs.clear();
+        dropSent();
         reports.log(event("stop"));
     }
 
@@ -588,6 +686,7 @@ final class Link {
         hello.put("event", "hello");
         hello.put("result", greeting());
         send(client, hello);
+        ping();
     }
 
     /**
@@ -670,6 +769,8 @@ final class Link {
             public void done(Object result, String error) {
                 if (finished) return;
                 finished = true;
+                // Nothing the change sent on its way by a route runs once it has ended, whatever comes back later.
+                dropSent();
                 reply(job.ask(), result, error);
                 nextJob();
             }
@@ -829,6 +930,8 @@ final class Link {
         m.put("runtime", "java");
         m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
         if (!loadedFrom.isEmpty()) m.put("loadedFrom", loadedFrom);
+        // Extension 3.7: whether the link's own MIDI has come back through the loopback (see ROUTES).
+        m.put("loopback", loopback);
         return m;
     }
 
@@ -874,6 +977,7 @@ final class Link {
             m.put("runtime", "java");
             m.put("extension", MusicOrganiserExtensionDefinition.VERSION);
             if (!loadedFrom.isEmpty()) m.put("loadedFrom", loadedFrom);
+            m.put("loopback", loopback);
             m.put("error", failure(e) + " Ask for a selftest to see what's wrong.");
             return m;
         }
@@ -1105,13 +1209,213 @@ final class Link {
         reply(ask, Map.of(), null);
     }
 
-    /** Runs one of Bitwig's actions by its ID (as listed by the actions command), e.g. saving the project. */
-    private void runAction(Ask ask, Map<String, Object> request) {
+    /**
+     * Runs one of Bitwig's actions by its ID (as listed by the actions command), e.g. saving the project, by the route
+     * the request asks for as `via` (straight away when it doesn't say: see ROUTES). The answer (extension 3.7) says
+     * which project Bitwig had in front just before the action ran, as `project`: on Bitwig 6.1.3 Save once left the
+     * test project unsaved while another project was open too, and which one is in front may be why. It's left out when
+     * the link can't read it (the application part of the API didn't set up). `via` is the route, and `ran` whether the
+     * action got run by it: a route other than "direct" may not come back (the loopback isn't set up, say), and then
+     * the link didn't run it. Whether Bitwig then did what the action does is for the app to see.
+     */
+    private void runAction(Map<String, Object> request, Finish finish) {
+        String route = route(request);
         Object id = field(request, "action");
         Action action = id instanceof String ? app.getAction((String) id) : null;
         if (action == null) throw new LinkError("Bitwig has no action " + Json.js(id) + ".");
-        action.invoke();
-        reply(ask, Map.of(), null);
+        String front = frontProject();
+        runBy(route, (String) id, action::invoke, ran -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            if (front != null) m.put("project", front);
+            m.put("via", route);
+            m.put("ran", ran);
+            finish.ok(m);
+        }, finish);
+    }
+
+    // ---- Routes (extension 3.7) ----
+
+    /**
+     * The route a request asks for as `via`: "direct" when it doesn't say. Refuses one that isn't in ROUTES, and one
+     * that needs the loopback's ports and buttons when Bitwig wouldn't let the link set them up.
+     */
+    private String route(Map<String, Object> request) {
+        Object via = field(request, "via");
+        if (absent(via)) return DIRECT;
+        if (!(via instanceof String) || !ROUTES.contains(via))
+            throw new LinkError("The route (via) has to be one of " + String.join(", ", ROUTES) + ", not " + Json.js(via) + ".");
+        String route = (String) via;
+        if (needsLoopback(route) && buttons == null)
+            throw new LinkError("This Bitwig didn't let the link set up its MIDI ports and buttons, so it can't run a command via "
+                                + route + ". A selftest says why.");
+        return route;
+    }
+
+    /** Whether a route goes through the loopback (MIDI out and back in): all but "direct" and "flush". */
+    private static boolean needsLoopback(String route) {
+        return !route.equals(DIRECT) && !route.equals("flush");
+    }
+
+    /** Refuses a button route for a command the link has no buttons for (Bitwig had no such action when the link started). */
+    private void checkButtons(String route, List<String> ids) {
+        if (!route.equals("button") && !route.equals("buttonCode")) return;
+        for (String id : ids)
+            if (!buttons.containsKey(id))
+                throw new LinkError("The link has buttons for " + (buttons.isEmpty() ? "none of Bitwig's commands" : String.join(", ", buttons.keySet()))
+                                    + ", not " + Json.js(id) + ", so it can't run that via " + route + ".");
+    }
+
+    /**
+     * Runs one of Bitwig's commands (`run`, which is Bitwig's action `id` or does the same) by a route (see ROUTES), then
+     * hands `then` whether it ran. "direct" runs it now. Any other route sends it on its way and waits up to
+     * LOOPBACK_WAIT for it to come back: when it doesn't, the link drops it, so it never runs later, and `then` gets
+     * false. Only the "button" route can't be held back like that, as Bitwig runs the command bound to the button
+     * itself; the link just hears of the press.
+     */
+    private void runBy(String route, String id, Runnable run, Then then, Finish finish) {
+        if (route.equals(DIRECT)) {
+            run.run();
+            then.run(true);
+            return;
+        }
+        checkButtons(route, List.of(id));
+        Sent sent = new Sent(route, id, run);
+        switch (route) {
+            case "flush" -> {
+                flushing.add(sent);
+                host.requestFlush();
+            }
+            case "midi" -> {
+                int token = nextToken();
+                tokens.put(token, sent);
+                midiOut.sendSysex(message(token));
+            }
+            default -> {
+                int note = (route.equals("button") ? NOTE_BOUND : NOTE_CODE) + buttons.get(id);
+                presses.put(route + " " + id, sent);
+                // A press and a release, as a button would send.
+                midiOut.sendMidi(0x90 | CHANNEL, note, 127);
+                midiOut.sendMidi(0x80 | CHANNEL, note, 0);
+            }
+        }
+        waitFor(() -> sent.ran, LOOPBACK_WAIT, ran -> {
+            if (!ran) drop(sent);
+            then.run(ran);
+        }, finish);
+    }
+
+    /**
+     * Runs a command that came back by its route, unless the link gave up on it already, or the change may no longer go
+     * ahead (another project came to the front meanwhile, say: the change then stops at its next step, saying why).
+     */
+    private void run(Sent sent) {
+        if (sent.dropped) return;
+        try {
+            carryOn(currentJob);
+        } catch (RuntimeException e) {
+            drop(sent);
+            return;
+        }
+        try {
+            sent.run.run();
+            sent.ran = true;
+        } catch (RuntimeException | LinkageError e) {
+            host.errorln("Music Organiser: couldn't run " + sent.id + " via " + sent.route + " (" + e + ").");
+        }
+    }
+
+    /** Gives up on a command sent by a route: if it comes back after all, nothing runs. */
+    private void drop(Sent sent) {
+        sent.dropped = true;
+        tokens.values().remove(sent);
+        presses.values().remove(sent);
+        flushing.remove(sent);
+    }
+
+    /** Gives up on every command on its way by a route (when a change ends, and when Bitwig stops the link). */
+    private void dropSent() {
+        for (Sent sent : tokens.values()) sent.dropped = true;
+        for (Sent sent : presses.values()) sent.dropped = true;
+        for (Sent sent : flushing) sent.dropped = true;
+        tokens.clear();
+        presses.clear();
+        flushing.clear();
+    }
+
+    /** The next SysEx message's number: 1 up to the most three 7-bit bytes hold, then 1 again. */
+    private int nextToken() {
+        lastToken = lastToken % 0x1FFFFF + 1;
+        return lastToken;
+    }
+
+    /** The SysEx message the link sends itself with a number (see SYSEX_START), written as hex the way Bitwig takes it. */
+    static String message(int token) {
+        return String.format("F0 7D 4D 4F 42 %02X %02X %02X F7", (token >> 14) & 0x7F, (token >> 7) & 0x7F, token & 0x7F);
+    }
+
+    /** Sends the link a SysEx message that nothing waits for, so it learns whether the loopback works (hello's `loopback`). */
+    private void ping() {
+        if (midiOut == null) return;
+        try {
+            midiOut.sendSysex(message(nextToken()));
+        } catch (RuntimeException | LinkageError e) {
+            host.errorln("Music Organiser: couldn't send a message through the loopback (" + e + ").");
+        }
+    }
+
+    /**
+     * A SysEx message on the loopback's MIDI in, as hex. One of the link's own (see message) says the loopback works,
+     * and runs the command waiting for its number, if any. Anything else is someone else's, and left alone.
+     */
+    void received(String data) {
+        String hex = data == null ? "" : data.replaceAll("[^0-9a-fA-F]", "").toUpperCase(Locale.ROOT);
+        if (!hex.startsWith(SYSEX_START) || !hex.endsWith("F7") || hex.length() != SYSEX_START.length() + 8) return;
+        int[] b = new int[3];
+        for (int i = 0; i < 3; i++) {
+            int start = SYSEX_START.length() + 2 * i;
+            b[i] = Integer.parseInt(hex.substring(start, start + 2), 16);
+            if (b[i] > 0x7F) return;
+        }
+        loopback = true;
+        Sent sent = tokens.remove((b[0] << 14) | (b[1] << 7) | b[2]);
+        if (sent != null) run(sent);
+    }
+
+    /**
+     * A press of one of the link's buttons, which came back through the loopback: for the "button" route, Bitwig has run
+     * the command bound to it already, and for "buttonCode" the link runs it now. Either way only for a press the link is
+     * waiting for: it can't tell a late press from a new one of the same button, but drops what it waited for in vain.
+     */
+    private void pressed(String id, String route) {
+        loopback = true;
+        Sent sent = presses.remove(route + " " + id);
+        if (sent == null || sent.dropped) return;
+        if (route.equals("button")) sent.ran = true;
+        else run(sent);
+    }
+
+    /** A command on its way by a route: which, its button's ID, what runs it, whether it ran, and whether the link gave up on it. */
+    private static final class Sent {
+        final String route;
+        final String id;
+        final Runnable run;
+        boolean ran;
+        boolean dropped;
+
+        Sent(String route, String id, Runnable run) {
+            this.route = route;
+            this.id = id;
+            this.run = run;
+        }
+    }
+
+    /** The name of the project Bitwig has in front, or null when the link can't read it. */
+    private String frontProject() {
+        try {
+            return str(app.projectName().get());
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** The parameter last clicked in Bitwig (link version 3), with what Bitwig says of it. */
@@ -1530,8 +1834,15 @@ final class Link {
      * its own colours, other clips can have that colour too (one already on Bitwig's clipboard, say), so a pasted clip in
      * it may not be the launcher clip's copy. Where the clip starts can't be read, so only a look at Bitwig shows whether
      * it went in at `at`. Only the live tests send it, in their own project, so nothing is undone when it doesn't work.
+     *
+     * Extension 3.7: the request can ask for a route (`via`, see ROUTES) for the copy, the paste and the two focus actions.
+     * "direct" (when it doesn't say) runs them as before, with the API's copy and paste. Any other route runs Bitwig's
+     * Copy and Paste actions and the focus actions by that route. `ran` says, for each of those steps, whether it ran
+     * (null when the link didn't get that far, or Bitwig has no FOCUS_LAUNCHER). A step that didn't run doesn't stop
+     * the change with an error: the link answers with what Bitwig shows, and doesn't paste after a copy that didn't run.
      */
     private void arrange(Map<String, Object> request, Finish finish) {
+        String route = route(request);
         if (arranger == null) throw new LinkError("This Bitwig didn't let the link reach its arranger. A selftest says why.");
         int t = checkTrack(field(request, "track"));
         Object s = field(request, "slot");
@@ -1547,6 +1858,22 @@ final class Link {
         if (focus == null)
             throw new LinkError("Bitwig has no action \"" + FOCUS_ARRANGER + "\", which the link runs to bring the arranger timeline to the front.");
         Action launcherFocus = app.getAction(FOCUS_LAUNCHER);
+        // What copies and pastes: the API's copy and paste straight away, Bitwig's Copy and Paste actions by any other route.
+        Runnable copyRun = app::copy;
+        Runnable pasteRun = app::paste;
+        if (!route.equals(DIRECT)) {
+            Action copyAction = app.getAction("Copy");
+            Action pasteAction = app.getAction("Paste");
+            if (copyAction == null || pasteAction == null)
+                throw new LinkError("Bitwig has no \"Copy\" and \"Paste\" actions, which the link runs to copy and paste via " + route + ".");
+            copyRun = copyAction::invoke;
+            pasteRun = pasteAction::invoke;
+            List<String> needed = new ArrayList<>(List.of("Copy", "Paste", FOCUS_ARRANGER));
+            if (launcherFocus != null) needed.add(FOCUS_LAUNCHER);
+            checkButtons(route, needed);
+        }
+        Runnable copied = copyRun;
+        Runnable pasted = pasteRun;
         double at = absent(given) ? transport.playStartPosition().get() : (Double) given;
         Track track = trackItems[t];
         String name = str(track.name().get());
@@ -1573,6 +1900,13 @@ final class Link {
         int launcherBefore = launcherClips(t);
         m.put("launcherClipsBefore", launcherBefore);
         m.put("launcherClipsAfter", null);
+        m.put("via", route);
+        Map<String, Object> ran = new LinkedHashMap<>();
+        ran.put("launcherFocus", null);
+        ran.put("copy", null);
+        ran.put("focus", null);
+        ran.put("paste", null);
+        m.put("ran", ran);
 
         // The Arrange layout, with its clip launcher showing.
         if (!arrangeLayout()) app.setPanelLayout(Application.PANEL_LAYOUT_ARRANGE);
@@ -1588,26 +1922,34 @@ final class Link {
                     if (!selected) throw new LinkError("Bitwig didn't select the clip in slot " + index + " of track " + t + ".");
                     // The clip in its marking colour, so the link can tell it once it's pasted.
                     mark(slot, m, mark -> {
-                        Runnable copy = () -> {
-                            app.copy();
+                        Runnable copy = () -> runBy(route, "Copy", copied, copyRan -> {
+                            ran.put("copy", copyRan);
+                            if (!copyRan) {
+                                // Nothing new on Bitwig's clipboard, so nothing to paste.
+                                m.put("beforePaste", arrangerClipState());
+                                answer(t, m, shown, finish);
+                                return;
+                            }
                             transport.playStartPosition().set(at);
                             waitFor(() -> Math.abs(transport.playStartPosition().get() - at) < 1e-6, CHANGE_WAIT, moved -> {
                                 if (!moved) throw new LinkError("Bitwig didn't move the play start to beat " + Json.number(at) + ".");
-                                focusPanel(focus, arranger.isTimelineVisible(), "arranger timeline", m, "focus", times -> {
+                                focusPanel(route, FOCUS_ARRANGER, focus, arranger.isTimelineVisible(), "arranger timeline", m, "focus", ran, times -> {
                                     if (times == 1) {
-                                        paste(t, name, launcherBefore, mark, m, shown, finish);
+                                        paste(route, pasted, ran, t, name, launcherBefore, mark, m, shown, finish);
                                         return;
                                     }
                                     // It hid the timeline, which only happens when the timeline is in front: so it had the
                                     // focus as the link copied, and Bitwig's clipboard doesn't hold the launcher clip.
-                                    m.put("copiedFromTimeline", true);
+                                    // (Or the focus action didn't run, so the timeline may not have the focus to paste in.)
+                                    if (times == 2) m.put("copiedFromTimeline", true);
                                     m.put("beforePaste", arrangerClipState());
                                     answer(t, m, shown, finish);
                                 }, finish);
                             }, finish);
-                        };
+                        }, finish);
                         if (launcherFocus == null) copy.run();
-                        else focusPanel(launcherFocus, launcherShown, "clip launcher", m, "launcherFocus", times -> copy.run(), finish);
+                        else focusPanel(route, FOCUS_LAUNCHER, launcherFocus, launcherShown, "clip launcher", m, "launcherFocus", ran,
+                                        times -> copy.run(), finish);
                     }, finish);
                 }, finish);
             }, finish);
@@ -1633,28 +1975,43 @@ final class Link {
 
     /**
      * Brings one of Bitwig's panels (`what`, which `visible` says is shown or not) to the front with Bitwig's
-     * focus-or-toggle `action` for it, then hands `then` how many times the action ran, which the answer keeps under
-     * `key`. Such an action hides its panel when that's in front already, so when it does, the link runs it again to
-     * show the panel, in front.
+     * focus-or-toggle `action` for it (its ID is `id`), run by `route`, then hands `then` what happened: 1 when the panel
+     * is in front, 2 when the action hid it (it was in front already), and 0 when the route didn't run the action. The
+     * answer keeps how many times the action ran under `key`, and `ran` whether the route ran it each time. Such an
+     * action hides its panel when that's in front already, so when it does, the link runs it again to show the panel,
+     * in front.
      */
-    private void focusPanel(Action action, BooleanValue visible, String what, Map<String, Object> m, String key, IntConsumer then,
-                            Finish finish) {
+    private void focusPanel(String route, String id, Action action, BooleanValue visible, String what, Map<String, Object> m, String key,
+                            Map<String, Object> ran, IntConsumer then, Finish finish) {
         boolean shown = visible.get();
-        action.invoke();
-        m.put(key, 1);
-        // Hidden, the panel comes into view. Shown, it stays (now in front) unless it was in front already: then it hides,
-        // which the link gives it a moment to do.
-        waitFor(() -> visible.get() != shown, shown ? TOGGLE_WAIT : CHANGE_WAIT, changed -> {
-            if (!shown && !changed) throw new LinkError("Bitwig didn't show its " + what + ".");
-            if (!shown || !changed) {
-                then.accept(1);
+        runBy(route, id, action::invoke, first -> {
+            ran.put(key, first);
+            if (!first) {
+                then.accept(0);
                 return;
             }
-            action.invoke();
-            m.put(key, 2);
-            waitFor(visible::get, CHANGE_WAIT, again -> {
-                if (!again) throw new LinkError("Bitwig hid its " + what + ", which was in front already, and didn't show it again.");
-                then.accept(2);
+            m.put(key, 1);
+            // Hidden, the panel comes into view. Shown, it stays (now in front) unless it was in front already: then it hides,
+            // which the link gives it a moment to do.
+            waitFor(() -> visible.get() != shown, shown ? TOGGLE_WAIT : CHANGE_WAIT, changed -> {
+                if (!shown && !changed) throw new LinkError("Bitwig didn't show its " + what + ".");
+                if (!shown || !changed) {
+                    then.accept(1);
+                    return;
+                }
+                runBy(route, id, action::invoke, second -> {
+                    ran.put(key, second);
+                    if (!second) {
+                        // Hidden it stays, and the link carries on all the same: the panel had been in front.
+                        then.accept(2);
+                        return;
+                    }
+                    m.put(key, 2);
+                    waitFor(visible::get, CHANGE_WAIT, again -> {
+                        if (!again) throw new LinkError("Bitwig hid its " + what + ", which was in front already, and didn't show it again.");
+                        then.accept(2);
+                    }, finish);
+                }, finish);
             }, finish);
         }, finish);
     }
@@ -1726,19 +2083,26 @@ final class Link {
      * whatever its clipboard held before. Even then, the link says it arranged the clip only when the mark is exact, as a
      * colour Bitwig rounded to one of its own could be another clip's as well.
      */
-    private void paste(int t, String name, int launcherBefore, Mark mark, Map<String, Object> m, Shown shown, Finish finish) {
+    private void paste(String route, Runnable pasteRun, Map<String, Object> ran, int t, String name, int launcherBefore, Mark mark,
+                       Map<String, Object> m, Shown shown, Finish finish) {
         m.put("beforePaste", arrangerClipState());
         boolean there = clipOn(name);
-        app.paste();
-        waitFor(() -> (!there && clipOn(name)) || launcherClips(t) != launcherBefore, CHANGE_WAIT, seen -> {
-            // Bitwig reports a change bit by bit, so what it did is read once it stops changing.
-            settle(() -> Arrays.asList(arrangerClipState(), arrangerClipColour(), launcherClips(t)), settled -> {
-                boolean appeared = !there && clipOn(name) && launcherClips(t) == launcherBefore;
-                boolean sameAsSource = mark.took() && arrangerClip.exists().get() && sameColour(rgb(arrangerClip.color()), mark.got());
-                m.put("arranged", appeared && sameAsSource && mark.exact());
-                m.put("appeared", appeared);
-                m.put("sameAsSource", sameAsSource);
+        runBy(route, "Paste", pasteRun, pasted -> {
+            ran.put("paste", pasted);
+            if (!pasted) {
                 answer(t, m, shown, finish);
+                return;
+            }
+            waitFor(() -> (!there && clipOn(name)) || launcherClips(t) != launcherBefore, CHANGE_WAIT, seen -> {
+                // Bitwig reports a change bit by bit, so what it did is read once it stops changing.
+                settle(() -> Arrays.asList(arrangerClipState(), arrangerClipColour(), launcherClips(t)), settled -> {
+                    boolean appeared = !there && clipOn(name) && launcherClips(t) == launcherBefore;
+                    boolean sameAsSource = mark.took() && arrangerClip.exists().get() && sameColour(rgb(arrangerClip.color()), mark.got());
+                    m.put("arranged", appeared && sameAsSource && mark.exact());
+                    m.put("appeared", appeared);
+                    m.put("sameAsSource", sameAsSource);
+                    answer(t, m, shown, finish);
+                }, finish);
             }, finish);
         }, finish);
     }

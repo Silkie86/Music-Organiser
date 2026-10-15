@@ -15,9 +15,13 @@ namespace MusicOrganiser.Core.DawLink;
 /// <param name="Runtime">"java" when the Bitwig extension answers (link version 3); null for the script.</param>
 /// <param name="Extension">The extension's version, when it's the extension.</param>
 /// <param name="OnlyIn">Whether the link honours <see cref="BitwigLink.OnlyIn"/> (older scripts don't).</param>
+/// <param name="Loopback">
+/// Whether the extension's own MIDI has come back to it through the loopback (extension 3.7), which the routes other
+/// than "direct" and "flush" need (see <see cref="BitwigLink.RunActionAsync"/>); null when the link doesn't say.
+/// </param>
 public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
                                  string Project, bool Modified, bool Engine, bool Changes, string? Runtime = null,
-                                 string? Extension = null, bool OnlyIn = false, string? LoadedFrom = null)
+                                 string? Extension = null, bool OnlyIn = false, string? LoadedFrom = null, bool? Loopback = null)
 {
     /// <summary>What answers in Bitwig: the extension or the script.</summary>
     public string Answering => Runtime == "java" ? $"the Music Organiser extension {Extension}".TrimEnd() : "the Music Organiser script";
@@ -48,6 +52,19 @@ public sealed record BitwigSelection(string Track, BitwigDevice? Device, IReadOn
 public sealed record BitwigParam(string Id, string Name, double? Value, string? Display);
 
 public sealed record BitwigAction(string Id, string Name, string Category, string Menu);
+
+/// <summary>How one of Bitwig's actions ran (<see cref="BitwigLink.RunActionAsync"/>).</summary>
+/// <param name="Project">
+/// The project Bitwig had in front just before the action ran, as the link says it (the script, and the Java extension
+/// from 3.7), or null when an older link doesn't say.
+/// </param>
+/// <param name="Via">The route the link ran it by: "direct" (straight away) from a link that doesn't say.</param>
+/// <param name="Ran">
+/// Whether the link ran it by that route. A route through Bitwig's flush or the MIDI loopback may not come back (the
+/// loopback isn't set up, say), and then the link didn't run it. True from a link that doesn't say, as it ran it straight
+/// away. Whether Bitwig then did what the action does is another matter: Bitwig 6.1.3 ignored Save run straight away.
+/// </param>
+public sealed record BitwigActionRun(string? Project, string Via, bool Ran);
 
 /// <summary>What Bitwig added to a track's chain. Added is false when it ignored the plugin, device or file.</summary>
 /// <param name="Index">Where the new device is in the chain.</param>
@@ -119,10 +136,19 @@ public sealed record BitwigPitch(string Device, double Value, string Display);
 /// How many of the track's first 8 launcher slots had a clip before; more in <paramref name="LauncherClipsAfter"/> means
 /// Bitwig pasted into the launcher instead.
 /// </param>
+/// <param name="Via">The route the extension copied, pasted and ran the focus actions by (extension 3.7), or null when it doesn't say.</param>
+/// <param name="Ran">Whether each of those steps ran by that route (extension 3.7), or null when the extension doesn't say.</param>
 public sealed record BitwigArranged(bool Arranged, bool Appeared, bool SameAsSource, bool CopiedFromTimeline, double At, string Layout,
                                     BitwigShown Launcher, BitwigClipMark Mark, int LauncherFocus, BitwigShown Timeline, int Focus,
                                     BitwigArrangerClip Before, BitwigArrangerClip BeforePaste, BitwigArrangerClip After, string? PastedColor,
-                                    int LauncherClipsBefore, int LauncherClipsAfter);
+                                    int LauncherClipsBefore, int LauncherClipsAfter, string? Via = null, BitwigArrangeRan? Ran = null);
+
+/// <summary>
+/// Whether each step of the arrange experiment ran by its route (extension 3.7): giving the clip launcher the focus, the
+/// copy, bringing the arranger timeline to the front and the paste. Null for a step the extension didn't get to (or, for
+/// the launcher's focus, when Bitwig has no action for it); false when the route didn't run it.
+/// </summary>
+public sealed record BitwigArrangeRan(bool? LauncherFocus, bool? Copy, bool? Focus, bool? Paste);
 
 /// <summary>
 /// How the arrange experiment marked the launcher clip with a fresh colour before it copied it, so it could tell its own
@@ -157,8 +183,21 @@ public sealed class BitwigLink : IDisposable
     public const int LinkVersion = 2;
     public const string OldScript = "Bitwig has an older copy of the Music Organiser script. Install it again from Settings > DAW links " +
                                     "(Bitwig picks up the new one by itself), then try again.";
+    /// <summary>
+    /// The MIDI port the Java extension (3.7 and later) has its MIDI in and out set to, for its loopback (made in loopMIDI
+    /// on Windows). Never the FL Studio link's port (<see cref="FlSetup.PortName"/>), which has to stay clear of it: FL
+    /// Studio must never get what the Bitwig link sends itself, and the FL Studio link must never take this port for its own.
+    /// </summary>
+    public const string LoopbackPort = "Music Organiser Bitwig";
+    /// <remarks>
+    /// The extension 3.7 asks Bitwig for a MIDI in and out (its loopback). Whether Bitwig starts a controller with them
+    /// unassigned isn't known yet (extensions/README.md, "Still to confirm"), so this says to set them too.
+    /// </remarks>
     public const string NotRunning = "Bitwig isn't answering. Check that Bitwig Studio is open, with the Music Organiser " +
-                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link).";
+                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link). " +
+                                     "With the Music Organiser extension 3.7 or later, also set that controller's MIDI in and MIDI out " +
+                                     $"to the MIDI port “{LoopbackPort}” (make it in loopMIDI on Windows), never “Music Organiser”, " +
+                                     "FL Studio's: Bitwig may not start the extension while they're unassigned.";
     const int MaxMessage = 64 << 20;
 
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -325,9 +364,31 @@ public sealed class BitwigLink : IDisposable
     public Task InsertFileAsync(string path, CancellationToken ct = default) =>
         RequestAsync(new() { ["cmd"] = "insert", ["kind"] = "file", ["path"] = path }, ct);
 
-    /// <summary>Runs one of Bitwig's actions by its ID, e.g. to save the project.</summary>
-    public Task RunActionAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(new() { ["cmd"] = "action", ["action"] = id }, ct);
+    /// <summary>
+    /// Runs one of Bitwig's actions by its ID, e.g. to save the project, and says how it went: which project Bitwig had
+    /// in front just before it ran, the route, and whether the route ran it (see <see cref="BitwigActionRun"/>).
+    /// </summary>
+    /// <param name="via">
+    /// The route (the Java extension 3.7; null leaves it to the link, which runs it straight away): "direct" runs it
+    /// straight away, "flush" from Bitwig's next flush, "midi" when a SysEx message the extension sends itself comes back
+    /// through the MIDI loopback, "buttonCode" when a press of one of its own buttons comes back that way (the extension
+    /// runs the action), and "button" the same with Bitwig running the action bound to the button. Bitwig 6.1.3 ignored
+    /// Save, copy and paste run straight away, while it carried them out for a controller's hardware button. The script,
+    /// and older extensions, refuse or ignore any route but "direct".
+    /// </param>
+    public async Task<BitwigActionRun> RunActionAsync(string id, string? via = null, CancellationToken ct = default)
+    {
+        var request = new JsonObject { ["cmd"] = "action", ["action"] = id };
+        if (via is not null) request["via"] = via;
+        // A route other than "direct" waits for the action to come back, and the extension runs actions one change at a time.
+        var answer = await RequestAsync(request, ct, ChangeTimeout);
+        string? Text(string name) =>
+            answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+        var ran = !(answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("ran", out var r) && r.ValueKind == JsonValueKind.False);
+        return new BitwigActionRun(Text("project"), Text("via") ?? "direct", ran);
+    }
 
     /// <summary>
     /// Sends any command, with <paramref name="fields"/> added to it, and returns Bitwig's answer as it came. For commands
@@ -406,8 +467,16 @@ public sealed class BitwigLink : IDisposable
     /// worked). Copy replaces whatever was on Bitwig's clipboard, the launcher clip keeps its new colour, nothing is undone
     /// when it doesn't work, and the play start stays where it was moved, which is why only a test project gets this.
     /// </summary>
-    public async Task<BitwigArranged> ArrangeAsync(int track, int slot, double? at = null, CancellationToken ct = default) =>
-        Parse<BitwigArranged>(await ChangeAsync(new() { ["cmd"] = "arrange", ["track"] = track, ["slot"] = slot, ["at"] = at }, ct));
+    /// <param name="via">
+    /// The route for the copy, the paste and the focus actions (the extension 3.7; null leaves it to the extension, which
+    /// runs them straight away): see <see cref="RunActionAsync"/>.
+    /// </param>
+    public async Task<BitwigArranged> ArrangeAsync(int track, int slot, double? at = null, string? via = null, CancellationToken ct = default)
+    {
+        var request = new JsonObject { ["cmd"] = "arrange", ["track"] = track, ["slot"] = slot, ["at"] = at };
+        if (via is not null) request["via"] = via;
+        return Parse<BitwigArranged>(await ChangeAsync(request, ct));
+    }
 
     async Task<BitwigInserted> InsertOnAsync(int track, bool atStart, JsonObject request, CancellationToken ct)
     {

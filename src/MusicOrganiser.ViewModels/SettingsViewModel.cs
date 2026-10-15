@@ -758,7 +758,8 @@ public sealed partial class DawLinkSetting : ObservableObject
             ? $"✓ Answering now: {state.Version}" + (state.Project.Length > 0 ? $", with “{state.Project}” open." : ".") +
               (state.Daw == DawState.Bitwig && !state.Changes
                   ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "") +
-              (state.LoadedFrom is { Length: > 0 } file ? $" Bitwig loads the extension from {Path.GetDirectoryName(file)}." : "") +
+              // Only an Extensions folder, which Install puts the next version in: not a copy Bitwig made somewhere of its own (Temp, say).
+              (DawScripts.BitwigExtensionsFolder(state.LoadedFrom) is { } folder ? $" Bitwig loads the extension from {folder}." : "") +
               (state.Extension is { } running && _shipped is { } shipped && running != shipped ? Running(running, shipped) : "")
             : state.Running == true ? $"Not answering right now, though {Daw} is open. Check connection says what's missing."
             : "Not answering right now.";

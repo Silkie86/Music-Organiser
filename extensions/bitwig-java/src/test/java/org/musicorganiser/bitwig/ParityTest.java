@@ -135,6 +135,7 @@ class ParityTest {
                 m.remove("runtime");
                 m.remove("extension");
                 m.remove("loadedFrom");
+                m.remove("loopback");
             }
             if (m.containsKey("params") && m.containsKey("drumPads")) {
                 m.remove("page");
@@ -267,6 +268,8 @@ class ParityTest {
         reading.add(advance(1990));
         reading.add(advance(100));
         reading.addAll(each(obj("id", 10, "cmd", "action"), "action", MISSING, null, 5, obj(), "Format C:", "save", "Save", "toggle_metronome"));
+        // Straight away is the one route both run an action by (the script refuses the others).
+        reading.addAll(each(obj("id", 10, "cmd", "action", "action", "Save"), "via", MISSING, null, "direct"));
         reading.add(send(obj("id", 11, "cmd", "actions")));
         reading.add(send(obj("id", 12, "cmd", "project")));
         reading.add(send(obj("id", 13, "cmd", "hello")));
