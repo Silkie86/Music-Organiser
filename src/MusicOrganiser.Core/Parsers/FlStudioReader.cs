@@ -225,11 +225,13 @@ public sealed partial class FlStudioReader : IProjectReader
                     if (name.Length > 0 || vpath.Length > 0)
                     {
                         var isInst = !inMixer && channel is not null && channelTypes.GetValueOrDefault(channel.Value) == ChannelTypeInstrument;
-                        info.Plugins.Add(new PluginRef(
-                            name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath),
-                            WrapperText(f, VstVendor),
+                        var vendor = WrapperText(f, VstVendor);
+                        var shown = name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath);
+                        // Old FL (FL 9) hosted its own effects, such as Fruity Compressor, in the wrapper: they're still FL's own.
+                        var own = PluginCatalog.IsFlStudioBundled(shown, vendor, vpath);
+                        info.Plugins.Add(new PluginRef(shown, own && vendor.Length == 0 ? "Image-Line" : vendor,
                             isInst ? PluginKind.Instrument : PluginKind.Effect,
-                            TextScan.PluginFormatFromPath(vpath) is { Length: > 0 } fmt ? fmt : "VST",
+                            own ? "Native" : TextScan.PluginFormatFromPath(vpath) is { Length: > 0 } fmt ? fmt : "VST",
                             vpath));
                     }
                     pendingInternal = "";

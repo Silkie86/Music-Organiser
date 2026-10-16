@@ -419,6 +419,14 @@ public class FlStudio9Tests
     }
 
     [Fact]
+    public void ListsFlsOwnEffectsHostedInTheOldWrapperAsNative()
+    {
+        var plugins = new FlStudioReader().Read(_path).Plugins.ToDictionary(p => p.Name);
+        Assert.Equal(("Native", "Image-Line"), (plugins["Fruity Compressor"].Format, plugins["Fruity Compressor"].Vendor));
+        Assert.Equal(("VST", PluginKind.Instrument), (plugins["LegacyCell"].Format, plugins["LegacyCell"].Kind));
+    }
+
+    [Fact]
     public void SaysWhenAPluginGaveFlNothingToSaveAndCarriesNoEmptySound()
     {
         var path = Fixtures.FlStudio25NothingSaved(Fixtures.TempDir());
