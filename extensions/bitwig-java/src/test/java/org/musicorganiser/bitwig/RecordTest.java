@@ -282,6 +282,60 @@ class RecordTest {
         assertJson(obj("id", 3, "ok", true, "result", obj("running", false)), app.ask(obj("id", 3, "cmd", "recordabort")));
     }
 
+    /** Runs the stand-in's clock until the extension has asked Bitwig for `call`. */
+    void runUntil(String call) {
+        for (int i = 0; i < 60000 && !calls().contains(call); i++) bitwig.clock.advance(1);
+        assertTrue(calls().contains(call), "it asked for " + call + ": " + Json.write(bitwig.calls));
+    }
+
+    @Test
+    @DisplayName("presses Stop when aborted straight after the launch, before Bitwig shows it playing, and stays stopped")
+    void stopsALaunchThatHasntShownYet() {
+        studio(m -> m.startDelay = 200);
+        app.send(record(1, "rec", BAR_5));
+        runUntil("launch");
+        assertFalse(bitwig.playingNow);
+        app.ask(obj("id", 2, "cmd", "recordabort"));
+        bitwig.clock.advance(10000);
+        Map<String, Object> result = SelfCheckTest.map(app.take().get(0).get("result"));
+        assertEquals("aborted", result.get("decided"));
+        assertTrue(calls().lastIndexOf("stop") > calls().indexOf("launch"), Json.write(bitwig.calls));
+        assertPutBack(0);
+        bitwig.clock.advance(10000);
+        assertFalse(bitwig.playingNow, "Bitwig never started afterwards");
+    }
+
+    @Test
+    @DisplayName("stops the replay when changes are turned off, and says so")
+    void stopsTheReplayWhenChangesGoOff() {
+        studio(m -> m.startDelay = 200);
+        app.send(record(1, "rec", BAR_5));
+        runUntil("play");
+        bitwig.allowChanges(false);
+        bitwig.clock.advance(15000);
+        Map<String, Object> result = SelfCheckTest.map(app.take().get(0).get("result"));
+        assertEquals("aborted", result.get("decided"));
+        assertEquals("Changes were turned off.", result.get("abortWhy"));
+        assertEquals("aborted", at(result, "replay", "ended"));
+        assertPutBack(0);
+        bitwig.clock.advance(10000);
+        assertFalse(bitwig.playingNow, "Bitwig never started afterwards");
+    }
+
+    @Test
+    @DisplayName("neither turns record on nor launches once changes are turned off while it sets Bitwig up")
+    void doesntStartOnceChangesGoOff() {
+        studio();
+        app.send(record(1, "rec", BAR_5));
+        bitwig.allowChanges(false);
+        bitwig.clock.advance(10000);
+        Map<String, Object> result = SelfCheckTest.map(app.take().get(0).get("result"));
+        assertEquals("aborted", result.get("decided"));
+        assertFalse(calls().contains("launch"), Json.write(bitwig.calls));
+        assertFalse(bitwig.calls.contains(List.of("transport", "isArrangerRecordEnabled", true)), Json.write(bitwig.calls));
+        assertPutBack(0);
+    }
+
     @Test
     @DisplayName("turns record off, stops Bitwig and puts everything back when Bitwig stops the link part way")
     void stopsWithTheLink() {

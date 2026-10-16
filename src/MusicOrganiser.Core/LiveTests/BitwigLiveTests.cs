@@ -1009,7 +1009,7 @@ public static class BitwigLiveTests
             return (LiveVerdict.Skip("Only tried once an earlier go recorded the clip into the arranger, or the link couldn't tell, and none did " +
                                      "(see above)."), null);
         var p = await link.ProjectAsync(ct);
-        var (request, timeout) = RecordRequest(go, p, trackId, clipBeats, armed: first?.Decided == "nothing" && armed?.Decided == "recorded");
+        var (request, timeout) = RecordRequest(go, p, trackId, clipBeats, armed: first?.Decided == "nothing" && armed?.Decided is "recorded" or "cantTell");
         var answer = await link.RecordAsync(request, timeout, ct);
         return (RecordVerdict(answer, go, track, earlier), answer);
     }
@@ -1705,7 +1705,7 @@ public static class BitwigLiveTests
                     return verdict;
                 }, RecordTime);
             }
-            await Change(Changes, "Panel commands", (link, t) => PanelCommandsAsync(link, t));
+            await Change(Changes, "Panel commands", (link, t) => PanelCommandsAsync(link, t), TimeSpan.FromSeconds(90));
 
             await Change(Changes, "Drum Machine by ID", async (link, t) =>
             {
@@ -2074,8 +2074,10 @@ public static class BitwigLiveTests
             }
         }
 
+        // A failure found on the way (Bitwig left recording or playing, say) still gets said.
         static LiveVerdict PartWay(string why, LiveVerdict? found) =>
-            LiveVerdict.Skip("Stopped part way through: " + why, found?.Data) with { Lines = found?.Lines ?? [] };
+            LiveVerdict.Skip("Stopped part way through: " + why + (found?.Outcome == LiveOutcome.Failed ? " Before that: " + found.Detail : ""),
+                             found?.Data) with { Lines = found?.Lines ?? [] };
 
         /// <summary>
         /// Why the run may not change the project, or null when it may: Bitwig lets the app make changes and has a project

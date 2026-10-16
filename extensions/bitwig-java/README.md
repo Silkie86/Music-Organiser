@@ -137,14 +137,16 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   armed only with `arm: true`), the tempo (`tempo`, optional, so a faster one takes less time), and the play
   start at `at`. It reads each back, and refuses, putting them back, when one doesn't take. Then it turns
   arranger record on, launches the clip (Bitwig starts from the play start), stops the clip's track in its last
-  bar (it stops on the bar line), turns record off, stops Bitwig only while it plays (Stop while stopped moves
-  the play start to the beginning), and returns the track to the arrangement. With `deleteLauncherClip: true`
+  bar (it stops on the bar line), turns record off, stops Bitwig only while it plays or may be about to (Stop
+  while stopped moves the play start to the beginning), pressing Stop again while it still shows playing and
+  waiting until it has shown stopped for a moment, and returns the track to the arrangement. With `deleteLauncherClip: true`
   it deletes the launcher clip next, so what's heard after comes from the arranger alone. Then it plays the
   arranger back from `replayFrom` (`at` unless given) to a bar past the clip, listening to the track's notes, and
   puts every setting back, reading each back again. `record: false` plays the clip without recording it, to tell
   whether the link hears the track's notes. Tracks are found by their IDs, so one going in above changes
-  nothing. It stops (record off, Bitwig stopped, everything put back) when its time runs out, when
-  `recordabort` asks, when Bitwig stops the link, or on an error; when another project comes to the front, it
+  nothing. Each step after a wait checks "Let the app make changes" and the track again. It stops (record
+  off, Bitwig stopped, everything put back; the master stays muted while Bitwig still plays) when
+  `recordabort` asks, when changes are turned off, when Bitwig stops the link, or on an error; when another project comes to the front, it
   leaves Bitwig alone. The answer: `decided` (`recorded`, `nothing`, `cantTell`, `heard`, `cantHear`,
   `refused`, `aborted`, `abandoned` and so on), what it `played` and heard (each note's `key` and `at`), the
   `replay` (notes heard `inPass` and `before`, and whether the launcher clip played), what it `seen`, the

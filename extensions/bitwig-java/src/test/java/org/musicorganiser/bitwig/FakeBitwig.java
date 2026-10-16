@@ -812,6 +812,10 @@ final class FakeBitwig {
         return Integer.parseInt(parts[0].trim()) * 4.0 / Integer.parseInt(parts[1].trim());
     }
 
+    /** Launches and Plays still to start (see Model.startDelay), and how many Stops have cancelled those asked for before them. */
+    private int startsDue;
+    private int stops;
+
     private void startPlaying(double from) {
         playingNow = true;
         playFrom = from;
@@ -847,7 +851,11 @@ final class FakeBitwig {
     /** A launcher clip launched: with Bitwig stopped, it starts playing from the play start, and the clip with it. */
     private void launch(int track, int scene) {
         calls.add(Arrays.asList("launch", track, scene));
-        later(20, () -> {
+        int stops = this.stops;
+        startsDue++;
+        later(model.startDelay, () -> {
+            startsDue--;
+            if (stops != this.stops) return;
             TrackSpec t = trackSpec(track);
             if (t == null || scene >= t.slots.size() || t.slots.get(scene) == null) return;
             double start;
@@ -1137,6 +1145,8 @@ final class FakeBitwig {
         boolean launcher = true;
         /** Where the play start is at first, in beats. */
         double playStart;
+        /** How long a launch, or Play, takes to start Bitwig playing, in ms (the record job looks every 25 ms). */
+        long startDelay = 20;
         /** The panel with the focus at first: LAUNCHER, TIMELINE, or "" for another. */
         String focus = "";
         /**
@@ -2899,8 +2909,11 @@ final class FakeBitwig {
             /** Bitwig starts playing from the play start, a moment later. */
             void play() {
                 calls.add(List.of("play"));
-                later(20, () -> {
-                    if (!playingNow) startPlaying(playStartAt);
+                int stops = FakeBitwig.this.stops;
+                startsDue++;
+                later(model.startDelay, () -> {
+                    startsDue--;
+                    if (stops == FakeBitwig.this.stops && !playingNow) startPlaying(playStartAt);
                 });
             }
 
@@ -2910,6 +2923,9 @@ final class FakeBitwig {
                 later(20, () -> {
                     if (playingNow) {
                         stopPlaying();
+                    } else if (startsDue > 0) {
+                        // Bitwig takes commands in order: a launch or Play asked for before this Stop starts, then stops.
+                        stops++;
                     } else {
                         calls.add(List.of("stopWhileStopped"));
                         playStartAt = 0;

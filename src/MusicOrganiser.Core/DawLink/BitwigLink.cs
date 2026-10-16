@@ -746,8 +746,9 @@ public sealed class BitwigLink : IDisposable
     }
 
     /// <summary>
-    /// Asks the record job to stop (recordabort; the Java extension 3.9), whatever project is in front: it then turns record
-    /// off, stops Bitwig and puts everything back. Whether one was running; false when the link couldn't be asked.
+    /// Asks the record job to stop (recordabort; the Java extension 3.9), whatever project is in front. With its own project
+    /// in front, it then turns record off, stops Bitwig and puts everything back; with another, it has already answered
+    /// "abandoned" and left Bitwig as it was. Whether one was running; false when the link couldn't be asked.
     /// </summary>
     public async Task<bool> AbortRecordingAsync()
     {

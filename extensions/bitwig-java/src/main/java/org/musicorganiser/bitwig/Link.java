@@ -153,6 +153,13 @@ final class Link {
     static final long RECORD_TICK = 25;
     /** How long the record job gives Bitwig to start playing once it has launched the clip, in milliseconds. */
     static final long START_WAIT = 3000;
+    /**
+     * How long Bitwig has to show stopped, after the record job last pressed Stop or saw it play, before the job counts it
+     * stopped for sure (what Bitwig shows reaches the extension a moment late), in milliseconds.
+     */
+    static final long SETTLE = 500;
+    /** How long the record job waits after pressing Stop before pressing it again while Bitwig still shows playing. */
+    static final long RESTOP = 500;
     /** The tempos Bitwig takes, in BPM: the record job asks for none outside them. */
     static final double MIN_TEMPO = 20;
     static final double MAX_TEMPO = 666;
@@ -2600,7 +2607,7 @@ final class Link {
      * Bitwig is, the notes the track plays, and whether the slot plays and records. In the clip's last bar it stops the
      * track, which Bitwig does on the next bar line, at the clip's end.</li>
      * <li>Then, or once the time it should take has passed (`timedOut`), or recordabort asks, or someone stops Bitwig, it
-     * turns record off, stops Bitwig (only if it's playing: Stop while stopped moves the play start to the beginning) and
+     * turns record off, stops Bitwig (only if it's playing or may be about to: Stop while stopped moves the play start to the beginning) and
      * returns the track to the arrangement, so it plays its arranger timeline again.</li>
      * <li>After a recording, it deletes the launcher clip if asked, then plays the arranger back from `replayFrom` (`at`
      * unless given) to a bar past the clip's end, still muted, and notes the notes the track plays: with the launcher clip
@@ -2692,6 +2699,9 @@ final class Link {
         list.add(new Setting("play start", () -> transport.playStartPosition().get(), v -> transport.playStartPosition().set((Double) v), at));
         return list;
     }
+
+    /** The record settings that keep Bitwig quiet: the job puts them back only once Bitwig has stopped. */
+    private static final Set<String> QUIET = Set.of("master mute", "metronome");
 
     private static Setting onOff(String name, SettableBooleanValue value, boolean wanted) {
         return new Setting(name, () -> value.get(), v -> value.set((Boolean) v), wanted);
@@ -2877,8 +2887,15 @@ final class Link {
         boolean done;
         boolean abortAsked;
         String abortWhy;
+        /** Whether the job left out a step because it may not go on (see mayGoOn): it then answers `aborted`. */
+        boolean cut;
         /** Whether the job asked for arranger record, and hasn't turned it off since. */
         boolean recordOn;
+        /** When the job last asked Bitwig to start (a launch, or Play) without seeing it play since, else -1 (see stopPlaying). */
+        long startAsked = -1;
+        /** When the job last pressed Stop, and until when a stopped Bitwig doesn't count as stopped for sure (see stopped). */
+        long stopSent = Long.MIN_VALUE / 2;
+        long quietUntil = Long.MIN_VALUE / 2;
         /** Whether the job may have changed Bitwig's settings, so they need putting back. */
         boolean changed;
         final List<String> refused = new ArrayList<>();
@@ -2946,7 +2963,7 @@ final class Link {
             }
             waitUntil(() -> notSet().isEmpty(), CHANGE_WAIT, set -> {
                 refused.addAll(notSet());
-                if (!refused.isEmpty() || abortAsked) {
+                if (!refused.isEmpty() || !mayGoOn()) {
                     restore();
                     return;
                 }
@@ -2958,7 +2975,7 @@ final class Link {
                 recordOn = true;
                 waitUntil(() -> transport.isArrangerRecordEnabled().get(), CHANGE_WAIT, on -> {
                     if (!on) refused.add("arranger record");
-                    if (!on || abortAsked) end("refused");
+                    if (!on) end("refused");
                     else launch();
                 });
             });
@@ -2982,40 +2999,44 @@ final class Link {
 
         /** Launches the clip, and watches it play. */
         void launch() {
-            int t = target();
-            if (t < 0) {
+            if (!mayGoOn()) {
                 end("aborted");
                 return;
             }
             long now = clock.millis();
             play = new Playing(at, now);
             deadline = now + START_WAIT + ms(length + 2 * bar);
-            trackSlots[t][scene].launch();
+            trackSlots[indexOf(trackId)][scene].launch();
+            startAsked = now;
             later(this::watch);
+        }
+
+        /**
+         * Whether the job may take its next step: it hasn't been asked to stop, "Let the app make changes" is still on, and
+         * its track is still there (else it says why). Checked before each step after a wait, as for every change; putting
+         * Bitwig back goes on regardless.
+         */
+        boolean mayGoOn() {
+            if (!abortAsked && changesSetting.get() && target() >= 0) return true;
+            if (!abortAsked && !changesSetting.get()) abortWhy = "Changes were turned off.";
+            cut = true;
+            return false;
         }
 
         /** One look at Bitwig while the clip plays (see record). */
         void watch() {
-            if (abortAsked) {
+            if (!mayGoOn()) {
                 end("aborted");
                 return;
             }
-            if (!changesSetting.get()) {
-                abortWhy = "Changes were turned off.";
-                end("aborted");
-                return;
-            }
-            int t = target();
-            if (t < 0) {
-                end("aborted");
-                return;
-            }
+            int t = indexOf(trackId);
             long now = clock.millis();
             boolean playing = transport.isPlaying().get();
             if (play.started == null) {
                 if (playing) {
                     play.started = now;
                     play.startPosition = transport.playPosition().get();
+                    startAsked = -1;
                 } else if (now - play.asked > START_WAIT) {
                     end("didntStart");
                     return;
@@ -3048,17 +3069,17 @@ final class Link {
             later(this::watch);
         }
 
-        /** Ends the clip's playing (see record): record off, Bitwig stopped if it plays, the track back to the arrangement. */
+        /** Ends the clip's playing (see record): record off, Bitwig stopped if it plays (or may be about to), the track back to the arrangement. */
         void end(String why) {
             if (play != null) play.ended = why;
             if (recordOn) transport.isArrangerRecordEnabled().set(false);
-            if (transport.isPlaying().get()) transport.stop();
+            stopPlaying();
             int t = indexOf(trackId);
             if (t >= 0) trackItems[t].returnToArrangement();
-            waitUntil(() -> !transport.isPlaying().get() && !(recordOn && transport.isArrangerRecordEnabled().get()), CHANGE_WAIT, stopped -> {
+            waitUntil(() -> stopped() && !(recordOn && transport.isArrangerRecordEnabled().get()), CHANGE_WAIT, stopped -> {
                 if (recordOn && !transport.isArrangerRecordEnabled().get()) recordOn = false;
                 boolean recorded = rec && play != null && play.started != null && (why.equals("done") || why.equals("timedOut") || why.equals("stoppedEarly"));
-                if (!stopped || !recorded) {
+                if (!stopped || !recorded || !mayGoOn()) {
                     restore();
                     return;
                 }
@@ -3067,9 +3088,39 @@ final class Link {
             });
         }
 
+        /**
+         * Presses Stop when Bitwig plays, or may be about to: a launch or Play the job asked for and hasn't seen start yet
+         * (Bitwig takes commands in order, so the Stop still stops it). Never while Bitwig is stopped for sure, as Stop then
+         * moves the play start back to 1.1.1. Bitwig counts as stopped for sure (see stopped) only once it has shown stopped
+         * for SETTLE, and, after a start that hadn't shown, for as long as the job gives one to show (START_WAIT).
+         */
+        void stopPlaying() {
+            boolean unconfirmed = startAsked >= 0;
+            if (!unconfirmed && !transport.isPlaying().get()) return;
+            long now = clock.millis();
+            transport.stop();
+            stopSent = now;
+            quietUntil = Math.max(quietUntil, unconfirmed ? Math.max(now + SETTLE, startAsked + START_WAIT) : now + SETTLE);
+            startAsked = -1;
+        }
+
+        /** Whether Bitwig has stopped for sure (see stopPlaying). While it still shows playing, presses Stop again every RESTOP. */
+        boolean stopped() {
+            long now = clock.millis();
+            if (transport.isPlaying().get()) {
+                quietUntil = Math.max(quietUntil, now + SETTLE);
+                if (now - stopSent >= RESTOP) {
+                    transport.stop();
+                    stopSent = now;
+                }
+                return false;
+            }
+            return now >= quietUntil;
+        }
+
         /** Deletes the launcher clip it recorded, so the replay can only hear the arranger's copy. */
         void deleteClip(Runnable then) {
-            int t = target();
+            int t = indexOf(trackId);
             if (t < 0) {
                 launcherClipDeleted = false;
                 then.run();
@@ -3086,13 +3137,13 @@ final class Link {
         }
 
         void replayOrRestore() {
-            if (!replay) {
+            if (!replay || !mayGoOn()) {
                 restore();
                 return;
             }
             transport.playStartPosition().set(replayFrom);
             waitUntil(() -> same(transport.playStartPosition().get(), replayFrom), CHANGE_WAIT, moved -> {
-                if (!moved || abortAsked) {
+                if (!moved || !mayGoOn()) {
                     restore();
                     return;
                 }
@@ -3100,23 +3151,25 @@ final class Link {
                 replayed = new Playing(replayFrom, now);
                 deadline = now + START_WAIT + ms(at + length + bar - replayFrom);
                 transport.play();
+                startAsked = now;
                 later(this::watchReplay);
             });
         }
 
         /** One look at Bitwig while it plays the arranger back (see record). */
         void watchReplay() {
-            int t = target();
-            if (t < 0 || abortAsked) {
+            if (!mayGoOn()) {
                 stopReplay("aborted");
                 return;
             }
+            int t = indexOf(trackId);
             long now = clock.millis();
             boolean playing = transport.isPlaying().get();
             if (replayed.started == null) {
                 if (playing) {
                     replayed.started = now;
                     replayed.startPosition = transport.playPosition().get();
+                    startAsked = -1;
                 } else if (now - replayed.asked > START_WAIT) {
                     stopReplay("didntStart");
                     return;
@@ -3143,24 +3196,33 @@ final class Link {
 
         void stopReplay(String why) {
             replayed.ended = why;
-            if (transport.isPlaying().get()) transport.stop();
-            waitUntil(() -> !transport.isPlaying().get(), CHANGE_WAIT, stopped -> restore());
+            stopPlaying();
+            waitUntil(this::stopped, CHANGE_WAIT, stopped -> restore());
         }
 
-        /** Puts back everything the job changed, then answers once Bitwig shows it (or after CHANGE_WAIT, saying what didn't come back). */
+        /**
+         * Puts back everything the job changed, once Bitwig has stopped for sure, then answers once Bitwig shows it all (or
+         * after CHANGE_WAIT, saying what didn't come back).
+         */
         void restore() {
-            putBack();
-            waitUntil(() -> notRestored().isEmpty(), CHANGE_WAIT, back -> {
-                restoreFailed = notRestored();
-                answer(null);
+            stopPlaying();
+            waitUntil(this::stopped, CHANGE_WAIT, stopped -> {
+                putBack(stopped);
+                waitUntil(() -> notRestored().isEmpty(), CHANGE_WAIT, back -> {
+                    restoreFailed = notRestored();
+                    answer(null);
+                });
             });
         }
 
-        /** Sets back each setting, arm and switch the job changed that doesn't show what it was. */
-        void putBack() {
+        /**
+         * Sets back each setting, arm and switch the job changed that doesn't show what it was; while Bitwig may still play
+         * (not `stopped`), the master stays muted and the metronome off, so it makes no sound.
+         */
+        void putBack(boolean stopped) {
             if (recordOn && transport.isArrangerRecordEnabled().get()) transport.isArrangerRecordEnabled().set(false);
             for (Setting s : settings)
-                if (!same(s.read().get(), saved.get(s.name()))) s.write().accept(saved.get(s.name()));
+                if ((stopped || !QUIET.contains(s.name())) && !same(s.read().get(), saved.get(s.name()))) s.write().accept(saved.get(s.name()));
             Map<String, Integer> places = placesById();
             for (Map.Entry<String, Boolean> e : arms.entrySet()) {
                 Integer t = places.get(e.getKey());
@@ -3231,7 +3293,7 @@ final class Link {
         }
 
         /**
-         * Stops a recording at once, as far as it can, with nothing waited for: record off, Bitwig stopped if it plays, and
+         * Stops a recording at once, as far as it can, with nothing waited for: record off, Bitwig stopped if it plays (or may be about to), and
          * the settings put back. Only while Bitwig has the job's project in front: another's transport isn't the job's to
          * touch. For when Bitwig stops the link, and when a step fails (which then answers).
          */
@@ -3242,13 +3304,15 @@ final class Link {
                 if (recordOn) transport.isArrangerRecordEnabled().set(false);
             });
             attemptQuietly(() -> {
-                if (transport.isPlaying().get()) transport.stop();
+                // A start asked for that hasn't shown yet still comes before this Stop.
+                if (transport.isPlaying().get() || startAsked >= 0) transport.stop();
             });
             attemptQuietly(() -> {
                 int t = indexOf(trackId);
                 if (t >= 0) trackItems[t].returnToArrangement();
             });
-            if (changed) attemptQuietly(this::putBack);
+            // The Stop goes first, so the master can be unmuted.
+            if (changed) attemptQuietly(() -> putBack(true));
         }
 
         private void attemptQuietly(Runnable step) {
@@ -3268,8 +3332,8 @@ final class Link {
             if (given != null) return given;
             if (!refused.isEmpty()) return "refused";
             if (error != null) return "failed";
-            String ended = play == null ? null : play.ended;
-            if (play == null || "aborted".equals(ended) || (replayed != null && "aborted".equals(replayed.ended))) return abortAsked || abortWhy != null ? "aborted" : "refused";
+            if (cut) return "aborted";
+            if (play == null) return "refused";
             if (play.started == null) return "didntStart";
             if (!rec) return play.heard > 0 ? "heard" : "cantHear";
             if (replayed == null || replayed.started == null) return "notChecked";
