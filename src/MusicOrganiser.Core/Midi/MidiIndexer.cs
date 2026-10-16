@@ -24,7 +24,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     public const string OlderSavesKey = "midi_older_saves";
 
     /// <summary>Raised when the analysis changes, so every file is read again once.</summary>
-    public const int Version = 2;   // 2: empty bars trimmed and long gaps split (2026-10-15)
+    public const int Version = 3;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes
 
     /// <summary>At most this many files are read at once: a quarter of the cores, and never more than 3.</summary>
     public static int Workers => Math.Clamp(Environment.ProcessorCount / 4, 1, 3);
@@ -154,6 +154,29 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                 var clipName = clip.Name.Equals(track, StringComparison.OrdinalIgnoreCase) ? "" : clip.Name;
                 Add(phrases, seen, PhraseAnalyser.Normalise(notes, clip.Ppq), track, clipName, $"{track} {clip.Name}", drums);
             }
+
+        // Then the longer phrases: clips that play back to back on a track in the arrangement, joined. Not for drums,
+        // which have no harmony to fit and play the same few hits all song long.
+        if (phrases.Count < 2) return phrases;
+        IReadOnlyList<(string Track, IReadOnlyList<TrackClip> Clips)> tracks;
+        try { tracks = PhraseJoiner.Tracks(path); }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // The clips on their own are still worth having.
+            AppLog.Info("MIDI", $"Couldn't read the arrangement of {path}: {e.Message}");
+            tracks = [];
+        }
+        foreach (var (track, clips) in tracks)
+        {
+            if (ProjectKey.IsUnpitchedPlugin(track)) continue;
+            foreach (var joined in PhraseJoiner.Phrases(track, clips))
+            {
+                if (joined.Notes.Count < 3) continue;
+                var analysis = PhraseAnalyser.Analyse(joined.Notes, $"{track} {joined.Clip}");
+                if (analysis.Role == MidiRoles.Drums || !seen.Add(analysis.Hash)) continue;
+                phrases.Add(new IndexedPhrase(track, joined.Clip, joined.Notes, analysis, false) { Members = joined.Members });
+            }
+        }
         return phrases;
     }
 
@@ -175,7 +198,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     static void Add(List<IndexedPhrase> phrases, HashSet<string> seen, List<NoteEvent> notes, string part, string clip, string hints, bool drums)
     {
         if (notes.Count < 3) return;
-        foreach (var (where, piece) in PhraseAnalyser.Split(notes))
+        foreach (var (where, piece, _) in PhraseAnalyser.Split(notes))
         {
             var analysis = PhraseAnalyser.Analyse(piece, hints, drums);
             if (!seen.Add(analysis.Hash)) continue;   // the same notes again in this file
