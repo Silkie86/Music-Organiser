@@ -413,6 +413,11 @@
                         <Button Classes="countLink" Tag="Details" Click="OnSeeAll" ToolTip.Tip="See the tracks, your tags and notes, and the file's details">
                             <TextBlock Classes="count" Text="{Binding TracksCountText}" />
                         </Button>
+                        <TextBlock Classes="countDot" Text="·" />
+                        <Button Classes="countLink" Tag="MIDI that fits" Click="OnSeeAll"
+                                ToolTip.Tip="MIDI from your other songs and MIDI folders that fits this one, already in its key">
+                            <TextBlock Classes="count" Text="{Binding SongMidi.LinkText}" />
+                        </Button>
                     </WrapPanel>
 
                     <!-- The arrangement. Read when Overview first shows; Full size opens it in its own window. -->
