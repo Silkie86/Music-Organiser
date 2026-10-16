@@ -160,13 +160,16 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _loading = true;
         try
         {
-            var catalogue = await UiWork.Run(() => new MidiCatalogue(_index.All()));
+            // Counting a few hundred thousand parts happens off the window's thread too.
+            var (catalogue, counts, files) = await UiWork.Run(() =>
+            {
+                var c = new MidiCatalogue(_index.All());
+                return (c, c.RoleCounts(), c.Entries.Select(e => e.Phrase.Source.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            });
             _catalogue = catalogue;
             HasParts = catalogue.Entries.Count > 0;
-            var counts = catalogue.RoleCounts();
             foreach (var chip in RoleChips)
                 chip.Count = chip.Role == "All" ? catalogue.Entries.Count : counts.GetValueOrDefault(chip.Role);
-            var files = catalogue.Entries.Select(e => e.Phrase.Source.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             Failures = await UiWork.Run(_index.Failures);
             Summary = catalogue.Entries.Count == 0
                 ? "No MIDI found yet."
