@@ -79,10 +79,12 @@ public class InstrumentTests
     }
 
     /// <summary>A one-track MIDI file by hand, since the app's own writer sets no sounds: a program change, then four notes.</summary>
-    static byte[] FileWithProgram(int channel, int program)
+    static byte[] FileWithProgram(int channel, int? program, string name = "Loop")
     {
-        var track = new List<byte> { 0x00, 0xFF, 0x03, 0x04, (byte)'L', (byte)'o', (byte)'o', (byte)'p' };
-        track.AddRange([0x00, (byte)(0xC0 | channel), (byte)program]);
+        var bytes = new List<byte> { 0x00, 0xFF, 0x03, (byte)name.Length };
+        bytes.AddRange(name.Select(c => (byte)c));
+        if (program is { } p) bytes.AddRange([0x00, (byte)(0xC0 | channel), (byte)p]);
+        var track = bytes;
         foreach (var key in new byte[] { 36, 36, 43, 41 })
             track.AddRange([0x00, (byte)(0x90 | channel), key, 100, 0x60, (byte)(0x80 | channel), key, 0]);
         track.AddRange([0x00, 0xFF, 0x2F, 0x00]);
@@ -111,5 +113,22 @@ public class InstrumentTests
         Assert.Equal(38, stored.Program);
         Assert.Equal(Instruments.Bass, MidiCatalogue.InstrumentOf(stored)?.Name);
         Assert.Equal(MidiIndexer.FileVersion, index.Sources()[stored.Source.Path].Version);
+    }
+
+    [Fact]
+    public void A_files_only_track_name_still_says_what_plays()
+    {
+        var dir = Fixtures.TempDir();
+        File.WriteAllBytes(Path.Combine(dir, "Night drive.mid"), FileWithProgram(0, null, "Keyscape"));
+        File.WriteAllBytes(Path.Combine(dir, "Idea.mid"), FileWithProgram(0, null, "Track 1"));
+        Assert.Equal("Keyscape", Assert.Single(MidiIndexer.FromFile(Path.Combine(dir, "Night drive.mid"), [dir])).TrackName);
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.SetList(MidiIndexer.FoldersKey, [dir]);
+        using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));
+        new MidiIndexer(index, db).Run();
+        var parts = index.All().ToDictionary(p => Path.GetFileName(p.Source.Path));
+        Assert.Equal("", parts["Night drive.mid"].Part);   // the title stays "Night drive"
+        Assert.Equal("“Keyscape” is a piano plugin", MidiCatalogue.InstrumentOf(parts["Night drive.mid"])?.Why);
+        Assert.Null(MidiCatalogue.InstrumentOf(parts["Idea.mid"]));
     }
 }

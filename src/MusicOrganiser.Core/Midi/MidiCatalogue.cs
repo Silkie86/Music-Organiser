@@ -149,7 +149,7 @@ public sealed class MidiCatalogue
     {
         var isFile = p.Source.Kind == MidiSource.File;
         string[] names = isFile
-            ? [p.Part, p.Clip, Path.GetFileNameWithoutExtension(p.Source.Path),
+            ? [p.Part, p.TrackName, p.Clip, Path.GetFileNameWithoutExtension(p.Source.Path),
                .. (Path.GetDirectoryName(p.Source.Path) ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).TakeLast(3).Reverse()]
             : [p.Part, p.Clip];
         var guess = Instruments.Guess(names, channel10: p.Drums && isFile, program: p.Program);

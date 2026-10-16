@@ -10,6 +10,8 @@ public sealed record MidiFilePart(string Name, int Ppq, IReadOnlyList<NoteEvent>
 {
     /// <summary>The General MIDI program (sound, 0–127) the part's channel is first set to, if the file sets one.</summary>
     public int? Program { get; init; }
+    /// <summary>The track's own name, kept even where <see cref="Name"/> leaves it out (the only track of a file).</summary>
+    public string TrackName { get; init; } = "";
 }
 
 /// <summary>
@@ -62,7 +64,7 @@ public static class MidiFileReader
                 if (byChannel.Count > 1) label = (label.Length > 0 ? label + " · " : "") + $"Ch {channel + 1}";
                 parts.Add(new MidiFilePart(named == 1 && byChannel.Count == 1 ? "" : label, ppq,
                     notes.OrderBy(n => n.Start).ThenBy(n => n.Key).ToList(), channel == 9, tempo)
-                    { Program = programs.TryGetValue(channel, out var program) ? program : null });
+                    { Program = programs.TryGetValue(channel, out var program) ? program : null, TrackName = name });
             }
         }
         return parts;

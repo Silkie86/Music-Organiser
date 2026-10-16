@@ -273,7 +273,7 @@
                     <views:NoteRoll Height="130" Channel="{Binding Channel}" Position="{Binding Position}" Spans="{Binding Spans}"
                                     SeekCommand="{Binding SeekCommand}" />
                     <WrapPanel>
-                        <Border Classes="pill" Margin="0,0,6,6" IsVisible="{Binding HasInstrument}" ToolTip.Tip="{Binding InstrumentWhy}">
+                        <Border Classes="pill" Margin="0,0,6,6" IsVisible="{Binding ShowsInstrument}" ToolTip.Tip="{Binding InstrumentWhy}">
                             <TextBlock Classes="pillText" Text="{Binding InstrumentText}" />
                         </Border>
                         <Border Classes="pill" Margin="0,0,6,6" ToolTip.Tip="{Binding RoleWhy}">

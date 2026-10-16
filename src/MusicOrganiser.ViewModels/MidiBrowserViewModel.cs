@@ -842,7 +842,9 @@ public sealed partial class MidiRow : ObservableObject
     public string Details => string.Join(" · ", new[] { InstrumentText, RoleLabel, KeyText, BarsText, $"{Entry.Phrase.NoteCount:N0} notes" }.Where(s => s.Length > 0));
 
     /// <summary>The instrument, when something attached to the part says ("Piano"), else "".</summary>
-    public string InstrumentText => Entry.Instrument?.Name ?? "";
+    /// <summary>Left out where it would only repeat the kind ("Drums · Drums").</summary>
+    public string InstrumentText => Entry.Instrument is { } i && !i.Name.Equals(RoleLabel, StringComparison.OrdinalIgnoreCase) ? i.Name : "";
+    public bool ShowsInstrument => InstrumentText.Length > 0;
     public bool HasInstrument => Entry.Instrument is not null;
     /// <summary>How the app knows the instrument: "“Keyscape” is a piano plugin".</summary>
     public string InstrumentWhy => Entry.Instrument?.Why ?? "";

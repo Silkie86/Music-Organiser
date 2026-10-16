@@ -27,7 +27,8 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     public const int Version = 3;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes
     /// <summary>
     /// .mid files have their own version on top: 4 keeps the General MIDI sound each part's channel is set to (2026-10-16),
-    /// so library files are read again once while projects, which have no such thing, aren't.
+    /// and a file's only track's name (which the part leaves out, but may say "Keyscape"), so library files are read again
+    /// once while projects, which have no such things, aren't.
     /// </summary>
     public const int FileVersion = 4;
 
@@ -208,13 +209,14 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             // The General MIDI sound it's set to is a hint too ("Synth Bass 1"), unless it's the default piano.
             var sound = part.Program is > 0 and < 128 && !part.Drums ? " " + Instruments.GeneralMidi[part.Program.Value] : "";
             Add(phrases, seen, PhraseAnalyser.Normalise(part.Notes, part.Ppq), part.Name, name,
-                $"{part.Name} {name} {string.Join(' ', folders)}{sound}", part.Drums, part.Program);
+                $"{part.Name} {name} {string.Join(' ', folders)}{sound}", part.Drums, part.Program,
+                part.Name.Length == 0 ? part.TrackName.Trim() : "");
         }
         return phrases;
     }
 
     static void Add(List<IndexedPhrase> phrases, HashSet<string> seen, List<NoteEvent> notes, string part, string clip, string hints, bool drums,
-                    int? program = null)
+                    int? program = null, string trackName = "")
     {
         if (notes.Count < 3) return;
         foreach (var (where, piece, _) in PhraseAnalyser.Split(notes))
@@ -222,7 +224,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             var analysis = PhraseAnalyser.Analyse(piece, hints, drums);
             if (!seen.Add(analysis.Hash)) continue;   // the same notes again in this file
             phrases.Add(new IndexedPhrase(part, where.Length == 0 ? clip : clip.Length == 0 ? where : $"{clip} · {where}", piece, analysis, drums)
-                        { Program = program });
+                        { Program = program, TrackName = trackName });
         }
     }
 }
