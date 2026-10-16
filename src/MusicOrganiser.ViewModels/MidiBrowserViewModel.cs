@@ -615,8 +615,11 @@ public sealed partial class MidiRow : ObservableObject
     /// <summary>"Joined from 4 clips" for a longer phrase; "Part of a 16-bar phrase" for a clip that's in one.</summary>
     public string PhraseText =>
         Entry.IsJoined ? $"Joined from {Entry.ClipCount} clips"
-        : Entry.Within is { Count: > 0 } w ? (w.Count == 1 ? $"Part of a {w[0].Phrase.Bars}-bar phrase" : $"Part of {w.Count} longer phrases")
+        : Entry.Within is { Count: > 0 } w ? (w.Count == 1 ? $"Part of {Article(w[0].Phrase.Bars)} {w[0].Phrase.Bars}-bar phrase" : $"Part of {w.Count} longer phrases")
         : "";
+
+    /// <summary>"an" before a number said with a vowel sound first: an 8-bar, an 11-bar, an 18-bar.</summary>
+    static string Article(int n) => n is 8 or 11 or 18 or (>= 80 and <= 89) ? "an" : "a";
     public bool HasPhrase => PhraseText.Length > 0;
     public bool CanShowWholePhrase => Entry.Within is { Count: > 0 };
     public string PhraseWhy => Entry.IsJoined
