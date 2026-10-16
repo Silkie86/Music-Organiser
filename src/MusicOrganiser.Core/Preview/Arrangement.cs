@@ -84,13 +84,14 @@ public static class ArrangementReader
         {
             ".flp" => FlArrangement.Read(path),
             ".bwproject" => [new BitwigReader().ReadArrangement(path)],
+            ".song" => [new StudioOneReader().ReadArrangement(path)],
             _ => [],
         };
     }
 
     /// <summary>
     /// Where an audio file is on this computer: the path the project saved, else a file of that name in the project's
-    /// folder or the folders beside it (Bitwig keeps them in samples/ and recordings/, FL in the project's folder).
+    /// folder or the folders beside it (Bitwig keeps them in samples/ and recordings/, Studio One in Media/, FL in the project's folder).
     /// </summary>
     public static string? Locate(string saved, string projectPath)
     {
@@ -102,7 +103,8 @@ public static class ArrangementReader
             var dir = System.IO.Path.GetDirectoryName(projectPath);
             if (string.IsNullOrEmpty(dir) || name.Length == 0) return null;
             foreach (var folder in new[] { dir, System.IO.Path.Combine(dir, "samples"), System.IO.Path.Combine(dir, "recordings"),
-                                           System.IO.Path.Combine(dir, "Samples"), System.IO.Path.Combine(dir, "Audio") })
+                                           System.IO.Path.Combine(dir, "Samples"), System.IO.Path.Combine(dir, "Audio"),
+                                           System.IO.Path.Combine(dir, "Media") })
             {
                 var candidate = System.IO.Path.Combine(folder, name);
                 if (File.Exists(candidate)) return candidate;
