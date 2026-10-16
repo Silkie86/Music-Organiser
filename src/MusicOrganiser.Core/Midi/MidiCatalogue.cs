@@ -18,6 +18,8 @@ public sealed class MidiEntry
     public string? YourRole { get; set; }
     public IReadOnlyList<PhraseChord> Chords { get; init; } = [];
     public float[] Chroma { get; init; } = new float[12];
+    /// <summary>What CLaMP 3 heard in it (see <see cref="Clamp3Model"/>), or null when the model hasn't heard it yet.</summary>
+    public sbyte[]? Meaning { get; set; }
 
     public long Id => Phrase.Id;
 
@@ -53,8 +55,10 @@ public sealed class MidiEntry
 /// <param name="Fit">Rank by how well each part fits this harmony, moved to fit it.</param>
 /// <param name="Like">Rank by how alike each part is to this one.</param>
 /// <param name="Leave">Leave out the parts in this file: the project being fitted to fits itself, which says nothing.</param>
+/// <param name="Words">What CLaMP 3 makes of <paramref name="Text"/>: when given, the words are read as a description and
+/// parts are ranked by how close they sound to it, instead of only matching names.</param>
 public sealed record MidiQuery(string Text = "", string? Role = null, string? From = null, HarmonyTarget? Fit = null,
-                               MidiEntry? Like = null, int Limit = 500, string? Leave = null);
+                               MidiEntry? Like = null, int Limit = 500, string? Leave = null, float[]? Words = null);
 
 /// <summary>A part found, with how it fits (when matching a harmony) or how alike it is (for "more like this").</summary>
 public sealed record MidiHit(MidiEntry Entry, HarmonyFit? Fit = null, double? Likeness = null);
@@ -69,7 +73,7 @@ public sealed class MidiCatalogue
     public IReadOnlyList<MidiEntry> Entries { get; }
     public int PhraseCount { get; }
 
-    public MidiCatalogue(IReadOnlyList<StoredPhrase> phrases)
+    public MidiCatalogue(IReadOnlyList<StoredPhrase> phrases, IReadOnlyDictionary<string, sbyte[]>? meanings = null)
     {
         PhraseCount = phrases.Count;
         // Phrases come newest file first, so the first of each set of notes is the newest copy.
@@ -87,11 +91,22 @@ public sealed class MidiCatalogue
             {
                 Phrase = p, Chords = chords, Chroma = MidiIndex.Floats(p.Chroma), YourRole = p.YourRole,
                 SearchText = SearchTextOf(p, p.YourRole ?? p.Role, chords),
+                Meaning = meanings?.GetValueOrDefault(p.Hash),
             };
             byHash[p.Hash] = entry;
             entries.Add(entry);
         }
         Entries = entries;
+    }
+
+    /// <summary>How many parts CLaMP 3 has heard.</summary>
+    public int HeardCount => Entries.Count(e => e.Meaning is not null);
+
+    /// <summary>Adds what CLaMP 3 heard to the parts it has heard since the catalogue was made.</summary>
+    public void AddMeanings(IReadOnlyDictionary<string, sbyte[]> meanings)
+    {
+        foreach (var e in Entries)
+            if (e.Meaning is null && meanings.TryGetValue(e.Phrase.Hash, out var m)) e.Meaning = m;
     }
 
     /// <summary>Changes what kind of part this is (null: back to the app's guess), for searching and the chips too.</summary>
@@ -113,9 +128,14 @@ public sealed class MidiCatalogue
         return string.Join(' ', parts).ToLowerInvariant();
     }
 
+    /// <summary>How much a word found in a part's names, kind, key or chords lifts it when searching by description.</summary>
+    const float NameBonus = 0.08f;
+
     public IReadOnlyList<MidiHit> Search(MidiQuery q, out int matching, CancellationToken ct = default)
     {
         var words = q.Text.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (q.Words is { } described && words.Length > 0 && q.Fit is null && q.Like is null)
+            return Describe(q, words, described, out matching, ct);
         var leave = q.Leave is null ? null : MidiEntry.SongOf(q.Leave);
         var pool = Entries.Where(e =>
             (q.Role is null ? q.Fit is null || e.Role != MidiRoles.Drums : e.Role == q.Role) &&   // drums have no harmony to fit
@@ -139,10 +159,39 @@ public sealed class MidiCatalogue
         if (q.Like is { } like)
         {
             var mine = MidiIndex.Floats(like.Phrase.Features);
-            return pool.Select(e => new MidiHit(e, Likeness: PhraseAnalyser.Likeness(mine, MidiIndex.Floats(e.Phrase.Features))))
+            // Shape (the app's own measurements) and, once CLaMP 3 has heard both, how alike they sound, half and half.
+            return pool.Select(e => new MidiHit(e, Likeness: Likeness(like, e, mine)))
                        .OrderByDescending(h => h.Likeness).Take(q.Limit).ToList();
         }
         return pool.Take(q.Limit).Select(e => new MidiHit(e)).ToList();
+    }
+
+    static double Likeness(MidiEntry like, MidiEntry e, float[] likeFeatures)
+    {
+        var shape = PhraseAnalyser.Likeness(likeFeatures, MidiIndex.Floats(e.Phrase.Features));
+        return like.Meaning is { } a && e.Meaning is { } b ? 0.5 * shape + 0.5 * Math.Max(0, Clamp3Model.Similarity(a, b)) : shape;
+    }
+
+    /// <summary>
+    /// Search by description: every part (of the chosen kind and place) ranked by how close CLaMP 3 thinks it sounds to
+    /// the words, lifted a little for each word that also appears in its names, kind, key or chords. Parts the model
+    /// hasn't heard yet still show up when all the words match their names, as they do without the model.
+    /// </summary>
+    IReadOnlyList<MidiHit> Describe(MidiQuery q, string[] words, float[] described, out int matching, CancellationToken ct)
+    {
+        var leave = q.Leave is null ? null : MidiEntry.SongOf(q.Leave);
+        var scored = new List<(MidiEntry Entry, float Score)>();
+        foreach (var e in Entries)
+        {
+            if ((q.Role is not null && e.Role != q.Role) || (q.From is not null && (q.From == "projects") != e.IsProject) ||
+                (leave is not null && e.IsInSong(leave))) continue;
+            var found = words.Count(w => e.SearchText.Contains(w, StringComparison.Ordinal));
+            if (e.Meaning is { } m) scored.Add((e, Clamp3Model.Similarity(described, m) + NameBonus * found / words.Length));
+            else if (found == words.Length) scored.Add((e, NameBonus));
+            if (scored.Count % 8192 == 0) ct.ThrowIfCancellationRequested();
+        }
+        matching = scored.Count;
+        return scored.OrderByDescending(s => s.Score).Take(q.Limit).Select(s => new MidiHit(s.Entry)).ToList();
     }
 
     /// <summary>How many parts of each kind there are, for the chips.</summary>

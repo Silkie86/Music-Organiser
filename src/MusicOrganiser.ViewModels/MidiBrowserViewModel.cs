@@ -8,6 +8,7 @@ using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
+using Microsoft.ML.OnnxRuntime;
 
 namespace MusicOrganiser.ViewModels;
 
@@ -35,6 +36,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     CancellationTokenSource? _indexCts;
     Task? _indexing;
     int _searchRequest, _listenRequest;
+    (MidiQuery, float[]?)? _lastAsked;
+
+    /// <summary>Results for a different search than last time are in: the list goes back to the top.</summary>
+    public event EventHandler? NewSearchShown;
     bool _loading, _indexAgain, _retryFailed;
 
     public MidiBrowserViewModel(LibraryDb db, MainViewModel main, MidiIndex? index = null)
@@ -107,7 +112,30 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     public bool IsLiking => Like is not null;
     public string LikeText => Like is null ? "" : $"Parts shaped like {Like.Title}";
 
-    partial void OnSearchChanged(string value) => _ = RefreshAsync(delayMs: 150);
+    // ---- search by description (CLaMP 3) ----
+
+    Clamp3Model? _clamp;
+    readonly object _clampLock = new();
+    bool _clampFailed;
+    Task? _hearing;
+    CancellationTokenSource? _hearCts;
+    (string Text, float[] Vector)? _lastWords;
+
+    /// <summary>Whether the MIDI model is on this computer: then the search box takes descriptions too.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(SearchHint))] [NotifyPropertyChangedFor(nameof(CanDownloadMeaning))]
+    bool _meaningInstalled = Clamp3Model.IsInstalled();
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanDownloadMeaning))] bool _isDownloadingMeaning;
+    [ObservableProperty] double _meaningPercent;
+    [ObservableProperty] string _meaningText = "";
+    /// <summary>The model is listening to parts it hasn't heard yet.</summary>
+    [ObservableProperty] bool _isHearing;
+
+    public bool CanDownloadMeaning => !MeaningInstalled && !IsDownloadingMeaning;
+    public string SearchHint => MeaningInstalled
+        ? "Describe it: dark pad chords, bouncy funk bassline… or a name, key or chord"
+        : "Search MIDI: dark, Cm, trap, piano, Am7…";
+
+    partial void OnSearchChanged(string value) => _ = RefreshAsync(delayMs: MeaningInstalled ? 300 : 150);
     partial void OnSelectedRoleChanged(RoleChip value) => _ = RefreshAsync();
     partial void OnFromChanged(string value) => _ = RefreshAsync();
     partial void OnLikeChanged(MidiEntry? value)
@@ -138,7 +166,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _loading = true;
         try
         {
-            var catalogue = await UiWork.Run(() => new MidiCatalogue(_index.All()));
+            var catalogue = await UiWork.Run(() => new MidiCatalogue(_index.All(), _index.Embeddings(Clamp3Model.Version)));
             _catalogue = catalogue;
             HasParts = catalogue.Entries.Count > 0;
             var counts = catalogue.RoleCounts();
@@ -163,16 +191,27 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var request = ++_searchRequest;
         if (delayMs > 0 && UiWork.InBackground) await Task.Delay(delayMs);
         if (request != _searchRequest || _catalogue is not { } catalogue) return;
-        var query = new MidiQuery(Search.Trim(), SelectedRole.Role == "All" ? null : SelectedRole.Role,
-                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, Fit, Like, Leave: _fitPath);
+        var text = Search.Trim();
+        var words = text.Length > 0 && Fit is null && Like is null ? await WordsAsync(text) : null;
+        if (request != _searchRequest) return;
+        var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
+                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, Fit, Like, Leave: _fitPath,
+                                  Words: words);
         var (hits, matching) = await UiWork.Run(() => (catalogue.Search(query, out var n), n));
         if (request != _searchRequest) return;
         var keep = Selected?.Entry;
+        var asked = (query with { Words = null }, words);
+        var newSearch = !Equals(asked, _lastAsked);
+        _lastAsked = asked;
         Results = hits.Select(h => new MidiRow(h, this)).ToList();
         Selected = Results.FirstOrDefault(r => r.Entry == keep) ?? Results.FirstOrDefault();
+        // The part picked stays picked, but a new search shows its best match first rather than scrolling to it.
+        if (newSearch) NewSearchShown?.Invoke(this, EventArgs.Empty);
         ResultText = matching == 0 ? (HasParts ? "Nothing matches. Try fewer words, or another kind." : "")
             : Fit is not null ? $"Best fits first · {Math.Min(matching, hits.Count):N0} shown of {matching:N0}, each moved into the right key"
             : Like is not null ? $"Most alike first · {hits.Count:N0} of {matching:N0}"
+            : words is not null ? $"Closest to “{text}” first · {hits.Count:N0} of {matching:N0}" +
+                                  (catalogue.HeardCount < catalogue.Entries.Count ? $" · {catalogue.Entries.Count - catalogue.HeardCount:N0} not heard yet" : "")
             : hits.Count < matching ? $"{hits.Count:N0} of {matching:N0}, newest first. Search to narrow it down." : $"{matching:N0}, newest first";
     }
 
@@ -233,6 +272,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             var result = await Task.Run(() => _indexer.Run(progress, token, retryFailed), token);
             if (result.Read > 0 || result.Forgotten > 0 || _catalogue is null) await LoadAsync();
             else Failures = await UiWork.Run(_index.Failures);
+            _ = HearAsync();
             card.Finish(result.Read == 0 ? "MIDI up to date" : "MIDI read",
                         result.Read == 0 ? $"{_catalogue?.Entries.Count ?? 0:N0} parts" :
                         $"{result.Read:N0} file{(result.Read == 1 ? "" : "s")}, {result.Phrases:N0} parts" +
@@ -257,6 +297,142 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             IsIndexing = false;
             IndexText = "";
         }
+    }
+
+    // ---- the MIDI model ----
+
+    /// <summary>The model, loaded the first time it's needed; null when it isn't installed or won't load.</summary>
+    Clamp3Model? Clamp()
+    {
+        if (_clamp is not null || _clampFailed || !Clamp3Model.IsInstalled()) return _clamp;
+        lock (_clampLock)
+        {
+            if (_clamp is not null || _clampFailed) return _clamp;
+            try { _clamp = new Clamp3Model(); }
+            catch (Exception e)
+            {
+                _clampFailed = true;
+                AppLog.Info("MIDI", $"The MIDI model wouldn't load: {e}");
+            }
+            return _clamp;
+        }
+    }
+
+    /// <summary>What the model makes of the search words (the last one is kept, so changing the kind doesn't ask again).</summary>
+    async Task<float[]?> WordsAsync(string text)
+    {
+        if (!MeaningInstalled) return null;
+        if (_lastWords is { } last && last.Text == text) return last.Vector;
+        try
+        {
+            var vector = await UiWork.Run(() => Clamp()?.EmbedText(text));
+            if (vector is not null) _lastWords = (text, vector);
+            return vector;
+        }
+        catch (Exception e) when (e is OnnxRuntimeException or InvalidOperationException)
+        {
+            AppLog.Info("MIDI", $"Describing \"{text}\" failed: {e.Message}");
+            return null;
+        }
+    }
+
+    [RelayCommand]
+    async Task DownloadMeaning()
+    {
+        if (IsDownloadingMeaning) return;
+        IsDownloadingMeaning = true;
+        MeaningPercent = 0;
+        MeaningText = "Connecting…";
+        var cts = new CancellationTokenSource();
+        var card = _main.Activities.Start("Downloading the MIDI model", "Connecting…", cts.Cancel);
+        try
+        {
+            var progress = new Progress<(string File, long Done, long? Total)>(p =>
+            {
+                var index = Array.FindIndex(Clamp3Model.Files, f => f.Local == p.File) + 1;
+                var size = $"{p.Done / 1048576.0:N1} MB" + (p.Total is { } t ? $" of {t / 1048576.0:N1} MB" : "");
+                MeaningPercent = p.Total is > 0 ? 100.0 * p.Done / p.Total.Value : 0;
+                MeaningText = $"File {index} of {Clamp3Model.Files.Length}: {size}";
+                card.Report(p.Total is > 0 ? MeaningPercent : -1, MeaningText);
+            });
+            await Clamp3Model.DownloadAsync(progress, ct: cts.Token);
+            _clampFailed = false;
+            MeaningInstalled = true;
+            card.Finish("MIDI model installed", "It's listening to your MIDI now; search by description as it goes");
+            Message = "The MIDI model is installed. It's listening to your MIDI in the background; describe what you're after in the search box.";
+            _ = HearAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            card.Stop("Download stopped", "It carries on from the file it was on");
+        }
+        catch (Exception e)
+        {
+            card.Fail("Downloading the MIDI model failed", e.Message);
+            Message = $"Downloading the MIDI model failed: {e.Message}. Check the internet connection and try again.";
+        }
+        finally
+        {
+            IsDownloadingMeaning = false;
+            MeaningText = "";
+        }
+    }
+
+    /// <summary>Lets the model hear the parts it hasn't heard yet, then searches again so they show up.</summary>
+    public Task HearAsync()
+    {
+        if (!MeaningInstalled || _catalogue is null) return Task.CompletedTask;
+        if (_hearing is { IsCompleted: false }) return _hearing;
+        return _hearing = RunHearAsync();
+    }
+
+    [RelayCommand]
+    void StopHearing() => _hearCts?.Cancel();
+
+    async Task RunHearAsync()
+    {
+        if (await UiWork.Run(Clamp) is not { } model)
+        {
+            Message = "The MIDI model is installed but wouldn't load, so search matches names only. Details are in the log.";
+            return;
+        }
+        var cts = _hearCts = new CancellationTokenSource();
+        Activity? card = null;
+        var progress = new ThrottledProgress<ScanProgress>(p =>
+        {
+            card ??= _main.Activities.Start("Listening to your MIDI", "So you can search it by description", cts.Cancel);
+            if (p.Total > 0) card.Report(100.0 * p.Done / p.Total, $"{p.Done:N0} of {p.Total:N0} parts");
+        }, 500);
+        IsHearing = true;
+        try
+        {
+            var result = await Task.Run(() => MidiEmbedder.Run(_index, model, progress, cts.Token), cts.Token);
+            if (result.Heard > 0) await AddMeaningsAsync();
+            card?.Finish("Heard your MIDI", $"{result.Heard:N0} parts can be found by description" +
+                                            (result.Failed > 0 ? $"; {result.Failed:N0} couldn't be heard" : ""));
+        }
+        catch (OperationCanceledException)
+        {
+            await AddMeaningsAsync();
+            card?.Stop("Stopped listening to MIDI", "It carries on from there next time");
+        }
+        catch (Exception e)
+        {
+            card?.Fail("Listening to MIDI failed", e.Message);
+            AppLog.Info("MIDI", $"Listening failed: {e}");
+        }
+        finally
+        {
+            progress.Close();
+            IsHearing = false;
+        }
+    }
+
+    async Task AddMeaningsAsync()
+    {
+        if (_catalogue is not { } catalogue) return;
+        await UiWork.Run(() => { catalogue.AddMeanings(_index.Embeddings(Clamp3Model.Version)); return 0; });
+        if (Search.Trim().Length > 0 || Like is not null) await RefreshAsync();
     }
 
     [RelayCommand]
@@ -531,6 +707,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     public void Dispose()
     {
         _indexCts?.Cancel();
+        _hearCts?.Cancel();
+        _clamp?.Dispose();
         StopPlaying();
         _player?.Dispose();
     }
