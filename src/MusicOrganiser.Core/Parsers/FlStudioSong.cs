@@ -142,6 +142,15 @@ public sealed record FlAutomation(string Name, int Channel, FlControl Control, i
 
     /// <summary>For an insert's effect: its slot (see <see cref="FlPlugin.Slot"/>), or -1.</summary>
     public int Slot { get; init; } = -1;
+
+    /// <summary>The beats where each of its playlist clips starts.</summary>
+    public IReadOnlyList<double> Starts { get; init; } = [];
+
+    /// <summary>
+    /// Where the playlist clip a point belongs to starts. Where clips moving one thing meet on a beat, the points of the
+    /// one starting there go last, so it has the last word.
+    /// </summary>
+    public double StartOf(FlPoint point) => Starts.LastOrDefault(s => s <= point.Beat + 1e-4);
 }
 
 /// <summary>A mixer insert (0 is the master) and its effects in slot order.</summary>
@@ -321,9 +330,12 @@ public sealed partial class FlStudioReader
         var mixer = new MixerSettings(mixerSettings);
         // An automation clip switched off in the Channel Rack doesn't play, like a muted one.
         var automation = PlaceAutomation(links.Where(l => !off.Contains(l.Clip)).ToList(), curves, names, playlist, tracks, mixer, flp.Ppq);
-        // A channel whose on/off is automated plays only while it's on. When several clips switch it, it follows each in turn.
+        // A channel whose on/off is automated plays only while it's on. When several clips switch it, it follows each in turn:
+        // where one clip ends and another starts, the one starting there has the last word.
         var switching = automation.Where(a => a.Control == FlControl.OnOff).GroupBy(a => a.Channel)
-            .ToDictionary(g => g.Key, g => (Names: g.Select(a => a.Name).Distinct().ToList(), Points: g.SelectMany(a => a.Points).OrderBy(p => p.Beat).ToList()));
+            .ToDictionary(g => g.Key, g => (Names: g.Select(a => a.Name).Distinct().ToList(),
+                Points: g.SelectMany(a => a.Points.Select(p => (Point: p, From: a.StartOf(p))))
+                         .OrderBy(x => Math.Round(x.Point.Beat * flp.Ppq)).ThenBy(x => x.From).Select(x => x.Point).ToList()));
         var clips = PlaceClips(flp, rawNotes, playlist, tracks, order.ToHashSet(), patternNames);
         var audioClips = PlaceAudioClips(playlist, tracks, order.Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation).ToHashSet());
         var channels = order
@@ -472,18 +484,24 @@ public sealed partial class FlStudioReader
                 }, plugin, points);
             var hold = Moves([]).Control == FlControl.OnOff;
             var placed = new List<FlPoint>();
+            var starts = new List<double>();
             foreach (var item in items.Where(i => i.Index == clip && !i.Muted))
             {
                 var part = CutCurve(curve, item.At / (double)ppq, item.From / (double)ppq, item.Length / (double)ppq, hold).ToList();
+                if (part.Count == 0) continue;
+                starts.Add(part[0].Beat);
+                // A clip placed over the end of an earlier one takes over where it starts.
+                if (placed.Count > 0 && placed[^1].Beat > part[0].Beat + SameBeat)
+                    placed = CutCurve(placed, placed[0].Beat, placed[0].Beat, part[0].Beat - placed[0].Beat, hold).ToList();
                 // Between clips FL holds the value the last one ended on, then jumps to where the next starts.
-                if (placed.Count > 0 && part.Count > 0 && placed[^1].Beat < part[0].Beat - SameBeat && placed[^1].Value != part[0].Value)
+                if (placed.Count > 0 && placed[^1].Beat < part[0].Beat - SameBeat && placed[^1].Value != part[0].Value)
                     placed.Add(placed[^1] with { Beat = part[0].Beat });
                 // A clip straight after another starts where that one ended: the shared point is kept once.
-                if (placed.Count > 0 && part.Count > 0 && Math.Abs(placed[^1].Beat - part[0].Beat) <= SameBeat && placed[^1].Value == part[0].Value)
+                if (placed.Count > 0 && Math.Abs(placed[^1].Beat - part[0].Beat) <= SameBeat && placed[^1].Value == part[0].Value)
                     part.RemoveAt(0);
                 placed.AddRange(part);
             }
-            if (placed.Count > 0) result.Add(Moves(placed));
+            if (placed.Count > 0) result.Add(Moves(placed) with { Starts = starts });
         }
         return result;
     }

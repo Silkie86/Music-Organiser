@@ -492,6 +492,32 @@ public static class Fixtures
     }
 
     /// <summary>
+    /// An FL 25 song whose "Kick" pattern plays in bars 1, 2 and 3 while two clips switch the kick, back to back: "Kick off"
+    /// (off throughout) in bars 1 and 3, "Kick on" (on throughout) in bar 2. <paramref name="onLinkedFirst"/> swaps the order
+    /// of their links in the file. "Kick - Volume" (a rise from 0 to 1 over 8 beats) is placed at beat 0 and again at beat 4,
+    /// over the first one's second half.
+    /// </summary>
+    public static string FlStudio25BackToBack(string dir, bool onLinkedFirst)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 120_000)
+            .Word(65, 1).Text(193, "Kick").Data(224, Note(0, 0, 48, 36, 100));
+        var (off, on) = (AutomationLink(1, 0u << 16 | 7), AutomationLink(2, 0u << 16 | 7));
+        b.Data(227, onLinkedFirst ? on : off).Data(227, onLinkedFirst ? off : on).Data(227, AutomationLink(3, 0u << 16 | 0))
+            .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Kick").Byte(0, 1).Text(196, @"C:\Samples\Kick.wav")
+            .Word(64, 1).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick off").Data(234, AutomationPoints((0, 0), (4, 0)))
+            .Word(64, 2).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick on").Data(234, AutomationPoints((0, 1), (4, 1)))
+            .Word(64, 3).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick - Volume").Data(234, AutomationPoints((0, 0), (8, 1)))
+            .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(768, 20481, 384),
+                        .. PlaylistItem25(0, 1, 384, track: 498), .. PlaylistItem25(384, 2, 384, track: 498), .. PlaylistItem25(768, 1, 384, track: 498),
+                        .. PlaylistItem25(0, 3, 768, track: 497), .. PlaylistItem25(384, 3, 768, track: 496)]);
+        var path = Path.Combine(dir, "Back to back.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
     /// Like Solomon's civil_18: an FL 25 song whose playlist tracks 2 ("Acapellas") and 4 are muted, and whose "Hat" and
     /// "Vox" channels are switched off in the Channel Rack. Pattern "Verse" (a snare note and a hat note) is on track 1
     /// in bar 1 and on track 2 in bar 2. "Acapella" audio clips are on track 2 (bars 1 and 2) and track 4 (bar 3); "Vox"
