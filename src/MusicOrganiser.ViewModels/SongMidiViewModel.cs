@@ -66,7 +66,7 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
                 Status = "No MIDI has been read yet. Open the MIDI page to read your projects and MIDI folders.";
                 return;
             }
-            var good = await UiWork.Run(() => catalogue.Search(new MidiQuery(Fit: target, Limit: 500, Leave: path), out _)
+            var good = await UiWork.Run(() => catalogue.Search(new MidiQuery(Fit: target, Limit: 500, Leave: path, Notes: midi.NotesOf), out _)
                                                        .Count(h => h.Fit!.Score >= GoodFit));
             GoodCount = good;
             CountText = good == 1 ? "1 good fit" : $"{good:N0} good fits";
@@ -84,10 +84,10 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     {
         var request = ++_request;
         if (_target is not { } target || await midi.CatalogueAsync() is not { } catalogue) return;
-        var query = new MidiQuery(Role: Kind.Role == "All" ? null : Kind.Role, Fit: target, Limit: Limit, Leave: path);
+        var query = new MidiQuery(Role: Kind.Role == "All" ? null : Kind.Role, Fit: target, Limit: Limit, Leave: path, Notes: midi.NotesOf);
         var hits = await UiWork.Run(() => catalogue.Search(query, out _));
         if (request != _request) return;
-        Rows = hits.Select(h => new MidiRow(h, midi)).ToList();
+        Rows = hits.Select(h => new MidiRow(h, midi, target)).ToList();
         Selected = Rows.FirstOrDefault();
     }
 

@@ -213,7 +213,21 @@
                 <TextBlock Text="Listening to your MIDI so it can be found by description…" Classes="small" VerticalAlignment="Center" />
                 <Button Content="Stop" Padding="8,2" FontSize="12" Command="{Binding StopHearingCommand}" />
             </StackPanel>
-            <TextBlock Text="{Binding ResultText}" Classes="small" />
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                    <Button Classes="chip" Content="Back to the usual order" FontSize="12" Command="{Binding UnshuffleCommand}"
+                            IsVisible="{Binding IsShuffled}" />
+                    <Button Classes="chip" FontSize="12" Command="{Binding ShuffleCommand}"
+                            ToolTip.Tip="A random pick from everything that matches, in a random order. Press again for another.">
+                        <TextBlock Text="⤨  Shuffle" />
+                    </Button>
+                    <ToggleButton Classes="chip" IsChecked="{Binding Loop}" FontSize="12"
+                                  ToolTip.Tip="Play parts round and round until you stop them">
+                        <TextBlock Text="↻  Loop" />
+                    </ToggleButton>
+                </StackPanel>
+                <TextBlock Text="{Binding ResultText}" Classes="small" VerticalAlignment="Center" />
+            </DockPanel>
         </StackPanel>
 
         <!-- Nothing yet: how to get MIDI in. -->
@@ -229,13 +243,14 @@
             </StackPanel>
         </Border>
 
-        <Grid Grid.Row="4" ColumnDefinitions="*,370" IsVisible="{Binding !IsEmpty}">
+        <!-- The card grows to two thirds of the page while fitting, to play a suggestion on top of what it's fitted to. -->
+        <Grid x:Name="Body" Grid.Row="4" ColumnDefinitions="*,370" IsVisible="{Binding !IsEmpty}">
             <ListBox x:Name="Parts" ItemsSource="{Binding Results}" SelectedItem="{Binding Selected}" Background="Transparent"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}"
                      DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:MidiRow">
-                        <Grid ColumnDefinitions="Auto,*,180,Auto" Margin="0,3">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,3">
                             <Button Command="{Binding PlayCommand}" Padding="9,5" Margin="0,0,10,0" VerticalAlignment="Center"
                                     ToolTip.Tip="Listen (with a stand-in sound)">
                                 <Panel>
@@ -250,8 +265,9 @@
                                 <TextBlock Text="{Binding PhraseText}" Classes="small" Foreground="{DynamicResource AccentBrush}"
                                            IsVisible="{Binding HasPhrase}" ToolTip.Tip="{Binding PhraseWhy}" />
                             </StackPanel>
-                            <views:NoteRoll Grid.Column="2" Height="44" Channel="{Binding Channel}" Position="{Binding Position}"
-                                            Spans="{Binding Spans}" SeekCommand="{Binding SeekCommand}" />
+                            <views:NoteRoll Grid.Column="2" Height="44" Width="180" Channel="{Binding Channel}" Position="{Binding Position}"
+                                            Spans="{Binding Spans}" SeekCommand="{Binding SeekCommand}"
+                                            IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}" />
                             <StackPanel Grid.Column="3" Width="124" Margin="10,0,4,0" VerticalAlignment="Center"
                                         IsVisible="{Binding FitText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                         ToolTip.Tip="{Binding FitWhy}">
@@ -265,13 +281,23 @@
 
             <!-- The part picked: a bigger look, what it is, and what to do with it. -->
             <Border Grid.Column="1" Classes="card" Margin="16,0,0,0" VerticalAlignment="Top" IsVisible="{Binding HasSelection}">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Spacing="10" DataContext="{Binding Selected}" x:DataType="vm:MidiRow">
                     <StackPanel>
                         <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding From}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                     </StackPanel>
                     <views:NoteRoll Height="130" Channel="{Binding Channel}" Position="{Binding Position}" Spans="{Binding Spans}"
-                                    SeekCommand="{Binding SeekCommand}" />
+                                    SeekCommand="{Binding SeekCommand}" IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}" />
+                    <!-- Fitting: what it's fitted to above, this part below, lined up bar for bar as they'll play together. -->
+                    <StackPanel Spacing="4" IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}">
+                        <TextBlock Text="{Binding PairText}" Classes="small" />
+                        <views:NoteRoll Height="110" Channel="{Binding PairPartner}" SongEnd="{Binding PairLength}"
+                                        Position="{Binding PairPosition}" SeekCommand="{Binding PairSeekCommand}" />
+                        <TextBlock Text="{Binding Title, StringFormat='This part: {0}'}" Classes="small" Margin="0,6,0,0" />
+                        <views:NoteRoll Height="150" Channel="{Binding PairMine}" SongEnd="{Binding PairLength}"
+                                        Position="{Binding PairPosition}" SeekCommand="{Binding PairSeekCommand}" />
+                    </StackPanel>
                     <WrapPanel>
                         <Border Classes="pill" Margin="0,0,6,6" IsVisible="{Binding ShowsInstrument}" ToolTip.Tip="{Binding InstrumentWhy}">
                             <TextBlock Classes="pillText" Text="{Binding InstrumentText}" />
@@ -296,17 +322,55 @@
                     <TextBlock Text="{Binding FitWhy}" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}"
                                IsVisible="{Binding HasFit}" />
                     <WrapPanel>
-                        <Button Command="{Binding PlayCommand}" Margin="0,0,6,6" Padding="12,6" ToolTip.Tip="Listen (with a stand-in sound). Click along the notes to jump.">
+                        <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedTogetherCommand}" Margin="0,0,6,6" Padding="12,6" Classes="accent"
+                                IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}"
+                                ToolTip.Tip="Both at once, with stand-in sounds, so you can hear if they go together. Click along the notes to jump.">
                             <Panel>
-                                <TextBlock Text="▶  Play" IsVisible="{Binding !IsPlaying}" />
-                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlaying}" />
+                                <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PairButtonText, StringFormat='▶  {0}'}" IsVisible="{Binding !IsPlayingTogether}" />
+                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingTogether}" />
                             </Panel>
                         </Button>
+                        <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedAloneCommand}" Margin="0,0,6,6" Padding="12,6"
+                                ToolTip.Tip="Listen (with a stand-in sound). Click along the notes to jump.">
+                            <Panel>
+                                <TextBlock Text="▶  Play" IsVisible="{Binding !IsPlayingAlone}" />
+                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAlone}" />
+                            </Panel>
+                        </Button>
+                        <ToggleButton Classes="chip" Margin="0,0,6,6" VerticalAlignment="Center" IsChecked="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Loop}"
+                                      ToolTip.Tip="Play round and round until you stop it">
+                            <TextBlock Text="↻  Loop" />
+                        </ToggleButton>
                         <Border Classes="dragChip" Margin="0,0,6,6" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
                                 ToolTip.Tip="Drag into your DAW as a MIDI clip (already moved into the right key when fitting)">
                             <TextBlock Text="Drag into your DAW" />
                         </Border>
                     </WrapPanel>
+                    <!-- Octave: moved where it fits, or where you put it (remembered). -->
+                    <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding CanChangeOctave}" ToolTip.Tip="{Binding OctaveWhy}">
+                        <Button Content="−" Padding="10,3" Command="{Binding OctaveDownCommand}" ToolTip.Tip="An octave down" />
+                        <TextBlock Text="{Binding OctaveText}" VerticalAlignment="Center" MinWidth="96" TextAlignment="Center" />
+                        <Button Content="+" Padding="10,3" Command="{Binding OctaveUpCommand}" ToolTip.Tip="An octave up" />
+                        <Button Content="Reset" Padding="8,3" FontSize="12" Command="{Binding ResetOctaveCommand}" IsVisible="{Binding IsYourOctave}"
+                                ToolTip.Tip="Let the app pick the octave again" />
+                    </StackPanel>
+                    <!-- What kind of part it is: one click puts it right, for every copy. -->
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="What kind of part is it?" Classes="small" ToolTip.Tip="{Binding RoleWhy}" />
+                        <ItemsControl ItemsSource="{Binding RoleOptions}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:RoleOption">
+                                    <ToggleButton Classes="chip" Margin="0,0,6,6" FontSize="12" Content="{Binding Label}"
+                                                  IsChecked="{Binding IsCurrent, Mode=OneWay}"
+                                                  Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetRoleCommand}"
+                                                  CommandParameter="{Binding Role}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
                     <WrapPanel>
                         <Button Content="What goes with this?" Margin="0,0,6,6"
                                 Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).FitToSelectedCommand}"
@@ -321,20 +385,9 @@
                                 Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).ShowSourceCommand}" />
                         <Button Content="Save as…" Margin="0,0,6,6"
                                 Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SaveSelectedCommand}" />
-                        <Button Content="It's really…" Margin="0,0,6,6" ToolTip.Tip="Put it right when the app guessed the wrong kind of part">
-                            <Button.Flyout>
-                                <MenuFlyout>
-                                    <MenuItem Header="Chords" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetRoleCommand}" CommandParameter="Chords" />
-                                    <MenuItem Header="A melody" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetRoleCommand}" CommandParameter="Melody" />
-                                    <MenuItem Header="A bassline" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetRoleCommand}" CommandParameter="Bass" />
-                                    <MenuItem Header="An arp" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetRoleCommand}" CommandParameter="Arp" />
-                                    <MenuItem Header="Drums" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetRoleCommand}" CommandParameter="Drums" />
-                                    <MenuItem Header="Something else" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetRoleCommand}" CommandParameter="Other" />
-                                </MenuFlyout>
-                            </Button.Flyout>
-                        </Button>
                     </WrapPanel>
                 </StackPanel>
+                </ScrollViewer>
             </Border>
         </Grid>
     </Grid>

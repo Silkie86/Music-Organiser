@@ -155,6 +155,92 @@ public class MidiBrowserTests
         Assert.True(fit.Clash < 0.05);
     }
 
+    // A tune over Am – F – C – G that follows the chords (chord notes, bar by bar), and the same bars in the opposite
+    // order: the same notes overall, so only playing them against the chords in time tells them apart.
+    static readonly int[][] Following = [[69, 72, 76, 72], [65, 69, 72, 69], [67, 72, 76, 72], [67, 71, 74, 71]];
+    static List<NoteEvent> Tune(params int[][] bars) =>
+        bars.SelectMany((b, bar) => b.Select((k, i) => new NoteEvent(bar * (long)Bar + i * Beat, Beat, k, 100))).ToList();
+
+    [Fact]
+    public void A_tune_that_follows_the_chords_in_time_beats_the_same_notes_in_the_wrong_places()
+    {
+        var song = HarmonyTarget.FromChannels("Song", [new MidiChannel("Keys", "", Ppq, Chords(AMinor), Plugin: "Serum")])!;
+        var follows = Tune(Following);
+        var against = Tune(Following.Reverse().ToArray());
+        var a = PhraseAnalyser.Analyse(follows);
+        var b = PhraseAnalyser.Analyse(against);
+        // Ignoring time, they're the same.
+        Assert.Equal(HarmonyMatcher.Fit(a.Chroma, a.Chords, song).Score, HarmonyMatcher.Fit(b.Chroma, b.Chords, song).Score, 2);
+
+        var good = HarmonyMatcher.Refine(a.Chroma, a.Chords, follows, MidiRoles.Melody, song);
+        var bad = HarmonyMatcher.Refine(b.Chroma, b.Chords, against, MidiRoles.Melody, song);
+        Assert.Equal(0, good.Semitones);
+        Assert.True(good.Together > 0.95, $"together {good.Together}");
+        Assert.True(good.Score > bad.Score + 0.1, $"{good.Score} vs {bad.Score}");
+    }
+
+    [Fact]
+    public void A_part_is_lined_up_where_it_fits_in_the_song()
+    {
+        // The chords only come in at bar 5.
+        var later = Chords(AMinor).Select(n => n with { Start = n.Start + 4 * Bar }).ToList();
+        var song = HarmonyTarget.FromChannels("Song", [new MidiChannel("Keys", "", Ppq, later, Plugin: "Serum")])!;
+        var tune = Tune(Following);
+        var a = PhraseAnalyser.Analyse(tune);
+        var fit = HarmonyMatcher.Refine(a.Chroma, a.Chords, tune, MidiRoles.Melody, song);
+        Assert.Equal(4 * Bar, fit.At);
+        Assert.True(fit.Together > 0.95);
+    }
+
+    [Fact]
+    public void Parts_are_offered_in_the_octave_that_kind_of_part_plays_in_the_song()
+    {
+        var song = HarmonyTarget.FromChannels("Song",
+        [
+            new MidiChannel("Bass", "", Ppq, Line(Bar, 45, 41, 36, 43), Plugin: "Serum"),
+            new MidiChannel("Keys", "", Ppq, Chords(AMinor), Plugin: "Serum"),
+        ])!;
+        Assert.InRange(song.Registers[MidiRoles.Bass], 40, 43);
+
+        // A bassline saved two octaves up goes down next to the song's bass.
+        var high = Line(Bar, 69, 65, 60, 67);
+        var bass = PhraseAnalyser.Analyse(high);
+        Assert.Equal(-2, HarmonyMatcher.Refine(bass.Chroma, bass.Chords, high, MidiRoles.Bass, song).Octaves);
+
+        // A tune saved low goes up above the chords, where melodies sit.
+        var low = Tune(Following).Select(n => n with { Key = n.Key - 24 }).ToList();
+        var tune = PhraseAnalyser.Analyse(low);
+        Assert.Equal(2, HarmonyMatcher.Refine(tune.Chroma, tune.Chords, low, MidiRoles.Melody, song).Octaves);
+
+        // Fitting to one part: the same kind of part goes where it is.
+        var part = HarmonyTarget.FromPart("Keys", MidiRoles.Chords, Chords(AMinor), PhraseAnalyser.Analyse(Chords(AMinor)).Chroma, [], null);
+        var upTwo = Chords(AMinor).Select(n => n with { Key = n.Key + 24 }).ToList();
+        var chords = PhraseAnalyser.Analyse(upTwo);
+        Assert.Equal(-2, HarmonyMatcher.Refine(chords.Chroma, chords.Chords, upTwo, MidiRoles.Chords, part).Octaves);
+    }
+
+    [Fact]
+    public void The_closer_look_reranks_the_best_fits_with_their_notes_and_shuffle_picks_at_random()
+    {
+        var notes = new Dictionary<long, List<NoteEvent>>
+        {
+            [1] = Tune(Following.Reverse().ToArray()),
+            [2] = Tune(Following),
+        };
+        var catalogue = new MidiCatalogue([Stored(1, @"K:.flp", "Backwards", notes[1]), Stored(2, @"K:.flp", "Follows", notes[2])]);
+        var song = HarmonyTarget.FromChannels("Song", [new MidiChannel("Keys", "", Ppq, Chords(AMinor), Plugin: "Serum")])!;
+        var hits = catalogue.Search(new MidiQuery(Fit: song, Notes: e => notes[e.Id]), out _);
+        Assert.Equal([2L, 1L], hits.Select(h => h.Entry.Id));
+        Assert.NotNull(hits[0].Fit!.Together);
+
+        var many = new MidiCatalogue(Enumerable.Range(1, 40).Select(i => Stored(i, $@"K:\{i}.flp", $"Part {i}", Line(Beat, 40 + i, 62, 64))).ToList());
+        var first = many.Search(new MidiQuery(Limit: 10, Shuffle: 1), out var n).Select(h => h.Entry.Id).ToList();
+        Assert.Equal(40, n);
+        Assert.Equal(10, first.Distinct().Count());
+        Assert.NotEqual(Enumerable.Range(1, 10).Select(i => (long)i), first);   // not just the newest ten
+        Assert.Equal(first, many.Search(new MidiQuery(Limit: 10, Shuffle: 1), out _).Select(h => h.Entry.Id));
+    }
+
     // ---- the catalogue ----
 
     static StoredPhrase Stored(long id, string path, string part, List<NoteEvent> notes, string hints = "")
