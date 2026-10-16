@@ -84,7 +84,7 @@ public sealed partial class BitwigReader : IProjectReader
             ReadDecoded(doc, path, info);
         else
             ReadByTextScan(raw, Path.GetDirectoryName(path) ?? ".", info, doc?.BodyError,
-                           doc?.MetaList("used_files").Select(CollectedKey).ToHashSet(StringComparer.OrdinalIgnoreCase));
+                           doc?.MetaList("used_files").SelectMany(CollectedNames).ToHashSet(StringComparer.OrdinalIgnoreCase));
 
         if (doc is not null)
         {
@@ -146,10 +146,10 @@ public sealed partial class BitwigReader : IProjectReader
         // file it collected into the project folder; those copies are listed in used_files,
         // so an original is only counted when the project has no copy of that file. Copies
         // can carry a "-2" style suffix ("Snare - c1.wav" is collected as "Snare - c1-2.wav").
-        var collected = doc.MetaList("used_files").Select(CollectedKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var collected = doc.MetaList("used_files").SelectMany(CollectedNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var o in doc.Objects.Where(o => o.Class == ClsFileRef))
             if (o.Str(FFilePath) is { Length: > 0 } f && TextScan.IsAudioPath(f) && IsAbsolute(f) &&
-                !collected.Contains(CollectedKey(f)))
+                !collected.Contains(FileName(f)))
                 info.Samples.Add(f);
 
         var notes = doc.Objects.Count(o => o.Class == ClsNote);
@@ -162,14 +162,24 @@ public sealed partial class BitwigReader : IProjectReader
         info.CanExtractPresets = states > 0;
     }
 
-    static string CollectedKey(string path)
+    /// <summary>
+    /// The names a file collected into the project can have had before: its own, and its name without each "-2" style
+    /// suffix Bitwig adds when the name is taken. Only the copy's suffixes are taken off, so collecting "Kick-01.wav"
+    /// doesn't hide an original "Kick-02.wav".
+    /// </summary>
+    static IEnumerable<string> CollectedNames(string copy)
     {
-        var name = path.Split('\\', '/')[^1];
+        var name = FileName(copy);
         var ext = Path.GetExtension(name);
-        return CopySuffix().Replace(name[..^ext.Length], "") + ext;
+        var stem = name[..^ext.Length];
+        yield return name;
+        while (CopySuffix().Match(stem) is { Success: true } m)
+            yield return (stem = stem[..m.Index]) + ext;
     }
 
-    [GeneratedRegex(@"(-\d+)+$")]
+    static string FileName(string path) => path.Split('\\', '/')[^1];
+
+    [GeneratedRegex(@"-\d+$")]
     private static partial Regex CopySuffix();
 
     /// <summary>Rooted on this OS, or a Windows drive or network path (the files come from Windows).</summary>
@@ -404,7 +414,7 @@ public sealed partial class BitwigReader : IProjectReader
                 if (TextScan.IsAudioPath(s))
                 {
                     // As in a full read, an original that was collected into the project counts once, as its copy.
-                    if (ScannedPath(s) is { } p && !(IsAbsolute(p) && collected?.Contains(CollectedKey(p)) == true))
+                    if (ScannedPath(s) is { } p && !(IsAbsolute(p) && collected?.Contains(FileName(p)) == true))
                         info.Samples.Add(IsAbsolute(p) ? p : Path.GetFullPath(Path.Combine(dir, p)));
                 }
                 else if (TextScan.IsPluginPath(s))
@@ -454,7 +464,8 @@ public sealed partial class BitwigReader : IProjectReader
             var chars = bytes[i + 2] << 8 | bytes[i + 3];
             if (chars < 4 || chars > 4096 || i + 4 + 2 * chars > bytes.Length) continue;
             var s = Encoding.BigEndianUnicode.GetString(bytes, i + 4, 2 * chars);
-            if (s.Any(c => char.IsControl(c) || c == '\uFFFD') || s.Count(char.IsAscii) * 2 < s.Length) continue;
+            if (s.Any(c => char.IsControl(c) || c == '\uFFFD') ||
+                s.Count(char.IsAscii) * 2 < s.Length && !TextScan.IsAudioPath(s) && !TextScan.IsPluginPath(s)) continue;
             wide.Add(s);
             Array.Clear(bytes, i, 4 + 2 * chars);
             i += 3 + 2 * chars;

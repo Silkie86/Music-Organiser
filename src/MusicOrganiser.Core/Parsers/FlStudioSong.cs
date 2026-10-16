@@ -490,9 +490,15 @@ public sealed partial class FlStudioReader
                 var part = CutCurve(curve, item.At / (double)ppq, item.From / (double)ppq, item.Length / (double)ppq, hold).ToList();
                 if (part.Count == 0) continue;
                 starts.Add(part[0].Beat);
-                // A clip placed over the end of an earlier one takes over where it starts.
+                // A clip placed over an earlier placement takes over from where it starts to where it ends; if the
+                // earlier one runs on past that, it carries on from there.
+                List<FlPoint> rest = [];
                 if (placed.Count > 0 && placed[^1].Beat > part[0].Beat + SameBeat)
+                {
+                    if (placed[^1].Beat > part[^1].Beat + SameBeat)
+                        rest = CutCurve(placed, part[^1].Beat, part[^1].Beat, placed[^1].Beat - part[^1].Beat, hold).ToList();
                     placed = CutCurve(placed, placed[0].Beat, placed[0].Beat, part[0].Beat - placed[0].Beat, hold).ToList();
+                }
                 // Between clips FL holds the value the last one ended on, then jumps to where the next starts.
                 if (placed.Count > 0 && placed[^1].Beat < part[0].Beat - SameBeat && placed[^1].Value != part[0].Value)
                     placed.Add(placed[^1] with { Beat = part[0].Beat });
@@ -500,6 +506,8 @@ public sealed partial class FlStudioReader
                 if (placed.Count > 0 && Math.Abs(placed[^1].Beat - part[0].Beat) <= SameBeat && placed[^1].Value == part[0].Value)
                     part.RemoveAt(0);
                 placed.AddRange(part);
+                if (rest.Count > 0 && rest[0].Value == placed[^1].Value) rest.RemoveAt(0);
+                placed.AddRange(rest);
             }
             if (placed.Count > 0) result.Add(Moves(placed) with { Starts = starts });
         }
