@@ -324,17 +324,22 @@ def main():
     print(f"int8 against fp32 on text-to-MIDI search: same best match {same_top:.0%}, score correlation {corr:.3f}")
 
     if a.tiny:
-        # Expected outputs for the C# tests: the MTF texts, the patches CLaMP 3's Python makes, and both embeddings.
+        # Expected outputs for the C# tests: the MTF texts, the patches CLaMP 3's Python makes, and both embeddings. The
+        # tests use the fp32 models: int8 matrix maths differs a little between processors (AVX2, AVX-512, ARM), which
+        # in a 16-number model is enough to blur a check of the C# inputs.
         cases = {
-            "midi": [{"mtf": m, "patches": mtf_patches(m), "embedding": s8.run(None, i)[0][0].tolist()} for m, i in zip(mtfs[:4], sym_inputs[:4])],
-            "text": [{"text": q, "ids": i["input_ids"][0].tolist(), "embedding": t8.run(None, i)[0][0].tolist()} for q, i in zip(queries, txt_inputs)],
+            "midi": [{"mtf": m, "patches": mtf_patches(m), "embedding": s32.run(None, i)[0][0].tolist()} for m, i in zip(mtfs[:4], sym_inputs[:4])],
+            "text": [{"text": q, "ids": i["input_ids"][0].tolist(), "embedding": t32.run(None, i)[0][0].tolist()} for q, i in zip(queries, txt_inputs)],
         }
         extra = ["  Dark   PAD chords ", "ｆｕｌｌ width", "émotional piano", "trap 808 rolls", "x"]
         cases["notes"] = [mido_case(seed) for seed in range(3)]
         cases["tokens"] = [{"text": q, "ids": tok.encode(q).ids} for q in queries + extra]
         with open(os.path.join(a.out, "expected.json"), "w", encoding="utf-8") as f:
             json.dump(cases, f)
-    if not a.keep_fp32:
+    if a.tiny:
+        os.replace(sym32, sym8)
+        os.replace(txt32, txt8)
+    elif not a.keep_fp32:
         os.remove(sym32)
         os.remove(txt32)
 
