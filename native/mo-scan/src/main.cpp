@@ -1,7 +1,7 @@
 // mo-scan: loads one plugin file and prints what's inside as JSON lines, one per plugin.
 // The app runs it once per plugin with a timeout, so a plugin that crashes or hangs only ends this process.
 //
-//   mo-scan [--no-params] [--state] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>
+//   mo-scan [--no-params] [--state] [--curve <steps>] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>
 //   mo-scan --version
 #include "json.h"
 #include "module.h"
@@ -61,13 +61,14 @@ int run(const std::vector<std::filesystem::path>& args)
         }
         if (a == "--no-params") opt.params = false;
         else if (a == "--state") opt.state = true;
+        else if (a == "--curve" && i + 1 < args.size()) opt.curve = std::clamp(std::atoi(args[++i].u8string().c_str()), 1, 1000);
         else if (a == "--only" && i + 1 < args.size()) opt.only = args[++i].u8string();
         else if (a == "--format" && i + 1 < args.size()) format = lower(args[++i].u8string());
         else paths.push_back(args[i]);
     }
     if (paths.empty())
     {
-        std::fprintf(stderr, "usage: mo-scan [--no-params] [--state] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>\n");
+        std::fprintf(stderr, "usage: mo-scan [--no-params] [--state] [--curve <steps>] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>\n");
         return 64;
     }
 
