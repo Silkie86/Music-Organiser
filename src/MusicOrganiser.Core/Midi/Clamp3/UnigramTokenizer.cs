@@ -17,7 +17,7 @@ public sealed partial class UnigramTokenizer
     readonly Dictionary<string, (int Id, double Score)> _pieces;
     readonly int _maxPieceLength;
     readonly double _unkScore;
-    readonly bool _prefixSpace;
+    readonly bool _prefixSpace, _whitespaceSplit;
     readonly List<Func<string, string>> _normalisers;
 
     public int UnkId { get; }
@@ -25,8 +25,10 @@ public sealed partial class UnigramTokenizer
     public int EosId { get; }
     public int PadId { get; }
 
+    /// <param name="whitespaceSplit">Split into words at any whitespace first (XLM-R's WhitespaceSplit), so runs of spaces
+    /// and spaces at the ends make no pieces of their own.</param>
     public UnigramTokenizer(IReadOnlyList<(string Piece, double Score)> vocab, int unkId, bool prefixSpace = true,
-                            IEnumerable<Func<string, string>>? normalisers = null)
+                            IEnumerable<Func<string, string>>? normalisers = null, bool whitespaceSplit = true)
     {
         _pieces = new Dictionary<string, (int, double)>(vocab.Count, StringComparer.Ordinal);
         for (var i = 0; i < vocab.Count; i++)
@@ -36,6 +38,7 @@ public sealed partial class UnigramTokenizer
         }
         UnkId = unkId;
         _prefixSpace = prefixSpace;
+        _whitespaceSplit = whitespaceSplit;
         _normalisers = normalisers?.ToList() ?? [Precompiled, s => MultipleSpaces().Replace(s, " ")];
         // As the Hugging Face and SentencePiece Unigram models do: an unknown character costs more than any piece.
         _unkScore = vocab.Count == 0 ? -10 : vocab.Min(v => v.Score) - 10;
@@ -56,8 +59,11 @@ public sealed partial class UnigramTokenizer
         var vocab = model.GetProperty("vocab").EnumerateArray().Select(v => (v[0].GetString()!, v[1].GetDouble())).ToList();
         var unk = model.TryGetProperty("unk_id", out var u) && u.ValueKind == JsonValueKind.Number ? u.GetInt32() : 3;
         var prefix = true;
+        var whitespaceSplit = false;
         if (root.TryGetProperty("pre_tokenizer", out var pre) && pre.ValueKind == JsonValueKind.Object)
         {
+            whitespaceSplit = pre.TryGetProperty("pretokenizers", out var steps) &&
+                              steps.EnumerateArray().Any(p => p.GetProperty("type").GetString() == "WhitespaceSplit");
             var metaspace = pre.GetProperty("type").GetString() == "Metaspace" ? pre
                 : pre.TryGetProperty("pretokenizers", out var list) ? list.EnumerateArray().FirstOrDefault(p => p.GetProperty("type").GetString() == "Metaspace")
                 : default;
@@ -68,7 +74,7 @@ public sealed partial class UnigramTokenizer
             }
         }
         var normalisers = root.TryGetProperty("normalizer", out var norm) && norm.ValueKind == JsonValueKind.Object ? Normalisers(norm).ToList() : [];
-        return new UnigramTokenizer(vocab, unk, prefix, normalisers);
+        return new UnigramTokenizer(vocab, unk, prefix, normalisers, whitespaceSplit);
     }
 
     static IEnumerable<Func<string, string>> Normalisers(JsonElement n)
@@ -132,8 +138,20 @@ public sealed partial class UnigramTokenizer
 
     /// <summary>
     /// Metaspace: spaces become "▁" (with one in front unless there is one already), and each "▁" starts a new word.
+    /// With WhitespaceSplit before it, each whitespace-separated word goes through Metaspace on its own.
     /// </summary>
     IEnumerable<string> Words(string text)
+    {
+        if (_whitespaceSplit)
+        {
+            foreach (var w in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+                foreach (var piece in Metaspace(w)) yield return piece;
+            yield break;
+        }
+        foreach (var piece in Metaspace(text)) yield return piece;
+    }
+
+    IEnumerable<string> Metaspace(string text)
     {
         if (text.Length == 0) yield break;
         var s = text.Replace(' ', Space);
