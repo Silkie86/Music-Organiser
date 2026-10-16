@@ -40,6 +40,8 @@ public sealed record StoredPhrase(long Id, MidiSource Source, string Part, strin
     public bool Drums { get; init; }
     /// <summary>A .mid track's own name where <see cref="Part"/> leaves it out, such as "Keyscape", else "".</summary>
     public string TrackName { get; init; } = "";
+    /// <summary>The octave you moved these notes to, or null.</summary>
+    public int? YourOctave { get; init; }
 }
 
 /// <summary>
@@ -71,6 +73,8 @@ public sealed class MidiIndex : IDisposable
         -- What CLaMP 3 heard in each set of notes (768 signed bytes), by note hash like your_roles, so copies share one and
         -- reading a file again keeps them. model says which export made it; another export's are dropped.
         CREATE TABLE IF NOT EXISTS clamp (hash TEXT PRIMARY KEY, model TEXT NOT NULL, vec BLOB NOT NULL);
+        -- The octave you moved a part to, by its notes, the same way.
+        CREATE TABLE IF NOT EXISTS your_octaves (hash TEXT PRIMARY KEY, octaves INTEGER NOT NULL);
         """;
 
     readonly SqliteConnection _write, _read;
@@ -231,8 +235,9 @@ public sealed class MidiIndex : IDisposable
             cmd.CommandText = """
                 SELECT ph.id, ph.source, ph.part, ph.clip, ph.role, ph.role_why, y.role AS your_role, ph.bars, ph.notes, ph.lowest,
                        ph.highest, ph.key_tonic, ph.key_minor, ph.key_conf, ph.chroma, ph.chords, ph.features, ph.hash,
-                       s.kind, s.daw, s.mtime, s.size, s.tempo, ph.members, ph.program, ph.drums, ph.track_name
+                       s.kind, s.daw, s.mtime, s.size, s.tempo, ph.members, o.octaves, ph.program, ph.drums, ph.track_name
                 FROM phrases ph JOIN sources s ON s.path = ph.source LEFT JOIN your_roles y ON y.hash = ph.hash
+                     LEFT JOIN your_octaves o ON o.hash = ph.hash
                 ORDER BY s.mtime DESC, ph.id
                 """;
             using var r = cmd.ExecuteReader();
@@ -247,23 +252,31 @@ public sealed class MidiIndex : IDisposable
                 list.Add(new StoredPhrase(r.GetInt64(0), source, Str(r, 2), Str(r, 3), Str(r, 4), Str(r, 5),
                                           r.IsDBNull(6) ? null : r.GetString(6), r.GetInt32(7), r.GetInt32(8), r.GetInt32(9), r.GetInt32(10),
                                           key, (byte[])r[14], Str(r, 15), (byte[])r[16], Str(r, 17)) {
-                    Members = Str(r, 23), Program = r.IsDBNull(24) ? null : r.GetInt32(24), Drums = !r.IsDBNull(25) && r.GetInt32(25) == 1,
-                    TrackName = Str(r, 26),
+                    Members = Str(r, 23), YourOctave = r.IsDBNull(24) ? null : r.GetInt32(24),
+                    Program = r.IsDBNull(25) ? null : r.GetInt32(25), Drums = !r.IsDBNull(26) && r.GetInt32(26) == 1,
+                    TrackName = Str(r, 27),
                 });
             }
         }
         return list;
     }
 
-    /// <summary>A phrase's notes, at <see cref="PhraseAnalyser.Ppq"/>.</summary>
-    public IReadOnlyList<NoteEvent> Notes(long id)
+    /// <summary>
+    /// A phrase's notes, at <see cref="PhraseAnalyser.Ppq"/>. A file read again gets new phrase ids, so while the list
+    /// shown still has the old ones, the same notes are found by their hash instead (they showed as empty rolls).
+    /// </summary>
+    public IReadOnlyList<NoteEvent> Notes(long id, string? hash = null)
     {
         lock (_readLock)
         {
             using var cmd = _read.CreateCommand();
             cmd.CommandText = "SELECT data FROM phrases WHERE id = $id";
             cmd.Parameters.AddWithValue("$id", id);
-            return cmd.ExecuteScalar() is byte[] data ? DecodeNotes(data) : [];
+            if (cmd.ExecuteScalar() is byte[] data) return DecodeNotes(data);
+            if (hash is null) return [];
+            cmd.CommandText = "SELECT data FROM phrases WHERE hash = $h LIMIT 1";
+            cmd.Parameters.AddWithValue("$h", hash);
+            return cmd.ExecuteScalar() is byte[] same ? DecodeNotes(same) : [];
         }
     }
 
@@ -340,6 +353,20 @@ public sealed class MidiIndex : IDisposable
             while (r.Read()) map[r.GetString(0)] = Clamp3Model.Unpack((byte[])r[1]);
         }
         return map;
+    }
+
+    /// <summary>Remembers the octave you moved these notes to (every copy), or null to let the app pick again.</summary>
+    public void SetYourOctave(string hash, int? octaves)
+    {
+        lock (_writeLock)
+        {
+            using var cmd = _write.CreateCommand();
+            cmd.CommandText = octaves is null ? "DELETE FROM your_octaves WHERE hash = $h"
+                : "INSERT INTO your_octaves (hash, octaves) VALUES ($h, $o) ON CONFLICT(hash) DO UPDATE SET octaves = $o";
+            cmd.Parameters.AddWithValue("$h", hash);
+            cmd.Parameters.AddWithValue("$o", (object?)octaves ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
     }
 
     void Exec(SqliteTransaction tx, string sql, params (string Name, object? Value)[] args)

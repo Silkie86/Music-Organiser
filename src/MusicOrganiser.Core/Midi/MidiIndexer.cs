@@ -82,8 +82,18 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         {
             try
             {
-                while (!ct.IsCancellationRequested && todo.TryDequeue(out var source))
+                while (!ct.IsCancellationRequested)
                 {
+                    // While you're using the app, one song at a time: reading a song makes a lot of memory to clean up,
+                    // and on a big library each clean-up pauses the window (Solomon's log, 2026-10-16: freezes of 0.3 to
+                    // 1.7 s back to back while MIDI was read). All of them while the app is minimised or behind another.
+                    if (todo.IsEmpty) break;
+                    if (i > 0 && !Parallelism.AppInBackground)
+                    {
+                        Thread.Sleep(500);
+                        continue;
+                    }
+                    if (!todo.TryDequeue(out var source)) break;
                     try
                     {
                         // In one of the app's shared background slots, so a scan or Deep listen running too still leaves cores free.
