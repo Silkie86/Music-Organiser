@@ -238,15 +238,22 @@ public sealed class MidiIndex : IDisposable
         return list;
     }
 
-    /// <summary>A phrase's notes, at <see cref="PhraseAnalyser.Ppq"/>.</summary>
-    public IReadOnlyList<NoteEvent> Notes(long id)
+    /// <summary>
+    /// A phrase's notes, at <see cref="PhraseAnalyser.Ppq"/>. A file read again gets new phrase ids, so while the list
+    /// shown still has the old ones, the same notes are found by their hash instead (they showed as empty rolls).
+    /// </summary>
+    public IReadOnlyList<NoteEvent> Notes(long id, string? hash = null)
     {
         lock (_readLock)
         {
             using var cmd = _read.CreateCommand();
             cmd.CommandText = "SELECT data FROM phrases WHERE id = $id";
             cmd.Parameters.AddWithValue("$id", id);
-            return cmd.ExecuteScalar() is byte[] data ? DecodeNotes(data) : [];
+            if (cmd.ExecuteScalar() is byte[] data) return DecodeNotes(data);
+            if (hash is null) return [];
+            cmd.CommandText = "SELECT data FROM phrases WHERE hash = $h LIMIT 1";
+            cmd.Parameters.AddWithValue("$h", hash);
+            return cmd.ExecuteScalar() is byte[] same ? DecodeNotes(same) : [];
         }
     }
 

@@ -750,7 +750,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     internal IReadOnlyList<NoteEvent> NotesOf(MidiEntry e)
     {
-        try { return _index.Notes(e.Id); }
+        try { return _index.Notes(e.Id, e.Phrase.Hash); }
         catch (Exception ex) when (ex is Microsoft.Data.Sqlite.SqliteException or InvalidOperationException) { return []; }
     }
 
