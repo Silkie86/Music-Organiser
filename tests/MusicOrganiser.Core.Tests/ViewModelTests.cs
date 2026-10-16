@@ -1049,9 +1049,10 @@ public class ViewModelTests : IDisposable
         var user = Path.Combine(_root, "Bitwig Studio");
         var found = false;
         var answers = true;
-        Task<string> Check() => answers
-            ? Task.FromResult("Connected to Bitwig Studio 6.1.2, with “Night Drive” open.")
-            : Task.FromException<string>(new DawLinkException("Bitwig isn't answering."));
+        var ready = true;
+        Task<(string, bool)> Check() => answers
+            ? Task.FromResult(("Connected to Bitwig Studio 6.1.2, with “Night Drive” open.", ready))
+            : Task.FromException<(string, bool)>(new DawLinkException("Bitwig isn't answering."));
         var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.Bitwig(user), Check, found: () => found);
 
         Assert.Equal("Bitwig Studio: not found on this computer, so it was skipped.", await link.SetUpAsync());
@@ -1063,6 +1064,10 @@ public class ViewModelTests : IDisposable
         Assert.Equal("Installed the script. Connected to Bitwig Studio 6.1.2, with “Night Drive” open.", link.Result);
         Assert.Equal(ScriptState.Installed, DawScripts.Bitwig(user).State);
         Assert.StartsWith("Installed in ", link.Status);
+
+        // It answers, but says something's still to set up (the extension's MIDI ports, say).
+        ready = false;
+        Assert.Equal("Bitwig Studio: answering, but there's still something to set up. What's left is below.", await link.SetUpAsync());
 
         answers = false;
         Assert.Equal("Bitwig Studio: the script is in place, but Bitwig Studio isn't answering yet. What's left is below.",
@@ -1076,7 +1081,7 @@ public class ViewModelTests : IDisposable
         var user = Path.Combine(_root, "Bitwig Studio");
         var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.2");
         var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built),
-                                      () => Task.FromResult(""), found: () => true);
+                                      () => Task.FromResult(("", true)), found: () => true);
 
         await link.RefreshAsync();
         Assert.Equal("Not installed. Install puts in extension 3.2.", link.Status);
@@ -1114,7 +1119,7 @@ public class ViewModelTests : IDisposable
         var old = Path.Combine(user, "Controller Scripts", "Music Organiser");
         var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.4");
         var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built),
-                                      () => Task.FromResult("Connected to Bitwig Studio 6.1.3."), found: () => true);
+                                      () => Task.FromResult(("Connected to Bitwig Studio 6.1.3.", true)), found: () => true);
         Directory.CreateDirectory(old);
         File.WriteAllText(Path.Combine(old, "MusicOrganiser.control.js"), "// the script");
 

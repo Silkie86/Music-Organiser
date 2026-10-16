@@ -708,8 +708,9 @@ class ArrangerTest {
         studio();
         Map<String, Object> reply = app.waitFor(fileTrack(1, 0, LIVE_CLIP, BAR_5));
         assertJson(obj("id", 1, "ok", true, "result", obj(
-                       "added", 1, "index", 1, "name", "Live Clip", "type", "Instrument", "tracksBefore", 3, "tracksAfter", 4, "launcherClips", 0,
-                       "selected", false, "arranger", clip("Live Clip"), "arrangerBefore", clip(null), "at", 16, "onTrack", obj("before", 1, "after", 1))),
+                       "added", 1, "index", 1, "id", null, "name", "Live Clip", "type", "Instrument", "tracksBefore", 3, "tracksAfter", 4, "launcherClips", 0,
+                       "selected", false, "arranger", clip("Live Clip"), "arrangerBefore", clip(null), "at", 16, "onTrack", obj("before", 1, "after", 1),
+                       "newTracks", list(obj("index", 1, "id", null, "name", "Live Clip", "type", "Instrument", "group", false, "launcherClips", 0)))),
                    reply);
         assertEquals(List.of(new Arranged(bitwig.state.tracks.get(1), BAR_5, LIVE_CLIP, CLIP_GREY)), bitwig.state.arranged);
         assertEquals(List.of(List.of("playStart", BAR_5), List.of("insertFile", LIVE_CLIP, "after track 0")), bitwig.calls);
@@ -732,8 +733,9 @@ class ArrangerTest {
         bitwig.clock.advance(5000);
         assertEquals(List.of(), app.take(), "waits for Bitwig");
         bitwig.clock.advance(5000);
-        assertJson(obj("added", 0, "index", null, "name", null, "type", null, "tracksBefore", 3, "tracksAfter", 3, "launcherClips", null, "selected", false,
-                       "arranger", clip(null), "arrangerBefore", clip(null), "at", 0, "onTrack", obj("before", 1, "after", 1)),
+        assertJson(obj("added", 0, "index", null, "id", null, "name", null, "type", null, "tracksBefore", 3, "tracksAfter", 3, "launcherClips", null,
+                       "selected", false, "arranger", clip(null), "arrangerBefore", clip(null), "at", 0, "onTrack", obj("before", 1, "after", 1),
+                       "newTracks", list()),
                    app.take().get(0).get("result"));
     }
 

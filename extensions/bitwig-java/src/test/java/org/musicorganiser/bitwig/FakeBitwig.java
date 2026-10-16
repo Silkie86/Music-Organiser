@@ -13,6 +13,7 @@ import com.bitwig.extension.controller.api.Action;
 import com.bitwig.extension.controller.api.ActionCategory;
 import com.bitwig.extension.controller.api.Application;
 import com.bitwig.extension.controller.api.Arranger;
+import com.bitwig.extension.controller.api.BeatTimeValue;
 import com.bitwig.extension.controller.api.BooleanValue;
 import com.bitwig.extension.controller.api.Clip;
 import com.bitwig.extension.controller.api.ClipLauncherSlot;
@@ -37,10 +38,13 @@ import com.bitwig.extension.controller.api.InsertionPoint;
 import com.bitwig.extension.controller.api.IntegerValue;
 import com.bitwig.extension.controller.api.LastClickedParameter;
 import com.bitwig.extension.controller.api.MasterRecorder;
+import com.bitwig.extension.controller.api.MasterTrack;
 import com.bitwig.extension.controller.api.MidiIn;
 import com.bitwig.extension.controller.api.MidiOut;
 import com.bitwig.extension.controller.api.Parameter;
 import com.bitwig.extension.controller.api.PinnableCursorDevice;
+import com.bitwig.extension.controller.api.PlayingNote;
+import com.bitwig.extension.controller.api.PlayingNoteArrayValue;
 import com.bitwig.extension.controller.api.PopupBrowser;
 import com.bitwig.extension.controller.api.Preferences;
 import com.bitwig.extension.controller.api.Project;
@@ -50,6 +54,7 @@ import com.bitwig.extension.controller.api.RemoteSocket;
 import com.bitwig.extension.controller.api.SettableBeatTimeValue;
 import com.bitwig.extension.controller.api.SettableBooleanValue;
 import com.bitwig.extension.controller.api.SettableColorValue;
+import com.bitwig.extension.controller.api.SettableEnumValue;
 import com.bitwig.extension.controller.api.SettableIntegerValue;
 import com.bitwig.extension.controller.api.SettableStringValue;
 import com.bitwig.extension.controller.api.SoloValue;
@@ -113,6 +118,13 @@ import java.util.regex.Pattern;
  * keeps track of where each call into the extension comes from (see {@link Context}), and the model says in which of
  * those Bitwig carries out the commands of its user interface: Bitwig 6.1.3 ignored them everywhere but, it seems, while
  * it handled a hardware button.
+ *
+ * For recording into the arranger (extension 3.9), it plays: the transport starts and stops (Stop while stopped moves the
+ * play start to the beginning, as Bitwig's does), its play position runs on the stand-in's clock at the tempo, a launched
+ * clip loops until its track stops on the next bar line, and with arranger record on, what a launcher clip plays goes in the
+ * arranger on its track (see {@link Recorded}), which plays it back once the track is back on the arrangement. Each track
+ * says the notes it's playing, from the notes the model gives each clip file. The transport's switches are kept, and the
+ * model can make Bitwig ignore any of them, as well as stopping a track, or record nothing.
  */
 final class FakeBitwig {
     static final String SAMPLER = Link.SAMPLER;
@@ -155,6 +167,28 @@ final class FakeBitwig {
     final Value playing = new Value(SettableBooleanValue.class, false);
     final Value position = new Value(SettableBeatTimeValue.class, 0.0);
     final Value browserOpen = new Value(BooleanValue.class, false);
+
+    // Recording into the arranger (extension 3.9).
+    /** The transport's switches and choices as Bitwig has them now, by the API's names (isMetronomeEnabled, preRoll...). */
+    final Map<String, Object> transportNow = new LinkedHashMap<>();
+    /** The same as the extension reads them. */
+    private final Map<String, Value> transportValues = new LinkedHashMap<>();
+    /** The tempo now, in BPM. */
+    double tempoNow;
+    /** Whether Bitwig plays, from where (in beats) and since when (the clock's time), and where it stopped. */
+    boolean playingNow;
+    private double playFrom;
+    private long playSince;
+    private double stoppedAt;
+    /** Where Bitwig was when arranger record went on as it played (null while it doesn't record). */
+    private Double recordingFrom;
+    /** Whether the master track is muted. */
+    boolean masterMuted;
+    final Value masterMute;
+    final Value playPosition;
+    private final Stand master;
+    /** How many new tracks got an ID (Model.newTrackIds). */
+    private int newIds;
 
     // The arranger, for the arrange experiment.
     /** The panels that can have the focus (copy and paste work on the one that has it), as {@link #focus} names them. */
@@ -212,7 +246,7 @@ final class FakeBitwig {
     /** The change last seen waiting for Bitwig. */
     private Link.Job lastJob;
 
-    private record Switch(String cmd, BooleanSupplier when, String project) {}
+    private record Switch(String cmd, BooleanSupplier when, String project, Runnable change) {}
 
     /**
      * What called into the extension: Bitwig starting it (INIT), the app's connection (SOCKET), a task it scheduled
@@ -251,6 +285,26 @@ final class FakeBitwig {
         /** The clips in the arranger, and the one selected there (null for none). */
         final List<Arranged> arranged = new ArrayList<>();
         Arranged arrangerSelected;
+        /** The clips Bitwig recorded into the arranger from the launcher (extension 3.9). */
+        final List<Recorded> recorded = new ArrayList<>();
+    }
+
+    /**
+     * A launcher clip recorded into the arranger (extension 3.9): its track, where it starts and ends (in beats), the clip
+     * it's of (the file it came from), and where that clip started playing, which its notes are counted from.
+     */
+    record Recorded(TrackSpec track, double start, double end, String clip, double clipStart) {}
+
+    /** A launcher clip playing (or about to): its slot, where it starts (in beats) and where it stops (null while it loops on). */
+    static final class Launched {
+        final int scene;
+        final double start;
+        Double stopAt;
+
+        Launched(int scene, double start) {
+            this.scene = scene;
+            this.start = start;
+        }
     }
 
     /**
@@ -277,7 +331,39 @@ final class FakeBitwig {
         projectName = new Value(StringValue.class, model.project);
         engine = new Value(BooleanValue.class, model.engine);
         modified = new Value(BooleanValue.class, model.modified);
-        tempo = new Param(Parameter.class, model.tempo, "");
+        tempoNow = model.tempo;
+        tempo = new Param(Parameter.class, model.tempo, "") {
+            /** Bitwig takes a tempo from 20 to 666 BPM, a moment later. */
+            void setRaw(double value) {
+                calls.add(Arrays.asList("tempo", value));
+                later(20, () -> {
+                    if (!model.settingsIgnored.contains("tempo")) tempoNow = Math.max(20, Math.min(666, value));
+                });
+            }
+        };
+        transportNow.putAll(model.transport);
+        for (Map.Entry<String, Object> e : model.transport.entrySet()) {
+            String name = e.getKey();
+            Class<?> type = e.getValue() instanceof Boolean ? SettableBooleanValue.class : SettableEnumValue.class;
+            Value value = new Value(type, e.getValue(), v -> setTransport(name, v));
+            if (name.equals("isArrangerAutomationWriteEnabled"))
+                value.live = () -> (Boolean) transportNow.get(name) || (model.automationWhileRecording && recordOn());
+            transportValues.put(name, value);
+        }
+        masterMuted = model.masterMuted;
+        masterMute = new Value(SettableBooleanValue.class, masterMuted, v -> {
+            calls.add(Arrays.asList("masterMute", v));
+            later(20, () -> {
+                if (!model.settingsIgnored.contains("masterMute")) masterMuted = (Boolean) v;
+            });
+        });
+        playPosition = new Value(BeatTimeValue.class, 0.0);
+        playPosition.live = () -> model.positionStill && playingNow ? playFrom : position();
+        master = new Stand(MasterTrack.class) {
+            Value mute() {
+                return masterMute;
+            }
+        };
         signature = new Value(TimeSignatureValue.class, model.timeSignature);
         layoutNow = model.layout;
         timelineShown = model.timeline;
@@ -367,12 +453,17 @@ final class FakeBitwig {
      * Bitwig's track bank follows the project in front.
      */
     void switchDuring(String cmd, String project) {
-        switches.add(new Switch(cmd, null, project));
+        switches.add(new Switch(cmd, null, project, null));
     }
 
     /** As {@link #switchDuring(String, String)}, at the change's first wait after `when` comes true (say, once samples are dropped on pads). */
     void switchDuring(String cmd, BooleanSupplier when, String project) {
-        switches.add(new Switch(cmd, when, project));
+        switches.add(new Switch(cmd, when, project, null));
+    }
+
+    /** Changes something in Bitwig (`change`, on `state`) part way through the next `cmd`, at its first wait after `when` comes true. */
+    void during(String cmd, BooleanSupplier when, Runnable change) {
+        switches.add(new Switch(cmd, when, null, change));
     }
 
     /** The extension has just started to wait for Bitwig: switches the project if a test asked for it at this point of the change running. */
@@ -384,7 +475,8 @@ final class FakeBitwig {
         for (Switch s : new ArrayList<>(switches)) {
             if (!s.cmd().equals(job.request().get("cmd")) || !(s.when() != null ? s.when().getAsBoolean() : first)) continue;
             switches.remove(s);
-            projectName.v = s.project();
+            if (s.project() != null) projectName.v = s.project();
+            if (s.change() != null) later(0, s.change());
         }
     }
 
@@ -499,7 +591,9 @@ final class FakeBitwig {
             int instruments = 0;
             for (TrackSpec t : state.tracks)
                 if (t.type == null || t.type.isEmpty() || t.type.equals("Instrument")) instruments++;
-            state.tracks.add(at, new TrackSpec("Inst " + (instruments + 1), "Instrument"));
+            TrackSpec made = new TrackSpec("Inst " + (instruments + 1), "Instrument");
+            if (model.newTrackIds) made.id = "new-" + (++newIds);
+            state.tracks.add(at, made);
             if (cursorIndex >= 0 && cursorIndex >= at) cursorIndex++;
             if (model.browserOnNewTrack) browserOpen.v = true;
         });
@@ -675,8 +769,193 @@ final class FakeBitwig {
         });
     }
 
+    /** Bitwig's toggle_arranger action: shows the arranger timeline, or hides it (it then loses the focus). */
+    private void toggleArranger() {
+        later(20, () -> {
+            timelineShown = !timelineShown;
+            if (!timelineShown && TIMELINE.equals(focus)) focus = "";
+        });
+    }
+
+    // ---- Playing and recording (extension 3.9) ----
+
+    /** One of the transport's switches or choices set by the extension: it changes a moment later, unless the model says Bitwig ignores it. */
+    private void setTransport(String name, Object value) {
+        calls.add(Arrays.asList("transport", name, value));
+        later(20, () -> {
+            if (model.settingsIgnored.contains(name)) return;
+            if (name.equals("isArrangerRecordEnabled")) record((Boolean) value);
+            else transportNow.put(name, value);
+        });
+    }
+
+    boolean recordOn() {
+        return Boolean.TRUE.equals(transportNow.get("isArrangerRecordEnabled"));
+    }
+
+    /** Arranger record going on or off: while Bitwig plays, what's recorded so far goes in the arranger when it goes off. */
+    private void record(boolean on) {
+        if (on == recordOn()) return;
+        if (on && playingNow) recordingFrom = position();
+        if (!on) recorded(position());
+        transportNow.put("isArrangerRecordEnabled", on);
+    }
+
+    /** Where Bitwig is, in beats: running on from where it started at the tempo while it plays. */
+    double position() {
+        return playingNow ? playFrom + (clock.now - playSince) * tempoNow / 60000 : stoppedAt;
+    }
+
+    /** A bar's length in beats, from the time signature ("4/4", "7/8"). */
+    double bar() {
+        String[] parts = ((String) signature.v).split("/");
+        return Integer.parseInt(parts[0].trim()) * 4.0 / Integer.parseInt(parts[1].trim());
+    }
+
+    /** Launches and Plays still to start (see Model.startDelay), and how many Stops have cancelled those asked for before them. */
+    private int startsDue;
+    private int stops;
+
+    private void startPlaying(double from) {
+        playingNow = true;
+        playFrom = from;
+        playSince = clock.now;
+        if (recordOn()) recordingFrom = from;
+    }
+
+    /** Bitwig stops: what was recorded goes in the arranger, launcher clips stop, and the playhead goes back to the play start. */
+    private void stopPlaying() {
+        recorded(position());
+        playingNow = false;
+        stoppedAt = playStartAt;
+        for (TrackSpec t : state.tracks) t.launched = null;
+    }
+
+    /**
+     * Recording ends at `end` (beats): each launcher clip that played meanwhile goes in the arranger, on its track, for the
+     * time it played, unless the model says Bitwig records nothing, or only on armed tracks.
+     */
+    private void recorded(double end) {
+        Double from = recordingFrom;
+        recordingFrom = null;
+        if (from == null || !playingNow || model.recordsNothing) return;
+        for (TrackSpec t : state.tracks) {
+            Launched l = t.launched;
+            if (l == null || (model.recordsOnlyArmed && !t.arm) || l.scene >= t.slots.size() || t.slots.get(l.scene) == null) continue;
+            double start = Math.max(from, l.start);
+            double stop = Math.min(end, l.stopAt == null ? end : l.stopAt);
+            if (stop > start + 1e-9) state.recorded.add(new Recorded(t, start, stop, t.slots.get(l.scene), l.start));
+        }
+    }
+
+    /** A launcher clip launched: with Bitwig stopped, it starts playing from the play start, and the clip with it. */
+    private void launch(int track, int scene) {
+        calls.add(Arrays.asList("launch", track, scene));
+        int stops = this.stops;
+        startsDue++;
+        later(model.startDelay, () -> {
+            startsDue--;
+            if (stops != this.stops) return;
+            TrackSpec t = trackSpec(track);
+            if (t == null || scene >= t.slots.size() || t.slots.get(scene) == null) return;
+            double start;
+            if (playingNow) {
+                start = nextBar(position());
+            } else {
+                startPlaying(playStartAt);
+                start = playStartAt;
+            }
+            t.launched = new Launched(scene, start);
+            t.launcherMode = true;
+        });
+    }
+
+    /** The next bar line after `beats` (the one after it, when it's on one). */
+    private double nextBar(double beats) {
+        double bar = bar();
+        return (Math.floor(beats / bar + 1e-9) + 1) * bar;
+    }
+
+    /** A track's launcher clip stopping: on the next bar line, as the launch quantize is a bar (or straight away without one). */
+    private void stopTrack(int track) {
+        calls.add(Arrays.asList("stopTrack", track));
+        later(20, () -> {
+            TrackSpec t = trackSpec(track);
+            if (model.trackStopIgnored || t == null || t.launched == null || !playingNow) return;
+            double now = position();
+            String quantize = (String) transportNow.get("defaultLaunchQuantization");
+            t.launched.stopAt = "none".equals(quantize) ? now : nextBar(now);
+        });
+    }
+
+    /** A track back on the arrangement: its launcher clip stops, and it plays its arranger timeline again. */
+    private void returnToArrangement(int track) {
+        calls.add(Arrays.asList("returnToArrangement", track));
+        later(20, () -> {
+            TrackSpec t = trackSpec(track);
+            if (t == null) return;
+            t.launched = null;
+            t.launcherMode = false;
+        });
+    }
+
+    /** Whether a track's launcher clip in `scene` is playing now (null scene: any). */
+    private boolean clipPlaying(TrackSpec t, Integer scene) {
+        Launched l = t == null ? null : t.launched;
+        if (l == null || !playingNow || (scene != null && l.scene != scene)) return false;
+        double now = position();
+        return now >= l.start - 1e-9 && (l.stopAt == null || now < l.stopAt - 1e-9);
+    }
+
+    private boolean clipQueued(TrackSpec t, int scene) {
+        Launched l = t == null ? null : t.launched;
+        return l != null && playingNow && l.scene == scene && position() < l.start - 1e-9;
+    }
+
+    /**
+     * The notes a track is playing now: its launcher clip's while that plays, else (back on the arrangement) those of what
+     * was recorded into its arranger timeline where Bitwig is. None while Bitwig is stopped, or when the model hides them.
+     */
+    private PlayingNote[] notesOf(TrackSpec t) {
+        if (t == null || !playingNow || model.notesHidden) return new PlayingNote[0];
+        double now = position();
+        List<PlayingNote> list = new ArrayList<>();
+        if (clipPlaying(t, null)) {
+            notesAt(t.slots.get(t.launched.scene), now - t.launched.start, list);
+        } else if (!t.launcherMode) {
+            for (Recorded r : state.recorded)
+                if (r.track() == t && now >= r.start() - 1e-9 && now < r.end() - 1e-9) notesAt(r.clip(), now - r.clipStart(), list);
+        }
+        return list.toArray(new PlayingNote[0]);
+    }
+
+    /** The notes of a clip file (Model.clipNotes) sounding `beats` into it, as it loops (Model.clipLength). */
+    private void notesAt(String clip, double beats, List<PlayingNote> into) {
+        List<double[]> notes = model.clipNotes.getOrDefault(clip, List.of());
+        double length = model.clipLength.getOrDefault(clip, 4.0);
+        double at = ((beats % length) + length) % length;
+        for (double[] n : notes)
+            if (at >= n[0] - 1e-9 && at < n[0] + n[1] - 1e-9) into.add(playingNote((int) n[2]));
+    }
+
+    private static PlayingNote playingNote(int key) {
+        return (PlayingNote) new Stand(PlayingNote.class) {
+            int pitch() {
+                return key;
+            }
+
+            int velocity() {
+                return 100;
+            }
+        }.api;
+    }
+
     /** Tells the extension how things are now, as Bitwig's observers do. */
     private void sync() {
+        for (Map.Entry<String, Value> e : transportValues.entrySet()) e.getValue().v = transportNow.get(e.getKey());
+        tempo.v = tempoNow;
+        playing.v = playingNow;
+        masterMute.v = masterMuted;
         layout.v = layoutNow;
         timeline.v = timelineShown;
         launcher.v = launcherShown;
@@ -866,6 +1145,8 @@ final class FakeBitwig {
         boolean launcher = true;
         /** Where the play start is at first, in beats. */
         double playStart;
+        /** How long a launch, or Play, takes to start Bitwig playing, in ms (the record job looks every 25 ms). */
+        long startDelay = 20;
         /** The panel with the focus at first: LAUNCHER, TIMELINE, or "" for another. */
         String focus = "";
         /**
@@ -924,6 +1205,48 @@ final class FakeBitwig {
         /** Whether Bitwig never calls the extension's flush, however often it asks. */
         boolean noFlush;
 
+        // Recording into the arranger (extension 3.9).
+        /**
+         * The transport's switches and choices at first, by the API's names: a few on, and pre-roll, automation write and
+         * the launch quantize not as the record job wants them, so a test sees them put back.
+         */
+        final Map<String, Object> transport = new LinkedHashMap<>();
+        {
+            transport.put("isArrangerRecordEnabled", false);
+            transport.put("isMetronomeEnabled", true);
+            transport.put("isArrangerLoopEnabled", true);
+            transport.put("isPunchInEnabled", false);
+            transport.put("isPunchOutEnabled", false);
+            transport.put("isArrangerOverdubEnabled", true);
+            transport.put("isClipLauncherOverdubEnabled", false);
+            transport.put("isArrangerAutomationWriteEnabled", false);
+            transport.put("isClipLauncherAutomationWriteEnabled", false);
+            transport.put("automationWriteMode", "latch");
+            transport.put("preRoll", "one_bar");
+            transport.put("defaultLaunchQuantization", "1/4");
+        }
+        /** What Bitwig ignores when the extension sets it: the transport's (by the API's names), "tempo" or "masterMute". */
+        final Set<String> settingsIgnored = new HashSet<>();
+        /** Whether the master track is muted at first. */
+        boolean masterMuted;
+        /** The notes each clip file plays, each {start, length, key} in beats, and how long each clip is (it loops; 4 beats if not given). */
+        final Map<String, List<double[]>> clipNotes = new HashMap<>();
+        final Map<String, Double> clipLength = new HashMap<>();
+        /** Whether Bitwig records a launcher clip into the arranger only on an armed track, or never. */
+        boolean recordsOnlyArmed;
+        boolean recordsNothing;
+        /** Whether Bitwig ignores stopping a track, or arming one. */
+        boolean trackStopIgnored;
+        boolean armIgnored;
+        /** Whether the notes a track plays never show, as on a track Bitwig might not say them for. */
+        boolean notesHidden;
+        /** Whether Bitwig's play position stays where it started while it plays (the link then goes by the clock). */
+        boolean positionStill;
+        /** Bitwig's "Write automation when recording Arranger clips": arranger automation write shows on while record is. */
+        boolean automationWhileRecording;
+        /** Whether new tracks get IDs ("new-1", "new-2"...), as Bitwig's do. */
+        boolean newTrackIds;
+
         /**
          * Has Bitwig carry out the commands of its user interface only while it handles a hardware button, and (when
          * `sysex` is true) a SysEx message on the MIDI in, which may count as hardware too.
@@ -952,6 +1275,11 @@ final class FakeBitwig {
         String volumeText;
         /** The ID Bitwig keeps the track under, or null where Bitwig hasn't said. */
         String id;
+        /** Whether it's armed (extension 3.9). */
+        boolean arm;
+        /** Its launcher clip playing (or about to), or null; and whether it plays the launcher, not its arranger timeline. */
+        Launched launched;
+        boolean launcherMode;
         final List<DeviceSpec> devices = new ArrayList<>();
         /** Each clip slot's clip (the file it came from), or null where the slot is empty. */
         final List<String> slots = new ArrayList<>();
@@ -984,6 +1312,11 @@ final class FakeBitwig {
             return this;
         }
 
+        TrackSpec armed() {
+            arm = true;
+            return this;
+        }
+
         TrackSpec slots(String... clips) {
             slots.addAll(Arrays.asList(clips));
             return this;
@@ -998,6 +1331,7 @@ final class FakeBitwig {
             t.volume = volume;
             t.volumeText = volumeText;
             t.id = id;
+            t.arm = arm;
             for (DeviceSpec d : devices) t.devices.add(d.copy());
             t.slots.addAll(slots);
             t.clipColours.putAll(clipColours);
@@ -1838,6 +2172,10 @@ final class FakeBitwig {
         final Value present = new Value(BooleanValue.class, false);
         final Value content = new Value(BooleanValue.class, false);
         final Value selected = new Value(BooleanValue.class, false);
+        /** Whether its clip is playing, about to, or recording in the launcher (extension 3.9): never, here. */
+        final Value playingClip = new Value(BooleanValue.class, false);
+        final Value queued = new Value(BooleanValue.class, false);
+        final Value recordingClip = new Value(BooleanValue.class, false);
         /** The clip's colour. Setting it colours the clip a moment later, unless the model says Bitwig ignores that. */
         final Colour colour;
         private final int track;
@@ -1847,6 +2185,8 @@ final class FakeBitwig {
             super(ClipLauncherSlot.class);
             this.track = track;
             this.scene = scene;
+            playingClip.live = () -> clipPlaying(trackSpec(track), scene);
+            queued.live = () -> clipQueued(trackSpec(track), scene);
             colour = new Colour(rgb -> {
                 calls.add(Arrays.asList("clipColour", track, scene, hex(rgb)));
                 String made = hex(model.colourSnaps ? snapped(rgb) : rgb);
@@ -1881,6 +2221,22 @@ final class FakeBitwig {
 
         void select() {
             selectSlot(track, scene);
+        }
+
+        Value isPlaying() {
+            return playingClip;
+        }
+
+        Value isPlaybackQueued() {
+            return queued;
+        }
+
+        Value isRecording() {
+            return recordingClip;
+        }
+
+        void launch() {
+            FakeBitwig.this.launch(track, scene);
         }
 
         /** Deletes the slot's clip a moment later. */
@@ -1918,8 +2274,11 @@ final class FakeBitwig {
         final Value isActivated = new Value(SettableBooleanValue.class, true);
         final Value mute = new Value(SettableBooleanValue.class, false);
         final Value solo = new Value(SoloValue.class, false);
-        final Value arm = new Value(SettableBooleanValue.class, false);
+        final Value arm;
         final Value channelId = new Value(StringValue.class, "");
+        /** Whether no launcher clip plays on it, and the notes it plays (extension 3.9), as they are whenever the extension looks. */
+        final Value stopped = new Value(BooleanValue.class, true);
+        final Value notes = new Value(PlayingNoteArrayValue.class, new PlayingNote[0]);
         final Colour colour;
         final Param volume = new Param(Parameter.class, 0.79, "0.0 dB");
         final Param pan = new Param(Parameter.class, 0.5, "C");
@@ -1934,6 +2293,15 @@ final class FakeBitwig {
             this.index = index;
             title = new Value(SettableStringValue.class, "", whenSet((spec, v) -> spec.name = (String) v));
             colour = new Colour(whenSet((spec, rgb) -> spec.colour = (float[]) rgb));
+            Consumer<Object> arming = whenSet((spec, v) -> {
+                if (!model.armIgnored) spec.arm = (Boolean) v;
+            });
+            arm = new Value(SettableBooleanValue.class, false, v -> {
+                calls.add(Arrays.asList("arm", index, v));
+                arming.accept(v);
+            });
+            stopped.live = () -> !clipPlaying(trackSpec(index), null);
+            notes.live = () -> notesOf(trackSpec(index));
             start = index < 0 ? null : chain("start");
             end = index < 0 ? new Point(null, null) : chain("end");
         }
@@ -1958,6 +2326,7 @@ final class FakeBitwig {
             trackType.v = spec.type == null ? "Instrument" : spec.type;
             isGroup.v = spec.group;
             mute.v = spec.mute;
+            arm.v = spec.arm;
             channelId.v = spec.id == null ? "" : spec.id;
             if (spec.colour != null) {
                 colour.r = spec.colour[0];
@@ -2019,6 +2388,22 @@ final class FakeBitwig {
 
         Value channelId() {
             return channelId;
+        }
+
+        Value isStopped() {
+            return stopped;
+        }
+
+        Value playingNotes() {
+            return notes;
+        }
+
+        void stop() {
+            stopTrack(index);
+        }
+
+        void returnToArrangement() {
+            FakeBitwig.this.returnToArrangement(index);
         }
 
         Colour color() {
@@ -2223,6 +2608,9 @@ final class FakeBitwig {
                     case "Duplicate" -> {
                         if (honoured("Duplicate")) duplicated();
                     }
+                    case Link.TOGGLE_ARRANGER -> {
+                        if (honoured(a.id())) toggleArranger();
+                    }
                     default -> {}
                 }
             }
@@ -2424,9 +2812,23 @@ final class FakeBitwig {
             }
         };
 
+        private final Value armed = new Value(BooleanValue.class, false);
+
         private final Stand project = new Stand(Project.class) {
             Value isModified() {
                 return modified;
+            }
+
+            Value hasArmedTracks() {
+                armed.live = () -> state.tracks.stream().anyMatch(t -> t.arm);
+                return armed;
+            }
+
+            void unarmAll() {
+                calls.add(List.of("unarmAll"));
+                later(20, () -> {
+                    if (!model.armIgnored) state.tracks.forEach(t -> t.arm = false);
+                });
             }
         };
 
@@ -2449,6 +2851,86 @@ final class FakeBitwig {
 
             Value playStartPosition() {
                 return playStart;
+            }
+
+            // Extension 3.9.
+            Value isArrangerRecordEnabled() {
+                return transportValues.get("isArrangerRecordEnabled");
+            }
+
+            Value isMetronomeEnabled() {
+                return transportValues.get("isMetronomeEnabled");
+            }
+
+            Value isArrangerLoopEnabled() {
+                return transportValues.get("isArrangerLoopEnabled");
+            }
+
+            Value isPunchInEnabled() {
+                return transportValues.get("isPunchInEnabled");
+            }
+
+            Value isPunchOutEnabled() {
+                return transportValues.get("isPunchOutEnabled");
+            }
+
+            Value isArrangerOverdubEnabled() {
+                return transportValues.get("isArrangerOverdubEnabled");
+            }
+
+            Value isClipLauncherOverdubEnabled() {
+                return transportValues.get("isClipLauncherOverdubEnabled");
+            }
+
+            Value isArrangerAutomationWriteEnabled() {
+                return transportValues.get("isArrangerAutomationWriteEnabled");
+            }
+
+            Value isClipLauncherAutomationWriteEnabled() {
+                return transportValues.get("isClipLauncherAutomationWriteEnabled");
+            }
+
+            Value automationWriteMode() {
+                return transportValues.get("automationWriteMode");
+            }
+
+            Value preRoll() {
+                return transportValues.get("preRoll");
+            }
+
+            Value defaultLaunchQuantization() {
+                return transportValues.get("defaultLaunchQuantization");
+            }
+
+            Value playPosition() {
+                return playPosition;
+            }
+
+            /** Bitwig starts playing from the play start, a moment later. */
+            void play() {
+                calls.add(List.of("play"));
+                int stops = FakeBitwig.this.stops;
+                startsDue++;
+                later(model.startDelay, () -> {
+                    startsDue--;
+                    if (stops == FakeBitwig.this.stops && !playingNow) startPlaying(playStartAt);
+                });
+            }
+
+            /** Bitwig stops, a moment later; Stop while it's stopped moves the play start to the beginning, as in Bitwig. */
+            void stop() {
+                calls.add(List.of("stop"));
+                later(20, () -> {
+                    if (playingNow) {
+                        stopPlaying();
+                    } else if (startsDue > 0) {
+                        // Bitwig takes commands in order: a launch or Play asked for before this Stop starts, then stops.
+                        stops++;
+                    } else {
+                        calls.add(List.of("stopWhileStopped"));
+                        playStartAt = 0;
+                    }
+                });
             }
         };
 
@@ -2548,6 +3030,10 @@ final class FakeBitwig {
 
         Stand createArranger() {
             return arranger;
+        }
+
+        Stand createMasterTrack(int scenes) {
+            return master;
         }
 
         ArrangerClip createArrangerCursorClip(int gridWidth, int gridHeight) {

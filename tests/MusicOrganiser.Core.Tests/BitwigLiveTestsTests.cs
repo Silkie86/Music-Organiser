@@ -109,8 +109,9 @@ public class BitwigLiveTestsTests
 
         // The script has none of the Java extension's newer fields, so those say they need it.
         string[] newer = ["Link › Track IDs", "Link › Parameter details", "Link › Last clicked parameter", "Link › Self-check", "Link › MIDI loopback",
-                          "Changes › Clip to arranger", "Changes › MIDI file as a track", "Changes › Sampler's parameter details",
-                          "Changes › Master recorder"];
+                          "Changes › Clip to arranger", "Changes › MIDI file as a track", "Changes › Track to record on", "Changes › Hear the clip",
+                          "Changes › Record into the arranger", "Changes › Record armed", "Changes › Record fast", "Changes › Panel commands",
+                          "Changes › Sampler's parameter details", "Changes › Master recorder"];
         Assert.All(newer, n => Assert.Equal((LiveOutcome.Skipped, BitwigLiveTests.NeedsJava),
                                             run.Results.Where(r => r.Title == n).Select(r => (r.Outcome, r.Detail)).Single()));
         // The stand-in saves no file, so there's no saved project to compare: skipped, saying so.
@@ -119,7 +120,7 @@ public class BitwigLiveTestsTests
         Assert.Equal(LiveOutcome.Skipped, Find(run, "Saved file", "Compare with Bitwig").Outcome);
         var skipped = run.Results.Where(r => r.Outcome == LiveOutcome.Skipped).Select(r => r.Title).ToList();
         Assert.Equal([.. newer, "Saved file › Find the saved project", "Saved file › Compare with Bitwig"], skipped);
-        Assert.Equal(11, run.Skipped);
+        Assert.Equal(17, run.Skipped);
         Assert.All(["Link", "Changes", "Send"], area => Assert.DoesNotContain(run.Results, r => r.Area == area && r.Outcome == LiveOutcome.Failed));
 
         // What each test saw.
@@ -200,7 +201,7 @@ public class BitwigLiveTestsTests
                                           !r.Name.StartsWith("Last") && !r.Name.StartsWith("Self") && !r.Name.StartsWith("MIDI")),
                    r => Assert.Equal(LiveOutcome.Passed, r.Outcome));
         var changes = run.Results.Where(r => r.Area != "Link").ToList();
-        Assert.Equal(29, changes.Count);
+        Assert.Equal(35, changes.Count);
         Assert.All(changes, r => Assert.Equal(LiveOutcome.Skipped, r.Outcome));
         Assert.Equal("Bitwig has “Night Drive” open, so the run changed nothing: it only changes a project whose name starts with “MO Live Test”, " +
                      "never your own work. " + BitwigLiveTests.HowToAllowChanges, Find(run, "Changes", "Changes allowed").Detail);
@@ -455,8 +456,9 @@ public class BitwigLiveTestsTests
         Assert.Equal(["direct", "flush", "midi", "buttonCode", "button"], ActionRoutes(java));
         Assert.Contains(" The link tried Save 5 ways, one after another, and none worked: straight away (direct), from Bitwig's flush (flush), on the " +
                         "link's own MIDI message (midi), on a press of the link's own button, run by the link (buttonCode) and by the link's own " +
-                        "hardware button, run by Bitwig (button). The routes through the MIDI loopback didn't run. Bitwig 6.1.3 saved for the " +
-                        "extension only once its MIDI in and out were set (then from its flush), so every route needs them. " + BitwigLiveTests.LoopbackSetup,
+                        "hardware button, run by Bitwig (button). The routes through the MIDI loopback didn't run. Bitwig 6.1.3 has only saved for " +
+                        "the extension once its MIDI in and out were set (from its flush, and once straight away), so set them whichever route " +
+                        "the app uses. " + BitwigLiveTests.LoopbackSetup,
                         verdict.Detail);
         Assert.Equal(["- Straight away (direct): ran, but Bitwig still showed unsaved changes 0 s later",
                       "- From Bitwig's flush (flush): ran, but Bitwig still showed unsaved changes 0 s later",
@@ -619,10 +621,9 @@ public class BitwigLiveTestsTests
 
         var broken = BitwigLiveTests.LoopbackVerdict(Hello("3.7", false));
         Assert.Equal(LiveOutcome.Failed, broken.Outcome);
-        Assert.Equal("The extension's own MIDI hasn't come back to it through the loopback, so its MIDI in and out aren't set, and Bitwig may not " +
-                     "carry out the commands the app runs by any route. Bitwig 6.1.3 ignored Save, copy and paste run straight away. Bitwig 6.1.3 " +
-                     "saved for the extension only once its MIDI in and out were set (then from its flush), so every route needs them. " +
-                     BitwigLiveTests.LoopbackSetup, broken.Detail);
+        Assert.Equal("The extension's own MIDI hasn't come back to it through the loopback, so its MIDI in and out aren't set to “Music Organiser " +
+                     "Bitwig”, or that port isn't working. The routes through MIDI need them, and Bitwig 6.1.3 has only saved for the extension once " +
+                     "they were set: without them it ignored Save run straight away. " + BitwigLiveTests.LoopbackSetup, broken.Detail);
         // The setup names the loopMIDI port, and warns off FL Studio's.
         Assert.Contains("set both MIDI in and MIDI out to “Music Organiser Bitwig” (the loopMIDI port), never “Music Organiser” (FL Studio's)",
                         BitwigLiveTests.LoopbackSetup);
@@ -830,8 +831,9 @@ public class BitwigLiveTestsTests
         Assert.Equal($"Bitwig still showed unsaved changes 15 s after Save (“Save”), and didn't write {file}, though its window was in front. The link " +
                      "tried Save 5 ways, one after another, and none worked: straight away (direct), from Bitwig's flush (flush), on the link's own MIDI " +
                      "message (midi), on a press of the link's own button, run by the link (buttonCode) and by the link's own hardware button, run by " +
-                     "Bitwig (button). The routes through the MIDI loopback didn't run. Bitwig 6.1.3 saved for the extension only once its MIDI in " +
-                     "and out were set (then from its flush), so every route needs them. " + BitwigLiveTests.LoopbackSetup + " Bitwig said the test " +
+                     "Bitwig (button). The routes through the MIDI loopback didn't run. Bitwig 6.1.3 has only saved for the extension once its MIDI " +
+                     "in and out were set (from its flush, and once straight away), so set them whichever route the app uses. " +
+                     BitwigLiveTests.LoopbackSetup + " Bitwig said the test " +
                      "project, “MO Live Test”, was the active project when Save ran. If Bitwig opened a Save As window, the project hasn't been saved " +
                      "yet: save it as “MO Live Test”, then run again.", none.Detail);
         Assert.Equal(["- Straight away (direct): ran, but Bitwig still showed unsaved changes 15 s later",
