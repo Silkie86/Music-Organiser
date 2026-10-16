@@ -432,7 +432,8 @@ public class MidiBrowserTests
         var lib = Path.Combine(dir, "MIDI");
         Directory.CreateDirectory(lib);
         var broken = Path.Combine(lib, "Broken.mid");
-        File.WriteAllText(broken, "RIFF0000WAVE");
+        File.WriteAllText(broken, "RIFF0000WAVEfmt , a sound file named as MIDI");
+        File.WriteAllBytes(Path.Combine(lib, "Empty.mid"), []);   // empty files are skipped, not failures
 
         using var db = new LibraryDb(Path.Combine(dir, "library.db"));
         db.SetList(MidiIndexer.FoldersKey, [lib]);

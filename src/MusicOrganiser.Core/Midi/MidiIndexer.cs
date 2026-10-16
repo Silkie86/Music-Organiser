@@ -29,6 +29,9 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     /// <summary>At most this many files are read at once: a quarter of the cores, and never more than 3.</summary>
     public static int Workers => Math.Clamp(Environment.ProcessorCount / 4, 1, 3);
 
+    /// <summary>A MIDI file's header (14 bytes) and one empty track (8) and no notes: anything shorter is skipped as empty.</summary>
+    public const int MinMidiBytes = 22;
+
     public sealed record Result(int Read, int Failed, int Forgotten, int Phrases);
 
     /// <param name="retryFailed">Also read again the files that failed last time, though they haven't changed.</param>
@@ -47,6 +50,8 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             try
             {
                 var fi = new FileInfo(f);
+                // Too short to hold a single note (an empty or never-finished download): nothing to read, and not a failure.
+                if (fi.Length < MinMidiBytes) continue;
                 wanted[f] = new MidiSource(f, MidiSource.File, "MIDI", new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds(), fi.Length, null);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
