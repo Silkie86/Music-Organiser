@@ -104,10 +104,12 @@ public class ViewModelTests : IDisposable
     [Fact]
     public async Task A_fixed_copy_is_listed_with_its_song_and_still_asks_whether_it_loaded_after_leaving_it()
     {
-        var lib = Path.Combine(_root, "Lib", "Drums");
+        // The sample library sits outside the projects' folder: a kick inside it would count as found (SampleLocator).
+        var libRoot = Fixtures.TempDir();
+        var lib = Path.Combine(libRoot, "Drums");
         Directory.CreateDirectory(lib);
         File.WriteAllBytes(Path.Combine(lib, "Kick 01.wav"), [0]);
-        _db.SetList(Scanner.SampleFoldersKey, [Path.Combine(_root, "Lib")]);
+        _db.SetList(Scanner.SampleFoldersKey, [libRoot]);
         new Scanner(_db).ScanSampleFolders();
         ScanFixtures();
         var projects = Main().Projects;

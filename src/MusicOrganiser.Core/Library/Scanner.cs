@@ -203,14 +203,21 @@ public sealed class Scanner(LibraryDb db)
     }
 
     /// <summary>
-    /// Reads plugin files with the native scanner, four at a time, and stores the plugins inside each
+    /// How many plugins load at once, each in its own low-priority mo-scan process: up to four, fewer when the app is
+    /// set to be gentle, but always two, so one slow plugin (or one waiting on a licence dialog) can't hold up the rest
+    /// on a small processor.
+    /// </summary>
+    static int PluginLoads => Math.Clamp(Parallelism.Workers, 2, 4);
+
+    /// <summary>
+    /// Reads plugin files with the native scanner, a few at a time (<see cref="PluginLoads"/>), and stores the plugins inside each
     /// one: exact ID, name, vendor, version and kind. Parameters are read later (<see cref="ReadAllParametersAsync"/>).
     /// </summary>
     public async Task ReadPluginFilesAsync(PluginScanner scanner, IReadOnlyList<string> paths,
                                            IProgress<ScanProgress>? progress = null, CancellationToken ct = default)
     {
         var done = 0;
-        await Parallel.ForEachAsync(paths, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(4, Parallelism.Workers), CancellationToken = ct }, async (path, token) =>
+        await Parallel.ForEachAsync(paths, new ParallelOptions { MaxDegreeOfParallelism = PluginLoads, CancellationToken = ct }, async (path, token) =>
         {
             var stamp = PluginScanner.Stamp(path);
             var scan = await scanner.ScanAsync(path, ct: token);
@@ -221,7 +228,7 @@ public sealed class Scanner(LibraryDb db)
 
     /// <summary>
     /// Reads the parameters of every installed plugin that doesn't have them yet: each plugin is loaded in
-    /// the native scanner, four at a time. Stopped part way, it carries on from there next time. A plugin
+    /// the native scanner, a few at a time. Stopped part way, it carries on from there next time. A plugin
     /// that can't be loaded keeps why, and is left out after that.
     /// </summary>
     public async Task<(int Read, int Failed)> ReadAllParametersAsync(PluginScanner scanner, IProgress<ScanProgress>? progress = null,
@@ -230,7 +237,7 @@ public sealed class Scanner(LibraryDb db)
         var todo = db.PluginsWithoutParameters();
         int done = 0, read = 0, failed = 0;
         progress?.Report(new("Reading parameters", 0, todo.Count, ""));
-        await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(4, Parallelism.Workers), CancellationToken = ct }, async (plugin, token) =>
+        await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = PluginLoads, CancellationToken = ct }, async (plugin, token) =>
         {
             var result = await scanner.ReadParametersAsync(plugin, token);
             db.SaveScannedPlugin(result);
