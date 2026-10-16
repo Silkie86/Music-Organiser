@@ -13,7 +13,7 @@ namespace MusicOrganiser.Core.Midi;
 /// Two encoders from the symbolic ("C2") checkpoint, exported to ONNX by tools/clamp3/export_onnx.py: the M3 encoder
 /// for MIDI (as MTF text, see <see cref="MtfText"/>) and the XLM-RoBERTa text encoder. Each takes its input and gives a
 /// 768-number vector (pooled and projected; this class makes it unit length). The files are an optional download into
-/// the app's data folder; nothing of the model is in git.
+/// the app's data folder (about 430 MB); nothing of the model is in git.
 /// </summary>
 public sealed class Clamp3Model : IDisposable
 {

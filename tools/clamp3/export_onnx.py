@@ -73,8 +73,24 @@ class Text(torch.nn.Module):
         self.model = XLMRobertaModel(cfg)
         self.proj = torch.nn.Linear(cfg.hidden_size, out)
 
+        self.int8_embeddings = False
+
+    def quantise_embeddings(self):
+        """The 250,002-word table is two thirds of the model: kept as int8 rows with one scale each (a quarter of the
+        size, and next to no change), looked up in the graph and handed to XLM-R as embeddings. Position ids are then
+        counted from the start, as they are for real tokens when nothing is padded (the app never pads)."""
+        w = self.model.embeddings.word_embeddings.weight.detach()
+        scale = w.abs().amax(dim=1, keepdim=True).clamp(min=1e-8) / 127
+        self.register_buffer("words_int8", torch.round(w / scale).to(torch.int8))
+        self.register_buffer("words_scale", scale)
+        self.int8_embeddings = True
+
     def forward(self, input_ids, attention_mask):
-        hidden = self.model(input_ids, attention_mask=attention_mask)["last_hidden_state"]
+        if self.int8_embeddings:
+            embeds = self.words_int8[input_ids].float() * self.words_scale[input_ids]
+            hidden = self.model(inputs_embeds=embeds, attention_mask=attention_mask)["last_hidden_state"]
+        else:
+            hidden = self.model(input_ids, attention_mask=attention_mask)["last_hidden_state"]
         m = attention_mask.unsqueeze(-1).to(hidden.dtype)
         return self.proj((hidden * m).sum(dim=1) / m.sum(dim=1))
 
@@ -116,8 +132,17 @@ def export(module, args, names, out_name, path):
 
 
 def quantise(src, dst):
-    from onnxruntime.quantization import QuantType, quantize_dynamic
-    quantize_dynamic(src, dst, weight_type=QuantType.QInt8, op_types_to_quantize=["MatMul", "Gather"])
+    """Int8 weights in blocks of 32 (MatMulNBits): the weights shrink to a quarter. Accuracy level 4 lets ONNX Runtime
+    multiply in int8 with each block of the inputs scaled on its own, as fast as fp32 and within 0.9995 of it.
+    Ordinary dynamic int8 (one scale for a whole input) moved the real CLaMP 3 text encoder too far: cosine 0.95 to
+    fp32, and the same best match for only 71% of searches."""
+    import onnx
+    from onnxruntime.quantization.matmul_nbits_quantizer import DefaultWeightOnlyQuantConfig, MatMulNBitsQuantizer
+    config = DefaultWeightOnlyQuantConfig(block_size=32, is_symmetric=True, bits=8, op_types_to_quantize=("MatMul",),
+                                          accuracy_level=4)
+    q = MatMulNBitsQuantizer(onnx.load(src), algo_config=config)
+    q.process()
+    q.model.save_model_to_file(dst, use_external_data_format=False)
 
 
 def cosine(a, b):
@@ -309,7 +334,13 @@ def main():
 
     sym8, txt8 = os.path.join(a.out, "symbolic.onnx"), os.path.join(a.out, "text.onnx")
     quantise(sym32, sym8)
-    quantise(txt32, txt8)
+    text.quantise_embeddings()
+    txt_q = os.path.join(a.out, "text_int8_words.onnx")
+    with torch.no_grad():
+        export(text, (torch.tensor(txt_inputs[0]["input_ids"]), torch.tensor(txt_inputs[0]["attention_mask"])), ["input_ids", "attention_mask"], "embedding", txt_q)
+    text.int8_embeddings = False   # PyTorch with the original table stays the reference
+    quantise(txt_q, txt8)
+    os.remove(txt_q)
     check("symbolic int8", sym8, symbolic, sym_inputs, reference=symbolic.reference)
     check("text int8", txt8, text, txt_inputs)
 

@@ -182,7 +182,7 @@
             <Border Classes="card" Padding="12,8" HorizontalAlignment="Left" IsVisible="{Binding CanDownloadMeaning}">
                 <StackPanel Orientation="Horizontal" Spacing="12">
                     <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="560" FontSize="12.5"
-                               Text="Search by how parts sound (&quot;dark pad chords&quot;, &quot;bouncy funk bassline&quot;) and find parts that sound alike: download the MIDI model once. It runs on this computer." />
+                               Text="Search by how parts sound (&quot;dark pad chords&quot;, &quot;bouncy funk bassline&quot;) and find parts that sound alike: download the MIDI model once (about 430 MB). It runs on this computer." />
                     <Button Content="Download MIDI model" Classes="accent" VerticalAlignment="Center" Command="{Binding DownloadMeaningCommand}"
                             ToolTip.Tip="CLaMP 3, a free music-and-words model (MIT licence). Saved in the app's data folder." />
                 </StackPanel>

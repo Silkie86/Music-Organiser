@@ -32,7 +32,7 @@ jobs:
         if: steps.existing.outputs.found == 'false'
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install transformers==4.46.3 tokenizers onnx onnxruntime mido numpy
+          pip install transformers==4.46.3 tokenizers onnx onnx_ir onnxruntime mido numpy
       - name: Export, check and quantise
         if: steps.existing.outputs.found == 'false'
         run: python tools/clamp3/export_onnx.py --out out | tee export.log
