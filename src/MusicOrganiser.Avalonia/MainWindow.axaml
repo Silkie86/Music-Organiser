@@ -12,6 +12,8 @@
         <DataTemplate DataType="vm:SettingsViewModel"><views:SettingsView /></DataTemplate>
         <!-- Screens not moved over from the Windows app yet. -->
         <DataTemplate DataType="vm:SoundsViewModel"><views:SoundsView /></DataTemplate>
+        <DataTemplate DataType="vm:MidiBrowserViewModel"><views:MidiView /></DataTemplate>
+        <DataTemplate DataType="vm:SongMidiViewModel"><views:SongMidiView /></DataTemplate>
         <DataTemplate DataType="vm:PluginsViewModel"><views:PluginsView /></DataTemplate>
         <DataTemplate DataType="vm:SamplesViewModel"><views:SamplesView /></DataTemplate>
     </Window.DataTemplates>

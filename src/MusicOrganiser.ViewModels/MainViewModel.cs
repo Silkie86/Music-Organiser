@@ -26,6 +26,8 @@ public sealed partial class MainViewModel : ObservableObject
     public PluginsViewModel Plugins { get; }
     public SamplesViewModel Samples { get; }
     public SoundsViewModel Sounds { get; }
+    /// <summary>The MIDI page: every MIDI part in your projects and MIDI libraries.</summary>
+    public MidiBrowserViewModel Midi { get; }
     public SettingsViewModel Settings { get; }
 
     /// <summary>Bitwig and FL Studio as they are now, through their links (the sidebar's "In your DAWs").</summary>
@@ -62,15 +64,18 @@ public sealed partial class MainViewModel : ObservableObject
         Samples = new SamplesViewModel(db, this);
         Settings = new SettingsViewModel(db, this, dataFolder);
         Sounds = new SoundsViewModel(db, sounds, this);
+        Midi = new MidiBrowserViewModel(db, this);
         Settings.Liked.Changed += Sounds.WeightsChanged;
         Nav =
         [
             new("Projects", "", Projects),
             new("Sound Lab", "\uE8D6", Sounds),
+            new("MIDI", "", Midi),
             new("Plugins", "", Plugins),
             new("Settings", "", Settings),
         ];
         _selectedNav = StartPage();
+        if (_selectedNav.Page == Midi) Midi.Opened();
         _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
         _projectsShown = _soundsShown = db.ProjectsRevision;   // those two pages read the library as they open
 
@@ -110,6 +115,7 @@ public sealed partial class MainViewModel : ObservableObject
             var (read, gone) = await Task.Run(() => _scanner.Update(changes.Files));
             if (read + gone == 0) return;
             await RefreshAllAsync();
+            _ = Midi.AfterScanAsync();   // a saved song's MIDI is read again too
             var name = Path.GetFileNameWithoutExtension(changes.Files.First());
             Activities.Done(read + gone == 1 ? $"Updated {name}" : $"Updated {read + gone} projects",
                             gone == 0 ? "Saved in their folders, so the app read them again"
@@ -150,6 +156,7 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnSelectedNavChanged(NavItem value)
     {
         _db.SetSetting(LastPageKey, value.Title);
+        if (value.Page == Midi) Midi.Opened();
         // The MO Probes running now are followed only while Settings shows them.
         if (value.Page != Settings)
         {
@@ -237,6 +244,7 @@ public sealed partial class MainViewModel : ObservableObject
         _projectWatch?.Dispose();
         Sounds.StopWatching();
         CancelScan();
+        Midi.Dispose();
         PluginScanner.StopAll();
     }
 
@@ -414,6 +422,8 @@ public sealed partial class MainViewModel : ObservableObject
             _scanCard.Finish("Library up to date",
                 added > 0 ? $"{added} new project file{(added == 1 ? "" : "s")} · {Projects.Items.Count} songs in all" : $"{Projects.Items.Count} songs, nothing new");
         }
+        // The MIDI browser reads new and changed projects' MIDI on its own, at the lowest priority.
+        _ = Midi.AfterScanAsync();
         await RunQueuedScanAsync();
     }
 }

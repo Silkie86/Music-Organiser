@@ -28,6 +28,10 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public ProjectItem Item { get; }
     public ProjectDetail? Detail { get; }
     public IReadOnlyList<PluginRow> Plugins { get; }
+
+    SongMidiViewModel? _songMidi;
+    /// <summary>The "MIDI that fits" tab: worked out the first time it's opened (see <see cref="SongMidiViewModel"/>).</summary>
+    public SongMidiViewModel SongMidi => _songMidi ??= new(_main.Midi, _main, Item.Path, Item.Name);
     /// <summary>The plugin list as shown: synths that play no notes in the song are hidden until asked for.</summary>
     [ObservableProperty] IReadOnlyList<PluginRow> _visiblePlugins = [];
     [ObservableProperty] bool _showSilent;

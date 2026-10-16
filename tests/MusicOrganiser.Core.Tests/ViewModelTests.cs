@@ -1294,6 +1294,214 @@ public class ViewModelTests : IDisposable
             if (waited.Elapsed > TimeSpan.FromSeconds(20)) Assert.Fail("Timed out.");
     }
 
+    [Fact]
+    public async Task The_midi_page_finds_parts_and_fits_them_to_a_project_already_moved()
+    {
+        // A MIDI pack with the song's progression in C minor, and a bassline; and a project in A minor.
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        int[][] cMinor = [[60, 63, 67], [56, 60, 63], [51, 55, 58], [58, 62, 65]];
+        var pack = Path.Combine(_root, "Packs", "Chords");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Moody", Ppq = 96 };
+        chords.Track("Piano").AddRange(cMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Moody Cm.mid"), Core.Export.MidiWriter.Write(chords));
+        var song = new Core.Parsers.MidiChannel("Keys", "", 96,
+            aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))).ToList(), Plugin: "Serum");
+
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [Path.Combine(_root, "Packs")]);
+        _db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "exports"));
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        Assert.Contains(midi.Results, r => r.Title == "Moody Cm");
+
+        midi.SelectedRole = midi.RoleChips.First(c => c.Role == Core.Midi.MidiRoles.Chords);
+        midi.Search = "moody";
+        await midi.RefreshAsync();
+        var row = Assert.Single(midi.Results);
+        var key = row.KeyText;   // C minor or its relative, E flat major: the same notes
+        Assert.Contains(key, new[] { "Cm", "D#" });
+
+        // Fitted to the A minor song: moved down 3, and shown, played and dragged out that way.
+        midi.FitToHarmony(Core.Midi.HarmonyTarget.FromChannels("Fit me", [song])!);
+        await midi.RefreshAsync();
+        row = Assert.Single(midi.Results);
+        Assert.Equal("down 3 semitones", row.MoveText);
+        Assert.Equal(key == "Cm" ? "Cm → Am" : "D# → C", row.KeyText);
+        Assert.Equal(51 - 3, row.Channel.Notes.Min(n => n.Key));
+        var drag = midi.MakeDrag([row])!;
+        var written = Core.Midi.MidiFileReader.Read(drag.Files.Single());
+        Assert.Equal(51 - 3, written.Single().Notes.Min(n => n.Key));
+        Assert.EndsWith("(-3).mid", drag.Files.Single());
+        Assert.StartsWith(Path.Combine(_root, "exports"), drag.Files.Single());
+
+        // The pack's file is untouched, and saying what a part is sticks.
+        midi.Selected = row;
+        await midi.SetRoleCommand.ExecuteAsync(Core.Midi.MidiRoles.Melody);
+        Assert.Equal(Core.Midi.MidiRoles.Melody, Assert.Single(midi.Index.All()).YourRole);
+    }
+
+    [Fact]
+    public async Task A_part_that_comes_in_late_in_its_bar_shows_and_plays_from_its_first_note_but_drags_out_from_the_bar()
+    {
+        // A pickup: three notes on the last beat of the bar, then a held chord in the next bar.
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var clip = new Core.Parsers.MidiClip { Name = "Pickup", Ppq = 96 };
+        clip.Track("Keys").AddRange([
+            new(3 * 96, 32, 60, 100), new(3 * 96 + 32, 32, 62, 100), new(3 * 96 + 64, 32, 64, 100),
+            new(4 * 96, 384, 60, 100), new(4 * 96, 384, 64, 100), new(4 * 96, 384, 67, 100)]);
+        File.WriteAllBytes(Path.Combine(pack, "Pickup.mid"), Core.Export.MidiWriter.Write(clip));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        _db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "exports"));
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+
+        var row = Assert.Single(midi.Results);
+        Assert.Equal(0, row.Channel.Notes.Min(n => n.Start));   // shown and played from its first note, with no silence first
+        var written = Core.Midi.MidiFileReader.Read(midi.MakeDrag([row])!.Files.Single()).Single();
+        Assert.Equal(3 * 96, written.Notes.Min(n => n.Start));   // the file keeps the pickup before the bar line
+    }
+
+    [Fact]
+    public async Task A_clip_shows_the_longer_phrase_it_plays_in_with_itself_lit_up()
+    {
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        _db.Upsert(Core.Library.Scanner.Analyse(MidiBrowserTests.FlProjectWithPhrases(songs)));
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+
+        var hook = midi.Results.Single(r => r.Title == "Keys · Hook");
+        Assert.Equal("Part of a 16-bar phrase", hook.PhraseText);
+        var whole = midi.Results.Single(r => r.Entry.IsJoined);
+        Assert.Equal("Joined from 2 clips", whole.PhraseText);
+        Assert.Equal([0L, 4 * 384, 8 * 384, 12 * 384], whole.Spans!.Select(s => s.Start));
+        Assert.DoesNotContain(whole.Spans!, s => s.Lit);
+
+        midi.Selected = hook;
+        midi.ShowWholePhraseCommand.Execute(null);
+        var shown = Assert.Single(midi.Results);
+        Assert.True(shown.Entry.IsJoined);
+        Assert.Equal([false, true, false, true], shown.Spans!.Select(s => s.Lit));   // the hook, both times it plays
+        Assert.Contains("longer phrase", midi.ResultText);
+
+        midi.ClearPhrasesCommand.Execute(null);
+        Assert.Equal(3, midi.Results.Count);
+    }
+
+    [Fact]
+    public async Task What_goes_with_this_plays_a_suggestion_on_top_looping_and_octaves_and_kinds_are_remembered()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        int[][] tune = [[69, 72, 76, 72], [65, 69, 72, 69], [67, 72, 76, 72], [67, 71, 74, 71]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Keys", Ppq = 96 };
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Keys Am.mid"), Core.Export.MidiWriter.Write(chords));
+        var lead = new Core.Parsers.MidiClip { Name = "Lead", Ppq = 96 };
+        // Saved two octaves low, an 8-bar tune (the 4 bars twice).
+        lead.Track("Lead").AddRange(tune.Concat(tune).SelectMany((b, i) => b.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96, 96, k - 24, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Lead melody.mid"), Core.Export.MidiWriter.Write(lead));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        var played = new List<string>();
+        ((HeadlessUi)Ui.Current).Player = () => new Recorder(played);
+
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        midi.Selected = midi.Results.Single(r => r.Title.Contains("Keys"));
+        midi.FitToSelectedCommand.Execute(null);
+        Assert.True(midi.IsPairing);
+        var melody = midi.Results.Single(r => r.Title.Contains("Lead"));
+        Assert.Equal(0, melody.Semitones);
+        Assert.Equal(2, melody.Octaves);   // up above the chords, where a melody sits
+        Assert.NotNull(melody.Fit!.Together);
+        Assert.Equal(8 * bar, melody.PairLength);   // 4 bars of chords twice under 8 bars of tune
+        Assert.Equal(8 * bar, melody.PairPartner!.End);
+        Assert.StartsWith("With Keys", melody.PairText);
+
+        // Its play button plays it on top of the chords; the card's Play button plays it alone.
+        midi.Selected = melody;
+        await melody.PlayCommand.ExecuteAsync(null);
+        Assert.EndsWith(":together", played[^1]);
+        Assert.True(melody.IsPlayingTogether);
+        await midi.PlaySelectedAloneCommand.ExecuteAsync(null);
+        Assert.False(played[^1].EndsWith(":together"));
+        Assert.True(melody.IsPlayingAlone);
+
+        // Looping is remembered.
+        midi.Loop = true;
+        Assert.Equal("1", _db.GetSetting(MidiBrowserViewModel.LoopKey));
+        Assert.Equal([0L, 4 * bar], MidiBrowserViewModel.Repeat([new Core.Parsers.NoteEvent(0, 96, 60, 100)], 4 * bar, 8 * bar).Select(n => n.Start));
+
+        // An octave you pick sticks, for every copy, after the app starts again too.
+        await melody.OctaveDownCommand.ExecuteAsync(null);
+        Assert.Equal(1, melody.Octaves);
+        Assert.True(melody.IsYourOctave);
+        Assert.Equal(melody.Entry.Phrase.Lowest + 12 + 0, melody.Channel.Lowest);
+        using (var again = new Core.Midi.MidiIndex(midi.Index.FilePath))
+            Assert.Equal(1, again.All().Single(p => p.Hash == melody.Entry.Phrase.Hash).YourOctave);
+
+        // The kind, in one click on the card.
+        await midi.SetRoleCommand.ExecuteAsync(Core.Midi.MidiRoles.Arp);
+        Assert.True(melody.RoleOptions.Single(o => o.Role == Core.Midi.MidiRoles.Arp).IsCurrent);
+        Assert.False(melody.RoleOptions.Single(o => o.Role == Core.Midi.MidiRoles.Melody).IsCurrent);
+
+        // Shuffle: a random order until the search changes.
+        midi.ClearFitCommand.Execute(null);
+        Assert.False(midi.IsPairing);
+        midi.SelectedRole = midi.RoleChips[0];
+        await midi.ShuffleCommand.ExecuteAsync(null);
+        Assert.True(midi.IsShuffled);
+        Assert.StartsWith("Shuffled", midi.ResultText);
+        midi.Search = "lead";
+        Assert.False(midi.IsShuffled);
+    }
+
+    [Fact]
+    public async Task A_songs_midi_tab_lists_parts_that_fit_it_already_moved_and_not_its_own()
+    {
+        const int bar = 4 * 96;
+        int[][] cMinor = [[60, 63, 67], [56, 60, 63], [51, 55, 58], [58, 62, 65]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Moody", Ppq = 96 };
+        chords.Track("Piano").AddRange(cMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Moody Cm.mid"), Core.Export.MidiWriter.Write(chords));
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        var project = MidiBrowserTests.FlProjectWithChords(songs);   // Am F C G on Serum
+        _db.Upsert(Core.Library.Scanner.Analyse(project));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var tab = new SongMidiViewModel(main.Midi, main, project, "Chords Song");
+        await tab.LoadAsync();
+
+        var row = Assert.Single(tab.Rows);   // the song's own chords are left out
+        Assert.Equal("Moody Cm", row.Title);
+        Assert.Equal("down 3 semitones", row.MoveText);
+        Assert.Equal(1, tab.GoodCount);
+        Assert.Equal("1 good fit", tab.CountText);
+        Assert.Contains("Am", tab.Status);
+
+        tab.Kind = SongMidiViewModel.Kinds.First(k => k.Role == Core.Midi.MidiRoles.Melody);
+        await Task.Yield();
+        Assert.Empty(tab.Rows);
+
+        // The same list on the MIDI page, fitted to this song.
+        await tab.OpenInMidiPageCommand.ExecuteAsync(null);
+        Assert.Same(main.Midi, main.SelectedNav.Page);
+        Assert.Equal("Chords Song", main.Midi.Fit!.Name);
+    }
+
     sealed class HeadlessUi : IPlatformUi
     {
         // Sweep previews and the Sounds list are worked out straight away here, so a test can check them at once.

@@ -386,7 +386,7 @@
         </StackPanel>
 
         <TabControl x:Name="Tabs" Margin="12,14,12,0" Classes="detailTabs">
-            <TabItem Header="Overview">
+            <TabItem Header="Overview" IsSelected="{Binding PreviewShown, Mode=OneWayToSource}">
                 <!-- A line of counts, then the arrangement filling the rest. Fix's list opens under it, with a divider to drag between them. -->
                 <Grid x:Name="OverviewGrid" Margin="12,10,12,12" RowDefinitions="Auto,*,Auto,Auto">
                     <WrapPanel Margin="-4,0,0,8">
@@ -413,10 +413,15 @@
                         <Button Classes="countLink" Tag="Details" Click="OnSeeAll" ToolTip.Tip="See the tracks, your tags and notes, and the file's details">
                             <TextBlock Classes="count" Text="{Binding TracksCountText}" />
                         </Button>
+                        <TextBlock Classes="countDot" Text="·" />
+                        <Button Classes="countLink" Tag="MIDI that fits" Click="OnSeeAll"
+                                ToolTip.Tip="MIDI from your other songs and MIDI folders that fits this one, already in its key">
+                            <TextBlock Classes="count" Text="{Binding SongMidi.LinkText}" />
+                        </Button>
                     </WrapPanel>
 
-                    <!-- The arrangement (filled in by the Project preview work). -->
-                    <ContentControl x:Name="ArrangementSlot" Grid.Row="1" />
+                    <!-- The arrangement. Read when Overview first shows; Full size opens it in its own window. -->
+                    <v:ArrangementPanel Grid.Row="1" Margin="-12,-4,-12,0" IsVisible="{Binding CanPreview}" />
 
                     <GridSplitter x:Name="ArrangementDivider" Grid.Row="2" Height="14" Background="Transparent" ResizeDirection="Rows"
                                   IsVisible="{Binding IsFixOpen}" DragCompleted="OnArrangementDividerMoved"
@@ -613,6 +618,11 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </DockPanel>
+            </TabItem>
+
+            <!-- MIDI from your other projects and MIDI folders that fits this song's harmony, already in its key. -->
+            <TabItem Header="MIDI that fits">
+                <ContentControl Margin="12,14,12,12" Content="{Binding SongMidi}" />
             </TabItem>
 
             <TabItem Header="Details">

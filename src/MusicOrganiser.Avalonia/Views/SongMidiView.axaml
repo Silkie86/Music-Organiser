@@ -1,0 +1,78 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
+             x:Class="MusicOrganiser.Avalonia.Views.SongMidiView"
+             x:DataType="vm:SongMidiViewModel">
+    <!-- A song's "MIDI that fits": parts from your other projects and MIDI folders that fit its harmony, already moved into its key. -->
+    <UserControl.Styles>
+        <Style Selector="TextBlock.fitScore">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+        </Style>
+        <Style Selector="TextBlock.small">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <Button DockPanel.Dock="Right" Content="Open on the MIDI page" Command="{Binding OpenInMidiPageCommand}" VerticalAlignment="Center"
+                    ToolTip.Tip="The same list with search, every kind, and What goes with this?" />
+            <StackPanel Spacing="6">
+                <TextBlock Text="{Binding Status}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                <ListBox Classes="chips" ItemsSource="{x:Static vm:SongMidiViewModel.Kinds}" SelectedItem="{Binding Kind}">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:RoleChip">
+                            <TextBlock Text="{Binding Label}" />
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </StackPanel>
+        </DockPanel>
+
+        <Panel>
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" IsVisible="{Binding IsLoading}">
+                <Arc Classes="spinner" Width="22" Height="22" HorizontalAlignment="Center" />
+                <TextBlock Text="Finding MIDI that fits…" Classes="small" HorizontalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Text="Nothing to show yet." Classes="small" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       IsVisible="{Binding IsEmpty}" />
+            <ListBox ItemsSource="{Binding Rows}" SelectedItem="{Binding Selected}" Background="Transparent"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}"
+                     DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:MidiRow">
+                        <Grid ColumnDefinitions="Auto,*,160,Auto" Margin="0,2">
+                            <Button Command="{Binding PlayCommand}" Padding="9,5" Margin="0,0,10,0" VerticalAlignment="Center"
+                                    ToolTip.Tip="Listen, already moved into this song's key (with a stand-in sound)">
+                                <Panel>
+                                    <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
+                                    <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
+                                </Panel>
+                            </Button>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
+                                <TextBlock Text="{Binding From}" Classes="small" ToolTip.Tip="{Binding Entry.Phrase.Source.Path}" />
+                                <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding ChordsText}" />
+                            </StackPanel>
+                            <views:NoteRoll Grid.Column="2" Height="40" Channel="{Binding Channel}" Position="{Binding Position}"
+                                            SeekCommand="{Binding SeekCommand}" />
+                            <StackPanel Grid.Column="3" Width="110" Margin="10,0,4,0" VerticalAlignment="Center" ToolTip.Tip="{Binding FitWhy}">
+                                <TextBlock Classes="fitScore" Text="{Binding FitText}" />
+                                <TextBlock Classes="small" HorizontalAlignment="Right" Text="{Binding MoveText}" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Panel>
+    </DockPanel>
+</UserControl>
