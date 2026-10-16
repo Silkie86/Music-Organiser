@@ -71,9 +71,16 @@ public sealed partial class BitwigReader : IProjectReader
 
     static Document? TryDecode(string path, out byte[] raw)
     {
-        raw = File.ReadAllBytes(path);
-        return IsBitwig(raw) ? BitwigFormat.Decode(raw) : null;
+        var file = ReadOnce.Get(path, p =>
+        {
+            var bytes = File.ReadAllBytes(p);
+            return new Decoded(bytes, IsBitwig(bytes) ? BitwigFormat.Decode(bytes) : null);
+        });
+        raw = file.Raw;
+        return file.Doc;
     }
+
+    sealed record Decoded(byte[] Raw, Document? Doc);
 
     public ProjectInfo Read(string path)
     {

@@ -138,6 +138,26 @@ public class Clamp3Tests
     }
 
     [Fact]
+    public void Names_can_count_for_more_or_not_at_all()
+    {
+        var phrases = new[] { Phrase(1, "Keys", MidiRoles.Chords, "a"), Phrase(2, "Pad", MidiRoles.Chords, "b"), Phrase(3, "Dark pad", MidiRoles.Chords, "c") };
+        // "a" sounds a little closer to the description than "b", which is named after it; "c" hasn't been heard yet.
+        var meanings = new Dictionary<string, sbyte[]> { ["a"] = Towards(0, 0.58f), ["b"] = Towards(0, 0.5f) };
+        var catalogue = new MidiCatalogue(phrases, meanings);
+        var words = new float[768];
+        words[0] = 1;
+        List<string> Order(float weight) =>
+            catalogue.Search(new MidiQuery("pad", Words: words, NameWeight: weight), out _).Select(h => h.Entry.Phrase.Hash).ToList();
+
+        // As it comes, the name lifts "b" a little, not past the closer sound of "a".
+        Assert.Equal(["a", "b", "c"], Order(1));
+        // Names counting three times put the part named "Pad" first.
+        Assert.Equal(["b", "a", "c"], Order(3));
+        // The model only: names are ignored, so the part not heard yet drops out.
+        Assert.Equal(["a", "b"], Order(0));
+    }
+
+    [Fact]
     public void Every_set_of_notes_is_heard_once_and_kept_when_files_are_read_again()
     {
         var dir = Fixtures.TempDir();

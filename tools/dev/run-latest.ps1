@@ -183,8 +183,33 @@ Say 'Leave this window open: changes pushed to GitHub show up in the app by them
 Say 'In the app, F12 saves a note (and a picture) for Claude.' 'Cyan'
 Say 'Press Ctrl+C here, or close this window, to stop. (Close just the app and the next change opens it again.)' 'Cyan'
 Say ''
-$watch = Start-Process -FilePath 'dotnet' -ArgumentList @('watch', '--project', $AppProject, '--non-interactive') `
-    -NoNewWindow -PassThru -WorkingDirectory $Repo
+function Start-Watch {
+    Start-Process -FilePath 'dotnet' -ArgumentList @('watch', '--project', $AppProject, '--non-interactive') `
+        -NoNewWindow -PassThru -WorkingDirectory $Repo
+}
+
+function Stop-Watch($Process) {
+    # dotnet watch and the app it started.
+    if ($Process.HasExited) { return }
+    if ($OnWindows) { & taskkill /PID $Process.Id /T /F 2>$null | Out-Null }
+    else { Stop-Process -Id $Process.Id -ErrorAction SilentlyContinue }
+    $Process.WaitForExit(10000) | Out-Null
+}
+
+function Test-NeedsRestart([string]$From, [string]$To) {
+    # Hot reload can change code and screens that already exist, but a running app can't take in a new class, a
+    # new screen or a project change: a screen that names a new class fails to reload ("Unable to resolve type"),
+    # and the app stays on the old build. Those pulls get a fresh build instead.
+    $files = @(& $GitExe -C $Repo diff --name-status $From $To)
+    if ($files | Where-Object { $_ -match '^[ADRC]' }) { return 'files were added or removed' }
+    if ($files | Where-Object { $_ -match '\.(csproj|props|targets|slnx?)$' }) { return 'a project file changed' }
+    $types = & $GitExe -C $Repo diff -U0 $From $To -- '*.cs' |
+        Select-String -Pattern '^\+.*\b(class|record|struct|interface|enum)\s+[A-Z]\w*' -CaseSensitive
+    if ($types) { return 'new code types were added' }
+    return $null
+}
+
+$watch = Start-Watch
 
 try {
     $next = (Get-Date).AddSeconds($PullEvery)
@@ -201,10 +226,18 @@ try {
 
         $news = @(& $GitExe -C $Repo log --format='  %h %s' "$here..$there")
         $changed = @(& $GitExe -C $Repo diff --name-only $here $there)
+        $restart = Test-NeedsRestart $here $there
         Update-ToRemote
         Say ''
         Say "$(Get-Date -Format 'HH:mm:ss')  New from GitHub ($($news.Count) change(s)), now in the app:" 'Green'
         $news | ForEach-Object { Say $_ 'Green' }
+
+        if ($restart) {
+            Say "Restarting the app with a fresh build, because $restart (live reload can't take those in)." 'Yellow'
+            Stop-Watch $watch
+            $watch = Start-Watch
+            continue
+        }
 
         # Rewrite changed screens in place: git replaces files rather than editing them, and HotAvalonia watches
         # for edits, so this makes sure each one reloads.
@@ -215,9 +248,5 @@ try {
     }
 }
 finally {
-    # dotnet watch and the app it started.
-    if (-not $watch.HasExited) {
-        if ($OnWindows) { & taskkill /PID $watch.Id /T /F 2>$null | Out-Null }
-        else { Stop-Process -Id $watch.Id -ErrorAction SilentlyContinue }
-    }
+    Stop-Watch $watch
 }

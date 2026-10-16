@@ -101,18 +101,17 @@ public static partial class PhraseAnalyser
     /// <summary>Every phrase is kept at this resolution: 96 ticks to a beat.</summary>
     public const int Ppq = 96;
     const int Bar = 4 * Ppq;
-    /// <summary>Parts longer than this are cut into <see cref="SplitBars"/>-bar pieces, so a whole song's channel becomes phrases.</summary>
+    /// <summary>Parts longer than this are cut into phrases of 4 to 16 bars, where the music breathes (<see cref="CutPoints"/>).</summary>
     public const int MaxBars = 16;
-    public const int SplitBars = 8;
     /// <summary>The most notes kept in one phrase.</summary>
     public const int MaxNotes = 4096;
     public const int FeatureCount = 48;
 
     /// <summary>
     /// The notes at <see cref="Ppq"/>, muted ones left out, moved so the phrase starts in its first bar (a pattern
-    /// that starts on bar 9 of a song starts on bar 1 here).
+    /// that starts on bar 9 of a song starts on bar 1 here). With <paramref name="keepPlace"/>, they stay where they are.
     /// </summary>
-    public static List<NoteEvent> Normalise(IEnumerable<NoteEvent> notes, int ppq)
+    public static List<NoteEvent> Normalise(IEnumerable<NoteEvent> notes, int ppq, bool keepPlace = false)
     {
         var scale = (double)Ppq / Math.Max(1, ppq);
         var list = notes.Where(n => !n.Muted)
@@ -123,7 +122,7 @@ public static partial class PhraseAnalyser
                 Step = false,
             })
             .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
-        if (list.Count == 0) return list;
+        if (list.Count == 0 || keepPlace) return list;
         var shift = list[0].Start / Bar * Bar;
         if (shift != 0) for (var i = 0; i < list.Count; i++) list[i] = list[i] with { Start = list[i].Start - shift };
         return list;
@@ -138,10 +137,12 @@ public static partial class PhraseAnalyser
     /// <summary>
     /// A part as phrases, with no empty bars before or after any of them (Solomon, 2026-10-15: "midi with a lot of space
     /// either side truncate them"). <see cref="GapBars"/> or more empty bars split it into sections; a section longer than
-    /// <see cref="MaxBars"/> bars is cut into <see cref="SplitBars"/>-bar pieces. Each comes with where it starts in the
-    /// part ("bars 9–16"), or "" when it's the whole part. Pieces with the same notes are kept once.
+    /// <see cref="MaxBars"/> bars is cut where the music breathes (<see cref="CutPoints"/>). Each comes with where it
+    /// starts in the part ("bars 9–16"), or "" when it's the whole part, and how far it was moved to start on bar 1 (in
+    /// ticks), so what sits in the part can be found in the phrase. Pieces with the same notes are kept once.
     /// </summary>
-    public static IEnumerable<(string Where, List<NoteEvent> Notes)> Split(List<NoteEvent> notes)
+    /// <param name="clipStarts">Bars (from the part's start) where a clip starts, when the part was joined from clips: likely places to cut.</param>
+    public static IEnumerable<(string Where, List<NoteEvent> Notes, long From)> Split(List<NoteEvent> notes, IReadOnlySet<long>? clipStarts = null)
     {
         if (notes.Count == 0) yield break;
         var sections = Sections(notes);
@@ -149,13 +150,20 @@ public static partial class PhraseAnalyser
         var seen = new HashSet<string>();
         foreach (var section in sections)
         {
-            var pieces = BarsOf(section) - section[0].Start / Bar <= MaxBars
-                ? [section]
-                : section.GroupBy(n => n.Start / (SplitBars * (long)Bar)).Select(g =>
-                  {
-                      var end = (g.Key + 1) * SplitBars * (long)Bar;   // notes held past the piece are cut at its end
-                      return g.Select(n => n with { Length = Math.Min(n.Length, end - n.Start) }).ToList();
-                  }).ToList();
+            var first = section[0].Start / Bar;
+            var bars = BarsOf(section) - (int)first;
+            var pieces = new List<List<NoteEvent>>();
+            if (bars <= MaxBars) pieces.Add(section);
+            else
+            {
+                var bounds = CutPoints(section, first, bars, clipStarts).Prepend(first).Append(first + bars).ToList();
+                for (var i = 0; i + 1 < bounds.Count; i++)
+                {
+                    long from = bounds[i] * Bar, to = bounds[i + 1] * Bar;   // notes held past the piece are cut at its end
+                    var piece = section.Where(n => n.Start >= from && n.Start < to).Select(n => n with { Length = Math.Min(n.Length, to - n.Start) }).ToList();
+                    if (piece.Count > 0) pieces.Add(piece);
+                }
+            }
             foreach (var piece in pieces)
             {
                 if (!whole && piece.Count < 3) continue;
@@ -163,9 +171,74 @@ public static partial class PhraseAnalyser
                 var trimmed = piece.Select(n => n with { Start = n.Start - firstBar * Bar }).Take(MaxNotes).ToList();
                 if (!seen.Add(HashOf(trimmed))) continue;
                 var lastBar = firstBar + BarsOf(trimmed);
-                yield return (whole ? "" : firstBar + 1 == lastBar ? $"bar {lastBar}" : $"bars {firstBar + 1}–{lastBar}", trimmed);
+                yield return (whole ? "" : firstBar + 1 == lastBar ? $"bar {lastBar}" : $"bars {firstBar + 1}–{lastBar}", trimmed, firstBar * Bar);
             }
         }
+    }
+
+    /// <summary>
+    /// Where to cut a long section into phrases of 4, 8, 12 or 16 bars (the last can be shorter), as bar numbers: where
+    /// the music breathes rather than every 8 bars (Solomon, 2026-10-16: "this could be part of a larger phrase"). A
+    /// piece is a good phrase when the music after it plays it again, and a bar line is a good place to cut when nothing
+    /// is held across it, the last beat before it rests or lands back on the note the section started on, or a clip
+    /// starts there. Of every way to cut the section, the best placed wins. Each cut costs a little, so a 32-bar loop of
+    /// one 8-bar progression becomes four 8-bar pieces (kept as one), not eight 4-bar halves.
+    /// </summary>
+    static List<long> CutPoints(List<NoteEvent> section, long first, int bars, IReadOnlySet<long>? clipStarts)
+    {
+        // Each bar's notes and where they start in it, as one number: equal bars play the same thing.
+        var content = new HashCode[bars];
+        var home = section.Where(n => n.Start - section[0].Start < Ppq / 16).Min(n => n.Key) % 12;
+        foreach (var n in section)
+        {
+            var bar = (int)(n.Start / Bar - first);
+            if (bar >= 0 && bar < bars) content[bar].Add((n.Key, n.Start % Bar));
+        }
+        var barIds = content.Select(c => c.ToHashCode()).ToArray();
+
+        // How much the bars after a piece repeat it (0 to 1).
+        double Repeated(int from, int to)
+        {
+            var length = to - from;
+            var compared = Math.Min(length, bars - to);
+            if (compared <= 0) return 0;
+            var same = 0;
+            for (var i = 0; i < compared; i++) if (barIds[from + i] == barIds[to + i]) same++;
+            return (double)same / length;
+        }
+
+        // How good each bar line is to cut at.
+        var good = new double[bars];
+        for (var b = 1; b < bars; b++)
+        {
+            var at = (first + b) * Bar;
+            var score = -0.6;   // each cut costs this much, so only good places beat a longer piece
+            var held = section.Count(n => n.Start < at && n.Start + n.Length > at + Ppq / 4);
+            var sounding = section.Where(n => n.Start < at && n.Start + n.Length > at - Ppq).ToList();
+            if (held > 0) score -= 0.6 * Math.Min(1, held / 2.0);
+            if (sounding.Count == 0) score += 0.3;   // a rest before the bar line
+            else if (sounding.Min(n => n.Key) % 12 == home) score += 0.4;   // back home
+            if (clipStarts?.Contains(first + b) == true) score += 0.5;
+            good[b] = score;
+        }
+
+        // The best way through: best[p] is the best score for cutting the first p bars into pieces.
+        var best = Enumerable.Repeat(double.NegativeInfinity, bars + 1).ToArray();
+        var from = new int[bars + 1];
+        best[0] = 0;
+        for (var p = 1; p <= bars; p++)
+            for (var length = 1; length <= Math.Min(MaxBars, p); length++)
+            {
+                var size = length switch { 8 or 16 => 0.3, 4 => 0.0, 12 => -0.1, _ => p == bars ? -0.3 : double.NaN };
+                var start = p - length;
+                if (double.IsNaN(size) || double.IsNegativeInfinity(best[start])) continue;
+                var score = best[start] + (start > 0 ? good[start] : 0) + size + 1.2 * Repeated(start, p);
+                if (score > best[p]) (best[p], from[p]) = (score, start);
+            }
+        var cuts = new List<long>();
+        for (var p = from[bars]; p > 0; p = from[p]) cuts.Add(first + p);
+        cuts.Reverse();
+        return cuts;
     }
 
     /// <summary>The part cut wherever <see cref="GapBars"/> or more bars go by with no note playing.</summary>
