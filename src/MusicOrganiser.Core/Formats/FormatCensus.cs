@@ -236,7 +236,7 @@ public sealed class FormatCensus
     {
         0x01 => "u8", 0x02 => "i16", 0x03 => "i32", 0x04 => "i64", 0x05 => "bool", 0x06 => "f32", 0x07 => "f64",
         0x08 => "string", 0x09 => "object", 0x0a => "null", 0x0b => "ref", 0x0d => "blob", 0x0f => "ints",
-        0x12 => "list", 0x14 => "map", 0x15 => "uuid", 0x16 => "rgba", 0x17 => "floats", 0x19 => "strings",
+        0x12 => "list", 0x14 => "map", 0x15 => "uuid", 0x16 => "rgba", 0x17 => "floats", 0x18 => "doubles", 0x19 => "strings",
         0x1a => "named", _ => $"0x{type:x2}",
     };
 
