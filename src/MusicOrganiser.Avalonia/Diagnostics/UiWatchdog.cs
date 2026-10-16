@@ -58,6 +58,8 @@ sealed class UiWatchdog : IDisposable
         {
             answered.Reset();
             var knocked = Stopwatch.GetTimestamp();
+            var paused = GC.GetTotalPauseDuration();
+            var fullCollections = GC.CollectionCount(2);
             Dispatcher.UIThread.Post(answered.Set, DispatcherPriority.Send);
             if (!answered.Wait(Threshold))
             {
@@ -69,7 +71,10 @@ sealed class UiWatchdog : IDisposable
                 var froze = Stopwatch.GetElapsedTime(knocked);
                 SessionLog.Current?.Warning("Freeze",
                     $"The app didn't respond for {Seconds(froze)} on {(page.Length > 0 ? page : "?")}" +
-                    (jobs.Length > 0 ? $", while running: {jobs}" : ", with no job running (a click or the page itself)"));
+                    (jobs.Length > 0 ? $", while running: {jobs}" : ", with no job running (a click or the page itself)") +
+                    // Whether the stall was the garbage collector tidying memory (it stops every thread) or work.
+                    $" [memory clean-up: {Seconds(GC.GetTotalPauseDuration() - paused)} paused, " +
+                    $"{GC.CollectionCount(2) - fullCollections} full]");
             }
             Thread.Sleep(200);
         }

@@ -143,7 +143,7 @@ public sealed class WatchdogTests : IDisposable
 
         var recent = log.Recent();
         Assert.Contains(recent, l => l.Contains("[Job] Started: Scanning plugins (VST3)"));
-        Assert.Contains(recent, l => l.Contains("[Freeze] The app didn't respond for") && l.Contains("on Plugins, while running: Scanning plugins"));
+        Assert.Contains(recent, l => l.Contains("[Freeze] The app didn't respond for") && l.Contains("on Plugins, while running: Scanning plugins") && l.Contains("[memory clean-up: "));
         Assert.Contains(recent, l => l.Contains("[Job] Done: Scanned plugins after"));
         log.Dispose();
     }
