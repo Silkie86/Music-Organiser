@@ -148,6 +148,110 @@ public class ArrangementTests
     }
 
     [Fact]
+    public void StudioOneSongsShowTheirPartsPatternsAndAudio()
+    {
+        // Laid out like Solomon's "Garage baby" (Studio One 6.5): notes live in Performances/*.musicx, found by clipID.
+        var dir = Fixtures.TempDir();
+        Directory.CreateDirectory(Path.Combine(dir, "Media"));
+        WavWriter.Write(Path.Combine(dir, "Media", "Vox.wav"), [new float[44100]], 44100);
+        var path = Path.Combine(dir, "Garage.song");
+        using (var zip = System.IO.Compression.ZipFile.Open(path, System.IO.Compression.ZipArchiveMode.Create))
+        {
+            void Add(string entry, byte[] data) { using var s = zip.CreateEntry(entry).Open(); s.Write(data); }
+            void Text(string entry, string text) => Add(entry, System.Text.Encoding.UTF8.GetBytes(text));
+            Text("metainfo.xml", """<MetaInformation><Attribute x:id="Media:Tempo" value="130"/></MetaInformation>""");
+            Text("Song/mediapool.xml", """
+                <MediaPool><Attributes x:id="rootFolder">
+                  <MediaFolder name="Music"><MusicClip mediaID="{K}" name="Keys"><Url x:id="dataPath" type="1" url="media:///Performances/Keys/Keys(1).musicx"/></MusicClip></MediaFolder>
+                  <MediaFolder name="Pattern"><MusicPatternClip mediaID="{P}"><Url x:id="dataPath" type="1" url="media:///Performances/Impact/Impact(2).pattern"/></MusicPatternClip></MediaFolder>
+                  <MediaFolder name="Audio"><AudioClip mediaID="{A}"><Url x:id="path" type="1" url="file:///F:/Studio%20One/Songs/Garage/Media/Vox.wav"/>
+                    <Attributes x:id="format" frameCount="44100" sampleRate="44100" numChannels="1"/></AudioClip></MediaFolder>
+                </Attributes></MediaPool>
+                """);
+            Text("Song/song.xml", """
+                <Song><Attributes x:id="Root">
+                  <Attributes x:id="timeContext">
+                    <TempoMap x:id="tempoMap"><TempoMapSegment start="0" tempo="0.46153846153846156"/></TempoMap>
+                    <TimeSignatureMap x:id="timeSignatureMap"><TimeSignatureMapSegment start="0" numerator="4" denominator="4"/></TimeSignatureMap>
+                  </Attributes>
+                  <List x:id="Tracks">
+                    <MarkerTrack><MarkerEvent markerType="2" timeFormat="2" name="Start"/><MarkerEvent start="8" timeFormat="2" name="Drop"/></MarkerTrack>
+                    <MediaTrack mediaType="Music" timeFormat="2" name="Impact" color="FFDD6105">
+                      <List x:id="Events"><MusicPatternPart clipID="{P}" timeFormat="2" length="16" name="Pattern"/></List>
+                    </MediaTrack>
+                    <MediaTrack mediaType="Music" timeFormat="2" name="Keyscape" color="FFD89D00">
+                      <List x:id="Events"><MusicPart clipID="{K}" start="8" timeFormat="2" length="8" offset="16" transpose="2" name="Keys"/></List>
+                    </MediaTrack>
+                    <MediaTrack mediaType="Audio" timeFormat="2" mute="1" name="Vox">
+                      <List x:id="Events"><AudioEvent clipID="{A}" start="2.5" timeFormat="0" length="0.46153846153846156" offset="0.25" speed="1" name="Vox"/></List>
+                    </MediaTrack>
+                  </List>
+                </Attributes></Song>
+                """);
+            Text("Performances/Impact/Impact(2).pattern", """
+                <PatternBank><List x:id="performances">
+                  <PatternPerformance stepCount="16" stepLength="0.25">
+                    <PatternStep pitch="36" velocity="1"/><PatternStep start="4" pitch="38" velocity="0.5"/><PatternStep start="6" pitch="42" velocity="0.6" mute="1"/>
+                  </PatternPerformance>
+                </List></PatternBank>
+                """);
+            // {timeFormat: 2, events: [{pitch: 48, length: 1}, {start: 17.5, pitch: 55, length: 0.5, velocity: 0.5}, {start: 22, pitch: 60, length: 4}]}
+            Add("Performances/Keys/Keys(1).musicx", Ubj(("timeFormat", 2L), ("events", new object[]
+            {
+                new (string, object)[] { ("pitch", 48L), ("length", 1.0) },
+                new (string, object)[] { ("start", 17.5), ("pitch", 55L), ("length", 0.5), ("velocity", 0.5) },
+                new (string, object)[] { ("start", 22.0), ("pitch", 60L), ("length", 4.0) },
+            })));
+        }
+
+        var song = ArrangementReader.Read(path).Single();
+        Assert.Equal(130, song.Tempo, 6);
+        Assert.Equal(["Impact", "Keyscape", "Vox"], song.Lanes.Select(l => l.Name));
+        Assert.Equal(0xDD6105, song.Lanes[0].Colour);
+        Assert.Equal([new PreviewMarker(8, "Drop")], song.Markers);
+
+        // The 4-beat pattern repeats through its 16-beat part; the muted step stays muted.
+        var pattern = song.Lanes[0].Clips.Single();
+        Assert.Equal(12, pattern.Notes.Count);
+        Assert.Equal([0.0, 1.0, 4.0, 5.0], pattern.Notes.Where(n => !n.Muted).Select(n => n.Start).Take(4));
+
+        // The part plays beats 16 to 24 of its clip, two semitones up, from beat 8 of the song.
+        var keys = song.Lanes[1].Clips.Single();
+        Assert.Equal((8.0, 8.0), (keys.Start, keys.Length));
+        Assert.Equal([(1.5, 57, 64), (6.0, 62, 102)], keys.Notes.Select(n => (n.Start, n.Key, n.Velocity)));
+        Assert.Equal(2.0, keys.Notes[1].Length, 6);   // cut off where the part ends
+
+        // An audio event's length and offset are in seconds: one beat long, a quarter second in. Its file is in Media/.
+        var vox = song.Lanes[2];
+        Assert.True(vox.Muted);
+        var clip = vox.Clips.Single();
+        Assert.Equal((2.5, 1.0), (clip.Start, Math.Round(clip.Length, 6)));
+        var part = clip.Audio.Single();
+        Assert.True(part.Found);
+        Assert.Equal(0.25, part.From, 6);
+        Assert.Equal(60.0 / 130, part.SecondsPerBeat!.Value, 6);
+    }
+
+    /// <summary>Universal Binary JSON, as Studio One writes .musicx files.</summary>
+    static byte[] Ubj(params (string Key, object Value)[] fields)
+    {
+        var o = new List<byte>();
+        void Str(string s) { var b = System.Text.Encoding.UTF8.GetBytes(s); o.Add((byte)'i'); o.Add((byte)b.Length); o.AddRange(b); }
+        void Val(object v)
+        {
+            switch (v)
+            {
+                case long l: o.Add((byte)'i'); o.Add((byte)(sbyte)l); break;
+                case double d: o.Add((byte)'D'); var b = BitConverter.GetBytes(d); Array.Reverse(b); o.AddRange(b); break;
+                case (string, object)[] obj: o.Add((byte)'{'); foreach (var (k, x) in obj) { Str(k); Val(x); } o.Add((byte)'}'); break;
+                case object[] list: o.Add((byte)'['); foreach (var x in list) Val(x); o.Add((byte)']'); break;
+            }
+        }
+        Val(fields);
+        return [.. o];
+    }
+
+    [Fact]
     public void PeaksFollowTheLoudnessOfTheFile()
     {
         var path = Path.Combine(Fixtures.TempDir(), "Swell.wav");

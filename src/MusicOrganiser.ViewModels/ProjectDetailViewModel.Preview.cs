@@ -14,7 +14,7 @@ public sealed partial class ProjectDetailViewModel
     bool _arrangementRead;
 
     /// <summary>Whether this DAW's projects can be drawn.</summary>
-    public bool CanPreview => Item.Daw is "FL Studio" or "Bitwig Studio" && !Item.FileMissing;
+    public bool CanPreview => Item.Daw is "FL Studio" or "Bitwig Studio" or "Studio One" && !Item.FileMissing;
     public bool HasArrangementChoice => Arrangements.Count > 1;
     public bool HasArrangement => Arrangement is { Lanes.Count: > 0 };
     public IReadOnlyList<string> ArrangementNotes => Arrangement?.Notes ?? [];
@@ -60,7 +60,7 @@ public sealed partial class ProjectDetailViewModel
         {
             ArrangementMessage = Item.FileMissing
                 ? "The project file isn't where it was, so it can't be drawn."
-                : $"Drawing {Item.Daw} projects isn't possible yet. FL Studio and Bitwig projects can be drawn.";
+                : $"Drawing {Item.Daw} projects isn't possible yet. FL Studio, Bitwig and Studio One projects can be drawn.";
             return;
         }
         ArrangementLoading = true;
