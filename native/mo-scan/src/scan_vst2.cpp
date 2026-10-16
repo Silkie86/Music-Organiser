@@ -140,8 +140,22 @@ void writePlugin(Json& j, const std::filesystem::path& path, AEffect* e, const O
                 .str("name", ask(e, effGetParamName, i))
                 .str("units", ask(e, effGetParamLabel, i))
                 .num("value", e->getParameter(e, i))
-                .str("text", ask(e, effGetParamDisplay, i))
-                .end();
+                .str("text", ask(e, effGetParamDisplay, i));
+            if (opt.curve > 0)
+            {
+                // VST2 can only show the text of the value a knob is at, so each step is set, read and put back.
+                float was = e->getParameter(e, i);
+                j.beginArray("curve");
+                for (int k = 0; k <= opt.curve; k++)
+                {
+                    float x = float(k) / float(opt.curve);
+                    e->setParameter(e, i, x);
+                    j.item().num("x", x).num("value", e->getParameter(e, i)).str("text", ask(e, effGetParamDisplay, i)).end();
+                }
+                j.endArray();
+                e->setParameter(e, i, was);
+            }
+            j.end();
         }
         j.endArray();
     }
