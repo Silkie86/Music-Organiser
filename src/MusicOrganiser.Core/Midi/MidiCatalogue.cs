@@ -67,9 +67,11 @@ public sealed class MidiEntry
 /// <param name="Words">What CLaMP 3 makes of <paramref name="Text"/>: when given, the words are read as a description and
 /// parts are ranked by how close they sound to it, instead of only matching names.</param>
 /// <param name="Within">Only the longer phrases this part is in.</param>
+/// <param name="NameWeight">How much words found in a part's names, folders and kind count against the model when
+/// searching by description: 1 as usual, more to let names lead, 0 for the model's ears only.</param>
 public sealed record MidiQuery(string Text = "", string? Role = null, string? From = null, HarmonyTarget? Fit = null,
                                MidiEntry? Like = null, int Limit = 500, string? Leave = null, float[]? Words = null,
-                               MidiEntry? Within = null);
+                               MidiEntry? Within = null, float NameWeight = 1);
 
 /// <summary>A part found, with how it fits (when matching a harmony) or how alike it is (for "more like this").</summary>
 public sealed record MidiHit(MidiEntry Entry, HarmonyFit? Fit = null, double? Likeness = null);
@@ -216,9 +218,11 @@ public sealed class MidiCatalogue
         {
             if ((q.Role is not null && e.Role != q.Role) || (q.From is not null && (q.From == "projects") != e.IsProject) ||
                 (leave is not null && e.IsInSong(leave))) continue;
-            var found = words.Count(w => e.SearchText.Contains(w, StringComparison.Ordinal));
-            if (e.Meaning is { } m) scored.Add((e, Clamp3Model.Similarity(described, m) + WordBonus * found));
-            else if (found == words.Length) scored.Add((e, WordBonus * found));
+            var found = q.NameWeight > 0 ? words.Count(w => e.SearchText.Contains(w, StringComparison.Ordinal)) : 0;
+            var lift = WordBonus * q.NameWeight * found;
+            if (e.Meaning is { } m) scored.Add((e, Clamp3Model.Similarity(described, m) + lift));
+            // Parts not heard yet only show when their names have every word (and names count at all).
+            else if (q.NameWeight > 0 && found == words.Length) scored.Add((e, lift));
             if (scored.Count % 8192 == 0) ct.ThrowIfCancellationRequested();
         }
         matching = scored.Count;

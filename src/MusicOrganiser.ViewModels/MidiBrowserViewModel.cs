@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -52,6 +53,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         RoleChips = MidiRoles.All.Prepend("All").Select(r => new RoleChip(r == "All" ? "All" : MidiRoles.Plural(r), r)).ToList();
         _selectedRole = RoleChips[0];
         _includeOlderSaves = db.GetSetting(MidiIndexer.OlderSavesKey) == "1";
+        if (double.TryParse(db.GetSetting(NameWeightKey), NumberStyles.Float, CultureInfo.InvariantCulture, out var weight))
+            _nameWeight = Math.Clamp(weight, 0, 3);
     }
 
     public MidiIndex Index => _index;
@@ -129,6 +132,25 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [ObservableProperty] string _meaningText = "";
     /// <summary>The model is listening to parts it hasn't heard yet.</summary>
     [ObservableProperty] bool _isHearing;
+
+    public const string NameWeightKey = "midi_name_weight";
+
+    /// <summary>
+    /// How much names, folders and kinds count against what the model hears, when searching by description: 0 is the
+    /// model only, 1 as it comes, 3 lets names lead. Saved, so it stays as you set it.
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(NameWeightText))] double _nameWeight = 1;
+
+    public string NameWeightText => NameWeight <= 0 ? "Sound only: names are ignored"
+        : NameWeight < 1 ? "Mostly sound, names help a little"
+        : NameWeight == 1 ? "Sound and names, balanced"
+        : NameWeight < 3 ? "Names count more than sound" : "Names lead, sound sorts them";
+
+    partial void OnNameWeightChanged(double value)
+    {
+        _db.SetSetting(NameWeightKey, value.ToString(CultureInfo.InvariantCulture));
+        if (Search.Trim().Length > 0) _ = RefreshAsync(delayMs: 150);
+    }
 
     public bool CanDownloadMeaning => !MeaningInstalled && !IsDownloadingMeaning;
     public string SearchHint => MeaningInstalled
@@ -218,7 +240,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (request != _searchRequest) return;
         var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
                                   From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, Fit, Like, Leave: _fitPath,
-                                  Words: words, Within: PhrasesOf);
+                                  Words: words, Within: PhrasesOf, NameWeight: (float)NameWeight);
         var (hits, matching) = await UiWork.Run(() => (catalogue.Search(query, out var n), n));
         if (request != _searchRequest) return;
         var keep = Selected?.Entry;
