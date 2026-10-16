@@ -278,6 +278,112 @@ public class MidiBrowserTests
         Assert.Equal(2, PhraseAnalyser.BarsOf(pieces[1].Notes));
     }
 
+    // ---- longer phrases ----
+
+    static TrackClip Clip(string name, int bar, List<NoteEvent> notes) => new(name, bar * (long)Bar, 4L * Bar, notes);
+
+    [Fact]
+    public void Clips_that_play_back_to_back_on_a_track_join_into_one_phrase()
+    {
+        var verse = Chords(AMinor);
+        var hook = Chords(CMinor);
+        TrackClip[] clips =
+        [
+            Clip("Verse", 0, verse), Clip("Hook", 4, hook), Clip("Verse", 8, verse), Clip("Hook", 12, hook),
+            // After a long gap, the verse twice: the same clip again, which is listed on its own already.
+            Clip("Verse", 22, verse), Clip("Verse", 26, verse),
+        ];
+
+        var joined = PhraseJoiner.Phrases("Keys", clips).Single();
+        Assert.Equal("Verse → Hook → Verse → Hook", joined.Clip);
+        Assert.Equal(16, PhraseAnalyser.BarsOf(joined.Notes));
+        Assert.Equal([0L, 4L * Bar, 8L * Bar, 12L * Bar], joined.Members.Select(m => m.Start));
+        // Each clip is known by the hash it has when it's listed on its own.
+        var alone = PhraseAnalyser.HashOf(PhraseAnalyser.Split(PhraseAnalyser.Normalise(verse, Ppq)).Single().Notes);
+        Assert.Equal(alone, joined.Members[0].Hash);
+        Assert.Equal(joined.Members, PhraseMember.Decode(PhraseMember.Encode(joined.Members)));
+    }
+
+    [Fact]
+    public void A_long_part_is_cut_where_its_phrases_end_not_every_8_bars()
+    {
+        // A 4-bar intro on a low A, then one 8-bar progression three times: Am F C G | Am F E Am.
+        int[] e = [52, 56, 59];
+        var intro = Line(Beat, Enumerable.Repeat(45, 16).ToArray());
+        var progression = Chords([.. AMinor, AMinor[0], AMinor[1], e, AMinor[0]]);
+        var song = intro.Concat(Enumerable.Range(0, 3).SelectMany(i => progression.Select(n => n with { Start = n.Start + (4 + 8 * i) * Bar }))).ToList();
+
+        var pieces = PhraseAnalyser.Split(song).ToList();
+        // Every 8 bars would give bars 1–8 (the intro and half the progression), 9–16 and so on.
+        Assert.Equal(["bars 1–4", "bars 5–12"], pieces.Select(p => p.Where));
+        Assert.Equal(PhraseAnalyser.HashOf(progression), PhraseAnalyser.HashOf(pieces[1].Notes));
+        Assert.Equal(4L * Bar, pieces[1].From);
+    }
+
+    [Fact]
+    public void An_fl_songs_patterns_played_one_after_another_become_a_phrase_and_each_knows_it()
+    {
+        var dir = Fixtures.TempDir();
+        var path = FlProjectWithPhrases(dir);
+
+        var phrases = MidiIndexer.FromProject(path);
+        Assert.Equal(["Verse", "Hook", "Verse → Hook → Verse → Hook"], phrases.Select(p => p.Clip));
+        Assert.Equal(16, phrases[2].Analysis.Bars);
+        Assert.Equal([phrases[0].Analysis.Hash, phrases[1].Analysis.Hash], phrases[2].Members.Select(m => m.Hash).Distinct());
+
+        // Saved and read back, the verse and the hook each know the longer phrase they're part of.
+        using var index = new MidiIndex(Path.Combine(dir, "midi.db"));
+        index.Replace(new MidiSource(path, MidiSource.Project, "FL Studio", 1, 1, 120), MidiIndexer.Version, phrases);
+        var catalogue = new MidiCatalogue(index.All());
+        var whole = catalogue.Entries.Single(e => e.IsJoined);
+        Assert.Equal(2, whole.ClipCount);
+        var verseEntry = catalogue.Entries.Single(e => e.Phrase.Clip == "Verse");
+        Assert.Equal([whole], verseEntry.Within!);
+        Assert.Equal([whole], catalogue.Search(new MidiQuery(Within: verseEntry), out _).Select(h => h.Entry));
+        Assert.Null(whole.Within);
+    }
+
+    [Fact]
+    public void Clips_back_to_back_in_bitwigs_arranger_become_a_phrase_too()
+    {
+        // The FL song above, as the app writes it for Bitwig: the verse and hook clips one after another on the Keys track.
+        var dir = Fixtures.TempDir();
+        var song = Readers.FlStudio.ReadSong(FlProjectWithPhrases(dir));
+        var path = Path.Combine(dir, "Song", "Song.bwproject");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, Export.BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => null).Bytes);
+
+        var joined = MidiIndexer.FromProject(path).Single(p => p.Members.Count > 0);
+        Assert.Equal("Keys", joined.Part);
+        Assert.Equal(16, joined.Analysis.Bars);
+        Assert.Equal(4, joined.Members.Count);
+    }
+
+    [Fact]
+    public void A_midi_db_from_before_phrases_were_joined_gets_the_new_column()
+    {
+        var path = Path.Combine(Fixtures.TempDir(), "midi.db");
+        using (var old = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+        {
+            old.Open();
+            using var cmd = old.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE sources (path TEXT PRIMARY KEY COLLATE NOCASE, kind TEXT NOT NULL, daw TEXT, mtime INTEGER, size INTEGER,
+                                      tempo REAL, version INTEGER, error TEXT);
+                CREATE TABLE phrases (id INTEGER PRIMARY KEY, source TEXT NOT NULL COLLATE NOCASE REFERENCES sources(path) ON DELETE CASCADE,
+                    part TEXT, clip TEXT, role TEXT, role_why TEXT, drums INTEGER, bars INTEGER, notes INTEGER, lowest INTEGER, highest INTEGER,
+                    key_tonic INTEGER, key_minor INTEGER, key_conf REAL, chroma BLOB, chords TEXT, features BLOB, hash TEXT, data BLOB);
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        using var index = new MidiIndex(path);
+        var notes = Chords(AMinor);
+        index.Replace(new MidiSource("a.mid", MidiSource.File, "", 1, 1, null), MidiIndexer.Version,
+                      [new IndexedPhrase("Keys", "A", notes, PhraseAnalyser.Analyse(notes), false) { Members = [new("ABC", 0, Bar)] }]);
+        Assert.Equal("ABC@0+384", index.All().Single().Members);
+    }
+
     [Fact]
     public void Each_track_of_a_midi_file_is_its_own_part_to_fit()
     {
@@ -341,6 +447,26 @@ public class MidiBrowserTests
         Assert.Contains(index.All(), p => p.Source.Path == first);
         db.SetSetting(MidiIndexer.OlderSavesKey, "0");
         Assert.Equal(1, indexer.Run().Forgotten);
+    }
+
+    /// <summary>An FL song whose "Keys" plays pattern Verse (Am F C G), then Hook (Cm Ab Eb Bb), then both again, 4 bars each.</summary>
+    internal static string FlProjectWithPhrases(string dir)
+    {
+        static byte[] Pattern(int[][] chords) =>
+            chords.SelectMany((c, bar) => c.Select(k => Fixtures.Note((uint)(bar * Bar), 0, Bar, (ushort)k, 100))).SelectMany(b => b).ToArray();
+        const uint Four = 4 * Bar;
+        var b = new Fixtures.FlpBuilder()
+            .Ascii(199, "25.1.0.4868")
+            .Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Keys")
+            .Data(213, Fixtures.WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Serum_x64.dll", "Xfer Records", [1, 2, 3, 4]))
+            .Word(65, 1).Text(193, "Verse").Data(224, Pattern(AMinor))
+            .Word(65, 2).Text(193, "Hook").Data(224, Pattern(CMinor))
+            .Data(233, [.. Fixtures.PlaylistItem25(0, 20481, Four), .. Fixtures.PlaylistItem25(Four, 20482, Four),
+                        .. Fixtures.PlaylistItem25(2 * Four, 20481, Four), .. Fixtures.PlaylistItem25(3 * Four, 20482, Four)]);
+        var path = Path.Combine(dir, "Phrases.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
     }
 
     internal static string FlProjectWithChords(string dir)

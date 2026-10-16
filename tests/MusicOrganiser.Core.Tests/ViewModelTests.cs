@@ -1366,6 +1366,34 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_clip_shows_the_longer_phrase_it_plays_in_with_itself_lit_up()
+    {
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        _db.Upsert(Core.Library.Scanner.Analyse(MidiBrowserTests.FlProjectWithPhrases(songs)));
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+
+        var hook = midi.Results.Single(r => r.Title == "Keys · Hook");
+        Assert.Equal("Part of a 16-bar phrase", hook.PhraseText);
+        var whole = midi.Results.Single(r => r.Entry.IsJoined);
+        Assert.Equal("Joined from 2 clips", whole.PhraseText);
+        Assert.Equal([0L, 4 * 384, 8 * 384, 12 * 384], whole.Spans!.Select(s => s.Start));
+        Assert.DoesNotContain(whole.Spans!, s => s.Lit);
+
+        midi.Selected = hook;
+        midi.ShowWholePhraseCommand.Execute(null);
+        var shown = Assert.Single(midi.Results);
+        Assert.True(shown.Entry.IsJoined);
+        Assert.Equal([false, true, false, true], shown.Spans!.Select(s => s.Lit));   // the hook, both times it plays
+        Assert.Contains("longer phrase", midi.ResultText);
+
+        midi.ClearPhrasesCommand.Execute(null);
+        Assert.Equal(3, midi.Results.Count);
+    }
+
+    [Fact]
     public async Task A_songs_midi_tab_lists_parts_that_fit_it_already_moved_and_not_its_own()
     {
         const int bar = 4 * 96;
