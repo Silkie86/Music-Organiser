@@ -49,8 +49,10 @@ public static class DuplicateFinder
     /// Converted copies are the same sound when their whole sounds are at most this far apart, in dB (see
     /// <see cref="SoundPrint.SpectralDistance"/>); otherwise they're only very similar. An MP3 or similar
     /// shifts the sound a little (up to about 1 dB at 128 kbit/s), so it gets <see cref="SameDbLossy"/>.
+    /// 0.1 comes from Solomon's library (2026-10-16, 39k converted pairs): real copies pile up below 0.1, while
+    /// from 0.1 to 0.5 most pairs were round robins (R1 vs R4) and a reverb's L/R/position takes, not copies.
     /// </summary>
-    public const double SameDb = 0.5, SameDbLossy = 1.2;
+    public const double SameDb = 0.1, SameDbLossy = 1.2;
     /// <summary>
     /// A match whose sounds are typically (the median) further apart than this, in dB, isn't a copy at all: it was
     /// matched on its rhythm or onset only, like a kick loop and a hi-hat loop. A copy with another EQ, more drive
