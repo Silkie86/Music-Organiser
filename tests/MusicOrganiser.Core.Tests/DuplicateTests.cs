@@ -60,6 +60,13 @@ public class DuplicateTests
         org.Scan([Path.Combine(root, "Samples")]);
         Assert.Equal(org.Sounds.Count, DuplicateFinder.Update(org));
 
+        // Each run leaves a report of every match and its scores beside the library, for tuning the limits.
+        var report = Directory.GetFiles(Path.Combine(root, "reports", "duplicates"), "matches-*.csv").Single();
+        var rows = File.ReadAllLines(report);
+        Assert.StartsWith("kind,verdict,score", rows[0]);
+        Assert.Contains(rows, r => r.StartsWith("Converted,same,"));
+        Assert.Contains(rows, r => r.StartsWith("Trimmed,similar,"));
+
         var groups = DuplicateFinder.Groups(org);
         string Names(DuplicateGroup g) => string.Join(" + ", g.Members.Select(m => m.Sound.Name));
         Assert.True(groups.Count == 5, string.Join("\n", groups.Select(Names)));

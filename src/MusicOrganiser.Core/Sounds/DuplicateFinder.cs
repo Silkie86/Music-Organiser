@@ -97,7 +97,53 @@ public static class DuplicateFinder
         }
         CompareLikelyCopies(org, progress, ct);
         CheckSameness(org, progress, ct);
+        WriteReport(org);
         return todo.Count;
+    }
+
+    // ---- the match report ---------------------------------------------------------------------------
+
+    /// <summary>How many match reports are kept in reports\duplicates; older ones are tidied away.</summary>
+    const int ReportsKept = 5;
+
+    /// <summary>
+    /// Writes every scored match (exact copies are found by hash and need no tuning) to reports\duplicates\matches-&lt;stamp&gt;.csv next to the library, so the
+    /// "Same sound" and "Very similar" limits can be tuned on a real library without copying the whole database.
+    /// Only reads; a report that can't be written is skipped. Returns where it went, or null.
+    /// </summary>
+    public static string? WriteReport(SoundOrganiser org)
+    {
+        try
+        {
+            var matches = org.Library.Matches();
+            if (matches.Count == 0) return null;
+            var paths = org.Everything.ToDictionary(s => s.Id, s => (s.Path, s.Seconds));
+            var folder = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(org.Library.FilePath))!, "reports", "duplicates");
+            Directory.CreateDirectory(folder);
+            var file = System.IO.Path.Combine(folder, $"matches-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.csv");
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            using (var w = new StreamWriter(file, false, new System.Text.UTF8Encoding(true)))
+            {
+                w.WriteLine("kind,verdict,score,apart_db,typical_db,offset_s,seconds_a,seconds_b,file_a,file_b");
+                foreach (var m in matches)
+                {
+                    paths.TryGetValue(m.A, out var a);
+                    paths.TryGetValue(m.B, out var b);
+                    var verdict = !IsCopy(m) ? "dropped" : m.Kind == CopyKind.Exact || IsSame(m, a.Path, b.Path) ? "same" : "similar";
+                    w.WriteLine(string.Join(",",
+                        m.Kind, verdict, m.Score.ToString("0.###", inv), m.Apart?.ToString("0.###", inv) ?? "",
+                        m.Typical?.ToString("0.###", inv) ?? "", m.Offset.ToString("0.###", inv),
+                        a.Seconds.ToString("0.###", inv), b.Seconds.ToString("0.###", inv),
+                        Csv(a.Path ?? m.A.ToString(inv)), Csv(b.Path ?? m.B.ToString(inv))));
+                }
+            }
+            foreach (var old in new DirectoryInfo(folder).GetFiles("matches-*.csv").OrderByDescending(f => f.Name).Skip(ReportsKept))
+                old.Delete();
+            return file;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+
+        static string Csv(string v) => "\"" + v.Replace("\"", "\"\"") + "\"";
     }
 
     // ---- printing, and SoundFingerprinting look-ups as each sound is printed ------------------------
