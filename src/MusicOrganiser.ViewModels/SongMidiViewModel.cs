@@ -36,7 +36,9 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     /// <summary>What the song's harmony is ("Key A minor · Am F C G"), or why nothing can be shown.</summary>
     [ObservableProperty] string _status = "";
     /// <summary>For the song panel's counts line: "12 good fits", once worked out.</summary>
-    [ObservableProperty] string _countText = "";
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(LinkText))] string _countText = "";
+    /// <summary>The counts line's link: "MIDI that fits" until it's been worked out, then "12 good fits".</summary>
+    public string LinkText => CountText.Length > 0 ? CountText : "MIDI that fits";
     [ObservableProperty] int _goodCount;
 
     public bool HasSelection => Selected is not null;
