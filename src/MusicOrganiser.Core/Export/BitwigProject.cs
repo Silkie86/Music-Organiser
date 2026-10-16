@@ -349,7 +349,7 @@ public static class BitwigProject
                 else if (SettingPath(copies[0].Plugin, a.Parameter) is not { } setting) left = "FL didn't save which of the effect's settings it moves";
                 else
                     foreach (var (track, device, effect) in copies)
-                        if (!t.AddPluginAutomation(track, device, setting.Path, setting.Id, SettingName(a.Name, effect.Name), a.Points.Select(p => (p.Beat, p.Value))))
+                        if (!t.AddPluginAutomation(track, device, setting.Path, setting.Id, SettingName(a.Name, effect.Name), Lane(a)))
                             left = noLane;
                 if (left is not null) notes.Add($"{a.Name}: automation left out ({left})");
                 continue;
@@ -374,7 +374,7 @@ public static class BitwigProject
                     foreach (var track in on.Tracks)
                     {
                         if (track.Obj(0x165)?.Obj(pan ? 0x1a5 : 0x1a4) is not { } param) why = "this track has no fader";
-                        else if (!t.AddMixerAutomation(track, param, pan ? "Pan" : "Volume", a.Points.Select(p => (p.Beat, value(p.Value)))))
+                        else if (!t.AddMixerAutomation(track, param, pan ? "Pan" : "Volume", Lane(a, value)))
                             why = noLane;
                     }
                     break;
@@ -385,8 +385,7 @@ public static class BitwigProject
                 case FlControl.PluginParameter when instruments.TryGetValue(a.Channel, out var instrument):
                     if (SettingPath(instrument.Plugin, a.Parameter) is not { } setting)
                         why = "FL didn't save which of the plugin's settings it moves";
-                    else if (!t.AddPluginAutomation(on.Tracks[0], instrument.Device, setting.Path, setting.Id, SettingName(a.Name, on.Channel.Name),
-                                                    a.Points.Select(p => (p.Beat, p.Value))))
+                    else if (!t.AddPluginAutomation(on.Tracks[0], instrument.Device, setting.Path, setting.Id, SettingName(a.Name, on.Channel.Name), Lane(a)))
                         why = noLane;
                     break;
                 case FlControl.PluginParameter:
@@ -423,6 +422,10 @@ public static class BitwigProject
             ? file.Str(0x3b) : "";
         return new FlPlugin(name, newer.Str(0x9b), "VST3", classId, null, path);
     }
+
+    /// <summary>An automation clip's points for a lane, with where the FL clip each one belongs to starts (see <see cref="FlAutomation.StartOf"/>).</summary>
+    static IEnumerable<(double Beat, double Value, double From)> Lane(FlAutomation a, Func<double, double>? value = null) =>
+        a.Points.Select(p => (p.Beat, value is null ? p.Value : value(p.Value), a.StartOf(p)));
 
     /// <summary>
     /// How Bitwig names a plugin's setting: a VST2 setting by its number, which FL uses too; a VST3 one by
@@ -554,6 +557,8 @@ public static class BitwigProject
         readonly BwObject _group;
         readonly BwObject _clip, _keyLane, _note;
         readonly BwObject? _mixerLane, _pluginLane, _point, _setting, _audioClip;
+        /// <summary>Where the FL clip each automation point came from starts (see <see cref="AddLane"/>).</summary>
+        readonly Dictionary<BwObject, double> _from = new(ReferenceEqualityComparer.Instance);
         readonly HashSet<BwObject> _audioTracks = new(ReferenceEqualityComparer.Instance);
         readonly Copier _copier;
         public BwObject SamplerTrack { get; }
@@ -811,7 +816,7 @@ public static class BitwigProject
         }
 
         /// <summary>Automates the track's volume or pan fader (<paramref name="param"/>), with values in Bitwig's units.</summary>
-        public bool AddMixerAutomation(BwObject track, BwObject param, string name, IEnumerable<(double Beat, double Value)> points) =>
+        public bool AddMixerAutomation(BwObject track, BwObject param, string name, IEnumerable<(double Beat, double Value, double From)> points) =>
             AddLane(track, _mixerLane, target => ReferenceEquals(target.Obj(0x41), param), target =>
             {
                 target.Set(0x41, new BwLink(param), 0x09);
@@ -823,7 +828,7 @@ public static class BitwigProject
         /// from 0 to 1. The plugin also lists the setting, as Bitwig saves an automated one.
         /// </summary>
         public bool AddPluginAutomation(BwObject track, BwObject device, string path, long id, string name,
-                                        IEnumerable<(double Beat, double Value)> points)
+                                        IEnumerable<(double Beat, double Value, double From)> points)
         {
             var list = points.ToList();
             var added = AddLane(track, _pluginLane, target => ReferenceEquals(target.Obj(0xec), device) && target.Str(0xed) == path, target =>
@@ -846,11 +851,12 @@ public static class BitwigProject
 
         /// <summary>
         /// Adds points, joined by straight lines, to the track's lane for a setting, making the lane from
-        /// <paramref name="pattern"/> if the track has none yet; several FL clips moving one setting share it.
+        /// <paramref name="pattern"/> if the track has none yet; several FL clips moving one setting share it, in time
+        /// order, and where two meet on a beat the one starting there goes last (From is where its clip starts).
         /// False when the template has no lane to copy.
         /// </summary>
         bool AddLane(BwObject track, BwObject? pattern, Func<BwObject, bool> moves, Action<BwObject> setUp,
-                     IEnumerable<(double Beat, double Value)> points)
+                     IEnumerable<(double Beat, double Value, double From)> points)
         {
             if (pattern is null || _point is null || track.Obj(0x2dc9)?[0x4ba] is not List<object?> lanes) return false;
             var lane = lanes.Select(track.Resolve).OfType<BwObject>().FirstOrDefault(l => l.Obj(0x2a3) is { } target && moves(target));
@@ -868,9 +874,11 @@ public static class BitwigProject
                 point.Set(0x28f, p.Value);
                 if (point.Has(0x359e)) point.Set(0x359e, (byte)1, 0x01);
                 if (point.Has(0xba6)) point.Set(0xba6, 0.0);   // a straight line to the next point
+                _from[point] = p.From;
                 return (object?)point;
             }));
-            var sorted = list.OrderBy(x => lane.Resolve(x)!.Num(0x2af)).ToList();
+            var sorted = list.OrderBy(x => Math.Round((lane.Resolve(x)?.Num(0x2af) ?? 0) * 1e4))
+                             .ThenBy(x => lane.Resolve(x) is { } o ? _from.GetValueOrDefault(o) : 0).ToList();
             list.Clear();
             list.AddRange(sorted);
             return true;

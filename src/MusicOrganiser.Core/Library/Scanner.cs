@@ -62,22 +62,25 @@ public sealed class Scanner(LibraryDb db)
         return Readers.For(path) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
     }
 
-    /// <summary>Whether a project's sample is on this PC: see <see cref="SampleLocator"/> for where it looks.</summary>
-    public static bool SampleFound(string sample, string projectPath) => SampleLocator.Shared.Found(sample, projectPath);
-
-    public static LibraryDb.IndexedFile Analyse(string path)
+    /// <summary>
+    /// Reads one project. Whether each of its samples is on this PC is decided by <paramref name="samples"/> (see
+    /// <see cref="SampleLocator"/> for where it looks); a scan passes one locator for all its projects, so each folder is
+    /// read once, and a project read on its own gets a fresh one, so a sample put back just now counts.
+    /// </summary>
+    public static LibraryDb.IndexedFile Analyse(string path, SampleLocator? samples = null)
     {
+        samples ??= new SampleLocator();
         var fi = new FileInfo(path);
         var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
         try
         {
             var info = Readers.For(path)!.Read(path);
-            var samples = info.Samples.Select(s => (s, SampleFound(s, path))).ToList();
+            var found = info.Samples.Select(s => (s, samples.Found(s, path))).ToList();
             var hardware = info.Plugins.Select(p => p.Name).Concat(info.Hardware)
                                .Select(PluginCatalog.ElektronDevice)
                                .OfType<string>().Distinct().Order().ToList();
             var notes = info.CanExtractMidi ? ProjectKey.Read(path) : new SongNotes("", -1, -1);
-            return new(path, fi.Length, mtime, info, null, samples, hardware)
+            return new(path, fi.Length, mtime, info, null, found, hardware)
             {
                 DetectedKey = notes?.Key, NoteCount = notes?.Notes ?? -1, LengthBars = notes?.Bars ?? -1,
             };
@@ -106,10 +109,11 @@ public sealed class Scanner(LibraryDb db)
 
         // Read the projects on every core; save them here, in path order, a batch at a time,
         // so a new numbered save always finds the earlier ones it takes its status from.
+        var samples = new SampleLocator();
         var analysed = todo.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).WithCancellation(ct)
             .Select(f =>
             {
-                try { return Parallelism.Background(() => Analyse(f)); }
+                try { return Parallelism.Background(() => Analyse(f, samples)); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }   // deleted or locked since it was found
             });
         var batch = new List<LibraryDb.IndexedFile>();

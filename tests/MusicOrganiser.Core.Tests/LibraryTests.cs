@@ -348,6 +348,22 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void AScanFindsASampleAnywhereInTheProjectsFolderEvenOnePutBackSinceTheLastScan()
+    {
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        var fl = _db.Projects().Single(x => x.Daw == "FL Studio");
+        Assert.Equal(1, fl.MissingSamples);
+
+        // Solomon's rule: look in the project's folders, not just beside it (here Bitwig's bounce folder).
+        Directory.CreateDirectory(Path.Combine(_root, "bounce"));
+        File.WriteAllBytes(Path.Combine(_root, "bounce", "Kick 01.wav"), [0]);
+        scanner.ScanProjects(full: true);
+        Assert.True(_db.Project(fl.Id)!.Samples.Single(s => s.Path.EndsWith("Kick 01.wav")).Found);
+        Assert.Equal(0, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
+    }
+
+    [Fact]
     public void MarksDeletedProjectsAsMissing()
     {
         var scanner = new Scanner(_db);
@@ -432,7 +448,7 @@ public class SampleLocatorTests
         var kick = Make(content, "Drums", "Kicks", "Kick 9.wav");
         Make(content, "Other", "Snare.wav");
         Make(content, "Projects", "Old Song", "recordings", "Audio 1-1.wav");
-        var locator = new SampleLocator(TimeSpan.FromMinutes(5), _ => [content]);
+        var locator = new SampleLocator(_ => [content]);
 
         Assert.Equal(recording, locator.Locate(@"F:\Bitwig Studio\Projects\This Song\recordings\Syntakt 2-1.wav", project));
         Assert.Equal(bounce, locator.Locate(@"F:\Old exports\Kontakt 7-bounce-6.wav", project));   // anywhere in the project's folder
@@ -444,10 +460,11 @@ public class SampleLocatorTests
         Assert.True(locator.Found(@"%FLStudioFactoryData%\Data\Patches\Packs\Drums\Kick.wav", project));
         Assert.False(locator.Found(@"D:\Gone\Missing.wav", project));
 
-        // A folder is read once for a while; a file that has gone since isn't found.
-        var added = Make(song, "samples", "New.wav");
+        // A locator reads each folder once: a file added since is found by the next one (the next scan), and a file that
+        // has gone since isn't found.
+        var added = Make(song, "bounce", "New.wav");
         Assert.Null(locator.Locate(@"D:\Gone\New.wav", project));
-        Assert.Equal(added, new SampleLocator(TimeSpan.Zero, _ => []).Locate(@"D:\Gone\New.wav", project));
+        Assert.Equal(added, new SampleLocator(_ => []).Locate(@"D:\Gone\New.wav", project));
         File.Delete(bounce);
         Assert.Null(locator.Locate(@"F:\Old exports\Kontakt 7-bounce-6.wav", project));
     }

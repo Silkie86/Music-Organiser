@@ -11,23 +11,22 @@ namespace MusicOrganiser.Core.Library;
 /// <item>at the same path on the project's drive, for a drive that was given a new letter (F: is now K:);</item>
 /// <item>where it would be if the folders it was in moved with the project: a path into the project's own folder,
 /// or into a folder above it ("F:\Bitwig Studio\Projects\Other Song\samples\x.wav" next to "K:\Bitwig Studio\Projects\This Song");</item>
+/// <item>beside the project, or in a folder beside it that a DAW collects into (samples, recordings, Media, Audio);</item>
 /// <item>anywhere in the project's folder tree with the same file name (Bitwig's bounce, multi-samples and
 /// recordings folders, FL Studio's Audio and Samples folders);</item>
 /// <item>in the DAW's own content folders (its factory packs, user library and installed sound packages), where the
 /// folder it's in must have the same name too, since those folders hold thousands of sounds.</item>
 /// </list>
-/// Folder trees are read once and kept for a few minutes, so a scan reads each folder once.
+/// Each folder tree is read once by a locator. A scan uses one locator and lets it go when it's done, so the next scan
+/// sees samples put back since, and the trees aren't kept in memory between scans.
 /// </summary>
-public sealed class SampleLocator(TimeSpan keep, Func<string, IReadOnlyList<string>>? contentFolders = null)
+public sealed class SampleLocator(Func<string, IReadOnlyList<string>>? contentFolders = null)
 {
-    /// <summary>The one the scanner uses.</summary>
-    public static SampleLocator Shared { get; } = new(TimeSpan.FromMinutes(5));
-
     /// <summary>The most files read from one folder tree; a project kept at the top of a big drive stops there.</summary>
     public const int MostFiles = 200_000;
 
     readonly Func<string, IReadOnlyList<string>> _contentFolders = contentFolders ?? DawContentFolders;
-    readonly ConcurrentDictionary<string, (DateTime Read, Lazy<FolderIndex> Index)> _trees = new(StringComparer.OrdinalIgnoreCase);
+    readonly ConcurrentDictionary<string, Lazy<FolderIndex>> _trees = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Whether this sample is on this PC, by the rules above. FL Studio's own content (%FLStudioFactoryData%...) always is.</summary>
     public bool Found(string sample, string projectPath) => sample.StartsWith('%') || Locate(sample, projectPath) is not null;
@@ -45,6 +44,8 @@ public sealed class SampleLocator(TimeSpan keep, Func<string, IReadOnlyList<stri
             var projectDir = Path.GetDirectoryName(projectPath);
             if (parts.Length == 0 || string.IsNullOrEmpty(projectDir)) return null;
             var name = parts[^1];
+            foreach (var sub in Beside)
+                if (Path.Combine(projectDir, sub, name) is var near && File.Exists(near)) return near;
             // A project kept at the top of a drive: only the files beside it, not the whole drive.
             var depth = Path.GetPathRoot(projectDir) is { Length: > 0 } root && Same(root, projectDir) ? 0 : int.MaxValue;
             if (Tree(projectDir, depth).Find(name, folder: null) is { } inProject)
@@ -154,20 +155,20 @@ public sealed class SampleLocator(TimeSpan keep, Func<string, IReadOnlyList<stri
         return folders.Where(f => f.Length > 0 && Path.IsPathRooted(f) && Directory.Exists(f)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    /// <summary>The project's own folder and the folders beside it that DAWs collect samples into.</summary>
+    static readonly string[] Beside = ["", "samples", "recordings", "Media", "Audio", "audio"];
+
     /// <summary>Folders inside a DAW's folders that hold projects, autosaves or history rather than sounds.</summary>
     static readonly HashSet<string> NotContent = new(StringComparer.OrdinalIgnoreCase)
         { "Projects", "Songs", "Shows", "auto-backups", "Backup", "History", "$RECYCLE.BIN", "System Volume Information" };
 
     FolderIndex Tree(string folder, int depth)
     {
-        var now = DateTime.UtcNow;
-        var entry = _trees.AddOrUpdate(folder,
-            f => (now, new Lazy<FolderIndex>(() => FolderIndex.Read(f, depth))),
-            (f, old) => now - old.Read < keep ? old : (now, new Lazy<FolderIndex>(() => FolderIndex.Read(f, depth))));
+        var tree = _trees.GetOrAdd(folder, f => new Lazy<FolderIndex>(() => FolderIndex.Read(f, depth)));
         if (_trees.Count > 4096)
             foreach (var key in _trees.Keys)
                 if (!Same(key, folder)) _trees.TryRemove(key, out _);
-        return entry.Index.Value;
+        return tree.Value;
     }
 
     /// <summary>The sample files in a folder tree, by file name.</summary>

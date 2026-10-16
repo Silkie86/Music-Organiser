@@ -83,7 +83,8 @@ public sealed partial class BitwigReader : IProjectReader
         if (doc?.Root is not null && doc.BodyError is null)
             ReadDecoded(doc, path, info);
         else
-            ReadByTextScan(raw, Path.GetDirectoryName(path) ?? ".", info, doc?.BodyError);
+            ReadByTextScan(raw, Path.GetDirectoryName(path) ?? ".", info, doc?.BodyError,
+                           doc?.MetaList("used_files").Select(CollectedKey).ToHashSet(StringComparer.OrdinalIgnoreCase));
 
         if (doc is not null)
         {
@@ -171,9 +172,10 @@ public sealed partial class BitwigReader : IProjectReader
     [GeneratedRegex(@"(-\d+)+$")]
     private static partial Regex CopySuffix();
 
-    /// <summary>Rooted on this OS, or a Windows drive path (the files come from Windows).</summary>
+    /// <summary>Rooted on this OS, or a Windows drive or network path (the files come from Windows).</summary>
     static bool IsAbsolute(string p) =>
-        Path.IsPathRooted(p) || (p.Length > 2 && char.IsAsciiLetter(p[0]) && p[1] == ':' && p[2] is '\\' or '/');
+        Path.IsPathRooted(p) || p.StartsWith(@"\\", StringComparison.Ordinal) ||
+        (p.Length > 2 && char.IsAsciiLetter(p[0]) && p[1] == ':' && p[2] is '\\' or '/');
 
     static PluginKind BitwigKind(string name, string category)
     {
@@ -378,7 +380,7 @@ public sealed partial class BitwigReader : IProjectReader
 
     // ---- Fallback: text scan ----------------------------------------------------------
 
-    void ReadByTextScan(byte[] raw, string dir, ProjectInfo info, string? why)
+    void ReadByTextScan(byte[] raw, string dir, ProjectInfo info, string? why, HashSet<string>? collected)
     {
         info.Confidence = Confidence.Heuristic;
         if (!IsBitwig(raw))
@@ -390,7 +392,7 @@ public sealed partial class BitwigReader : IProjectReader
         foreach (var blob in Blobs(raw))
         {
             var expectVersion = false;
-            foreach (var str in TextScan.Strings(blob))
+            foreach (var str in ScanStrings(blob))
             {
                 var s = str.Trim('\0', ' ');
                 // The version follows its key, either in the same text run or as the next one.
@@ -401,7 +403,8 @@ public sealed partial class BitwigReader : IProjectReader
                 expectVersion = s.EndsWith("application_version_name", StringComparison.Ordinal);
                 if (TextScan.IsAudioPath(s))
                 {
-                    if (ScannedPath(s) is { } p)
+                    // As in a full read, an original that was collected into the project counts once, as its copy.
+                    if (ScannedPath(s) is { } p && !(IsAbsolute(p) && collected?.Contains(CollectedKey(p)) == true))
                         info.Samples.Add(IsAbsolute(p) ? p : Path.GetFullPath(Path.Combine(dir, p)));
                 }
                 else if (TextScan.IsPluginPath(s))
@@ -432,9 +435,31 @@ public sealed partial class BitwigReader : IProjectReader
         if (DrivePath().Match(s) is { Success: true, Index: > 0 } m)
             s = s[m.Index..];
         else if (s.Length > 2 && s[0] == (char)((s.Length - 1) & 0xff) &&
-                 (s[1] == '/' || ProjectFolders.Any(f => s.AsSpan(1).StartsWith(f + "/", StringComparison.OrdinalIgnoreCase))))
+                 (s[1] == '/' || s.AsSpan(1).StartsWith(@"\\") || ProjectFolders.Any(f => s.AsSpan(1).StartsWith(f + "/", StringComparison.OrdinalIgnoreCase))))
             s = s[1..];
         return s.Contains('/') || s.Contains('\\') ? s : null;
+    }
+
+    /// <summary>
+    /// The text in a blob. Bitwig writes a string with a character outside ASCII ("Beyoncé") as UTF-16BE, with the top
+    /// bit of its length set; those are read whole first and blanked out, so the plain scan doesn't find pieces of them.
+    /// </summary>
+    static IEnumerable<string> ScanStrings(ReadOnlyMemory<byte> blob)
+    {
+        var bytes = blob.ToArray();
+        var wide = new List<string>();
+        for (var i = 0; i + 4 <= bytes.Length; i++)
+        {
+            if (bytes[i] != 0x80 || bytes[i + 1] != 0) continue;
+            var chars = bytes[i + 2] << 8 | bytes[i + 3];
+            if (chars < 4 || chars > 4096 || i + 4 + 2 * chars > bytes.Length) continue;
+            var s = Encoding.BigEndianUnicode.GetString(bytes, i + 4, 2 * chars);
+            if (s.Any(c => char.IsControl(c) || c == '\uFFFD') || s.Count(char.IsAscii) * 2 < s.Length) continue;
+            wide.Add(s);
+            Array.Clear(bytes, i, 4 + 2 * chars);
+            i += 3 + 2 * chars;
+        }
+        return TextScan.Strings(bytes).Concat(wide);
     }
 
     /// <summary>The folders Bitwig keeps a project's own files in, next to the .bwproject.</summary>

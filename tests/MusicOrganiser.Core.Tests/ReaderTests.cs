@@ -246,6 +246,23 @@ public class FlStudioTests
                      song.Automation.Single(a => a.Name == "Bass - Volume").Points.Select(p => (p.Beat, p.Value)));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WhereClipsSwitchingAChannelMeetTheOneStartingThereDecides(bool onLinkedFirst)
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25BackToBack(Fixtures.TempDir(), onLinkedFirst));
+
+        // "Kick off" in bars 1 and 3, "Kick on" in bar 2, whichever is linked first in the file.
+        var kick = song.Channels.Single(c => c.Name == "Kick");
+        Assert.Equal(["Kick off", "Kick on"], kick.SwitchedBy.Order());
+        Assert.Equal([(0L, true), (384L, false), (768L, true)], kick.Clips.Select(c => (c.Start, c.Muted)));
+
+        // The volume clip placed again over the second half of itself takes over where it starts: halfway up, it starts again.
+        Assert.Equal([(0.0, 0.0), (4.0, 0.5), (4.0, 0.0), (12.0, 1.0)],
+                     song.Automation.Single(a => a.Name == "Kick - Volume").Points.Select(p => (p.Beat, p.Value)));
+    }
+
     [Fact]
     public void ReadsMixerInsertSettingsEffectSlotsAndWhatAutomationMovesOnThem()
     {
@@ -460,6 +477,33 @@ public class BitwigTests
 
         var known = new BitwigReader { KnownPlugins = new HashSet<string>(["Serum"], StringComparer.OrdinalIgnoreCase) };
         Assert.Contains(known.Read(path).Plugins, p => p.Name == "Serum");
+    }
+
+    [Fact]
+    public void TheTextScanReadsNetworkAndAccentedPathsWholeAndCountsCollectedFilesOnce()
+    {
+        // The metadata reads but the body doesn't (a value of a kind this app doesn't know, as 6.1's lists of doubles were).
+        const string accented = @"F:\Samples\Beyoncé Acapellas\Vocal Chop 03.wav", network = @"\\NAS\Samples\Breaks\Amen Break 136bpm.wav";
+        var dir = Path.Combine(Fixtures.TempDir(), "Song");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "Song.bwproject");
+        File.WriteAllBytes(path, Fixtures.BwWriter.File(
+            meta: m => { m.MetaEntry("used_files", 0x19); m.U32(1); m.StrVal("recordings/BD 1-2.wav"); },
+            body: b =>
+            {
+                b.Begin(0x2e);
+                // Bitwig writes a string's length before it: 42 is "*", which joins the network path's text.
+                foreach (var s in new[] { @"F:\Bitwig Studio\Projects\Song\recordings\BD 1-2.wav", network, @"F:\Samples\Drums\Kick 01.wav" })
+                    b.Str(0x2b9, s);
+                b.Str(0x2b9, accented, utf16: true);   // as Bitwig writes any text with a character outside ASCII
+                b.U32(0x123); b.S.WriteByte(0x7e);
+            }, zip: null));
+
+        var info = new BitwigReader().Read(path);
+        Assert.Equal(Confidence.Heuristic, info.Confidence);
+        // The recording collected into the project counts once, as its copy there, not again where it was recorded.
+        Assert.Equal(new[] { Path.Combine(dir, "recordings", "BD 1-2.wav"), network, @"F:\Samples\Drums\Kick 01.wav", accented }.Order(StringComparer.Ordinal),
+                     info.Samples.Order(StringComparer.Ordinal));
     }
 
     [Fact]
