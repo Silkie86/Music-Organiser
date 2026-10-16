@@ -261,6 +261,11 @@ public class FlStudioTests
         // The volume clip placed again over the second half of itself takes over where it starts: halfway up, it starts again.
         Assert.Equal([(0.0, 0.0), (4.0, 0.5), (4.0, 0.0), (12.0, 1.0)],
                      song.Automation.Single(a => a.Name == "Kick - Volume").Points.Select(p => (p.Beat, p.Value)));
+        // Placed again inside itself, it plays that stretch, then the longer placement carries on.
+        Assert.Equal([(0.0, 0.0), (2.0, 0.25), (2.0, 0.0), (4.0, 0.25), (4.0, 0.5), (8.0, 1.0)],
+                     song.Automation.Single(a => a.Name == "Kick - Pan").Points.Select(p => (p.Beat, p.Value)));
+        Assert.Equal([(0.0, 0.0), (4.0, 0.5), (8.0, 1.0)],
+                     song.Automation.Single(a => a.Name == "Kick - Pitch").Points.Select(p => (p.Beat, p.Value)));
     }
 
     [Fact]
@@ -483,7 +488,8 @@ public class BitwigTests
     public void TheTextScanReadsNetworkAndAccentedPathsWholeAndCountsCollectedFilesOnce()
     {
         // The metadata reads but the body doesn't (a value of a kind this app doesn't know, as 6.1's lists of doubles were).
-        const string accented = @"F:\Samples\Beyoncé Acapellas\Vocal Chop 03.wav", network = @"\\NAS\Samples\Breaks\Amen Break 136bpm.wav";
+        const string accented = @"F:\Samples\Beyoncé Acapellas\Vocal Chop 03.wav", network = @"\\NAS\Samples\Breaks\Amen Break 136bpm.wav",
+                     cyrillic = @"D:\Музыка\Сэмплы\Ударные\Бочка\Kick 01.wav", japanese = @"D:\音楽\サンプル\ドラム\キック.wav";
         var dir = Path.Combine(Fixtures.TempDir(), "Song");
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "Song.bwproject");
@@ -495,14 +501,48 @@ public class BitwigTests
                 // Bitwig writes a string's length before it: 42 is "*", which joins the network path's text.
                 foreach (var s in new[] { @"F:\Bitwig Studio\Projects\Song\recordings\BD 1-2.wav", network, @"F:\Samples\Drums\Kick 01.wav" })
                     b.Str(0x2b9, s);
-                b.Str(0x2b9, accented, utf16: true);   // as Bitwig writes any text with a character outside ASCII
+                // As Bitwig writes any text with a character outside ASCII, even when most of it is.
+                foreach (var s in new[] { accented, cyrillic, japanese })
+                    b.Str(0x2b9, s, utf16: true);
                 b.U32(0x123); b.S.WriteByte(0x7e);
             }, zip: null));
 
         var info = new BitwigReader().Read(path);
         Assert.Equal(Confidence.Heuristic, info.Confidence);
         // The recording collected into the project counts once, as its copy there, not again where it was recorded.
-        Assert.Equal(new[] { Path.Combine(dir, "recordings", "BD 1-2.wav"), network, @"F:\Samples\Drums\Kick 01.wav", accented }.Order(StringComparer.Ordinal),
+        Assert.Equal(new[] { Path.Combine(dir, "recordings", "BD 1-2.wav"), network, @"F:\Samples\Drums\Kick 01.wav", accented, cyrillic, japanese }
+                         .Order(StringComparer.Ordinal),
+                     info.Samples.Order(StringComparer.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AFileCollectedIntoTheProjectHidesOnlyItsOwnOriginal(bool decodable)
+    {
+        // Kick-01 and Snare (as "Snare-2", the name being taken) were collected into the project; Kick-02 from the same
+        // pack wasn't, so it's still listed where it is.
+        var dir = Path.Combine(Fixtures.TempDir(), "Song");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "Song.bwproject");
+        File.WriteAllBytes(path, Fixtures.BwWriter.File(
+            meta: m => { m.MetaEntry("used_files", 0x19); m.U32(2); m.StrVal("samples/Kick-01.wav"); m.StrVal("samples/Snare-2.wav"); },
+            body: b =>
+            {
+                b.Begin(0x2e);
+                var id = 0x4100;
+                foreach (var file in new[] { @"D:\Packs\Drums\Kick-01.wav", @"D:\Packs\Drums\Kick-02.wav", @"D:\Packs\Drums\Snare.wav" })
+                {
+                    b.Obj(id++); b.Begin(0x2a); b.Str(0x3b, file); b.End();
+                }
+                if (!decodable) { b.U32(0x123); b.S.WriteByte(0x7e); }   // a value of a kind this app doesn't know
+                b.End();
+            }, zip: null));
+
+        var info = new BitwigReader().Read(path);
+        Assert.Equal(decodable ? Confidence.Partial : Confidence.Heuristic, info.Confidence);
+        Assert.Equal(new[] { Path.Combine(dir, "samples", "Kick-01.wav"), Path.Combine(dir, "samples", "Snare-2.wav"), @"D:\Packs\Drums\Kick-02.wav" }
+                         .Order(StringComparer.Ordinal),
                      info.Samples.Order(StringComparer.Ordinal));
     }
 

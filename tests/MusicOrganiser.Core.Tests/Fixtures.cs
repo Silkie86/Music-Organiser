@@ -495,7 +495,8 @@ public static class Fixtures
     /// An FL 25 song whose "Kick" pattern plays in bars 1, 2 and 3 while two clips switch the kick, back to back: "Kick off"
     /// (off throughout) in bars 1 and 3, "Kick on" (on throughout) in bar 2. <paramref name="onLinkedFirst"/> swaps the order
     /// of their links in the file. "Kick - Volume" (a rise from 0 to 1 over 8 beats) is placed at beat 0 and again at beat 4,
-    /// over the first one's second half.
+    /// over the first one's second half. "Kick - Pan" (the same rise) is placed at beats 0-8, then again at 2-4 inside it;
+    /// "Kick - Pitch" (the same rise) at 0-8, then again at 0-4.
     /// </summary>
     public static string FlStudio25BackToBack(string dir, bool onLinkedFirst)
     {
@@ -505,13 +506,18 @@ public static class Fixtures
             .Word(65, 1).Text(193, "Kick").Data(224, Note(0, 0, 48, 36, 100));
         var (off, on) = (AutomationLink(1, 0u << 16 | 7), AutomationLink(2, 0u << 16 | 7));
         b.Data(227, onLinkedFirst ? on : off).Data(227, onLinkedFirst ? off : on).Data(227, AutomationLink(3, 0u << 16 | 0))
+            .Data(227, AutomationLink(4, 0u << 16 | 1)).Data(227, AutomationLink(5, 0u << 16 | 4))
             .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Kick").Byte(0, 1).Text(196, @"C:\Samples\Kick.wav")
             .Word(64, 1).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick off").Data(234, AutomationPoints((0, 0), (4, 0)))
             .Word(64, 2).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick on").Data(234, AutomationPoints((0, 1), (4, 1)))
             .Word(64, 3).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick - Volume").Data(234, AutomationPoints((0, 0), (8, 1)))
+            .Word(64, 4).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick - Pan").Data(234, AutomationPoints((0, 0), (8, 1)))
+            .Word(64, 5).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick - Pitch").Data(234, AutomationPoints((0, 0), (8, 1)))
             .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(768, 20481, 384),
                         .. PlaylistItem25(0, 1, 384, track: 498), .. PlaylistItem25(384, 2, 384, track: 498), .. PlaylistItem25(768, 1, 384, track: 498),
-                        .. PlaylistItem25(0, 3, 768, track: 497), .. PlaylistItem25(384, 3, 768, track: 496)]);
+                        .. PlaylistItem25(0, 3, 768, track: 497), .. PlaylistItem25(384, 3, 768, track: 496),
+                        .. PlaylistItem25(0, 4, 768, track: 495), .. PlaylistItem25(192, 4, 192, track: 494),
+                        .. PlaylistItem25(0, 5, 768, track: 493), .. PlaylistItem25(0, 5, 384, track: 492)]);
         var path = Path.Combine(dir, "Back to back.flp");
         File.WriteAllBytes(path, b.Build());
         return path;
