@@ -3,10 +3,14 @@ name: MIDI model (CLaMP 3 to ONNX)
 # Builds the MIDI page's model files and puts them on a GitHub release of this repository, where the app downloads them
 # on first use (Clamp3Model.DownloadBase). It downloads CLaMP 3's symbolic checkpoint and XLM-RoBERTa's tokenizer from
 # Hugging Face, exports both encoders with tools/clamp3/export_onnx.py, checks them against PyTorch, and quantises them
-# to int8. Run it by hand from the Actions tab. A release that already exists is left as it is: raise
-# Clamp3Model.Version (and the tag below with it) for a new export.
+# to int8. Run it by hand from the Actions tab (once this file is on main); until then a push to the MIDI search
+# branch that changes the export runs it. A release that already exists is left as it is: raise Clamp3Model.Version
+# (and the tag below with it) for a new export.
 on:
   workflow_dispatch:
+  push:
+    branches: [claude/midi-word-search-haqohr]
+    paths: [.github/workflows/clamp3-onnx.yml, tools/clamp3/export_onnx.py]
 
 permissions:
   contents: write
