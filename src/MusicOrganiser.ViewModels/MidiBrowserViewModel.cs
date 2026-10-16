@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -52,6 +53,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         RoleChips = MidiRoles.All.Prepend("All").Select(r => new RoleChip(r == "All" ? "All" : MidiRoles.Plural(r), r)).ToList();
         _selectedRole = RoleChips[0];
         _includeOlderSaves = db.GetSetting(MidiIndexer.OlderSavesKey) == "1";
+        if (double.TryParse(db.GetSetting(NameWeightKey), NumberStyles.Float, CultureInfo.InvariantCulture, out var weight))
+            _nameWeight = Math.Clamp(weight, 0, 3);
     }
 
     public MidiIndex Index => _index;
@@ -130,11 +133,29 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// <summary>The model is listening to parts it hasn't heard yet.</summary>
     [ObservableProperty] bool _isHearing;
 
+    public const string NameWeightKey = "midi_name_weight";
+
+    /// <summary>
+    /// How much names, folders and kinds count against what the model hears, when searching by description: 0 is the
+    /// model only, 1 as it comes, 3 lets names lead. Saved, so it stays as you set it.
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(NameWeightText))] double _nameWeight = 1;
+
+    public string NameWeightText => NameWeight <= 0 ? "Sound only: names are ignored"
+        : NameWeight < 1 ? "Mostly sound, names help a little"
+        : NameWeight == 1 ? "Sound and names, balanced"
+        : NameWeight < 3 ? "Names count more than sound" : "Names lead, sound sorts them";
+
+    partial void OnNameWeightChanged(double value)
+    {
+        _db.SetSetting(NameWeightKey, value.ToString(CultureInfo.InvariantCulture));
+        if (Search.Trim().Length > 0) _ = RefreshAsync(delayMs: 150);
+    }
+
     public bool CanDownloadMeaning => !MeaningInstalled && !IsDownloadingMeaning;
     public string SearchHint => MeaningInstalled
         ? "Describe it: dark pad chords, bouncy funk bassline… or a name, key or chord"
         : "Search MIDI: dark, Cm, trap, piano, Am7…";
-
 
     // ---- longer phrases ----
 
@@ -219,7 +240,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (request != _searchRequest) return;
         var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
                                   From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, Fit, Like, Leave: _fitPath,
-                                  Words: words, Within: PhrasesOf);
+                                  Words: words, Within: PhrasesOf, NameWeight: (float)NameWeight);
         var (hits, matching) = await UiWork.Run(() => (catalogue.Search(query, out var n), n));
         if (request != _searchRequest) return;
         var keep = Selected?.Entry;
@@ -228,9 +249,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _lastAsked = asked;
         Results = hits.Select(h => new MidiRow(h, this)).ToList();
         Selected = Results.FirstOrDefault(r => r.Entry == keep) ?? Results.FirstOrDefault();
+        if (PhrasesOf is not null) Message = "";
         // The part picked stays picked, but a new search shows its best match first rather than scrolling to it.
         if (newSearch) NewSearchShown?.Invoke(this, EventArgs.Empty);
-        if (PhrasesOf is not null) Message = "";
         ResultText = matching == 0 ? (HasParts ? "Nothing matches. Try fewer words, or another kind." : "")
             : PhrasesOf is not null ? (matching == 1 ? "1 longer phrase" : $"{matching:N0} longer phrases") + ", longest first. The part you picked is lit up in each."
             : Fit is not null ? $"Best fits first · {Math.Min(matching, hits.Count):N0} shown of {matching:N0}, each moved into the right key"
