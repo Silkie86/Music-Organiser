@@ -32,7 +32,7 @@ class SelfCheckTest {
     static final List<String> CHECKS = List.of(
         "API version", "application", "project", "transport", "cursor track", "cursor device", "drum pads", "track bank",
         "Sampler and Note Transpose pitch", "track IDs", "popup browser", "settings", "remote controls", "last clicked parameter",
-        "parameter steps, origins and automation", "master recorder", "arranger", "files as tracks", "command routes", "remote connection", "actions",
+        "parameter steps, origins and automation", "master recorder", "arranger", "files as tracks", "recording into the arranger", "command routes", "remote connection", "actions",
         "reports folder");
 
     @TempDir
@@ -139,7 +139,10 @@ class SelfCheckTest {
         Map<String, Object> result = map(app.ask(obj("id", 4, "cmd", "selftest")).get("result"));
         List<Object> failed = listAt(result, "checks").stream().filter(c -> !(Boolean) at(c, "ok")).map(c -> at(c, "name"))
                                                       .collect(Collectors.toList());
-        assertEquals(List.of("track bank", "Sampler and Note Transpose pitch", "track IDs"), failed);
+        // Recording into the arranger (extension 3.9) needs the tracks too.
+        assertEquals(List.of("track bank", "Sampler and Note Transpose pitch", "track IDs", "recording into the arranger"), failed);
+        assertEquals("Couldn't set it up: org.musicorganiser.bitwig.LinkError: The track bank wasn't made, so there's no track to record.",
+                     detail(result, "recording into the arranger"));
     }
 
     @Test

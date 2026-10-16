@@ -21,16 +21,19 @@ import com.bitwig.extension.controller.api.HardwareSurface;
 import com.bitwig.extension.controller.api.InsertionPoint;
 import com.bitwig.extension.controller.api.LastClickedParameter;
 import com.bitwig.extension.controller.api.MasterRecorder;
+import com.bitwig.extension.controller.api.MasterTrack;
 import com.bitwig.extension.controller.api.MidiIn;
 import com.bitwig.extension.controller.api.MidiOut;
 import com.bitwig.extension.controller.api.Parameter;
 import com.bitwig.extension.controller.api.PinnableCursorDevice;
+import com.bitwig.extension.controller.api.PlayingNote;
 import com.bitwig.extension.controller.api.PopupBrowser;
 import com.bitwig.extension.controller.api.Project;
 import com.bitwig.extension.controller.api.RemoteConnection;
 import com.bitwig.extension.controller.api.RemoteSocket;
 import com.bitwig.extension.controller.api.SettableBooleanValue;
 import com.bitwig.extension.controller.api.SettableColorValue;
+import com.bitwig.extension.controller.api.SettableEnumValue;
 import com.bitwig.extension.controller.api.Track;
 import com.bitwig.extension.controller.api.TrackBank;
 import com.bitwig.extension.controller.api.Transport;
@@ -53,6 +56,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
@@ -93,6 +97,11 @@ import java.util.stream.Collectors;
  * loopback, as a message it sent itself or a press of a button of its own coming back (see {@link #ROUTES}). Save
  * worked from Bitwig's flush (live run 20261015T185248Z), so that's the route a request gets when it doesn't name one
  * (see {@link #DEFAULT_ROUTE}); copy and paste still didn't put a clip in the arranger by any route.
+ *
+ * That's because Bitwig copies and pastes whatever was clicked last in it, not what the API selected (live runs of 3.6 to
+ * 3.8). So from extension 3.9 the link records a launcher clip into the arranger instead, as a person does with Bitwig's
+ * arranger record on, which takes only ordinary calls of the API (see {@link #record}), and finds tracks by the IDs Bitwig
+ * keeps them under, which stay put when a track goes in above them.
  */
 final class Link {
     static final int PORT = 19791;
@@ -140,6 +149,19 @@ final class Link {
     static final int SAME_COLOUR = 2;
     /** How far apart one of them has to be (out of 255) for a colour to look clearly different. */
     static final int OTHER_COLOUR = 64;
+    /** How often the record job (extension 3.9) looks at what Bitwig is doing, in milliseconds. */
+    static final long RECORD_TICK = 25;
+    /** How long the record job gives Bitwig to start playing once it has launched the clip, in milliseconds. */
+    static final long START_WAIT = 3000;
+    /** The tempos Bitwig takes, in BPM: the record job asks for none outside them. */
+    static final double MIN_TEMPO = 20;
+    static final double MAX_TEMPO = 666;
+    /** The most notes a record answer lists for each time the clip plays (it counts them all). */
+    static final int MAX_NOTES = 64;
+    /** How long the probe (extension 3.9) waits after each of Bitwig's commands before it looks, unless asked for another gap. */
+    static final long PROBE_GAP = 1500;
+    /** Bitwig's action that shows or hides the arranger timeline, whichever panel has the focus. */
+    static final String TOGGLE_ARRANGER = "toggle_arranger";
     /**
      * The routes the link can run one of Bitwig's commands by (extension 3.7): "direct" runs it straight away (in the
      * socket's callback, or a task the link scheduled), "flush" from Bitwig's next flush, "midi" when a SysEx message the
@@ -265,6 +287,10 @@ final class Link {
     private boolean details;
     /** Whether tracks carry their IDs. */
     private boolean trackIds;
+    /** Bitwig's master track, which the record job mutes while it plays (null when Bitwig wouldn't make it, or the rest of recording). */
+    private MasterTrack master;
+    /** The record job running now, if any: recordabort and Bitwig stopping the link reach it here. */
+    private Recording recording;
 
     /**
      * The selected device's parameters, as Bitwig reports them. Display texts are only asked for while a request
@@ -323,6 +349,11 @@ final class Link {
         commands.put("arrange", Command.job(this::arrange));
         // Extension 3.8: another experiment, which only the live tests send.
         commands.put("filetrack", Command.job(this::fileTrack));
+        // Extension 3.9: recording a launcher clip into the arranger, a way to stop it that doesn't wait behind it, and a
+        // probe of whether Bitwig carries out its panels' commands for the link. Only the live tests send them so far.
+        commands.put("record", Command.job(this::record));
+        commands.put("recordabort", Command.answer(false, this::abortRecording));
+        commands.put("probe", Command.job(this::probe));
     }
 
     // ---- Starting and stopping ----
@@ -577,6 +608,34 @@ final class Link {
         }, () -> trackAfter == null ? "The track bank wasn't made, so there's nowhere to insert a file."
                                     : "A file can go after any of the first " + MAX_TRACKS + " tracks, as a new track.");
 
+        // For the record job (extension 3.9): the transport's switches it sets and puts back, where Bitwig is playing, the
+        // master track (muted while the job plays), and each track's playing notes and launcher slots as they play.
+        feature("recording into the arranger", () -> {
+            if (trackItems[MAX_TRACKS - 1] == null) throw new LinkError("The track bank wasn't made, so there's no track to record.");
+            for (SettableBooleanValue value : switches()) value.markInterested();
+            transport.automationWriteMode().markInterested();
+            transport.preRoll().markInterested();
+            transport.defaultLaunchQuantization().markInterested();
+            transport.playPosition().markInterested();
+            transport.playStartPosition().markInterested();
+            project.hasArmedTracks().markInterested();
+            MasterTrack made = host.createMasterTrack(0);
+            made.mute().markInterested();
+            for (int t = 0; t < MAX_TRACKS; t++) {
+                trackItems[t].isStopped().markInterested();
+                trackItems[t].playingNotes().markInterested();
+                for (ClipLauncherSlot slot : trackSlots[t]) {
+                    slot.isPlaying().markInterested();
+                    slot.isPlaybackQueued().markInterested();
+                    slot.isRecording().markInterested();
+                }
+            }
+            master = made;
+        }, () -> "Arranger record is " + (transport.isArrangerRecordEnabled().get() ? "on" : "off") + ", pre-roll "
+                 + str(transport.preRoll().get()) + ", launch quantize " + str(transport.defaultLaunchQuantization().get())
+                 + ", automation write mode " + str(transport.automationWriteMode().get()) + "; the master track is "
+                 + (master.mute().get() ? "muted." : "not muted."));
+
         // The routes that run Bitwig's commands other than straight away (see ROUTES): the loopback's MIDI ports, and two
         // buttons for each command of ROUTED Bitwig has, which notes on channel 16 coming back through the loopback press.
         feature("command routes", () -> {
@@ -658,6 +717,12 @@ final class Link {
     }
 
     void exit() {
+        // A recording mustn't go on without the link: record off, Bitwig stopped, and its settings put back, as far as can be.
+        if (recording != null) {
+            Recording stopping = recording;
+            stopping.emergency();
+            stopping.done = true;
+        }
         for (Client client : clients) client.open = false;
         clients.clear();
         jobs.clear();
@@ -1548,7 +1613,7 @@ final class Link {
 
     /**
      * Adds an instrument track at the end of the project's tracks (before the effect tracks), names it and
-     * selects it, and answers with its index in the project listing.
+     * selects it, and answers with its index in the project listing, and (extension 3.9) its ID when Bitwig has said it.
      */
     private void newTrack(Map<String, Object> request, Finish finish) {
         Object given = field(request, "name");
@@ -1578,6 +1643,9 @@ final class Link {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("index", t);
                     m.put("name", str(track.name().get()));
+                    // Extension 3.9: the ID Bitwig keeps it under, when it has said, which finds it however tracks move.
+                    String id = idOf(t);
+                    if (!id.isEmpty()) m.put("id", id);
                     finish.ok(m);
                 }, finish);
             }, finish);
@@ -1586,10 +1654,10 @@ final class Link {
 
     /**
      * Puts a file (a MIDI file, or audio) in one of a track's clip launcher slots: the one given, or the first
-     * empty one, and answers once Bitwig has made the clip.
+     * empty one, and answers once Bitwig has made the clip. The track is `track`, or (extension 3.9) the one with ID `trackId`.
      */
     private void addClip(Map<String, Object> request, Finish finish) {
-        int t = checkTrack(field(request, "track"));
+        int t = requestedTrack(request);
         String path = given(field(request, "path"), "file");
         ClipLauncherSlot[] slots = trackSlots[t];
         Object s = field(request, "slot");
@@ -1603,9 +1671,13 @@ final class Link {
             index = emptySlot(slots);
             if (index < 0) throw new LinkError("The track's first " + SCENES + " clip slots are full.");
         }
-        ClipLauncherSlot slot = slots[index];
         slotInserts[t][index].insertFile(path);
-        waitFor(() -> slot.hasContent().get(), CHANGE_WAIT, made -> {
+        // The track's slot, found by its ID when Bitwig has said it, in case a track goes in above it meanwhile.
+        String id = idOf(t);
+        waitFor(() -> {
+            int now = id.isEmpty() ? t : indexOf(id);
+            return now >= 0 && trackSlots[now][index].hasContent().get();
+        }, CHANGE_WAIT, made -> {
             if (!made) throw new LinkError("Bitwig didn't make a clip from " + path + ".");
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("slot", index);
@@ -1914,6 +1986,8 @@ final class Link {
         double at = absent(given) ? transport.playStartPosition().get() : (Double) given;
         Track track = trackItems[t];
         String name = str(track.name().get());
+        // So the checks delete only on this track, should another go in above it (extension 3.9).
+        String trackId = idOf(t);
         SettableBooleanValue launcherShown = arranger.isClipLauncherVisible();
 
         // The answer, in the order the app reads it, filled in as the steps go: first what Bitwig shows before.
@@ -1949,7 +2023,7 @@ final class Link {
         Mark[] marked = new Mark[1];
         Finish finish = !checks ? asked : (result, error) -> {
             if (error != null || !worthChecking(m, launcherFocus, name)) asked.done(result, error);
-            else check(route, t, index, track, launcherFocus, launcherShown, pasted, duplicate, marked[0], m, asked);
+            else check(route, t, trackId, index, track, launcherFocus, launcherShown, pasted, duplicate, marked[0], m, asked);
         };
 
         // The Arrange layout, with its clip launcher showing.
@@ -2195,8 +2269,12 @@ final class Link {
      * that goes anywhere but the launcher (or a new track) all the same isn't seen, and is left. A check that can't go on
      * (Bitwig won't show the launcher, say) leaves the rest out and puts what stopped it in `checks` as `error`, and
      * arrange still answers with what it found.
+     *
+     * Extension 3.9: a check deletes only on the track Bitwig keeps under `id` (when it has said it): if another track has
+     * taken its place in the listing meanwhile (a paste can put tracks in above it), the check leaves the clip and says
+     * `trackMoved`.
      */
-    private void check(String route, int t, int index, Track track, Action launcherFocus, SettableBooleanValue launcherShown,
+    private void check(String route, int t, String id, int index, Track track, Action launcherFocus, SettableBooleanValue launcherShown,
                        Runnable pasteRun, Action duplicate, Mark mark, Map<String, Object> m, Finish finish) {
         Map<String, Object> checks = new LinkedHashMap<>();
         checks.put("launcherPaste", null);
@@ -2206,7 +2284,7 @@ final class Link {
             if (error != null) checks.put("error", error);
             finish.ok(m);
         };
-        Runnable duplicating = () -> duplicateCheck(route, t, index, track, launcherFocus, launcherShown, duplicate, checks, done);
+        Runnable duplicating = () -> duplicateCheck(route, t, id, index, track, launcherFocus, launcherShown, duplicate, checks, done);
         ClipLauncherSlot[] slots = trackSlots[t];
         int empty = -1;
         for (int s = 0; s < slots.length && empty < 0; s++)
@@ -2245,6 +2323,11 @@ final class Link {
                     lp.put("made", true);
                     lp.put("colour", colour);
                     lp.put("sameAsMark", mark != null && mark.took() && sameColour(rgb(slot.color()), mark.got()));
+                    if (!sameTrack(t, id)) {
+                        lp.put("trackMoved", true);
+                        duplicating.run();
+                        return;
+                    }
                     slot.deleteObject();
                     waitFor(() -> !slot.hasContent().get(), CHANGE_WAIT, removed -> {
                         lp.put("removed", removed);
@@ -2256,7 +2339,7 @@ final class Link {
     }
 
     /** Arrange's second check: Bitwig's Duplicate on the clip in the launcher (see check). */
-    private void duplicateCheck(String route, int t, int index, Track track, Action launcherFocus, SettableBooleanValue launcherShown,
+    private void duplicateCheck(String route, int t, String id, int index, Track track, Action launcherFocus, SettableBooleanValue launcherShown,
                                 Action duplicate, Map<String, Object> checks, Finish done) {
         if (duplicate == null) {
             done.ok(null);
@@ -2296,6 +2379,11 @@ final class Link {
                             done.ok(null);
                             return;
                         }
+                        if (!sameTrack(t, id)) {
+                            d.put("trackMoved", true);
+                            done.ok(null);
+                            return;
+                        }
                         ClipLauncherSlot copy = trackSlots[t][made];
                         copy.deleteObject();
                         waitFor(() -> !copy.hasContent().get(), CHANGE_WAIT, removed -> {
@@ -2331,6 +2419,11 @@ final class Link {
                 else then.run();
             }, done);
         }, done);
+    }
+
+    /** Whether the track at place `t` in the listing is still the one Bitwig keeps under `id` ("" when it hadn't said: then it's taken to be). */
+    private boolean sameTrack(int t, String id) {
+        return id.isEmpty() || id.equals(idOf(t));
     }
 
     /** Answers arrange with what Bitwig shows now, after the paste or without one. */
@@ -2393,11 +2486,18 @@ final class Link {
      * in the arranger: `exists`, and its `track`'s name), `arrangerBefore` (the same before), `at` (the play start as the
      * file went in), and `onTrack` (the given track's launcher clips `before` and `after`, in case Bitwig put the clip there
      * instead). The API can't list the clips on the arranger timeline, so only a look at Bitwig says for sure.
+     *
+     * Extension 3.9: the track can be given by its ID (`trackId`), and the new tracks are told by their IDs when Bitwig says
+     * them: those it didn't have before, wherever they went in (where the listing first differs otherwise). The answer adds
+     * the first new track's `id`, and `newTracks`, each new track's `index`, `id`, `name`, `type`, whether it's a `group`
+     * and its `launcherClips`. A project file (.dawproject, .bwproject) may come in as tracks, or open as a project of its
+     * own, in front: then the change stops, saying Bitwig has that open.
      */
     private void fileTrack(Map<String, Object> request, Finish finish) {
         if (trackAfter == null) throw new LinkError("This Bitwig didn't let the link insert files between tracks. A selftest says why.");
         if (arranger == null) throw new LinkError("This Bitwig didn't let the link reach its arranger. A selftest says why.");
-        int t = checkTrack(field(request, "track"));
+        int t = requestedTrack(request);
+        String targetId = idOf(t);
         String path = given(field(request, "path"), "file");
         Object given = field(request, "at");
         if (!absent(given) && !(given instanceof Double && Double.isFinite((Double) given) && (Double) given >= 0))
@@ -2406,6 +2506,7 @@ final class Link {
             int count = tracks.itemCount().get();
             List<String> before = trackList();
             List<Integer> clipsBefore = everyLauncherClip();
+            Set<String> idsBefore = new HashSet<>(tracksById().keySet());
             Map<String, Object> arrangerBefore = arrangerClipState();
             double at = transport.playStartPosition().get();
             trackAfter[t].insertFile(path);
@@ -2414,11 +2515,20 @@ final class Link {
                 // Bitwig reports a change bit by bit, so what it did is read once it stops changing.
                 settle(() -> Arrays.asList(tracks.itemCount().get(), trackList(), everyLauncherClip(), arrangerClipState()), settled -> {
                     int after = tracks.itemCount().get();
-                    int n = after > count ? firstDifference(before, trackList()) : -1;
-                    boolean seen = n >= 0 && trackItems[n].exists().get();
+                    List<Integer> made = new ArrayList<>();
+                    if (!idsBefore.isEmpty()) {
+                        for (int i = 0; i < MAX_TRACKS; i++)
+                            if (trackItems[i].exists().get() && !idOf(i).isEmpty() && !idsBefore.contains(idOf(i))) made.add(i);
+                    } else if (after > count) {
+                        int first = firstDifference(before, trackList());
+                        if (first >= 0 && trackItems[first].exists().get()) made.add(first);
+                    }
+                    int n = made.isEmpty() ? -1 : made.get(0);
+                    boolean seen = n >= 0;
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("added", Math.max(0, after - count));
                     m.put("index", seen ? n : null);
+                    m.put("id", seen && !idOf(n).isEmpty() ? idOf(n) : null);
                     m.put("name", seen ? str(trackItems[n].name().get()) : null);
                     m.put("type", seen ? str(trackItems[n].trackType().get()) : null);
                     m.put("tracksBefore", count);
@@ -2428,12 +2538,24 @@ final class Link {
                     m.put("arranger", arrangerClipState());
                     m.put("arrangerBefore", arrangerBefore);
                     m.put("at", at);
-                    // The track given may have moved down, when Bitwig put the new one before it.
-                    int now = seen && n <= t ? t + Math.max(0, after - count) : t;
+                    // The track given may have moved down, when Bitwig put the new one before it: found by its ID when it has one.
+                    int now = !targetId.isEmpty() ? indexOf(targetId) : seen && n <= t ? t + Math.max(0, after - count) : t;
                     Map<String, Object> on = new LinkedHashMap<>();
                     on.put("before", clipsBefore.get(t));
-                    on.put("after", now < MAX_TRACKS && trackItems[now].exists().get() ? launcherClips(now) : null);
+                    on.put("after", now >= 0 && now < MAX_TRACKS && trackItems[now].exists().get() ? launcherClips(now) : null);
                     m.put("onTrack", on);
+                    List<Object> list = new ArrayList<>();
+                    for (int i : made) {
+                        Map<String, Object> track = new LinkedHashMap<>();
+                        track.put("index", i);
+                        track.put("id", idOf(i).isEmpty() ? null : idOf(i));
+                        track.put("name", str(trackItems[i].name().get()));
+                        track.put("type", str(trackItems[i].trackType().get()));
+                        track.put("group", trackItems[i].isGroup().get());
+                        track.put("launcherClips", launcherClips(i));
+                        list.add(track);
+                    }
+                    m.put("newTracks", list);
                     finish.ok(m);
                 }, finish);
             }, finish);
@@ -2447,6 +2569,889 @@ final class Link {
         waitFor(() -> Math.abs(transport.playStartPosition().get() - at) < 1e-6, CHANGE_WAIT, moved -> {
             if (!moved) throw new LinkError("Bitwig didn't move the play start to beat " + Json.number(at) + ".");
             insert.run();
+        }, finish);
+    }
+
+    // ---- Recording into the arranger (extension 3.9) ----
+
+    /**
+     * Records a launcher clip into Bitwig's arranger (extension 3.9), the way a person does: with Bitwig's arranger record on,
+     * launching a clip while Bitwig is stopped starts it playing from the play start, and Bitwig records what the clip plays
+     * onto its track's arranger timeline. Copy and paste never did this for the link (Bitwig copies whatever was clicked last
+     * in it, not what the API selected), while every step here is an ordinary call of the API. Only the live tests send it
+     * so far, in their own project.
+     *
+     * The request names the track by its ID (`trackId`), which stays put when a track goes in above it, the launcher `slot`,
+     * where to record (`at`, beats from the start) and for how long (`length`, in beats), both whole bars. With `record`
+     * false it plays the clip there without recording, to see whether the link can hear the track's notes at all. `arm`
+     * arms the track while it records (the others are always disarmed, so they record nothing), `tempo` sets another tempo
+     * meanwhile (the clip plays sooner at a faster one), and `deleteLauncherClip` deletes the launcher clip once it's
+     * recorded, so the replay below can only hear the arranger's copy.
+     *
+     * Step by step:
+     * <ol>
+     * <li>It refuses while Bitwig plays, while arranger record is on, or while a launcher clip plays or is about to.</li>
+     * <li>It keeps the transport's settings it changes (see recordSettings), the master track's mute and each track's arm,
+     * then turns the metronome, the loop, punch in and out, overdub and automation write off, sets automation write to
+     * touch (so nothing is written that isn't touched), no pre-roll and a launch quantize of a bar, mutes the master (so
+     * nothing is heard), disarms the tracks, moves the play start to `at` and sets the tempo if asked. It reads each back,
+     * and when one didn't take, puts everything back and answers `refused` with them.</li>
+     * <li>It turns arranger record on (unless `record` is false) and launches the clip. While it plays, the link reads where
+     * Bitwig is, the notes the track plays, and whether the slot plays and records. In the clip's last bar it stops the
+     * track, which Bitwig does on the next bar line, at the clip's end.</li>
+     * <li>Then, or once the time it should take has passed (`timedOut`), or recordabort asks, or someone stops Bitwig, it
+     * turns record off, stops Bitwig (only if it's playing: Stop while stopped moves the play start to the beginning) and
+     * returns the track to the arrangement, so it plays its arranger timeline again.</li>
+     * <li>After a recording, it deletes the launcher clip if asked, then plays the arranger back from `replayFrom` (`at`
+     * unless given) to a bar past the clip's end, still muted, and notes the notes the track plays: with the launcher clip
+     * not playing, those come from the arranger.</li>
+     * <li>It puts back everything it changed, reads it back, and answers.</li>
+     * </ol>
+     * Nothing touches a parameter while record is on (Bitwig can write automation then), and every step checks that Bitwig
+     * still has the project the job started in: when another comes to the front, the transport would steer that one, so the
+     * job stops touching anything and answers `abandoned`. If the extension stops meanwhile, record goes off and Bitwig
+     * stops (see emergency).
+     *
+     * The answer's `decided` sums it up: `recorded` (the replay heard the clip's notes with the launcher clip not playing),
+     * `nothing` (they were heard as it played, not in the replay), `cantTell` (no notes heard either time, so only a look at
+     * Bitwig says), `notChecked` (no replay); for a pass with record off, `heard` or `cantHear`; or `refused`, `didntStart`,
+     * `aborted`, `abandoned` or `failed`. The rest says what the link saw (see Recording.answer).
+     */
+    private void record(Map<String, Object> request, Finish finish) {
+        if (master == null) throw new LinkError("This Bitwig didn't let the link record into its arranger. A selftest says why.");
+        if (!trackIds) throw new LinkError("This Bitwig doesn't tell the link tracks' IDs, which the record job finds its track by. A selftest says why.");
+        Object id = field(request, "trackId");
+        if (!(id instanceof String) || ((String) id).isEmpty()) throw new LinkError("Say which track to record by its ID (trackId).");
+        Object s = field(request, "slot");
+        if (!isIndex(s, SCENES))
+            throw new LinkError("The app can reach the first " + SCENES + " clip slots on a track, not slot " + Json.js(s) + ".");
+        double at = beats(field(request, "at"), "at", false);
+        double length = beats(field(request, "length"), "length", true);
+        boolean rec = flag(request, "record", true);
+        boolean arm = flag(request, "arm", false);
+        boolean delete = flag(request, "deleteLauncherClip", false);
+        boolean replay = flag(request, "replay", rec);
+        Object from = field(request, "replayFrom");
+        double replayFrom = absent(from) ? at : beats(from, "replayFrom", false);
+        Object t = field(request, "tempo");
+        if (!absent(t) && !(t instanceof Double && (Double) t >= MIN_TEMPO && (Double) t <= MAX_TEMPO))
+            throw new LinkError("The tempo is from " + Json.number(MIN_TEMPO) + " to " + Json.number(MAX_TEMPO) + " BPM, not " + Json.js(t) + ".");
+        Double tempo = absent(t) ? null : (Double) t;
+        Object pass = field(request, "pass");
+        double bar = barLength();
+        if (!wholeBars(at, bar) || !wholeBars(length, bar) || !wholeBars(replayFrom, bar))
+            throw new LinkError("at, length and replayFrom have to be whole bars: " + Json.number(bar) + " beats each in "
+                                + str(transport.timeSignature().get()) + ".");
+        if (replayFrom > at) throw new LinkError("The replay can't start (replayFrom) after where the clip is recorded (at).");
+        int track = indexOf((String) id);
+        if (track < 0) throw new LinkError("There's no track with ID " + id + " in the project listing.");
+        ClipLauncherSlot slot = trackSlots[track][index(s)];
+        if (!slot.hasContent().get()) throw new LinkError("Slot " + index(s) + " on that track has no clip to record.");
+        if (transport.isPlaying().get()) throw new LinkError("Bitwig is playing. Stop it, then ask again.");
+        if (transport.isArrangerRecordEnabled().get()) throw new LinkError("Bitwig's arranger record is on. Turn it off, then ask again.");
+        String busy = busyTrack();
+        if (busy != null) throw new LinkError("A launcher clip on \"" + busy + "\" is playing, recording or about to. Stop it, then ask again.");
+        new Recording(finish, (String) id, index(s), at, length, bar, rec, arm, delete, replay, replayFrom, tempo,
+                      pass instanceof String ? (String) pass : null).start();
+    }
+
+    /** Stops the record job running now, if any (extension 3.9): it ends as soon as it next looks, and puts everything back. */
+    private void abortRecording(Ask ask, Map<String, Object> request) {
+        boolean running = recording != null && !recording.done;
+        if (running) recording.abortAsked = true;
+        reply(ask, Map.of("running", running), null);
+    }
+
+    /** The transport's switches the record job turns off while it records, and puts back afterwards. */
+    private List<SettableBooleanValue> switches() {
+        return List.of(transport.isArrangerRecordEnabled(), transport.isMetronomeEnabled(), transport.isArrangerLoopEnabled(),
+                       transport.isPunchInEnabled(), transport.isPunchOutEnabled(), transport.isArrangerOverdubEnabled(),
+                       transport.isClipLauncherOverdubEnabled(), transport.isArrangerAutomationWriteEnabled(),
+                       transport.isClipLauncherAutomationWriteEnabled());
+    }
+
+    /**
+     * What the record job sets before the clip plays, in the order it sets them and puts them back: the play start last, so
+     * nothing set after it can move it.
+     */
+    private List<Setting> recordSettings(Double tempo, double at) {
+        List<Setting> list = new ArrayList<>();
+        list.add(onOff("metronome", transport.isMetronomeEnabled(), false));
+        list.add(onOff("arranger loop", transport.isArrangerLoopEnabled(), false));
+        list.add(onOff("punch in", transport.isPunchInEnabled(), false));
+        list.add(onOff("punch out", transport.isPunchOutEnabled(), false));
+        list.add(onOff("arranger overdub", transport.isArrangerOverdubEnabled(), false));
+        list.add(onOff("launcher overdub", transport.isClipLauncherOverdubEnabled(), false));
+        list.add(onOff("arranger automation write", transport.isArrangerAutomationWriteEnabled(), false));
+        list.add(onOff("launcher automation write", transport.isClipLauncherAutomationWriteEnabled(), false));
+        list.add(choice("automation write mode", transport.automationWriteMode(), "touch"));
+        list.add(choice("pre-roll", transport.preRoll(), "none"));
+        list.add(choice("launch quantize", transport.defaultLaunchQuantization(), "1"));
+        list.add(onOff("master mute", master.mute(), true));
+        if (tempo != null) list.add(new Setting("tempo", () -> transport.tempo().getRaw(), v -> transport.tempo().setRaw((Double) v), tempo));
+        list.add(new Setting("play start", () -> transport.playStartPosition().get(), v -> transport.playStartPosition().set((Double) v), at));
+        return list;
+    }
+
+    private static Setting onOff(String name, SettableBooleanValue value, boolean wanted) {
+        return new Setting(name, () -> value.get(), v -> value.set((Boolean) v), wanted);
+    }
+
+    private static Setting choice(String name, SettableEnumValue value, String wanted) {
+        return new Setting(name, () -> str(value.get()), v -> value.set((String) v), wanted);
+    }
+
+    /** One of Bitwig's settings the record job changes and puts back: its name (for the answer), how to read and set it, and what recording wants. */
+    private record Setting(String name, Supplier<Object> read, Consumer<Object> write, Object wanted) {}
+
+    /** Whether two settings' values are the same: numbers give or take a thousandth (Bitwig keeps a tempo to a few places). */
+    static boolean same(Object a, Object b) {
+        if (a instanceof Number && b instanceof Number) return Math.abs(((Number) a).doubleValue() - ((Number) b).doubleValue()) < 1e-3;
+        return Objects.equals(a, b);
+    }
+
+    /** A bar's length in beats, from Bitwig's time signature ("4/4", "7/8"). */
+    private double barLength() {
+        Matcher m = Pattern.compile("^\\s*(\\d+)\\s*/\\s*(\\d+)").matcher(str(transport.timeSignature().get()));
+        if (!m.find() || Integer.parseInt(m.group(1)) == 0 || Integer.parseInt(m.group(2)) == 0)
+            throw new LinkError("The link can't tell a bar's length from Bitwig's time signature \"" + str(transport.timeSignature().get()) + "\".");
+        return Integer.parseInt(m.group(1)) * 4.0 / Integer.parseInt(m.group(2));
+    }
+
+    private static boolean wholeBars(double beats, double bar) {
+        double bars = beats / bar;
+        return Math.abs(bars - Math.rint(bars)) < 1e-6;
+    }
+
+    /** A number of beats a request gives as `what`: 0 or more, or more than 0 when it's a length. */
+    private static double beats(Object value, String what, boolean length) {
+        if (!(value instanceof Double) || !Double.isFinite((Double) value) || (Double) value < 0 || (length && (Double) value == 0))
+            throw new LinkError(what + " is a number of beats" + (length ? ", more than 0" : ", 0 or more") + ", not " + Json.js(value) + ".");
+        return (Double) value;
+    }
+
+    /** A request's true-or-false field, or `otherwise` when it doesn't give one. */
+    private static boolean flag(Map<String, Object> request, String key, boolean otherwise) {
+        Object value = field(request, key);
+        if (absent(value)) return otherwise;
+        if (!(value instanceof Boolean)) throw new LinkError(key + " is true or false, not " + Json.js(value) + ".");
+        return (Boolean) value;
+    }
+
+    /** The name of a track (one the link sees) with a launcher clip playing, recording or about to play, else null. */
+    private String busyTrack() {
+        for (int t = 0; t < MAX_TRACKS; t++) {
+            if (!trackItems[t].exists().get()) continue;
+            for (ClipLauncherSlot slot : trackSlots[t])
+                if (slot.isPlaying().get() || slot.isPlaybackQueued().get() || slot.isRecording().get()) return str(trackItems[t].name().get());
+        }
+        return null;
+    }
+
+    /** The tracks the link sees, by ID, with their names (those Bitwig hasn't said the ID of are left out). */
+    private Map<String, String> tracksById() {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (int t = 0; t < MAX_TRACKS; t++) {
+            String id = idOf(t);
+            if (trackItems[t].exists().get() && !id.isEmpty()) m.put(id, str(trackItems[t].name().get()));
+        }
+        return m;
+    }
+
+    /** Where each track the link sees is in the listing now, by its ID. */
+    private Map<String, Integer> placesById() {
+        Map<String, Integer> m = new HashMap<>();
+        for (int t = 0; t < MAX_TRACKS; t++) {
+            String id = idOf(t);
+            if (trackItems[t].exists().get() && !id.isEmpty()) m.putIfAbsent(id, t);
+        }
+        return m;
+    }
+
+    /** Whether each launcher slot the link sees has a clip, as "<track ID> <slot>". */
+    private Map<String, Boolean> clipsById() {
+        Map<String, Boolean> m = new LinkedHashMap<>();
+        for (int t = 0; t < MAX_TRACKS; t++) {
+            String id = idOf(t);
+            if (!trackItems[t].exists().get() || id.isEmpty()) continue;
+            for (int s = 0; s < SCENES; s++) m.put(id + " " + s, trackSlots[t][s].hasContent().get());
+        }
+        return m;
+    }
+
+    /**
+     * One time the record job plays the clip (or the arranger back): where from, when it asked and when Bitwig started, and the
+     * notes it heard the track play, each with where. Where Bitwig is comes from its play position, or, when that doesn't move
+     * once Bitwig plays, from the clock and the tempo (`fromClock`).
+     */
+    private static final class Playing {
+        final double from;
+        final long asked;
+        Long started;
+        double startPosition;
+        boolean fromClock;
+        int heard;
+        final List<Object> notes = new ArrayList<>();
+        private Set<Integer> held = new HashSet<>();
+        String ended;
+
+        Playing(double from, long asked) {
+            this.from = from;
+            this.asked = asked;
+        }
+
+        double position(long now, double reported, double tempo) {
+            if (!fromClock && now - started >= 500 && Math.abs(reported - startPosition) < 1e-9) fromClock = true;
+            return fromClock ? from + (now - started) * tempo / 60000 : reported;
+        }
+
+        /** The track's notes now: each that wasn't playing a moment ago starts at `at`. */
+        void hear(Object[] playing, double at) {
+            Set<Integer> now = new HashSet<>();
+            for (Object note : playing)
+                if (note instanceof PlayingNote) now.add(((PlayingNote) note).pitch());
+            for (Integer key : now) {
+                if (held.contains(key)) continue;
+                heard++;
+                if (notes.size() >= MAX_NOTES) continue;
+                Map<String, Object> note = new LinkedHashMap<>();
+                note.put("key", key);
+                note.put("at", Math.round(at * 1000) / 1000.0);
+                notes.add(note);
+            }
+            held = now;
+        }
+
+        /** How many notes it heard from `start` (inclusive) to `end` (not). */
+        int heardFrom(double start, double end) {
+            int n = 0;
+            for (Object note : notes) {
+                double at = ((Number) ((Map<?, ?>) note).get("at")).doubleValue();
+                if (at >= start - 0.01 && at < end) n++;
+            }
+            return n;
+        }
+
+        Map<String, Object> answer() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("from", from);
+            m.put("started", started != null);
+            m.put("startedAfterMs", started == null ? null : started - asked);
+            m.put("ended", ended);
+            m.put("positionFrom", fromClock ? "clock" : "bitwig");
+            m.put("heard", heard);
+            m.put("notes", notes);
+            return m;
+        }
+    }
+
+    /** The record job running (see record): everything it keeps, sees and puts back, step by step. */
+    private final class Recording {
+        final Job job = currentJob;
+        /** The project the job started in: it touches Bitwig only while that one is in front. */
+        final String projectName = str(app.projectName().get());
+        final Finish finish;
+        final String trackId;
+        final int scene;
+        final double at;
+        final double length;
+        final double bar;
+        final boolean rec;
+        final boolean arm;
+        final boolean delete;
+        final boolean replay;
+        final double replayFrom;
+        final Double tempo;
+        final String pass;
+        final long began = clock.millis();
+        final String trackName;
+        List<Setting> settings;
+        final Map<String, Object> saved = new LinkedHashMap<>();
+        /** Each track's arm before, by its ID. */
+        final Map<String, Boolean> arms = new LinkedHashMap<>();
+        Map<String, String> tracksBefore;
+        Map<String, Boolean> clipsBefore;
+        double projectTempo;
+        double tempoUsed;
+        /** Whether the job has answered (or given up), so nothing it scheduled does anything more. */
+        boolean done;
+        boolean abortAsked;
+        String abortWhy;
+        /** Whether the job asked for arranger record, and hasn't turned it off since. */
+        boolean recordOn;
+        /** Whether the job may have changed Bitwig's settings, so they need putting back. */
+        boolean changed;
+        final List<String> refused = new ArrayList<>();
+        List<String> restoreFailed;
+        Playing play;
+        Playing replayed;
+        long deadline;
+        boolean slotPlayed;
+        boolean slotRecording;
+        boolean automationWriteSeenOn;
+        Double stopSentAt;
+        Boolean launcherClipDeleted;
+        boolean replayLauncherPlayed;
+        String error;
+
+        Recording(Finish finish, String trackId, int scene, double at, double length, double bar, boolean rec, boolean arm, boolean delete,
+                  boolean replay, double replayFrom, Double tempo, String pass) {
+            this.finish = finish;
+            this.trackId = trackId;
+            this.scene = scene;
+            this.at = at;
+            this.length = length;
+            this.bar = bar;
+            this.rec = rec;
+            this.arm = arm;
+            this.delete = delete;
+            this.replay = replay;
+            this.replayFrom = replayFrom;
+            this.tempo = tempo;
+            this.pass = pass;
+            trackName = str(trackItems[indexOf(trackId)].name().get());
+        }
+
+        /** Keeps what the job changes, sets it for recording, and waits for Bitwig to show it all. */
+        void start() {
+            recording = this;
+            try {
+                prepare();
+            } catch (RuntimeException | LinkageError e) {
+                error = failure(e);
+                emergency();
+                answer("failed");
+            }
+        }
+
+        private void prepare() {
+            settings = recordSettings(tempo, at);
+            for (Setting s : settings) saved.put(s.name(), s.read().get());
+            projectTempo = transport.tempo().getRaw();
+            tempoUsed = tempo != null ? tempo : projectTempo;
+            for (int t = 0; t < MAX_TRACKS; t++) {
+                String id = idOf(t);
+                if (trackItems[t].exists().get() && !id.isEmpty()) arms.put(id, trackItems[t].arm().get());
+            }
+            tracksBefore = tracksById();
+            clipsBefore = clipsById();
+            changed = true;
+            for (Setting s : settings)
+                if (!same(s.read().get(), s.wanted())) s.write().accept(s.wanted());
+            Map<String, Integer> places = placesById();
+            for (String id : arms.keySet()) {
+                Integer t = places.get(id);
+                boolean wanted = arm && id.equals(trackId);
+                if (t != null && trackItems[t].arm().get() != wanted) trackItems[t].arm().set(wanted);
+            }
+            waitUntil(() -> notSet().isEmpty(), CHANGE_WAIT, set -> {
+                refused.addAll(notSet());
+                if (!refused.isEmpty() || abortAsked) {
+                    restore();
+                    return;
+                }
+                if (!rec) {
+                    launch();
+                    return;
+                }
+                transport.isArrangerRecordEnabled().set(true);
+                recordOn = true;
+                waitUntil(() -> transport.isArrangerRecordEnabled().get(), CHANGE_WAIT, on -> {
+                    if (!on) refused.add("arranger record");
+                    if (!on || abortAsked) end("refused");
+                    else launch();
+                });
+            });
+        }
+
+        /** The settings (and arms) that don't show what recording wants yet. */
+        List<String> notSet() {
+            List<String> list = new ArrayList<>();
+            for (Setting s : settings)
+                if (!same(s.read().get(), s.wanted())) list.add(s.name());
+            boolean armsOk = true;
+            Map<String, Integer> places = placesById();
+            for (String id : arms.keySet()) {
+                Integer t = places.get(id);
+                if (t != null && trackItems[t].arm().get() != (arm && id.equals(trackId))) armsOk = false;
+            }
+            // A track past the ones the link sees may be armed too: Bitwig says whether any is.
+            if (!armsOk || Link.this.project.hasArmedTracks().get() != arm) list.add("arm");
+            return list;
+        }
+
+        /** Launches the clip, and watches it play. */
+        void launch() {
+            int t = target();
+            if (t < 0) {
+                end("aborted");
+                return;
+            }
+            long now = clock.millis();
+            play = new Playing(at, now);
+            deadline = now + START_WAIT + ms(length + 2 * bar);
+            trackSlots[t][scene].launch();
+            later(this::watch);
+        }
+
+        /** One look at Bitwig while the clip plays (see record). */
+        void watch() {
+            if (abortAsked) {
+                end("aborted");
+                return;
+            }
+            if (!changesSetting.get()) {
+                abortWhy = "Changes were turned off.";
+                end("aborted");
+                return;
+            }
+            int t = target();
+            if (t < 0) {
+                end("aborted");
+                return;
+            }
+            long now = clock.millis();
+            boolean playing = transport.isPlaying().get();
+            if (play.started == null) {
+                if (playing) {
+                    play.started = now;
+                    play.startPosition = transport.playPosition().get();
+                } else if (now - play.asked > START_WAIT) {
+                    end("didntStart");
+                    return;
+                }
+            } else if (!playing) {
+                end("stoppedEarly");
+                return;
+            }
+            ClipLauncherSlot slot = trackSlots[t][scene];
+            slotPlayed |= slot.isPlaying().get();
+            slotRecording |= slot.isRecording().get();
+            automationWriteSeenOn |= transport.isArrangerAutomationWriteEnabled().get() || transport.isClipLauncherAutomationWriteEnabled().get();
+            if (play.started != null) {
+                double position = play.position(now, transport.playPosition().get(), tempoUsed);
+                play.hear(trackItems[t].playingNotes().get(), position);
+                if (stopSentAt == null && position >= at + length - bar - 1e-9) {
+                    // On the next bar line, the clip's end, as the launch quantize is a bar.
+                    trackItems[t].stop();
+                    stopSentAt = position;
+                }
+                if (stopSentAt != null && position >= at + length - 1e-9 && !slot.isPlaying().get() && !slot.isPlaybackQueued().get()) {
+                    end("done");
+                    return;
+                }
+            }
+            if (now >= deadline) {
+                end("timedOut");
+                return;
+            }
+            later(this::watch);
+        }
+
+        /** Ends the clip's playing (see record): record off, Bitwig stopped if it plays, the track back to the arrangement. */
+        void end(String why) {
+            if (play != null) play.ended = why;
+            if (recordOn) transport.isArrangerRecordEnabled().set(false);
+            if (transport.isPlaying().get()) transport.stop();
+            int t = indexOf(trackId);
+            if (t >= 0) trackItems[t].returnToArrangement();
+            waitUntil(() -> !transport.isPlaying().get() && !(recordOn && transport.isArrangerRecordEnabled().get()), CHANGE_WAIT, stopped -> {
+                if (recordOn && !transport.isArrangerRecordEnabled().get()) recordOn = false;
+                boolean recorded = rec && play != null && play.started != null && (why.equals("done") || why.equals("timedOut") || why.equals("stoppedEarly"));
+                if (!stopped || !recorded) {
+                    restore();
+                    return;
+                }
+                if (delete) deleteClip(this::replayOrRestore);
+                else replayOrRestore();
+            });
+        }
+
+        /** Deletes the launcher clip it recorded, so the replay can only hear the arranger's copy. */
+        void deleteClip(Runnable then) {
+            int t = target();
+            if (t < 0) {
+                launcherClipDeleted = false;
+                then.run();
+                return;
+            }
+            trackSlots[t][scene].deleteObject();
+            waitUntil(() -> {
+                int now = indexOf(trackId);
+                return now >= 0 && !trackSlots[now][scene].hasContent().get();
+            }, CHANGE_WAIT, gone -> {
+                launcherClipDeleted = gone;
+                then.run();
+            });
+        }
+
+        void replayOrRestore() {
+            if (!replay) {
+                restore();
+                return;
+            }
+            transport.playStartPosition().set(replayFrom);
+            waitUntil(() -> same(transport.playStartPosition().get(), replayFrom), CHANGE_WAIT, moved -> {
+                if (!moved || abortAsked) {
+                    restore();
+                    return;
+                }
+                long now = clock.millis();
+                replayed = new Playing(replayFrom, now);
+                deadline = now + START_WAIT + ms(at + length + bar - replayFrom);
+                transport.play();
+                later(this::watchReplay);
+            });
+        }
+
+        /** One look at Bitwig while it plays the arranger back (see record). */
+        void watchReplay() {
+            int t = target();
+            if (t < 0 || abortAsked) {
+                stopReplay("aborted");
+                return;
+            }
+            long now = clock.millis();
+            boolean playing = transport.isPlaying().get();
+            if (replayed.started == null) {
+                if (playing) {
+                    replayed.started = now;
+                    replayed.startPosition = transport.playPosition().get();
+                } else if (now - replayed.asked > START_WAIT) {
+                    stopReplay("didntStart");
+                    return;
+                }
+            } else if (!playing) {
+                stopReplay("stoppedEarly");
+                return;
+            }
+            replayLauncherPlayed |= trackSlots[t][scene].isPlaying().get();
+            if (replayed.started != null) {
+                double position = replayed.position(now, transport.playPosition().get(), tempoUsed);
+                replayed.hear(trackItems[t].playingNotes().get(), position);
+                if (position >= at + length + bar - 1e-9) {
+                    stopReplay("done");
+                    return;
+                }
+            }
+            if (now >= deadline) {
+                stopReplay("timedOut");
+                return;
+            }
+            later(this::watchReplay);
+        }
+
+        void stopReplay(String why) {
+            replayed.ended = why;
+            if (transport.isPlaying().get()) transport.stop();
+            waitUntil(() -> !transport.isPlaying().get(), CHANGE_WAIT, stopped -> restore());
+        }
+
+        /** Puts back everything the job changed, then answers once Bitwig shows it (or after CHANGE_WAIT, saying what didn't come back). */
+        void restore() {
+            putBack();
+            waitUntil(() -> notRestored().isEmpty(), CHANGE_WAIT, back -> {
+                restoreFailed = notRestored();
+                answer(null);
+            });
+        }
+
+        /** Sets back each setting, arm and switch the job changed that doesn't show what it was. */
+        void putBack() {
+            if (recordOn && transport.isArrangerRecordEnabled().get()) transport.isArrangerRecordEnabled().set(false);
+            for (Setting s : settings)
+                if (!same(s.read().get(), saved.get(s.name()))) s.write().accept(saved.get(s.name()));
+            Map<String, Integer> places = placesById();
+            for (Map.Entry<String, Boolean> e : arms.entrySet()) {
+                Integer t = places.get(e.getKey());
+                if (t != null && trackItems[t].arm().get() != e.getValue()) trackItems[t].arm().set(e.getValue());
+            }
+        }
+
+        List<String> notRestored() {
+            List<String> list = new ArrayList<>();
+            if (transport.isArrangerRecordEnabled().get()) list.add("arranger record");
+            for (Setting s : settings)
+                if (!same(s.read().get(), saved.get(s.name()))) list.add(s.name());
+            Map<String, Integer> places = placesById();
+            for (Map.Entry<String, Boolean> e : arms.entrySet()) {
+                Integer t = places.get(e.getKey());
+                if (t != null && trackItems[t].arm().get() != e.getValue()) {
+                    list.add("arm");
+                    break;
+                }
+            }
+            return list;
+        }
+
+        /** The track's place in the listing now, found by its ID, or -1 when it has gone (the job then stops: see its callers). */
+        int target() {
+            int t = indexOf(trackId);
+            if (t < 0) abortWhy = "The track went away.";
+            return t;
+        }
+
+        /** Runs a step a moment from now, while the job may still go on (see still). */
+        void later(Runnable step) {
+            host.scheduleTask(() -> guarded(step), RECORD_TICK);
+        }
+
+        /** Waits until `test` is true, or `ms` have passed, then hands `then` whether it came true (see later). */
+        void waitUntil(BooleanSupplier test, long ms, Then then) {
+            long start = clock.millis();
+            Runnable check = new Runnable() {
+                @Override
+                public void run() {
+                    boolean ok = test.getAsBoolean();
+                    if (ok || clock.millis() - start >= ms) then.run(ok);
+                    else later(this);
+                }
+            };
+            later(check);
+        }
+
+        /**
+         * Runs a step of the job unless it has answered, or Bitwig has another project in front (then it answers `abandoned`
+         * without touching anything more). A step that fails puts everything back as far as it can and answers `failed`.
+         */
+        void guarded(Runnable step) {
+            if (done || job != currentJob) return;
+            if (!projectName.equals(frontProject())) {
+                answer("abandoned");
+                return;
+            }
+            try {
+                step.run();
+            } catch (RuntimeException | LinkageError e) {
+                if (done) return;
+                error = failure(e);
+                emergency();
+                answer("failed");
+            }
+        }
+
+        /**
+         * Stops a recording at once, as far as it can, with nothing waited for: record off, Bitwig stopped if it plays, and
+         * the settings put back. Only while Bitwig has the job's project in front: another's transport isn't the job's to
+         * touch. For when Bitwig stops the link, and when a step fails (which then answers).
+         */
+        void emergency() {
+            if (recording == this) recording = null;
+            if (!projectName.equals(frontProject())) return;
+            attemptQuietly(() -> {
+                if (recordOn) transport.isArrangerRecordEnabled().set(false);
+            });
+            attemptQuietly(() -> {
+                if (transport.isPlaying().get()) transport.stop();
+            });
+            attemptQuietly(() -> {
+                int t = indexOf(trackId);
+                if (t >= 0) trackItems[t].returnToArrangement();
+            });
+            if (changed) attemptQuietly(this::putBack);
+        }
+
+        private void attemptQuietly(Runnable step) {
+            try {
+                step.run();
+            } catch (RuntimeException | LinkageError e) {
+                host.errorln("Music Organiser: couldn't put Bitwig back after recording (" + e + ").");
+            }
+        }
+
+        long ms(double beats) {
+            return (long) Math.ceil(beats * 60000 / tempoUsed);
+        }
+
+        /** What the job decided, from what it saw (see record), unless it already knows (`given`). */
+        String decide(String given) {
+            if (given != null) return given;
+            if (!refused.isEmpty()) return "refused";
+            if (error != null) return "failed";
+            String ended = play == null ? null : play.ended;
+            if (play == null || "aborted".equals(ended) || (replayed != null && "aborted".equals(replayed.ended))) return abortAsked || abortWhy != null ? "aborted" : "refused";
+            if (play.started == null) return "didntStart";
+            if (!rec) return play.heard > 0 ? "heard" : "cantHear";
+            if (replayed == null || replayed.started == null) return "notChecked";
+            if (replayed.heardFrom(at, at + length + bar) > 0 && !replayLauncherPlayed) return "recorded";
+            return play.heard > 0 ? "nothing" : "cantTell";
+        }
+
+        /** Answers with what the job saw and did: `given` is what it decided when it knows already (abandoned, failed). */
+        void answer(String given) {
+            if (done) return;
+            done = true;
+            if (recording == this) recording = null;
+            String decided = decide(given);
+            boolean front = projectName.equals(frontProject());
+            Map<String, Object> m = new LinkedHashMap<>();
+            if (pass != null) m.put("pass", pass);
+            m.put("decided", decided);
+            m.put("trackId", trackId);
+            m.put("track", trackName);
+            m.put("slot", scene);
+            m.put("at", at);
+            m.put("length", length);
+            m.put("bar", bar);
+            m.put("record", rec);
+            m.put("arm", arm);
+            Map<String, Object> tempos = new LinkedHashMap<>();
+            tempos.put("project", projectTempo);
+            tempos.put("used", tempoUsed);
+            m.put("tempo", tempos);
+            m.put("refused", refused);
+            if (abortWhy != null) m.put("abortWhy", abortWhy);
+            if (error != null) m.put("error", error);
+            m.put("played", play == null ? null : play.answer());
+            if (play != null) m.put("heard", play.heard);
+            Map<String, Object> seen = new LinkedHashMap<>();
+            seen.put("clipPlayed", slotPlayed);
+            seen.put("slotRecording", slotRecording);
+            seen.put("automationWriteSeenOn", automationWriteSeenOn);
+            seen.put("stopSentAt", stopSentAt);
+            m.put("seen", seen);
+            m.put("launcherClipDeleted", launcherClipDeleted);
+            Map<String, Object> back = null;
+            if (replayed != null) {
+                back = replayed.answer();
+                back.put("to", at + length + bar);
+                back.put("inPass", replayed.heardFrom(at, at + length + bar));
+                back.put("before", replayed.heardFrom(Double.NEGATIVE_INFINITY, at));
+                back.put("launcherPlayed", replayLauncherPlayed);
+            }
+            m.put("replay", back);
+            // What Bitwig shows now, unless another project is in front: the job doesn't read that one's.
+            Map<String, Object> after = new LinkedHashMap<>();
+            after.put("checked", front);
+            if (front) {
+                after.put("recordOff", !transport.isArrangerRecordEnabled().get());
+                after.put("playing", transport.isPlaying().get());
+                after.put("playStart", transport.playStartPosition().get());
+            }
+            // Null when the job didn't wait to see everything come back (it was abandoned, or a step failed).
+            after.put("restoreFailed", restoreFailed);
+            m.put("after", after);
+            m.put("diff", front && tracksBefore != null ? diff() : null);
+            m.put("ms", clock.millis() - began);
+            finish.ok(m);
+        }
+
+        /** The tracks added and removed since the job started (by ID), and the launcher slots whose clip came or went. */
+        Map<String, Object> diff() {
+            Map<String, String> tracksNow = tracksById();
+            Map<String, Boolean> clipsNow = clipsById();
+            List<Object> added = new ArrayList<>();
+            for (Map.Entry<String, String> e : tracksNow.entrySet())
+                if (!tracksBefore.containsKey(e.getKey())) {
+                    Map<String, Object> track = new LinkedHashMap<>();
+                    track.put("id", e.getKey());
+                    track.put("name", e.getValue());
+                    added.add(track);
+                }
+            List<Object> removed = new ArrayList<>();
+            for (String id : tracksBefore.keySet())
+                if (!tracksNow.containsKey(id)) removed.add(id);
+            List<Object> clips = new ArrayList<>();
+            for (Map.Entry<String, Boolean> e : clipsNow.entrySet()) {
+                Boolean was = clipsBefore.get(e.getKey());
+                if (was == null || was.equals(e.getValue())) continue;
+                int cut = e.getKey().lastIndexOf(' ');
+                Map<String, Object> c = new LinkedHashMap<>();
+                c.put("trackId", e.getKey().substring(0, cut));
+                c.put("slot", Integer.parseInt(e.getKey().substring(cut + 1)));
+                c.put("before", was);
+                c.put("after", e.getValue());
+                clips.add(c);
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("tracksAdded", added);
+            m.put("tracksRemoved", removed);
+            m.put("clipsChanged", clips);
+            return m;
+        }
+    }
+
+    // ---- The probe (extension 3.9) ----
+
+    /**
+     * Probes whether Bitwig carries out the commands of its panels for the link (extension 3.9), by a route (`via`, see
+     * ROUTES; DEFAULT_ROUTE without one): TOGGLE_ARRANGER, which shows or hides the arranger timeline whatever has the focus,
+     * then FOCUS_LAUNCHER and FOCUS_ARRANGER, which bring their panel to the front, or hide it when it's in front already.
+     * Each runs twice, `gap` ms apart (PROBE_GAP unless given), and the link reads whether its panel shows before and after
+     * each go. A panel that shows and hides with them means Bitwig carried them out; one that never changes means it didn't
+     * (as copy and paste weren't). It switches to the Arrange layout first, as arrange does, and shows or hides each panel
+     * as it was afterwards. The answer: `via`, the `layout` before, and `steps`, each with its `action`, whether the route
+     * `ran` each go, the panel's `visible` before and after each, and whether it was `restored` (null when it needn't be),
+     * or `missing` when Bitwig has no such action.
+     */
+    private void probe(Map<String, Object> request, Finish finish) {
+        String route = route(request);
+        if (arranger == null) throw new LinkError("This Bitwig didn't let the link reach its arranger. A selftest says why.");
+        Object g = field(request, "gap");
+        if (!absent(g) && !(g instanceof Double && (Double) g >= 0 && (Double) g <= 10000))
+            throw new LinkError("The gap is from 0 to 10000 ms, not " + Json.js(g) + ".");
+        long gap = absent(g) ? PROBE_GAP : Math.round((Double) g);
+        List<String> plan = List.of(TOGGLE_ARRANGER, FOCUS_LAUNCHER, FOCUS_ARRANGER);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("via", route);
+        m.put("layout", str(app.panelLayout().get()));
+        List<Object> steps = new ArrayList<>();
+        m.put("steps", steps);
+        Runnable go = () -> probeStep(route, plan, 0, gap, steps, () -> finish.ok(m), finish);
+        if (arrangeLayout()) {
+            go.run();
+            return;
+        }
+        app.setPanelLayout(Application.PANEL_LAYOUT_ARRANGE);
+        waitFor(this::arrangeLayout, CHANGE_WAIT, arranging -> {
+            if (!arranging) throw new LinkError("Bitwig didn't switch to its Arrange layout.");
+            go.run();
+        }, finish);
+    }
+
+    private void probeStep(String route, List<String> plan, int i, long gap, List<Object> steps, Runnable then, Finish finish) {
+        if (i >= plan.size()) {
+            then.run();
+            return;
+        }
+        String id = plan.get(i);
+        Runnable next = () -> probeStep(route, plan, i + 1, gap, steps, then, finish);
+        Map<String, Object> step = new LinkedHashMap<>();
+        step.put("action", id);
+        steps.add(step);
+        Action action = app.getAction(id);
+        if (action == null) {
+            step.put("missing", true);
+            next.run();
+            return;
+        }
+        SettableBooleanValue visible = id.equals(FOCUS_LAUNCHER) ? arranger.isClipLauncherVisible() : arranger.isTimelineVisible();
+        boolean before = visible.get();
+        List<Object> ran = new ArrayList<>();
+        List<Object> seen = new ArrayList<>(List.of(before));
+        step.put("ran", ran);
+        step.put("visible", seen);
+        step.put("restored", null);
+        runBy(route, id, action::invoke, first -> {
+            ran.add(first);
+            waitFor(() -> false, gap, w -> {
+                seen.add(visible.get());
+                runBy(route, id, action::invoke, second -> {
+                    ran.add(second);
+                    waitFor(() -> false, gap, w2 -> {
+                        seen.add(visible.get());
+                        if (visible.get() == before) {
+                            next.run();
+                            return;
+                        }
+                        visible.set(before);
+                        waitFor(() -> visible.get() == before, CHANGE_WAIT, back -> {
+                            step.put("restored", back);
+                            next.run();
+                        }, finish);
+                    }, finish);
+                }, finish);
+            }, finish);
         }, finish);
     }
 
@@ -2548,6 +3553,33 @@ final class Link {
         if (!isIndex(t, MAX_TRACKS) || !trackItems[index(t)].exists().get())
             throw new LinkError("There's no track " + Json.js(t) + " in the project listing.");
         return index(t);
+    }
+
+    /**
+     * The track a request names (extension 3.9): by the ID Bitwig keeps it under (`trackId`) when it gives one, which stays
+     * put when a track goes in above it, else by its place in the project listing (`track`).
+     */
+    private int requestedTrack(Map<String, Object> request) {
+        Object id = field(request, "trackId");
+        if (absent(id)) return checkTrack(field(request, "track"));
+        if (!(id instanceof String) || ((String) id).isEmpty()) throw new LinkError("A track's ID is text.");
+        if (!trackIds) throw new LinkError("This Bitwig doesn't tell the link tracks' IDs, so it can't find one by its ID. A selftest says why.");
+        int t = indexOf((String) id);
+        if (t < 0) throw new LinkError("There's no track with ID " + id + " in the project listing.");
+        return t;
+    }
+
+    /** The place in the listing of the track Bitwig keeps under `id`, or -1 when the link sees none (extension 3.9). */
+    private int indexOf(String id) {
+        if (!trackIds || id == null || id.isEmpty()) return -1;
+        for (int t = 0; t < MAX_TRACKS; t++)
+            if (trackItems[t].exists().get() && id.equals(str(trackItems[t].channelId().get()))) return t;
+        return -1;
+    }
+
+    /** The ID Bitwig keeps the track at a place in the listing under, or "" when it hasn't said (or doesn't say IDs). */
+    private String idOf(int t) {
+        return trackIds ? str(trackItems[t].channelId().get()) : "";
     }
 
     private Device trackDevice(int t, Object d) {
