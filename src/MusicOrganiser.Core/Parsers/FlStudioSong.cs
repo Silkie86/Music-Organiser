@@ -13,6 +13,12 @@ public sealed record FlPlugin(string Name, string Vendor, string Format, string 
 {
     public bool Native => Format == "FL";
 
+    /// <summary>
+    /// The plugin gave FL nothing when the project was saved, so FL kept none of its sound and it opens at its default
+    /// (KORG LegacyCell does this; Solomon's funk step_8 saved again in FL 25 lost all three of its LegacyCells).
+    /// </summary>
+    public bool NothingSaved { get; init; }
+
     /// <summary>An effect's slot in its mixer insert, from 0 at the top; -1 for an instrument, or when the file doesn't say.</summary>
     public int Slot { get; init; } = -1;
 
@@ -622,12 +628,14 @@ public sealed partial class FlStudioReader
             ? f.TryGetValue(VstClassId, out var cid) && cid.Length == 16 ? VstPreset.ClassIdString(cid) : ""
             : f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4 ? BinaryPrimitives.ReadInt32LittleEndian(cc).ToString() : "";
         PresetBlob? state = null;
-        if (f.TryGetValue(VstState, out var raw) && raw.Length > 0)
+        f.TryGetValue(VstState, out var raw);
+        var nothing = !isVst3 && raw is not null && SavedNothing(raw);
+        if (raw is { Length: > 0 } && !nothing)
         {
             state = WrapperPreset(f, raw, displayName.Length > 0 ? displayName : name, name);
             if (state.Extension is not (".fxp" or ".vstpreset")) state = null;   // raw states other DAWs can't load
         }
         return new FlPlugin(name, WrapperText(f, VstVendor), isVst3 ? "VST3" : "VST2", id, state, WrapperText(f, VstPath),
-                            isVst3 && raw is { Length: > 0 } ? Vst3ParameterIds(raw) : null);
+                            isVst3 && raw is { Length: > 0 } ? Vst3ParameterIds(raw) : null) { NothingSaved = nothing };
     }
 }

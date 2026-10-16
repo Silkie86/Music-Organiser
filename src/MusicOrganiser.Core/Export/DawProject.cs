@@ -118,16 +118,20 @@ public static class DawProject
 
         XElement? Device(FlPlugin p, string role, List<string> skipped)
         {
-            if (p.Native || p.State is null)
+            if (p.Native || p.State is null && !p.NothingSaved)
             {
                 skipped.Add(p.Native ? $"{p.Name} (FL Studio plugin)" : $"{p.Name} (settings not readable)");
                 return null;
             }
-            // VST2 settings go in as a bank (.fxb), as Bitwig's own DAWproject files have them.
-            var (data, extension) = p.Format == "VST2" && p.State.Extension == ".fxp"
-                ? (Fxp.ToBank(p.State.Data), ".fxb") : (p.State.Data, p.State.Extension);
-            var path = $"plugins/{Guid.NewGuid()}{extension}";
-            files.Add((path, data));
+            string? path = null;
+            if (p.State is { } s)
+            {
+                // VST2 settings go in as a bank (.fxb), as Bitwig's own DAWproject files have them.
+                var (data, extension) = p.Format == "VST2" && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data), ".fxb") : (s.Data, s.Extension);
+                path = $"plugins/{Guid.NewGuid()}{extension}";
+                files.Add((path, data));
+            }
+            else skipped.Add($"{p.Name}'s sound (FL Studio saved none in this file, so it opens at its default)");
             return new XElement(p.Format == "VST3" ? "Vst3Plugin" : "Vst2Plugin",
                 new XAttribute("id", Id()),
                 p.DeviceId.Length > 0 ? new XAttribute("deviceID", p.DeviceId) : null,
@@ -136,7 +140,7 @@ public static class DawProject
                 new XAttribute("deviceVendor", p.Vendor),
                 new XAttribute("loaded", "true"),
                 new XElement("Enabled", new XAttribute("id", Id()), new XAttribute("value", p.Enabled ? "true" : "false")),
-                new XElement("State", new XAttribute("path", path)));
+                path is null ? null : new XElement("State", new XAttribute("path", path)));
         }
 
         XElement Channel(string role, string? destination, IEnumerable<XElement> devices, double volume = 1, double pan = 0.5,

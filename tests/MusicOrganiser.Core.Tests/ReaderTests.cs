@@ -390,6 +390,59 @@ public class FlStudio25Tests
     }
 }
 
+public class FlStudio9Tests
+{
+    static readonly byte[] Chunk = [.. Enumerable.Range(0, 300).Select(i => (byte)(i * 7))];
+    readonly string _path = Fixtures.FlStudio9Project(Fixtures.TempDir(), Chunk);
+
+    [Fact]
+    public void KeepsAnFl9PluginsWholeSavedSound()
+    {
+        var cell = new FlStudioReader().ExtractPresets(_path).Single(p => p.Plugin == "LegacyCell");
+        Assert.Equal("FPCh", Encoding.ASCII.GetString(cell.Data, 8, 4));
+        Assert.Equal("KLCV", Encoding.ASCII.GetString(cell.Data, 16, 4));
+        Assert.Equal(Chunk.Length, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(cell.Data.AsSpan(56)));
+        Assert.Equal(Chunk, cell.Data[60..]);
+
+        var song = Readers.FlStudio.ReadSong(_path);
+        Assert.Equal(Chunk, song.Channels.Single(c => c.Name == "Cell").Instrument!.State!.Data[60..]);
+    }
+
+    [Fact]
+    public void ReadsAnFl9PluginsSettingsAfterTheShorterHeader()
+    {
+        var d = new FlStudioReader().ExtractPresets(_path).Single(p => p.Plugin == "Fruity Compressor").Data;
+        Assert.Equal("FxCk", Encoding.ASCII.GetString(d, 8, 4));
+        Assert.Equal("Full Reset", Encoding.ASCII.GetString(d, 28, 28).TrimEnd('\0'));
+        Assert.Equal([0.5f, 0.02f, 0.5f], Enumerable.Range(0, 3)
+            .Select(i => System.Buffers.Binary.BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(56 + 4 * i))));
+    }
+
+    [Fact]
+    public void SaysWhenAPluginGaveFlNothingToSaveAndCarriesNoEmptySound()
+    {
+        var path = Fixtures.FlStudio25NothingSaved(Fixtures.TempDir());
+        var warning = Assert.Single(new FlStudioReader().Read(path).Warnings);
+        Assert.StartsWith("LegacyCell has no saved sound in this file", warning);
+        Assert.Empty(new FlStudioReader().ExtractPresets(path));
+
+        var song = Readers.FlStudio.ReadSong(path);
+        var cell = song.Channels.Single().Instrument!;
+        Assert.Equal((null, true), (cell.State, cell.NothingSaved));
+        Assert.Contains("Cell: left out LegacyCell's sound (FL Studio saved none in this file, so it opens at its default)",
+                        BitwigProject.FromFl(song, Fixtures.BitwigTemplate()).Notes);
+
+        // DAWproject keeps the plugin, just without settings for it.
+        var daw = DawProject.FromFl(song, "funk step_9");
+        using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(daw.Bytes));
+        using var xml = zip.GetEntry("project.xml")!.Open();
+        var plugin = System.Xml.Linq.XDocument.Load(xml).Descendants("Vst2Plugin").Single();
+        Assert.Equal("LegacyCell", (string?)plugin.Attribute("deviceName"));
+        Assert.Null(plugin.Element("State"));
+        Assert.Contains("Cell: left out LegacyCell's sound (FL Studio saved none in this file, so it opens at its default)", daw.Notes);
+    }
+}
+
 public class BitwigTests
 {
     readonly string _path = Fixtures.BitwigProject(Fixtures.TempDir());
