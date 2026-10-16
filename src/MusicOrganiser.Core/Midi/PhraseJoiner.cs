@@ -56,16 +56,27 @@ public static class PhraseJoiner
         {
             case ".flp":
             {
-                var reader = new FlStudioReader();
+                // The playlist alone: where each pattern is placed and the notes in it. (Reading the whole song for
+                // another DAW would also copy every plugin's settings, which is a lot of memory for nothing here.)
+                var playlist = new FlStudioReader().ReadPlaylist(path);
                 // With no patterns in the playlist, FL plays them in pattern mode: their order there means nothing.
-                if (!reader.ReadPlaylist(path).Items.Any(i => i.Pattern is not null)) return [];
-                var song = reader.ReadSong(path);
-                var scale = (double)PhraseAnalyser.Ppq / Math.Max(1, song.Ppq);
-                return song.Channels.Where(c => c.Clips.Count > 0)
-                    .Select(c => (c.Name, (IReadOnlyList<TrackClip>)c.Clips.Where(k => !k.Muted).Select(k => new TrackClip(k.Name,
-                        (long)Math.Round(k.Start * scale), (long)Math.Round(k.Length * scale),
-                        PhraseAnalyser.Normalise(k.Notes, song.Ppq, keepPlace: true))).ToList()))
-                    .ToList();
+                if (!playlist.Items.Any(i => i.Pattern is not null)) return [];
+                var scale = (double)PhraseAnalyser.Ppq / Math.Max(1, playlist.Ppq);
+                var patterns = playlist.Patterns.ToDictionary(p => p.Index);
+                var byChannel = new Dictionary<int, List<TrackClip>>();
+                foreach (var item in playlist.Items.Where(i => i.Pattern is not null && !i.Muted).OrderBy(i => i.Start))
+                {
+                    if (!patterns.TryGetValue(item.Pattern!.Value, out var pattern)) continue;
+                    long from = (long)Math.Max(0, item.Offset), to = from + item.Length;
+                    foreach (var channel in pattern.Notes.Where(n => n.Note.Start >= from && n.Note.Start < to).GroupBy(n => n.Channel))
+                    {
+                        var notes = channel.Select(n => n.Note with { Start = n.Note.Start - from, Length = Math.Min(n.Note.Length, to - n.Note.Start) });
+                        if (!byChannel.TryGetValue(channel.Key, out var list)) byChannel[channel.Key] = list = [];
+                        list.Add(new TrackClip(pattern.Name, (long)Math.Round(item.Start * scale), (long)Math.Round(item.Length * scale),
+                                               PhraseAnalyser.Normalise(notes, playlist.Ppq, keepPlace: true)));
+                    }
+                }
+                return byChannel.Select(kv => (playlist.ChannelNames.GetValueOrDefault(kv.Key, $"Channel {kv.Key + 1}"), (IReadOnlyList<TrackClip>)kv.Value)).ToList();
             }
             case ".bwproject" or ".song":
             {
