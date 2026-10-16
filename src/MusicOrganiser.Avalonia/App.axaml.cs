@@ -4,6 +4,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
 using MusicOrganiser.Avalonia.Diagnostics;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.LiveTests;
 using MusicOrganiser.Core.Sounds;
 using MusicOrganiser.ViewModels;
 
@@ -32,6 +33,11 @@ public partial class App : Application
             _sounds = new SoundOrganiser(_soundDb);
             var main = new MainViewModel(_db, _sounds) { AppChecks = AppChecks.All };
             var window = new MainWindow { DataContext = main };
+            // A test build (Debug, as the run-latest launcher starts it) names its commit in the title, so an app left
+            // open on an old build is easy to spot: live edits don't change it, only a fresh build does.
+#if DEBUG
+            if (Commit(LiveReports.AppVersion) is { } commit) window.Title += $" \u00b7 test build {commit}";
+#endif
             desktop.MainWindow = window;
             Views.Appearance.Follow(main.Settings.Appearance, window.Scaler);
             // F12: a note to Claude about what's on screen; and each page opened goes in the log, so a note or an
@@ -77,6 +83,10 @@ public partial class App : Application
         };
         // The galaxy logs which way it draws itself, through Core.AppLog (Views/GalaxyGpu.cs, wired up in Program.cs).
     }
+
+    /// <summary>The short commit in a version like "1.0.0+69948c3d…", or null when the build didn't know it.</summary>
+    internal static string? Commit(string version) =>
+        version.IndexOf('+') is var plus and >= 0 && version.Length - plus > 7 ? version.Substring(plus + 1, 7) : null;
 
     readonly List<string> _errors = [];
 

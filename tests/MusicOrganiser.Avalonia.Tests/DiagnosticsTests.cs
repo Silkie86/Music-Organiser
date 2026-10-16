@@ -84,6 +84,13 @@ public sealed class DiagnosticsTests : IDisposable
         Assert.DoesNotContain(recent, l => l.Contains("Measured"));
     }
 
+    [Theory]
+    [InlineData("1.0.0+69948c3d2a1b", "69948c3")]
+    [InlineData("1.0.0", null)]
+    [InlineData("1.0.0+abc", null)]
+    public void A_test_build_names_its_commit(string version, string? commit) =>
+        Assert.Equal(commit, App.Commit(version));
+
     [Fact]
     public void A_note_is_saved_with_its_picture_and_page()
     {
