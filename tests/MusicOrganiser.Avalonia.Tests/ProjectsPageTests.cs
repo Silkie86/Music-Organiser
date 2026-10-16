@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
@@ -64,24 +65,23 @@ public sealed class ProjectsPageTests : IDisposable
         Settle();
 
         ProjectItem Item(string name) => page.Items.Single(i => i.Name == name);
-        ComboBox RatingBox() => window.GetVisualDescendants().OfType<ComboBox>()
-            .Single(c => c.ItemsSource == ProjectsViewModel.RatingChoices && c.DataContext == page.Detail);
+        StarRating RatingBox() => window.GetVisualDescendants().OfType<StarRating>().Single(c => c.DataContext == page.Detail);
 
         page.Selected = Item("Alpha");
         Settle();
-        RatingBox().SelectedItem = 4;
+        RatingBox().Value = 4;
         Settle();
         page.Selected = Item("Bravo");
         Settle();
-        Assert.Equal(0, RatingBox().SelectedItem);
-        RatingBox().SelectedItem = 2;
+        Assert.Equal(0, RatingBox().Value);
+        RatingBox().Value = 2;
         Settle();
         page.Selected = Item("Charlie");
         Settle();
         page.Selected = Item("Alpha");
         Settle();
 
-        Assert.Equal(4, RatingBox().SelectedItem);
+        Assert.Equal(4, RatingBox().Value);
         var saved = _db.Projects().ToDictionary(p => p.Name, p => p.Rating);
         Assert.Equal(4, saved["Alpha"]);
         Assert.Equal(2, saved["Bravo"]);
@@ -127,6 +127,59 @@ public sealed class ProjectsPageTests : IDisposable
         Assert.True(page.Detail.FixRows.Count > 900);
         var fixRows = window.GetVisualDescendants().Count(c => c is Border { DataContext: FixRow } b && b.Classes.Contains("listRow"));
         Assert.InRange(fixRows, 1, 100);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_song_panel_puts_every_way_to_open_in_one_row_and_its_counts_open_their_tabs()
+    {
+        var folder = Path.Combine(_root, "Beat");
+        Directory.CreateDirectory(folder);
+        foreach (var (name, days) in new[] { ("Beat_1", 40), ("Beat_2", 1) })
+        {
+            var file = Path.Combine(folder, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, DateTime.Now.AddDays(-days));
+            _db.Upsert(new LibraryDb.IndexedFile(file, 1, new DateTimeOffset(File.GetLastWriteTime(file)).ToUnixTimeSeconds(), new ProjectInfo { Daw = "FL Studio" }, null,
+                [("K:/Samples/Gone.wav", false)], []));
+        }
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = main.Projects;
+        page.ReloadAsync().GetAwaiter().GetResult();
+        var window = new Window { Content = new ProjectsView { DataContext = page }, Width = 1400, Height = 900 };
+        window.Show();
+        page.Selected = page.Items.Single();
+        Settle();
+        var view = window.GetVisualDescendants().OfType<ProjectDetailView>().Single(v => v.DataContext == page.Detail);
+
+        // Open in Bitwig, Open in FL Studio and Older saves sit side by side on one line.
+        Button Labelled(string text) => view.GetVisualDescendants().OfType<Button>()
+            .Single(b => b.IsEffectivelyVisible && b.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text == text));
+        var tops = new[] { "Open in Bitwig", "Open in FL Studio", "Older saves" }.Select(t => Labelled(t).TranslatePoint(default, view)!.Value.Y).ToList();
+        Assert.All(tops, y => Assert.Equal(tops[0], y, 1));
+
+        // The counts line opens each list's tab.
+        var tabs = view.FindControl<TabControl>("Tabs")!;
+        view.GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("countLink") && (string?)b.Tag == "Samples")
+            .RaiseEvent(new global::Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Settle();
+        Assert.Equal("Samples", (string?)((TabItem)tabs.SelectedItem!).Header);
+        Assert.Equal("1 sample", page.Detail!.SamplesCountText);
+        Assert.Equal("1 missing", page.Detail.MissingSamplesText);
+
+        // Fix, pressed from another tab, opens its list on Overview under the arrangement, with the divider between them.
+        var plan = page.Detail.PlanFixCommand.ExecuteAsync(null);
+        while (!plan.IsCompleted) Dispatcher.UIThread.RunJobs();
+        Settle();
+        Assert.Equal("Overview", (string?)((TabItem)tabs.SelectedItem!).Header);
+        Assert.True(view.FindControl<GridSplitter>("ArrangementDivider")!.IsEffectivelyVisible);
+
+        // Squeezed narrow, the toolbar's groups wrap onto more lines instead of being cut off.
+        window.Width = 900;
+        Settle();
+        var toolbar = view.FindControl<ToolbarPanel>("Toolbar")!;
+        Assert.All(toolbar.Children.Where(c => c.IsVisible), c => Assert.True(c.Bounds.Right <= toolbar.Bounds.Width + 0.5, $"{c.Bounds} is cut off"));
+        Assert.True(toolbar.Bounds.Height > Labelled("Open in Bitwig").Bounds.Height * 1.5, "The toolbar didn't wrap");
         window.Close();
     }
 }
