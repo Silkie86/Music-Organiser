@@ -30,6 +30,8 @@ public sealed record StoredPhrase(long Id, MidiSource Source, string Part, strin
 {
     /// <summary>For a phrase joined from clips (<see cref="PhraseMember.Encode"/>), else "".</summary>
     public string Members { get; init; } = "";
+    /// <summary>The octave you moved these notes to, or null.</summary>
+    public int? YourOctave { get; init; }
 }
 
 /// <summary>
@@ -58,6 +60,8 @@ public sealed class MidiIndex : IDisposable
         CREATE INDEX IF NOT EXISTS ix_phrases_hash ON phrases(hash);
         -- What you said a part is, by its notes, so it holds for every copy and survives reading the file again.
         CREATE TABLE IF NOT EXISTS your_roles (hash TEXT PRIMARY KEY, role TEXT NOT NULL);
+        -- The octave you moved a part to, by its notes, the same way.
+        CREATE TABLE IF NOT EXISTS your_octaves (hash TEXT PRIMARY KEY, octaves INTEGER NOT NULL);
         """;
 
     readonly SqliteConnection _write, _read;
@@ -214,8 +218,9 @@ public sealed class MidiIndex : IDisposable
             cmd.CommandText = """
                 SELECT ph.id, ph.source, ph.part, ph.clip, ph.role, ph.role_why, y.role AS your_role, ph.bars, ph.notes, ph.lowest,
                        ph.highest, ph.key_tonic, ph.key_minor, ph.key_conf, ph.chroma, ph.chords, ph.features, ph.hash,
-                       s.kind, s.daw, s.mtime, s.size, s.tempo, ph.members
+                       s.kind, s.daw, s.mtime, s.size, s.tempo, ph.members, o.octaves
                 FROM phrases ph JOIN sources s ON s.path = ph.source LEFT JOIN your_roles y ON y.hash = ph.hash
+                     LEFT JOIN your_octaves o ON o.hash = ph.hash
                 ORDER BY s.mtime DESC, ph.id
                 """;
             using var r = cmd.ExecuteReader();
@@ -229,7 +234,8 @@ public sealed class MidiIndex : IDisposable
                 KeyEstimate? key = r.IsDBNull(11) ? null : new KeyEstimate(r.GetInt32(11), r.GetInt32(12) == 1, r.GetDouble(13));
                 list.Add(new StoredPhrase(r.GetInt64(0), source, Str(r, 2), Str(r, 3), Str(r, 4), Str(r, 5),
                                           r.IsDBNull(6) ? null : r.GetString(6), r.GetInt32(7), r.GetInt32(8), r.GetInt32(9), r.GetInt32(10),
-                                          key, (byte[])r[14], Str(r, 15), (byte[])r[16], Str(r, 17)) { Members = Str(r, 23) });
+                                          key, (byte[])r[14], Str(r, 15), (byte[])r[16], Str(r, 17))
+                         { Members = Str(r, 23), YourOctave = r.IsDBNull(24) ? null : r.GetInt32(24) });
             }
         }
         return list;
@@ -264,6 +270,20 @@ public sealed class MidiIndex : IDisposable
                 : "INSERT INTO your_roles (hash, role) VALUES ($h, $r) ON CONFLICT(hash) DO UPDATE SET role = $r";
             cmd.Parameters.AddWithValue("$h", hash);
             cmd.Parameters.AddWithValue("$r", (object?)role ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Remembers the octave you moved these notes to (every copy), or null to let the app pick again.</summary>
+    public void SetYourOctave(string hash, int? octaves)
+    {
+        lock (_writeLock)
+        {
+            using var cmd = _write.CreateCommand();
+            cmd.CommandText = octaves is null ? "DELETE FROM your_octaves WHERE hash = $h"
+                : "INSERT INTO your_octaves (hash, octaves) VALUES ($h, $o) ON CONFLICT(hash) DO UPDATE SET octaves = $o";
+            cmd.Parameters.AddWithValue("$h", hash);
+            cmd.Parameters.AddWithValue("$o", (object?)octaves ?? DBNull.Value);
             cmd.ExecuteNonQuery();
         }
     }
