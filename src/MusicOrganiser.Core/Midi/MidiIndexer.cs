@@ -145,6 +145,8 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     public static IReadOnlyList<IndexedPhrase> FromProject(string path)
     {
         if (Readers.For(path) is not { } reader) return [];
+        // The clips, the playlist and the channels all come from one read of the file.
+        using var once = ReadOnce.Scope();
         var phrases = new List<IndexedPhrase>();
         var seen = new HashSet<string>();
         foreach (var clip in reader.ExtractMidi(path))

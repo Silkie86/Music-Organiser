@@ -360,6 +360,23 @@ public class MidiBrowserTests
     }
 
     [Fact]
+    public void A_song_is_read_from_disk_once_while_its_midi_is_read()
+    {
+        // Each big read is memory to clean up, and those clean-ups pause the window: reading a song's clips, playlist and
+        // channels shares one read of the file.
+        var path = FlProjectWithPhrases(Fixtures.TempDir());
+        var reader = new FlStudioReader();
+        using (ReadOnce.Scope())
+        {
+            var clips = reader.ExtractMidi(path).Count;
+            File.Move(path, path + ".moved");
+            Assert.Equal(clips, reader.ExtractMidi(path).Count);
+            Assert.Equal(4, reader.ReadPlaylist(path).Items.Count);
+        }
+        Assert.Throws<FileNotFoundException>(() => reader.ExtractMidi(path));
+    }
+
+    [Fact]
     public void A_midi_db_from_before_phrases_were_joined_gets_the_new_column()
     {
         var path = Path.Combine(Fixtures.TempDir(), "midi.db");
