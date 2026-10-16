@@ -1,0 +1,94 @@
+<!--
+    Motion: colours that fade, cards that slide, ticks that pop. Kept short and quiet (0.1 to 0.25 s, easing out) so it
+    reads as polish, not decoration. Settings › Appearance › Less motion leaves this file out (Views/Appearance.cs);
+    what must always show (spinners, busy buttons, the cards themselves) is in Feedback.axaml.
+-->
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Hover and press: colours fade instead of snapping, and buttons give a little when pressed. -->
+    <Style Selector="Button /template/ ContentPresenter#PART_ContentPresenter, ToggleButton /template/ ContentPresenter#PART_ContentPresenter, ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Transitions">
+            <Transitions>
+                <BrushTransition Property="Background" Duration="0:0:0.14" />
+                <BrushTransition Property="BorderBrush" Duration="0:0:0.14" />
+            </Transitions>
+        </Setter>
+    </Style>
+    <Style Selector="Button, ToggleButton">
+        <Setter Property="Transitions">
+            <Transitions>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.09" />
+                <DoubleTransition Property="Opacity" Duration="0:0:0.15" />
+            </Transitions>
+        </Setter>
+    </Style>
+    <Style Selector="Button:pressed, ToggleButton:pressed">
+        <Setter Property="RenderTransform" Value="scale(0.96)" />
+    </Style>
+    <!-- The chosen row in a table changes without a fade on purpose. A fade there mixed the row's colour with its see-through
+         opacity on the way, so moving from one sound to the next flashed bright for a moment. -->
+    <!-- Sound tiles: the chosen tile's tint and outline fade in quietly. -->
+    <Style Selector="Border.tile">
+        <Setter Property="Transitions">
+            <Transitions>
+                <BrushTransition Property="Background" Duration="0:0:0.12" />
+                <BrushTransition Property="BorderBrush" Duration="0:0:0.12" />
+            </Transitions>
+        </Setter>
+    </Style>
+    <Style Selector="ProgressBar">
+        <Setter Property="Transitions">
+            <Transitions>
+                <DoubleTransition Property="Value" Duration="0:0:0.3" Easing="CubicEaseOut" />
+            </Transitions>
+        </Setter>
+    </Style>
+
+    <!-- Activity cards: slide up into place, and slide away to the right when they're done. -->
+    <Style Selector="Border.toast">
+        <Style.Animations>
+            <Animation Duration="0:0:0.24" Easing="CubicEaseOut" FillMode="Forward">
+                <KeyFrame Cue="0%"><Setter Property="Opacity" Value="0" /><Setter Property="TranslateTransform.X" Value="0" /><Setter Property="TranslateTransform.Y" Value="18" /><Setter Property="ScaleTransform.ScaleX" Value="0.97" /><Setter Property="ScaleTransform.ScaleY" Value="0.97" /></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="Opacity" Value="1" /><Setter Property="TranslateTransform.X" Value="0" /><Setter Property="TranslateTransform.Y" Value="0" /><Setter Property="ScaleTransform.ScaleX" Value="1" /><Setter Property="ScaleTransform.ScaleY" Value="1" /></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+    <Style Selector="Border.toast.leaving">
+        <Style.Animations>
+            <Animation Duration="0:0:0.24" Easing="CubicEaseIn" FillMode="Forward">
+                <KeyFrame Cue="0%"><Setter Property="Opacity" Value="1" /><Setter Property="TranslateTransform.X" Value="0" /><Setter Property="TranslateTransform.Y" Value="0" /><Setter Property="ScaleTransform.ScaleX" Value="1" /><Setter Property="ScaleTransform.ScaleY" Value="1" /></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="Opacity" Value="0" /><Setter Property="TranslateTransform.X" Value="40" /><Setter Property="TranslateTransform.Y" Value="0" /><Setter Property="ScaleTransform.ScaleX" Value="1" /><Setter Property="ScaleTransform.ScaleY" Value="1" /></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+    <!-- The tick (or cross) pops in when a job ends. -->
+    <Style Selector="Border.toastIcon[IsVisible=True]">
+        <Style.Animations>
+            <Animation Duration="0:0:0.32" Easing="BackEaseOut">
+                <KeyFrame Cue="0%"><Setter Property="ScaleTransform.ScaleX" Value="0.4" /><Setter Property="ScaleTransform.ScaleY" Value="0.4" /><Setter Property="Opacity" Value="0" /></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="ScaleTransform.ScaleX" Value="1" /><Setter Property="ScaleTransform.ScaleY" Value="1" /><Setter Property="Opacity" Value="1" /></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+
+    <!-- Notes that appear (a message under the Open button, a match found) fade in rather than pop. -->
+    <Style Selector="Border.note[IsVisible=True], TextBlock.note[IsVisible=True]">
+        <Style.Animations>
+            <Animation Duration="0:0:0.22" Easing="CubicEaseOut">
+                <KeyFrame Cue="0%"><Setter Property="Opacity" Value="0" /><Setter Property="TranslateTransform.X" Value="0" /><Setter Property="TranslateTransform.Y" Value="-4" /></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="Opacity" Value="1" /><Setter Property="TranslateTransform.X" Value="0" /><Setter Property="TranslateTransform.Y" Value="0" /></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+    <!-- A new page or project fades in with a small rise, so the eye sees what changed. -->
+    <Style Selector="Control.appear">
+        <Style.Animations>
+            <Animation Duration="0:0:0.2" Easing="CubicEaseOut">
+                <KeyFrame Cue="0%"><Setter Property="Opacity" Value="0" /><Setter Property="TranslateTransform.X" Value="0" /><Setter Property="TranslateTransform.Y" Value="8" /></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="Opacity" Value="1" /><Setter Property="TranslateTransform.X" Value="0" /><Setter Property="TranslateTransform.Y" Value="0" /></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+
+</Styles>

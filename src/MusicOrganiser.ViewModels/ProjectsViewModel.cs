@@ -19,7 +19,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     public static IReadOnlyList<string> StatusChoices => Statuses.All;
     public static IReadOnlyList<int> RatingChoices { get; } = [0, 1, 2, 3, 4, 5];
     public static IReadOnlyList<string> GroupChoices { get; } =
-        ["No grouping", "DAW", "Status", "Folder", "Month modified", "Year modified", "Elektron box", "Rating"];
+        ["When made", "No grouping", "DAW", "Status", "Folder", "Month modified", "Year modified", "Elektron box", "Rating"];
 
     public ObservableCollection<string> DawFilters { get; } = new();
     public ObservableCollection<string> StatusFilters { get; } = new();
@@ -35,7 +35,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     [ObservableProperty] bool _onlyMissing;
     [ObservableProperty] bool _hideArchived = true;
     [ObservableProperty] bool _groupSaves = true;
-    [ObservableProperty] string _groupBy = "No grouping";
+    [ObservableProperty] string _groupBy = "When made";
     [ObservableProperty] string _countText = "";
 
     /// <summary>Set from the Plugins or Samples screens: only projects with these ids.</summary>
@@ -46,30 +46,66 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     [ObservableProperty] ProjectItem? _selected;
     [ObservableProperty] ProjectDetailViewModel? _detail;
 
+    /// <summary>Setting: how much of the page's width the selected song's panel takes, 0 to 1.</summary>
+    public const string PanelShareKey = "projects_panel_share";
+
+    /// <summary>
+    /// How much of the width the song's panel takes (the rest is the list): two thirds at first, then where you leave
+    /// the divider. Kept between a fifth and nine tenths so neither side disappears.
+    /// </summary>
+    public double PanelShare
+    {
+        get => double.TryParse(_db.GetSetting(PanelShareKey), System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out var share) ? Math.Clamp(share, 0.2, 0.9) : 2 / 3.0;
+        set => _db.SetSetting(PanelShareKey, Math.Clamp(value, 0.2, 0.9).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     public ProjectsViewModel(LibraryDb db, MainViewModel main)
     {
         _db = db;
         _main = main;
         View = Ui.Current.CreateView(Items);
         View.Filter = o => o is ProjectItem p && Filter(p);
-        View.SortBy(nameof(ProjectItem.Modified), ListSortDirection.Descending);
+        View.SortBy(nameof(ProjectItem.Made), ListSortDirection.Descending);
+        OnGroupByChanged(GroupBy);
     }
 
-    public void Reload()
+    public void Reload() => Show(Load(GroupSaves));
+
+    /// <summary>Reload with the database work done in the background, so the window keeps answering.</summary>
+    public Task ReloadAsync() => ReloadAsync(null);
+
+    /// <param name="select">Pick the row holding this file afterwards (when the one picked now is going away).</param>
+    public async Task ReloadAsync(string? select)
+    {
+        var group = GroupSaves;
+        Show(await UiWork.Run(() => Load(group)), select);
+    }
+
+    /// <summary>The rows, read from the database and grouped into songs (on any thread).</summary>
+    (int Saves, List<ProjectItem> Items, List<string> Tags) Load(bool group)
+    {
+        var projects = _db.Projects();
+        var items = group
+            ? SongVersions.Group(projects).Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older)).ToList()
+            : projects.Select(p => new ProjectItem(_db, p)).ToList();
+        return (projects.Count, items, _db.AllTags().Select(t => t.Tag).ToList());
+    }
+
+    void Show((int Saves, List<ProjectItem> Items, List<string> Tags) loaded, string? select = null)
     {
         var selectedId = Selected?.Id;
-        var projects = _db.Projects();
-        _saveCount = projects.Count;
-        Items.ReplaceAll(GroupSaves
-            ? SongVersions.Group(projects).Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older))
-            : projects.Select(p => new ProjectItem(_db, p)));
+        _saveCount = loaded.Saves;
+        Items.ReplaceAll(loaded.Items);
 
         Refill(DawFilters, Items.Select(i => i.Daw), DawFilter, v => DawFilter = v);
         Refill(StatusFilters, Statuses.All, StatusFilter, v => StatusFilter = v);
-        Refill(TagFilters, _db.AllTags().Select(t => t.Tag), TagFilter, v => TagFilter = v);
+        Refill(TagFilters, loaded.Tags, TagFilter, v => TagFilter = v);
         Refill(HardwareFilters, Items.SelectMany(i => i.Hardware), HardwareFilter, v => HardwareFilter = v);
 
-        Selected = Items.FirstOrDefault(i => i.Id == selectedId || i.OlderSaves.Any(o => o.Id == selectedId));
+        Selected = select is not null
+            ? Items.FirstOrDefault(i => i.Path == select || i.OlderSaves.Any(o => o.Path == select))
+            : Items.FirstOrDefault(i => i.Id == selectedId || i.OlderSaves.Any(o => o.Id == selectedId));
         ApplyFilter();
         _main.Live.MarkProjects();
     }
@@ -123,6 +159,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     {
         var prop = value switch
         {
+            "When made" => nameof(ProjectItem.WhenGroup),
             "DAW" => nameof(ProjectItem.Daw),
             "Status" => nameof(ProjectItem.Status),
             "Folder" => nameof(ProjectItem.FolderName),
@@ -173,7 +210,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     }
 
     [RelayCommand]
-    void OpenSelected() => Detail?.OpenInDawCommand.Execute(null);
+    void OpenSelected() => Detail?.OpenMainCommand.Execute(null);
 
     /// <summary>The project files themselves, e.g. into Explorer or a DAW that imports them.</summary>
     public DragPayload? MakeDrag(IReadOnlyList<object> items)

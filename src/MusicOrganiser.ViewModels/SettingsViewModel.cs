@@ -41,6 +41,35 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>What's wrong with the template, where it came from, or what Edit in Bitwig did.</summary>
     [ObservableProperty] string _bitwigTemplateNote = "";
     [ObservableProperty] bool _stepsUntilNextNote;
+    [ObservableProperty] bool _upgradeSynths;
+
+    /// <summary>Which page the app opens on: a page's title, or <see cref="LastPageChoice"/>.</summary>
+    public const string StartPageKey = "start_page";
+
+    /// <summary>Settings › Performance: how hard scans, Deep listen and other background work may push the computer.</summary>
+    public const string PerformanceKey = "performance";
+
+    public static IReadOnlyList<string> PerformanceChoices => Parallelism.PaceChoices;
+
+    [ObservableProperty] string _performance = Parallelism.Gentle;
+
+    partial void OnPerformanceChanged(string value)
+    {
+        OnPropertyChanged(nameof(PerformanceTip));
+        _db.SetSetting(PerformanceKey, value);
+        Parallelism.Mode = Parallelism.ParsePace(value);
+    }
+
+    public string PerformanceTip => Performance switch
+    {
+        Parallelism.Balanced => $"Background work uses up to {Math.Max(1, Parallelism.Cores - 2)} of your {Parallelism.Cores} processor threads.",
+        Parallelism.Fast => $"All {Parallelism.Cores} processor threads while you're in another app or the window is minimised; {Math.Max(1, Parallelism.Cores - 2)} while you're using it.",
+        _ => $"Background work uses up to {Math.Max(1, Parallelism.Cores / 2)} of your {Parallelism.Cores} processor threads, so the app stays smooth while it works.",
+    };
+    public const string LastPageChoice = "Last page I used";
+    public static IReadOnlyList<string> StartPageChoices { get; } =
+        ["Projects", "Sound Lab", "Plugins", "Settings", LastPageChoice];
+    [ObservableProperty] string _startPage;
     [ObservableProperty] string _sampleIndexText = "";
     public string LibraryLocation => _db.FilePath;
 
@@ -61,10 +90,17 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// The app's data folder, where MO Probe's reports and the live tests' reports are: %LOCALAPPDATA%\MusicOrganiser unless
     /// given (tests give one of their own, so opening Settings never reaches the real one).
     /// </param>
+    /// <summary>The theme, accent, font, size and motion.</summary>
+    public AppearanceViewModel Appearance { get; }
+    /// <summary>How Sounds › Most liked weighs things.</summary>
+    public LikedSettingsViewModel Liked { get; }
+
     public SettingsViewModel(LibraryDb db, MainViewModel main, string? dataFolder = null)
     {
         _db = db;
         _main = main;
+        Appearance = new AppearanceViewModel(db);
+        Liked = new LikedSettingsViewModel(db);
         foreach (var r in db.Roots()) ProjectFolders.Add(r);
         foreach (var f in db.GetList(Scanner.SampleFoldersKey)) SampleFolders.Add(f);
         var plugins = db.GetList(Scanner.PluginFoldersKey);
@@ -75,6 +111,10 @@ public sealed partial class SettingsViewModel : ObservableObject
         _bitwigTemplate = BitwigTemplateStore.Find(db, main.DataFolder) ?? "";
         _bitwigTemplateNote = TemplateNote(_bitwigTemplate);
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
+        _upgradeSynths = db.GetSetting(ProjectDetailViewModel.UpgradeSynthsKey) == "1";
+        _performance = Parallelism.Mode.ToString();
+        _startPage = db.GetSetting(StartPageKey) is { } start ? start == "Samples" ? "Sound Lab" : start : "Projects";   // Samples is on the Sounds page now
+        if (!StartPageChoices.Contains(_startPage)) _startPage = "Projects";
         UpdateSampleIndexText();
         var watch = main.Live.Watch;
         Probe = new ProbeReportsViewModel(folder: dataFolder is null ? null : Path.Combine(dataFolder, "probe"),
@@ -227,12 +267,13 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     static Task<string?> PickFolder(string title) => Ui.Current.PickFolder(title);
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
     async Task AddProjectFolder()
     {
         if (await PickFolder("Choose a folder with music projects") is not { } f || ProjectFolders.Contains(f)) return;
         _db.AddRoot(f);
         ProjectFolders.Add(f);
+        _main.WatchProjectFolders();
         await _main.ScanAsync(false);
     }
 
@@ -242,14 +283,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (SelectedProjectFolder is not { } f) return;
         _db.RemoveRoot(f);
         ProjectFolders.Remove(f);
+        _main.WatchProjectFolders();
     }
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
     async Task AddSampleFolder()
     {
         if (await PickFolder("Choose a sample library folder") is not { } f || SampleFolders.Contains(f)) return;
         SampleFolders.Add(f);
         _db.SetList(Scanner.SampleFoldersKey, SampleFolders);
+        _main.Sounds.WatchSampleFolders();
         await IndexSamples();
     }
 
@@ -259,16 +302,17 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (SelectedSampleFolder is not { } f) return;
         SampleFolders.Remove(f);
         _db.SetList(Scanner.SampleFoldersKey, SampleFolders);
+        _main.Sounds.WatchSampleFolders();
     }
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
     async Task IndexSamples()
     {
         await _main.ScanAsync(false, plugins: false, samples: true);
         UpdateSampleIndexText();
     }
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
     async Task AddPluginFolder()
     {
         if (await PickFolder("Choose a plugin folder (VST3, CLAP or VST2)") is not { } f || PluginFolders.Contains(f)) return;
@@ -325,8 +369,13 @@ public sealed partial class SettingsViewModel : ObservableObject
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Couldn't read it: {e.Message}"; }
     }
 
+    partial void OnStartPageChanged(string value) => _db.SetSetting(StartPageKey, value);
+
     partial void OnStepsUntilNextNoteChanged(bool value) =>
         _db.SetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey, value ? "1" : "0");
+
+    partial void OnUpgradeSynthsChanged(bool value) =>
+        _db.SetSetting(ProjectDetailViewModel.UpgradeSynthsKey, value ? "1" : "0");
 
     [RelayCommand]
     async Task ChooseBitwigTemplate()

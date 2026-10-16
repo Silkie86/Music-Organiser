@@ -39,9 +39,14 @@ public sealed partial class SamplesViewModel : ObservableObject, IFileDragSource
             files.Count == 1 ? "1 sample" : $"{files.Count} samples");
     }
 
-    public void Reload()
+    public void Reload() => Show(_db.SampleUsage());
+
+    /// <summary>Reload with the database work done in the background, so the window keeps answering.</summary>
+    public async Task ReloadAsync() => Show(await UiWork.Run(_db.SampleUsage));
+
+    void Show(IReadOnlyList<SampleUsage> items)
     {
-        Items = _db.SampleUsage();
+        Items = items;
         View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
         View.Filter = o => o is SampleUsage s &&
                            (!OnlyMissing || !s.Found) &&

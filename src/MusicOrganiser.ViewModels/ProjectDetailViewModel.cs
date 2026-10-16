@@ -18,6 +18,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public const string BitwigTemplateKey = "bitwig_template";
     /// <summary>"1" when FL's steps on a Sampler play until the next note or the clip end, not until their sample ends.</summary>
     public const string StepsUntilNextNoteKey = "bitwig_steps_until_next_note";
+    /// <summary>"1" when converting swaps older versions of the template's synth (Serum) for the template's own (Serum 2).</summary>
+    public const string UpgradeSynthsKey = "bitwig_upgrade_synths";
     public static string DawExeKey(string daw) => $"daw_exe:{daw}";
 
     readonly LibraryDb _db;
@@ -40,12 +42,43 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public bool HasOlderSaves => Item.OlderSaves.Count > 0;
     public string SavesText => HasOlderSaves ? $"Newest of {Item.SaveCount} saves: {Item.FileName}" : "";
     public string OlderSavesHeader => $"Older saves ({Item.OlderSaves.Count})";
+    /// <summary>The song's working periods, newest first, each one's last save ready to open (the Open button's drop-down).</summary>
+    public IReadOnlyList<RunChoice> RunChoices { get; }
+    public bool HasRunChoices => RunChoices.Count > 1;
+    public string OlderSavesTip => HasRunChoices
+        ? $"Open an older save: its {RunChoices.Count} versions (saves more than {SongVersions.RunGapMonths} months apart), or any save"
+        : "Open one of the older saves";
+    /// <summary>"First made 2 Feb 2019 · saved 3 Aug 2024", or "Saved 3 Aug 2024" when it's all one day.</summary>
+    public string DatesText => Item.Made.Date == Item.Modified.Date
+        ? $"Saved {Item.Modified:d MMM yyyy}"
+        : $"First made {Item.Made:d MMM yyyy} · saved {Item.Modified:d MMM yyyy}";
     public bool CanExtractMidi => Detail?.CanExtractMidi == true && !Item.FileMissing;
     public bool CanExtractPresets => Detail?.CanExtractPresets == true && !Item.FileMissing;
     public string MidiNote => "See each channel's notes and what plays them, export them as MIDI, or send them to Bitwig" +
                               (Item.Daw == "Studio One" ? " (experimental for Studio One)" : "");
     public string PluginHeader => $"Plugins ({Plugins.Count}{(Item.MissingPlugins > 0 ? $", {Item.MissingPlugins} missing" : "")})";
     public string SampleHeader => $"Samples ({Samples.Count}{(Item.MissingSamples > 0 ? $", {Item.MissingSamples} missing" : "")})";
+
+    /// <summary>Overview's line of counts ("12 plugins · 3 missing"), each opening its own tab.</summary>
+    public string PluginsCountText => CountOf(Plugins.Count, "plugin");
+    public string MissingPluginsText => Item.MissingPlugins > 0 ? $"{Item.MissingPlugins} missing" : "";
+    public string SamplesCountText => CountOf(Samples.Count, "sample");
+    public string MissingSamplesText => Item.MissingSamples > 0 ? $"{Item.MissingSamples} missing" : "";
+    public string SavesCountText => CountOf(Item.SaveCount, "save");
+    public string TracksCountText => CountOf(Tracks.Count, IsFlStudio ? "channel" : "track");
+    static string CountOf(int n, string thing) => n == 0 ? $"No {thing}s" : n == 1 ? $"1 {thing}" : $"{n:N0} {thing}s";
+
+    /// <summary>The line above the name: tempo and when it was made and saved.</summary>
+    public string HeaderFacts => string.Join(" · ", new[] { Item.TempoText.Length > 0 ? $"{Item.TempoText} BPM" : "", DatesText }.Where(t => t.Length > 0));
+
+    /// <summary>How much of Overview's height the arrangement keeps when Fix's list sits under it (the divider between them).</summary>
+    public const string ArrangementShareKey = "project_arrangement_share";
+    public double ArrangementShare
+    {
+        get => double.TryParse(_db.GetSetting(ArrangementShareKey), System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out var v) ? Math.Clamp(v, 0.15, 0.9) : 0.55;
+        set => _db.SetSetting(ArrangementShareKey, Math.Clamp(value, 0.15, 0.9).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+    }
 
     [ObservableProperty] string _message = "";
 
@@ -59,11 +92,13 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p, installed)).ToList() ?? [];
         VisiblePlugins = Plugins;
         Samples = Detail?.Samples.Select(s => new SampleRow(db, s, item, this)).ToList() ?? [];
+        RunChoices = item.Runs.Reverse().Select((r, i) => new RunChoice(this, r, i == 0)).ToList();
 
         var facts = new List<KeyValuePair<string, string>>
         {
             new("DAW", Detail?.Summary.Version is { Length: > 0 } v ? $"{item.Daw} ({v})" : item.Daw),
             new("Tempo", item.TempoText.Length > 0 ? $"{item.TempoText} BPM" : "Unknown"),
+            new("First made", item.Made.ToString("d MMM yyyy")),
             new("Modified", item.Modified.ToString("d MMM yyyy, HH:mm")),
             new("Last opened from here", item.LastOpened?.ToString("d MMM yyyy, HH:mm") ?? "Never"),
             new("Location", item.Folder),
@@ -74,6 +109,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         if (item.Error is { } err) facts.Add(new("Couldn't read", err));
         Facts = facts;
         if (item.Daw == "FL Studio" && CanExtractMidi) _ = FindSilentSynthsAsync();
+        LoadPendingFix();
     }
 
     /// <summary>
@@ -87,7 +123,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         {
             var players = await Task.Run(() => MidiChannel.Players(reader.ExtractChannels(Item.Path)));
             if (players.Count == 0) return;
-            foreach (var p in Plugins) p.Silent = p.IsInstrument && !players.Contains(p.Name);
+            foreach (var p in Plugins) p.Silent = p.IsInstrument && p.Installed && !players.Contains(p.Name);   // a missing one stays in sight
             SilentCount = Plugins.Count(p => p.Silent);
             ApplyPluginFilter();
         }
@@ -119,17 +155,24 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         if (save is not null) Open(save.Id, save.Path, save.Daw);
     }
 
+    /// <summary>Opens a save in its own DAW (FL Studio for an FL project).</summary>
+    internal void OpenInOwnDaw(ProjectSummary save) => Open(save.Id, save.Path, save.Daw);
+
     [RelayCommand]
     void RevealSave(ProjectSummary? save)
     {
         if (save is not null) Shell.Reveal(save.Path);
     }
 
+    /// <summary>The window's activity cards.</summary>
+    internal ActivityFeed Activities => _main.Activities;
+
     void Open(long id, string path, string daw)
     {
         if (!File.Exists(path))
         {
             Message = "This project file isn't where it used to be. Rescan to update the library.";
+            Activities.Failed("Can't find the project file", "It has moved or been deleted. Rescan to update the library.");
             return;
         }
         if (_db.GetSetting(DawExeKey(daw)) is { Length: > 0 } exe && File.Exists(exe))
@@ -137,11 +180,14 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         else
             Shell.Open(path);
         _db.MarkOpened(id);
-        Message = $"Opening {Path.GetFileNameWithoutExtension(path)} in {daw}…";
+        Message = "";
+        Activities.Done($"Opening {Path.GetFileNameWithoutExtension(path)}", $"Sent to {daw}. It opens there in a moment.");
     }
 
     [RelayCommand]
     void Reveal() => Shell.Reveal(Item.Path);
+
+    static string Things(int n) => n == 1 ? "1 thing" : $"{n} things";
 
     [RelayCommand]
     void CopyPath() => Ui.Current.CopyText(Item.Path);
@@ -157,12 +203,48 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public bool IsFlStudio => Item.Daw == "FL Studio";
 
     /// <summary>
+    /// The main Open button (and Enter or a double-click in the list): open the project in its DAW, except FL Studio projects,
+    /// which go to Bitwig, since that's where Solomon takes them. Open in FL Studio sits beside it.
+    /// </summary>
+    [RelayCommand]
+    Task OpenMain()
+    {
+        if (IsFlStudio) return OpenInBitwig();
+        OpenInDaw();
+        return Task.CompletedTask;
+    }
+
+    public string OpenMainText => IsFlStudio ? "Open in Bitwig" : $"Open in {Item.Daw}";
+    public string OpenMainTip => IsFlStudio
+        ? "Convert this FL Studio project into a Bitwig project and open it (Enter does the same in the list)"
+        : "Open the newest save in its DAW (Enter does the same in the list)";
+
+    /// <summary>Converts one of the song's older saves into a Bitwig project and opens it.</summary>
+    [RelayCommand]
+    Task OpenSaveInBitwig(ProjectSummary? save) => save is null ? Task.CompletedTask : ConvertForBitwig(save, save.Name);
+
+    /// <summary>
     /// Converts an FL Studio project into a native Bitwig project and opens it in Bitwig. The first time,
     /// it asks for the Bitwig project to build from (see <see cref="BitwigProject"/>).
     /// </summary>
     [RelayCommand]
-    async Task OpenInBitwig()
+    Task OpenInBitwig() => ConvertForBitwig(Item.Summary, Item.Name);
+
+    /// <summary>
+    /// The names of the Bitwig copies this app has opened since Bitwig was last seen closed. Bitwig can have several
+    /// projects open but only says which one is in front, and opening one it has open just brings that copy forward.
+    /// </summary>
+    static readonly HashSet<string> OpenedInBitwig = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Converts one save (the newest, or the last of an older run) and opens it in Bitwig.</summary>
+    internal async Task ConvertForBitwig(ProjectSummary save, string name)
     {
+        if (!File.Exists(save.Path))
+        {
+            Message = "This project file isn't where it used to be. Rescan to update the library.";
+            Activities.Failed("Can't find the project file", "It has moved or been deleted. Rescan to update the library.");
+            return;
+        }
         var template = BitwigTemplateStore.Find(_db, _main.DataFolder);
         if (template is null)
         {
@@ -176,22 +258,42 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             }
             _main.Settings.TemplateChanged(template);
         }
-        Message = "Converting for Bitwig…";
+        Message = "";
+        var card = Activities.Start($"Converting {name} for Bitwig");
         try
         {
-            var path = Item.Path;
+            var path = save.Path;
             var untilNextNote = _db.GetSetting(StepsUntilNextNoteKey) == "1";
-            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote));
+            var upgrade = _db.GetSetting(UpgradeSynthsKey) == "1";
+            // A new convert saved over a copy Bitwig has open would look unchanged there, so it gets a fresh name.
+            var bitwig = _main.Live.State(DawState.Bitwig);
+            if (bitwig is { Running: false }) OpenedInBitwig.Clear();
+            var saveAs = Exporter.BitwigName(path, n => OpenedInBitwig.Contains(n) ||
+                                                        bitwig is { Answering: true } && bitwig.Project.Trim().Equals(n, StringComparison.OrdinalIgnoreCase));
+            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade, saveAs));
             OpenWithBitwig(_db, file);
-            Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig." +
+            OpenedInBitwig.Add(saveAs);
+            var renamed = saveAs != Exporter.BitwigName(path, _ => false)
+                ? " It has a new name because Bitwig may still have an earlier convert open, and would show that one instead. " +
+                  "Close the old one without saving."
+                : "";
+            Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig.{renamed}" +
                       (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
                                                  $"{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more, listed in the notes saved next to it" : "")}.");
+            card.Finish($"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig",
+                        leftOut.Count == 0 ? "Converted. Everything carried over." : $"Converted. {Things(leftOut.Count)} not carried over (see the project panel).",
+                        "Show file", () => Shell.Reveal(file));
         }
         catch (InvalidDataException e) when (e.Message.StartsWith("The Bitwig template", StringComparison.Ordinal))
         {
             Message = $"{e.Message}. Pick another template in Settings.";
+            card.Fail("Converting for Bitwig failed", "The Bitwig template needs changing (see the project panel).");
         }
-        catch (Exception e) { Message = $"Converting for Bitwig failed: {e.Message}"; }
+        catch (Exception e)
+        {
+            Message = $"Converting for Bitwig failed: {e.Message}";
+            card.Fail("Converting for Bitwig failed", e.Message);
+        }
     }
 
     /// <summary>Opens a Bitwig project with the Bitwig chosen in Settings, or whatever opens .bwproject files.</summary>
@@ -207,7 +309,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     [RelayCommand]
     async Task ExportToBitwig()
     {
-        Message = "Converting for Bitwig…";
+        Message = "";
+        var card = Activities.Start($"Saving {Item.Name} as DAWproject");
         try
         {
             var path = Item.Path;
@@ -221,8 +324,13 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
                       }) +
                       (leftOut.Count == 0 ? "" : $" Not carried over yet: {string.Join("; ", leftOut.Take(4))}{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more" : "")}.");
             Shell.Reveal(file);
+            card.Finish($"Saved {Path.GetFileName(file)}", "In Bitwig, use File > Open and pick it.", "Show file", () => Shell.Reveal(file));
         }
-        catch (Exception e) { Message = $"Converting for Bitwig failed: {e.Message}"; }
+        catch (Exception e)
+        {
+            Message = $"Converting for Bitwig failed: {e.Message}";
+            card.Fail("Converting for Bitwig failed", e.Message);
+        }
     }
 
     public bool IsBitwig => Item.Daw == "Bitwig Studio";
@@ -266,6 +374,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     async Task CheckAsync(bool quiet)
     {
         var daw = IsFlStudio ? "FL Studio" : "Bitwig";
+        var card = quiet ? null : Activities.Start($"Checking with {daw}", "Comparing what the app read with what the DAW shows");
         if (!quiet)
         {
             CheckLines = [];
@@ -286,14 +395,18 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             }
             CheckLines = quiet ? [new(CheckResult.Note, $"{daw} has this project open, so the app checked it there by itself."), .. lines] : lines;
             if (!quiet) Message = "";
+            var differ = lines.Count(l => l.Result == CheckResult.Different);
+            card?.Finish($"Checked with {daw}", differ == 0 ? "Everything matches" : $"{Things(differ)} differ (listed in the project panel)");
         }
         catch (DawLinkException e)
         {
             if (!quiet) Message = e.Message;
+            card?.Fail($"Couldn't check with {daw}", e.Message);
         }
         catch (Exception e)
         {
             if (!quiet) Message = $"Checking with {daw} failed: {e.Message}";
+            card?.Fail($"Checking with {daw} failed", e.Message);
         }
     }
 
@@ -310,7 +423,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     async Task ExportPluginPreset(PluginRow? row)
     {
         if (row is null || Readers.For(Item.Path) is not { } reader) return;
-        Message = $"Exporting {row.Name}…";
+        Message = "";
+        var card = Activities.Start($"Exporting {row.Name}");
         try
         {
             var path = Item.Path;
@@ -323,14 +437,21 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             if (result.Files.Count == 0)
             {
                 Message = $"This project has no saved state for {row.Name}.";
+                card.Fail($"Nothing to export for {row.Name}", "This project has no saved state for it.");
                 return;
             }
             Message = PresetsViewModel.ExportSummary(result, blobs, templates);
             var best = result.Files.FirstOrDefault(f => f.EndsWith(".bwpreset", StringComparison.OrdinalIgnoreCase)) ?? result.Files[0];
             if (result.Files.Count <= 2) Shell.Reveal(Path.Combine(result.Folder, best));
             else Shell.Open(result.Folder);
+            card.Finish($"Exported {row.Name}", result.Files.Count == 1 ? "1 file" : $"{result.Files.Count} files",
+                        "Show", () => Shell.Open(result.Folder));
         }
-        catch (Exception e) { Message = $"Preset export failed: {e.Message}"; }
+        catch (Exception e)
+        {
+            Message = $"Preset export failed: {e.Message}";
+            card.Fail("Preset export failed", e.Message);
+        }
     }
 
     [RelayCommand]
@@ -347,6 +468,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         _main.RefreshAll();
     }
 }
+
 
 public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p, IReadOnlySet<string> installed) : ObservableObject
 {
@@ -426,6 +548,7 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
         if (!await Ui.Current.Confirm($"Copy\n{candidate}\n\ninto the project folder as\n{FileName}?", "Recover sample")) return;
         File.Copy(candidate, target);
         MatchMessage = "Copied. Your DAW will find it next time the project opens.";
+        owner.Activities.Done($"Copied {FileName} into the project folder", "Your DAW will find it next time the project opens.");
         owner.Reindex();
     }
 }
@@ -445,4 +568,22 @@ public sealed partial class MatchRow(Match m, SampleRow? sample) : ObservableObj
 
     [RelayCommand]
     Task Recover() => sample?.Recover(m.Candidate) ?? Task.CompletedTask;
+}
+
+/// <summary>
+/// One line of the Open button's drop-down (and the list's right-click menu): a working period on the song, with its
+/// last save to open in its DAW or, for FL Studio, to send to Bitwig.
+/// </summary>
+public sealed class RunChoice(ProjectDetailViewModel owner, SaveRun run, bool newest)
+{
+    public SaveRun Run => run;
+    public bool IsNewest => newest;
+    /// <summary>"2024 rework · Didums_77 · 3 Aug 2024 · 12 saves".</summary>
+    public string Header => $"{run.Label}{(newest ? " (newest)" : "")} · {run.Details}";
+    public bool IsFlStudio => run.Last.Daw == "FL Studio";
+    public string OpenInDawText => $"Open in {run.Last.Daw}";
+
+    public IRelayCommand OpenInDawCommand { get; } = new RelayCommand(() => owner.OpenInOwnDaw(run.Last));
+    public IAsyncRelayCommand OpenInBitwigCommand { get; } = new AsyncRelayCommand(() => owner.ConvertForBitwig(run.Last, run.Last.Name));
+    public IRelayCommand RevealCommand { get; } = new RelayCommand(() => Shell.Reveal(run.Last.Path));
 }

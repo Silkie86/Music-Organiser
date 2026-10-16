@@ -52,6 +52,12 @@ public class LibraryTests : IDisposable
         Assert.Equal(found.Order(StringComparer.OrdinalIgnoreCase), found);
         Assert.Subset(found.ToHashSet(), expected.ToHashSet());
         Assert.DoesNotContain(found, f => f.Contains("auto-backups") || f.Contains("(autosave)"));
+        // The size and modified time come with the folder listing, the same as asking for each file.
+        Assert.All(Scanner.FindProjectStamps([_root]), f =>
+        {
+            var fi = new FileInfo(f.Path);
+            Assert.Equal((fi.Length, new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds()), (f.Size, f.Mtime));
+        });
 
         new Scanner(_db).ScanProjects();
         var paths = _db.Projects().Select(p => p.Path).ToHashSet();
@@ -171,6 +177,8 @@ public class LibraryTests : IDisposable
     [InlineData("a_2_3", "a_2", 3)]
     [InlineData("130", "130", 1)]
     [InlineData("_5", "_5", 1)]
+    [InlineData("civil war_5 (fixed)", "civil war", 5)]   // Fix's copy sits with the save it was made from
+    [InlineData("Didums (Fixed 2)", "Didums", 1)]
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
 
@@ -185,6 +193,87 @@ public class LibraryTests : IDisposable
         var didums = groups.Single(g => g.Song == "Didums" && g.Latest.Folder == @"C:\dub");
         Assert.Equal("Didums_10", didums.Latest.Name);
         Assert.Equal(["Didums_2", "Didums"], didums.Older.Select(o => o.Name));
+    }
+
+    static ProjectSummary Save(string name, DateTime saved, int notes = 100, int bars = 32, int tracks = 6, string[]? plugins = null,
+                               DateTime? created = null) =>
+        new()
+        {
+            Name = name, Path = $@"C:\dub\{name}.flp", Daw = "FL Studio", Folder = @"C:\dub", Modified = saved, Created = created,
+            NoteCount = notes, LengthBars = bars, TrackCount = tracks, PluginNames = plugins ?? ["Serum", "Fruity Reverb 2"],
+        };
+
+    [Fact]
+    public void SavesThreeMonthsApartStartANewRun()
+    {
+        var runs = SongVersions.Runs([
+            Save("Didums_77", new(2024, 8, 3), notes: 400, bars: 96),
+            Save("Didums", new(2019, 1, 10), notes: 20),
+            Save("Didums_12", new(2019, 2, 2)),
+            Save("Didums_13", new(2019, 4, 30)),          // under 3 months after the last save: same run
+            Save("Didums_40", new(2024, 7, 20), notes: 380, bars: 90),
+        ]);
+        Assert.Equal([("2019 original", "Didums_13", 3), ("2024 rework", "Didums_77", 2)],
+                     runs.Select(r => (r.Label, r.Last.Name, r.Saves)));
+        Assert.Equal("Didums_77 · 3 Aug 2024 · 2 saves", runs[1].Details);
+    }
+
+    [Fact]
+    public void ResavingInANewerDawIsNotARework()
+    {
+        var original = Save("Didums_12", new(2019, 2, 2), plugins: ["Serum", "Fruity Reverb 2"]);
+        // FL 26 opened and saved it again: newer versions of the same plugins, a note or two different.
+        var resaved = Save("Didums_13", new(2024, 8, 3), notes: 104, bars: 34, plugins: ["Serum 2", "Fruity Reverb 2 (x64)"]);
+        Assert.False(SongVersions.IsReworked(original, resaved));
+        Assert.Equal("2024 re-save", SongVersions.Runs([original, resaved])[1].Label);
+
+        Assert.True(SongVersions.IsReworked(original, Save("x", default, plugins: ["Serum", "Fruity Reverb 2", "Vital"])));   // a plugin added
+        Assert.True(SongVersions.IsReworked(original, Save("x", default, tracks: 7)));      // a channel added
+        Assert.True(SongVersions.IsReworked(original, Save("x", default, notes: 121)));     // over a fifth more notes
+        Assert.False(SongVersions.IsReworked(original, Save("x", default, notes: 120)));
+        Assert.True(SongVersions.IsReworked(original, Save("x", default, bars: 41)));       // over 8 bars longer
+        Assert.False(SongVersions.IsReworked(original, Save("x", default, notes: -1, bars: -1)));   // unknown counts are left out
+    }
+
+    [Theory]
+    [InlineData("Serum 2", "serum")]
+    [InlineData("Serum (x64)", "serum")]
+    [InlineData("Pro-Q 3", "pro-q")]
+    [InlineData("Kontakt 7.10.1", "kontakt")]
+    [InlineData("Sylenth1_x64", "sylenth")]
+    [InlineData("Tau", "tau")]
+    [InlineData("3x Osc", "3x osc")]
+    [InlineData("808", "808")]
+    public void PluginVersionsAreTheSamePlugin(string name, string family) => Assert.Equal(family, SongVersions.PluginFamily(name));
+
+    [Fact]
+    public void A_song_is_as_old_as_its_first_save_or_the_date_its_file_keeps()
+    {
+        Assert.Equal(new DateTime(2019, 1, 10), SongVersions.FirstMade([Save("Didums_77", new(2024, 8, 3)), Save("Didums", new(2019, 1, 10))]));
+        // Every save was re-saved in 2024, but FL Studio kept the day it was made.
+        Assert.Equal(new DateTime(2018, 11, 5), SongVersions.FirstMade([Save("Didums", new(2024, 8, 3), created: new(2018, 11, 5))]));
+    }
+
+    [Fact]
+    public void FlStudioKeepsWhenAProjectWasMadeAndHowLongItWasOpen()
+    {
+        var payload = new byte[16];
+        BitConverter.TryWriteBytes(payload.AsSpan(0, 8), (new DateTime(2019, 2, 2, 14, 30, 0) - new DateTime(1899, 12, 30)).TotalDays);
+        BitConverter.TryWriteBytes(payload.AsSpan(8, 8), 3.5 / 24);
+        var (created, spent) = FlStudioReader.ProjectTime(payload);
+        Assert.Equal(new DateTime(2019, 2, 2, 14, 30, 0), created!.Value, TimeSpan.FromSeconds(1));
+        Assert.Equal("3 h 30 min", spent);
+        Assert.Equal((null, null), FlStudioReader.ProjectTime(new byte[16]));
+    }
+
+    [Fact]
+    public void A_scan_keeps_how_many_notes_bars_and_channels_each_save_has()
+    {
+        new Scanner(_db).ScanProjects();
+        var p = _db.Projects().Single(x => x.Name == "Night Drive");
+        Assert.True(p.NoteCount > 0);
+        Assert.True(p.LengthBars > 0);
+        Assert.True(p.TrackCount > 0);
     }
 
     [Fact]
@@ -249,9 +338,10 @@ public class LibraryTests : IDisposable
         var fl = _db.Project(_db.Projects().First(x => x.Daw == "FL Studio").Id)!;
         var missing = fl.Samples.Single(s => !s.Found);
         var matches = MatchFinder.ForSample(_db, missing.Path);
-        Assert.Equal(("Same file name", 1.0), (matches[0].Reason, matches[0].Score));
+        // The project looked in a "Drums" folder too, which counts in their favour.
+        Assert.Equal(("Same file name, in matching folders", 1.0), (matches[0].Reason, matches[0].Score));
         Assert.EndsWith("Kick 01.wav", matches[0].Candidate);
-        Assert.Contains(matches, m => m.Candidate.EndsWith("Kick 02.wav") && m.Reason == "Similar name");
+        Assert.Contains(matches, m => m.Candidate.EndsWith("Kick 02.wav") && m.Reason == "Similar name, in matching folders");
         Assert.DoesNotContain(matches, m => m.Candidate.EndsWith("Hat.wav"));
         Assert.Contains("Kick%2001.wav", MatchFinder.SampleSearchUrl(missing.Path));
     }
@@ -276,5 +366,24 @@ public class LibraryTests : IDisposable
         Assert.True(File.Exists(Path.Combine(midi.Folder, "01 Lead (Serum).mid")));
         var presets = Exporter.Presets(Readers.FlStudio, flp, outRoot);
         Assert.Contains("Serum - Lead.fxp", presets.Files);
+    }
+
+    [Fact]
+    public void The_same_plugins_and_sample_files_again_change_nothing()
+    {
+        _db.ReplaceInstalledPlugins(["Serum", "Vital"]);
+        _db.ReplaceSampleIndex(["/s/Kick.wav", "/s/Snare.wav"]);
+        var before = (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision);
+
+        _db.ReplaceInstalledPlugins(["Vital", "Serum"]);
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Kick.wav"]);
+        Assert.Equal(before, (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision));
+
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Hat.wav"]);
+        Assert.Equal(before.SampleIndexRevision + 1, _db.SampleIndexRevision);
+        Assert.Equal(["/s/Hat.wav", "/s/Snare.wav"], _db.SampleIndex().Select(s => s.Path).Order());
+        _db.ReplaceInstalledPlugins(["Vital"]);
+        Assert.Equal(before.PluginsRevision + 1, _db.PluginsRevision);
+        Assert.Equal(["Vital"], _db.InstalledNames());
     }
 }

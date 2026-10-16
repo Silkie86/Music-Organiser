@@ -77,6 +77,49 @@ public sealed partial class GridTests
         Assert.Empty(opened);
     }
 
+    public sealed class PageViewModel
+    {
+        public List<string> Searched { get; } = [];
+        public CommunityToolkit.Mvvm.Input.RelayCommand<Row> SearchCommand { get; }
+        public PageViewModel() => SearchCommand = new(r => Searched.Add(r!.Name));
+    }
+
+    [AvaloniaFact]
+    public void A_button_in_a_cell_reaches_the_pages_command()
+    {
+        // The Plugins page's "Search" buttons sit in grid cells and reach the page through $parent[UserControl]. The cells
+        // are made before they're on screen, which logs a warning once; the button must still work once it shows.
+        var vm = new PageViewModel();
+        var grid = new DataGrid
+        {
+            ItemsSource = new List<Row> { new("Serum"), new("Pro-Q 3") }, IsReadOnly = true, Height = 300,
+            Columns =
+            {
+                new DataGridTemplateColumn
+                {
+                    Header = "Status",
+                    CellTemplate = new global::Avalonia.Controls.Templates.FuncDataTemplate<Row>((_, _) => new Button
+                    {
+                        Content = "Search",
+                        [!Button.CommandProperty] = new Binding("DataContext.SearchCommand")
+                        {
+                            RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor) { AncestorType = typeof(UserControl) },
+                        },
+                        [!Button.CommandParameterProperty] = new Binding(),
+                    }),
+                },
+            },
+        };
+        var window = new Window { Content = new UserControl { DataContext = vm, Content = grid }, Width = 400, Height = 400 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var button = grid.GetVisualDescendants().OfType<Button>().Single(b => b.DataContext is Row { Name: "Pro-Q 3" });
+        Click(window, button, 1);
+
+        Assert.Equal(["Pro-Q 3"], vm.Searched);
+    }
+
     public sealed partial class PickerViewModel : ObservableObject
     {
         public List<string> Picks { get; } = [];
@@ -115,6 +158,23 @@ public sealed partial class GridTests
         view.Refresh();
         view.SortDescriptions.Add(DataGridSortDescription.FromPath(nameof(Row.Name)));
         view.Filter = r => ((Row)r).Name != "Hat";
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(vm.Picks);
+        Assert.Equal(Named(view, "Snare"), grid.SelectedItem);
+    }
+
+    [AvaloniaFact]
+    public void A_refresh_keeps_the_selected_row_when_the_list_is_grouped()
+    {
+        var (_, grid, view, vm) = LinkedGrid();
+        view.GroupDescriptions.Add(new DataGridPathGroupDescription(nameof(Row.Name)));
+        Dispatcher.UIThread.RunJobs();
+        vm.Selected = Named(view, "Snare");
+        Dispatcher.UIThread.RunJobs();
+        vm.Picks.Clear();
+
+        view.Refresh();
         Dispatcher.UIThread.RunJobs();
 
         Assert.Empty(vm.Picks);

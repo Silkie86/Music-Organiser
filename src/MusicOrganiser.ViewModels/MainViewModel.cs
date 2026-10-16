@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MusicOrganiser.Core;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.LiveTests;
@@ -32,10 +33,14 @@ public sealed partial class MainViewModel : ObservableObject
 
     public IReadOnlyList<NavItem> Nav { get; }
 
+    /// <summary>The activity cards: every job says when it starts, how far it has got and when it's done.</summary>
+    public ActivityFeed Activities { get; } = new();
+
     [ObservableProperty] NavItem _selectedNav;
     [ObservableProperty] bool _isScanning;
     [ObservableProperty] string _scanStatus = "";
     [ObservableProperty] double _scanPercent;
+    Activity? _scanCard;
 
     /// <param name="watch">How the DAWs are reached: their usual links unless given (tests use stand-ins).</param>
     /// <param name="pluginScanner">The plugin scanner: mo-scan where the build put it unless given (tests use a stand-in).</param>
@@ -47,6 +52,7 @@ public sealed partial class MainViewModel : ObservableObject
                          string? dataFolder = null)
     {
         _db = db;
+        Parallelism.Mode = Parallelism.ParsePace(db.GetSetting(SettingsViewModel.PerformanceKey));
         DataFolder = dataFolder ?? LiveReports.DataFolder;
         PluginScanner = pluginScanner ?? new();
         _scanner = new Scanner(db);
@@ -56,22 +62,77 @@ public sealed partial class MainViewModel : ObservableObject
         Samples = new SamplesViewModel(db, this);
         Settings = new SettingsViewModel(db, this, dataFolder);
         Sounds = new SoundsViewModel(db, sounds, this);
+        Settings.Liked.Changed += Sounds.WeightsChanged;
         Nav =
         [
             new("Projects", "", Projects),
             new("Sound Lab", "\uE8D6", Sounds),
             new("Plugins", "", Plugins),
-            new("Samples", "", Samples),
             new("Settings", "", Settings),
         ];
-        _selectedNav = Nav[0];
-        Projects.Reload();
+        _selectedNav = StartPage();
+        _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
+        _projectsShown = _soundsShown = db.ProjectsRevision;   // those two pages read the library as they open
 
         // First run: send people to Settings to add their project folders.
         if (_db.Roots().Count == 0 && _db.GetList(Scanner.SampleFoldersKey).Count == 0) SelectedNav = Nav[^1];
         else _ = ScanAsync(false);
+        WatchProjectFolders();
         Live.Start();
     }
+
+    FolderWatch? _projectWatch;
+
+    /// <summary>How long the project folders must be quiet before what changed is read (a DAW saves in several steps).</summary>
+    public static TimeSpan ProjectWatchQuiet { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// While the app is open, the project folders are watched: a project saved, added, moved or deleted is read (or
+    /// marked missing) a moment later, on its own, without walking every folder again. Called again when Settings
+    /// changes the folders.
+    /// </summary>
+    public void WatchProjectFolders()
+    {
+        _projectWatch?.Dispose();
+        _projectWatch = new FolderWatch(_db.Roots(), Scanner.IsProjectFile, c => _ = ProjectFilesChangedAsync(c), ProjectWatchQuiet);
+    }
+
+    async Task ProjectFilesChangedAsync(FolderWatch.Changes changes)
+    {
+        // Too much changed to name every file, or a scan is running that may already have passed them: walk the folders.
+        if (changes.Overflowed.Count > 0 || IsScanning)
+        {
+            await ScanAsync(false, plugins: false);
+            return;
+        }
+        try
+        {
+            var (read, gone) = await Task.Run(() => _scanner.Update(changes.Files));
+            if (read + gone == 0) return;
+            await RefreshAllAsync();
+            var name = Path.GetFileNameWithoutExtension(changes.Files.First());
+            Activities.Done(read + gone == 1 ? $"Updated {name}" : $"Updated {read + gone} projects",
+                            gone == 0 ? "Saved in their folders, so the app read them again"
+                                      : $"{(read > 0 ? $"{read} saved, " : "")}{gone} moved or deleted");
+            AppLog.Info("Watch", $"Project folders: {read} read, {gone} gone ({changes.Files.Count} changes seen)");
+        }
+        catch (Exception e)
+        {
+            AppLog.Info("Watch", $"Couldn't read changed projects: {e.Message}");
+        }
+    }
+
+    /// <summary>The page the app opens on: the one picked in Settings, or the last one used, or Projects.</summary>
+    NavItem StartPage()
+    {
+        var choice = _db.GetSetting(SettingsViewModel.StartPageKey) ?? "Projects";
+        var title = choice == SettingsViewModel.LastPageChoice ? _db.GetSetting(LastPageKey) : choice;
+        if (title == "Samples") title = "Sound Lab";   // Samples is a tab on the Sounds page now
+        return Nav.FirstOrDefault(n => n.Title == title) ?? Nav[0];
+    }
+
+    /// <summary>The page showing when the app was last used, for "Last page I used" in Settings.</summary>
+    public const string LastPageKey = "last_page";
 
     public void ShowProjects() => SelectedNav = Nav.First(n => n.Page == Projects);
 
@@ -88,6 +149,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSelectedNavChanged(NavItem value)
     {
+        _db.SetSetting(LastPageKey, value.Title);
         // The MO Probes running now are followed only while Settings shows them.
         if (value.Page != Settings)
         {
@@ -101,13 +163,55 @@ public sealed partial class MainViewModel : ObservableObject
         Settings.Probe.StartLive();
     }
 
-    public void RefreshAll()
+    /// <summary>The pages whose part of the library changed read it again, in the background (see <see cref="RefreshAllAsync"/>).</summary>
+    public void RefreshAll() => _ = RefreshAllAsync();
+
+    // The library revision each page last read (-1: not yet), so a scan that changed nothing leaves the pages alone.
+    long _projectsShown, _soundsShown, _samplesShown = -1;
+    (long, long) _pluginsShown = (-1, -1);
+
+    /// <summary>
+    /// After a scan (or a DAW saving a project): each page whose part of the library changed reads it again in the
+    /// background, then shows the result, so a library of 16,000 projects and 357,000 sounds doesn't hold the window up
+    /// ("Not responding"). Most scans find nothing new, and then no page reads anything. The sounds themselves don't
+    /// change in a project scan, only how many projects use each one.
+    /// </summary>
+    public async Task RefreshAllAsync()
     {
-        Projects.Reload();
-        Plugins.Reload();
-        Samples.Reload();
-        Sounds.Reload();
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var times = new List<string>();
+        async Task Time(string page, Func<Task> reload)
+        {
+            var start = timer.Elapsed;
+            await reload();
+            times.Add($"{page} {(timer.Elapsed - start).TotalSeconds:0.00} s");
+        }
+        var projects = _db.ProjectsRevision;
+        var plugins = (projects, _db.PluginsRevision);
+        if (projects != _projectsShown)
+        {
+            _projectsShown = projects;
+            await Time("Projects", Projects.ReloadAsync);
+        }
+        if (plugins != _pluginsShown)
+        {
+            _pluginsShown = plugins;
+            await Time("Plugins", Plugins.ReloadAsync);
+        }
+        if (projects != _samplesShown)
+        {
+            _samplesShown = projects;
+            await Time("Samples", Samples.ReloadAsync);
+        }
+        if (projects != _soundsShown)
+        {
+            _soundsShown = projects;
+            await Time("Sounds", Sounds.RefreshUsageAsync);
+        }
         Live.Match();   // the library may have the projects the DAWs have open now
+        AppLog.Info("Pages", times.Count == 0
+            ? "Nothing new in the library, so the pages were left as they are"
+            : $"Refreshed in {timer.Elapsed.TotalSeconds:0.00} s: {string.Join(", ", times)}");
     }
 
     [RelayCommand]
@@ -130,6 +234,8 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public void Shutdown()
     {
+        _projectWatch?.Dispose();
+        Sounds.StopWatching();
         CancelScan();
         PluginScanner.StopAll();
     }
@@ -160,24 +266,31 @@ public sealed partial class MainViewModel : ObservableObject
         _readingParameters = IsScanning = true;
         _scanCts = new CancellationTokenSource();
         var ct = _scanCts.Token;
+        _scanCard = Activities.Start("Reading plugin parameters", cancel: CancelScan);
         var progress = ProgressInStatus();
         try
         {
             var (read, failed) = await Task.Run(() => _scanner.ReadAllParametersAsync(PluginScanner, progress, ct), ct);
             ScanStatus = $"Parameters read for {read} plugin{(read == 1 ? "" : "s")}" +
                          (failed > 0 ? $"; {failed} couldn't be loaded" : "") + $" · {DateTime.Now:HH:mm}";
+            _scanCard.Finish("Plugin parameters read", $"{read} plugin{(read == 1 ? "" : "s")}" +
+                                                       (failed > 0 ? $", {failed} couldn't be loaded" : ""));
         }
         catch (OperationCanceledException)
         {
             ScanStatus = _parametersQueued ? "Reading parameters after this scan"   // making way for one
                 : "Stopped reading parameters; it carries on from there next time";
+            if (_parametersQueued) _scanCard.Stop("Paused reading parameters", "It carries on after this scan");
+            else _scanCard.Stop("Stopped reading parameters", "It carries on from there next time");
         }
         catch (Exception e)
         {
             ScanStatus = $"Reading parameters failed: {e.Message}";
+            _scanCard.Fail("Reading parameters failed", e.Message);
         }
         finally
         {
+            progress.Close();
             _readingParameters = IsScanning = false;
             ScanPercent = 0;
             Plugins.Reload();
@@ -185,10 +298,11 @@ public sealed partial class MainViewModel : ObservableObject
         await RunQueuedScanAsync();
     }
 
-    Progress<ScanProgress> ProgressInStatus() => new(p =>
+    ThrottledProgress<ScanProgress> ProgressInStatus() => new(p =>
     {
         ScanStatus = p.Total > 0 ? $"{p.Stage}: {p.Done} of {p.Total}" : p.Stage;
         ScanPercent = p.Total > 0 ? 100.0 * p.Done / p.Total : 0;
+        _scanCard?.Report(p.Total > 0 ? ScanPercent : -1, p.Total > 0 ? $"{p.Stage}: {p.Done:N0} of {p.Total:N0}" : p.Stage);
     });
 
     // A scan asked for while another is running (say, adding a folder during the startup scan)
@@ -245,6 +359,8 @@ public sealed partial class MainViewModel : ObservableObject
         IsScanning = true;
         _scanCts = new CancellationTokenSource();
         var ct = _scanCts.Token;
+        _scanCard = Activities.Start(full ? "Re-reading everything" : "Looking for new and changed projects", cancel: CancelScan);
+        var added = 0;
         var progress = ProgressInStatus();
         try
         {
@@ -258,7 +374,7 @@ public sealed partial class MainViewModel : ObservableObject
                     ((IProgress<ScanProgress>)progress).Report(new("Checking installed plugins", 0, 0, ""));
                     _scanner.ScanInstalledPlugins(out pluginFiles);
                 }
-                _scanner.ScanProjects(progress, full, ct);
+                added = _scanner.ScanProjects(progress, full, ct);
                 sampling.GetAwaiter().GetResult();
             }, ct);
 
@@ -266,7 +382,7 @@ public sealed partial class MainViewModel : ObservableObject
             // a minute the first time, so show the projects first.
             if (pluginFiles.Count > 0 && PluginScanner.Available)
             {
-                RefreshAll();
+                await RefreshAllAsync();
                 await Task.Run(async () =>
                 {
                     await _scanner.ReadPluginFilesAsync(PluginScanner, pluginFiles, progress, ct);
@@ -278,16 +394,25 @@ public sealed partial class MainViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             ScanStatus = "Scan stopped";
+            _scanCard.Stop("Scan stopped", "Rescan carries on from where it got to");
         }
         catch (Exception e)
         {
             ScanStatus = $"Scan failed: {e.Message}";
+            _scanCard.Fail("Scan failed", e.Message);
         }
         finally
         {
+            progress.Close();
             IsScanning = false;
             ScanPercent = 0;
-            RefreshAll();
+            await RefreshAllAsync();
+        }
+        if (_scanCard.IsRunning)
+        {
+            // Counted by the scan itself: the list may still have been loading when it started.
+            _scanCard.Finish("Library up to date",
+                added > 0 ? $"{added} new project file{(added == 1 ? "" : "s")} · {Projects.Items.Count} songs in all" : $"{Projects.Items.Count} songs, nothing new");
         }
         await RunQueuedScanAsync();
     }

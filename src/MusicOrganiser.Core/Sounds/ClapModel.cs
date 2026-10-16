@@ -80,9 +80,10 @@ public sealed class ClapModel : IDisposable
                File.Exists(Path.Combine(folder, "tokenizer.json"));
     }
 
-    // Several copies of the audio model run side by side, each on its own share of the
-    // cores, so deep listening keeps every core busy. Copies are made as they're needed.
-    static readonly int AudioCopies = Math.Max(1, Parallelism.Cores / 4);
+    // Several copies of the audio model run side by side, each on its own share of the background workers, so deep
+    // listening keeps them busy but leaves two cores for the window (the galaxy stays smooth while it listens).
+    // Copies are made as they're needed.
+    static readonly int AudioCopies = Math.Max(1, Parallelism.Workers / 4);
     readonly string _audioPath;
     readonly SessionOptions _audioOptions;
     readonly ConcurrentBag<InferenceSession> _audioPool = [];
@@ -105,8 +106,10 @@ public sealed class ClapModel : IDisposable
         _audioOptions = new SessionOptions
         {
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-            IntraOpNumThreads = Math.Max(1, Parallelism.Cores / AudioCopies),
+            IntraOpNumThreads = Math.Max(1, Parallelism.Workers / AudioCopies),
         };
+        // ONNX Runtime's threads otherwise spin at normal priority between pieces of work, eating the cores left for the window.
+        _audioOptions.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
         var audio = NewAudioSession();
         _audioPool.Add(audio);
         using var textOptions = new SessionOptions { GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL };

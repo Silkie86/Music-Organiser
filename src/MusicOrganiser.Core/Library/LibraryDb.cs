@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
@@ -51,8 +52,26 @@ public sealed partial class LibraryDb : IDisposable
 
     readonly SqliteConnection _conn;
     readonly object _lock = new();
+    // Reads get connections of their own (the database is in WAL mode, so they never wait for a write): a page reading
+    // the library on the window's thread no longer stalls behind a scan's long write or a 357,000-row read.
+    readonly ConcurrentBag<SqliteConnection> _readers = [];
+    string? _readString;
+    volatile bool _disposed;
 
     public string FilePath { get; }
+
+    long _projectsRevision, _pluginsRevision, _sampleIndexRevision;
+    /// <summary>
+    /// Goes up whenever a scan changes the projects (added, re-read, gone, a plugin's installed answer). The pages compare
+    /// it after a scan and skip reading everything again when nothing changed, which is most scans.
+    /// </summary>
+    public long ProjectsRevision => Interlocked.Read(ref _projectsRevision);
+    /// <summary>Goes up when the installed plugins or what the plugin scanner found in them change.</summary>
+    public long PluginsRevision => Interlocked.Read(ref _pluginsRevision);
+    /// <summary>Goes up when the files in your sample folders change.</summary>
+    public long SampleIndexRevision => Interlocked.Read(ref _sampleIndexRevision);
+    void ProjectsChanged() => Interlocked.Increment(ref _projectsRevision);
+    void PluginsChanged() => Interlocked.Increment(ref _pluginsRevision);
 
     public static string DefaultPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "library.db");
@@ -63,15 +82,33 @@ public sealed partial class LibraryDb : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         _conn = new SqliteConnection($"Data Source={path}");
         _conn.Open();
+        _readString = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString();
         Exec(Schema);
         Exec(PluginScanSchema);
+        AddColumn("projects", "detected_key", "TEXT");
+        AddColumn("projects", "created", "INTEGER");
+        AddColumn("projects", "note_count", "INTEGER");
+        AddColumn("projects", "length_bars", "INTEGER");
+        AddColumn("projects", "track_count", "INTEGER");
+    }
+
+    /// <summary>A column added after the first release: libraries made before it get it here.</summary>
+    void AddColumn(string table, string column, string type)
+    {
+        var has = Query($"SELECT name FROM pragma_table_info('{table}')", r => (string)r["name"]).Contains(column);
+        if (!has) Exec($"ALTER TABLE {table} ADD COLUMN {column} {type}");
     }
 
     // Under the lock, so a query still running on a background task (say, Settings looking for the DAW scripts) finishes
     // first rather than having the connection closed under it.
     public void Dispose()
     {
-        lock (_lock) _conn.Dispose();
+        lock (_lock)
+        {
+            _disposed = true;
+            _conn.Dispose();
+            while (_readers.TryTake(out var r)) r.Dispose();
+        }
     }
 
     // ---- plumbing --------------------------------------------------------------
@@ -85,9 +122,11 @@ public sealed partial class LibraryDb : IDisposable
         }
     }
 
-    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args)
+    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args) => Cmd(_conn, sql, args);
+
+    static SqliteCommand Cmd(SqliteConnection conn, string sql, params (string Name, object? Value)[] args)
     {
-        var cmd = _conn.CreateCommand();
+        var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         foreach (var (n, v) in args) cmd.Parameters.AddWithValue(n, v ?? DBNull.Value);
         return cmd;
@@ -95,14 +134,34 @@ public sealed partial class LibraryDb : IDisposable
 
     List<T> Query<T>(string sql, Func<SqliteDataReader, T> map, params (string, object?)[] args)
     {
-        lock (_lock)
+        // Inside a write on this thread: its own connection, which sees the rows it hasn't committed yet.
+        if (Monitor.IsEntered(_lock) || _readString is null)
+            lock (_lock) return Read(_conn, sql, map, args);
+        var reader = Reader();
+        try { return Read(reader, sql, map, args); }
+        finally
         {
-            using var cmd = Cmd(sql, args);
-            using var r = cmd.ExecuteReader();
-            var list = new List<T>();
-            while (r.Read()) list.Add(map(r));
-            return list;
+            if (_disposed) reader.Dispose();
+            else _readers.Add(reader);
         }
+    }
+
+    static List<T> Read<T>(SqliteConnection conn, string sql, Func<SqliteDataReader, T> map, (string, object?)[] args)
+    {
+        using var cmd = Cmd(conn, sql, args);
+        using var r = cmd.ExecuteReader();
+        var list = new List<T>();
+        while (r.Read()) list.Add(map(r));
+        return list;
+    }
+
+    SqliteConnection Reader()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_readers.TryTake(out var reader)) return reader;
+        reader = new SqliteConnection(_readString);
+        reader.Open();
+        return reader;
     }
 
     static string Str(SqliteDataReader r, string col) => r[col] is string s ? s : "";
@@ -141,12 +200,24 @@ public sealed partial class LibraryDb : IDisposable
 
     // ---- indexing ----------------------------------------------------------------
 
+    /// <remarks>
+    /// A project read before the app knew its key, notes and length counts as changed, so the next scan reads it again.
+    /// </remarks>
     public Dictionary<string, (long Mtime, long Size)> KnownFiles() =>
-        Query("SELECT path, mtime, size FROM projects", r => (Path: (string)r["path"], Mtime: Long(r, "mtime"), Size: Long(r, "size")))
+        Query("SELECT path, mtime, size, (detected_key IS NULL OR note_count IS NULL) AS unkeyed FROM projects",
+              r => (Path: (string)r["path"], Mtime: Long(r, "unkeyed") == 1 ? -1 : Long(r, "mtime"), Size: Long(r, "size")))
             .ToDictionary(x => x.Path, x => (x.Mtime, x.Size), StringComparer.OrdinalIgnoreCase);
 
     public sealed record IndexedFile(string Path, long Size, long Mtime, ProjectInfo? Info, string? Error,
-                                     IReadOnlyList<(string Path, bool Found)> Samples, IReadOnlyList<string> Hardware);
+                                     IReadOnlyList<(string Path, bool Found)> Samples, IReadOnlyList<string> Hardware)
+    {
+        /// <summary>The key its notes point to, "" for none, or null when the notes couldn't be read.</summary>
+        public string? DetectedKey { get; init; }
+        /// <summary>How many notes play in it, or -1 when unknown.</summary>
+        public int NoteCount { get; init; } = -1;
+        /// <summary>How many bars its notes run, or -1 when unknown.</summary>
+        public int LengthBars { get; init; } = -1;
+    }
 
     public void Upsert(IndexedFile f) => UpsertMany([f]);
 
@@ -161,6 +232,7 @@ public sealed partial class LibraryDb : IDisposable
             foreach (var f in files) Upsert(tx, f, installed);
             tx.Commit();
         }
+        ProjectsChanged();
     }
 
     void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed)
@@ -175,21 +247,25 @@ public sealed partial class LibraryDb : IDisposable
         var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
         using (var cmd = Cmd("""
             INSERT INTO projects (path, name, daw, folder, size, mtime, tempo, version, title, confidence,
-                                  can_midi, can_presets, info, error, file_missing, hardware)
+                                  can_midi, can_presets, info, error, file_missing, hardware, detected_key,
+                                  created, note_count, length_bars, track_count)
             VALUES ($path, $name, $daw, $folder, $size, $mtime, $tempo, $version, $title, $conf,
-                    $midi, $presets, $info, $error, 0, $hw)
+                    $midi, $presets, $info, $error, 0, $hw, $key, $created, $notes, $bars, $tracks)
             ON CONFLICT(path) DO UPDATE SET name=excluded.name, daw=excluded.daw, folder=excluded.folder,
                 size=excluded.size, mtime=excluded.mtime, tempo=excluded.tempo, version=excluded.version,
                 title=excluded.title, confidence=excluded.confidence, can_midi=excluded.can_midi,
                 can_presets=excluded.can_presets, info=excluded.info, error=excluded.error, file_missing=0,
-                hardware=excluded.hardware
+                hardware=excluded.hardware, detected_key=excluded.detected_key, created=excluded.created,
+                note_count=excluded.note_count, length_bars=excluded.length_bars, track_count=excluded.track_count
             """,
             ("$path", f.Path), ("$name", Path.GetFileNameWithoutExtension(f.Path)),
             ("$daw", info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown"), ("$folder", Path.GetDirectoryName(f.Path)),
             ("$size", f.Size), ("$mtime", f.Mtime), ("$tempo", info?.Tempo), ("$version", info?.Version),
             ("$title", info?.Title), ("$conf", (int)(info?.Confidence ?? Confidence.Catalogue)),
             ("$midi", info?.CanExtractMidi == true ? 1 : 0), ("$presets", info?.CanExtractPresets == true ? 1 : 0),
-            ("$info", infoJson), ("$error", f.Error), ("$hw", string.Join(", ", f.Hardware))))
+            ("$info", infoJson), ("$error", f.Error), ("$hw", string.Join(", ", f.Hardware)), ("$key", f.DetectedKey ?? ""),
+            ("$created", info?.Created is { } made ? new DateTimeOffset(made).ToUnixTimeSeconds() : null),
+            ("$notes", f.NoteCount), ("$bars", f.LengthBars), ("$tracks", info?.Tracks.Count ?? -1)))
         {
             cmd.Transaction = tx;
             cmd.ExecuteNonQuery();
@@ -311,11 +387,27 @@ public sealed partial class LibraryDb : IDisposable
         {
             if (present.Contains(path) || !roots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase))) continue;
             if (ignored?.Invoke(path) == true) RemoveProject(id);
-            else Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id));
+            else if (Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
         }
     }
 
-    public void RemoveProject(long id) => Exec("DELETE FROM projects WHERE id = $id", ("$id", id));
+    /// <summary>A project file that has gone (deleted, or moved out of your folders): it stays listed, marked missing.</summary>
+    public bool MarkFileMissing(string path)
+    {
+        if (Exec("UPDATE projects SET file_missing = 1 WHERE path = $p AND file_missing = 0", ("$p", path)) == 0) return false;
+        ProjectsChanged();
+        return true;
+    }
+
+    public void RemoveProject(long id)
+    {
+        if (Exec("DELETE FROM projects WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
+    }
+
+    public void RemoveProject(string path)
+    {
+        if (Exec("DELETE FROM projects WHERE path = $p", ("$p", path)) > 0) ProjectsChanged();
+    }
 
     // ---- installed plugins & sample index ----------------------------------------------
 
@@ -327,11 +419,17 @@ public sealed partial class LibraryDb : IDisposable
 
     public void ReplaceInstalledPlugins(IEnumerable<string> names)
     {
+        var list = names.ToList();
+        var now = Query("SELECT name, name_key FROM installed_plugins", r => (Name: (string)r["name"], Key: (string)r["name_key"])).ToList();
+        // The same list as last time (most scans): nothing to write, and every project's plugins keep their answers.
+        var keys = new Dictionary<string, string>();
+        foreach (var n in list) keys.TryAdd(NameKey(n), n);
+        if (now.Count == keys.Count && now.All(r => keys.TryGetValue(r.Key, out var n) && n == r.Name)) return;
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
             using (var del = Cmd("DELETE FROM installed_plugins")) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var n in names)
+            foreach (var n in list)
             {
                 using var cmd = Cmd("INSERT OR IGNORE INTO installed_plugins VALUES ($n, $k)", ("$n", n), ("$k", NameKey(n)));
                 cmd.Transaction = tx;
@@ -339,44 +437,87 @@ public sealed partial class LibraryDb : IDisposable
             }
             tx.Commit();
         }
+        PluginsChanged();
         RefreshInstalledFlags();
     }
 
-    /// <summary>Re-check every project plugin against the installed list.</summary>
+    /// <summary>
+    /// Re-check every project plugin against the installed list. Only the rows whose answer changed are written, and in
+    /// small batches: a library of 16,000 projects has hundreds of thousands of plugin rows, and holding the database for
+    /// all of them at once kept the window waiting ("Not responding").
+    /// </summary>
     public void RefreshInstalledFlags()
     {
         var installed = InstalledKeys();
-        var rows = Query("SELECT rowid, name, name_key, vendor, kind, format, path FROM plugins",
-            r => (RowId: (long)r["rowid"], Key: NameKey(Str(r, "name")),
+        var rows = Query("SELECT rowid, name, name_key, vendor, kind, format, path, installed FROM plugins",
+            r => (RowId: (long)r["rowid"], Key: NameKey(Str(r, "name")), Was: Long(r, "installed") != 0,
                   Ref: new PluginRef(Str(r, "name"), Str(r, "vendor"), (PluginKind)Long(r, "kind"), Str(r, "format"), Str(r, "path"))));
-        lock (_lock)
-        {
-            using var tx = _conn.BeginTransaction();
-            foreach (var row in rows)
-            {
-                using var cmd = Cmd("UPDATE plugins SET installed = $i WHERE rowid = $r",
-                    ("$i", IsInstalled(row.Ref, row.Key, installed) ? 1 : 0), ("$r", row.RowId));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            tx.Commit();
-        }
+        var changed = rows.Select(row => (row.RowId, Now: IsInstalled(row.Ref, row.Key, installed), row.Was))
+                          .Where(row => row.Now != row.Was)
+                          .Select(row => (row.RowId, row.Now))
+                          .ToList();
+        InBatches(changed, "UPDATE plugins SET installed = $i WHERE rowid = $r", ["$i", "$r"],
+                  (row, p) => { p[0].Value = row.Now ? 1 : 0; p[1].Value = row.RowId; });
+        if (changed.Count > 0) ProjectsChanged();
     }
 
+    /// <summary>
+    /// The sample folders' files, in place of the last list. Written in batches with the database let go in between,
+    /// so the window can keep reading it while a big library (350,000 files) goes in.
+    /// </summary>
     public void ReplaceSampleIndex(IEnumerable<string> files)
     {
-        lock (_lock)
+        // Only the difference is written: most scans find the same files, and rewriting 350,000 rows each time kept the
+        // disk and the database busy for nothing.
+        var now = Query("SELECT path FROM sample_index", r => (string)r["path"]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var found = files.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var gone = now.Where(f => !found.Contains(f)).ToList();
+        var added = found.Where(f => !now.Contains(f)).ToList();
+        InBatches(gone, "DELETE FROM sample_index WHERE path = $p", ["$p"], (f, p) => p[0].Value = f);
+        InBatches(added, "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
         {
-            using var tx = _conn.BeginTransaction();
-            using (var del = Cmd("DELETE FROM sample_index")) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var f in files)
+            p[0].Value = f;
+            p[1].Value = Path.GetFileName(f);
+            p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
+        });
+        if (gone.Count + added.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
+    }
+
+    /// <summary>The sample index brought up to date for files the sample folders' watcher saw change: there now, or gone.</summary>
+    public void UpdateSampleIndex(IEnumerable<string> paths)
+    {
+        var list = paths.Where(TextScan.IsAudioPath).ToList();
+        var gone = list.Where(f => !File.Exists(f)).ToList();
+        InBatches(gone, "DELETE FROM sample_index WHERE path = $p", ["$p"], (f, p) => p[0].Value = f);
+        InBatches(list.Except(gone), "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
+        {
+            p[0].Value = f;
+            p[1].Value = Path.GetFileName(f);
+            p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
+        });
+        if (list.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
+    }
+
+    /// <summary>Runs one statement for each item, a few thousand to a transaction, letting go of the database between them.</summary>
+    void InBatches<T>(IEnumerable<T> items, string sql, string[] names, Action<T, SqliteParameter[]> fill, int size = 2000)
+    {
+        using var e = items.GetEnumerator();
+        var more = e.MoveNext();
+        while (more)
+        {
+            lock (_lock)
             {
-                using var cmd = Cmd("INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)",
-                    ("$p", f), ("$n", Path.GetFileName(f)), ("$k", NameKey(Path.GetFileNameWithoutExtension(f))));
+                using var tx = _conn.BeginTransaction();
+                using var cmd = Cmd(sql);
                 cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
+                var p = names.Select(n => cmd.Parameters.Add(new SqliteParameter(n, null))).ToArray();
+                for (var n = 0; more && n < size; n++, more = e.MoveNext())
+                {
+                    fill(e.Current, p);
+                    cmd.ExecuteNonQuery();
+                }
+                tx.Commit();
             }
-            tx.Commit();
         }
     }
 
@@ -426,6 +567,11 @@ public sealed partial class LibraryDb : IDisposable
         Status = Str(r, "status") is { Length: > 0 } s ? s : "Idea",
         Rating = (int)Long(r, "rating"), Favourite = Long(r, "favourite") == 1,
         MusicalKey = Str(r, "musical_key"), Notes = Str(r, "notes"),
+        DetectedKey = HasCol(r, "detected_key") ? Str(r, "detected_key") : "",
+        Created = HasCol(r, "created") && r["created"] is long made ? DateTimeOffset.FromUnixTimeSeconds(made).LocalDateTime : null,
+        NoteCount = HasCol(r, "note_count") && r["note_count"] is long notes ? (int)notes : -1,
+        LengthBars = HasCol(r, "length_bars") && r["length_bars"] is long bars ? (int)bars : -1,
+        TrackCount = HasCol(r, "track_count") && r["track_count"] is long tracks ? (int)tracks : -1,
     };
 
     static bool HasCol(SqliteDataReader r, string name)
@@ -457,9 +603,25 @@ public sealed partial class LibraryDb : IDisposable
         };
     }
 
-    public void SaveOrganisation(ProjectSummary p) => Exec("""
-        UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
-        """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", p.Id));
+    public void SaveOrganisation(ProjectSummary p) => SaveOrganisation(p, []);
+
+    /// <summary>Your fields for a song: written to its newest save and to each of its other saves, so they stay the song's.</summary>
+    public void SaveOrganisation(ProjectSummary p, IEnumerable<long> otherSaves)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var id in otherSaves.Prepend(p.Id).Distinct())
+            {
+                using var cmd = Cmd("""
+                    UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
+                    """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", id));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
 
     public void SetTags(long id, IEnumerable<string> tags)
     {
@@ -485,12 +647,33 @@ public sealed partial class LibraryDb : IDisposable
         Query("SELECT tag, COUNT(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag", r => ((string)r["tag"], (int)(long)r["n"]));
 
     public IReadOnlyList<PluginUsage> PluginUsage() => Query("""
-        SELECT MIN(pl.name) AS name, MAX(pl.vendor) AS vendor, MAX(pl.format) AS format,
-               COUNT(DISTINCT pl.project_id) AS n, group_concat(DISTINCT p.daw) AS daws, MIN(pl.installed) AS installed
-        FROM plugins pl JOIN projects p ON p.id = pl.project_id
-        WHERE p.file_missing = 0
-        GROUP BY pl.name_key ORDER BY n DESC, name
-        """, r => new PluginUsage(Str(r, "name"), Str(r, "vendor"), Str(r, "format"), (int)Long(r, "n"), Str(r, "daws"), Long(r, "installed") == 1));
+        WITH live AS (
+            SELECT pl.*, p.mtime AS saved, p.daw AS daw FROM plugins pl JOIN projects p ON p.id = pl.project_id WHERE p.file_missing = 0),
+        missing AS (SELECT project_id, COUNT(DISTINCT name_key) AS n FROM live WHERE installed = 0 GROUP BY project_id)
+        SELECT MIN(l.name) AS name, MAX(l.vendor) AS vendor, MAX(l.format) AS format,
+               COUNT(DISTINCT l.project_id) AS n, group_concat(DISTINCT l.daw) AS daws, MIN(l.installed) AS installed,
+               COUNT(DISTINCT CASE WHEN l.installed = 0 AND m.n = 1 THEN l.project_id END) AS unlocks,
+               MAX(l.saved) AS last, MAX(l.kind) AS kind
+        FROM live l LEFT JOIN missing m ON m.project_id = l.project_id
+        GROUP BY l.name_key ORDER BY n DESC, name
+        """, r => new PluginUsage(Str(r, "name"), Str(r, "vendor"), Str(r, "format"), (int)Long(r, "n"), Str(r, "daws").Replace(",", ", "), Long(r, "installed") == 1,
+                                  (int)Long(r, "unlocks"), Long(r, "last") is > 0 and var t ? DateTimeOffset.FromUnixTimeSeconds(t).LocalDateTime : null,
+                                  (PluginKind)Long(r, "kind")));
+
+    /// <summary>Each project that's missing a plugin, with the plugins it's missing (by name key).</summary>
+    public IReadOnlyDictionary<long, HashSet<string>> MissingPluginsByProject() =>
+        Query("""
+            SELECT DISTINCT pl.project_id, pl.name_key FROM plugins pl JOIN projects p ON p.id = pl.project_id
+            WHERE p.file_missing = 0 AND pl.installed = 0
+            """, r => ((long)r["project_id"], Str(r, "name_key")))
+            .GroupBy(t => t.Item1).ToDictionary(g => g.Key, g => g.Select(t => t.Item2).ToHashSet());
+
+    /// <summary>The projects using a plugin, most recently saved first.</summary>
+    public IReadOnlyList<PluginProject> ProjectsWithPlugin(string name) => Query("""
+        SELECT DISTINCT p.id, p.name, p.daw, p.mtime FROM plugins pl JOIN projects p ON p.id = pl.project_id
+        WHERE pl.name_key = $k AND p.file_missing = 0 ORDER BY p.mtime DESC
+        """, r => new PluginProject((long)r["id"], Str(r, "name"), Str(r, "daw"), DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime),
+        ("$k", NameKey(name)));
 
     public IReadOnlyList<SampleUsage> SampleUsage() => Query("""
         SELECT s.path, COUNT(DISTINCT s.project_id) AS n, MIN(s.found) AS found
@@ -498,6 +681,14 @@ public sealed partial class LibraryDb : IDisposable
         WHERE p.file_missing = 0
         GROUP BY s.path COLLATE NOCASE ORDER BY found, n DESC, s.path LIMIT 20000
         """, r => new SampleUsage(Str(r, "path"), (int)Long(r, "n"), Long(r, "found") == 1));
+
+    /// <summary>Each sample's projects, and how many of them were saved since <paramref name="recentSince"/>.</summary>
+    public IReadOnlyList<(string Path, int Projects, int Recent)> SampleUsageByAge(DateTime recentSince) => Query("""
+        SELECT s.path, COUNT(DISTINCT s.project_id) AS n, COUNT(DISTINCT CASE WHEN p.mtime >= $c THEN s.project_id END) AS recent
+        FROM samples s JOIN projects p ON p.id = s.project_id
+        WHERE p.file_missing = 0
+        GROUP BY s.path COLLATE NOCASE
+        """, r => (Str(r, "path"), (int)Long(r, "n"), (int)Long(r, "recent")), ("$c", new DateTimeOffset(recentSince).ToUnixTimeSeconds()));
 
     /// <summary>Projects using a plugin (by name) or a sample (by path).</summary>
     public IReadOnlyList<long> ProjectsUsingPlugin(string name) =>

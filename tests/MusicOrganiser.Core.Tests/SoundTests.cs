@@ -406,6 +406,13 @@ public class LearningTests
         Assert.Equal(5, picks.Count);
         Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
         Assert.All(picks, p => Assert.Equal("Kick", p.Sound.Type));
+        // When there's nothing to suggest, the page says why.
+        Assert.Empty(Rediscover.Suggest(org, new Rediscover.Options(Type: "Ride")));
+        Assert.StartsWith("No sounds are sorted as Ride", Rediscover.WhyNothing(org, new Rediscover.Options(Type: "Ride")));
+        org.ApplyUsage(org.Sounds.Select(s => (s.Path, 1)).ToList());
+        Assert.Empty(Rediscover.Suggest(org, new Rediscover.Options(Type: "Kick")));
+        Assert.Contains("Include", Rediscover.WhyNothing(org, new Rediscover.Options(Type: "Kick")));
+        org.ApplyUsage([(Path.Combine(samples, "Pack A", "Kicks", "Kick 00.wav"), 3), ("Kick 01.wav", 2), ("Kick 02.wav", 1)]);
 
         // Kits: each pad gets its type, locks hold, the export is written.
         var slots = KitBuilder.DefaultDrumKit().Take(4).ToList();
@@ -499,5 +506,107 @@ public class LearningTests
         var learned = lib.SoundsTagged("boomy", "learned").Select(id => org.Get(id)!.Name).ToList();
         Assert.NotEmpty(learned);
         Assert.All(learned, n => Assert.StartsWith("one", n));
+    }
+
+    [Fact]
+    public void Older_signs_of_liking_count_half_and_settings_change_the_weights()
+    {
+        var s = new Sound
+        {
+            Path = "kick.wav", UsedIn = 3, UsedInRecently = 1, Favourite = true,
+            Activity = new SoundActivity(Plays: 4, OlderPlays: 2, Drags: 1, OlderDrags: 0, Sends: 0, OlderSends: 2),
+        };
+        // Projects 5 × (1 + 2 × ½), drags 3 × 1, sends 3 × (2 × ½), plays 1 × (4 + 2 × ½), favourite 10.
+        Assert.Equal(10 + 3 + 3 + 5 + 10, LikedWeights.Default.Score(s));
+        // Older counting in full, and projects worth 2: 2 × 3 + 3 × 1 + 3 × 2 + 1 × 6 + 10.
+        Assert.Equal(6 + 3 + 6 + 6 + 10, (LikedWeights.Default with { OlderShare = 1, Project = 2 }).Score(s));
+        Assert.Equal("Favourite, in 3 projects, dragged out once, sent into a DAW 2 times, played 6 times", LikedWeights.Explain(s));
+        Assert.Equal(LikedWeights.Default with { Play = 7 }, LikedWeights.FromJson((LikedWeights.Default with { Play = 7 }).ToJson()));
+        Assert.Equal(LikedWeights.Default, LikedWeights.FromJson("not json"));
+    }
+}
+
+public class GalaxyMapTests
+{
+    // Three families of 20 sounds (kicks, hats, pads), each a noisy copy of its own fingerprint.
+    static Dictionary<long, float[]> Families(int dim = 40)
+    {
+        var rng = new Random(3);
+        var centres = Enumerable.Range(0, 3).Select(_ => Enumerable.Range(0, dim).Select(_ => (float)(rng.NextDouble() * 2 - 1)).ToArray()).ToArray();
+        var result = new Dictionary<long, float[]>();
+        for (var i = 0; i < 60; i++)
+            result[i] = VectorIndex.Unit(centres[i / 20].Select(c => c + (float)(rng.NextDouble() - 0.5) * 0.3f).ToArray());
+        return result;
+    }
+
+    [Fact]
+    public void Sounds_that_sound_alike_land_together_and_the_map_is_the_same_every_time()
+    {
+        var vectors = Families();
+        var map = GalaxyMap.Layout(vectors);
+        AssertFamiliesApart(map);
+        Assert.Equal(map, GalaxyMap.Layout(vectors));   // same library, same galaxy
+    }
+
+    [Fact]
+    public void The_big_library_route_still_keeps_sound_alikes_together()
+    {
+        // exactBelow: 0 takes the route a 300,000-sound library takes: estimated neighbours and parallel updates.
+        var map = GalaxyMap.Layout(Families(), exactBelow: 0);
+        AssertFamiliesApart(map);
+    }
+
+    static void AssertFamiliesApart(Dictionary<long, StarPoint> map)
+    {
+        Assert.Equal(60, map.Count);
+        Assert.All(map.Values, p => { Assert.InRange(p.X, 0f, 1f); Assert.InRange(p.Y, 0f, 1f); });
+        static double D(StarPoint a, StarPoint b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
+        double Mean(Func<long, long, bool> pair) =>
+            map.SelectMany(a => map.Where(b => b.Key > a.Key && pair(a.Key, b.Key)).Select(b => D(a.Value, b.Value))).Average();
+        var within = Mean((a, b) => a / 20 == b / 20);
+        var between = Mean((a, b) => a / 20 != b / 20);
+        Assert.True(between > within * 3, $"families should sit apart: within {within:0.000}, between {between:0.000}");
+    }
+
+    [Fact]
+    public void A_new_sound_lands_beside_its_sound_alikes()
+    {
+        var vectors = Families();
+        var map = GalaxyMap.Layout(vectors);
+        vectors[100] = vectors[5].ToArray();   // a new copy of a kick
+        var placed = GalaxyMap.PlaceNew(vectors, map);
+        Assert.Equal([100L], placed.Keys);
+        var kicks = map.Where(kv => kv.Key < 20).ToList();
+        var (kx, ky) = (kicks.Average(k => k.Value.X), kicks.Average(k => k.Value.Y));
+        var hats = map.Where(kv => kv.Key is >= 20 and < 40).ToList();
+        var (hx, hy) = (hats.Average(k => k.Value.X), hats.Average(k => k.Value.Y));
+        var p = placed[100];
+        Assert.True(Math.Abs(p.X - kx) + Math.Abs(p.Y - ky) < Math.Abs(p.X - hx) + Math.Abs(p.Y - hy));
+    }
+}
+
+public class RediscoverScaleTests
+{
+    [Fact]
+    public void Shuffle_picks_from_a_library_of_a_hundred_thousand_sounds_in_a_moment()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-rediscover-").FullName;
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        var rng = new Random(7);
+        lib.Save(Enumerable.Range(0, 100_000).Select(i => new SoundLibrary.Analysed($"/lib/Pack {i / 500}/Kick {i}.wav", 1, 1,
+            new SoundAnalysis { Seconds = 0.5, Features = Enumerable.Range(0, 40).Select(_ => (float)rng.NextDouble()).ToArray() },
+            null, null, "Kick")));
+        using var org = new SoundOrganiser(lib);
+        org.ApplyUsage(Enumerable.Range(0, 300).Select(i => ($"/lib/Pack {i / 500}/Kick {i}.wav", 2)).ToList());
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var picks = Rediscover.Suggest(org, new Rediscover.Options(Count: 30, Seed: 1));
+        var folders = Rediscover.Folders(org);
+        clock.Stop();
+
+        Assert.Equal(30, picks.Count);
+        Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
+        Assert.Equal(200, folders.Count);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"Took {clock.Elapsed.TotalSeconds:0.0} s");
     }
 }
