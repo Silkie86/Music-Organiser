@@ -86,7 +86,10 @@ public sealed record BitwigLiveOptions
 /// was copied in Bitwig (one clipboard for every project open), and leaves the test project in its Arrange layout, with its
 /// clip launcher showing, the play start moved, the MIDI clip in a new colour and a copy of it pasted on the run's Sample
 /// track. With the extension 3.8, Clip to arranger's checks may leave a copy of the Sample track behind too, and the run
-/// inserts its MIDI file as a track of its own (“Live Clip”, <see cref="FileAsTrackAsync"/>).
+/// inserts its MIDI file as a track of its own (“Live Clip”, <see cref="FileAsTrackAsync"/>). With the extension 3.9, it
+/// does neither: it records a clip into the arranger instead, on a track of its own (“Rec 143012”, <see cref="RecordGoAsync"/>),
+/// which plays Bitwig for a minute or so with its master muted and leaves the recordings in the arranger, and it shows and
+/// hides Bitwig's panels to see whether Bitwig carries out their commands (<see cref="PanelCommandsAsync"/>).
 /// </summary>
 public static class BitwigLiveTests
 {
@@ -500,7 +503,8 @@ public static class BitwigLiveTests
     /// The live test Changes › Clip to arranger, an experiment: copies the MIDI clip in launcher slot <paramref
     /// name="clipSlot"/> of the track called <paramref name="track"/> into Bitwig's arranger at bar 5 (worked out from the
     /// project's time signature), with Bitwig's window brought to the front first, and says what Bitwig did (<see
-    /// cref="ArrangeVerdict"/>). Skipped without the Java extension 3.6 or later, or without the clip. When the extension
+    /// cref="ArrangeVerdict"/>). Skipped without the Java extension 3.6 or later, or without the clip, and with the extension 3.9
+    /// or later, which records the clip there instead (<see cref="RecordsInstead"/>). When the extension
     /// stops at a step Bitwig didn't go along with, Failed with its reason, still asking the person to look.
     ///
     /// With the extension 3.7 or later, it tries the copy, the paste and the focus actions by one route after another (<see
@@ -522,6 +526,7 @@ public static class BitwigLiveTests
         if (!IsNewer(hello)) return LiveVerdict.Skip(NeedsJava);
         // Older extensions have no arrange, and let changes through all the same: Bitwig runs one until it's installed again.
         if (Version.TryParse(hello.Extension, out var running) && running < ArrangeFrom) return NeedsArrange(hello.Extension);
+        if (IsFrom(hello, RecordFrom)) return LiveVerdict.Skip(RecordsInstead);
         var p = await link.ProjectAsync(ct);
         if (clipSlot is not { } slot || p.Tracks.LastOrDefault(x => x.Name == track) is not { } on) return Needs("the MIDI clip");
         const int bar = 5;
@@ -805,7 +810,8 @@ public static class BitwigLiveTests
     }
 
     /// <summary>
-    /// The live test Changes › MIDI file as a track, an experiment (the Java extension 3.8; Skipped with an older link):
+    /// The live test Changes › MIDI file as a track, an experiment (the Java extension 3.8; Skipped with an older link, and with
+    /// 3.9 or later, as the 3.8 run showed it makes nothing: <see cref="FileMadeNothing"/>):
     /// inserts the run's MIDI file after the track called <paramref name="track"/>, as a new track, with the play start at bar
     /// 5 (worked out from the project's time signature), the way Bitwig's API inserts a file between tracks, and says where
     /// Bitwig put its clip (<see cref="FileTrackVerdict"/>). Nothing else in Bitwig's API puts a clip in the arranger, so
@@ -816,6 +822,7 @@ public static class BitwigLiveTests
         var hello = link.Hello;
         if (!IsNewer(hello)) return LiveVerdict.Skip(NeedsJava);
         if (!IsFrom(hello, FlushFrom)) return NeedsExtension(FlushFrom, hello.Extension);
+        if (IsFrom(hello, RecordFrom)) return LiveVerdict.Skip(FileMadeNothing);
         var p = await link.ProjectAsync(ct);
         if (p.Tracks.LastOrDefault(x => x.Name == track) is not { } after) return Needs("the sample's track");
         const int bar = 5;
@@ -865,6 +872,382 @@ public static class BitwigLiveTests
               "their track's name, so it can't tell whether a new one appeared"
             : "no clip on it is selected in the arranger, so the link can't tell whether the clip went there";
         return LiveVerdict.Note($"{made}, with no clip in its launcher, but {why}. {Capital(look)}", data);
+    }
+
+    /// <summary>The first extension with the record job and the panel probe (<see cref="BitwigLink.RecordAsync"/>, <see cref="BitwigLink.ProbeAsync"/>).</summary>
+    static readonly Version RecordFrom = new(3, 9);
+
+    /// <summary>Why Clip to arranger isn't tried with the extension 3.9 or later, which records the clip there instead.</summary>
+    public const string RecordsInstead =
+        "The extension 3.9 records the clip into the arranger instead (Changes › Record into the arranger): the 3.8 run showed that Bitwig's " +
+        "copy and paste act on what was last clicked in Bitwig, not on what the link selects, so they can't move the clip there.";
+
+    /// <summary>Why MIDI file as a track isn't tried with the extension 3.9 or later.</summary>
+    public const string FileMadeNothing =
+        "The 3.8 run showed that Bitwig makes nothing from a MIDI file inserted between tracks, so the extension 3.9 records the clip into " +
+        "the arranger instead (Changes › Record into the arranger).";
+
+    /// <summary>
+    /// The goes of the live tests that record a launcher clip into the arranger (the Java extension 3.9), in the order they
+    /// run: see <see cref="RecordGoAsync"/>.
+    /// </summary>
+    public enum RecordGo
+    {
+        /// <summary>Hear the clip: play it without recording, at bar 5, to tell whether the link hears the track's notes.</summary>
+        Hear,
+        /// <summary>Record into the arranger: record it at bar 5, with the track unarmed.</summary>
+        Record,
+        /// <summary>Record armed: record it again with the track armed, a little further on, only when the first go recorded nothing.</summary>
+        Armed,
+        /// <summary>
+        /// Record fast: record it further on again at double the tempo (666 BPM at most), with the launcher clip deleted before the
+        /// replay, which starts at bar 5 to hear the earlier goes too. Only once an earlier go recorded the clip, or couldn't tell.
+        /// </summary>
+        Fast,
+    }
+
+    /// <summary>The live test each go is reported as.</summary>
+    public static string RecordTestName(RecordGo go) => go switch
+    {
+        RecordGo.Hear => "Hear the clip",
+        RecordGo.Record => "Record into the arranger",
+        RecordGo.Armed => "Record armed",
+        _ => "Record fast",
+    };
+
+    /// <summary>How long the clip the recording tests use is, in beats: two bars of 4/4.</summary>
+    public const double RecordClipBeats = 8;
+
+    /// <summary>The time the record job gets on top of the clip's play and the replay: its waits for Bitwig, each of a few seconds.</summary>
+    static readonly TimeSpan RecordWaits = TimeSpan.FromSeconds(35);
+
+    /// <summary>
+    /// The live test Changes › Track to record on (the Java extension 3.9; Skipped with an older link): a new track called
+    /// <paramref name="name"/> (“Rec 143012”), found by its ID from then on, with an empty Sampler (an instrument that makes no
+    /// sound) and the MIDI file <paramref name="clip"/> in its first launcher slot, for the recording tests. Returns the track's
+    /// ID too, or null when there's no track to record on.
+    /// </summary>
+    public static async Task<(LiveVerdict Verdict, string? Id)> RecordTrackAsync(BitwigLink link, string name, string clip, CancellationToken ct = default)
+    {
+        var hello = link.Hello;
+        if (!IsNewer(hello)) return (LiveVerdict.Skip(NeedsJava), null);
+        if (!IsFrom(hello, RecordFrom)) return (NeedsExtension(RecordFrom, hello.Extension), null);
+        var made = await link.NewTrackWithIdAsync(name, ct: ct);
+        if ((made.Id ?? await IdAtAsync(link, made.Index, ct)) is not { Length: > 0 } id)
+            return (LiveVerdict.Fail($"Bitwig added “{name}” (track {made.Index + 1}), but didn't say its ID, which the recording tests find it by."), null);
+        var sampler = await link.InsertBitwigDeviceAsync(made.Index, BitwigSend.Sampler, ct: ct);
+        var slot = await link.AddClipAsync(id, clip, 0, ct);
+        var data = new JsonObject { ["index"] = made.Index, ["id"] = id, ["sampler"] = sampler.Added, ["slot"] = slot };
+        return (LiveVerdict.Pass($"Bitwig added “{name}” (ID {id}) " +
+                                 (sampler.Added ? "with an empty Sampler, an instrument that makes no sound, " : "(though not the empty Sampler asked for) ") +
+                                 $"and put {Path.GetFileName(clip)}, two bars of six notes, in its launcher slot {slot + 1}. The next tests play Bitwig " +
+                                 "for a minute or so with its master muted: keep your hands off Bitwig until they're done.", data), id);
+    }
+
+    /// <summary>The ID of the track at <paramref name="index"/> in the project listing, or null when the link doesn't say.</summary>
+    static async Task<string?> IdAtAsync(BitwigLink link, int index, CancellationToken ct)
+    {
+        var tracks = (await link.CommandAsync("project", ct: ct)).GetProperty("tracks");
+        foreach (var track in tracks.EnumerateArray())
+            if (track.TryGetProperty("index", out var at) && at.TryGetInt32(out var i) && i == index && track.TryGetProperty("id", out var id))
+                return id.ValueKind == JsonValueKind.String && id.GetString() is { Length: > 0 } text ? text : null;
+        return null;
+    }
+
+    /// <summary>
+    /// What a go of the recording tests asks the record job (<see cref="BitwigLink.RecordAsync"/>) to do in a project (its tempo
+    /// and time signature), and how long it may take: <see cref="RecordGo"/> says what each does. The clip is <paramref
+    /// name="clipBeats"/> long, recorded as whole bars. The goes record a bar apart from each other's ends, from bar 5: with a
+    /// two-bar clip in 4/4, at bars 5, 9 and 13. <paramref name="armed"/> arms the track for the fast go, when only the armed
+    /// go recorded.
+    /// </summary>
+    public static (BitwigRecordRequest Request, TimeSpan Timeout) RecordRequest(RecordGo go, BitwigProject project, string trackId,
+                                                                               double clipBeats, bool armed = false)
+    {
+        var bar = BarBeats(project.TimeSignature);
+        var length = Math.Ceiling(clipBeats / bar - 1e-9) * bar;
+        var first = 4 * bar;
+        var apart = length + 2 * bar;
+        var request = go switch
+        {
+            RecordGo.Hear => new BitwigRecordRequest(trackId, 0, first, length) { Record = false },
+            RecordGo.Record => new BitwigRecordRequest(trackId, 0, first, length),
+            RecordGo.Armed => new BitwigRecordRequest(trackId, 0, first + apart, length) { Arm = true },
+            _ => new BitwigRecordRequest(trackId, 0, first + 2 * apart, length)
+            {
+                Arm = armed, DeleteLauncherClip = true, ReplayFrom = first, Tempo = Math.Min(Math.Round(project.Tempo * 2, 3), 666),
+            },
+        };
+        request = request with { Pass = go.ToString() };
+        // The clip plays, a bar or two either side of it, and the replay plays from its start (or where it's asked to) to a bar after its end.
+        var tempo = request.Tempo ?? project.Tempo;
+        var beats = length + 2 * bar + (request.Record ? request.At + length + bar - (request.ReplayFrom ?? request.At) : 0);
+        return (request, TimeSpan.FromSeconds(beats * 60 / Math.Max(tempo, 1)) + RecordWaits);
+    }
+
+    /// <summary>
+    /// One go of the recording tests (the Java extension 3.9; Skipped with an older link): asks the record job to play or
+    /// record the clip in the first launcher slot of the track with ID <paramref name="trackId"/> (called <paramref
+    /// name="track"/>), as <see cref="RecordRequest"/> sets out, and says what came of it (<see cref="RecordVerdict"/>). The
+    /// armed and fast goes run only when the goes before them call for it (<paramref name="earlier"/>, what each answered),
+    /// and are Skipped saying why otherwise. Returns the job's answer too, for the goes after.
+    /// </summary>
+    public static async Task<(LiveVerdict Verdict, BitwigRecorded? Answer)> RecordGoAsync(BitwigLink link, RecordGo go, string track, string trackId,
+                                                                                           IReadOnlyDictionary<RecordGo, BitwigRecorded> earlier,
+                                                                                           double clipBeats = RecordClipBeats, CancellationToken ct = default)
+    {
+        var hello = link.Hello;
+        if (!IsNewer(hello)) return (LiveVerdict.Skip(NeedsJava), null);
+        if (!IsFrom(hello, RecordFrom)) return (NeedsExtension(RecordFrom, hello.Extension), null);
+        var first = earlier.GetValueOrDefault(RecordGo.Record);
+        var armed = earlier.GetValueOrDefault(RecordGo.Armed);
+        if (go == RecordGo.Armed && first?.Decided != "nothing")
+            return (LiveVerdict.Skip(first is null
+                ? "This needs a go at recording unarmed first, which didn't run (see above)."
+                : "Only tried when Bitwig records nothing with the track unarmed, and Record into the arranger found otherwise (see above)."), null);
+        if (go == RecordGo.Fast && !new[] { first, armed }.Any(a => a?.Decided is "recorded" or "cantTell"))
+            return (LiveVerdict.Skip("Only tried once an earlier go recorded the clip into the arranger, or the link couldn't tell, and none did " +
+                                     "(see above)."), null);
+        var p = await link.ProjectAsync(ct);
+        var (request, timeout) = RecordRequest(go, p, trackId, clipBeats, armed: first?.Decided == "nothing" && armed?.Decided == "recorded");
+        var answer = await link.RecordAsync(request, timeout, ct);
+        return (RecordVerdict(answer, go, track, earlier), answer);
+    }
+
+    /// <summary>
+    /// What a go of the recording tests found (<see cref="BitwigLink.RecordAsync"/>, <see cref="RecordGo"/>):
+    /// <list type="bullet">
+    /// <item>Hearing the clip: Passed when the link heard its notes; Noted when it heard none, so the recording goes can only
+    /// ask the person to look.</item>
+    /// <item>A recording: Passed when the replay heard the clip's notes where it was recorded with the launcher clip not
+    /// playing, asking the person to look at it too (the 3.7 run showed a value reading back isn't proof); Noted when the
+    /// link heard no notes at all, so only a look tells; Failed when the clip played but the replay heard nothing.</item>
+    /// <item>Failed when the job didn't get to play: a setting didn't take, Bitwig didn't start, the job stopped part way or
+    /// failed, or another project came to the front.</item>
+    /// <item>Failed whatever the notes said when anything else changed (a track added or removed, a launcher clip on another
+    /// track), or Bitwig didn't end as it was (still recording or playing, a setting not put back).</item>
+    /// </list>
+    /// The data is the job's whole answer.
+    /// </summary>
+    /// <param name="earlier">What the goes before this one answered: the fast go's replay is checked against theirs.</param>
+    public static LiveVerdict RecordVerdict(BitwigRecorded r, RecordGo go, string track, IReadOnlyDictionary<RecordGo, BitwigRecorded>? earlier = null)
+    {
+        var data = JsonSerializer.SerializeToNode(r, AnswerJson)!;
+        var bars = Bars(r.At, r.Length, r.Bar);
+        var look = $"Look at {bars} on “{track}” in Bitwig's arranger and say whether the clip is there.";
+        var lines = new List<string>();
+        if (r.Played is { } played) lines.Add("- " + PlayedLine(played, r.Bar, "The clip played"));
+        if (r.Replay is { } replay) lines.Add("- " + PlayedLine(replay, r.Bar, "The replay"));
+
+        // What the job ended on, whatever it heard.
+        var problems = new List<string>();
+        if (r.After is { Checked: true } after)
+        {
+            if (after.RecordOff == false) problems.Add("Bitwig's arranger record is still on");
+            if (after.Playing == true) problems.Add("Bitwig is still playing");
+            if (after.RestoreFailed is { Count: > 0 } back) problems.Add($"Bitwig didn't take back {Join(back.Distinct().ToList())} as they were");
+            else if (after.RestoreFailed is null && r.Decided != "failed") problems.Add("the link didn't see every setting come back as it was");
+        }
+        if (r.Diff is { } diff)
+        {
+            if (diff.TracksAdded.Count > 0) problems.Add($"Bitwig added {Checks.List(diff.TracksAdded.Select(t => t.Name).ToList())} meanwhile");
+            if (diff.TracksRemoved.Count > 0) problems.Add($"{Checks.Count(diff.TracksRemoved.Count, "track")} went away meanwhile");
+            var others = diff.ClipsChanged.Where(c => !(c.TrackId == r.TrackId && c.Slot == r.Slot && c.Before && !c.After && r.LauncherClipDeleted == true))
+                             .ToList();
+            if (others.Count > 0)
+                problems.Add($"{Checks.Count(others.Count, "launcher slot")} changed that the link didn't change ({string.Join(", ", others.Select(c =>
+                    $"slot {c.Slot + 1} on {(c.TrackId == r.TrackId ? $"“{track}”" : $"the track with ID {c.TrackId}")} {(c.After ? "got a clip" : "lost its clip")}"))})");
+        }
+        if (r.Seen.SlotRecording) problems.Add($"Bitwig recorded into launcher slot {r.Slot + 1} on “{track}” as well");
+
+        var notes = new List<string>();
+        if (r.Seen.AutomationWriteSeenOn)
+            notes.Add("Bitwig turned automation write on while it recorded (its “Write automation when recording” setting); the link moved " +
+                      "nothing then, so nothing should have been written, but look for automation on the tracks.");
+        if (r.Played?.Ended == "timedOut")
+            notes.Add($"Bitwig didn't stop the track at the clip's end, so the link stopped Bitwig when the time ran out: what went in may run past {bars}.");
+        if (r.Played?.PositionFrom == "clock" || r.Replay?.PositionFrom == "clock")
+            notes.Add("Bitwig's play position didn't move as it played, so the link went by the clock and the tempo to tell where it was.");
+
+        var heard = r.Played?.Heard ?? r.Heard;
+        var speed = r.Tempo.Used != r.Tempo.Project ? $" at {Checks.Bpm(r.Tempo.Used)} BPM (the project's is {Checks.Bpm(r.Tempo.Project)})" : "";
+        var armed = r.Arm ? ", with the track armed" : "";
+        LiveVerdict verdict;
+        switch (r.Decided)
+        {
+            case "heard":
+                verdict = LiveVerdict.Pass($"With the master muted, Bitwig played the clip on “{track}” and the link heard {Checks.Count(heard, "note")} " +
+                                           "of it, so it can hear whether a recording plays back. Nothing was recorded.", data);
+                break;
+            case "cantHear":
+                verdict = LiveVerdict.Note((r.Seen.ClipPlayed ? $"Bitwig played the clip on “{track}”" : $"Bitwig started, though the link didn't see the clip on “{track}” play,") +
+                                           ", but the link heard none of its notes, so it can't hear whether a recording plays back: the recording tests ask " +
+                                           "you to look instead. Nothing was recorded.", data);
+                break;
+            case "recorded":
+                var inPass = r.Replay?.InPass ?? 0;
+                var detail = $"Bitwig recorded the clip into its arranger on “{track}” at {bars}{speed}{armed}: playing the arranger back, the link " +
+                             $"heard {Checks.Count(inPass, "note")} there, with the launcher clip not playing.";
+                var alias = false;
+                if (r.LauncherClipDeleted == true)
+                {
+                    var before = r.Replay?.Before ?? 0;
+                    var takes = (earlier ?? new Dictionary<RecordGo, BitwigRecorded>()).Values.Where(e => e.Decided == "recorded" && e.At < r.At).ToList();
+                    detail += " The link deleted the launcher clip before the replay";
+                    if (takes.Count == 0) detail += ".";
+                    else if (before > 0)
+                        detail += $", and still heard {Checks.Count(before, "note")} from the earlier {(takes.Count == 1 ? "recording" : "recordings")} at " +
+                                  $"{Join(takes.Select(e => Bars(e.At, e.Length, e.Bar)).ToList())}, so what's recorded in the arranger doesn't need the launcher clip.";
+                    else
+                    {
+                        alias = true;
+                        detail += $", and then heard nothing of the earlier {(takes.Count == 1 ? "recording" : "recordings")} at " +
+                                  $"{Join(takes.Select(e => Bars(e.At, e.Length, e.Bar)).ToList())}, so Bitwig may have recorded {(takes.Count == 1 ? "it" : "them")} " +
+                                  "as copies that share the launcher clip's notes (Play menu › Record to Arranger as Alias Clips).";
+                    }
+                }
+                detail += $" The link can't see an arranger clip itself: look at {bars} on “{track}” in Bitwig's arranger and say whether it's there.";
+                verdict = alias ? LiveVerdict.Note(detail, data) : LiveVerdict.Pass(detail, data);
+                break;
+            case "nothing":
+                verdict = LiveVerdict.Fail($"Bitwig played the clip on “{track}”{speed}{armed} with arranger record on (the link heard " +
+                                           $"{Checks.Count(heard, "note")}), but playing the arranger back it heard none of them at {bars}, so nothing went " +
+                                           "in the arranger." + (go == RecordGo.Record ? " The next go tries with the track armed." : "") + " " + look, data);
+                break;
+            case "cantTell":
+                verdict = LiveVerdict.Note($"Bitwig played the clip on “{track}”{speed}{armed} with arranger record on, but the link heard no notes, as it " +
+                                           $"played or in the replay, so only a look tells. {look}", data);
+                break;
+            case "notChecked":
+                verdict = LiveVerdict.Note($"Bitwig played the clip on “{track}”{speed}{armed} with arranger record on, but the link didn't play the " +
+                                           $"arranger back to hear it. {look}", data);
+                break;
+            case "didntStart":
+                verdict = LiveVerdict.Fail("Bitwig didn't start playing when the link launched the clip (the link waited 3 seconds), so nothing was " +
+                                           "recorded. Everything was put back.", data);
+                break;
+            case "refused":
+                verdict = LiveVerdict.Fail(r.Refused.Count > 0
+                    ? $"The link didn't record, as Bitwig didn't take {Join(r.Refused.Distinct().ToList())} as the recording needs them (so only the clip " +
+                      "records, and nothing is heard). Everything was put back."
+                    : "The link stopped before the clip played. Everything was put back.", data);
+                break;
+            case "aborted":
+                verdict = LiveVerdict.Fail("The recording stopped part way" + (r.AbortWhy is { } why ? $": {why.TrimEnd('.')}." : ", as the app asked.") +
+                                           $" The link turned record off and put everything back. {look}", data);
+                break;
+            case "failed":
+                verdict = LiveVerdict.Fail($"The extension stopped with an error: {r.Error}. It turned record off, stopped Bitwig and put things back as " +
+                                           "well as it could: check that arranger record is off and Bitwig has stopped.", data);
+                break;
+            case "abandoned":
+                // The run's gate makes this Stopped part way, which keeps the lines: what to do goes there too.
+                const string goBack = "Another project came to the front while Bitwig recorded, so the link left Bitwig alone: go back to the test " +
+                                      "project, and turn arranger record off and press Stop if they're still on.";
+                verdict = LiveVerdict.Fail(goBack, data);
+                lines.Insert(0, "- " + goBack);
+                break;
+            default:
+                verdict = LiveVerdict.Fail($"The extension answered “{r.Decided}”, which this app doesn't know. {look}", data);
+                break;
+        }
+        if (problems.Count > 0)
+            verdict = LiveVerdict.Fail($"{verdict.Detail} But {Join(problems)}, which the test project should have been left without.", data);
+        if (notes.Count > 0) verdict = verdict with { Detail = verdict.Detail + " " + string.Join(" ", notes) };
+        return verdict with { Lines = lines };
+    }
+
+    /// <summary>Bars as a person counts them, from where something starts and how long it is in beats: "bars 5 to 6", or "bar 5".</summary>
+    static string Bars(double at, double length, double bar)
+    {
+        var from = (int)Math.Round(at / bar) + 1;
+        var to = (int)Math.Round((at + length) / bar);
+        return to > from ? $"bars {from} to {to}" : $"bar {from}";
+    }
+
+    /// <summary>
+    /// Where something is, as Bitwig shows it in 4/4: bar, beat and sixteenth, each from 1 ("5.2.3" is a beat and a half into bar 5),
+    /// from where it is in beats (quarter notes) and a bar's length in beats.
+    /// </summary>
+    static string Position(double at, double bar)
+    {
+        var bars = Math.Floor(at / bar + 1e-9);
+        var within = Math.Max(0, at - bars * bar);
+        var beat = Math.Floor(within + 1e-9);
+        return $"{bars + 1}.{beat + 1}.{Math.Floor((within - beat) * 4 + 1e-9) + 1}";
+    }
+
+    /// <summary>A line for the report on one time the record job played: where from, how it went, and the notes the link heard.</summary>
+    static string PlayedLine(BitwigPlayed p, double bar, string what)
+    {
+        var from = $"bar {Share(p.From / bar + 1)}";
+        if (!p.Started) return $"{what} from {from}: Bitwig didn't start.";
+        var heard = p.Notes.Count == 0 ? "the link heard no notes"
+            : $"the link heard {Checks.Count(p.Heard, "note")}: {string.Join(", ", p.Notes.Select(n => $"{DawProject.NoteName(n.Key)} at {Position(n.At, bar)}"))}";
+        var ended = p.Ended switch
+        {
+            "done" => "",
+            "timedOut" => " It ran out of time.",
+            "stoppedEarly" => " Bitwig stopped early.",
+            null => "",
+            var other => $" It ended {other}.",
+        };
+        var extra = p.InPass is { } inPass
+            ? $" ({inPass} in the recording's bars, {p.Before ?? 0} before them{(p.LauncherPlayed == true ? ", and the launcher clip played" : "")})"
+            : "";
+        return $"{what} from {from}{(p.To is { } to ? $" to bar {Share(to / bar + 1)}" : "")}, starting {Ms(p.StartedAfterMs ?? 0)} after the link asked: " +
+               $"{heard}{extra}.{ended}";
+    }
+
+    /// <summary>
+    /// The live test Changes › Panel commands (the Java extension 3.9; Skipped with an older link): runs Bitwig's panel
+    /// commands twice each from Bitwig's flush, then straight away (<see cref="BitwigLink.ProbeAsync"/>), and says whether
+    /// Bitwig carried them out (<see cref="ProbeVerdict"/>). Whether Bitwig goes along with what the link asks of its panels
+    /// tells whether a way that needs the focus in a panel could ever work.
+    /// </summary>
+    public static async Task<LiveVerdict> PanelCommandsAsync(BitwigLink link, CancellationToken ct = default)
+    {
+        var hello = link.Hello;
+        if (!IsNewer(hello)) return LiveVerdict.Skip(NeedsJava);
+        if (!IsFrom(hello, RecordFrom)) return NeedsExtension(RecordFrom, hello.Extension);
+        var probes = new List<BitwigProbed>();
+        foreach (var via in new string?[] { null, "direct" }) probes.Add(await link.ProbeAsync(via, ct: ct));
+        return ProbeVerdict(probes);
+    }
+
+    /// <summary>
+    /// What the panel probe found by each route (<see cref="BitwigLink.ProbeAsync"/>): Passed when Bitwig carried out every
+    /// panel command it has by a route (a panel showed or hid with it), Failed when it carried out none by any, else Noted.
+    /// A line for each command by each route.
+    /// </summary>
+    public static LiveVerdict ProbeVerdict(IReadOnlyList<BitwigProbed> probes)
+    {
+        static bool Carried(BitwigProbeStep s) => s.Visible is { Count: 3 } v && (v[0] != v[1] || v[1] != v[2]);
+        static string Panel(string action) => action.Contains("launcher", StringComparison.Ordinal) ? "the clip launcher" : "the arranger timeline";
+        var lines = new List<string>();
+        foreach (var probe in probes)
+        {
+            foreach (var step in probe.Steps)
+            {
+                var what = step.Missing ? "Bitwig has no such action"
+                    : step.Ran?.Contains(false) == true ? "the route didn't run it"
+                    : step.Visible is not { Count: 3 } v ? "the link couldn't tell"
+                    : $"{Panel(step.Action)} went {string.Join(", ", v.Select(x => x ? "shown" : "hidden"))}" +
+                      (Carried(step) ? ", so Bitwig carried it out" : ", so Bitwig ignored it");
+                if (step.Restored == false) what += $" (the link couldn't show or hide {Panel(step.Action)} as it was again)";
+                lines.Add($"- {Capital(RouteName(probe.Via))}, {step.Action}: {what}");
+            }
+        }
+        var data = JsonSerializer.SerializeToNode(probes, AnswerJson);
+        var all = probes.Where(p => p.Steps.Any(s => !s.Missing) && p.Steps.Where(s => !s.Missing).All(Carried)).Select(p => RouteName(p.Via)).ToList();
+        if (all.Count > 0)
+            return LiveVerdict.Pass($"Bitwig carried out each of its panel commands for the link {Join(all)}: a panel showed or hid with each, so it " +
+                                    "goes along with what the link asks of its panels, and copy and paste failed because they act on what was last " +
+                                    "clicked in Bitwig.", data) with { Lines = lines };
+        if (!probes.SelectMany(p => p.Steps).Any(Carried))
+            return LiveVerdict.Fail("Bitwig carried out none of its panel commands for the link, by any route tried: no panel showed or hid with " +
+                                    "them, so it ignores them from an extension as it ignored copy and paste.", data) with { Lines = lines };
+        return LiveVerdict.Note("Bitwig carried out some of its panel commands for the link, not all (see below).", data) with { Lines = lines };
     }
 
     /// <summary>
@@ -1020,6 +1403,11 @@ public static class BitwigLiveTests
         string DevicesTrack => $"Devices {Tag}";
         string SampleTrack => $"Sample {Tag}";
         string KitTrack => $"Kit {Tag}";
+        string RecordTrack => $"Rec {Tag}";
+        /// <summary>The track the recording tests record on, once made: its name and ID.</summary>
+        (string Name, string Id)? _recTrack;
+        /// <summary>What each go of the recording tests answered, for the goes after.</summary>
+        readonly Dictionary<RecordGo, BitwigRecorded> _takes = [];
 
         /// <summary>Whether Bitwig has the Java extension, which gives more than the script (link 3, runtime "java").</summary>
         bool Newer => _link?.Hello is { } h && IsNewer(h);
@@ -1226,7 +1614,8 @@ public static class BitwigLiveTests
                 var detail = $"Bitwig lets the app make changes, and has “{p.Name}” open, so the run can change it.";
                 if (p.TrackCount > 100)
                     detail += $" It has {p.TrackCount} tracks, and each run adds " +
-                              (IsFrom(_link.Hello, FlushFrom) ? "about seven (more when Clip to arranger's checks copy a track)" : "about six") +
+                              (IsFrom(_link.Hello, RecordFrom) ? "about seven"
+                               : IsFrom(_link.Hello, FlushFrom) ? "about seven (more when Clip to arranger's checks copy a track)" : "about six") +
                               $": make a fresh “{TestProject}” project now and then, " +
                               "since Bitwig lists only the first 128 to the app.";
                 return LiveVerdict.Pass(detail);
@@ -1296,6 +1685,27 @@ public static class BitwigLiveTests
             // Another experiment: Bitwig's API can insert a file between tracks, which may put a MIDI file's clip in the arranger.
             await Change(Changes, "MIDI file as a track", (link, t) =>
                 _sampleMade ? FileAsTrackAsync(link, SampleTrack, Files.Clip, t) : Task.FromResult(Needs("the sample's track")));
+
+            // Extension 3.9: the clip goes in the arranger by recording it there, as a person does, on a track of its own.
+            await Change(Changes, "Track to record on", async (link, t) =>
+            {
+                var (verdict, id) = await RecordTrackAsync(link, RecordTrack, Files.RecordClip, t);
+                if (id is not null) _recTrack = (RecordTrack, id);
+                return verdict;
+            });
+            foreach (var go in Enum.GetValues<RecordGo>())
+            {
+                await Change(Changes, RecordTestName(go), async (link, t) =>
+                {
+                    if (!Newer) return LiveVerdict.Skip(NeedsJava);
+                    if (!IsFrom(link.Hello, RecordFrom)) return NeedsExtension(RecordFrom, link.Hello.Extension);
+                    if (_recTrack is not { } rec) return Needs("the track to record on");
+                    var (verdict, answer) = await RecordGoAsync(link, go, rec.Name, rec.Id, _takes, ct: t);
+                    if (answer is not null) _takes[go] = answer;
+                    return verdict;
+                }, RecordTime);
+            }
+            await Change(Changes, "Panel commands", (link, t) => PanelCommandsAsync(link, t));
 
             await Change(Changes, "Drum Machine by ID", async (link, t) =>
             {
@@ -1585,6 +1995,12 @@ public static class BitwigLiveTests
         /// <summary>How long Clip to arranger gets: a go by each route, each with a few of the extension's waits, and its checks'.</summary>
         static TimeSpan ArrangeTime => TimeSpan.FromSeconds(60) * Routes.Count;
 
+        /// <summary>
+        /// How long each go of the recording tests gets: its play and replay (well under a minute at 60 BPM and more), the
+        /// extension's waits, and time to stop it and put Bitwig back when it overruns.
+        /// </summary>
+        static TimeSpan RecordTime => TimeSpan.FromMinutes(3);
+
         IEnumerable<string> SavedFolders() => ProjectFolders(options.BitwigUserFolders(), options.LibraryProjects());
 
         /// <summary>
@@ -1846,10 +2262,16 @@ sealed class LiveFiles
     /// <summary>The notes of the clip and of the FL Studio channel the run sends: A, C and E, a beat each.</summary>
     public static IReadOnlyList<NoteEvent> Notes { get; } = [new(0, 96, 57, 100), new(96, 96, 60, 100), new(192, 96, 64, 100)];
 
+    /// <summary>The recording tests' clip: A, C, E, D, F and A, over two bars of 4/4 (96 ticks a beat), ending on the second bar's last beat.</summary>
+    public static IReadOnlyList<NoteEvent> RecordNotes { get; } =
+        [new(0, 96, 57, 100), new(144, 96, 60, 100), new(288, 96, 64, 100), new(384, 96, 62, 100), new(528, 96, 65, 100), new(672, 96, 69, 100)];
+
     public required string Folder { get; init; }
     /// <summary>A plucked A (440 Hz), for a Sampler.</summary>
     public required string Pluck { get; init; }
     public required string Clip { get; init; }
+    /// <summary>Two bars of six notes, each a different key, which the recording tests record into the arranger.</summary>
+    public required string RecordClip { get; init; }
     /// <summary>A small kit for a Drum Machine's pads, where General MIDI puts each.</summary>
     public required IReadOnlyList<BitwigPad> Pads { get; init; }
 
@@ -1891,10 +2313,14 @@ sealed class LiveFiles
         clip.Track("Live Clip").AddRange(Notes);
         var mid = Path.Combine(folder, "Live Clip.mid");
         Keep(mid, MidiWriter.Write(clip, 120));
+        var rec = new MidiClip { Name = "Rec Clip", Ppq = 96 };
+        rec.Track("Rec Clip").AddRange(RecordNotes);
+        var recMid = Path.Combine(folder, "Rec Clip.mid");
+        Keep(recMid, MidiWriter.Write(rec, 120));
 
         return new LiveFiles
         {
-            Folder = folder, Pluck = pluck, Clip = mid,
+            Folder = folder, Pluck = pluck, Clip = mid, RecordClip = recMid,
             Pads = [new(36, kick, "Live Kick"), new(38, snare, "Live Snare"), new(42, hat, "Live Hat")],
         };
     }

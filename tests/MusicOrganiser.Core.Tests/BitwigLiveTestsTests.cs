@@ -109,8 +109,9 @@ public class BitwigLiveTestsTests
 
         // The script has none of the Java extension's newer fields, so those say they need it.
         string[] newer = ["Link › Track IDs", "Link › Parameter details", "Link › Last clicked parameter", "Link › Self-check", "Link › MIDI loopback",
-                          "Changes › Clip to arranger", "Changes › MIDI file as a track", "Changes › Sampler's parameter details",
-                          "Changes › Master recorder"];
+                          "Changes › Clip to arranger", "Changes › MIDI file as a track", "Changes › Track to record on", "Changes › Hear the clip",
+                          "Changes › Record into the arranger", "Changes › Record armed", "Changes › Record fast", "Changes › Panel commands",
+                          "Changes › Sampler's parameter details", "Changes › Master recorder"];
         Assert.All(newer, n => Assert.Equal((LiveOutcome.Skipped, BitwigLiveTests.NeedsJava),
                                             run.Results.Where(r => r.Title == n).Select(r => (r.Outcome, r.Detail)).Single()));
         // The stand-in saves no file, so there's no saved project to compare: skipped, saying so.
@@ -119,7 +120,7 @@ public class BitwigLiveTestsTests
         Assert.Equal(LiveOutcome.Skipped, Find(run, "Saved file", "Compare with Bitwig").Outcome);
         var skipped = run.Results.Where(r => r.Outcome == LiveOutcome.Skipped).Select(r => r.Title).ToList();
         Assert.Equal([.. newer, "Saved file › Find the saved project", "Saved file › Compare with Bitwig"], skipped);
-        Assert.Equal(11, run.Skipped);
+        Assert.Equal(17, run.Skipped);
         Assert.All(["Link", "Changes", "Send"], area => Assert.DoesNotContain(run.Results, r => r.Area == area && r.Outcome == LiveOutcome.Failed));
 
         // What each test saw.
@@ -200,7 +201,7 @@ public class BitwigLiveTestsTests
                                           !r.Name.StartsWith("Last") && !r.Name.StartsWith("Self") && !r.Name.StartsWith("MIDI")),
                    r => Assert.Equal(LiveOutcome.Passed, r.Outcome));
         var changes = run.Results.Where(r => r.Area != "Link").ToList();
-        Assert.Equal(29, changes.Count);
+        Assert.Equal(35, changes.Count);
         Assert.All(changes, r => Assert.Equal(LiveOutcome.Skipped, r.Outcome));
         Assert.Equal("Bitwig has “Night Drive” open, so the run changed nothing: it only changes a project whose name starts with “MO Live Test”, " +
                      "never your own work. " + BitwigLiveTests.HowToAllowChanges, Find(run, "Changes", "Changes allowed").Detail);

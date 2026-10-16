@@ -311,6 +311,21 @@ flush, then on the link's MIDI) and put whole tracks in the track list, copies o
 at a pasted track and took the clip for gone. `filetrack` made no track: Bitwig ignores a MIDI
 file inserted after a track, while the same file into a launcher slot works.
 
+So 3.9 stops copying and records instead. Bitwig's user guide describes recording launcher clips into the
+arranger: with arranger record on, launching a clip while Bitwig is stopped starts it from the play start, and
+what the clip plays goes into the arranger on its track. That needs no focus or selection, only API calls the
+extension already makes work. The `record` job ([the extension's README](bitwig-java/README.md#whats-new-in-link-version-3))
+sets Bitwig up first so only the clip records and nothing is heard (the master muted, every track disarmed, no
+metronome, pre-roll, loop, punch or overdub, touch automation, launch quantize one bar), reading each setting
+back and refusing when one doesn't take. Then it records, stops the track on the clip's last bar, turns record
+off, plays the arranger back to hear what went in, and puts every setting back as it was. It runs in real time,
+so it takes the clip's length and the replay's; a faster `tempo` shortens both. It finds tracks by their IDs,
+so a track going in above can't send a step to the wrong one (as the pasted tracks did), and `clip`,
+`filetrack` and `arrange`'s clean-up do the same from 3.9. It's still an experiment: the live tests try it
+(*Changes › Record into the arranger*, below), and the app's sends won't use it until a run shows it works.
+`probe` sees whether Bitwig carries out its panel commands for the link at all, which says whether a way that
+needs the focus in a panel could ever work. In the app they're `BitwigLink.RecordAsync` and `ProbeAsync`.
+
 ### Sending into Bitwig
 
 `Core/DawLink/BitwigSend.cs` builds on these commands:
@@ -439,7 +454,22 @@ What runs, in this order:
   another experiment: Passed when it made a new track with no launcher clip and the clip selected in the
   arranger moved to it, asking you which bar the clip starts at and where the play start marker is (the 3.7 run
   left the marker at bar 1, though the link read it back at bar 5); Failed when no track came or the clip went in
-  its launcher; else Noted, asking you to look); Drum Machine pads; selecting a device, setting a parameter and reading it back (then setting it back); the
+  its launcher; else Noted, asking you to look); with extension 3.9, neither of those two (the 3.8 run showed
+  they can't work, and they're Skipped saying so), but recording into the arranger instead: a track of its own
+  (*Track to record on*, “Rec 143012”, with an empty Sampler, which makes no sound, and a two-bar clip of six
+  notes), then the clip played at bar 5 without recording (*Hear the clip*: Passed when the link heard its
+  notes; Noted when not, so the recording tests ask you to look), recorded at bar 5 (*Record into the
+  arranger*: Passed when the replay heard the clip there with the launcher clip not playing, asking you to look
+  too; Noted when the link hears no notes at all; Failed when the clip played but the replay heard nothing),
+  recorded at bar 9 with the track armed only when that recorded nothing (*Record armed*), and recorded at bar
+  13 at double the tempo once one of those went in (*Record fast*), with the launcher clip deleted first and the
+  replay from bar 5, which shows whether the earlier recordings still play without it (Noted when they don't,
+  as Bitwig may have recorded them as alias clips). Each is Failed whatever it heard when anything else changed
+  (a track added or gone, a launcher clip on another track), or Bitwig didn't end as it was (record or playing
+  still on, a setting not put back), and its lines list the notes the link heard and where. They play Bitwig
+  for a minute or so with its master muted, so keep your hands off Bitwig meanwhile. Then *Panel commands* runs
+  Bitwig's panel commands twice each from the flush and straight away, and says whether a panel showed or hid
+  with each (Passed when Bitwig carried them all out by a route, Failed when it carried out none); Drum Machine pads; selecting a device, setting a parameter and reading it back (then setting it back); the
   master recorder's status (Java only; it's never started); and, after Send, Save, with Bitwig's window brought
   to the front first (on Windows; the report says whether it got there, as `front`). Bitwig 6.1.3 ignored Save run
   straight away from the link, so with extension 3.7 or later the run tries Save by each route in turn: `direct`, `flush`, `midi`,
@@ -466,7 +496,8 @@ What runs, in this order:
 Each test ends Passed, Failed, Skipped (saying why) or Noted (a finding that isn't a pass or a fail, like
 the knob table). One failing never stops the run, and each has its own time limit (30 seconds; 1 minute 45 for
 Save, which may wait 15 seconds for each of its five routes; 5 minutes for Clip to arranger, a minute for each
-route and its checks; 2 minutes for the Drum Machine, which may mean reading Bitwig's presets for its ID; and
+route and its checks; 3 minutes for each go at recording, which the app stops itself (`recordabort`) when it
+runs past the time its play and replay should take; 2 minutes for the Drum Machine, which may mean reading Bitwig's presets for its ID; and
 5 minutes for a knob check).
 
 ### Only in a project made for them
@@ -556,6 +587,16 @@ Bitwig:
       moved: Bitwig's Copy, Paste and Duplicate act on its own selection, not the one the API makes ([what the
       runs found](#clips-in-the-arranger-an-experiment)).
 - [x] `filetrack` (3.8, 2026-10-15): a MIDI file inserted after a track made nothing, no track and no clip.
+- [ ] Recording into the arranger (3.9): whether Bitwig records a launched clip into the arranger when the
+      extension turns arranger record on, with the track unarmed (the guide says disarmed tracks avoid empty
+      clips, not that they record nothing) or only armed; whether the master's mute leaves the recording alone;
+      whether `playingNotes` says what a track with an empty Sampler plays, and what the arranger plays back;
+      whether stopping the track lands on the bar line; whether Bitwig's “Write automation when recording”
+      turns automation write on (the answer says `automationWriteSeenOn`); whether recordings at double the
+      tempo come out the same; and whether they still play once the launcher clip is deleted (they won't if
+      Bitwig records alias clips, Play menu › Record to Arranger as Alias Clips).
+- [ ] Whether Bitwig carries out `toggle_arranger` and the focus actions for the extension (*Panel commands*),
+      from the flush or straight away.
 - [x] The MIDI loopback's ports (Bitwig 6.1.3, 2026-10-15): Bitwig starts the extension, and the link answers,
       with its MIDI in and out unassigned. Save has only worked for the link once they were set: from its flush
       (twice) and straight away (once in two). Without them only straight away was tried (3.3 and 3.6), and it

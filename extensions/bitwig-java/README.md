@@ -125,7 +125,41 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   the live tests send. It inserts the file after the track as a new track (the track's
   `afterTrackInsertionPoint`, as a drop between tracks), with the play start moved to `at` first, and says where
   Bitwig put it: the new track's `index`, `name`, `type` and launcher clips, and the clip selected in the
-  arranger before and after.
+  arranger before and after. From 3.9 it takes `trackId` in place of `track`, and says the new track's `id` and
+  every track that's new (`newTracks`), found by ID.
+- `record` ✎ with `trackId`, `slot`, `at` and `length` (in beats, whole bars): **an experiment** (extension
+  3.9), which only the live tests send. It records the launcher clip into the arranger, as Bitwig's user guide
+  says a person does, which needs no focus or selection (copy and paste act on Bitwig's own selection, which
+  is why `arrange` failed). It refuses unless Bitwig is stopped with arranger record off and the slot has a
+  clip. It keeps every setting it changes, then sets them so only the clip records and nothing is heard:
+  metronome, arranger loop, punch in and out, both overdubs and both automation writes off, automation write
+  mode touch, pre-roll none, launch quantize one bar, the master muted, every track disarmed (the clip's track
+  armed only with `arm: true`), the tempo (`tempo`, optional, so a faster one takes less time), and the play
+  start at `at`. It reads each back, and refuses, putting them back, when one doesn't take. Then it turns
+  arranger record on, launches the clip (Bitwig starts from the play start), stops the clip's track in its last
+  bar (it stops on the bar line), turns record off, stops Bitwig only while it plays (Stop while stopped moves
+  the play start to the beginning), and returns the track to the arrangement. With `deleteLauncherClip: true`
+  it deletes the launcher clip next, so what's heard after comes from the arranger alone. Then it plays the
+  arranger back from `replayFrom` (`at` unless given) to a bar past the clip, listening to the track's notes, and
+  puts every setting back, reading each back again. `record: false` plays the clip without recording it, to tell
+  whether the link hears the track's notes. Tracks are found by their IDs, so one going in above changes
+  nothing. It stops (record off, Bitwig stopped, everything put back) when its time runs out, when
+  `recordabort` asks, when Bitwig stops the link, or on an error; when another project comes to the front, it
+  leaves Bitwig alone. The answer: `decided` (`recorded`, `nothing`, `cantTell`, `heard`, `cantHear`,
+  `refused`, `aborted`, `abandoned` and so on), what it `played` and heard (each note's `key` and `at`), the
+  `replay` (notes heard `inPass` and `before`, and whether the launcher clip played), what it `seen`, the
+  `tempo`, what was `refused`, what Bitwig showed `after` (and any setting that didn't come back,
+  `restoreFailed`), and what changed in the tracks and launcher slots, by ID (`diff`).
+- `recordabort`: asks a running `record` to stop (it answers `running`). It isn't a change, so it reaches the
+  job whatever project is in front.
+- `probe` ✎ with `via` and `gap` (optional, in ms): runs Bitwig's panel commands (`toggle_arranger`, then
+  the focus actions of the clip launcher and the arranger) twice each, `gap` apart, by the route, and says for
+  each whether its panel showed before and after each go (`visible`), whether the route `ran` it, and whether
+  the link put the panel back as it was (`restored`). A panel that shows and hides with them means Bitwig
+  carried them out for the link.
+- From 3.9, `newtrack` says the new track's `id`, and `clip` takes `trackId` in place of `track`. The
+  self-check says how Bitwig is set for recording (arranger record, pre-roll, launch quantize, automation write
+  mode and the master's mute).
 
 Not new to version 3, since the script does it too: any request can carry `onlyIn`, a project's name, and the
 link refuses it, or stops a change part way, unless Bitwig has that project open; `hello` says `onlyIn: true`.
@@ -193,6 +227,14 @@ the app connects.
   paste put something in the arranger (rounded mark or not, on the track or another), when a clip on the track was
   selected in the arranger already, or without the launcher's focus action; and
   `filetrack`, with the file going to the arranger, the launcher, or nowhere.
+- `RecordTest`: the `record` job, with the stand-in's transport (it plays on the stand-in's clock, records a
+  launched clip into the arranger while record is on, and plays that back): a clip recorded at bar 5 and heard
+  in the replay, with everything put back and Stop never pressed while stopped; each setting set (and read
+  back) before record goes on; a play without recording; the answers when the link hears no notes, or Bitwig
+  records nothing, or only an armed track; a faster tempo with the launcher clip deleted; a track that doesn't
+  stop; `recordabort`, Bitwig stopping the link and a setting that doesn't take; another project in front; a
+  track going in above; automation write coming on as it records, and a play position that doesn't move; odd
+  requests; `newtrack`'s ID and `clip` by ID; `probe`; and the self-check's line.
 - `RoutesTest`: the command routes: Save by every route, the MIDI each sends, a route that never comes back
   (`ran: false`, and a late message or press doesn't run it, nor does a stale message or the link's own ping that
   comes back while a newer command waits), a Bitwig that honours commands only for hardware or
