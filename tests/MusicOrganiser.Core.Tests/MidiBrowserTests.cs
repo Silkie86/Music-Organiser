@@ -433,6 +433,7 @@ public class MidiBrowserTests
         Directory.CreateDirectory(lib);
         var broken = Path.Combine(lib, "Broken.mid");
         File.WriteAllText(broken, "RIFF0000WAVE");
+        File.WriteAllBytes(Path.Combine(lib, "Empty.mid"), []);   // empty files are skipped, not failures
 
         using var db = new LibraryDb(Path.Combine(dir, "library.db"));
         db.SetList(MidiIndexer.FoldersKey, [lib]);
