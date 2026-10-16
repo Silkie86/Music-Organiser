@@ -45,6 +45,36 @@ public class ViewModelTests : IDisposable
         new(_db, _sounds, watch, pluginScanner, Path.Combine(_root, "data"));
 
     [Fact]
+    public void A_new_save_keeps_the_songs_rating_and_clearing_it_sticks()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        ProjectItem Song() => Main().Projects.Items.Single(i => i.Name == "Didums");
+        Save("Didums_1", 1);
+        var first = Song();
+        first.Rating = 4;
+        first.Status = "Mixing";
+        first.Favourite = true;
+        first.Notes = "needs vocals";
+
+        Save("Didums_2", 2);
+        var song = Song();
+        Assert.Equal("Didums_2", song.FileName);
+        Assert.Equal((4, "Mixing", true, "needs vocals"), (song.Rating, song.Status, song.Favourite, song.Notes));
+
+        song.Rating = 0;
+        song.Favourite = false;
+        song = Song();
+        Assert.Equal((0, false), (song.Rating, song.Favourite));
+        Assert.All(_db.Projects(), p => Assert.Equal(0, p.Rating));
+    }
+
+    [Fact]
     public void A_song_sits_under_the_year_it_was_first_made_and_shows_its_rework()
     {
         ProjectSummary Save(string name, DateTime saved, int notes, string[] plugins) => new()
@@ -60,25 +90,26 @@ public class ViewModelTests : IDisposable
         Assert.EndsWith($"2 saves · reworked {newest.Modified.Year}", item.DetailsLine);
 
         var detail = new ProjectDetailViewModel(_db, item, Main());
-        Assert.True(detail.HasOpenChoices);
+        Assert.True(detail.HasRunChoices);
         Assert.Equal([$"{newest.Modified.Year} rework (newest) · Didums_77 · {newest.Modified:d MMM yyyy}", "2019 original · Didums_12 · 2 Feb 2019"],
                      detail.RunChoices.Select(r => r.Header));
         Assert.StartsWith("First made 2 Feb 2019 · saved ", detail.DatesText);
 
-        // Overview's glance: the newest save first, then the older ones by date.
-        Assert.Equal(["Didums_77", "Didums_12"], detail.GlanceSaves.Select(s => s.Name));
-        Assert.True(detail.GlanceSaves[0].Newest);
-        Assert.Equal("2 Feb 2019", detail.GlanceSaves[1].WhenText);
-        Assert.Equal("None used", detail.GlanceSamples);
+        // Overview's line of counts.
+        Assert.Equal("2 saves", detail.SavesCountText);
+        Assert.Equal("No samples", detail.SamplesCountText);
+        Assert.Equal("", detail.MissingSamplesText);
     }
 
     [Fact]
     public async Task A_fixed_copy_is_listed_with_its_song_and_still_asks_whether_it_loaded_after_leaving_it()
     {
-        var lib = Path.Combine(_root, "Lib", "Drums");
+        // The sample library sits outside the projects' folder: a kick inside it would count as found (SampleLocator).
+        var libRoot = Fixtures.TempDir();
+        var lib = Path.Combine(libRoot, "Drums");
         Directory.CreateDirectory(lib);
         File.WriteAllBytes(Path.Combine(lib, "Kick 01.wav"), [0]);
-        _db.SetList(Scanner.SampleFoldersKey, [Path.Combine(_root, "Lib")]);
+        _db.SetList(Scanner.SampleFoldersKey, [libRoot]);
         new Scanner(_db).ScanSampleFolders();
         ScanFixtures();
         var projects = Main().Projects;
@@ -202,6 +233,59 @@ public class ViewModelTests : IDisposable
     {
         var main = Main();
         Assert.Same(main.Settings, main.SelectedNav.Page);
+    }
+
+    [Fact]
+    public async Task A_scan_that_finds_nothing_new_leaves_the_pages_as_they_are()
+    {
+        _db.AddRoot(_root);
+        var main = Main();
+        await main.ScanAsync(false, plugins: false);
+        var row = main.Projects.Items.First(i => i.Name == "Night Drive");
+        var plugins = main.Plugins.Items;
+
+        await main.ScanAsync(false, plugins: false);
+        Assert.Same(row, main.Projects.Items.First(i => i.Name == "Night Drive"));
+        Assert.Same(plugins, main.Plugins.Items);
+
+        // A changed project is read again, and the pages with it.
+        File.SetLastWriteTime(Path.Combine(_root, "Night Drive.flp"), DateTime.Now.AddMinutes(5));
+        await main.ScanAsync(false, plugins: false);
+        Assert.NotSame(row, main.Projects.Items.First(i => i.Name == "Night Drive"));
+        Assert.NotSame(plugins, main.Plugins.Items);
+    }
+
+    [Fact]
+    public async Task Projects_and_sounds_saved_while_the_app_is_open_are_taken_in_without_a_scan()
+    {
+        var quiet = (MainViewModel.ProjectWatchQuiet, SoundsViewModel.SampleWatchQuiet);
+        MainViewModel.ProjectWatchQuiet = SoundsViewModel.SampleWatchQuiet = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            var songs = Directory.CreateDirectory(Path.Combine(_root, "Songs")).FullName;
+            var lib = Directory.CreateDirectory(Path.Combine(_root, "Lib")).FullName;
+            _db.AddRoot(songs);
+            _db.SetList(Scanner.SampleFoldersKey, [lib]);
+            var main = Main();
+            await main.ScanAsync(false, plugins: false);
+            await Until(() => !main.Sounds.IsBusy);
+            Assert.Empty(main.Projects.Items);
+
+            // A song saved in a DAW, and a sound bounced into the sample folder (one in a hidden folder is left out).
+            Fixtures.FlStudioProject(songs, "Fresh Idea");
+            Synth.Write(Path.Combine(lib, "Bounce 01.wav"), Synth.Kick(1));
+            Directory.CreateDirectory(Path.Combine(lib, ".cache"));
+            Synth.Write(Path.Combine(lib, ".cache", "Temp.wav"), Synth.Kick(2));
+            await Until(() => main.Projects.Items.Any(i => i.Name == "Fresh Idea") && main.Sounds.Org.Sounds.Count == 1);
+            Assert.EndsWith("Bounce 01.wav", main.Sounds.Org.Sounds[0].Path);
+
+            // Deleted: the song stays listed, marked missing; the sound is forgotten.
+            File.Delete(Path.Combine(songs, "Fresh Idea.flp"));
+            File.Delete(Path.Combine(lib, "Bounce 01.wav"));
+            await Until(() => main.Projects.Items.Single().FileMissing && main.Sounds.Org.Sounds.Count == 0);
+            main.Shutdown();
+        }
+        finally { (MainViewModel.ProjectWatchQuiet, SoundsViewModel.SampleWatchQuiet) = quiet; }
     }
 
     [Fact]
@@ -1223,6 +1307,115 @@ public class ViewModelTests : IDisposable
     {
         for (var waited = Stopwatch.StartNew(); !done(); await Task.Delay(50))
             if (waited.Elapsed > TimeSpan.FromSeconds(20)) Assert.Fail("Timed out.");
+    }
+
+    [Fact]
+    public async Task The_midi_page_finds_parts_and_fits_them_to_a_project_already_moved()
+    {
+        // A MIDI pack with the song's progression in C minor, and a bassline; and a project in A minor.
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        int[][] cMinor = [[60, 63, 67], [56, 60, 63], [51, 55, 58], [58, 62, 65]];
+        var pack = Path.Combine(_root, "Packs", "Chords");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Moody", Ppq = 96 };
+        chords.Track("Piano").AddRange(cMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Moody Cm.mid"), Core.Export.MidiWriter.Write(chords));
+        var song = new Core.Parsers.MidiChannel("Keys", "", 96,
+            aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))).ToList(), Plugin: "Serum");
+
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [Path.Combine(_root, "Packs")]);
+        _db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "exports"));
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        Assert.Contains(midi.Results, r => r.Title == "Moody Cm");
+
+        midi.SelectedRole = midi.RoleChips.First(c => c.Role == Core.Midi.MidiRoles.Chords);
+        midi.Search = "moody";
+        await midi.RefreshAsync();
+        var row = Assert.Single(midi.Results);
+        var key = row.KeyText;   // C minor or its relative, E flat major: the same notes
+        Assert.Contains(key, new[] { "Cm", "D#" });
+
+        // Fitted to the A minor song: moved down 3, and shown, played and dragged out that way.
+        midi.FitToHarmony(Core.Midi.HarmonyTarget.FromChannels("Fit me", [song])!);
+        await midi.RefreshAsync();
+        row = Assert.Single(midi.Results);
+        Assert.Equal("down 3 semitones", row.MoveText);
+        Assert.Equal(key == "Cm" ? "Cm → Am" : "D# → C", row.KeyText);
+        Assert.Equal(51 - 3, row.Channel.Notes.Min(n => n.Key));
+        var drag = midi.MakeDrag([row])!;
+        var written = Core.Midi.MidiFileReader.Read(drag.Files.Single());
+        Assert.Equal(51 - 3, written.Single().Notes.Min(n => n.Key));
+        Assert.EndsWith("(-3).mid", drag.Files.Single());
+        Assert.StartsWith(Path.Combine(_root, "exports"), drag.Files.Single());
+
+        // The pack's file is untouched, and saying what a part is sticks.
+        midi.Selected = row;
+        await midi.SetRoleCommand.ExecuteAsync(Core.Midi.MidiRoles.Melody);
+        Assert.Equal(Core.Midi.MidiRoles.Melody, Assert.Single(midi.Index.All()).YourRole);
+    }
+
+    [Fact]
+    public async Task A_part_that_comes_in_late_in_its_bar_shows_and_plays_from_its_first_note_but_drags_out_from_the_bar()
+    {
+        // A pickup: three notes on the last beat of the bar, then a held chord in the next bar.
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var clip = new Core.Parsers.MidiClip { Name = "Pickup", Ppq = 96 };
+        clip.Track("Keys").AddRange([
+            new(3 * 96, 32, 60, 100), new(3 * 96 + 32, 32, 62, 100), new(3 * 96 + 64, 32, 64, 100),
+            new(4 * 96, 384, 60, 100), new(4 * 96, 384, 64, 100), new(4 * 96, 384, 67, 100)]);
+        File.WriteAllBytes(Path.Combine(pack, "Pickup.mid"), Core.Export.MidiWriter.Write(clip));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        _db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "exports"));
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+
+        var row = Assert.Single(midi.Results);
+        Assert.Equal(0, row.Channel.Notes.Min(n => n.Start));   // shown and played from its first note, with no silence first
+        var written = Core.Midi.MidiFileReader.Read(midi.MakeDrag([row])!.Files.Single()).Single();
+        Assert.Equal(3 * 96, written.Notes.Min(n => n.Start));   // the file keeps the pickup before the bar line
+    }
+
+    [Fact]
+    public async Task A_songs_midi_tab_lists_parts_that_fit_it_already_moved_and_not_its_own()
+    {
+        const int bar = 4 * 96;
+        int[][] cMinor = [[60, 63, 67], [56, 60, 63], [51, 55, 58], [58, 62, 65]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Moody", Ppq = 96 };
+        chords.Track("Piano").AddRange(cMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Moody Cm.mid"), Core.Export.MidiWriter.Write(chords));
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        var project = MidiBrowserTests.FlProjectWithChords(songs);   // Am F C G on Serum
+        _db.Upsert(Core.Library.Scanner.Analyse(project));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var tab = new SongMidiViewModel(main.Midi, main, project, "Chords Song");
+        await tab.LoadAsync();
+
+        var row = Assert.Single(tab.Rows);   // the song's own chords are left out
+        Assert.Equal("Moody Cm", row.Title);
+        Assert.Equal("down 3 semitones", row.MoveText);
+        Assert.Equal(1, tab.GoodCount);
+        Assert.Equal("1 good fit", tab.CountText);
+        Assert.Contains("Am", tab.Status);
+
+        tab.Kind = SongMidiViewModel.Kinds.First(k => k.Role == Core.Midi.MidiRoles.Melody);
+        await Task.Yield();
+        Assert.Empty(tab.Rows);
+
+        // The same list on the MIDI page, fitted to this song.
+        await tab.OpenInMidiPageCommand.ExecuteAsync(null);
+        Assert.Same(main.Midi, main.SelectedNav.Page);
+        Assert.Equal("Chords Song", main.Midi.Fit!.Name);
     }
 
     sealed class HeadlessUi : IPlatformUi

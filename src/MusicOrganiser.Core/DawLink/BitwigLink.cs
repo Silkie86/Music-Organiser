@@ -16,8 +16,9 @@ namespace MusicOrganiser.Core.DawLink;
 /// <param name="Extension">The extension's version, when it's the extension.</param>
 /// <param name="OnlyIn">Whether the link honours <see cref="BitwigLink.OnlyIn"/> (older scripts don't).</param>
 /// <param name="Loopback">
-/// Whether the extension's own MIDI has come back to it through the loopback (extension 3.7), which the routes other
-/// than "direct" and "flush" need (see <see cref="BitwigLink.RunActionAsync"/>); null when the link doesn't say.
+/// Whether the extension's own MIDI has come back to it through the loopback (extension 3.7), which the routes through
+/// MIDI need (see <see cref="BitwigLink.RunActionAsync"/>); Bitwig 6.1.3 also saved from its flush only once the
+/// loopback's ports were set (<see cref="BitwigLink.LoopbackMissing"/>). Null when the link doesn't say.
 /// </param>
 public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
                                  string Project, bool Modified, bool Engine, bool Changes, string? Runtime = null,
@@ -138,10 +139,91 @@ public sealed record BitwigPitch(string Device, double Value, string Display);
 /// </param>
 /// <param name="Via">The route the extension copied, pasted and ran the focus actions by (extension 3.7), or null when it doesn't say.</param>
 /// <param name="Ran">Whether each of those steps ran by that route (extension 3.7), or null when the extension doesn't say.</param>
+/// <param name="Checks">
+/// What the extension's checks found (extension 3.8), when they were asked for and could tell something: arrange's paste
+/// ran but put nothing in the arranger, and Bitwig has the launcher's focus action. Else null.
+/// </param>
 public sealed record BitwigArranged(bool Arranged, bool Appeared, bool SameAsSource, bool CopiedFromTimeline, double At, string Layout,
                                     BitwigShown Launcher, BitwigClipMark Mark, int LauncherFocus, BitwigShown Timeline, int Focus,
                                     BitwigArrangerClip Before, BitwigArrangerClip BeforePaste, BitwigArrangerClip After, string? PastedColor,
-                                    int LauncherClipsBefore, int LauncherClipsAfter, string? Via = null, BitwigArrangeRan? Ran = null);
+                                    int LauncherClipsBefore, int LauncherClipsAfter, string? Via = null, BitwigArrangeRan? Ran = null,
+                                    BitwigArrangeChecks? Checks = null);
+
+/// <summary>
+/// What the arrange experiment's checks found (extension 3.8), run by the same route once arrange's paste ran but put
+/// nothing in the arranger, to tell which part failed: the copy, or the arranger's part.
+/// </summary>
+/// <param name="LauncherPaste">
+/// A paste into an empty launcher slot on the track, which needs no arranger: null when the track had no empty slot the
+/// link could reach.
+/// </param>
+/// <param name="Duplicate">Bitwig's Duplicate on the launcher clip, which needs no clipboard: null when Bitwig has no Duplicate action.</param>
+/// <param name="Error">What stopped the checks part way (another project came to the front, say), or null.</param>
+public sealed record BitwigArrangeChecks(BitwigLauncherPasteCheck? LauncherPaste, BitwigDuplicateCheck? Duplicate, string? Error = null);
+
+/// <summary>
+/// The arrange experiment's paste into an empty launcher slot (extension 3.8): the link selects the slot, gives the clip
+/// launcher the focus and pastes. When the mark took (and is exact), a clip in the launcher clip's marking colour there
+/// means the copy took, so the arranger's part is what fails, and a clip in another colour means Bitwig pasted what its
+/// clipboard held before. The check stops before the paste when Bitwig doesn't select the slot or the route doesn't run
+/// the launcher's focus action.
+/// </summary>
+/// <param name="Slot">The empty slot (0 is the first).</param>
+/// <param name="Selected">Whether Bitwig selected it. When it didn't, the check stopped there.</param>
+/// <param name="Focus">How many times the link ran the launcher's focus action (twice when the first hid it).</param>
+/// <param name="Made">Whether a clip appeared in the slot.</param>
+/// <param name="Colour">That clip's colour (#RRGGBB), or null when none appeared.</param>
+/// <param name="SameAsMark">
+/// Whether the mark took and that's the colour the launcher clip got from it. When the mark is also exact, that makes it
+/// the clip's copy; a colour Bitwig rounded the mark to, other clips can have too.
+/// </param>
+/// <param name="Removed">Whether the link deleted that clip again, so the next go starts as this one did.</param>
+public sealed record BitwigLauncherPasteCheck(int Slot, bool Selected, int Focus, BitwigLauncherPasteRan Ran, bool Made, string? Colour,
+                                              bool SameAsMark, bool Removed);
+
+/// <summary>Whether the launcher's focus action and the paste ran by the route: null for a step the link didn't get to.</summary>
+public sealed record BitwigLauncherPasteRan(bool? Focus, bool? Paste);
+
+/// <summary>
+/// The arrange experiment's Duplicate on the launcher clip (extension 3.8): the link selects the clip again, gives the clip
+/// launcher the focus and runs Bitwig's Duplicate action. A new launcher clip means Bitwig's editing actions work in the
+/// launcher by this route; a new track means Duplicate went to the track, so the launcher didn't have the focus.
+/// </summary>
+/// <param name="Selected">Whether Bitwig selected the clip. When it didn't, the check stopped there.</param>
+/// <param name="Focus">How many times the link ran the launcher's focus action.</param>
+/// <param name="Launcher">How many more launcher clips the track had after it.</param>
+/// <param name="Tracks">How many more tracks the project had after it. A new track is left in the project.</param>
+/// <param name="Removed">Whether the link deleted the new launcher clip again.</param>
+public sealed record BitwigDuplicateCheck(bool Selected, int Focus, BitwigDuplicateRan Ran, int Launcher, int Tracks, bool Removed);
+
+/// <summary>Whether the launcher's focus action and Duplicate ran by the route: null for a step the link didn't get to.</summary>
+public sealed record BitwigDuplicateRan(bool? Focus, bool? Duplicate);
+
+/// <summary>
+/// What Bitwig did with a file the link inserted after a track, as a new track (extension 3.8: see <see
+/// cref="BitwigLink.FileTrackAsync"/>).
+/// </summary>
+/// <param name="Added">How many tracks Bitwig added (0 when it did nothing with the file).</param>
+/// <param name="Index">The new track's place in the track list, or null when there's none.</param>
+/// <param name="Name">The new track's name (Bitwig names it after the file), or null.</param>
+/// <param name="Type">The new track's type ("Instrument" for a MIDI file), or null.</param>
+/// <param name="LauncherClips">
+/// How many clips the new track has in its first 8 launcher slots: more than 0 means Bitwig put the file in the launcher,
+/// not the arranger. Null when there's no new track.
+/// </param>
+/// <param name="Selected">Whether Bitwig selected the new track.</param>
+/// <param name="Arranger">
+/// The clip selected in the arranger after: on the new track when Bitwig put the file in the arranger and selected it there.
+/// </param>
+/// <param name="ArrangerBefore">The same before, which <paramref name="Arranger"/> is compared with.</param>
+/// <param name="At">Where the play start was when the file went in, in beats from the start.</param>
+/// <param name="OnTrack">The launcher clips on the track the file went after, before and after, in case Bitwig put it there.</param>
+public sealed record BitwigFileTrack(int Added, int? Index, string? Name, string? Type, int TracksBefore, int TracksAfter, int? LauncherClips,
+                                     bool Selected, BitwigArrangerClip Arranger, BitwigArrangerClip ArrangerBefore, double At,
+                                     BitwigClipCount OnTrack);
+
+/// <summary>How many launcher clips a track had, before and after (null after when the track can't be found).</summary>
+public sealed record BitwigClipCount(int Before, int? After);
 
 /// <summary>
 /// Whether each step of the arrange experiment ran by its route (extension 3.7): giving the clip launcher the focus, the
@@ -190,14 +272,24 @@ public sealed class BitwigLink : IDisposable
     /// </summary>
     public const string LoopbackPort = "Music Organiser Bitwig";
     /// <remarks>
-    /// The extension 3.7 asks Bitwig for a MIDI in and out (its loopback). Whether Bitwig starts a controller with them
-    /// unassigned isn't known yet (extensions/README.md, "Still to confirm"), so this says to set them too.
+    /// Bitwig starts the extension 3.7 and later, and the link answers, with its MIDI in and out unassigned (confirmed on
+    /// Bitwig 6.1.3), so they're no reason for it not to answer: <see cref="LoopbackMissing"/> says when they're needed.
     /// </remarks>
     public const string NotRunning = "Bitwig isn't answering. Check that Bitwig Studio is open, with the Music Organiser " +
-                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link). " +
-                                     "With the Music Organiser extension 3.7 or later, also set that controller's MIDI in and MIDI out " +
-                                     $"to the MIDI port “{LoopbackPort}” (make it in loopMIDI on Windows), never “Music Organiser”, " +
-                                     "FL Studio's: Bitwig may not start the extension while they're unassigned.";
+                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link).";
+
+    /// <summary>
+    /// What to set up when the extension's MIDI loopback doesn't work (its hello's <see cref="BitwigHello.Loopback"/> is
+    /// false), as a sentence to add after saying the app connected; null when it works, or the link doesn't say (the
+    /// script, or an extension before 3.7). Bitwig 6.1.3 answered the link without it, but saved for it only once the
+    /// extension's MIDI in and out were set (then from its flush), so the app's commands need it too.
+    /// </summary>
+    public static string? LoopbackMissing(BitwigHello hello) => hello.Loopback is false
+        ? $"Its MIDI in and out aren't set to the MIDI port “{LoopbackPort}” yet, and Bitwig only saves for the app once they are: " +
+          (OperatingSystem.IsWindows() ? $"make a port called “{LoopbackPort}” in loopMIDI, then " : "") +
+          "in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it (never to “Music Organiser”, " +
+          "FL Studio's port)."
+        : null;
     const int MaxMessage = 64 << 20;
 
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -248,7 +340,8 @@ public sealed class BitwigLink : IDisposable
     public string? OnlyIn { get; set; }
 
     /// <summary>The commands that change or select something in the project, as the script and the extension list them.</summary>
-    static readonly HashSet<string> ProjectCommands = ["set", "insert", "newtrack", "clip", "pads", "transpose", "action", "recorder", "arrange", "select"];
+    static readonly HashSet<string> ProjectCommands = ["set", "insert", "newtrack", "clip", "pads", "transpose", "action", "recorder", "arrange", "select",
+                                                       "filetrack"];
 
     BitwigLink(TcpClient tcp)
     {
@@ -369,12 +462,12 @@ public sealed class BitwigLink : IDisposable
     /// in front just before it ran, the route, and whether the route ran it (see <see cref="BitwigActionRun"/>).
     /// </summary>
     /// <param name="via">
-    /// The route (the Java extension 3.7; null leaves it to the link, which runs it straight away): "direct" runs it
-    /// straight away, "flush" from Bitwig's next flush, "midi" when a SysEx message the extension sends itself comes back
+    /// The route (the Java extension 3.7; null leaves it to the link, which runs it from Bitwig's flush from the extension
+    /// 3.8, as Save worked there, and straight away before): "direct" runs it straight away, "flush" from Bitwig's next flush, "midi" when a SysEx message the extension sends itself comes back
     /// through the MIDI loopback, "buttonCode" when a press of one of its own buttons comes back that way (the extension
     /// runs the action), and "button" the same with Bitwig running the action bound to the button. Bitwig 6.1.3 ignored
-    /// Save, copy and paste run straight away, while it carried them out for a controller's hardware button. The script,
-    /// and older extensions, refuse or ignore any route but "direct".
+    /// Save, copy and paste run straight away, while it carried them out for a controller's hardware button, and saved
+    /// from its flush. The script, and older extensions, refuse or ignore any route but "direct".
     /// </param>
     public async Task<BitwigActionRun> RunActionAsync(string id, string? via = null, CancellationToken ct = default)
     {
@@ -469,14 +562,31 @@ public sealed class BitwigLink : IDisposable
     /// </summary>
     /// <param name="via">
     /// The route for the copy, the paste and the focus actions (the extension 3.7; null leaves it to the extension, which
-    /// runs them straight away): see <see cref="RunActionAsync"/>.
+    /// runs them from Bitwig's flush from 3.8, and straight away before): see <see cref="RunActionAsync"/>.
     /// </param>
-    public async Task<BitwigArranged> ArrangeAsync(int track, int slot, double? at = null, string? via = null, CancellationToken ct = default)
+    /// <param name="checks">
+    /// Whether to check, when arrange's paste ran but put nothing in the arranger, whether a paste into an empty launcher
+    /// slot and Bitwig's Duplicate work by the same route (the extension 3.8; <see cref="BitwigArranged.Checks"/>). A clip
+    /// either makes in the launcher is deleted again; a track Duplicate made, or anything that went elsewhere, is left.
+    /// </param>
+    public async Task<BitwigArranged> ArrangeAsync(int track, int slot, double? at = null, string? via = null, bool checks = false,
+                                                   CancellationToken ct = default)
     {
         var request = new JsonObject { ["cmd"] = "arrange", ["track"] = track, ["slot"] = slot, ["at"] = at };
         if (via is not null) request["via"] = via;
-        return Parse<BitwigArranged>(await ChangeAsync(request, ct));
+        if (checks) request["checks"] = true;
+        // The checks wait for Bitwig as many times again.
+        return Parse<BitwigArranged>(await ChangeAsync(request, ct, checks ? ChangeTimeout * 2 : null));
     }
+
+    /// <summary>
+    /// An experiment, for the live tests only (the Java extension 3.8): inserts a file after a track, as a new track, the way
+    /// Bitwig's own API inserts one there, with the play start moved to <paramref name="at"/> beats first when given, and
+    /// says where Bitwig put it (<see cref="BitwigFileTrack"/>). Whether Bitwig puts a MIDI file's clip in the arranger
+    /// that way, which nothing else in its API does, is what this is for. The play start stays where it was moved.
+    /// </summary>
+    public async Task<BitwigFileTrack> FileTrackAsync(int track, string path, double? at = null, CancellationToken ct = default) =>
+        Parse<BitwigFileTrack>(await ChangeAsync(new() { ["cmd"] = "filetrack", ["track"] = track, ["path"] = path, ["at"] = at }, ct));
 
     async Task<BitwigInserted> InsertOnAsync(int track, bool atStart, JsonObject request, CancellationToken ct)
     {
@@ -486,10 +596,10 @@ public sealed class BitwigLink : IDisposable
         return Parse<BitwigInserted>(await ChangeAsync(request, ct));
     }
 
-    Task<JsonElement> ChangeAsync(JsonObject request, CancellationToken ct)
+    Task<JsonElement> ChangeAsync(JsonObject request, CancellationToken ct, TimeSpan? timeout = null)
     {
         if (Hello.Link < LinkVersion) throw new DawLinkException(OldScript);
-        return RequestAsync(request, ct, ChangeTimeout);
+        return RequestAsync(request, ct, timeout ?? ChangeTimeout);
     }
 
     static JsonNode PluginId(string format, string id) => format.ToUpperInvariant() switch

@@ -249,6 +249,17 @@
 
             <Border Classes="card settingsCard">
                 <StackPanel>
+                    <TextBlock Text="Performance" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro" TextWrapping="Wrap"
+                               Text="How hard scans, Deep listen and finding duplicates may push your computer. Gentle keeps the app smooth while they run; Fast finishes sooner." />
+                    <ComboBox ItemsSource="{x:Static vm:SettingsViewModel.PerformanceChoices}" SelectedItem="{Binding Performance}"
+                              HorizontalAlignment="Left" MinWidth="240" />
+                    <TextBlock Text="{Binding PerformanceTip}" Classes="muted" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
                     <TextBlock Text="When the app opens" Classes="sectionHeader" />
                     <TextBlock Classes="cardIntro" Text="The page you land on each time you start Music Organiser." />
                     <ComboBox ItemsSource="{x:Static vm:SettingsViewModel.StartPageChoices}" SelectedItem="{Binding StartPage}"

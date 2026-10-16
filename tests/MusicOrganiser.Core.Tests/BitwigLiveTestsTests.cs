@@ -109,7 +109,8 @@ public class BitwigLiveTestsTests
 
         // The script has none of the Java extension's newer fields, so those say they need it.
         string[] newer = ["Link › Track IDs", "Link › Parameter details", "Link › Last clicked parameter", "Link › Self-check", "Link › MIDI loopback",
-                          "Changes › Clip to arranger", "Changes › Sampler's parameter details", "Changes › Master recorder"];
+                          "Changes › Clip to arranger", "Changes › MIDI file as a track", "Changes › Sampler's parameter details",
+                          "Changes › Master recorder"];
         Assert.All(newer, n => Assert.Equal((LiveOutcome.Skipped, BitwigLiveTests.NeedsJava),
                                             run.Results.Where(r => r.Title == n).Select(r => (r.Outcome, r.Detail)).Single()));
         // The stand-in saves no file, so there's no saved project to compare: skipped, saying so.
@@ -118,7 +119,7 @@ public class BitwigLiveTestsTests
         Assert.Equal(LiveOutcome.Skipped, Find(run, "Saved file", "Compare with Bitwig").Outcome);
         var skipped = run.Results.Where(r => r.Outcome == LiveOutcome.Skipped).Select(r => r.Title).ToList();
         Assert.Equal([.. newer, "Saved file › Find the saved project", "Saved file › Compare with Bitwig"], skipped);
-        Assert.Equal(10, run.Skipped);
+        Assert.Equal(11, run.Skipped);
         Assert.All(["Link", "Changes", "Send"], area => Assert.DoesNotContain(run.Results, r => r.Area == area && r.Outcome == LiveOutcome.Failed));
 
         // What each test saw.
@@ -199,7 +200,7 @@ public class BitwigLiveTestsTests
                                           !r.Name.StartsWith("Last") && !r.Name.StartsWith("Self") && !r.Name.StartsWith("MIDI")),
                    r => Assert.Equal(LiveOutcome.Passed, r.Outcome));
         var changes = run.Results.Where(r => r.Area != "Link").ToList();
-        Assert.Equal(28, changes.Count);
+        Assert.Equal(29, changes.Count);
         Assert.All(changes, r => Assert.Equal(LiveOutcome.Skipped, r.Outcome));
         Assert.Equal("Bitwig has “Night Drive” open, so the run changed nothing: it only changes a project whose name starts with “MO Live Test”, " +
                      "never your own work. " + BitwigLiveTests.HowToAllowChanges, Find(run, "Changes", "Changes allowed").Detail);
@@ -454,7 +455,8 @@ public class BitwigLiveTestsTests
         Assert.Equal(["direct", "flush", "midi", "buttonCode", "button"], ActionRoutes(java));
         Assert.Contains(" The link tried Save 5 ways, one after another, and none worked: straight away (direct), from Bitwig's flush (flush), on the " +
                         "link's own MIDI message (midi), on a press of the link's own button, run by the link (buttonCode) and by the link's own " +
-                        "hardware button, run by Bitwig (button). The routes through the MIDI loopback didn't run. " + BitwigLiveTests.LoopbackSetup,
+                        "hardware button, run by Bitwig (button). The routes through the MIDI loopback didn't run. Bitwig 6.1.3 saved for the " +
+                        "extension only once its MIDI in and out were set (then from its flush), so every route needs them. " + BitwigLiveTests.LoopbackSetup,
                         verdict.Detail);
         Assert.Equal(["- Straight away (direct): ran, but Bitwig still showed unsaved changes 0 s later",
                       "- From Bitwig's flush (flush): ran, but Bitwig still showed unsaved changes 0 s later",
@@ -490,6 +492,80 @@ public class BitwigLiveTestsTests
         var e = await Assert.ThrowsAsync<DawLinkException>(() => BitwigLiveTests.SaveByRoutesAsync(
             link, "Save", TimeSpan.FromMilliseconds(100), _ => null, () => true, closed: () => Task.FromResult(true)));
         Assert.Equal(noPorts, e.Message);
+    }
+
+    const string AppsOwnSave = " That's the way the link runs a command when the app names no route, so the app's own Save works the same way.";
+
+    [Fact]
+    public async Task SavesFromTheFlushFirstThroughTheExtension38()
+    {
+        // The extension 3.8 runs Save from Bitwig's flush when the app names no route, and Bitwig saves there.
+        var saved = 0;
+        string? Answer(JsonNode request)
+        {
+            switch ((string)request["cmd"]!)
+            {
+                case "hello":
+                    return RoutesHello(modified: Volatile.Read(ref saved) == 0, extension: "3.8");
+                case "action":
+                    Interlocked.Exchange(ref saved, 1);
+                    return ActionRun((string?)request["via"] ?? "flush", true);
+                default:
+                    return null;
+            }
+        }
+        await using var java = new FakeJavaBitwig(RoutesHello(extension: "3.8")) { Answer = Answer };
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+
+        var verdict = await BitwigLiveTests.SaveByRoutesAsync(link, "Save", TimeSpan.FromMilliseconds(300), _ => null, () => true);
+
+        Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
+        Assert.StartsWith("Bitwig saved “MO Live Test” when the link ran Save from Bitwig's flush: its unsaved changes cleared ", verdict.Detail);
+        Assert.EndsWith(AppsOwnSave, verdict.Detail);
+        // One Save, naming no route, as the app's own Save does.
+        Assert.Equal(new string?[] { null }, ActionRoutes(java));
+        Assert.False(java.Requests.Single(r => (string)r["cmd"]! == "action").AsObject().ContainsKey("via"));
+        Assert.Equal("flush", (string?)verdict.Data!["via"]);
+    }
+
+    [Fact]
+    public async Task TriesTheOtherRoutesAfterTheFlushThroughTheExtension38()
+    {
+        // Bitwig ignores Save by every route.
+        await using var java = new FakeJavaBitwig(RoutesHello(extension: "3.8"));
+        java.Answer = request => (string)request["cmd"]! == "action" ? ActionRun((string?)request["via"] ?? "flush", true) : null;
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+
+        var verdict = await BitwigLiveTests.SaveByRoutesAsync(link, "Save", TimeSpan.FromMilliseconds(100), _ => null, () => true);
+
+        Assert.Equal(LiveOutcome.Failed, verdict.Outcome);
+        Assert.Equal([null, "direct", "midi", "buttonCode", "button"], ActionRoutes(java));
+        Assert.Equal(["flush", "direct", "midi", "buttonCode", "button"], verdict.Data!["attempts"]!.AsArray().Select(a => (string?)a!["via"]));
+        Assert.Equal("- From Bitwig's flush (flush): ran, but Bitwig still showed unsaved changes 0 s later", verdict.Lines[0]);
+        Assert.DoesNotContain(AppsOwnSave, verdict.Detail);
+
+        // Saved by a route the app has to name: nothing said about the app's own Save.
+        java.Requests.Clear();
+        var saved = 0;
+        string? SavesStraightAway(JsonNode request)
+        {
+            switch ((string)request["cmd"]!)
+            {
+                case "hello":
+                    return RoutesHello(modified: Volatile.Read(ref saved) == 0, extension: "3.8");
+                case "action":
+                    var via = (string?)request["via"];
+                    if (via == "direct") Interlocked.Exchange(ref saved, 1);
+                    return ActionRun(via ?? "flush", true);
+                default:
+                    return null;
+            }
+        }
+        java.Answer = SavesStraightAway;
+        verdict = await BitwigLiveTests.SaveByRoutesAsync(link, "Save", TimeSpan.FromMilliseconds(100), _ => null, () => true);
+        Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
+        Assert.Equal([null, "direct"], ActionRoutes(java));
+        Assert.DoesNotContain(AppsOwnSave, verdict.Detail);
     }
 
     [Fact]
@@ -543,8 +619,10 @@ public class BitwigLiveTestsTests
 
         var broken = BitwigLiveTests.LoopbackVerdict(Hello("3.7", false));
         Assert.Equal(LiveOutcome.Failed, broken.Outcome);
-        Assert.Equal("The extension's own MIDI hasn't come back to it through the loopback, so it can only run Bitwig's commands straight away or " +
-                     "from Bitwig's flush, which Bitwig 6.1.3 ignored for Save, copy and paste. " + BitwigLiveTests.LoopbackSetup, broken.Detail);
+        Assert.Equal("The extension's own MIDI hasn't come back to it through the loopback, so its MIDI in and out aren't set, and Bitwig may not " +
+                     "carry out the commands the app runs by any route. Bitwig 6.1.3 ignored Save, copy and paste run straight away. Bitwig 6.1.3 " +
+                     "saved for the extension only once its MIDI in and out were set (then from its flush), so every route needs them. " +
+                     BitwigLiveTests.LoopbackSetup, broken.Detail);
         // The setup names the loopMIDI port, and warns off FL Studio's.
         Assert.Contains("set both MIDI in and MIDI out to “Music Organiser Bitwig” (the loopMIDI port), never “Music Organiser” (FL Studio's)",
                         BitwigLiveTests.LoopbackSetup);
@@ -752,7 +830,8 @@ public class BitwigLiveTestsTests
         Assert.Equal($"Bitwig still showed unsaved changes 15 s after Save (“Save”), and didn't write {file}, though its window was in front. The link " +
                      "tried Save 5 ways, one after another, and none worked: straight away (direct), from Bitwig's flush (flush), on the link's own MIDI " +
                      "message (midi), on a press of the link's own button, run by the link (buttonCode) and by the link's own hardware button, run by " +
-                     "Bitwig (button). The routes through the MIDI loopback didn't run. " + BitwigLiveTests.LoopbackSetup + " Bitwig said the test " +
+                     "Bitwig (button). The routes through the MIDI loopback didn't run. Bitwig 6.1.3 saved for the extension only once its MIDI in " +
+                     "and out were set (then from its flush), so every route needs them. " + BitwigLiveTests.LoopbackSetup + " Bitwig said the test " +
                      "project, “MO Live Test”, was the active project when Save ran. If Bitwig opened a Save As window, the project hasn't been saved " +
                      "yet: save it as “MO Live Test”, then run again.", none.Detail);
         Assert.Equal(["- Straight away (direct): ran, but Bitwig still showed unsaved changes 15 s later",
@@ -862,7 +941,7 @@ public class BitwigLiveTestsTests
              "launcher":{"before":false,"after":true},"mark":{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true,"exact":true},
              "launcherFocus":1,"timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},
              "beforePaste":{"exists":false,"track":null},"after":{"exists":true,"track":"Sample 143012"},"pastedColor":"#416DD9",
-             "launcherClipsBefore":1,"launcherClipsAfter":1,"via":null,"ran":null,"front":true}
+             "launcherClipsBefore":1,"launcherClipsAfter":1,"via":null,"ran":null,"checks":null,"front":true}
             """), verdict.Data), verdict.Data!.ToJsonString());
         Assert.Contains(" in the launcher (giving the clip launcher the focus took two goes: the first hid it). ",
                         BitwigLiveTests.ArrangeVerdict(arranged with { LauncherFocus = 2 }, "Sample 143012", 0, 5, null).Detail);
@@ -1193,6 +1272,78 @@ public class BitwigLiveTestsTests
             BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true, closed: () => Task.FromResult(true)));
     }
 
+    /// <summary>The extension 3.8's checks when the copy took: its paste into an empty launcher slot made the marked clip, and Duplicate worked there.</summary>
+    const string CopyTook = """{"launcherPaste":{"slot":2,"selected":true,"focus":1,"ran":{"focus":true,"paste":true},"made":true,"colour":"#416DD9","sameAsMark":true,"removed":true},"duplicate":{"selected":true,"focus":1,"ran":{"focus":true,"duplicate":true},"launcher":1,"tracks":0,"removed":true}}""";
+
+    /// <summary>The same when the copy didn't take, and Duplicate copied the whole track, so the launcher didn't have the focus.</summary>
+    const string CopyDidntTake = """{"launcherPaste":{"slot":2,"selected":true,"focus":1,"ran":{"focus":true,"paste":true},"made":true,"colour":"#3366CC","sameAsMark":false,"removed":false},"duplicate":{"selected":true,"focus":1,"ran":{"focus":true,"duplicate":true},"launcher":0,"tracks":1,"removed":false}}""";
+
+    [Fact]
+    public async Task ClipToArrangerChecksEachGoThatDidntWorkThroughTheExtension38()
+    {
+        // The extension 3.8: no route puts the clip there. From the flush the copy took and Duplicate worked in the launcher;
+        // straight away neither did; on the link's own MIDI message the checks stopped. By the buttons the checks' colours
+        // say nothing for sure: Bitwig didn't colour the launcher clip, then rounded its colour.
+        await using var java = new FakeJavaBitwig(ArrangingHello.Replace("\"3.6\"", "\"3.8\""), SevenEight);
+        java.Answer = request =>
+        {
+            if ((string)request["cmd"]! != "arrange") return null;
+            var via = (string?)request["via"] ?? "flush";
+            var a = JsonNode.Parse(ArrangeAnswer(via, false, AllRan))!.AsObject();
+            a["checks"] = via switch
+            {
+                "flush" => JsonNode.Parse(CopyTook),
+                "direct" => JsonNode.Parse(CopyDidntTake),
+                "midi" => JsonNode.Parse("""{"launcherPaste":null,"duplicate":{"selected":false,"focus":0,"ran":{"focus":null,"duplicate":null},"launcher":0,"tracks":0,"removed":false},"error":"Bitwig has “My Song” open now."}"""),
+                "buttonCode" => JsonNode.Parse(CopyDidntTake),
+                _ => JsonNode.Parse(CopyTook),
+            };
+            a["mark"] = via switch
+            {
+                "buttonCode" => JsonNode.Parse("""{"before":"#3366CC","asked":"#416DD9","got":"#3366CC","took":false,"exact":false}"""),
+                "button" => JsonNode.Parse("""{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true,"exact":false}"""),
+                _ => a["mark"]!.DeepClone(),
+            };
+            return a.ToJsonString();
+        };
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+
+        var verdict = await BitwigLiveTests.ClipToArrangerAsync(link, "Sample 143012", 0, () => true);
+
+        Assert.Equal(LiveOutcome.Failed, verdict.Outcome);
+        // The flush first, naming no route, as the app's own commands do; then the others. Each go asks for the checks.
+        Assert.Equal([null, "direct", "midi", "buttonCode", "button"], ArrangeRoutes(java));
+        Assert.All(java.Requests.Where(r => (string)r["cmd"]! == "arrange"), r => Assert.True((bool)r["checks"]!));
+        Assert.Equal(["flush", "direct", "midi", "buttonCode", "button"], verdict.Data!["attempts"]!.AsArray().Select(a => (string?)a!["via"]));
+        Assert.Equal(["- From Bitwig's flush (flush): nothing appeared in the arranger",
+                      "  - Paste into the launcher: a paste into empty slot 3 put the launcher clip's copy there, in its marking colour (#416DD9), so " +
+                      "the copy took and pasting works in the launcher: it's putting it in the arranger that fails",
+                      "  - Duplicate in the launcher: Duplicate made a copy of the clip in the launcher, so Bitwig's editing actions work in the " +
+                      "launcher by this route (the link deleted the copy again)",
+                      "- Straight away (direct): nothing appeared in the arranger",
+                      "  - Paste into the launcher: a paste into empty slot 3 put down a clip in another colour (#3366CC) than the launcher clip's " +
+                      "mark, so the copy didn't take: Bitwig pasted what its clipboard held before (the link couldn't delete it again, so it's " +
+                      "still in slot 3)",
+                      "  - Duplicate in the launcher: Duplicate copied the whole track instead, so the clip launcher didn't have the focus (the copy " +
+                      "is left in the test project)",
+                      "- On the link's own MIDI message (midi): nothing appeared in the arranger",
+                      "  - Duplicate in the launcher: Bitwig didn't select the launcher clip again, so the check stopped there",
+                      "  - The checks stopped: Bitwig has “My Song” open now.",
+                      "- On a press of the link's own button, run by the link (buttonCode): nothing appeared in the arranger",
+                      "  - Paste into the launcher: a paste into empty slot 3 put down a clip (#3366CC), but Bitwig didn't let the link colour the " +
+                      "launcher clip, so it can't tell whether that's the launcher clip's copy or what Bitwig's clipboard held before (the link " +
+                      "couldn't delete it again, so it's still in slot 3)",
+                      "  - Duplicate in the launcher: Duplicate copied the whole track instead, so the clip launcher didn't have the focus (the copy " +
+                      "is left in the test project)",
+                      "- By the link's own hardware button, run by Bitwig (button): nothing appeared in the arranger",
+                      "  - Paste into the launcher: a paste into empty slot 3 put down a clip in the launcher clip's colour (#416DD9), but Bitwig " +
+                      "rounded that colour to one of its own, which other clips can have too, so it can't tell for sure whether the copy took",
+                      "  - Duplicate in the launcher: Duplicate made a copy of the clip in the launcher, so Bitwig's editing actions work in the " +
+                      "launcher by this route (the link deleted the copy again)"],
+                     verdict.Lines);
+        Assert.Equal("#416DD9", (string?)verdict.Data["attempts"]![0]!["answer"]!["checks"]!["launcherPaste"]!["colour"]);
+    }
+
     /// <summary>
     /// The extension 3.7's arrange answer by a route when a clip in the launcher clip's colour appeared on the track, but
     /// Bitwig rounded the mark to one of its own colours, so the extension doesn't say it arranged the clip.
@@ -1315,6 +1466,103 @@ public class BitwigLiveTestsTests
         Assert.Equal(["direct", "flush", "midi", "buttonCode"], ArrangeRoutes(java));
         Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
         Assert.DoesNotContain(NotTried, verdict.Detail);
+    }
+
+    /// <summary>The extension 3.8's answer when Bitwig put the MIDI file on a new track, in the arranger, and selected its clip there.</summary>
+    const string FileInArranger = """{"added":1,"index":3,"name":"Live Clip","type":"Instrument","tracksBefore":4,"tracksAfter":5,"launcherClips":0,"selected":true,"arranger":{"exists":true,"track":"Live Clip"},"arrangerBefore":{"exists":false,"track":null},"at":14,"onTrack":{"before":1,"after":1}}""";
+
+    static BitwigFileTrack FileTrack(string json) => JsonSerializer.Deserialize<BitwigFileTrack>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+
+    [Fact]
+    public async Task InsertsTheMidiFileAsATrackAfterTheSampleTrack()
+    {
+        await using var java = new FakeJavaBitwig(ArrangingHello.Replace("\"3.6\"", "\"3.8\""),
+                                                  new Dictionary<string, string>(SevenEight) { ["filetrack"] = FileInArranger });
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+
+        var verdict = await BitwigLiveTests.FileAsTrackAsync(link, "Sample 143012", Path.Combine("files", "Live Clip.mid"));
+
+        // After the Sample track (index 2), with the play start at bar 5 in 7/8: four bars of 3.5 beats.
+        var sent = java.Requests.Last();
+        Assert.Equal(("filetrack", 2, Path.Combine("files", "Live Clip.mid"), 14.0),
+                     ((string)sent["cmd"]!, (int)sent["track"]!, (string)sent["path"]!, (double)sent["at"]!));
+        Assert.Equal(LiveOutcome.Passed, verdict.Outcome);
+        Assert.Equal("Bitwig put Live Clip.mid on a new track, “Live Clip” (track 4), with no clip in its launcher, and the clip selected in the " +
+                     "arranger is on that track now, so the clip went in the arranger. The link can't read where an arranger clip starts: look at " +
+                     "“Live Clip” in Bitwig's arranger and say whether the clip is there and which bar it starts at (it was meant to start at bar 5 " +
+                     "(beat 14), where the link moved the play start), and where the play start marker is.", verdict.Detail);
+        Assert.Equal(("Live Clip", 0), ((string?)verdict.Data!["name"], (int)verdict.Data["launcherClips"]!));
+
+        // An older extension, or the script, hasn't got it: skipped, sending nothing.
+        foreach (var (hello, skipped) in new[]
+                 {
+                     (ArrangingHello.Replace("\"3.6\"", "\"3.7\""), "This needs the Music Organiser extension 3.8 or later, and Bitwig runs 3.7. " +
+                                                                    BitwigLiveTests.Reinstall),
+                     (FakeJavaBitwig.Hello("""{"link":2,"runtime":null,"extension":null}"""), BitwigLiveTests.NeedsJava),
+                 })
+        {
+            await using var older = new FakeJavaBitwig(hello, SevenEight);
+            using var olderLink = await BitwigLink.ConnectAsync(older.Port);
+            var v = await BitwigLiveTests.FileAsTrackAsync(olderLink, "Sample 143012", "Live Clip.mid");
+            Assert.Equal((LiveOutcome.Skipped, skipped), (v.Outcome, v.Detail));
+            Assert.DoesNotContain(older.Requests, r => (string)r["cmd"]! == "filetrack");
+        }
+    }
+
+    [Fact]
+    public void SaysWhereBitwigPutTheMidiFile()
+    {
+        LiveVerdict Verdict(Action<JsonObject> change)
+        {
+            var answer = JsonNode.Parse(FileInArranger)!.AsObject();
+            change(answer);
+            return BitwigLiveTests.FileTrackVerdict(FileTrack(answer.ToJsonString()), "Live Clip.mid", "Sample 143012", 5);
+        }
+        const string look = "Look at “Live Clip” in Bitwig's arranger and say whether the clip is there and which bar it starts at (it was meant to " +
+                            "start at bar 5 (beat 14), where the link moved the play start), and where the play start marker is.";
+
+        var launcher = Verdict(a => a["launcherClips"] = 1);
+        Assert.Equal((LiveOutcome.Failed, "Bitwig put Live Clip.mid on a new track, “Live Clip” (track 4), but in its clip launcher (1 clip there), " +
+                                          "not the arranger, so inserting a file between tracks doesn't put it in the arranger."),
+                     (launcher.Outcome, launcher.Detail));
+
+        var nothing = Verdict(a =>
+        {
+            a["added"] = 0;
+            a["index"] = a["name"] = a["type"] = a["launcherClips"] = null;
+            a["tracksAfter"] = 4;
+        });
+        Assert.Equal((LiveOutcome.Failed, "Bitwig didn't add a track for Live Clip.mid after “Sample 143012”: it still has 4 tracks."),
+                     (nothing.Outcome, nothing.Detail));
+        var onTheTrack = Verdict(a =>
+        {
+            a["added"] = 0;
+            a["index"] = a["name"] = null;
+            a["onTrack"] = JsonNode.Parse("""{"before":1,"after":2}""");
+        });
+        Assert.EndsWith(": it still has 4 tracks, though “Sample 143012” has 2 clips in the launcher now, 1 before.", onTheTrack.Detail);
+
+        var unseen = Verdict(a => a["arranger"] = JsonNode.Parse("""{"exists":false,"track":null}"""));
+        Assert.Equal((LiveOutcome.Noted, "Bitwig put Live Clip.mid on a new track, “Live Clip” (track 4), with no clip in its launcher, but no clip on " +
+                                         "it is selected in the arranger, so the link can't tell whether the clip went there. " + look),
+                     (unseen.Outcome, unseen.Detail));
+        // An earlier run's “Live Clip” clip was selected already: a clip selected after on a track of that name says nothing.
+        var same = Verdict(a => a["arrangerBefore"] = JsonNode.Parse("""{"exists":true,"track":"Live Clip"}"""));
+        Assert.Equal((LiveOutcome.Noted, "Bitwig put Live Clip.mid on a new track, “Live Clip” (track 4), with no clip in its launcher, but a clip on a " +
+                                         "track called “Live Clip” was selected in the arranger before too, and the link tells those clips apart only " +
+                                         "by their track's name, so it can't tell whether a new one appeared. " + look),
+                     (same.Outcome, same.Detail));
+        // Clip to arranger's clip on the Sample track stayed selected: no clip on “Live Clip” is.
+        var elsewhere = Verdict(a =>
+        {
+            a["arrangerBefore"] = JsonNode.Parse("""{"exists":true,"track":"Sample 143012"}""");
+            a["arranger"] = JsonNode.Parse("""{"exists":true,"track":"Sample 143012"}""");
+        });
+        Assert.Equal((LiveOutcome.Noted, unseen.Detail), (elsewhere.Outcome, elsewhere.Detail));
+        var lost = Verdict(a => a["index"] = null);
+        Assert.Equal((LiveOutcome.Noted, "Bitwig added 1 track for Live Clip.mid, but the link couldn't find the new one in its listing. Look after " +
+                                         "“Sample 143012” in Bitwig and say what's there."),
+                     (lost.Outcome, lost.Detail));
     }
 
     [Theory]

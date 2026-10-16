@@ -52,7 +52,7 @@ public sealed class FormatCensus
         var total = new FormatCensus();
         var done = 0;
         Parallel.ForEach(files.Where(IsProject),
-            new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) },
+            new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Parallelism.Workers },
             () => new FormatCensus(),
             (file, _, mine) =>
             {

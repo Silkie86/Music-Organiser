@@ -533,6 +533,7 @@ final class FakeBitwig {
      * panel in front, or nothing selected, the clipboard keeps what it had.
      */
     private void copied() {
+        if (model.copyIgnored) return;
         later(20, () -> {
             Copied copied = null;
             if (LAUNCHER.equals(focus) && launcherShown && slotSelected != null) {
@@ -567,8 +568,8 @@ final class FakeBitwig {
 
     /**
      * Paste: with the arranger timeline shown and in front, a copy of the clip goes on the selected track at the play
-     * start, and is selected there (so the arranger's cursor clip follows it); with the clip launcher in front, it goes in
-     * the track's next empty slot after the one selected. Either way the copy has the colour the clip had when it was
+     * start (or the track the model says), and is selected there (so the arranger's cursor clip follows it); with the clip launcher in front, it goes in
+     * the slot selected when that's empty, else the track's next empty slot after it. Either way the copy has the colour the clip had when it was
      * copied. With another panel in front, nothing happens. The model can make Bitwig ignore paste, or paste into the
      * launcher whichever panel is in front.
      */
@@ -577,16 +578,76 @@ final class FakeBitwig {
             TrackSpec track = cursorSpec();
             if (model.pasteIgnored || clipboard == null || track == null) return;
             if (TIMELINE.equals(focus) && timelineShown && !model.pasteInLauncher) {
-                Arranged made = new Arranged(track, playStartAt, clipboard.clip(), clipboard.colour());
+                TrackSpec on = model.arrangerPasteOn == null ? track
+                        : state.tracks.stream().filter(t -> t.name.equals(model.arrangerPasteOn)).findFirst().orElseThrow();
+                Arranged made = new Arranged(on, playStartAt, clipboard.clip(), clipboard.colour());
                 state.arranged.add(made);
                 state.arrangerSelected = made;
             } else if (LAUNCHER.equals(focus) && launcherShown || model.pasteInLauncher) {
-                int s = slotSelected != null && slotSelected[0] == cursorIndex ? slotSelected[1] + 1 : 0;
+                // Into the slot selected when it's empty, else the next empty one after it.
+                int s = slotSelected != null && slotSelected[0] == cursorIndex ? slotSelected[1] : 0;
                 while (s < track.slots.size() && track.slots.get(s) != null) s++;
                 while (track.slots.size() <= s) track.slots.add(null);
                 track.slots.set(s, clipboard.clip());
                 track.clipColours.put(s, clipboard.colour());
                 state.scenes = Math.max(state.scenes, s + 1);
+            }
+        });
+    }
+
+    /**
+     * Duplicate, in the panel with the focus: with the clip launcher in front, a copy of the launcher clip selected goes in
+     * the track's next empty slot after it, in the same colour, and is selected; with the arranger timeline in front, the
+     * clip selected there gets a copy after it (where the copy starts doesn't matter here); with another panel in front,
+     * the selected track gets a copy after it. The model can make Bitwig ignore Duplicate.
+     */
+    private void duplicated() {
+        later(40, () -> {
+            if (model.duplicateIgnored) return;
+            if (LAUNCHER.equals(focus) && launcherShown && slotSelected != null) {
+                TrackSpec track = trackSpec(slotSelected[0]);
+                int scene = slotSelected[1];
+                if (track == null || scene >= track.slots.size() || track.slots.get(scene) == null) return;
+                int s = scene + 1;
+                while (s < track.slots.size() && track.slots.get(s) != null) s++;
+                while (track.slots.size() <= s) track.slots.add(null);
+                track.slots.set(s, track.slots.get(scene));
+                track.clipColours.put(s, clipColour(track, scene));
+                state.scenes = Math.max(state.scenes, s + 1);
+                slotSelected = new int[] {slotSelected[0], s};
+            } else if (TIMELINE.equals(focus) && timelineShown && state.arrangerSelected != null) {
+                Arranged a = state.arrangerSelected;
+                Arranged copy = new Arranged(a.track(), a.start() + 4, a.clip(), a.colour());
+                state.arranged.add(copy);
+                state.arrangerSelected = copy;
+            } else if (cursorSpec() != null) {
+                TrackSpec copy = cursorSpec().copy();
+                copy.name = copy.name + " 2";
+                state.tracks.add(cursorIndex + 1, copy);
+            }
+        });
+    }
+
+    /**
+     * A file inserted after track `t` (the filetrack experiment): a MIDI file goes on a new track after it, named after
+     * the file, in the arranger at the play start or in the new track's first launcher slot, as the model says.
+     */
+    private void fileAfter(int t, String method, Object arg) {
+        if (!method.equals("insertFile") || !MIDI.matcher((String) arg).find() || model.fileGoes.equals("nothing")) return;
+        String path = (String) arg;
+        later(40, () -> {
+            TrackSpec made = new TrackSpec(baseName(path), "Instrument");
+            if (model.fileGoes.equals("launcher")) {
+                made.slots.add(path);
+                state.scenes = Math.max(state.scenes, 1);
+            }
+            state.tracks.add(t + 1, made);
+            if (cursorIndex > t) cursorIndex++;
+            if (slotSelected != null && slotSelected[0] > t) slotSelected = new int[] {slotSelected[0] + 1, slotSelected[1]};
+            if (model.fileGoes.equals("arranger")) {
+                Arranged clip = new Arranged(made, playStartAt, path, CLIP_GREY);
+                state.arranged.add(clip);
+                if (model.fileSelected) state.arrangerSelected = clip;
             }
         });
     }
@@ -820,10 +881,23 @@ final class FakeBitwig {
         /** Bitwig's focus_or_toggle_ actions (by ID) it ignores, and those that hide their panel when it's in front but never show it. */
         final Set<String> focusIgnored = new HashSet<>();
         final Set<String> focusOnlyHides = new HashSet<>();
-        /** Whether Bitwig ignores paste. */
+        /** Whether Bitwig ignores paste, and copy (its clipboard keeps what it held). */
         boolean pasteIgnored;
+        boolean copyIgnored;
+        /** Whether Bitwig ignores Duplicate (extension 3.8's checks run it). */
+        boolean duplicateIgnored;
+        /**
+         * Where Bitwig puts a MIDI file inserted after a track (the filetrack experiment, extension 3.8): on a new track
+         * after it, in the arranger at the play start ("arranger") or in the new track's first launcher slot ("launcher"),
+         * or nowhere ("nothing"). The new track is named after the file.
+         */
+        String fileGoes = "arranger";
+        /** Whether a clip Bitwig puts in the arranger that way is selected there, so the arranger's cursor clip follows it. */
+        boolean fileSelected = true;
         /** Whether Bitwig pastes into the clip launcher, whichever panel has the focus. */
         boolean pasteInLauncher;
+        /** The track Bitwig's paste in the arranger timeline goes on instead of the selected one, or null for that one. */
+        String arrangerPasteOn;
         /** What's on Bitwig's clipboard at first, as if someone had copied a clip in their own song, or null for nothing. */
         Copied clipboard;
         /** Whether Bitwig ignores giving a launcher clip a colour. */
@@ -845,6 +919,8 @@ final class FakeBitwig {
         /** Whether the extension's MIDI out comes back on its MIDI in (a loopMIDI port set as both), and after how many milliseconds. */
         boolean loopback;
         long loopbackDelay = 5;
+        /** Once this says true, the loopback brings nothing more back, as if its port went away part way (null: never). */
+        BooleanSupplier loopbackCut;
         /** Whether Bitwig never calls the extension's flush, however often it asks. */
         boolean noFlush;
 
@@ -1807,6 +1883,17 @@ final class FakeBitwig {
             selectSlot(track, scene);
         }
 
+        /** Deletes the slot's clip a moment later. */
+        void deleteObject() {
+            calls.add(Arrays.asList("deleteClip", track, scene));
+            later(20, () -> {
+                TrackSpec at = trackSpec(track);
+                if (at == null || scene >= at.slots.size()) return;
+                at.slots.set(scene, null);
+                at.clipColours.remove(scene);
+            });
+        }
+
         Point replaceInsertionPoint() {
             return new Point("track " + track + " slot " + scene, (method, arg) -> {
                 if (!method.equals("insertFile") || !MIDI.matcher((String) arg).find()) return;
@@ -1965,6 +2052,10 @@ final class FakeBitwig {
 
         Point endOfDeviceChainInsertionPoint() {
             return end;
+        }
+
+        Point afterTrackInsertionPoint() {
+            return new Point("after track " + index, (method, arg) -> fileAfter(index, method, arg));
         }
 
         Bank clipLauncherSlotBank() {
@@ -2129,6 +2220,9 @@ final class FakeBitwig {
                     case "Paste" -> {
                         if (honoured("Paste")) pasted();
                     }
+                    case "Duplicate" -> {
+                        if (honoured("Duplicate")) duplicated();
+                    }
                     default -> {}
                 }
             }
@@ -2156,7 +2250,7 @@ final class FakeBitwig {
         void sendSysex(Object data) {
             String hex = data instanceof byte[] bytes ? hexBytes(bytes) : (String) data;
             midi.add(Arrays.asList("sysex", hex));
-            if (!model.loopback) return;
+            if (!loopsBack()) return;
             // As Bitwig hands it over: lower case, without spaces.
             String back = hex.replace(" ", "").toLowerCase(Locale.ROOT);
             clock.schedule(() -> {
@@ -2166,10 +2260,14 @@ final class FakeBitwig {
 
         void sendMidi(int status, int data1, int data2) {
             midi.add(Arrays.asList("midi", status, data1, data2));
-            if (!model.loopback || (status & 0xF0) != 0x90 || data2 == 0) return;
+            if (!loopsBack() || (status & 0xF0) != 0x90 || data2 == 0) return;
             clock.schedule(() -> press(status & 0x0F, data1), model.loopbackDelay);
         }
     };
+
+    private boolean loopsBack() {
+        return model.loopback && (model.loopbackCut == null || !model.loopbackCut.getAsBoolean());
+    }
 
     private static String hexBytes(byte[] bytes) {
         StringBuilder text = new StringBuilder();

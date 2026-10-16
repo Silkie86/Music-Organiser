@@ -7,7 +7,7 @@ namespace MusicOrganiser.ViewModels;
 /// the newest report. (<see cref="Progress{T}"/> sends every report to the window: reading 357,000 sounds sent 357,000,
 /// the window spent its time redrawing the activity card, some cards came up blank, and it stopped answering.)
 /// </summary>
-public sealed class ThrottledProgress<T>(Action<T> show, int everyMs = 70) : IProgress<T>
+public sealed class ThrottledProgress<T>(Action<T> show, int everyMs = 250) : IProgress<T>
 {
     readonly SynchronizationContext? _ui = SynchronizationContext.Current;
     readonly object _gate = new();

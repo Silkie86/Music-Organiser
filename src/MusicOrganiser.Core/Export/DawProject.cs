@@ -37,8 +37,8 @@ public static class DawProject
     /// <summary>What's said of a channel whose on/off is automated (<see cref="FlChannel.SwitchedBy"/>); <paramref name="audio"/> when its audio clips are carried.</summary>
     internal static string SwitchedOnAndOff(FlChannel c, bool audio)
     {
-        var partly = audio ? c.AudioClips.Count(x => x.PartlyOff && !x.Muted) : 0;
-        return $"switched on and off by \"{c.SwitchedBy}\" in FL Studio, so what it plays while it's off is muted" +
+        var partly = audio ? c.AudioClips.Count(x => x.PartlyOff && !x.Muted && !x.OnMutedTrack) : 0;
+        return $"switched on and off by {string.Join(" and ", c.SwitchedBy.Select(n => $"\"{n}\""))} in FL Studio, so what it plays while it's off is muted" +
                (partly == 0 ? "" : partly == 1 ? "; one audio clip it switches off part of the way through plays whole"
                                                : $"; {partly} audio clips it switches off part of the way through play whole");
     }
@@ -69,7 +69,7 @@ public static class DawProject
             FlControl.MainVolume => "the master volume isn't automated here yet",
             FlControl.InsertVolume => $"the fader of {insert} isn't automated here yet",
             FlControl.InsertPan => $"the pan of {insert} isn't automated here yet",
-            FlControl.InsertSlotOnOff => $"switching an effect on {insert} on and off isn't carried over yet",
+            FlControl.InsertSlotOnOff => $"switching an effect on {insert} on and off isn't carried over yet, so it stays on",
             FlControl.Pitch => "pitch has no equivalent here",
             _ => "this control has no equivalent here",
         };
@@ -234,7 +234,7 @@ public static class DawProject
             var track = Track(c.Name, "notes", ch, skipped, todo);
             structure.Add(track);
             if (!c.Enabled) notes.Add($"{c.Name}: {SwitchedOff(1)}");
-            if (c.SwitchedBy.Length > 0) notes.Add($"{c.Name}: {SwitchedOnAndOff(c, audio: false)}");
+            if (c.SwitchedBy.Count > 0) notes.Add($"{c.Name}: {SwitchedOnAndOff(c, audio: false)}");
             if (OnMutedTracks(c.Name, c.Clips.Where(x => x.OnMutedTrack).Select(x => x.Track), song.MutedTracks, trackMuted) is { } onMuted)
                 notes.Add(onMuted);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");

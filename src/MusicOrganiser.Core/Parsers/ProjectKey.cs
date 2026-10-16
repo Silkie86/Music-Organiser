@@ -22,6 +22,9 @@ public static class ProjectKey
         "Drumpad", "BeepMap", "Autogun",
     };
 
+    /// <summary>Whether this plugin's notes pick a slice or a pad rather than a pitch (FPC, Slicex, Battery...).</summary>
+    public static bool IsUnpitchedPlugin(string plugin) => NotPitched.Contains(plugin);
+
     /// <summary>The key, such as "F minor", or null when there are too few notes or no clear key.</summary>
     public static KeyEstimate? Estimate(IEnumerable<MidiChannel> channels)
     {
@@ -65,6 +68,7 @@ public static class ProjectKey
         channels.Sum(c => c.Notes.Count(n => !n.Muted)),
         channels.Count == 0 ? 0 : channels.Max(c => c.Bars));
 
-    static bool IsPitched(MidiChannel ch) =>
+    /// <summary>Whether the channel's notes are pitches: not drums, one-note hits, slices or a sample at its own pitch.</summary>
+    public static bool IsPitched(MidiChannel ch) =>
         ch.SamplePath.Length == 0 && !NotPitched.Contains(ch.Plugin) && ch.Kind is not ("Drums" or "Hits" or "");
 }

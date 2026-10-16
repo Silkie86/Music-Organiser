@@ -10,6 +10,9 @@ static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // Memory is cleaned up alongside the window rather than by pausing it: long jobs (scans, Deep listen, the
+        // duplicate finder) churn through audio buffers, and full blocking clean-ups showed up as 0.3-1.3 s freezes.
+        System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
         // This run's diary, for Claude to read (Diagnostics/SessionLog.cs): Avalonia's warnings go into it too.
         var log = SessionLog.Start();
         MusicOrganiser.Core.AppLog.Noted += (area, message) => log.Info(area, message);

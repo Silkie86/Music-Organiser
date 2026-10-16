@@ -49,10 +49,10 @@ public sealed record FlChannel(int Index, string Name, FlPlugin? Instrument, str
     public bool Enabled { get; init; } = true;
 
     /// <summary>
-    /// The automation clip that switches the channel on and off, or "". Its clips that are off all the way through are
+    /// The automation clips that switch the channel on and off (none when it isn't). Its clips that are off all the way through are
     /// muted, as are the notes in its other clips that start while it's off (FL's switch stops notes starting, not sound).
     /// </summary>
-    public string SwitchedBy { get; init; } = "";
+    public IReadOnlyList<string> SwitchedBy { get; init; } = [];
 }
 
 /// <summary>
@@ -321,8 +321,9 @@ public sealed partial class FlStudioReader
         var mixer = new MixerSettings(mixerSettings);
         // An automation clip switched off in the Channel Rack doesn't play, like a muted one.
         var automation = PlaceAutomation(links.Where(l => !off.Contains(l.Clip)).ToList(), curves, names, playlist, tracks, mixer, flp.Ppq);
-        // A channel whose on/off is automated plays only while it's on (the first clip that switches it, if several do).
-        var switching = automation.Where(a => a.Control == FlControl.OnOff).DistinctBy(a => a.Channel).ToDictionary(a => a.Channel);
+        // A channel whose on/off is automated plays only while it's on. When several clips switch it, it follows each in turn.
+        var switching = automation.Where(a => a.Control == FlControl.OnOff).GroupBy(a => a.Channel)
+            .ToDictionary(g => g.Key, g => (Names: g.Select(a => a.Name).Distinct().ToList(), Points: g.SelectMany(a => a.Points).OrderBy(p => p.Beat).ToList()));
         var clips = PlaceClips(flp, rawNotes, playlist, tracks, order.ToHashSet(), patternNames);
         var audioClips = PlaceAudioClips(playlist, tracks, order.Where(ch => types.GetValueOrDefault(ch) != ChannelTypeAutomation).ToHashSet());
         var channels = order
@@ -332,8 +333,8 @@ public sealed partial class FlStudioReader
                 var lv = levels.GetValueOrDefault(ch, (Pan: 0.5, Volume: DefaultVolume, Pitch: 0));
                 var placed = clips.GetValueOrDefault(ch) ?? [];
                 var placedAudio = audioClips.GetValueOrDefault(ch) ?? [];
-                var switchedBy = switching.GetValueOrDefault(ch);
-                if (switchedBy is not null)
+                var switchedBy = switching.TryGetValue(ch, out var sw) ? sw : default;
+                if (switchedBy.Names is not null)
                 {
                     var onOff = new OnOff(switchedBy.Points, flp.Ppq);
                     placed = placed.Select(onOff.Mute).ToList();
@@ -347,8 +348,8 @@ public sealed partial class FlStudioReader
                     VolumeEnvelope = volumeEnvelopes.GetValueOrDefault(ch),
                     AudioClips = placedAudio,
                     Stretch = (stretches.GetValueOrDefault(ch) ?? new FlStretch()) with { Reversed = reversed.Contains(ch) },
-                    Enabled = !off.Contains(ch) || switchedBy is not null,
-                    SwitchedBy = switchedBy?.Name ?? "",
+                    Enabled = !off.Contains(ch) || switchedBy.Names is not null,
+                    SwitchedBy = switchedBy.Names ?? [],
                 };
             })
             .ToList();
@@ -356,9 +357,13 @@ public sealed partial class FlStudioReader
             ? PlaylistItems(pl.Span).Select(i => tracks.At(i.Slot)).OfType<(FlTrack Track, bool Muted)>()
                 .Where(t => t.Muted).Select(t => t.Track).Distinct().OrderBy(t => t.Number).ToList()
             : [];
+        // An effect whose slot is switched on and off by automation stays on, as a channel whose light is automated does.
+        var switchedSlots = automation.Where(a => a.Control == FlControl.InsertSlotOnOff).Select(a => (a.Insert, a.Slot)).ToHashSet();
         var inserts = effects.Keys.Union(insertNames.Keys).Union(channels.Select(c => c.Insert)).Distinct().Order()
             .Select(i => new FlInsert(i, insertNames.GetValueOrDefault(i, ""),
-                                      (effects.GetValueOrDefault(i) ?? []).Select(fx => mixer.Value(i, fx.Slot, TargetSlotOnOff) == 0 ? fx with { Enabled = false } : fx).ToList())
+                                      (effects.GetValueOrDefault(i) ?? [])
+                                          .Select(fx => mixer.Value(i, fx.Slot, TargetSlotOnOff) == 0 && !switchedSlots.Contains((i, fx.Slot)) ? fx with { Enabled = false } : fx)
+                                          .ToList())
             {
                 Fader = mixer.Value(i, 0, TargetInsertVolume),
                 Pan = mixer.Value(i, 0, TargetInsertPan),
@@ -471,8 +476,11 @@ public sealed partial class FlStudioReader
             {
                 var part = CutCurve(curve, item.At / (double)ppq, item.From / (double)ppq, item.Length / (double)ppq, hold).ToList();
                 // Between clips FL holds the value the last one ended on, then jumps to where the next starts.
-                if (placed.Count > 0 && part.Count > 0 && placed[^1].Beat < part[0].Beat && placed[^1].Value != part[0].Value)
+                if (placed.Count > 0 && part.Count > 0 && placed[^1].Beat < part[0].Beat - SameBeat && placed[^1].Value != part[0].Value)
                     placed.Add(placed[^1] with { Beat = part[0].Beat });
+                // A clip straight after another starts where that one ended: the shared point is kept once.
+                if (placed.Count > 0 && part.Count > 0 && Math.Abs(placed[^1].Beat - part[0].Beat) <= SameBeat && placed[^1].Value == part[0].Value)
+                    part.RemoveAt(0);
                 placed.AddRange(part);
             }
             if (placed.Count > 0) result.Add(Moves(placed));
@@ -486,12 +494,16 @@ public sealed partial class FlStudioReader
     /// <summary>
     /// The part of a curve from <paramref name="from"/> to from + length (beats into the clip), moved to start at
     /// <paramref name="at"/>. Between points the value slides in a straight line, or with <paramref name="hold"/> stays
-    /// at the earlier point's until the next. Where several points share a beat (a jump), the value there is the last's.
+    /// at the earlier point's until the next. Where several points share a beat (a jump), the part starts from the
+    /// value after the jump and ends on the value before it; a jump right at its end is kept as a second point there,
+    /// so what's held after the clip is where the curve ends (FL saves a clip's last points at its very end).
     /// </summary>
     static IEnumerable<FlPoint> CutCurve(List<FlPoint> curve, double at, double from, double length, bool hold = false)
     {
-        double ValueAt(double beat)
+        double ValueAt(double beat, bool arriving = false)
         {
+            var first = curve.FindIndex(p => p.Beat >= beat - SameBeat);
+            if (arriving && first >= 0 && curve[first].Beat <= beat + SameBeat) return curve[first].Value;
             var last = curve.FindLastIndex(p => p.Beat <= beat + SameBeat);
             if (last < 0) return curve[0].Value;
             var (a, next) = (curve[last], last + 1 < curve.Count ? curve[last + 1] : (FlPoint?)null);
@@ -503,7 +515,9 @@ public sealed partial class FlStudioReader
         yield return new FlPoint(at, ValueAt(from));
         foreach (var p in curve)
             if (p.Beat > from + SameBeat && p.Beat < end - SameBeat) yield return p with { Beat = at + p.Beat - from };
-        yield return new FlPoint(at + length, ValueAt(end));
+        var arrived = ValueAt(end, arriving: true);
+        yield return new FlPoint(at + length, arrived);
+        if (ValueAt(end) is var after && after != arrived) yield return new FlPoint(at + length, after);
     }
 
     /// <summary>

@@ -52,6 +52,12 @@ public class LibraryTests : IDisposable
         Assert.Equal(found.Order(StringComparer.OrdinalIgnoreCase), found);
         Assert.Subset(found.ToHashSet(), expected.ToHashSet());
         Assert.DoesNotContain(found, f => f.Contains("auto-backups") || f.Contains("(autosave)"));
+        // The size and modified time come with the folder listing, the same as asking for each file.
+        Assert.All(Scanner.FindProjectStamps([_root]), f =>
+        {
+            var fi = new FileInfo(f.Path);
+            Assert.Equal((fi.Length, new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds()), (f.Size, f.Mtime));
+        });
 
         new Scanner(_db).ScanProjects();
         var paths = _db.Projects().Select(p => p.Path).ToHashSet();
@@ -319,7 +325,8 @@ public class LibraryTests : IDisposable
     [Fact]
     public void FindsLocalMatchesForMissingSamples()
     {
-        var lib = Path.Combine(_root, "Sample Library");
+        // Outside the projects' folders: a sample in a project's folder tree counts as found.
+        var lib = Path.Combine(Fixtures.TempDir(), "Sample Library");
         Directory.CreateDirectory(Path.Combine(lib, "Drums"));
         File.WriteAllBytes(Path.Combine(lib, "Drums", "Kick 01.wav"), [0]);
         File.WriteAllBytes(Path.Combine(lib, "Drums", "Kick 02.wav"), [0]);
@@ -360,5 +367,100 @@ public class LibraryTests : IDisposable
         Assert.True(File.Exists(Path.Combine(midi.Folder, "01 Lead (Serum).mid")));
         var presets = Exporter.Presets(Readers.FlStudio, flp, outRoot);
         Assert.Contains("Serum - Lead.fxp", presets.Files);
+    }
+
+    [Fact]
+    public void The_same_plugins_and_sample_files_again_change_nothing()
+    {
+        _db.ReplaceInstalledPlugins(["Serum", "Vital"]);
+        _db.ReplaceSampleIndex(["/s/Kick.wav", "/s/Snare.wav"]);
+        var before = (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision);
+
+        _db.ReplaceInstalledPlugins(["Vital", "Serum"]);
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Kick.wav"]);
+        Assert.Equal(before, (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision));
+
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Hat.wav"]);
+        Assert.Equal(before.SampleIndexRevision + 1, _db.SampleIndexRevision);
+        Assert.Equal(["/s/Hat.wav", "/s/Snare.wav"], _db.SampleIndex().Select(s => s.Path).Order());
+        _db.ReplaceInstalledPlugins(["Vital"]);
+        Assert.Equal(before.PluginsRevision + 1, _db.PluginsRevision);
+        Assert.Equal(["Vital"], _db.InstalledNames());
+    }
+}
+
+public class SampleLocatorTests
+{
+    const string Project = @"K:\Bitwig Studio\Projects\analog full set\analog full set nb 36.bwproject";
+
+    [Fact]
+    public void TriesTheSavedPathThenTheProjectsDriveThenFoldersThatMovedWithTheProject()
+    {
+        Assert.Equal([@"F:\Bitwig Studio\Projects\analog full set\recordings\Syntakt 2-1.wav",
+                      @"K:\Bitwig Studio\Projects\analog full set\recordings\Syntakt 2-1.wav"],
+            SampleLocator.Candidates(@"F:\Bitwig Studio\Projects\analog full set\recordings\Syntakt 2-1.wav", Project));
+        // Another project's folder, from when the projects were kept in Documents.
+        Assert.Equal([@"C:\Users\silki\Documents\Bitwig Studio\Projects\what you wanna do\samples\BDsub808_Long_C2.wav",
+                      @"K:\Users\silki\Documents\Bitwig Studio\Projects\what you wanna do\samples\BDsub808_Long_C2.wav",
+                      @"K:\Bitwig Studio\Projects\what you wanna do\samples\BDsub808_Long_C2.wav"],
+            SampleLocator.Candidates(@"C:\Users\silki\Documents\Bitwig Studio\Projects\what you wanna do\samples\BDsub808_Long_C2.wav", Project));
+        Assert.Equal([@"K:\Bitwig Studio\Projects\analog full set\recordings\BD 1-2.wav"],
+            SampleLocator.Candidates("recordings/BD 1-2.wav", Project));
+        Assert.Equal(["/Users/sol/Music/Bitwig Studio/Projects/song/recordings/a.wav", @"K:\Bitwig Studio\Projects\song\recordings\a.wav"],
+            SampleLocator.Candidates("/Users/sol/Music/Bitwig Studio/Projects/song/recordings/a.wav", Project));
+        Assert.Equal([@"F:\a.wav", @"K:\a.wav"], SampleLocator.Candidates(@"F:\a.wav", Project));
+    }
+
+    [Fact]
+    public void LooksInTheProjectsFoldersAndTheDawsContentFolders()
+    {
+        var drive = Path.Combine(Fixtures.TempDir(), "K");
+        var song = Path.Combine(drive, "Bitwig Studio", "Projects", "This Song");
+        var project = Path.Combine(song, "This Song.bwproject");
+        var content = Path.Combine(Fixtures.TempDir(), "installed-packages");
+        string Make(params string[] parts)
+        {
+            var file = Path.Combine(parts);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllBytes(file, [0]);
+            return file;
+        }
+        Make(project);
+        var recording = Make(song, "recordings", "Syntakt 2-1.wav");
+        var bounce = Make(song, "bounce", "Kontakt 7-bounce-6.wav");
+        var other = Make(drive, "Bitwig Studio", "Projects", "Other Song", "samples", "BDsub808.wav");
+        var kick = Make(content, "Drums", "Kicks", "Kick 9.wav");
+        Make(content, "Other", "Snare.wav");
+        Make(content, "Projects", "Old Song", "recordings", "Audio 1-1.wav");
+        var locator = new SampleLocator(TimeSpan.FromMinutes(5), _ => [content]);
+
+        Assert.Equal(recording, locator.Locate(@"F:\Bitwig Studio\Projects\This Song\recordings\Syntakt 2-1.wav", project));
+        Assert.Equal(bounce, locator.Locate(@"F:\Old exports\Kontakt 7-bounce-6.wav", project));   // anywhere in the project's folder
+        Assert.Equal(other, locator.Locate(@"C:\Users\silki\Documents\Bitwig Studio\Projects\Other Song\samples\BDsub808.wav", project));
+        Assert.Equal(kick, locator.Locate(@"D:\Packs\Kicks\Kick 9.wav", project));   // the DAW's own sounds, in a folder of the same name
+        Assert.Null(locator.Locate(@"D:\Packs\Snares\Snare.wav", project));
+        Assert.Null(locator.Locate(@"E:\Old Song\recordings\Audio 1-1.wav", project));   // another project's recording isn't this one's
+        Assert.Null(locator.Locate(@"D:\Gone\Missing.wav", project));
+        Assert.True(locator.Found(@"%FLStudioFactoryData%\Data\Patches\Packs\Drums\Kick.wav", project));
+        Assert.False(locator.Found(@"D:\Gone\Missing.wav", project));
+
+        // A folder is read once for a while; a file that has gone since isn't found.
+        var added = Make(song, "samples", "New.wav");
+        Assert.Null(locator.Locate(@"D:\Gone\New.wav", project));
+        Assert.Equal(added, new SampleLocator(TimeSpan.Zero, _ => []).Locate(@"D:\Gone\New.wav", project));
+        File.Delete(bounce);
+        Assert.Null(locator.Locate(@"F:\Old exports\Kontakt 7-bounce-6.wav", project));
+    }
+
+    [Fact]
+    public void FindsTheLibraryBesideABitwigProjectsFolder()
+    {
+        var bitwig = Path.Combine(Fixtures.TempDir(), "Bitwig Studio");
+        Directory.CreateDirectory(Path.Combine(bitwig, "Library", "Samples"));
+        var project = Path.Combine(bitwig, "Projects", "Song", "Song.bwproject");
+        Assert.Contains(Path.Combine(bitwig, "Library"), SampleLocator.DawContentFolders(project));
+        Assert.All(SampleLocator.DawContentFolders(project), f => Assert.True(Directory.Exists(f)));
+        Assert.All(SampleLocator.DawContentFolders("Song.flp"), f => Assert.True(Directory.Exists(f)));
+        Assert.Empty(SampleLocator.DawContentFolders("Song.als"));
     }
 }

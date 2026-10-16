@@ -15,7 +15,7 @@ import java.util.UUID;
 public final class MusicOrganiserExtensionDefinition extends ControllerExtensionDefinition {
     /** The ID the JavaScript script (extensions/bitwig/MusicOrganiser.control.js) was defined with. */
     static final UUID ID = UUID.fromString("ed35e3c7-c544-49ed-936d-c236b0c9b73b");
-    static final String VERSION = "3.7";
+    static final String VERSION = "3.8";
     /**
      * API 23 (Bitwig 6.1) has everything the link uses: parameter steps and names, origins, automation, channel
      * IDs, the last clicked parameter and the master recorder. Nothing newer (and no beta method) is used.
@@ -68,8 +68,9 @@ public final class MusicOrganiserExtensionDefinition extends ControllerExtension
      * seems to carry out some commands (Save, copy and paste, bringing a panel to the front) only while it handles input
      * from a device. Both have to be the loopMIDI port called "Music Organiser Bitwig" ({@link #LOOPBACK_PORT}), never
      * "Music Organiser", which is the FL Studio link's: FL Studio must never see these messages. Only the routes that go
-     * through MIDI use them, but whether Bitwig starts the extension at all while they're unassigned isn't known yet
-     * (Bitwig stops a controller whose device goes away): see "Still to confirm" in extensions/README.md.
+     * through MIDI send anything through them, but Bitwig 6.1.3 saved for the link by no route until they were set, the
+     * flush included (it starts the extension, and the link answers, with them unassigned): see "Routes and the MIDI
+     * loopback" in extensions/README.md.
      */
     @Override
     public int getNumMidiInPorts() {

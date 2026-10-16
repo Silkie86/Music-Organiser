@@ -32,6 +32,8 @@ public sealed partial class MainViewModel : ObservableObject
     public PluginsViewModel Plugins { get; }
     public SamplesViewModel Samples { get; }
     public SoundsViewModel Sounds { get; }
+    /// <summary>The MIDI page: every MIDI part in your projects and MIDI libraries.</summary>
+    public MidiBrowserViewModel Midi { get; }
     public SettingsViewModel Settings { get; }
 
     /// <summary>Bitwig and FL Studio as they are now, through their links (the sidebar's "In your DAWs").</summary>
@@ -58,6 +60,7 @@ public sealed partial class MainViewModel : ObservableObject
                          string? dataFolder = null)
     {
         _db = db;
+        Parallelism.Mode = Parallelism.ParsePace(db.GetSetting(SettingsViewModel.PerformanceKey));
         DataFolder = dataFolder ?? LiveReports.DataFolder;
         SoundLibrary = sounds.Library;
         PluginScanner = pluginScanner ?? new();
@@ -68,21 +71,68 @@ public sealed partial class MainViewModel : ObservableObject
         Samples = new SamplesViewModel(db, this);
         Settings = new SettingsViewModel(db, this, dataFolder);
         Sounds = new SoundsViewModel(db, sounds, this);
+        Midi = new MidiBrowserViewModel(db, this);
         Settings.Liked.Changed += Sounds.WeightsChanged;
         Nav =
         [
             new("Projects", "", Projects),
             new("Sound Lab", "\uE8D6", Sounds),
+            new("MIDI", "", Midi),
             new("Plugins", "", Plugins),
             new("Settings", "", Settings),
         ];
         _selectedNav = StartPage();
-        Projects.Reload();
+        if (_selectedNav.Page == Midi) Midi.Opened();
+        _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
+        _projectsShown = _soundsShown = db.ProjectsRevision;   // those two pages read the library as they open
 
         // First run: send people to Settings to add their project folders.
         if (_db.Roots().Count == 0 && _db.GetList(Scanner.SampleFoldersKey).Count == 0) SelectedNav = Nav[^1];
         else _ = ScanAsync(false);
+        WatchProjectFolders();
         Live.Start();
+    }
+
+    FolderWatch? _projectWatch;
+
+    /// <summary>How long the project folders must be quiet before what changed is read (a DAW saves in several steps).</summary>
+    public static TimeSpan ProjectWatchQuiet { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// While the app is open, the project folders are watched: a project saved, added, moved or deleted is read (or
+    /// marked missing) a moment later, on its own, without walking every folder again. Called again when Settings
+    /// changes the folders.
+    /// </summary>
+    public void WatchProjectFolders()
+    {
+        _projectWatch?.Dispose();
+        _projectWatch = new FolderWatch(_db.Roots(), Scanner.IsProjectFile, c => _ = ProjectFilesChangedAsync(c), ProjectWatchQuiet);
+    }
+
+    async Task ProjectFilesChangedAsync(FolderWatch.Changes changes)
+    {
+        // Too much changed to name every file, or a scan is running that may already have passed them: walk the folders.
+        if (changes.Overflowed.Count > 0 || IsScanning)
+        {
+            await ScanAsync(false, plugins: false);
+            return;
+        }
+        try
+        {
+            var (read, gone) = await Task.Run(() => _scanner.Update(changes.Files));
+            if (read + gone == 0) return;
+            await RefreshAllAsync();
+            _ = Midi.AfterScanAsync();   // a saved song's MIDI is read again too
+            var name = Path.GetFileNameWithoutExtension(changes.Files.First());
+            Activities.Done(read + gone == 1 ? $"Updated {name}" : $"Updated {read + gone} projects",
+                            gone == 0 ? "Saved in their folders, so the app read them again"
+                                      : $"{(read > 0 ? $"{read} saved, " : "")}{gone} moved or deleted");
+            AppLog.Info("Watch", $"Project folders: {read} read, {gone} gone ({changes.Files.Count} changes seen)");
+        }
+        catch (Exception e)
+        {
+            AppLog.Info("Watch", $"Couldn't read changed projects: {e.Message}");
+        }
     }
 
     /// <summary>The page the app opens on: the one picked in Settings, or the last one used, or Projects.</summary>
@@ -113,6 +163,7 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnSelectedNavChanged(NavItem value)
     {
         _db.SetSetting(LastPageKey, value.Title);
+        if (value.Page == Midi) Midi.Opened();
         // The MO Probes running now are followed only while Settings shows them.
         if (value.Page != Settings)
         {
@@ -126,19 +177,18 @@ public sealed partial class MainViewModel : ObservableObject
         Settings.Probe.StartLive();
     }
 
-    public void RefreshAll()
-    {
-        Projects.Reload();
-        Plugins.Reload();
-        Samples.Reload();
-        Sounds.Reload();
-        Live.Match();   // the library may have the projects the DAWs have open now
-    }
+    /// <summary>The pages whose part of the library changed read it again, in the background (see <see cref="RefreshAllAsync"/>).</summary>
+    public void RefreshAll() => _ = RefreshAllAsync();
+
+    // The library revision each page last read (-1: not yet), so a scan that changed nothing leaves the pages alone.
+    long _projectsShown, _soundsShown, _samplesShown = -1;
+    (long, long) _pluginsShown = (-1, -1);
 
     /// <summary>
-    /// After a scan (or a DAW saving a project): each page reads the database in the background, then shows the result,
-    /// so a library of 16,000 projects and 357,000 sounds doesn't hold the window up ("Not responding"). The sounds
-    /// themselves don't change in a project scan, only how many projects use each one.
+    /// After a scan (or a DAW saving a project): each page whose part of the library changed reads it again in the
+    /// background, then shows the result, so a library of 16,000 projects and 357,000 sounds doesn't hold the window up
+    /// ("Not responding"). Most scans find nothing new, and then no page reads anything. The sounds themselves don't
+    /// change in a project scan, only how many projects use each one.
     /// </summary>
     public async Task RefreshAllAsync()
     {
@@ -150,12 +200,32 @@ public sealed partial class MainViewModel : ObservableObject
             await reload();
             times.Add($"{page} {(timer.Elapsed - start).TotalSeconds:0.00} s");
         }
-        await Time("Projects", Projects.ReloadAsync);
-        await Time("Plugins", Plugins.ReloadAsync);
-        await Time("Samples", Samples.ReloadAsync);
-        await Time("Sounds", Sounds.RefreshUsageAsync);
+        var projects = _db.ProjectsRevision;
+        var plugins = (projects, _db.PluginsRevision);
+        if (projects != _projectsShown)
+        {
+            _projectsShown = projects;
+            await Time("Projects", Projects.ReloadAsync);
+        }
+        if (plugins != _pluginsShown)
+        {
+            _pluginsShown = plugins;
+            await Time("Plugins", Plugins.ReloadAsync);
+        }
+        if (projects != _samplesShown)
+        {
+            _samplesShown = projects;
+            await Time("Samples", Samples.ReloadAsync);
+        }
+        if (projects != _soundsShown)
+        {
+            _soundsShown = projects;
+            await Time("Sounds", Sounds.RefreshUsageAsync);
+        }
         Live.Match();   // the library may have the projects the DAWs have open now
-        AppLog.Info("Pages", $"Refreshed in {timer.Elapsed.TotalSeconds:0.00} s: {string.Join(", ", times)}");
+        AppLog.Info("Pages", times.Count == 0
+            ? "Nothing new in the library, so the pages were left as they are"
+            : $"Refreshed in {timer.Elapsed.TotalSeconds:0.00} s: {string.Join(", ", times)}");
     }
 
     [RelayCommand]
@@ -178,7 +248,10 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public void Shutdown()
     {
+        _projectWatch?.Dispose();
+        Sounds.StopWatching();
         CancelScan();
+        Midi.Dispose();
         PluginScanner.StopAll();
     }
 
@@ -302,7 +375,7 @@ public sealed partial class MainViewModel : ObservableObject
         _scanCts = new CancellationTokenSource();
         var ct = _scanCts.Token;
         _scanCard = Activities.Start(full ? "Re-reading everything" : "Looking for new and changed projects", cancel: CancelScan);
-        var songsBefore = Projects.Items.Count;
+        var added = 0;
         var progress = ProgressInStatus();
         try
         {
@@ -316,7 +389,7 @@ public sealed partial class MainViewModel : ObservableObject
                     ((IProgress<ScanProgress>)progress).Report(new("Checking installed plugins", 0, 0, ""));
                     _scanner.ScanInstalledPlugins(out pluginFiles);
                 }
-                _scanner.ScanProjects(progress, full, ct);
+                added = _scanner.ScanProjects(progress, full, ct);
                 sampling.GetAwaiter().GetResult();
             }, ct);
 
@@ -352,10 +425,12 @@ public sealed partial class MainViewModel : ObservableObject
         }
         if (_scanCard.IsRunning)
         {
-            var added = Projects.Items.Count - songsBefore;
+            // Counted by the scan itself: the list may still have been loading when it started.
             _scanCard.Finish("Library up to date",
-                added > 0 ? $"{added} new song{(added == 1 ? "" : "s")} · {Projects.Items.Count} in all" : $"{Projects.Items.Count} songs, nothing new");
+                added > 0 ? $"{added} new project file{(added == 1 ? "" : "s")} · {Projects.Items.Count} songs in all" : $"{Projects.Items.Count} songs, nothing new");
         }
+        // The MIDI browser reads new and changed projects' MIDI on its own, at the lowest priority.
+        _ = Midi.AfterScanAsync();
         await RunQueuedScanAsync();
     }
 }

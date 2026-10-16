@@ -63,7 +63,7 @@ public sealed partial class PluginsViewModel : ObservableObject
     public void Reload() => Show(Load());
 
     /// <summary>Reload with the database work done in the background, so the window keeps answering.</summary>
-    public async Task ReloadAsync() => Show(await Task.Run(Load));
+    public async Task ReloadAsync() => Show(await UiWork.Run(Load));
 
     /// <summary>What the page shows, read from the database (on any thread).</summary>
     sealed record Loaded(IReadOnlyList<PluginUsage> Items, HashSet<string> InstalledNames,

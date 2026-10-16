@@ -267,9 +267,10 @@ class ParityTest {
         reading.add(send(obj("id", 9, "cmd", "device")));
         reading.add(advance(1990));
         reading.add(advance(100));
-        reading.addAll(each(obj("id", 10, "cmd", "action"), "action", MISSING, null, 5, obj(), "Format C:", "save", "Save", "toggle_metronome"));
-        // Straight away is the one route both run an action by (the script refuses the others).
-        reading.addAll(each(obj("id", 10, "cmd", "action", "action", "Save"), "via", MISSING, null, "direct"));
+        // Straight away is the one route both run an action by (the script refuses the others). Without one, the script runs
+        // it straight away and the extension (from 3.8) from Bitwig's flush, so these name it.
+        reading.addAll(each(obj("id", 10, "cmd", "action", "via", "direct"), "action", MISSING, null, 5, obj(), "Format C:", "save", "Save",
+                            "toggle_metronome"));
         reading.add(send(obj("id", 11, "cmd", "actions")));
         reading.add(send(obj("id", 12, "cmd", "project")));
         reading.add(send(obj("id", 13, "cmd", "hello")));

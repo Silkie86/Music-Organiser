@@ -66,8 +66,27 @@ public static class DuplicateFinder
     /// <summary>How many of a sound's closest lookalikes get their waveforms compared.</summary>
     const int MaxChecksPerSound = 8;
 
+    // ---- staying out of the way --------------------------------------------------------------------
+    // The first run on a big library takes a long while, and the app must stay smooth meanwhile (Solomon's rule).
+    // Each piece of work runs through Parallelism.Background, in the slots every job shares (two cores stay free,
+    // below normal priority), and the garbage collector is asked not to stop the whole app while it runs.
+
     /// <summary>Prints new and changed sounds and finds their copies. Returns how many sounds were printed.</summary>
     public static int Update(SoundOrganiser org, IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
+    {
+        // Without this a long run's garbage collections pause every thread, the UI's too, for up to a second at a time.
+        var latency = System.Runtime.GCSettings.LatencyMode;
+        if (latency is System.Runtime.GCLatencyMode.Interactive or System.Runtime.GCLatencyMode.Batch)
+            System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
+        try { return Run(org, progress, ct); }
+        finally
+        {
+            if (System.Runtime.GCSettings.LatencyMode == System.Runtime.GCLatencyMode.SustainedLowLatency && latency != System.Runtime.GCLatencyMode.SustainedLowLatency)
+                System.Runtime.GCSettings.LatencyMode = latency;
+        }
+    }
+
+    static int Run(SoundOrganiser org, IProgress<SoundProgress>? progress, CancellationToken ct)
     {
         var lib = org.Library;
         var todo = lib.SoundsToPrint();
@@ -98,8 +117,9 @@ public static class DuplicateFinder
             store.Insert(new TrackInfo(id.ToString(), "", ""), new AVHashes(SoundPrint.Unpack(blob), null));
             stored++;
         });
-        var exact = lib.PrintKeys().Where(k => k.Exact is not null).ToDictionary(k => k.Id, k => Convert.ToHexString(k.Exact!));
-        var seconds = lib.PrintKeys().ToDictionary(k => k.Id, k => k.Seconds);
+        var keys = lib.PrintKeys();
+        var exact = keys.Where(k => k.Exact is not null).ToDictionary(k => k.Id, k => Convert.ToHexString(k.Exact!));
+        var seconds = keys.ToDictionary(k => k.Id, k => k.Seconds);
 
         using var queue = new BlockingCollection<Printed>(256);
         var reader = Task.Run(() =>
@@ -152,11 +172,12 @@ public static class DuplicateFinder
                 // Each against everything printed before, then against the rest of its own batch.
                 var own = new InMemoryModelService();
                 foreach (var b in withSfp) own.Insert(new TrackInfo(b.Id.ToString(), "", ""), new AVHashes(SoundPrint.Unpack(b.Print!.Sfp!), null));
-                Parallel.ForEach(withSfp, Parallelism.Options(ct), b =>
+                Parallel.ForEach(withSfp, Parallelism.Options(ct), b => Parallelism.Background(() =>
                 {
                     if (stored > 0) Look(b, store, matches);
                     Look(b, own, matches);
-                });
+                    return 0;
+                }));
                 foreach (var b in withSfp) store.Insert(new TrackInfo(b.Id.ToString(), "", ""), new AVHashes(SoundPrint.Unpack(b.Print!.Sfp!), null));
                 stored += withSfp.Count;
             }
@@ -238,35 +259,42 @@ public static class DuplicateFinder
         var bands = lib.PrintBands(pairs.SelectMany(p => new[] { p.Item1, p.Item2 }));
         // Lookalikes (a pack's worth of similar hi-hats) can be many, and each costs two file reads to rule out,
         // so each sound has only its closest few checked. Real copies are always among the closest.
-        var close = pairs.AsParallel().WithCancellation(ct)
-            .Select<(long, long), ((long, long) Pair, double Sim)>(p =>
+        var close = pairs.AsParallel().WithCancellation(ct).WithDegreeOfParallelism(Parallelism.Workers)
+            .Select<(long, long), ((long, long) Pair, double Sim)>(p => Parallelism.Background(() =>
             {
                 if (!bands.TryGetValue(p.Item1, out var a) || !bands.TryGetValue(p.Item2, out var b)) return (p, 0.0);
                 var sim = SoundPrint.Similarity(a.Frames, a.Bands, b.Frames, b.Bands);
                 if (sim < PrintThreshold) return (p, 0.0);
                 return SoundPrint.WaveSimilarity(SoundPrint.FromSketch(a.Sketch), SoundPrint.FromSketch(b.Sketch)) >= SketchThreshold ? (p, sim) : (p, 0.0);
-            })
+            }))
             .Where(t => t.Sim > 0).ToList();
         var closest = close.SelectMany(t => new[] { (Id: t.Pair.Item1, t.Pair, t.Sim), (Id: t.Pair.Item2, t.Pair, t.Sim) })
             .GroupBy(t => t.Id)
             .SelectMany(g => g.OrderByDescending(t => t.Sim).Take(MaxChecksPerSound).Select(t => t.Pair))
             .ToHashSet();
-        var likely = closest.ToList();
-        var found = new ConcurrentBag<SoundMatch>();
+        // In id order, so pairs from the same folders come together and the starts read stay in the cache.
+        var likely = closest.OrderBy(p => p.Item1).ThenBy(p => p.Item2).ToList();
+        bands.Clear();
+        var starts = new StartCache();
         var done = 0;
-        Parallel.ForEach(likely, Parallelism.Options(ct), p =>
+        // Saved as it goes, so a stopped run keeps the copies it has found.
+        foreach (var chunk in likely.Chunk(2000))
         {
-            if (org.Get(p.Item1) is { } sa && org.Get(p.Item2) is { } sb &&
-                Parallelism.Background(() => WaveSimilarity(sa.Path, sb.Path)) is var w && w >= WaveThreshold)
+            var found = new ConcurrentBag<SoundMatch>();
+            Parallel.ForEach(chunk, Parallelism.Options(ct), p =>
             {
-                var (da, db) = (seconds[p.Item1], seconds[p.Item2]);
-                var kind = SameLength(da, db, sa.Path, sb.Path) ? CopyKind.Converted : CopyKind.Trimmed;
-                found.Add(new SoundMatch(p.Item1, p.Item2, kind, w, 0));
-            }
-            var n = Interlocked.Increment(ref done);
-            if (n % 20 == 0) progress?.Report(new("Comparing likely copies", n, likely.Count));
-        });
-        lib.SaveMatches(found);
+                if (org.Get(p.Item1) is { } sa && org.Get(p.Item2) is { } sb &&
+                    Parallelism.Background(() => starts.Similarity(sa, sb)) is var w && w >= WaveThreshold)
+                {
+                    var (da, db) = (seconds[p.Item1], seconds[p.Item2]);
+                    var kind = SameLength(da, db, sa.Path, sb.Path) ? CopyKind.Converted : CopyKind.Trimmed;
+                    found.Add(new SoundMatch(p.Item1, p.Item2, kind, w, 0));
+                }
+                var n = Interlocked.Increment(ref done);
+                progress?.Report(new("Comparing likely copies", n, likely.Count));
+            });
+            lib.SaveMatches(found);
+        }
         lib.MarkCompared();
     }
 
@@ -353,7 +381,45 @@ public static class DuplicateFinder
     {
         try { return SoundPrint.WaveSimilarity(Start(a), Start(b)); }
         catch (Exception) { return 0; }
-        static float[] Start(string path) { var x = AudioFile.Read(path, 3); return SoundPrint.WaveStart(x.Mono(), x.SampleRate, 1); }
+    }
+
+    static float[] Start(string path) { var x = AudioFile.Read(path, 3); return SoundPrint.WaveStart(x.Mono(), x.SampleRate, 1); }
+
+    /// <summary>
+    /// The first second of recently compared sounds, so a sound checked against several lookalikes is read once
+    /// rather than each time. Holds a few thousand (about 44 KB each), then drops the older half.
+    /// </summary>
+    sealed class StartCache
+    {
+        const int Max = 4000;
+        readonly ConcurrentDictionary<long, (float[] Wave, long Used)> _waves = new();
+        long _clock;
+
+        public double Similarity(Sound a, Sound b)
+        {
+            try { return SoundPrint.WaveSimilarity(Get(a), Get(b)); }
+            catch (Exception) { return 0; }
+        }
+
+        float[] Get(Sound s)
+        {
+            var now = Interlocked.Increment(ref _clock);
+            if (_waves.TryGetValue(s.Id, out var hit))
+            {
+                _waves[s.Id] = (hit.Wave, now);
+                return hit.Wave;
+            }
+            var wave = Start(s.Path);
+            _waves[s.Id] = (wave, now);
+            if (_waves.Count > Max)
+                lock (_waves)
+                    if (_waves.Count > Max)
+                    {
+                        var cut = _waves.Values.Select(v => v.Used).Order().ElementAt(_waves.Count / 2);
+                        foreach (var (id, v) in _waves) if (v.Used < cut) _waves.TryRemove(id, out _);
+                    }
+            return wave;
+        }
     }
 
     // ---- groups ---------------------------------------------------------------------------------

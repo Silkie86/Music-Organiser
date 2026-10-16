@@ -162,6 +162,10 @@ public sealed class PluginScanner
         {
             return new(path, [], $"Couldn't run the plugin scanner: {e.Message}");
         }
+        // Below normal, as the app's own background work is, so a scan gets only what the PC has spare and the app
+        // (or a DAW playing) never lags behind it. A scanner that has already finished can't be changed, which is fine.
+        try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
+        catch (Exception e) when (e is Win32Exception or InvalidOperationException or NotSupportedException) { }
         lock (_running) _running.Add(process);
 
         var lines = new List<string>();

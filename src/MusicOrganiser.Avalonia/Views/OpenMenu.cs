@@ -5,17 +5,18 @@ using MusicOrganiser.ViewModels;
 namespace MusicOrganiser.Avalonia.Views;
 
 /// <summary>
-/// The menu of ways to open a song: the Open button's drop-down, and the same (with the main action and file actions
-/// added) on a right-click in the project list. Built when it opens, since it changes with the song.
+/// The menu of ways to open a song: the song panel's "Older saves" drop-down, and the same (with the Open buttons'
+/// actions and the file's added) on a right-click in the project list. Built when it opens, since it changes with the song.
 /// </summary>
 public static class OpenMenu
 {
-    /// <param name="row">The list's right-click menu, which also has the big button's own action and the file's.</param>
+    /// <param name="row">The list's right-click menu, which also has the Open buttons' own actions and the file's;
+    /// otherwise just the versions, for the song panel's "Older saves" button.</param>
     public static void Fill(ItemCollection items, ProjectDetailViewModel d, bool row)
     {
         items.Clear();
         if (row) items.Add(Item(d.OpenMainText, d.OpenMainCommand, d.OpenMainTip));
-        if (d.IsFlStudio) items.Add(Item("Open in FL Studio", d.OpenInDawCommand, "Open the newest save in FL Studio itself"));
+        if (row && d.IsFlStudio) items.Add(Item("Open in FL Studio", d.OpenInDawCommand, "Open the newest save in FL Studio itself"));
 
         if (d.HasRunChoices)
         {
@@ -40,6 +41,41 @@ public static class OpenMenu
             items.Add(Item("Show in folder", d.RevealCommand, null));
             items.Add(Item("Copy path", d.CopyPathCommand, null));
         }
+    }
+
+    /// <summary>
+    /// The "Older saves" button's menu: the song's versions when it has some (saves months apart), otherwise its newest
+    /// older saves, then a link to every save on the Saves tab.
+    /// </summary>
+    public static void FillOlderSaves(ItemCollection items, ProjectDetailViewModel d, Action seeAll)
+    {
+        items.Clear();
+        if (d.HasRunChoices) Fill(items, d, row: false);
+        else
+        {
+            items.Add(new MenuItem { Header = "RECENT SAVES", IsEnabled = false, Classes = { "menuHeading" } });
+            foreach (var save in d.OlderSaves.OrderByDescending(s => s.Modified).Take(OlderSavesShown))
+            {
+                var item = new MenuItem { Header = Text($"{save.Name} · {save.Modified:d MMM yyyy}") };
+                if (save.Daw == "FL Studio") item.Items.Add(Item("Open in Bitwig", d.OpenSaveInBitwigCommand, "Convert this save into a Bitwig project and open it", save));
+                item.Items.Add(Item($"Open in {save.Daw}", d.OpenSaveCommand, null, save));
+                item.Items.Add(Item("Show in folder", d.RevealSaveCommand, null, save));
+                items.Add(item);
+            }
+        }
+        items.Add(new Separator());
+        var all = new MenuItem { Header = $"See all {d.Item.SaveCount} saves" };
+        all.Click += (_, _) => seeAll();
+        items.Add(all);
+    }
+
+    const int OlderSavesShown = 8;
+
+    static MenuItem Item(string header, ICommand command, string? tip, object parameter)
+    {
+        var item = Item(header, command, tip);
+        item.CommandParameter = parameter;
+        return item;
     }
 
     static MenuItem Item(string header, ICommand command, string? tip)
