@@ -77,6 +77,7 @@ public class SerumTests
         void T(int at, string s) => Encoding.Latin1.GetBytes(s).CopyTo(raw, at);
         F(13_408 + 4 * 1, 0.4809f);           // knob 1 (Osc A level)
         F(13_408 + 4 * 45, 0.2829f);          // knob 45 (filter cutoff)
+        F(19_168 + 4 * (228 - 228), 0.6974f); // knob 228 (Mod 17 amount), in the later block
         T(15_368, @"Analog\Analog_BD_Sin.wav");
         T(15_880, "/User/grime.wav");
         T(16_392, @"Attacks_Kick\XF_KikAtk_32.wav");
@@ -104,6 +105,8 @@ public class SerumTests
 
         Assert.Equal(0.4809f, s.Knob(1));
         Assert.Equal(0.2829f, s.Knobs[45]);
+        Assert.Equal(0.6974f, s.Knob(228));
+        Assert.Equal(316, s.Knobs.Count);
         Assert.Equal(@"Analog\Analog_BD_Sin.wav", s.OscATable);
         Assert.Equal("/User/grime.wav", s.OscBTable);
         Assert.Equal(@"Attacks_Kick\XF_KikAtk_32.wav", s.NoiseSample);

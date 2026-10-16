@@ -17,13 +17,13 @@ namespace MusicOrganiser.Core.Plugins.Serum;
 public sealed class Serum1State
 {
     public const int Size = 172_736;
-    const int KnobsAt = 13_408;
+    const int KnobsAt = 13_408, LaterKnobsAt = 19_168, FirstLaterKnob = 228;
     const int OscANameAt = 15_368, OscBNameAt = 15_880, NoiseNameAt = 16_392, NameLength = 256;
     const int PresetNameAt = 18_802, AuthorAt = 18_848, DescriptionAt = 18_896;
     const int SlotSize = 40, SlotsAt = 0, MoreSlotsAt = 20_704, SlotCount = 32;
 
-    /// <summary>How many knob values the state holds, one per parameter the plugin shows a DAW.</summary>
-    public const int KnobCount = 248;
+    /// <summary>How many knob values the state holds, one per parameter Serum 1.3 shows a DAW (316, checked on Solomon's PC).</summary>
+    public const int KnobCount = 316;
 
     readonly byte[] _raw;
 
@@ -48,8 +48,12 @@ public sealed class Serum1State
         catch (InvalidDataException) { return null; }
     }
 
-    /// <summary>A knob's value from 0 to 1, by its parameter number.</summary>
-    public float Knob(int index) => BinaryPrimitives.ReadSingleLittleEndian(_raw.AsSpan(KnobsAt + 4 * index));
+    /// <summary>
+    /// A knob's value from 0 to 1, by its parameter number. The first 228 (up to Macro 4, Amp and the LFO 1 to 4
+    /// smooths) are in one block; those added later (Mod 17 on, LFO 5 to 8, FX levels, LFO buses) in another.
+    /// </summary>
+    public float Knob(int index) => BinaryPrimitives.ReadSingleLittleEndian(_raw.AsSpan(
+        index < FirstLaterKnob ? KnobsAt + 4 * index : LaterKnobsAt + 4 * (index - FirstLaterKnob)));
 
     public IReadOnlyList<float> Knobs => Enumerable.Range(0, KnobCount).Select(Knob).ToArray();
 
