@@ -36,6 +36,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     CancellationTokenSource? _indexCts;
     Task? _indexing;
     int _searchRequest, _listenRequest;
+    (MidiQuery, float[]?)? _lastAsked;
+
+    /// <summary>Results for a different search than last time are in: the list goes back to the top.</summary>
+    public event EventHandler? NewSearchShown;
     bool _loading, _indexAgain, _retryFailed;
 
     public MidiBrowserViewModel(LibraryDb db, MainViewModel main, MidiIndex? index = null)
@@ -196,8 +200,13 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var (hits, matching) = await UiWork.Run(() => (catalogue.Search(query, out var n), n));
         if (request != _searchRequest) return;
         var keep = Selected?.Entry;
+        var asked = (query with { Words = null }, words);
+        var newSearch = !Equals(asked, _lastAsked);
+        _lastAsked = asked;
         Results = hits.Select(h => new MidiRow(h, this)).ToList();
         Selected = Results.FirstOrDefault(r => r.Entry == keep) ?? Results.FirstOrDefault();
+        // The part picked stays picked, but a new search shows its best match first rather than scrolling to it.
+        if (newSearch) NewSearchShown?.Invoke(this, EventArgs.Empty);
         ResultText = matching == 0 ? (HasParts ? "Nothing matches. Try fewer words, or another kind." : "")
             : Fit is not null ? $"Best fits first · {Math.Min(matching, hits.Count):N0} shown of {matching:N0}, each moved into the right key"
             : Like is not null ? $"Most alike first · {hits.Count:N0} of {matching:N0}"
