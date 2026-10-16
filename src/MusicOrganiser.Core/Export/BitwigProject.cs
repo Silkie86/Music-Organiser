@@ -153,6 +153,7 @@ public static class BitwigProject
                 state = $"{Guid.NewGuid()}{extension}";
                 states.Add((state, data));
             }
+            else if (p.NothingSaved) skipped.Add($"{p.Name}'s sound (FL Studio saved none in this file, so it opens at its default)");
             else if (!fresh) skipped.Add($"{p.Name}'s settings (opens at its defaults)");
             def.Set(0xbe5, state);
             return device;

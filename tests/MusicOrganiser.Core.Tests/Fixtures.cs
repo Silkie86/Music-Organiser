@@ -298,6 +298,73 @@ public static class Fixtures
         return ms.ToArray();
     }
 
+    /// <summary>
+    /// FL 9's VST2 state: a 13-byte header (i32 -9, flags, u32 chunk length, u32 program) in front of the plugin's
+    /// chunk, or, for a plugin without chunks, chunk length 0 and its parameters as in <see cref="FlVst2ParamState"/>.
+    /// </summary>
+    public static byte[] FlVst2StateFl9(byte[] chunk, uint program, float[]? values = null, string name = "")
+    {
+        using var ms = new MemoryStream();
+        ms.Write(BitConverter.GetBytes(-9));
+        ms.WriteByte(values is null ? (byte)0x0d : (byte)0x05);
+        ms.Write(BitConverter.GetBytes((uint)chunk.Length));
+        ms.Write(BitConverter.GetBytes(program));
+        ms.Write(chunk);
+        if (values is not null)
+        {
+            ms.Write(BitConverter.GetBytes((uint)values.Length));
+            foreach (var v in values) ms.Write(BitConverter.GetBytes(v));
+            ms.Write(BitConverter.GetBytes(1u));
+            var text = new byte[24];
+            Encoding.ASCII.GetBytes(name).CopyTo(text, 0);
+            ms.Write(text);
+        }
+        return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Like Solomon's funk step_8 (FL 9.0.0, 2010): channel "Cell" plays KORG LegacyCell, whose 300-byte chunk sits
+    /// behind FL 9's shorter header with program 42, and the mixer has Fruity Compressor saved as parameters.
+    /// FL 9 keeps no plugin path or vendor, and its text is ASCII.
+    /// </summary>
+    public static string FlStudio9Project(string dir, byte[] chunk)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "9.0.0")
+            .Dword(156, 98_000)
+            .Word(64, 0).Byte(21, 2)
+            .Ascii(201, "Fruity Wrapper").Ascii(203, "Cell")
+            .Data(213, WrapperBlob("LegacyCell", "", "", FlVst2StateFl9(chunk, 42), version: 6, kind: 0, fourCc: "VCLK"))
+            .Data(236, [0, 0, 0, 0])
+            .Ascii(201, "Fruity Wrapper")
+            .Data(213, WrapperBlob("Fruity Compressor", "", "", FlVst2StateFl9([], 0, [0.5f, 0.02f, 0.5f], "Full Reset"),
+                                   version: 6, kind: 0, fourCc: "CFfU"))
+            .Word(98, 0);
+        var path = Path.Combine(dir, "funk step_8.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// Like Solomon's funk step_9 (funk step_8 saved again in FL 25.2.5): KORG LegacyCell on "Cell" gave FL an empty
+    /// chunk, so its state is FL's 21-byte header with chunk length 0, then 8 zero bytes. A pattern plays it in bar 1.
+    /// </summary>
+    public static string FlStudio25NothingSaved(string dir)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 98_000)
+            .Word(65, 1).Data(224, Note(0, 0, 96, 60, 100))
+            .Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Cell")
+            .Data(213, WrapperBlob("LegacyCell", @"C:\Program Files\VstPlugins\KORG\LegacyCell.dll", "KORG",
+                                   [.. FlVst2State([]), .. new byte[8]], version: 12, kind: 4, fourCc: "VCLK"))
+            .Data(233, PlaylistItem25(0, 20481, 384));
+        var path = Path.Combine(dir, "funk step_9.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
     /// <summary>FL's VST3 state: version 1, then records 1 (settings), 3 (component), 2 (controller).</summary>
     public static byte[] FlVst3State(byte[] component, byte[] controller, uint[]? parameterIds = null)
     {

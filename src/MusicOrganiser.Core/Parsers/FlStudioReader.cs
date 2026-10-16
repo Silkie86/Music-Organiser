@@ -187,6 +187,7 @@ public sealed partial class FlStudioReader : IProjectReader
         var pendingInternal = "";
         var channelHasPlugin = false;
         int patterns = 0, notes = 0;
+        var nothingSaved = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var e in flp.Events)
         {
@@ -228,6 +229,8 @@ public sealed partial class FlStudioReader : IProjectReader
                     var f = WrapperFields(e.Payload.Span);
                     var name = WrapperText(f, VstName);
                     var vpath = WrapperText(f, VstPath);
+                    if (f.TryGetValue(VstState, out var st) && SavedNothing(st) && (name.Length > 0 || vpath.Length > 0))
+                        nothingSaved.Add(name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath));
                     if (name.Length > 0 || vpath.Length > 0)
                     {
                         var isInst = !inMixer && channel is not null && channelTypes.GetValueOrDefault(channel.Value) == ChannelTypeInstrument;
@@ -245,6 +248,9 @@ public sealed partial class FlStudioReader : IProjectReader
 
         foreach (var i in channelNames.Keys.Union(channelTypes.Keys).Order())
             info.Tracks.Add(channelNames.GetValueOrDefault(i, $"Channel {i + 1}"));
+        foreach (var n in nothingSaved)
+            info.Warnings.Add($"{n} has no saved sound in this file (it gave FL Studio nothing when the project was saved), " +
+                              "so it opens at its default sound. An earlier save of the project may still have it.");
         info.Details["Channels"] = info.Tracks.Count.ToString();
         info.Details["Patterns"] = patterns.ToString();
         info.Details["Notes"] = notes.ToString();
@@ -307,35 +313,50 @@ public sealed partial class FlStudioReader : IProjectReader
             return new PresetBlob(name, plugin, ".vst3state", state);
         }
 
-        // VST2: FL puts a 21-byte header in front of the plugin's state:
-        // i32 -9, u8 flags (0x08 = the plugin saves a chunk), i32 -2, u32 chunk length, 8 zero bytes.
         var id = f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4
             ? BinaryPrimitives.ReadInt32LittleEndian(cc)
             : 0;
         var chunk = state;
-        if (state.Length >= 21 && BinaryPrimitives.ReadInt32LittleEndian(state) == -9)
+        if (Vst2Header(state) is var (start, len))
         {
-            var len = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9));
-            if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state) is var (values, program))
+            if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state, start) is var (values, program))
                 return new PresetBlob(name, plugin, ".fxp", Fxp.WrapParams(values, program.Length > 0 ? program : plugin, id));
-            if (21 + (long)len <= state.Length) chunk = state.AsSpan(21, (int)len).ToArray();
+            if (start + (long)len <= state.Length) chunk = state.AsSpan(start, (int)len).ToArray();
         }
         return new PresetBlob(name, plugin, ".fxp", Fxp.WrapChunk(chunk, plugin, id));
     }
 
     /// <summary>
+    /// Where the plugin's own state starts after the header FL puts in front of a VST2's state, and its chunk length.
+    /// Newer FL (seen in FL 21 and 25): i32 -9, u8 flags (0x08 = the plugin saves a chunk), i32 -2,
+    /// u32 chunk length, u32 0, u32 program, so 21 bytes. FL 9 (wrapper version 6) has no -2 or 0:
+    /// i32 -9, u8 flags, u32 chunk length, u32 program, so 13 bytes, and reading it as the newer one
+    /// kept only a few bytes of a big chunk, so the plugin came up at its default sound.
+    /// </summary>
+    static (int Start, uint Length)? Vst2Header(byte[] state)
+    {
+        if (state.Length < 13 || BinaryPrimitives.ReadInt32LittleEndian(state) != -9) return null;
+        if (BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(5)) == -2)
+            return state.Length >= 21 ? (21, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9))) : null;
+        return (13, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(5)));
+    }
+
+    /// <summary>A VST2 that saves its sound as a chunk but gave FL an empty one, so FL kept none of it.</summary>
+    static bool SavedNothing(byte[] state) => Vst2Header(state) is (_, 0) && (state[4] & 0x08) != 0;
+
+    /// <summary>
     /// Plugins that don't save a chunk (Predator, older FabFilter) have their parameters after
     /// FL's header instead: u32 count, the values as floats, then u32 1 and the program name.
     /// </summary>
-    static (float[] Values, string Program)? ParamState(byte[] state)
+    static (float[] Values, string Program)? ParamState(byte[] state, int start)
     {
-        if (state.Length < 25) return null;
-        var n = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(21));
-        if (n == 0 || 25 + 4L * n > state.Length) return null;
+        if (state.Length < start + 4) return null;
+        var n = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(start));
+        if (n == 0 || start + 4 + 4L * n > state.Length) return null;
         var values = new float[n];
-        for (var i = 0; i < n; i++) values[i] = BinaryPrimitives.ReadSingleLittleEndian(state.AsSpan(25 + 4 * i));
+        for (var i = 0; i < n; i++) values[i] = BinaryPrimitives.ReadSingleLittleEndian(state.AsSpan(start + 4 + 4 * i));
         var program = "";
-        var at = 25 + 4 * (int)n;
+        var at = start + 4 + 4 * (int)n;
         if (at + 4 < state.Length && BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(at)) == 1)
         {
             var text = state.AsSpan(at + 4, Math.Min(28, state.Length - at - 4));
@@ -773,7 +794,7 @@ public sealed partial class FlStudioReader : IProjectReader
                         var f = WrapperFields(e.Payload.Span);
                         var plugin = WrapperText(f, VstName) is { Length: > 0 } n ? n : TextScan.PluginNameFromPath(WrapperText(f, VstPath));
                         var name = currentName.Length > 0 ? currentName : plugin;
-                        if (f.TryGetValue(VstState, out var state) && state.Length > 0)
+                        if (f.TryGetValue(VstState, out var state) && state.Length > 0 && !SavedNothing(state))
                             presets.Add(WrapperPreset(f, state, name, plugin) with
                             {
                                 Kind = onChannel ? PluginKind.Instrument : PluginKind.Effect,
