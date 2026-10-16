@@ -6,7 +6,11 @@ namespace MusicOrganiser.Core.Midi;
 
 /// <summary>One part found in a MIDI file: a track (or, in a single-track file, a MIDI channel) with its notes.</summary>
 /// <param name="Drums">On MIDI channel 10, which General MIDI keeps for drums.</param>
-public sealed record MidiFilePart(string Name, int Ppq, IReadOnlyList<NoteEvent> Notes, bool Drums, double? Tempo);
+public sealed record MidiFilePart(string Name, int Ppq, IReadOnlyList<NoteEvent> Notes, bool Drums, double? Tempo)
+{
+    /// <summary>The General MIDI program (sound, 0–127) the part's channel is first set to, if the file sets one.</summary>
+    public int? Program { get; init; }
+}
 
 /// <summary>
 /// Reads Standard MIDI Files (.mid, types 0, 1 and 2) for the MIDI browser. It only reads: library files stay exactly as
@@ -34,6 +38,8 @@ public static class MidiFileReader
 
         var pos = 8 + headerLength;
         var tracks = new List<(string Name, Dictionary<int, List<NoteEvent>> ByChannel)>();
+        // A channel's sound is usually set once, in whichever track: the first program change for each channel counts.
+        var programs = new Dictionary<int, int>();
         double? tempo = null;
         for (var t = 0; t < trackCount && pos + 8 <= data.Length; t++)
         {
@@ -42,7 +48,7 @@ public static class MidiFileReader
             var body = data.Slice(pos + 8, Math.Clamp(length, 0, data.Length - pos - 8));
             pos += 8 + Math.Max(0, length);
             if (!isTrack) { t--; continue; }   // unknown chunk: skip it, it isn't a track
-            tracks.Add(ReadTrack(body, ref tempo));
+            tracks.Add(ReadTrack(body, ref tempo, programs));
         }
 
         var parts = new List<MidiFilePart>();
@@ -55,13 +61,14 @@ public static class MidiFileReader
                 var label = name.Length > 0 && !name.Equals(fileName, StringComparison.OrdinalIgnoreCase) ? name : "";
                 if (byChannel.Count > 1) label = (label.Length > 0 ? label + " · " : "") + $"Ch {channel + 1}";
                 parts.Add(new MidiFilePart(named == 1 && byChannel.Count == 1 ? "" : label, ppq,
-                    notes.OrderBy(n => n.Start).ThenBy(n => n.Key).ToList(), channel == 9, tempo));
+                    notes.OrderBy(n => n.Start).ThenBy(n => n.Key).ToList(), channel == 9, tempo)
+                    { Program = programs.TryGetValue(channel, out var program) ? program : null });
             }
         }
         return parts;
     }
 
-    static (string Name, Dictionary<int, List<NoteEvent>> ByChannel) ReadTrack(ReadOnlySpan<byte> s, ref double? tempo)
+    static (string Name, Dictionary<int, List<NoteEvent>> ByChannel) ReadTrack(ReadOnlySpan<byte> s, ref double? tempo, Dictionary<int, int> programs)
     {
         var name = "";
         var byChannel = new Dictionary<int, List<NoteEvent>>();
@@ -109,7 +116,8 @@ public static class MidiFileReader
             if (i + dataBytes > s.Length) break;
             int d1 = s[i], d2 = dataBytes == 2 ? s[i + 1] : 0;
             i += dataBytes;
-            if (kind == 0x90 && d2 > 0)
+            if (kind == 0xC0) programs.TryAdd(channel, d1 & 0x7F);
+            else if (kind == 0x90 && d2 > 0)
             {
                 if (!held.TryGetValue((channel, d1), out var q)) held[(channel, d1)] = q = new();
                 q.Enqueue((tick, d2));

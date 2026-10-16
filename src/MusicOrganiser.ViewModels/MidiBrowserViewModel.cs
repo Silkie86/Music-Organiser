@@ -839,7 +839,13 @@ public sealed partial class MidiRow : ObservableObject
             return Entry.Members.Select(m => new RollSpan(m.Start - lead, m.Length, m.Hash == lit)).ToList();
         }
     }
-    public string Details => string.Join(" · ", new[] { RoleLabel, KeyText, BarsText, $"{Entry.Phrase.NoteCount:N0} notes" }.Where(s => s.Length > 0));
+    public string Details => string.Join(" · ", new[] { InstrumentText, RoleLabel, KeyText, BarsText, $"{Entry.Phrase.NoteCount:N0} notes" }.Where(s => s.Length > 0));
+
+    /// <summary>The instrument, when something attached to the part says ("Piano"), else "".</summary>
+    public string InstrumentText => Entry.Instrument?.Name ?? "";
+    public bool HasInstrument => Entry.Instrument is not null;
+    /// <summary>How the app knows the instrument: "“Keyscape” is a piano plugin".</summary>
+    public string InstrumentWhy => Entry.Instrument?.Why ?? "";
 
     public bool HasFit => Fit is not null;
     public string FitText => Fit is { } f ? $"{f.Percent}%" : Likeness is { } l ? $"{Math.Round(l * 100)}%" : "";

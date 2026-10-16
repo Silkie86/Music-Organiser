@@ -21,6 +21,8 @@ public sealed record IndexedPhrase(string Part, string Clip, IReadOnlyList<NoteE
 {
     /// <summary>For a phrase joined from clips that play back to back: those clips, and where each sits in it.</summary>
     public IReadOnlyList<PhraseMember> Members { get; init; } = [];
+    /// <summary>The General MIDI program a .mid file sets for the part's channel, if any.</summary>
+    public int? Program { get; init; }
 }
 
 /// <summary>A saved phrase as the browser lists it: everything but its notes, which are read when it's shown.</summary>
@@ -30,6 +32,10 @@ public sealed record StoredPhrase(long Id, MidiSource Source, string Part, strin
 {
     /// <summary>For a phrase joined from clips (<see cref="PhraseMember.Encode"/>), else "".</summary>
     public string Members { get; init; } = "";
+    /// <summary>The General MIDI program a .mid file sets for the part's channel, if any.</summary>
+    public int? Program { get; init; }
+    /// <summary>On MIDI channel 10 (a .mid file) or played by an unpitched drum plugin (a project).</summary>
+    public bool Drums { get; init; }
 }
 
 /// <summary>
@@ -52,7 +58,7 @@ public sealed class MidiIndex : IDisposable
             part TEXT, clip TEXT, role TEXT, role_why TEXT, drums INTEGER,
             bars INTEGER, notes INTEGER, lowest INTEGER, highest INTEGER,
             key_tonic INTEGER, key_minor INTEGER, key_conf REAL,
-            chroma BLOB, chords TEXT, features BLOB, hash TEXT, data BLOB, members TEXT
+            chroma BLOB, chords TEXT, features BLOB, hash TEXT, data BLOB, members TEXT, program INTEGER
         );
         CREATE INDEX IF NOT EXISTS ix_phrases_source ON phrases(source);
         CREATE INDEX IF NOT EXISTS ix_phrases_hash ON phrases(hash);
@@ -83,10 +89,13 @@ public sealed class MidiIndex : IDisposable
             cmd.CommandText = Schema;
             cmd.ExecuteNonQuery();
             // Added for phrases joined from clips (2026-10-16): a midi.db made before then gets the column.
-            cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('phrases') WHERE name = 'members'";
-            if (Convert.ToInt32(cmd.ExecuteScalar()) == 0)
+            // Added later: a midi.db made before then gets the columns (members for phrases joined from clips, 2026-10-16;
+            // program for the General MIDI sound a .mid file sets, 2026-10-16).
+            foreach (var (column, type) in new[] { ("members", "TEXT"), ("program", "INTEGER") })
             {
-                cmd.CommandText = "ALTER TABLE phrases ADD COLUMN members TEXT";
+                cmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('phrases') WHERE name = '{column}'";
+                if (Convert.ToInt32(cmd.ExecuteScalar()) != 0) continue;
+                cmd.CommandText = $"ALTER TABLE phrases ADD COLUMN {column} {type}";
                 cmd.ExecuteNonQuery();
             }
         }
@@ -150,11 +159,11 @@ public sealed class MidiIndex : IDisposable
                 cmd.Transaction = tx;
                 cmd.CommandText = """
                     INSERT INTO phrases (source, part, clip, role, role_why, drums, bars, notes, lowest, highest, key_tonic, key_minor,
-                                         key_conf, chroma, chords, features, hash, data, members)
-                    VALUES ($s, $part, $clip, $role, $why, $drums, $bars, $notes, $lo, $hi, $kt, $km, $kc, $chroma, $chords, $feat, $hash, $data, $members)
+                                         key_conf, chroma, chords, features, hash, data, members, program)
+                    VALUES ($s, $part, $clip, $role, $why, $drums, $bars, $notes, $lo, $hi, $kt, $km, $kc, $chroma, $chords, $feat, $hash, $data, $members, $program)
                     """;
                 var ps = new[] { "$s", "$part", "$clip", "$role", "$why", "$drums", "$bars", "$notes", "$lo", "$hi", "$kt", "$km", "$kc",
-                                 "$chroma", "$chords", "$feat", "$hash", "$data", "$members" }
+                                 "$chroma", "$chords", "$feat", "$hash", "$data", "$members", "$program" }
                     .ToDictionary(n => n, n => cmd.Parameters.Add(new SqliteParameter(n, DBNull.Value)));
                 foreach (var p in phrases)
                 {
@@ -178,6 +187,7 @@ public sealed class MidiIndex : IDisposable
                     ps["$hash"].Value = a.Hash;
                     ps["$data"].Value = EncodeNotes(p.Notes);
                     ps["$members"].Value = p.Members.Count > 0 ? PhraseMember.Encode(p.Members) : DBNull.Value;
+                    ps["$program"].Value = p.Program is { } program ? program : DBNull.Value;
                     cmd.ExecuteNonQuery();
                 }
             }
@@ -217,7 +227,7 @@ public sealed class MidiIndex : IDisposable
             cmd.CommandText = """
                 SELECT ph.id, ph.source, ph.part, ph.clip, ph.role, ph.role_why, y.role AS your_role, ph.bars, ph.notes, ph.lowest,
                        ph.highest, ph.key_tonic, ph.key_minor, ph.key_conf, ph.chroma, ph.chords, ph.features, ph.hash,
-                       s.kind, s.daw, s.mtime, s.size, s.tempo, ph.members
+                       s.kind, s.daw, s.mtime, s.size, s.tempo, ph.members, ph.program, ph.drums
                 FROM phrases ph JOIN sources s ON s.path = ph.source LEFT JOIN your_roles y ON y.hash = ph.hash
                 ORDER BY s.mtime DESC, ph.id
                 """;
@@ -232,7 +242,9 @@ public sealed class MidiIndex : IDisposable
                 KeyEstimate? key = r.IsDBNull(11) ? null : new KeyEstimate(r.GetInt32(11), r.GetInt32(12) == 1, r.GetDouble(13));
                 list.Add(new StoredPhrase(r.GetInt64(0), source, Str(r, 2), Str(r, 3), Str(r, 4), Str(r, 5),
                                           r.IsDBNull(6) ? null : r.GetString(6), r.GetInt32(7), r.GetInt32(8), r.GetInt32(9), r.GetInt32(10),
-                                          key, (byte[])r[14], Str(r, 15), (byte[])r[16], Str(r, 17)) { Members = Str(r, 23) });
+                                          key, (byte[])r[14], Str(r, 15), (byte[])r[16], Str(r, 17)) {
+                    Members = Str(r, 23), Program = r.IsDBNull(24) ? null : r.GetInt32(24), Drums = !r.IsDBNull(25) && r.GetInt32(25) == 1,
+                });
             }
         }
         return list;

@@ -18,6 +18,8 @@ public sealed class MidiEntry
     public string? YourRole { get; set; }
     public IReadOnlyList<PhraseChord> Chords { get; init; } = [];
     public float[] Chroma { get; init; } = new float[12];
+    /// <summary>The instrument it's for, when its names, plugin, channel or General MIDI sound say; else null.</summary>
+    public InstrumentGuess? Instrument { get; init; }
     /// <summary>What CLaMP 3 heard in it (see <see cref="Clamp3Model"/>), or null when the model hasn't heard it yet.</summary>
     public sbyte[]? Meaning { get; set; }
 
@@ -100,10 +102,11 @@ public sealed class MidiCatalogue
                 continue;
             }
             var chords = PhraseChord.Decode(p.Chords);
+            var instrument = InstrumentOf(p);
             var entry = new MidiEntry
             {
-                Phrase = p, Chords = chords, Chroma = MidiIndex.Floats(p.Chroma), YourRole = p.YourRole,
-                SearchText = SearchTextOf(p, p.YourRole ?? p.Role, chords),
+                Phrase = p, Chords = chords, Chroma = MidiIndex.Floats(p.Chroma), YourRole = p.YourRole, Instrument = instrument,
+                SearchText = SearchTextOf(p, p.YourRole ?? p.Role, chords, instrument),
                 Meaning = meanings?.GetValueOrDefault(p.Hash),
             };
             byHash[p.Hash] = entry;
@@ -134,12 +137,31 @@ public sealed class MidiCatalogue
     public static void Relabel(MidiEntry e, string? role)
     {
         e.YourRole = role;
-        e.SearchText = SearchTextOf(e.Phrase, e.Role, e.Chords);
+        e.SearchText = SearchTextOf(e.Phrase, e.Role, e.Chords, e.Instrument);
     }
 
-    static string SearchTextOf(StoredPhrase p, string role, IReadOnlyList<PhraseChord> chords)
+    /// <summary>
+    /// The instrument a part is for, from what's attached to it: its track (or channel) name and its clip; for a .mid
+    /// file also the file's name and its folders from the nearest up (packs sort into folders like "Piano"), though in
+    /// a project those name the song, not the part; channel 10 or a drum plugin; the General MIDI sound a .mid file sets.
+    /// </summary>
+    public static InstrumentGuess? InstrumentOf(StoredPhrase p)
+    {
+        var isFile = p.Source.Kind == MidiSource.File;
+        string[] names = isFile
+            ? [p.Part, p.Clip, Path.GetFileNameWithoutExtension(p.Source.Path),
+               .. (Path.GetDirectoryName(p.Source.Path) ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).TakeLast(3).Reverse()]
+            : [p.Part, p.Clip];
+        var guess = Instruments.Guess(names, channel10: p.Drums && isFile, program: p.Program);
+        // A project track flagged as drums plays an unpitched plugin (a drum machine or sampler of hits).
+        return guess ?? (p.Drums ? new InstrumentGuess(Instruments.Drums, $"“{p.Part}” is a drum plugin") : null);
+    }
+
+    static string SearchTextOf(StoredPhrase p, string role, IReadOnlyList<PhraseChord> chords, InstrumentGuess? instrument)
     {
         var parts = new List<string> { p.Part, p.Clip, Path.GetFileNameWithoutExtension(p.Source.Path), role, MidiRoles.Plural(role), p.Source.Daw };
+        if (instrument is not null) parts.Add(Instruments.SearchWords(instrument.Name));
+        if (p.Program is { } program and >= 0 and < 128) parts.Add(Instruments.GeneralMidi[program]);
         // The folders it's in (the last few): MIDI packs are sorted into folders like "Chords" and "Trap Melodies".
         parts.AddRange((Path.GetDirectoryName(p.Source.Path) ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).TakeLast(4));
         if (p.Key is { Confidence: >= 0.05 } k) parts.AddRange([k.Name, k.Short]);
