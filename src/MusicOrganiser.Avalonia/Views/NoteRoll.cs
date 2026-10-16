@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
 
@@ -22,7 +23,12 @@ public sealed class NoteRoll : Control
     /// <summary>Runs with the clicked point in song ticks.</summary>
     public static readonly StyledProperty<ICommand?> SeekCommandProperty = AvaloniaProperty.Register<NoteRoll, ICommand?>(nameof(SeekCommand));
 
-    static NoteRoll() => AffectsRender<NoteRoll>(ChannelProperty, SongEndProperty, PositionProperty);
+    /// <summary>For a phrase joined from clips: where each clip sits, drawn as a line where it starts, the one looked for lit up.</summary>
+    public static readonly StyledProperty<IReadOnlyList<RollSpan>?> SpansProperty = AvaloniaProperty.Register<NoteRoll, IReadOnlyList<RollSpan>?>(nameof(Spans));
+
+    static NoteRoll() => AffectsRender<NoteRoll>(ChannelProperty, SongEndProperty, PositionProperty, SpansProperty);
+
+    public IReadOnlyList<RollSpan>? Spans { get => GetValue(SpansProperty); set => SetValue(SpansProperty, value); }
 
     public MidiChannel? Channel { get => GetValue(ChannelProperty); set => SetValue(ChannelProperty, value); }
     public long SongEnd { get => GetValue(SongEndProperty); set => SetValue(SongEndProperty, value); }
@@ -105,6 +111,19 @@ public sealed class NoteRoll : Control
 
         var fill = Res("AccentBrush", Brushes.DodgerBlue);
         var end = End;
+        if (Spans is { Count: > 0 } spans)
+        {
+            var line = Res("MutedBrush", Brushes.Gray);
+            foreach (var s in spans)
+            {
+                var x0 = Math.Clamp(2 + (w - 4) * s.Start / end, 0, w);
+                var x1 = Math.Clamp(2 + (w - 4) * (s.Start + s.Length) / end, 0, w);
+                if (s.Lit && x1 > x0)
+                    using (dc.PushOpacity(0.22)) dc.FillRectangle(fill, new Rect(x0, 0, x1 - x0, h));
+                if (s.Start > 0 && x0 < w - 2)
+                    using (dc.PushOpacity(0.6)) dc.FillRectangle(line, new Rect(x0, 0, 1, h));
+            }
+        }
         var notes = Notes(c, end, w, h);
         if (Position >= 0)
         {

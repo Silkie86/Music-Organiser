@@ -172,6 +172,12 @@
                     <Button Content="✕" Padding="8,2" Command="{Binding ClearFitCommand}" ToolTip.Tip="Stop fitting" />
                 </StackPanel>
             </Border>
+            <Border Classes="targetPill" IsVisible="{Binding IsShowingPhrases}">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding PhrasesText}" />
+                    <Button Content="✕" Padding="8,2" Command="{Binding ClearPhrasesCommand}" ToolTip.Tip="Back to the whole list" />
+                </StackPanel>
+            </Border>
             <Border Classes="targetPill" IsVisible="{Binding IsLiking}">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding LikeText}" />
@@ -212,9 +218,11 @@
                                 <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
                                 <TextBlock Text="{Binding From}" Classes="small" ToolTip.Tip="{Binding Entry.Phrase.Source.Path}" />
                                 <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding RoleWhy}" />
+                                <TextBlock Text="{Binding PhraseText}" Classes="small" Foreground="{DynamicResource AccentBrush}"
+                                           IsVisible="{Binding HasPhrase}" ToolTip.Tip="{Binding PhraseWhy}" />
                             </StackPanel>
                             <views:NoteRoll Grid.Column="2" Height="44" Channel="{Binding Channel}" Position="{Binding Position}"
-                                            SeekCommand="{Binding SeekCommand}" />
+                                            Spans="{Binding Spans}" SeekCommand="{Binding SeekCommand}" />
                             <StackPanel Grid.Column="3" Width="124" Margin="10,0,4,0" VerticalAlignment="Center"
                                         IsVisible="{Binding FitText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                         ToolTip.Tip="{Binding FitWhy}">
@@ -233,7 +241,8 @@
                         <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding From}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                     </StackPanel>
-                    <views:NoteRoll Height="130" Channel="{Binding Channel}" Position="{Binding Position}" SeekCommand="{Binding SeekCommand}" />
+                    <views:NoteRoll Height="130" Channel="{Binding Channel}" Position="{Binding Position}" Spans="{Binding Spans}"
+                                    SeekCommand="{Binding SeekCommand}" />
                     <WrapPanel>
                         <Border Classes="pill" Margin="0,0,6,6" ToolTip.Tip="{Binding RoleWhy}">
                             <TextBlock Classes="pillText" Text="{Binding RoleLabel}" />
@@ -243,6 +252,9 @@
                         </Border>
                         <Border Classes="pill" Margin="0,0,6,6">
                             <TextBlock Classes="pillText" Text="{Binding BarsText}" />
+                        </Border>
+                        <Border Classes="pill" Margin="0,0,6,6" IsVisible="{Binding HasPhrase}" ToolTip.Tip="{Binding PhraseWhy}">
+                            <TextBlock Classes="pillText" Text="{Binding PhraseText}" />
                         </Border>
                     </WrapPanel>
                     <TextBlock Text="{Binding ChordsText, StringFormat='Chords: {0}'}" TextWrapping="Wrap" FontSize="12.5"
@@ -265,6 +277,9 @@
                         <Button Content="What goes with this?" Margin="0,0,6,6"
                                 Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).FitToSelectedCommand}"
                                 ToolTip.Tip="Parts whose harmony fits this one: melodies and basslines for chords, chords for a melody or bassline" />
+                        <Button Content="Show the whole phrase" Margin="0,0,6,6" IsVisible="{Binding CanShowWholePhrase}"
+                                Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).ShowWholePhraseCommand}"
+                                ToolTip.Tip="The longer phrases this clip is part of in its song, with it lit up" />
                         <Button Content="More like this" Margin="0,0,6,6"
                                 Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).MoreLikeSelectedCommand}"
                                 ToolTip.Tip="Parts with a similar shape (how chordal, busy, low and rhythmic it is), whatever key they're in" />

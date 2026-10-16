@@ -107,12 +107,34 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     public bool IsLiking => Like is not null;
     public string LikeText => Like is null ? "" : $"Parts shaped like {Like.Title}";
 
+    // ---- longer phrases ----
+
+    /// <summary>Showing the longer phrases this part is in (Show the whole phrase).</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsShowingPhrases), nameof(PhrasesText))] MidiEntry? _phrasesOf;
+    public bool IsShowingPhrases => PhrasesOf is not null;
+    public string PhrasesText => PhrasesOf is null ? "" : $"Longer phrases with {PhrasesOf.Title} in them";
+
+    partial void OnPhrasesOfChanged(MidiEntry? value) => _ = RefreshAsync();
+
+    /// <summary>The longer phrases the selected part is in, with it lit up inside each.</summary>
+    [RelayCommand]
+    void ShowWholePhrase()
+    {
+        if (Selected?.Entry is not { Within.Count: > 0 } entry) return;
+        Like = null;
+        PhrasesOf = entry;
+    }
+
+    [RelayCommand]
+    void ClearPhrases() => PhrasesOf = null;
+
     partial void OnSearchChanged(string value) => _ = RefreshAsync(delayMs: 150);
     partial void OnSelectedRoleChanged(RoleChip value) => _ = RefreshAsync();
     partial void OnFromChanged(string value) => _ = RefreshAsync();
     partial void OnLikeChanged(MidiEntry? value)
     {
         OnPropertyChanged(nameof(LikeText));
+        if (value is not null) PhrasesOf = null;
         _ = RefreshAsync();
     }
 
@@ -164,13 +186,16 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (delayMs > 0 && UiWork.InBackground) await Task.Delay(delayMs);
         if (request != _searchRequest || _catalogue is not { } catalogue) return;
         var query = new MidiQuery(Search.Trim(), SelectedRole.Role == "All" ? null : SelectedRole.Role,
-                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, Fit, Like, Leave: _fitPath);
+                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, Fit, Like, Leave: _fitPath,
+                                  Within: PhrasesOf);
         var (hits, matching) = await UiWork.Run(() => (catalogue.Search(query, out var n), n));
         if (request != _searchRequest) return;
         var keep = Selected?.Entry;
         Results = hits.Select(h => new MidiRow(h, this)).ToList();
         Selected = Results.FirstOrDefault(r => r.Entry == keep) ?? Results.FirstOrDefault();
+        if (PhrasesOf is not null) Message = "";
         ResultText = matching == 0 ? (HasParts ? "Nothing matches. Try fewer words, or another kind." : "")
+            : PhrasesOf is not null ? (matching == 1 ? "1 longer phrase" : $"{matching:N0} longer phrases") + ", longest first. The part you picked is lit up in each."
             : Fit is not null ? $"Best fits first · {Math.Min(matching, hits.Count):N0} shown of {matching:N0}, each moved into the right key"
             : Like is not null ? $"Most alike first · {hits.Count:N0} of {matching:N0}"
             : hits.Count < matching ? $"{hits.Count:N0} of {matching:N0}, newest first. Search to narrow it down." : $"{matching:N0}, newest first";
@@ -349,6 +374,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         _fitPath = leave;
         Like = null;
+        PhrasesOf = null;
         Fit = target;
         FitSearch = "";
         FitChoicesOpen = false;
@@ -585,6 +611,29 @@ public sealed partial class MidiRow : ObservableObject
     }
 
     public string BarsText => $"{Entry.Phrase.Bars} bar{(Entry.Phrase.Bars == 1 ? "" : "s")}";
+
+    /// <summary>"Joined from 4 clips" for a longer phrase; "Part of a 16-bar phrase" for a clip that's in one.</summary>
+    public string PhraseText =>
+        Entry.IsJoined ? $"Joined from {Entry.ClipCount} clips"
+        : Entry.Within is { Count: > 0 } w ? (w.Count == 1 ? $"Part of a {w[0].Phrase.Bars}-bar phrase" : $"Part of {w.Count} longer phrases")
+        : "";
+    public bool HasPhrase => PhraseText.Length > 0;
+    public bool CanShowWholePhrase => Entry.Within is { Count: > 0 };
+    public string PhraseWhy => Entry.IsJoined
+        ? "Clips that play one after another on this track in the arrangement, joined into one phrase. The lines on the notes show where each clip starts."
+        : "This clip plays next to others on its track in the arrangement, as part of a longer phrase. Show the whole phrase to see it.";
+
+    /// <summary>For a joined phrase: where each clip sits on the roll, the part being looked for lit up.</summary>
+    public IReadOnlyList<RollSpan>? Spans
+    {
+        get
+        {
+            if (!Entry.IsJoined) return null;
+            var lead = Channel.Notes.Count == 0 ? 0 : _lead;
+            var lit = _owner.PhrasesOf?.Phrase.Hash;
+            return Entry.Members.Select(m => new RollSpan(m.Start - lead, m.Length, m.Hash == lit)).ToList();
+        }
+    }
     public string Details => string.Join(" · ", new[] { RoleLabel, KeyText, BarsText, $"{Entry.Phrase.NoteCount:N0} notes" }.Where(s => s.Length > 0));
 
     public bool HasFit => Fit is not null;
@@ -614,10 +663,13 @@ public sealed partial class MidiRow : ObservableObject
     /// </summary>
     public MidiClip FileClip() => MakeChannel(fromFirstNote: false).ToClip();
 
+    long _lead;
+
     MidiChannel MakeChannel(bool fromFirstNote)
     {
         var notes = _owner.NotesOf(Entry);
         var lead = fromFirstNote && notes.Count > 0 ? notes.Min(n => n.Start) : 0;
+        if (fromFirstNote) _lead = lead;
         if (Fit is { Semitones: not 0 } || lead > 0)
         {
             var move = Fit?.Semitones ?? 0;
@@ -644,3 +696,6 @@ public sealed partial class MidiRow : ObservableObject
         OnPropertyChanged(nameof(Details));
     }
 }
+
+/// <summary>A stretch of a note roll (ticks): where a clip sits inside a joined phrase, lit when it's the one looked for.</summary>
+public readonly record struct RollSpan(long Start, long Length, bool Lit);

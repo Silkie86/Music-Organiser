@@ -10,19 +10,27 @@ public sealed record MidiSource(string Path, string Kind, string Daw, long Mtime
     public const string Project = "project", File = "file";
 }
 
-/// <summary>One MIDI part ready to save: where it's from, its notes (at <see cref="PhraseAnalyser.Ppq"/>) and what it is.</summary>
 /// <summary>A file the MIDI browser couldn't read: <see cref="Why"/> is the error, in a few words.</summary>
 public sealed record MidiFailure(string Path, string Kind, string Why)
 {
     public string Name => System.IO.Path.GetFileName(Path);
 }
 
-public sealed record IndexedPhrase(string Part, string Clip, IReadOnlyList<NoteEvent> Notes, PhraseAnalysis Analysis, bool Drums);
+/// <summary>One MIDI part ready to save: where it's from, its notes (at <see cref="PhraseAnalyser.Ppq"/>) and what it is.</summary>
+public sealed record IndexedPhrase(string Part, string Clip, IReadOnlyList<NoteEvent> Notes, PhraseAnalysis Analysis, bool Drums)
+{
+    /// <summary>For a phrase joined from clips that play back to back: those clips, and where each sits in it.</summary>
+    public IReadOnlyList<PhraseMember> Members { get; init; } = [];
+}
 
 /// <summary>A saved phrase as the browser lists it: everything but its notes, which are read when it's shown.</summary>
 public sealed record StoredPhrase(long Id, MidiSource Source, string Part, string Clip, string Role, string RoleWhy, string? YourRole,
                                   int Bars, int NoteCount, int Lowest, int Highest, KeyEstimate? Key, byte[] Chroma, string Chords,
-                                  byte[] Features, string Hash);
+                                  byte[] Features, string Hash)
+{
+    /// <summary>For a phrase joined from clips (<see cref="PhraseMember.Encode"/>), else "".</summary>
+    public string Members { get; init; } = "";
+}
 
 /// <summary>
 /// The MIDI browser's own database (midi.db, next to the library): every MIDI part found in your projects and MIDI
@@ -44,7 +52,7 @@ public sealed class MidiIndex : IDisposable
             part TEXT, clip TEXT, role TEXT, role_why TEXT, drums INTEGER,
             bars INTEGER, notes INTEGER, lowest INTEGER, highest INTEGER,
             key_tonic INTEGER, key_minor INTEGER, key_conf REAL,
-            chroma BLOB, chords TEXT, features BLOB, hash TEXT, data BLOB
+            chroma BLOB, chords TEXT, features BLOB, hash TEXT, data BLOB, members TEXT
         );
         CREATE INDEX IF NOT EXISTS ix_phrases_source ON phrases(source);
         CREATE INDEX IF NOT EXISTS ix_phrases_hash ON phrases(hash);
@@ -71,6 +79,13 @@ public sealed class MidiIndex : IDisposable
         {
             cmd.CommandText = Schema;
             cmd.ExecuteNonQuery();
+            // Added for phrases joined from clips (2026-10-16): a midi.db made before then gets the column.
+            cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('phrases') WHERE name = 'members'";
+            if (Convert.ToInt32(cmd.ExecuteScalar()) == 0)
+            {
+                cmd.CommandText = "ALTER TABLE phrases ADD COLUMN members TEXT";
+                cmd.ExecuteNonQuery();
+            }
         }
         _read = new SqliteConnection($"Data Source={path}");
         _read.Open();
@@ -132,11 +147,11 @@ public sealed class MidiIndex : IDisposable
                 cmd.Transaction = tx;
                 cmd.CommandText = """
                     INSERT INTO phrases (source, part, clip, role, role_why, drums, bars, notes, lowest, highest, key_tonic, key_minor,
-                                         key_conf, chroma, chords, features, hash, data)
-                    VALUES ($s, $part, $clip, $role, $why, $drums, $bars, $notes, $lo, $hi, $kt, $km, $kc, $chroma, $chords, $feat, $hash, $data)
+                                         key_conf, chroma, chords, features, hash, data, members)
+                    VALUES ($s, $part, $clip, $role, $why, $drums, $bars, $notes, $lo, $hi, $kt, $km, $kc, $chroma, $chords, $feat, $hash, $data, $members)
                     """;
                 var ps = new[] { "$s", "$part", "$clip", "$role", "$why", "$drums", "$bars", "$notes", "$lo", "$hi", "$kt", "$km", "$kc",
-                                 "$chroma", "$chords", "$feat", "$hash", "$data" }
+                                 "$chroma", "$chords", "$feat", "$hash", "$data", "$members" }
                     .ToDictionary(n => n, n => cmd.Parameters.Add(new SqliteParameter(n, DBNull.Value)));
                 foreach (var p in phrases)
                 {
@@ -159,6 +174,7 @@ public sealed class MidiIndex : IDisposable
                     ps["$feat"].Value = Bytes(a.Features, scaleToMax: false);
                     ps["$hash"].Value = a.Hash;
                     ps["$data"].Value = EncodeNotes(p.Notes);
+                    ps["$members"].Value = p.Members.Count > 0 ? PhraseMember.Encode(p.Members) : DBNull.Value;
                     cmd.ExecuteNonQuery();
                 }
             }
@@ -198,7 +214,7 @@ public sealed class MidiIndex : IDisposable
             cmd.CommandText = """
                 SELECT ph.id, ph.source, ph.part, ph.clip, ph.role, ph.role_why, y.role AS your_role, ph.bars, ph.notes, ph.lowest,
                        ph.highest, ph.key_tonic, ph.key_minor, ph.key_conf, ph.chroma, ph.chords, ph.features, ph.hash,
-                       s.kind, s.daw, s.mtime, s.size, s.tempo
+                       s.kind, s.daw, s.mtime, s.size, s.tempo, ph.members
                 FROM phrases ph JOIN sources s ON s.path = ph.source LEFT JOIN your_roles y ON y.hash = ph.hash
                 ORDER BY s.mtime DESC, ph.id
                 """;
@@ -213,7 +229,7 @@ public sealed class MidiIndex : IDisposable
                 KeyEstimate? key = r.IsDBNull(11) ? null : new KeyEstimate(r.GetInt32(11), r.GetInt32(12) == 1, r.GetDouble(13));
                 list.Add(new StoredPhrase(r.GetInt64(0), source, Str(r, 2), Str(r, 3), Str(r, 4), Str(r, 5),
                                           r.IsDBNull(6) ? null : r.GetString(6), r.GetInt32(7), r.GetInt32(8), r.GetInt32(9), r.GetInt32(10),
-                                          key, (byte[])r[14], Str(r, 15), (byte[])r[16], Str(r, 17)));
+                                          key, (byte[])r[14], Str(r, 15), (byte[])r[16], Str(r, 17)) { Members = Str(r, 23) });
             }
         }
         return list;
