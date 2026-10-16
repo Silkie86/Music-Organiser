@@ -155,7 +155,9 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                 Add(phrases, seen, PhraseAnalyser.Normalise(notes, clip.Ppq), track, clipName, $"{track} {clip.Name}", drums);
             }
 
-        // Then the longer phrases: clips that play back to back on a track in the arrangement, joined.
+        // Then the longer phrases: clips that play back to back on a track in the arrangement, joined. Not for drums,
+        // which have no harmony to fit and play the same few hits all song long.
+        if (phrases.Count < 2) return phrases;
         IReadOnlyList<(string Track, IReadOnlyList<TrackClip> Clips)> tracks;
         try { tracks = PhraseJoiner.Tracks(path); }
         catch (Exception e) when (e is not OperationCanceledException)
@@ -166,13 +168,13 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         }
         foreach (var (track, clips) in tracks)
         {
-            var drums = ProjectKey.IsUnpitchedPlugin(track);
+            if (ProjectKey.IsUnpitchedPlugin(track)) continue;
             foreach (var joined in PhraseJoiner.Phrases(track, clips))
             {
                 if (joined.Notes.Count < 3) continue;
-                var analysis = PhraseAnalyser.Analyse(joined.Notes, $"{track} {joined.Clip}", drums);
-                if (!seen.Add(analysis.Hash)) continue;
-                phrases.Add(new IndexedPhrase(track, joined.Clip, joined.Notes, analysis, drums) { Members = joined.Members });
+                var analysis = PhraseAnalyser.Analyse(joined.Notes, $"{track} {joined.Clip}");
+                if (analysis.Role == MidiRoles.Drums || !seen.Add(analysis.Hash)) continue;
+                phrases.Add(new IndexedPhrase(track, joined.Clip, joined.Notes, analysis, false) { Members = joined.Members });
             }
         }
         return phrases;
