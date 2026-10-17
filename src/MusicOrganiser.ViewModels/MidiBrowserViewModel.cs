@@ -1479,8 +1479,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         _disposed = true;
         _indexCts?.Cancel();
-        _hearCts?.Cancel();
         _searchCts?.Cancel();
+        _hearCts?.Cancel();
         // The model is only freed once nothing is using it: a part being heard finishes within a second or so. If it's
         // still going after that, it's left to the end of the app rather than freed under it.
         var stopped = true;
