@@ -28,6 +28,7 @@ public sealed class Serum1State
     const int OscANameAt = 15_368, OscBNameAt = 15_880, NoiseNameAt = 16_392, NameLength = 256;
     const int PresetNameAt = 18_802, AuthorAt = 18_848, DescriptionAt = 18_896;
     const int SlotSize = 40, SlotsAt = 0, MoreSlotsAt = 20_704, SlotCount = 32;
+    const int FxOrderAt = 15_324, FxCount = 10, NoiseFlagsAt = 18_768;
 
     /// <summary>How many knob values the state holds, one per parameter Serum 1.3 shows a DAW (316, checked on Solomon's PC).</summary>
     public const int KnobCount = 316;
@@ -114,6 +115,31 @@ public sealed class Serum1State
     public string OscATable => Text(OscANameAt, NameLength);
     public string OscBTable => Text(OscBNameAt, NameLength);
     public string NoiseSample => Text(NoiseNameAt, NameLength);
+
+    /// <summary>
+    /// The effects in the order the rack plays them, numbered as the rack starts out (Hyper/Dimension, Distortion,
+    /// Flanger, Phaser, Chorus, Delay, Compressor, Reverb, EQ, Filter). An older preset that doesn't hold a proper
+    /// order reads as that starting order.
+    /// </summary>
+    public IReadOnlyList<int> FxOrder
+    {
+        get
+        {
+            var order = Enumerable.Range(0, FxCount)
+                .Select(i => BinaryPrimitives.ReadInt32LittleEndian(_raw.AsSpan(FxOrderAt + 4 * i))).ToArray();
+            return order.Order().SequenceEqual(Enumerable.Range(0, FxCount)) ? order : Enumerable.Range(0, FxCount).ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Whether the noise oscillator plays its sample once rather than looping. Taken from the first of two switch
+    /// bytes after the LFO shapes; both were on in the one state checked, where Serum 2 also turned one-shot on, so
+    /// which byte is which isn't confirmed (<see cref="NoiseFlagsAsChecked"/>).
+    /// </summary>
+    public bool NoiseOneShot => _raw[NoiseFlagsAt] != 0;
+
+    /// <summary>Whether both of those switch bytes are as they were in the state that was checked.</summary>
+    public bool NoiseFlagsAsChecked => _raw[NoiseFlagsAt] == 1 && _raw[NoiseFlagsAt + 1] == 1;
 
     string Text(int at, int max)
     {
