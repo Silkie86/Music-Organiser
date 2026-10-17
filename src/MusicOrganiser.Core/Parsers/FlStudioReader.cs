@@ -306,7 +306,7 @@ public sealed partial class FlStudioReader : IProjectReader
             info.Tracks.Add(channelNames.GetValueOrDefault(i, $"Channel {i + 1}"));
         foreach (var n in nothingSaved)
             info.Warnings.Add($"{n} has no saved sound in this file (it gave FL Studio nothing when the project was saved), " +
-                              "so it opens at its default sound. An earlier save of the project may still have it.");
+                              "so it opens at its default sound. An earlier save of the project may still have it; converting to Bitwig takes it from there.");
         info.Details["Channels"] = info.Tracks.Count.ToString();
         info.Details["Patterns"] = patterns.ToString();
         info.Details["Notes"] = notes.ToString();
