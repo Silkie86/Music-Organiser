@@ -62,7 +62,7 @@ public sealed partial class FlStudioReader : IProjectReader
     }
 
     /// <summary>What's said of a file named .flp that holds no FL project any more: empty, or overwritten (disk damage).</summary>
-    const string Damaged = "This file is empty or damaged: it doesn't start the way an FL Studio project does, so there's nothing in it to read";
+    internal const string Damaged = "This file is empty or damaged: it doesn't start the way an FL Studio project does, so there's nothing in it to read";
 
     sealed class Flp
     {
