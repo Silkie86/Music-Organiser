@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MusicOrganiser.Core\MusicOrganiser.Core.csproj" />
+    <ProjectReference Include="..\..\src\MusicOrganiser.ViewModels\MusicOrganiser.ViewModels.csproj" />
   </ItemGroup>
 
   <ItemGroup>

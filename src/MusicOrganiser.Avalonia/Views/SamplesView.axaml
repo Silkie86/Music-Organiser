@@ -1,0 +1,79 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:lib="using:MusicOrganiser.Core.Library"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
+             x:Class="MusicOrganiser.Avalonia.Views.SamplesView"
+             x:DataType="vm:SamplesViewModel">
+    <Grid RowDefinitions="Auto,*,Auto">
+        <DockPanel Margin="0,0,0,18">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <CheckBox Content="Missing only" IsChecked="{Binding OnlyMissing}" Margin="0,0,12,0" />
+                <TextBox Width="360" PlaceholderText="Search sample paths…" Text="{Binding SearchText}" />
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Text="Samples" Classes="pageTitle" />
+                <TextBlock Text="{Binding Summary}" Classes="pageSubtitle" />
+            </StackPanel>
+        </DockPanel>
+
+        <Border Grid.Row="1" Classes="card" Padding="8,10,8,8">
+            <DataGrid ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
+                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" CanUserSortColumns="True"
+                      GridLinesVisibility="None" Background="Transparent" DoubleTapped="OnDoubleTapped"
+                      views:FileDrag.Source="{Binding}">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="Sample" Width="*" SortMemberPath="Path">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate x:DataType="lib:SampleUsage">
+                                <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}"
+                                           VerticalAlignment="Center" Margin="8,0" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Projects" Width="90" Binding="{Binding Projects}" x:DataType="lib:SampleUsage" />
+                    <DataGridTemplateColumn Header="Status" Width="110" SortMemberPath="Found">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate x:DataType="lib:SampleUsage">
+                                <Border Classes="pill" Margin="8,0" Background="{StaticResource MissingSoftBrush}" IsVisible="{Binding !Found}">
+                                    <TextBlock Text="Missing" Classes="pillText" Foreground="{StaticResource MissingBrush}" />
+                                </Border>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+
+        <!-- Selected sample -->
+        <Border Grid.Row="2" Classes="card" Margin="0,12,0,0" IsVisible="{Binding Selected, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <StackPanel>
+                <TextBlock Text="{Binding Selected.Path}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                <WrapPanel Margin="0,8,0,0">
+                    <Button Content="Projects using it" Command="{Binding ShowProjectsCommand}" Margin="0,0,6,0" />
+                    <Button Content="Find matches on my drives" Command="{Binding FindMatchesCommand}" Margin="0,0,6,0" />
+                    <Button Content="Search online" Command="{Binding SearchOnlineCommand}" />
+                </WrapPanel>
+                <TextBlock Text="{Binding MatchMessage}" Margin="0,8,0,0"
+                           IsVisible="{Binding MatchMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding Matches}" views:FileDrag.Source="{Binding}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="lib:Match">
+                                <DockPanel Margin="0,2">
+                                    <Button DockPanel.Dock="Right" Content="Show" Padding="8,2"
+                                            Command="{Binding $parent[UserControl].((vm:SamplesViewModel)DataContext).RevealMatchCommand}"
+                                            CommandParameter="{Binding}" />
+                                    <TextBlock DockPanel.Dock="Right" Margin="8,0" VerticalAlignment="Center"
+                                               Text="{Binding Score, StringFormat={}{0:P0}}" ToolTip.Tip="{Binding Reason}"
+                                               Foreground="{StaticResource MutedBrush}" />
+                                    <TextBlock Text="{Binding Candidate}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

@@ -1,0 +1,64 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:MusicOrganiser.ViewModels"
+        xmlns:views="using:MusicOrganiser.Avalonia.Views"
+        x:Class="MusicOrganiser.Avalonia.Views.PresetsWindow"
+        x:DataType="vm:PresetsViewModel"
+        Title="{Binding Title, StringFormat='Presets in {0}'}" Width="680" Height="600" MinWidth="480" MinHeight="360"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource AppBackgroundBrush}">
+    <DockPanel>
+        <DockPanel DockPanel.Dock="Bottom" Margin="16,8,16,16">
+            <Button DockPanel.Dock="Right" Content="Export these" Classes="accent" Command="{Binding ExportShownCommand}"
+                    IsEnabled="{Binding HasPresets}" ToolTip.Tip="Export every preset in the list as it's filtered now" />
+            <TextBlock Text="{Binding Message}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0"
+                       Foreground="{StaticResource MutedBrush}" />
+        </DockPanel>
+
+        <TextBlock DockPanel.Dock="Bottom" Text="{Binding FormatNote}" Margin="16,8,16,0" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{StaticResource MutedBrush}"
+                   IsVisible="{Binding FormatNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        <WrapPanel DockPanel.Dock="Top" Margin="16,12,16,0">
+            <StackPanel Orientation="Horizontal" Margin="0,0,32,6" IsVisible="{Binding HasNative}">
+                <TextBlock Text="Plugins" VerticalAlignment="Center" Margin="0,0,12,0" Foreground="{StaticResource MutedBrush}" />
+                <RadioButton GroupName="Maker" Content="{Binding AllMakersText}" Margin="0,0,8,0"
+                             IsChecked="{Binding Maker, Converter={StaticResource IndexToBool}, ConverterParameter=0}" />
+                <RadioButton GroupName="Maker" Content="{Binding ThirdPartyText}" Margin="0,0,8,0"
+                             IsChecked="{Binding Maker, Converter={StaticResource IndexToBool}, ConverterParameter=1}" />
+                <RadioButton GroupName="Maker" Content="{Binding NativeText}"
+                             IsChecked="{Binding Maker, Converter={StaticResource IndexToBool}, ConverterParameter=2}" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,6" IsVisible="{Binding HasKinds}">
+                <TextBlock Text="Type" VerticalAlignment="Center" Margin="0,0,12,0" Foreground="{StaticResource MutedBrush}" />
+                <RadioButton GroupName="Type" Content="{Binding AllTypesText}" Margin="0,0,8,0"
+                             IsChecked="{Binding Type, Converter={StaticResource IndexToBool}, ConverterParameter=0}" />
+                <RadioButton GroupName="Type" Content="{Binding SynthsText}" Margin="0,0,8,0"
+                             IsChecked="{Binding Type, Converter={StaticResource IndexToBool}, ConverterParameter=1}" />
+                <RadioButton GroupName="Type" Content="{Binding EffectsText}"
+                             IsChecked="{Binding Type, Converter={StaticResource IndexToBool}, ConverterParameter=2}" />
+            </StackPanel>
+        </WrapPanel>
+
+        <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Margin="16,4,16,8" Foreground="{StaticResource MutedBrush}" />
+
+        <ListBox ItemsSource="{Binding Presets}" SelectionMode="Multiple" Margin="12,0,8,0" Background="Transparent"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:PresetRow">
+                    <DockPanel ToolTip.Tip="{Binding LoadHint}">
+                        <Button DockPanel.Dock="Right" Content="Export" Margin="8,0,0,0" VerticalAlignment="Center"
+                                Command="{Binding ExportCommand}" ToolTip.Tip="Save just this preset" />
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Plugin}" Margin="8,0,0,0" TextTrimming="CharacterEllipsis"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           IsVisible="{Binding Plugin, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding Details}" FontSize="12" Foreground="{StaticResource MutedBrush}" />
+                        </StackPanel>
+                    </DockPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</Window>

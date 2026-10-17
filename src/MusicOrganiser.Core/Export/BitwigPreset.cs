@@ -53,9 +53,10 @@ public static class BitwigPreset
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { return null; }
     }
 
-    /// <summary>Where Bitwig keeps the presets you save: Documents\Bitwig Studio.</summary>
+    /// <summary>Where Bitwig keeps the presets you save: Documents\Bitwig Studio (on Linux, ~/Bitwig Studio).</summary>
     public static IReadOnlyList<string> DefaultFolders() =>
-        [Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Bitwig Studio")];
+        [Path.Combine(Environment.GetFolderPath(OperatingSystem.IsLinux()
+            ? Environment.SpecialFolder.UserProfile : Environment.SpecialFolder.MyDocuments), "Bitwig Studio")];
 
     /// <summary>Every usable template under these folders, best one per plugin and format (newest file wins).</summary>
     public static IReadOnlyDictionary<string, Template> FindTemplates(IEnumerable<string> folders, CancellationToken ct = default)

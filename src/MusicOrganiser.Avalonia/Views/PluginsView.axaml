@@ -1,0 +1,136 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:lib="using:MusicOrganiser.Core.Library"
+             xmlns:plugins="using:MusicOrganiser.Core.Plugins"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
+             x:Class="MusicOrganiser.Avalonia.Views.PluginsView"
+             x:DataType="vm:PluginsViewModel">
+    <UserControl.Styles>
+        <!-- A quiet selection, so the faint ID and path stay readable. -->
+        <Style Selector="ListBox.copies ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style Selector="ListBox.copies ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+        </Style>
+        <Style Selector="ListBox.copies ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
+        </Style>
+    </UserControl.Styles>
+    <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,18">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <CheckBox Content="Not installed only" IsChecked="{Binding OnlyMissing}" Margin="0,0,12,0" />
+                <TextBox Width="360" PlaceholderText="Search plugins or vendors…" Text="{Binding SearchText}" />
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Text="Plugins" Classes="pageTitle" />
+                <TextBlock Text="{Binding Summary}" Classes="pageSubtitle" />
+            </StackPanel>
+        </DockPanel>
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+            <TextBlock FontSize="12" Classes="muted"
+                       Text="Double-click a plugin to see the projects that use it. 'Installed' compares against the plugin folders in Settings." />
+            <TextBlock FontSize="12" Classes="muted" Margin="0,2,0,0" TextWrapping="Wrap" Text="{Binding ScannerNote}" />
+            <DockPanel Margin="0,8,0,0" IsVisible="{Binding CanReadAll}">
+                <Button DockPanel.Dock="Left" Content="Read all parameters" Command="{Binding ReadAllParametersCommand}" />
+                <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" Classes="muted" TextWrapping="Wrap"
+                           Text="Loads each plugin whose parameters haven't been read, four at a time. Some show a licence window as they load. Stop in the sidebar pauses it, and it carries on from there next time." />
+            </DockPanel>
+        </StackPanel>
+
+        <!-- The selected plugin as installed: what the plugin scanner read from its file. -->
+        <Border DockPanel.Dock="Right" Width="380" Margin="12,0,0,0" Classes="card"
+                IsVisible="{Binding Selected, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="INSTALLED" Classes="filterLabel" />
+                <TextBlock DockPanel.Dock="Top" Text="{Binding Selected.Name, FallbackValue=''}" FontSize="16" FontWeight="SemiBold"
+                           TextWrapping="Wrap" Margin="0,0,0,6" />
+                <TextBlock DockPanel.Dock="Top" Text="{Binding InstalledNote}" Classes="muted" FontSize="12" Margin="0,0,0,6"
+                           IsVisible="{Binding InstalledNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                <ListBox DockPanel.Dock="Top" ItemsSource="{Binding Installed}" SelectedItem="{Binding ShownCopy}" Classes="copies"
+                         Background="Transparent" MaxHeight="230" Margin="-4,0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:InstalledPluginItem">
+                            <StackPanel Margin="0,2">
+                                <DockPanel>
+                                    <Border DockPanel.Dock="Left" Classes="pill" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Format}" Classes="pillText" Foreground="{StaticResource MutedBrush}" />
+                                    </Border>
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" ToolTip.Tip="{Binding Title}" />
+                                </DockPanel>
+                                <TextBlock Text="{Binding Details}" FontSize="12" Classes="muted" Margin="0,3,0,0" />
+                                <TextBlock Text="{Binding IdText}" FontSize="11" Foreground="{StaticResource FaintBrush}"
+                                           TextTrimming="CharacterEllipsis" ToolTip.Tip="The ID DAW projects save this plugin under" />
+                                <TextBlock Text="{Binding Location}" FontSize="11" Foreground="{StaticResource FaintBrush}"
+                                           TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Location}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <Panel DockPanel.Dock="Top" Margin="0,12,0,6"
+                       IsVisible="{Binding ShownCopy, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <Panel DataContext="{Binding ShownCopy}">
+                        <StackPanel x:DataType="vm:InstalledPluginItem">
+                            <TextBlock Text="PARAMETERS" Classes="filterLabel" />
+                            <TextBlock Text="{Binding ParametersNote}" Classes="muted" FontSize="12"
+                                       IsVisible="{Binding ParametersNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            <StackPanel IsVisible="{Binding CanRead}">
+                                <Button Content="Read parameters" Margin="0,4,0,4" Command="{Binding ReadParametersCommand}" />
+                                <TextBlock Text="Loads the plugin in the scanner. Some plugins show a licence window when they load."
+                                           Classes="muted" FontSize="11" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Panel>
+                </Panel>
+
+                <DataGrid ItemsSource="{Binding ShownCopy.Parameters, FallbackValue={x:Null}}" AutoGenerateColumns="False"
+                          IsReadOnly="True" SelectionMode="Single" GridLinesVisibility="None" Background="Transparent"
+                          CanUserSortColumns="True"
+                          IsVisible="{Binding ShownCopy.HasParameters, FallbackValue=False}">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Parameter" Width="*" Binding="{Binding Name}" x:DataType="plugins:ScannedParam" />
+                        <DataGridTemplateColumn Header="Starts at" Width="120" SortMemberPath="Text">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="plugins:ScannedParam">
+                                    <TextBlock Text="{Binding Display}" Margin="8,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                               ToolTip.Tip="{Binding Range}" Foreground="{StaticResource MutedBrush}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </DockPanel>
+        </Border>
+
+        <Border Classes="card" Padding="8,10,8,8">
+            <DataGrid ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
+                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" CanUserSortColumns="True"
+                      GridLinesVisibility="None" Background="Transparent" DoubleTapped="OnDoubleTapped">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Plugin" Width="2*" Binding="{Binding Name}" x:DataType="lib:PluginUsage" />
+                    <DataGridTextColumn Header="Vendor" Width="*" Binding="{Binding Vendor}" x:DataType="lib:PluginUsage" />
+                    <DataGridTextColumn Header="Format" Width="90" Binding="{Binding Format}" x:DataType="lib:PluginUsage" />
+                    <DataGridTextColumn Header="Projects" Width="90" Binding="{Binding Projects}" x:DataType="lib:PluginUsage" />
+                    <DataGridTextColumn Header="Used in" Width="*" Binding="{Binding Daws}" x:DataType="lib:PluginUsage" />
+                    <DataGridTemplateColumn Header="Installed" Width="140" SortMemberPath="Installed">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate x:DataType="lib:PluginUsage">
+                                <Panel Margin="8,0" VerticalAlignment="Center">
+                                    <TextBlock Text="Yes" Foreground="{StaticResource OkBrush}" IsVisible="{Binding Installed}" VerticalAlignment="Center" />
+                                    <Button Content="Search online" Padding="8,2" FontSize="12" IsVisible="{Binding !Installed}"
+                                            Command="{Binding $parent[UserControl].((vm:PluginsViewModel)DataContext).SearchOnlineCommand}"
+                                            CommandParameter="{Binding}" />
+                                </Panel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+    </DockPanel>
+</UserControl>

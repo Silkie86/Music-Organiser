@@ -47,6 +47,8 @@ public sealed record PresetBlob(string Name, string Plugin, string Extension, by
     public bool Native { get; init; }
     /// <summary>Where it sits when that tells copies apart, e.g. "Insert 3 · Vocals" or "Master".</summary>
     public string Where { get; init; } = "";
+    /// <summary>FL Studio: the channel an instrument is on (its place in the channel rack, from 0).</summary>
+    public int? Channel { get; init; }
     /// <summary>A VST2's program that was selected when it was saved (FL Studio), which the host selects again after loading it.</summary>
     public int Program { get; init; }
 }

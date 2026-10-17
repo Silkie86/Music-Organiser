@@ -1,12 +1,13 @@
 using System.IO;
 using MusicOrganiser.Core;
 using MusicOrganiser.Core.Sounds;
+using MusicOrganiser.ViewModels;
 using NAudio.Wave;
 
 namespace MusicOrganiser.App.Audio;
 
 /// <summary>Plays one sample at a time for auditioning. Starting a new one stops the last.</summary>
-public sealed class AudioPlayer : IDisposable
+public sealed class AudioPlayer : IAudioPlayer
 {
     WaveOutEvent? _out;
     WaveStream? _reader;

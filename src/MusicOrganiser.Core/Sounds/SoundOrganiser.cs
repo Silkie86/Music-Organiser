@@ -185,11 +185,15 @@ public sealed class SoundOrganiser : IDisposable
         });
         Flush();
         // A folder on an unplugged drive (or one that couldn't be read this time) keeps its sounds,
-        // tags and deep listening; only files that are really gone are forgotten.
-        var keep = folders.Where(f => !Directory.Exists(f)).Concat(unreadable)
-            .Select(d => System.IO.Path.EndsInDirectorySeparator(d) ? d : d + System.IO.Path.DirectorySeparatorChar).ToList();
+        // tags and deep listening; only files that are really gone are forgotten. So does a sound this app
+        // can't read here but could elsewhere (MP3, FLAC, M4A and OGG need Windows' decoders, which a Mac or
+        // Linux doesn't have yet).
+        static string Dir(string d) => System.IO.Path.EndsInDirectorySeparator(d) ? d : d + System.IO.Path.DirectorySeparatorChar;
+        var keep = folders.Where(f => !Directory.Exists(f)).Concat(unreadable).Select(Dir).ToList();
+        var listed = folders.Select(Dir).ToList();
         Library.RemoveMissing(files.ToHashSet(StringComparer.OrdinalIgnoreCase),
-            p => keep.Any(k => p.StartsWith(k, StringComparison.OrdinalIgnoreCase)));
+            p => keep.Any(k => p.StartsWith(k, StringComparison.OrdinalIgnoreCase)) ||
+                 !AudioFile.CanRead(p) && listed.Any(f => p.StartsWith(f, StringComparison.OrdinalIgnoreCase)) && File.Exists(p));
         Reload();
         UpdateTypes(progress);
         return todo.Count;

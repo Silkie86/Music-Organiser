@@ -111,8 +111,39 @@ public class LibraryTests : IDisposable
     [InlineData("Pitcher", "", "", true)]
     [InlineData("IL Harmor", "", "", true)]
     [InlineData("Serum", "Xfer Records", @"C:\VST\Serum.dll", false)]
+    [InlineData("Some Synth", "", "/Library/Audio/Plug-Ins/VST3/Image-Line/Some Synth.vst3", true)]
     public void KnowsWhatComesWithFlStudio(string name, string vendor, string path, bool bundled) =>
         Assert.Equal(bundled, PluginCatalog.IsFlStudioBundled(name, vendor, path));
+
+    [Fact]
+    public void ScansMacStylePluginBundlesAsOnePluginEach()
+    {
+        var folder = Path.Combine(_root, "Plug-Ins");
+        foreach (var bundle in new[] { "Serum.component", "Vital.clap", "Diva.vst3", "Old Synth.vst" })
+        {
+            var inner = Path.Combine(folder, bundle, "Contents", "MacOS");
+            Directory.CreateDirectory(inner);
+            File.WriteAllText(Path.Combine(inner, "helper.dll"), "");
+        }
+        var names = PluginCatalog.Scan([folder]).Except(PluginCatalog.AlwaysKnown).Order().ToList();
+        Assert.Equal(["Diva", "Old Synth", "Serum", "Vital"], names);
+    }
+
+    [Fact]
+    public void KeepsTwoLetterPluginNames()
+    {
+        // KORG's M1, as it installs on Windows: a VST3 bundle and a VST2 file.
+        var korg = Path.Combine(_root, "Plugins", "KORG");
+        Directory.CreateDirectory(Path.Combine(korg, "M1.vst3", "Contents", "x86_64-win"));
+        File.WriteAllText(Path.Combine(korg, "M1.dll"), "");
+        File.WriteAllText(Path.Combine(korg, "Polysix.dll"), "");
+
+        var files = PluginCatalog.ScanFiles([Path.Combine(_root, "Plugins")]);
+        Assert.Equal(["M1 VST2", "M1 VST3", "Polysix VST2"], files.Select(f => $"{f.Name} {f.Format}").Order());
+        // So a project naming it, with no path or an old one, finds it installed.
+        _db.ReplaceInstalledPlugins(PluginCatalog.Scan([Path.Combine(_root, "Plugins")]));
+        Assert.Contains(LibraryDb.NameKey("M1"), _db.InstalledKeys());
+    }
 
     [Theory]
     [InlineData("LFOTool", "LFOTool_x64")]
