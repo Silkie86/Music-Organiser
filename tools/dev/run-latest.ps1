@@ -183,7 +183,47 @@ Say 'Leave this window open: changes pushed to GitHub show up in the app by them
 Say 'In the app, F12 saves a note (and a picture) for Claude.' 'Cyan'
 Say 'Press Ctrl+C here, or close this window, to stop. (Close just the app and the next change opens it again.)' 'Cyan'
 Say ''
+function Stop-StrayApps {
+    # A copy of the app from this folder that is still open (left from an earlier run, or one dotnet watch lost
+    # track of) holds its files, so the next build can't replace them and waits for ever. Close it first.
+    $bin = [IO.Path]::GetFullPath((Join-Path $Repo 'src'))
+    # By path, not name: Linux and macOS shorten process names, and only this folder's copies are ours to close
+    # (Visual Studio's own copy runs from a different folder and is left alone).
+    $stray = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.Id -ne $PID -and $_.Path -and $_.Path.StartsWith($bin, [StringComparison]::OrdinalIgnoreCase) -and
+        [IO.Path]::GetFileName($_.Path) -in @('MusicOrganiser.Avalonia', 'MusicOrganiser.Avalonia.exe') })
+    if ($stray.Count -eq 0) { return }
+    Say "Closing $($stray.Count) older copy(ies) of the app that were still open, so the new build can replace them." 'Yellow'
+    foreach ($p in $stray) {
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        $p.WaitForExit(10000) | Out-Null
+    }
+}
+
+function Build-App {
+    # Builds once before dotnet watch starts, so a file held by another program is caught and said plainly instead
+    # of dotnet watch waiting silently on "Fix the error to continue". Tries again after closing stray copies.
+    for ($try = 1; $try -le 3; $try++) {
+        Stop-StrayApps
+        $out = @(& dotnet build (Join-Path $Repo $AppProject) -c Debug -nologo -v:q -clp:NoSummary 2>&1)
+        if ($LASTEXITCODE -eq 0) { return }
+        $locked = @($out | Where-Object { "$_" -match 'MSB302[16]|MSB3027|being used by another process|locked by' })
+        if ($locked.Count -eq 0) {
+            # A real build error: show it; dotnet watch shows it too and rebuilds when the next fix arrives.
+            $out | Select-Object -Last 15 | ForEach-Object { Say "  $_" 'Red' }
+            return
+        }
+        Say "The build couldn't replace a file because another program has it open:" 'Yellow'
+        $locked | Select-Object -First 2 | ForEach-Object { Say "  $_" 'Yellow' }
+        Say "Trying again ($try of 3)..." 'Yellow'
+        Start-Sleep -Seconds 3
+    }
+    Say 'Still locked. Close every Music Organiser window (and Visual Studio if it is running the app), then press Ctrl+C here and start the shortcut again.' 'Red'
+}
+
 function Start-Watch {
+    Say 'Building...' 'DarkGray'
+    Build-App
     Start-Process -FilePath 'dotnet' -ArgumentList @('watch', '--project', $AppProject, '--non-interactive') `
         -NoNewWindow -PassThru -WorkingDirectory $Repo
 }
@@ -194,6 +234,7 @@ function Stop-Watch($Process) {
     if ($OnWindows) { & taskkill /PID $Process.Id /T /F 2>$null | Out-Null }
     else { Stop-Process -Id $Process.Id -ErrorAction SilentlyContinue }
     $Process.WaitForExit(10000) | Out-Null
+    Stop-StrayApps
 }
 
 function Test-NeedsRestart([string]$From, [string]$To) {
