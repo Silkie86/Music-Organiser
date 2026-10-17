@@ -70,7 +70,7 @@ public class SerumTests
     }
 
     /// <summary>A Serum 1 state laid out as Serum 1.3 saves one, with a few things set.</summary>
-    static byte[] Serum1(bool flWrapped = false)
+    internal static byte[] Serum1(bool flWrapped = false)
     {
         var raw = new byte[Serum1State.Size];
         void F(int at, float v) => BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(at), v);
