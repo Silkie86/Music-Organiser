@@ -75,6 +75,35 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Changing_one_field_of_a_song_leaves_its_older_saves_other_fields_alone()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        Save("Didums_1", 1);
+        Save("Didums_2", 2);
+        // The older save has notes and a key of its own (set before the newer save had any).
+        var older = _db.Projects().Single(p => p.Name == "Didums_1");
+        older.Notes = "the first take had the vocal";
+        older.MusicalKey = "Am";
+        _db.SaveOrganisation(older);
+        var newer = _db.Projects().Single(p => p.Name == "Didums_2");
+        newer.Notes = "the vocal is gone";
+        newer.MusicalKey = "Cm";
+        _db.SaveOrganisation(newer);
+
+        var song = Main().Projects.Items.Single(i => i.Name == "Didums");
+        song.Rating = 3;
+
+        older = _db.Projects().Single(p => p.Name == "Didums_1");
+        Assert.Equal((3, "the first take had the vocal", "Am"), (older.Rating, older.Notes, older.MusicalKey));
+    }
+
+    [Fact]
     public void A_song_sits_under_the_year_it_was_first_made_and_shows_its_rework()
     {
         ProjectSummary Save(string name, DateTime saved, int notes, string[] plugins) => new()

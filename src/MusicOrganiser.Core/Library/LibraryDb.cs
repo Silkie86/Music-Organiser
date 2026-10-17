@@ -605,17 +605,31 @@ public sealed partial class LibraryDb : IDisposable
 
     public void SaveOrganisation(ProjectSummary p) => SaveOrganisation(p, []);
 
-    /// <summary>Your fields for a song: written to its newest save and to each of its other saves, so they stay the song's.</summary>
-    public void SaveOrganisation(ProjectSummary p, IEnumerable<long> otherSaves)
+    /// <summary>Your fields for a song, as <see cref="SaveOrganisation(ProjectSummary, IEnumerable{long}, OrganisationField)"/> with all of them.</summary>
+    public void SaveOrganisation(ProjectSummary p, IEnumerable<long> otherSaves) => SaveOrganisation(p, otherSaves, OrganisationField.All);
+
+    /// <summary>
+    /// Your fields for a song: written to its newest save, and those in <paramref name="fields"/> to each of its other
+    /// saves too, so they stay the song's. Only the field you changed goes to the other saves, so changing a rating
+    /// leaves an older save's own notes and key alone.
+    /// </summary>
+    public void SaveOrganisation(ProjectSummary p, IEnumerable<long> otherSaves, OrganisationField fields)
     {
+        var sets = new List<string>();
+        if (fields.HasFlag(OrganisationField.Status)) sets.Add("status = $s");
+        if (fields.HasFlag(OrganisationField.Rating)) sets.Add("rating = $r");
+        if (fields.HasFlag(OrganisationField.Favourite)) sets.Add("favourite = $f");
+        if (fields.HasFlag(OrganisationField.Key)) sets.Add("musical_key = $k");
+        if (fields.HasFlag(OrganisationField.Notes)) sets.Add("notes = $n");
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
             foreach (var id in otherSaves.Prepend(p.Id).Distinct())
             {
-                using var cmd = Cmd("""
-                    UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
-                    """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", id));
+                var set = id == p.Id ? "status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n" : string.Join(", ", sets);
+                if (set.Length == 0) continue;
+                using var cmd = Cmd($"UPDATE projects SET {set} WHERE id = $id",
+                    ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", id));
                 cmd.Transaction = tx;
                 cmd.ExecuteNonQuery();
             }
@@ -711,4 +725,12 @@ public sealed partial class LibraryDb : IDisposable
 
     public IReadOnlyList<long> ProjectsUsingSample(string path) =>
         Query("SELECT DISTINCT project_id FROM samples WHERE path = $p COLLATE NOCASE", r => (long)r["project_id"], ("$p", path));
+}
+
+/// <summary>Your fields on a song (see <see cref="LibraryDb.SaveOrganisation(ProjectSummary, IEnumerable{long}, OrganisationField)"/>).</summary>
+[Flags]
+public enum OrganisationField
+{
+    Status = 1, Rating = 2, Favourite = 4, Key = 8, Notes = 16,
+    All = Status | Rating | Favourite | Key | Notes,
 }
