@@ -23,6 +23,16 @@ public static class Serum1To2
     /// <param name="Rough">What came across only roughly or not at all, in words for the person using the app.</param>
     public sealed record Result(Serum2State State, IReadOnlyList<string> Rough);
 
+    /// <summary>What came across roughly, in a few words for a note: modulation rows counted together, at most five things named.</summary>
+    public static string Describe(IEnumerable<string> rough)
+    {
+        var all = rough.Distinct().ToList();
+        var rows = all.Count(r => r.StartsWith("modulation row ", StringComparison.Ordinal));
+        var named = all.Where(r => !r.StartsWith("modulation row ", StringComparison.Ordinal)).ToList();
+        if (rows > 0) named.Add(rows == 1 ? "1 modulation row" : $"{rows} modulation rows");
+        return named.Count <= 5 ? string.Join(", ", named) : $"{string.Join(", ", named.Take(5))} and {named.Count - 5} more";
+    }
+
     /// <param name="findAudio">
     /// Looks up a Serum 1 wavetable or noise sample by its path relative to Serum's Tables or Noises folder (as
     /// Serum 1 saves it, with '/'), for its length. Without it, or when it can't find the file, Serum 2 is left to

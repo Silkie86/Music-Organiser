@@ -416,7 +416,8 @@ public static class Fixtures
     /// An FL Studio 25 project inside "FL Studio/Projects": wrapper state version 12 with a
     /// VST2 (Serum) and a VST3 (Arcade), and a sample under %FLStudioUserData%.
     /// </summary>
-    public static string FlStudio25Project(string dir, bool withNotes = false)
+    /// <param name="serumChunk">Serum's own state (a Serum 1 chunk) in place of three placeholder bytes.</param>
+    public static string FlStudio25Project(string dir, bool withNotes = false, byte[]? serumChunk = null)
     {
         var projects = Path.Combine(dir, "FL Studio", "Projects");
         Directory.CreateDirectory(projects);
@@ -430,7 +431,7 @@ public static class Fixtures
             .Word(64, 1).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Lead")
             .Data(213, WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Xfer\Serum_x64.dll", "Xfer Records",
-                                   FlVst2State([1, 2, 3]), version: 12, kind: 4, fourCc: "XsfX"))
+                                   FlVst2State(serumChunk ?? [1, 2, 3]), version: 12, kind: 4, fourCc: "XsfX"))
             .Word(64, 2).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Keys")
             .Data(213, WrapperBlob("Arcade", @"C:\Program Files\Common Files\VST3\Arcade.vst3", "Output",

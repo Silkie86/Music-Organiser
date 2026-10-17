@@ -64,13 +64,12 @@ public static class ProjectFixer
         return lines;
     }
 
-    /// <summary>Whether Fix can swap this project's Serum for Serum 2: a Bitwig project with Serum in it, and Serum 2 installed.</summary>
+    /// <summary>Whether Fix can swap this project's Serum for Serum 2: an FL Studio or Bitwig project with Serum in it, and Serum 2 installed.</summary>
     public static bool CanSwapSerum(ProjectDetail project, IReadOnlySet<string> installed) => SerumSwap(project, installed) is not null;
 
     static FixLine? SerumSwap(ProjectDetail project, IReadOnlySet<string> installed)
     {
-        if (!Path.GetExtension(project.Summary.Path).Equals(".bwproject", StringComparison.OrdinalIgnoreCase) ||
-            !installed.Any(IsSerum2) || project.Plugins.FirstOrDefault(p => IsSerum1(p.Name)) is not { } serum)
+        if (!CanWrite(project.Summary.Path) || !installed.Any(IsSerum2) || project.Plugins.FirstOrDefault(p => IsSerum1(p.Name)) is not { } serum)
             return null;
         // Serum 1 missing: the swap is the fix, so it's ticked. Installed: it's yours to choose.
         return new FixLine(false, serum.Name, serum.Installed ? FixAction.Suggestion : FixAction.Relink, "Serum 2",
@@ -160,11 +159,16 @@ public static class ProjectFixer
         IReadOnlyList<string> notes = [];
         if (swap)
         {
-            if (kind != ".bwproject") throw new NotSupportedException("Fix can only swap Serum for Serum 2 in Bitwig projects so far.");
-            var result = BitwigReader.SwapSerum(data, Serum2Path(), serumAudio ?? Serum1To2.XferAudio())
-                         ?? throw new InvalidDataException("This Bitwig project couldn't be read fully enough to write a fixed copy.");
+            serumAudio ??= Serum1To2.XferAudio();
+            var result = kind switch
+            {
+                ".flp" => FlStudioReader.SwapSerum(data, Serum2Path(), serumAudio),
+                ".bwproject" => BitwigReader.SwapSerum(data, Serum2Path(), serumAudio)
+                                ?? throw new InvalidDataException("This Bitwig project couldn't be read fully enough to write a fixed copy."),
+                _ => throw new NotSupportedException("Fix can only swap Serum for Serum 2 in FL Studio and Bitwig projects."),
+            };
             if (result.Swapped == 0) throw new InvalidDataException(result.Notes.FirstOrDefault() ?? "No Serum was found inside the project file.");
-            (data, swapped, notes) = (result.Data, result.Swapped, result.Notes);
+            (data, swapped, notes) = (result.Data, result.Swapped, kind == ".flp" ? [.. result.Notes, .. FlAutomationNote(projectPath)] : result.Notes);
         }
 
         var target = FixedPath(projectPath);
@@ -180,6 +184,21 @@ public static class ProjectFixer
             throw;
         }
         return new FixResult(target, changed, swapped, notes);
+    }
+
+    /// <summary>
+    /// FL's automation of a plugin names its setting by number, and Serum 2's numbers are other knobs, so automation
+    /// of Serum's knobs would move the wrong ones. It's left for you to redo, with a note.
+    /// </summary>
+    static IEnumerable<string> FlAutomationNote(string projectPath)
+    {
+        FlSong song;
+        try { song = Readers.FlStudio.ReadSong(projectPath); }
+        catch (InvalidDataException) { yield break; }
+        var serum = song.Channels.Where(c => c.Instrument is { } i && IsSerum1(i.Name)).Select(c => c.Index).ToHashSet();
+        var clips = song.Automation.Count(a => a.Control == FlControl.PluginParameter && serum.Contains(a.Channel));
+        if (clips > 0)
+            yield return $"{clips} automation clip{(clips == 1 ? "" : "s")} of Serum's knobs now move other knobs of Serum 2: redo or delete them.";
     }
 
     /// <summary>Where Serum 2's VST3 is: the usual place, else wherever it is in the VST3 folder.</summary>

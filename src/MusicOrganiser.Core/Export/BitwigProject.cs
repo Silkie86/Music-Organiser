@@ -245,7 +245,7 @@ public static class BitwigProject
                     {
                         instrument = instrument with { State = state };
                         notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, with its sound translated" +
-                                  (rough.Count > 0 ? $" (only roughly: {string.Join(", ", rough)})" : "") + $". {backup}");
+                                  (rough.Count > 0 ? $" (only roughly: {Serum1To2.Describe(rough)})" : "") + $". {backup}");
                     }
                     else notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, which opens with its default sound. {backup}");
                 }

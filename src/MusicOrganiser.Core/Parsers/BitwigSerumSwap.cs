@@ -11,9 +11,6 @@ public sealed partial class BitwigReader
     const int Serum1Vst2 = 0x58667358;
     const int ClsVst3Slot = 0x729, ClsVst2Slot = 0x1a6, ClsPluginTarget = 0x65;
 
-    /// <summary>What <see cref="SwapSerum"/> did: the new file, how many Serums it swapped, and notes for the person.</summary>
-    public sealed record SerumSwap(byte[] Data, int Swapped, IReadOnlyList<string> Notes);
-
     /// <summary>
     /// A copy of a Bitwig project with every Serum 1 (VST2 or VST3) swapped for Serum 2, with its sound translated
     /// (<see cref="Serum1To2"/>). Automation of Serum 1's knobs is left out, since Serum 2's are other knobs. Null
@@ -76,7 +73,7 @@ public sealed partial class BitwigReader
             swapped.Add(def.Parent ?? def);
             notes.Add(result.Rough.Count == 0
                 ? $"{track}: Serum swapped for Serum 2, with its sound translated."
-                : $"{track}: Serum swapped for Serum 2, with its sound translated (only roughly: {string.Join(", ", result.Rough.Distinct())}).");
+                : $"{track}: Serum swapped for Serum 2, with its sound translated (only roughly: {Serum1To2.Describe(result.Rough)}).");
         }
         if (swapped.Count == 0) return new SerumSwap(raw, 0, notes);
 
