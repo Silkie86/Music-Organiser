@@ -27,7 +27,7 @@ public sealed partial class BitwigReader
         var names = TrackNames(doc, out _);
         var tempo = doc.Objects.Where(o => o.Class == ClsTempo).Select(o => o.Num(FTempo)).FirstOrDefault(t => t is >= 10 and <= 999) ?? 120;
         var lanes = new List<PreviewLane>();
-        var launcher = new List<List<PreviewClip?>>();
+        var launcher = new List<List<BwObject?>>();
         var missing = 0;
 
         void Walk(BwObject group, int depth)
@@ -47,7 +47,8 @@ public sealed partial class BitwigReader
                     Depth = depth,
                     Clips = clips,
                 });
-                launcher.Add(LauncherSlots(track).Select(slot => Descendants(slot).FirstOrDefault(IsClip) is { } c ? Clip(c, path) : null).ToList());
+                // The launcher's clips are only read if nothing is on the timeline.
+                launcher.Add(LauncherSlots(track).Select(slot => Descendants(slot).FirstOrDefault(IsClip)).ToList());
                 if (children) Walk(track, depth + 1);
             }
         }
@@ -57,12 +58,13 @@ public sealed partial class BitwigReader
         if (lanes.Count > 0 && lanes.All(l => l.Clips.Count == 0))
         {
             // Nothing on the timeline: lay the clip launcher's scenes end to end instead, each as long as its longest clip.
-            var scenes = launcher.Select(l => l.Count).DefaultIfEmpty(0).Max();
+            var slots = launcher.Select(l => l.Select(c => c is null ? null : Clip(c, path)).ToList()).ToList();
+            var scenes = slots.Select(l => l.Count).DefaultIfEmpty(0).Max();
             var at = 0.0;
             var placed = lanes.Select(_ => new List<PreviewClip>()).ToList();
             for (var scene = 0; scene < scenes; scene++)
             {
-                var inScene = launcher.Select((slots, i) => (Lane: i, Clip: scene < slots.Count ? slots[scene] : null)).Where(x => x.Clip is not null).ToList();
+                var inScene = slots.Select((row, i) => (Lane: i, Clip: scene < row.Count ? row[scene] : null)).Where(x => x.Clip is not null).ToList();
                 if (inScene.Count == 0) continue;
                 foreach (var (lane, clip) in inScene) placed[lane].Add(clip! with { Start = at });
                 at += inScene.Max(x => x.Clip!.Length);
@@ -89,7 +91,7 @@ public sealed partial class BitwigReader
     /// Everything inside an object, depth first: what's defined there, and with <paramref name="refs"/> also what it refers
     /// to (a track's devices are often references).
     /// </summary>
-    static IEnumerable<BwObject> Descendants(BwObject root, bool refs = false)
+    static IEnumerable<BwObject> Descendants(BwObject root, bool refs = false, Func<BwObject, bool>? stop = null)
     {
         var stack = new Stack<BwObject>([root]);
         var seen = new HashSet<BwObject>(ReferenceEqualityComparer.Instance);
@@ -97,7 +99,11 @@ public sealed partial class BitwigReader
         {
             var o = stack.Pop();
             if (!seen.Add(o)) continue;
-            if (!ReferenceEquals(o, root)) yield return o;
+            if (!ReferenceEquals(o, root))
+            {
+                if (stop?.Invoke(o) == true) continue;
+                yield return o;
+            }
             foreach (var (_, v) in o.Fields.AsEnumerable().Reverse())
             {
                 if ((refs ? o.Resolve(v) : v as BwObject) is { } child) stack.Push(child);
@@ -113,7 +119,8 @@ public sealed partial class BitwigReader
     {
         // The device chain only; clips and sub-tracks hold no devices of this track's.
         if (track.Obj(0x164) is not { } chain) return "";
-        var devices = Descendants(chain, refs: true).Where(o => o.Class is ClsBitwigDevice or ClsVst3Plugin or ClsVst2Plugin && o.Str(FDeviceName).Length > 0).ToList();
+        // References are followed, but never into another track (a sidechain or modulator can point at one).
+        var devices = Descendants(chain, refs: true, stop: o => o.Has(FTrackLanes) || o.Has(FGroupTracks)).Where(o => o.Class is ClsBitwigDevice or ClsVst3Plugin or ClsVst2Plugin && o.Str(FDeviceName).Length > 0).ToList();
         var device = devices.FirstOrDefault(d => BitwigKind(d.Str(FDeviceName), d.Str(FDeviceCategory)) == PluginKind.Instrument ||
                                                  InstrumentCategories.Contains(d.Str(FDeviceCategory)))
                      ?? devices.FirstOrDefault(d => BitwigKind(d.Str(FDeviceName), d.Str(FDeviceCategory)) != PluginKind.NoteEffect)
@@ -151,7 +158,7 @@ public sealed partial class BitwigReader
                 yield break;
             }
             var loop = loopEnd - loopStart;
-            if (at >= offset && at < loopEnd) yield return at - offset;
+            if (at >= offset && at < loopEnd && at - offset < length) yield return at - offset;
             if (at < loopStart || at >= loopEnd) yield break;
             for (var pass = loopEnd - offset + (at - loopStart); pass < length; pass += loop) yield return pass;
         }

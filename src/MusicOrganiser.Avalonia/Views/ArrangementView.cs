@@ -43,6 +43,8 @@ public sealed class ArrangementView : Control
     Point? _hover;
     DateTime _shown;
     readonly Dictionary<string, AudioPeaks?> _peaks = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Each lane's lowest and highest note, worked out the first time it's drawn.</summary>
+    readonly Dictionary<PreviewLane, (int Lo, int Hi)> _keys = new(ReferenceEqualityComparer.Instance);
     int _loading;
     DispatcherTimer? _timer;
 
@@ -61,8 +63,10 @@ public sealed class ArrangementView : Control
         _zoom = 0;
         _left = _top = 0;
         _shown = DateTime.UtcNow;
-        _songBeats = Math.Max(Arrangement?.BeatsPerBar ?? 4, (Arrangement?.Length ?? 0) * 1.02);
+        var length = Arrangement?.Length ?? 0;
+        _songBeats = Math.Max(Math.Max(1, Arrangement?.BeatsPerBar ?? 4), double.IsFinite(length) ? length * 1.02 : 0);
         _contentHeight = Arrangement?.Lanes.Sum(LaneHeight) ?? 0;
+        _keys.Clear();
         Animate();
         LoadWaveforms(Arrangement);
     }
@@ -99,7 +103,10 @@ public sealed class ArrangementView : Control
         {
             foreach (var f in files)
             {
-                var peaks = AudioPeaks.For(f);
+                // A file that fails to read is drawn without a waveform; it mustn't stop the others or leave the timer running.
+                AudioPeaks? peaks;
+                try { peaks = AudioPeaks.For(f); }
+                catch (Exception) { peaks = null; }
                 Dispatcher.UIThread.Post(() =>
                 {
                     _peaks[f] = peaks;
@@ -140,7 +147,7 @@ public sealed class ArrangementView : Control
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta))
         {
             var beat = Beat(Math.Max(at.X, HeaderWidth));
-            _zoom = Math.Clamp(Zoom * Math.Pow(1.25, e.Delta.Y), FitZoom, 400);
+            _zoom = Math.Clamp(Zoom * Math.Pow(1.25, e.Delta.Y), FitZoom, Math.Max(FitZoom, 400));
             _left = beat - (Math.Max(at.X, HeaderWidth) - HeaderWidth) / _zoom;
         }
         else if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) || Math.Abs(e.Delta.X) > Math.Abs(e.Delta.Y))
@@ -306,8 +313,8 @@ public sealed class ArrangementView : Control
             var bpb = Math.Max(1, a.BeatsPerBar);
             var label = $"Bar {(int)(beat / bpb) + 1}.{(int)(beat % bpb) + 1}" + (hoverText is null ? "" : "  ·  " + hoverText);
             var t = Fit(label, 11.5, text, Math.Max(80, w - hx - 20));
-            var lx = Math.Clamp(p.X + 10, hx + 4, w - t.Width - 10);
-            var ly = Math.Clamp(p.Y + 16, RulerHeight + 2, h - t.Height - 8);
+            var lx = Math.Max(hx + 4, Math.Min(p.X + 10, w - t.Width - 10));
+            var ly = Math.Max(RulerHeight + 2, Math.Min(p.Y + 16, h - t.Height - 8));
             dc.DrawRectangle(Res("SidebarBrush", Brushes.Black), new Pen(stroke, 1), new RoundedRect(new Rect(lx - 6, ly - 3, t.Width + 12, t.Height + 6), 5));
             dc.DrawText(t, new Point(lx, ly));
         }
@@ -325,6 +332,7 @@ public sealed class ArrangementView : Control
     void ForEachBar(Arrangement a, int step, Action<int, double> draw)
     {
         var bpb = Math.Max(1, a.BeatsPerBar);
+        if (!(Zoom > 0) || !double.IsFinite(Zoom)) return;
         var first = (int)Math.Floor(_left / bpb / step) * step;
         for (var bar = Math.Max(0, first); ; bar += step)
         {
@@ -393,8 +401,12 @@ public sealed class ArrangementView : Control
         using (dc.PushClip(new Rect(hx, Math.Max(y, RulerHeight), w - hx, lh)))
         {
             // Notes share one key range across the lane, so the same note sits at the same height in every clip.
-            var keys = lane.Clips.SelectMany(c => c.Notes).Select(n => n.Key).ToList();
-            var (lo, hi) = keys.Count > 0 ? (keys.Min(), keys.Max()) : (60, 60);
+            if (!_keys.TryGetValue(lane, out var range))
+            {
+                var keys = lane.Clips.SelectMany(c => c.Notes).Select(n => n.Key).ToList();
+                _keys[lane] = range = keys.Count > 0 ? (keys.Min(), keys.Max()) : (60, 60);
+            }
+            var (lo, hi) = range;
             foreach (var clip in lane.Clips)
             {
                 var x0 = X(clip.Start);
@@ -449,7 +461,7 @@ public sealed class ArrangementView : Control
             {
                 if (n.Muted) continue;
                 var x = X(clip.Start + n.Start);
-                if (x > Bounds.Width) break;
+                if (x > Bounds.Width) continue;   // not break: notes aren't always in time order
                 var nw = Math.Max(1.2, n.Length * Zoom - 0.5);
                 if (x + nw < HeaderWidth) continue;
                 var ny = inner.Y + (rows == 1 ? span / 2 : span * (1 - (double)(n.Key - lo) / (rows - 1)));
