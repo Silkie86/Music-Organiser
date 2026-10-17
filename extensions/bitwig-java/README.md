@@ -159,6 +159,10 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   each whether its panel showed before and after each go (`visible`), whether the route `ran` it, and whether
   the link put the panel back as it was (`restored`). A panel that shows and hides with them means Bitwig
   carried them out for the link.
+- From 3.10, when Bitwig goes on playing the clip's track past the clip's end (Solomon's first run: it ignored the
+  track's stop with the track unarmed, while armed goes stopped on time), `record` ends just past the end with
+  record off first (`played.ended: "cut"`), so the take can't run long, and it returns the track to the
+  arrangement again just before the replay. Recording armed is the way the app records.
 - From 3.9, `newtrack` says the new track's `id`, and `clip` takes `trackId` in place of `track`. The
   self-check says how Bitwig is set for recording (arranger record, pre-roll, launch quantize, automation write
   mode and the master's mute).
