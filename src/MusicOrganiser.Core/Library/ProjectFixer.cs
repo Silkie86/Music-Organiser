@@ -39,8 +39,11 @@ public sealed record FixResult(string Path, int Relinked, int Swapped, IReadOnly
 /// Fix: repairs what it can of a project's missing samples into a new file next to the original
 /// ("Didums_77 (fixed).flp"), and can swap Serum for Serum 2 in it. The original is never changed.
 /// </summary>
-public static class ProjectFixer
+public static partial class ProjectFixer
 {
+    [System.Text.RegularExpressions.GeneratedRegex(@"(\s*\(fixed(\s+\d+)?\))+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex FixedSuffix();
+
     /// <summary>Whether Fix can write this kind of project (FL Studio and Bitwig so far).</summary>
     public static bool CanWrite(string path) =>
         Path.GetExtension(path).ToLowerInvariant() is ".flp" or ".bwproject";
@@ -115,11 +118,14 @@ public static class ProjectFixer
         return new FixLine(false, name, FixAction.StillMissing, null, "Not installed on this computer.");
     }
 
-    /// <summary>Where the fixed copy goes: next to the original, "Name (fixed).ext", or "(fixed 2)" and on if that's taken.</summary>
+    /// <summary>
+    /// Where the fixed copy goes: next to the original, "Name (fixed).ext", or "(fixed 2)" and on if that's taken. Fixing
+    /// a fixed copy again makes the next "(fixed N)" of the same name, not "Name (fixed) (fixed)".
+    /// </summary>
     public static string FixedPath(string path)
     {
         var dir = Path.GetDirectoryName(path) ?? ".";
-        var name = Path.GetFileNameWithoutExtension(path);
+        var name = FixedSuffix().Replace(Path.GetFileNameWithoutExtension(path), "");
         var ext = Path.GetExtension(path);
         for (var n = 1; ; n++)
         {

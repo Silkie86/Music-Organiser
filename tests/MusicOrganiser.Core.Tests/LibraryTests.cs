@@ -179,6 +179,7 @@ public class LibraryTests : IDisposable
     [InlineData("_5", "_5", 1)]
     [InlineData("civil war_5 (fixed)", "civil war", 5)]   // Fix's copy sits with the save it was made from
     [InlineData("Didums (Fixed 2)", "Didums", 1)]
+    [InlineData("Didums_70 (fixed) (fixed)", "Didums", 70)]   // a fixed copy fixed again by an older build
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
 

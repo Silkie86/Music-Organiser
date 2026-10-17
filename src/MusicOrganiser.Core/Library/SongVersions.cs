@@ -31,7 +31,7 @@ public static partial class SongVersions
     private static partial Regex Numbered();
 
     /// <summary>Fix's copies: "Didums_70 (fixed)", "Didums_70 (fixed 2)".</summary>
-    [GeneratedRegex(@"\s*\(fixed(\s+\d+)?\)$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(\s*\(fixed(\s+\d+)?\))+$", RegexOptions.IgnoreCase)]
     private static partial Regex FixedTail();
 
     /// <summary>
