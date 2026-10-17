@@ -16,7 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
-    public int Version => 2;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper
+    public int Version => 3;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
@@ -137,7 +137,69 @@ public sealed partial class FlStudioReader : IProjectReader
             if (parts.Length >= 2 && major > 0 && int.TryParse(parts[1], out var minor))
                 flp.Utf16 = major > 11 || (major == 11 && minor >= 5);
         }
+        if (major is > 0 and < 12) StepsAsNotes(flp);
         return flp;
+    }
+
+    // FL 9 and older keep the step sequencer's steps in each channel's events, after the pattern they're in (event 65):
+    // a dot (WORD 91: step + 256), the step's volume (WORD 72: step, volume) and its shift (WORD 92: step, shift).
+    // Newer FL saves steps as notes with no length, as FL 25 did when funk step_8 was saved again.
+    const int EvShuffle = 11, EvDot = 91, EvDotVolume = 72, EvDotShift = 92;
+
+    /// <summary>
+    /// Turns old step sequencer dots into note events (224) placed right after them, so they're read like FL 25's
+    /// steps: key C5, no length, the step's volume as velocity. Odd steps are swung by the song's shuffle, and a shift
+    /// moves its step in 192nds of a beat; both checked against FL 25's re-save of funk step_8 (shuffle 36 moves odd
+    /// steps 3 ticks at 96 PPQ, shift 24 moves a step 12).
+    /// </summary>
+    static void StepsAsNotes(Flp flp)
+    {
+        if (!flp.Events.Any(e => e.Id == EvDot)) return;
+        var step = flp.Ppq / 4;
+        var swing = (int)(flp.Events.FirstOrDefault(e => e.Id == EvShuffle).Int * step / 256);
+        var events = new List<Event>(flp.Events.Count);
+        int? channel = null;
+        var dots = new SortedSet<int>();
+        var volumes = new Dictionary<int, int>();
+        var shifts = new Dictionary<int, int>();
+        void Flush()
+        {
+            if (channel is { } ch && dots.Count > 0)
+            {
+                var notes = new byte[24 * dots.Count];
+                var i = 0;
+                foreach (var d in dots)
+                {
+                    var n = notes.AsSpan(24 * i++, 24);
+                    var at = d * step + (d % 2 == 1 ? swing : 0) + shifts.GetValueOrDefault(d) * flp.Ppq / 192;
+                    BinaryPrimitives.WriteInt32LittleEndian(n, Math.Max(at, 0));
+                    BinaryPrimitives.WriteUInt16LittleEndian(n[4..], 0x4000);
+                    BinaryPrimitives.WriteUInt16LittleEndian(n[6..], (ushort)ch);
+                    BinaryPrimitives.WriteUInt16LittleEndian(n[12..], (ushort)DefaultRoot);
+                    n[16] = 120; n[18] = 64; n[20] = 64; n[22] = 128; n[23] = 128;   // fine pitch, pan, release and mods centred, as FL writes them
+                    n[21] = (byte)Math.Clamp(volumes.GetValueOrDefault(d, 100), 0, 128);
+                }
+                events.Add(new Event(EvPatternNotes, notes));
+            }
+            dots.Clear(); volumes.Clear(); shifts.Clear();
+        }
+        foreach (var e in flp.Events)
+        {
+            switch (e.Id)
+            {
+                case EvDot when channel is not null: dots.Add((int)(e.Int & 0xff)); break;
+                case EvDotVolume when channel is not null: volumes[(int)(e.Int & 0xff)] = (int)(e.Int >> 8); break;
+                case EvDotShift when channel is not null: shifts[(int)(e.Int & 0xff)] = (int)(e.Int >> 8); break;
+                default:
+                    Flush();
+                    if (e.Id == EvChannelNew) channel = (int)e.Int;
+                    break;
+            }
+            events.Add(e);
+        }
+        Flush();
+        flp.Events.Clear();
+        flp.Events.AddRange(events);
     }
 
     static Dictionary<int, byte[]> WrapperFields(ReadOnlySpan<byte> blob)
@@ -708,6 +770,22 @@ public sealed partial class FlStudioReader : IProjectReader
                                            (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 0x2000) != 0,
                                            BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 12)..])));
             break;
+        }
+        // FL 9: 32-byte items with 0 and 0x6000 where newer FL has the pattern, and the playlist row, counted
+        // from 999 down, at 12. Each row plays one pattern there: row 999 - n is pattern n (checked against
+        // FL 25's re-save of funk step_8, which put the same 123 items on its own tracks).
+        if (items.Count == 0 && d.Length > 0 && d.Length % 32 == 0)
+        {
+            for (var off = 0; off < d.Length; off += 32)
+            {
+                var row = BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 12)..]);
+                if (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 4)..]) != 0 || BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 6)..]) != 0x6000 ||
+                    row is 0 or > 999)
+                    return [];
+                items.Add(new PlaylistItem(PatternBase + 999 - row, BinaryPrimitives.ReadUInt32LittleEndian(d[off..]),
+                                           BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), ItemOffset(d[(off + 24)..]),
+                                           (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 0x2000) != 0, row));
+            }
         }
         return items;
     }

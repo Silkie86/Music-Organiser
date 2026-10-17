@@ -326,6 +326,30 @@ public static class Fixtures
     }
 
     /// <summary>
+    /// Like funk step_8's drums (FL 9.0.0): shuffle 36, and sampler "Kick" with step sequencer dots in pattern 1 kept in
+    /// its channel events: steps 0, 5 (volume 52) and 7 (shifted 24). The playlist (FL 9's 32-byte items, row 999 - n
+    /// for pattern n) plays pattern 1 from beat 8, one bar long.
+    /// </summary>
+    public static string FlStudio9Steps(string dir)
+    {
+        var item = new byte[32];
+        BinaryPrimitives.WriteUInt32LittleEndian(item, 768);
+        BinaryPrimitives.WriteUInt16LittleEndian(item.AsSpan(6), 0x6000);
+        BinaryPrimitives.WriteUInt32LittleEndian(item.AsSpan(8), 384);
+        BinaryPrimitives.WriteUInt16LittleEndian(item.AsSpan(12), 998);
+        BinaryPrimitives.WriteSingleLittleEndian(item.AsSpan(24), -1);
+        BinaryPrimitives.WriteSingleLittleEndian(item.AsSpan(28), -1);
+        var b = new FlpBuilder()
+            .Ascii(199, "9.0.0").Byte(11, 36).Dword(156, 140_000)
+            .Word(64, 0).Byte(21, 0).Ascii(192, "Kick").Ascii(196, @"C:\Samples\Kick.wav")
+            .Word(65, 1).Word(72, 5 | 52 << 8).Word(91, 0x100).Word(91, 0x105).Word(92, 7 | 24 << 8).Word(91, 0x107)
+            .Data(233, item);
+        var path = Path.Combine(dir, "funk step_8.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
     /// Like Solomon's funk step_9 (funk step_8 saved again in FL 25.2.5): KORG LegacyCell on "Cell" gave FL an empty
     /// chunk, so its state is FL's 21-byte header with chunk length 0, then 8 zero bytes. A pattern plays it in bar 1.
     /// </summary>

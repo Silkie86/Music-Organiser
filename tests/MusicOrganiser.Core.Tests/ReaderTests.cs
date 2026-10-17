@@ -419,6 +419,17 @@ public class FlStudio9Tests
     }
 
     [Fact]
+    public void ReadsFl9StepSequencerDrumsAndPlaylist()
+    {
+        var path = Fixtures.FlStudio9Steps(Fixtures.TempDir());
+        var kick = Readers.FlStudio.ReadSong(path).Channels.Single();
+        // Placed at beat 8 (768 ticks): odd steps swung 3 ticks by shuffle 36, step 7 also shifted 12.
+        Assert.Equal([(768L, 60), (768L + 123, 60), (768L + 183, 60)], kick.Notes.Select(n => ((long)n.Start, n.Key)));
+        Assert.True(kick.Notes[1].Velocity < kick.Notes[0].Velocity);
+        Assert.Equal("3", new FlStudioReader().Read(path).Details["Notes"]);
+    }
+
+    [Fact]
     public void ListsFlsOwnEffectsHostedInTheOldWrapperAsNative()
     {
         var plugins = new FlStudioReader().Read(_path).Plugins.ToDictionary(p => p.Name);
