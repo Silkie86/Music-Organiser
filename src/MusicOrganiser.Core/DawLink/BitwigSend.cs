@@ -510,6 +510,26 @@ public static class BitwigSend
             yield return file;
     }
 
+    /// <summary>What went into Bitwig for one sound: its new track, and anything that didn't go to plan.</summary>
+    public sealed record SentSound(string Name, int Track, string? Problem);
+
+    /// <summary>
+    /// Puts one sound into the project open in Bitwig: a new track named after it, with the sound in a Sampler, as if
+    /// it were dropped there.
+    /// </summary>
+    public static async Task<SentSound> SoundAsync(BitwigLink link, string path, string name, CancellationToken ct = default)
+    {
+        CheckChanges(link);
+        if (!File.Exists(path)) throw new DawLinkException($"{Path.GetFileName(path)} isn't at {path} any more.");
+        var track = await link.NewTrackAsync(name, ct: ct);
+        var added = await link.InsertFileAsync(track, path, ct: ct);
+        var problem = !added.Added ? $"Bitwig didn't load {Path.GetFileName(path)}"
+            : added.Device?.Name is { Length: > 0 } device && !device.Contains("Sampler", StringComparison.OrdinalIgnoreCase)
+                ? $"Bitwig put it on {device} rather than a Sampler"
+                : null;
+        return new SentSound(name, track, problem);
+    }
+
     static void CheckChanges(BitwigLink link)
     {
         if (link.Hello.Link < BitwigLink.LinkVersion) throw new DawLinkException(BitwigLink.OldScript);

@@ -17,6 +17,8 @@ public partial class SoundsView : UserControl
         // A click always plays the sound; Autoplay follows the arrow keys. Neither follows every selection
         // change: the grid re-selects rows by itself when you sort or come back to this page.
         SoundGrid.AddHandler(PointerReleasedEvent, OnRowClicked, RoutingStrategies.Bubble, handledEventsToo: true);
+        // A right-click picks the row under it, so its menu (Play, To Bitwig, Show file) is about that sound.
+        SoundGrid.AddHandler(PointerPressedEvent, OnRowRightPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         // Held arrow keys play each sound they pass (after the grid has moved on to it); letting go plays the one you stop on.
         SoundGrid.AddHandler(KeyDownEvent, OnGridKeyMoved, RoutingStrategies.Bubble, handledEventsToo: true);
         SoundGrid.AddHandler(KeyUpEvent, OnGridKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
@@ -47,6 +49,12 @@ public partial class SoundsView : UserControl
         if (source.FindAncestorOfType<DataGridRow>(true) is { } row && row.DataContext == vm.Selected) vm.PlayClicked();
     }
 
+    void OnRowRightPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (Vm is not { } vm || !e.GetCurrentPoint(this).Properties.IsRightButtonPressed) return;
+        if (e.Source is Visual source && source.FindAncestorOfType<DataGridRow>(true) is { DataContext: Sound sound }) vm.Selected = sound;
+    }
+
     static bool Moves(KeyEventArgs e) =>
         e.Key is Key.Up or Key.Down or Key.PageUp or Key.PageDown or Key.Home or Key.End && e.KeyModifiers == KeyModifiers.None;
 
@@ -75,7 +83,9 @@ public partial class SoundsView : UserControl
     void OnTilePressed(object? sender, PointerPressedEventArgs e)
     {
         if (Vm is not { } vm || sender is not Control { DataContext: SoundTile tile }) return;
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        var props = e.GetCurrentPoint(this).Properties;
+        if (props.IsRightButtonPressed) vm.Selected = tile.Sound;   // its menu is about this tile
+        if (!props.IsLeftButtonPressed) return;
         TileList.Focus();
         vm.Selected = tile.Sound;
         if (e.ClickCount == 1) vm.PlayClicked();

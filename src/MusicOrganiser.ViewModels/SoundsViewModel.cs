@@ -57,6 +57,11 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     [ObservableProperty] TypeCount? _selectedType;
     [ObservableProperty] int _loopFilter;   // 0 all, 1 one-shots, 2 loops
     [ObservableProperty] string _keyFilter = "Any key";
+    public const string AnyYear = "Any year";
+    /// <summary>Only sounds used in a project last saved in this year ("2019"), to see what you used when.</summary>
+    [ObservableProperty] string _yearFilter = AnyYear;
+    /// <summary>"Any year", then each year a project using one of your sounds was saved in, newest first.</summary>
+    [ObservableProperty] IReadOnlyList<string> _yearChoices = [AnyYear];
     [ObservableProperty] bool _compatibleKeys;
     [ObservableProperty] string _bpmFrom = "";
     [ObservableProperty] string _bpmTo = "";
@@ -284,6 +289,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _showing = true;   // the list is worked out once, just below
         try { SelectedType = TypeCounts.FirstOrDefault(t => t.Type == type) ?? TypeCounts[0]; }
         finally { _showing = false; }
+        UpdateYears();
         UpdateList();
         BuildStars();
         UpdateSummary();
@@ -320,7 +326,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             items[i].LikedShare = top > 0 ? liked[i] / top : 0;
         }
         UpdateSummary();
-        if (OnlyUnused) Refresh();
+        UpdateYears();
+        if (OnlyUnused || YearFilter != AnyYear) Refresh();
         else if (SortBy == MostLiked) ApplySort();
     }
 
@@ -379,6 +386,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         var type = SelectedType is { Type: var t } && t != "All sounds" ? t : null;
         var loops = LoopFilter;
         var unused = OnlyUnused;
+        int? year = int.TryParse(YearFilter, out var y) ? y : null;
         var favourites = OnlyFavourites;
         var tag = TagFilter;
         var key = KeyFilter != "Any key" ? MusicTheory.ParseKey(KeyFilter) : null;
@@ -393,6 +401,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             if (loops == 1 && s.IsLoop) return false;
             if (loops == 2 && !s.IsLoop) return false;
             if (unused && s.UsedIn > 0) return false;
+            if (year is { } yr && Array.BinarySearch(s.UsedInYears, yr) < 0) return false;
             if (favourites && !s.Favourite) return false;
             if (tag.Length > 0 && !s.Tags.Any(x => x.Equals(tag, StringComparison.OrdinalIgnoreCase))) return false;
             if (key is { } k)
@@ -586,6 +595,21 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     partial void OnBpmFromChanged(string value) => Refresh();
     partial void OnBpmToChanged(string value) => Refresh();
     partial void OnOnlyUnusedChanged(bool value) => Refresh();
+    partial void OnYearFilterChanged(string value)
+    {
+        if (value is null) YearFilter = AnyYear;   // the list of years was replaced under the box
+        else Refresh();
+    }
+
+    /// <summary>The years to choose from, from what your projects used; the chosen one stays if it's still there.</summary>
+    void UpdateYears()
+    {
+        var years = Items.SelectMany(s => s.UsedInYears).Distinct().OrderDescending().Select(y => y.ToString()).ToList();
+        if (years.SequenceEqual(YearChoices.Skip(1))) return;
+        var keep = YearFilter;
+        YearChoices = [AnyYear, .. years];
+        YearFilter = YearChoices.Contains(keep) ? keep : AnyYear;
+    }
     partial void OnOnlyFavouritesChanged(bool value) => Refresh();
     partial void OnTagFilterChanged(string value) => Refresh();
 
@@ -628,6 +652,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         CompatibleKeys = false;
         BpmFrom = BpmTo = "";
         OnlyUnused = OnlyFavourites = false;
+        YearFilter = AnyYear;
         TagFilter = "";
         Message = "";
         ApplySort();
@@ -837,6 +862,36 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void Reveal(Sound? s)
     {
         if ((s ?? Selected) is { } x) Shell.Reveal(x.Path);
+    }
+
+    /// <summary>
+    /// Puts the sound (or the selected one) into the project open in Bitwig, in a Sampler on a new track named after
+    /// it. Bitwig needs the Music Organiser extension with "Let the app make changes" on.
+    /// </summary>
+    [RelayCommand]
+    async Task ToBitwig(Sound? s)
+    {
+        if ((s ?? Selected) is not { } sound) return;
+        var card = Activities.Start($"Putting {sound.Name} into Bitwig", "On a Sampler, on a new track");
+        try
+        {
+            using var link = await BitwigLink.ConnectAsync();
+            var sent = await BitwigSend.SoundAsync(link, sound.Path, sound.Name);
+            if (sent.Problem is { } problem)
+            {
+                card.Fail($"{sound.Name} didn't go in cleanly", problem + ".");
+                Message = $"{problem}.";
+                return;
+            }
+            card.Finish($"{sound.Name} is in Bitwig", "On a Sampler, on a new track");
+            Record([sound], SoundEvent.Send);
+        }
+        catch (DawLinkException e) { card.Fail("Couldn't put it into Bitwig", e.Message); Message = e.Message; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            card.Fail("Couldn't put it into Bitwig", e.Message);
+            Message = $"Sending to Bitwig failed: {e.Message}";
+        }
     }
 
     [RelayCommand]

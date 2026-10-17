@@ -639,6 +639,33 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Sounds_can_be_filtered_by_the_year_a_project_using_them_was_saved()
+    {
+        _soundDb.Save(new[] { "/samples/Kick A.wav", "/samples/Snare B.wav", "/samples/Hat C.wav" }.Select(p =>
+            new SoundLibrary.Analysed(p, 1, 1, new SoundAnalysis { Features = [1, 0, 0] }, null, null, null)));
+        _sounds.Reload();
+        void Project(string name, int year, params string[] samples)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            var saved = new DateTimeOffset(new DateTime(year, 6, 1, 12, 0, 0, DateTimeKind.Local)).ToUnixTimeSeconds();
+            _db.Upsert(new LibraryDb.IndexedFile(file, 1, saved, new ProjectInfo { Daw = "FL Studio" }, null,
+                samples.Select(p => (p, true)).ToList(), []));
+        }
+        Project("Old one", 2019, "/samples/Kick A.wav");
+        Project("New one", 2024, "/samples/Snare B.wav", "/samples/Kick A.wav");
+
+        var lab = Main().Sounds;
+        Assert.Equal([SoundsViewModel.AnyYear, "2024", "2019"], lab.YearChoices);
+        lab.YearFilter = "2019";
+        Assert.Equal(["Kick A"], lab.Shown.Select(s => s.Name));
+        lab.YearFilter = "2024";
+        Assert.Equal(["Kick A", "Snare B"], lab.Shown.Select(s => s.Name).Order());
+        lab.ClearFiltersCommand.Execute(null);
+        Assert.Equal(3, lab.Shown.Count);
+    }
+
+    [Fact]
     public void The_galaxy_places_sounds_plays_what_you_sweep_and_turns_the_trail_into_a_kit()
     {
         var played = new List<string>();
@@ -884,6 +911,28 @@ public class ViewModelTests : IDisposable
             await kit.SendToBitwigCommand.ExecuteAsync(null);
             Assert.Equal("Kit #42 is on the Drum Machine selected in Bitwig: Percussion on C#1. The pads for Kick (C1), Snare (D1), " +
                          "Clap (D#1), Closed hat (F#1) already had sounds, so they were left alone.", kit.Status);
+        }
+        finally { BitwigLink.Port = port; }
+    }
+
+    [Fact]
+    public async Task A_sound_goes_into_Bitwig_on_a_Sampler_on_a_track_of_its_own()
+    {
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        if (bitwig is null) return;
+        var port = BitwigLink.Port;
+        BitwigLink.Port = bitwig.Port;
+        try
+        {
+            var file = Path.Combine(_root, "Snare Tight.wav");
+            File.WriteAllBytes(file, [0]);
+            var lab = Main().Sounds;
+            lab.Selected = new Sound { Path = file };
+            await lab.ToBitwigCommand.ExecuteAsync(null);
+
+            using var link = await BitwigLink.ConnectAsync();
+            var track = (await link.ProjectAsync()).Tracks.Single(t => t.Name == "Snare Tight");
+            Assert.Contains("Sampler", track.Devices.Single().Name);
         }
         finally { BitwigLink.Port = port; }
     }

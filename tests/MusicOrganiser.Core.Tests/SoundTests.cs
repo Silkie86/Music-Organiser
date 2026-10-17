@@ -526,6 +526,47 @@ public class LearningTests
     }
 }
 
+public class GalaxySavedMapTests
+{
+    [Fact]
+    public void Each_kind_of_placing_keeps_its_own_map_and_an_old_single_map_moves_across()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-maps-").FullName;
+        var path = Path.Combine(root, "sounds.db");
+        long a, b;
+        using (var lib = new SoundLibrary(path))
+        {
+            lib.Save(new[] { "/lib/A.wav", "/lib/B.wav" }.Select(p => new SoundLibrary.Analysed(p, 1, 1,
+                new SoundAnalysis { Features = [1, 0, 0] }, null, null, "Kick")));
+            var ids = lib.All().ToDictionary(s => s.Name, s => s.Id);
+            (a, b) = (ids["A"], ids["B"]);
+            lib.SaveMap("clap", new Dictionary<long, StarPoint> { [a] = new(0.1f, 0.2f), [b] = new(0.3f, 0.4f) }, replace: true);
+            lib.SaveMap("features", new Dictionary<long, StarPoint> { [a] = new(0.9f, 0.8f) }, replace: true);
+            // A fresh layout of one kind leaves the other's alone.
+            lib.SaveMap("features", new Dictionary<long, StarPoint> { [b] = new(0.5f, 0.5f) }, replace: true);
+            Assert.Equal(new StarPoint(0.1f, 0.2f), lib.Map("clap")[a]);
+            Assert.Equal([b], lib.Map("features").Keys);
+            Assert.Empty(lib.Map("clap+features"));
+
+            // A library from before: one map, made by the kind the old setting names.
+            lib.SetSetting("galaxy_space", "clap+features");
+        }
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"CREATE TABLE sound_map (sound_id INTEGER PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL); INSERT INTO sound_map VALUES ({a}, 0.25, 0.75);";
+            cmd.ExecuteNonQuery();
+        }
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        using (var lib = new SoundLibrary(path))
+        {
+            Assert.Equal(new StarPoint(0.25f, 0.75f), lib.Map("clap+features")[a]);
+            Assert.Equal(2, lib.Map("clap").Count);
+        }
+    }
+}
+
 public class GalaxyMapTests
 {
     // Three families of 20 sounds (kicks, hats, pads), each a noisy copy of its own fingerprint.

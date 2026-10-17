@@ -119,38 +119,44 @@ public sealed class SoundOrganiser : IDisposable
 
     // ---- usage from your projects -------------------------------------------------------
 
-    IReadOnlyList<(string Path, int Projects, int Recent)> _lastUsage = [];
+    IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> _lastUsage = [];
 
     public void ApplyUsage(IReadOnlyList<(string Path, int Projects)> usage) =>
-        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Projects)).ToList());
+        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Projects, Array.Empty<int>())).ToList());
+
+    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage) =>
+        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Recent, Array.Empty<int>())).ToList());
 
     /// <summary>
-    /// Counts how many of your projects use each sound, and how many of those were saved in the last year. Projects
+    /// Counts how many of your projects use each sound, how many of those were saved in the last year, and the years
+    /// they were saved in (for the "Used in" filter). Projects
     /// store samples by full path, relative path or just a file name (Bitwig collects copies), so a full-path match is
     /// used when there is one, otherwise the file name, but only a name no other sound in the library has: thousands
     /// of packs have a "01.wav", and each one was credited with every project using any of them.
     /// </summary>
-    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage) => ApplyUsage(_sounds, usage);
+    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> usage) => ApplyUsage(_sounds, usage);
 
-    void ApplyUsage(List<Sound> sounds, IReadOnlyList<(string Path, int Projects, int Recent)> usage)
+    void ApplyUsage(List<Sound> sounds, IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> usage)
     {
         _lastUsage = usage;
-        var byPath = new Dictionary<string, (int All, int Recent)>(StringComparer.OrdinalIgnoreCase);
-        var byName = new Dictionary<string, (int All, int Recent)>(StringComparer.OrdinalIgnoreCase);
-        static (int, int) Add((int All, int Recent) a, int n, int r) => (a.All + n, a.Recent + r);
-        foreach (var (p, n, r) in usage)
+        var byPath = new Dictionary<string, (int All, int Recent, int[] Years)>(StringComparer.OrdinalIgnoreCase);
+        var byName = new Dictionary<string, (int All, int Recent, int[] Years)>(StringComparer.OrdinalIgnoreCase);
+        static (int, int, int[]) Add((int All, int Recent, int[]? Years) a, int n, int r, int[] y) =>
+            (a.All + n, a.Recent + r, a.Years is not { Length: > 0 } had ? y : y.Length == 0 ? had : had.Union(y).Order().ToArray());
+        foreach (var (p, n, r, y) in usage)
         {
-            byPath[p] = Add(byPath.GetValueOrDefault(p), n, r);
+            byPath[p] = Add(byPath.GetValueOrDefault(p), n, r, y);
             var name = p.Split('\\', '/')[^1];
-            byName[name] = Add(byName.GetValueOrDefault(name), n, r);
+            byName[name] = Add(byName.GetValueOrDefault(name), n, r, y);
         }
         var shared = sounds.GroupBy(s => System.IO.Path.GetFileName(s.Path), StringComparer.OrdinalIgnoreCase)
                            .Where(g => g.Skip(1).Any()).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var s in sounds)
         {
             var name = System.IO.Path.GetFileName(s.Path);
-            (s.UsedIn, s.UsedInRecently) = byPath.TryGetValue(s.Path, out var u) ? u
+            var (all, recent, years) = byPath.TryGetValue(s.Path, out var u) ? u
                 : shared.Contains(name) ? default : byName.GetValueOrDefault(name);
+            (s.UsedIn, s.UsedInRecently, s.UsedInYears) = (all, recent, years ?? []);
         }
     }
 
@@ -309,8 +315,6 @@ public sealed class SoundOrganiser : IDisposable
 
     // ---- the sound galaxy ---------------------------------------------------------------------
 
-    public const string GalaxySpaceKey = "galaxy_space";
-
     /// <summary>What can place the galaxy's stars: CLAP and the measurements together, CLAP alone, or the measurements alone.</summary>
     public const string Both = "Both", ClapOnly = "CLAP", OwnOnly = "Own measurements";
 
@@ -350,37 +354,37 @@ public sealed class SoundOrganiser : IDisposable
         });
     }
 
-    /// <summary>True when the saved map is missing, made from the other kind of fingerprint, or lacks some sounds.</summary>
+    /// <summary>True when the saved map for this kind of placing is missing or lacks some sounds.</summary>
     public bool GalaxyOutOfDate(string wanted)
     {
         if (_features is not { Count: > 0 } f) return false;
-        if (Library.GetSetting(GalaxySpaceKey) != GalaxySpace(wanted)) return true;
-        var map = Library.Map();
+        var map = Library.Map(GalaxySpace(wanted));
         return f.Units.Keys.Any(id => !map.ContainsKey(id));
     }
 
     /// <summary>
-    /// Brings the galaxy up to date and returns it. It's laid out afresh when there's no map yet, the fingerprints
-    /// changed kind (deep listening finished) or more than a fifth of the sounds are new; otherwise the new sounds are
-    /// placed beside their sound-alikes, so the stars you know stay where they were.
+    /// Brings the galaxy up to date and returns it. Each kind of placing (<see cref="GalaxySpace"/>) keeps a map of its
+    /// own, so switching between them only works one out the first time. It's laid out afresh when that kind has no map
+    /// yet, <paramref name="fresh"/> asks for it, or more than a fifth of the sounds are new; otherwise the new sounds
+    /// are placed beside their sound-alikes, so the stars you know stay where they were.
     /// </summary>
-    public Dictionary<long, StarPoint> UpdateGalaxy(string wanted, IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
+    public Dictionary<long, StarPoint> UpdateGalaxy(string wanted, IProgress<SoundProgress>? progress = null, CancellationToken ct = default,
+                                                    bool fresh = false)
     {
         var space = GalaxySpace(wanted);
         var (ids, vector) = GalaxyVectors(space);
-        var map = Library.Map();
+        var map = Library.Map(space);
         var newIds = ids.Where(id => !map.ContainsKey(id)).ToArray();
-        if (map.Count == 0 || Library.GetSetting(GalaxySpaceKey) != space || newIds.Length > ids.Count / 5)
+        if (fresh || map.Count == 0 || newIds.Length > ids.Count / 5)
         {
             map = GalaxyMap.Layout(ids, vector, progress, ct);
-            Library.SaveMap(map, replace: true);
-            Library.SetSetting(GalaxySpaceKey, space);
+            Library.SaveMap(space, map, replace: true);
         }
         else if (newIds.Length > 0)
         {
             var mapped = ids.Where(map.ContainsKey).ToArray();
             var added = GalaxyMap.PlaceNew(newIds, mapped, vector, map);
-            Library.SaveMap(added, replace: false);
+            Library.SaveMap(space, added, replace: false);
             foreach (var (id, p) in added) map[id] = p;
         }
         return map;
