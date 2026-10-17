@@ -130,7 +130,7 @@ public static class DawProject
             if (p.State is { } s)
             {
                 // VST2 settings go in as a bank (.fxb), as Bitwig's own DAWproject files have them.
-                var (data, extension) = p.Format == "VST2" && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data), ".fxb") : (s.Data, s.Extension);
+                var (data, extension) = p.Format == "VST2" && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data, s.Program), ".fxb") : (s.Data, s.Extension);
                 path = $"plugins/{Guid.NewGuid()}{extension}";
                 files.Add((path, data));
             }
