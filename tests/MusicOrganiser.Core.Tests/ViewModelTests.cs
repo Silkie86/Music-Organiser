@@ -339,10 +339,18 @@ public class ViewModelTests : IDisposable
             await Until(() => main.Projects.Items.Any(i => i.Name == "Fresh Idea") && main.Sounds.Org.Sounds.Count == 1);
             Assert.EndsWith("Bounce 01.wav", main.Sounds.Org.Sounds[0].Path);
 
+            // Bitwig saving a song and its auto-backup copy at once: the card names the song, not the backup.
+            var cards = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            main.Activities.Items.CollectionChanged += (_, e) => { foreach (MusicOrganiser.ViewModels.Activity a in e.NewItems ?? Array.Empty<MusicOrganiser.ViewModels.Activity>()) cards.Enqueue(a.Title); };
+            Fixtures.FlStudioProject(Directory.CreateDirectory(Path.Combine(songs, "auto-backups")).FullName, "Another");
+            Fixtures.FlStudioProject(songs, "Zed");
+            await Until(() => cards.Any(t => t.StartsWith("Updated ")));
+            Assert.Equal("Updated Zed", cards.First(t => t.StartsWith("Updated ")));
+
             // Deleted: the song stays listed, marked missing; the sound is forgotten.
             File.Delete(Path.Combine(songs, "Fresh Idea.flp"));
             File.Delete(Path.Combine(lib, "Bounce 01.wav"));
-            await Until(() => main.Projects.Items.Single().FileMissing && main.Sounds.Org.Sounds.Count == 0);
+            await Until(() => main.Projects.Items.Single(i => i.Name == "Fresh Idea").FileMissing && main.Sounds.Org.Sounds.Count == 0);
             main.Shutdown();
         }
         finally { (MainViewModel.ProjectWatchQuiet, SoundsViewModel.SampleWatchQuiet) = quiet; }
