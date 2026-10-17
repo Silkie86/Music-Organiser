@@ -773,7 +773,8 @@ public sealed partial class FlStudioReader : IProjectReader
         }
         // FL 9: 32-byte items with 0 and 0x6000 where newer FL has the pattern, and the playlist row, counted
         // from 999 down, at 12. Each row plays one pattern there: row 999 - n is pattern n (checked against
-        // FL 25's re-save of funk step_8, which put the same 123 items on its own tracks).
+        // FL 25's re-save of funk step_8, which put the same 123 items on its own tracks). FL 25 gives each
+        // pattern played a track, in pattern order from track 1, so the slot is the one newer FL saves for that track.
         if (items.Count == 0 && d.Length > 0 && d.Length % 32 == 0)
         {
             for (var off = 0; off < d.Length; off += 32)
@@ -786,6 +787,9 @@ public sealed partial class FlStudioReader : IProjectReader
                                            BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), ItemOffset(d[(off + 24)..]),
                                            (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 0x2000) != 0, row));
             }
+            var order = items.Select(i => i.Index).Distinct().Order().Select((index, n) => (index, n)).ToDictionary();
+            for (var n = 0; n < items.Count; n++)
+                items[n] = items[n] with { Slot = 499 - order[items[n].Index] };
         }
         return items;
     }
