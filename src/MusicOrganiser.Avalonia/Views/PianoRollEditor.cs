@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
 
@@ -15,6 +16,8 @@ namespace MusicOrganiser.Avalonia.Views;
 /// right end to make it longer or shorter, right-click or double-click it to take it away. Notes a semitone from a guide
 /// note sounding at the same time are drawn in red. Everything snaps to sixteenths; hold Alt to place freely.
 /// The part repeats faintly when the guide is longer, and editing a repeat edits the part.
+/// Drag along the bar numbers to set loop points (Solomon, 2026-10-17: "there should be a way to set the loop points"):
+/// they snap to bars (Alt: beats), their ends can be dragged, and a right-click there clears them. A click plays from there.
 /// </summary>
 public sealed class PianoRollEditor : Control
 {
@@ -35,9 +38,17 @@ public sealed class PianoRollEditor : Control
     public static readonly StyledProperty<ICommand?> EditedCommandProperty = AvaloniaProperty.Register<PianoRollEditor, ICommand?>(nameof(EditedCommand));
     /// <summary>Runs with the ticks clicked in the strip along the top: play from there.</summary>
     public static readonly StyledProperty<ICommand?> SeekCommandProperty = AvaloniaProperty.Register<PianoRollEditor, ICommand?>(nameof(SeekCommand));
+    /// <summary>Where the part plays (ticks): from <see cref="PartStart"/> going round to <see cref="PartEnd"/> (−1: the end).</summary>
+    public static readonly StyledProperty<long> PartStartProperty = AvaloniaProperty.Register<PianoRollEditor, long>(nameof(PartStart));
+    public static readonly StyledProperty<long> PartEndProperty = AvaloniaProperty.Register<PianoRollEditor, long>(nameof(PartEnd), -1);
+    /// <summary>The loop points, or null.</summary>
+    public static readonly StyledProperty<RollRange?> SectionProperty = AvaloniaProperty.Register<PianoRollEditor, RollRange?>(nameof(Section));
+    /// <summary>Runs with new loop points dragged along the bar numbers, or null when they're cleared.</summary>
+    public static readonly StyledProperty<ICommand?> SectionCommandProperty = AvaloniaProperty.Register<PianoRollEditor, ICommand?>(nameof(SectionCommand));
 
     static PianoRollEditor() =>
-        AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty);
+        AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty,
+                                       PartStartProperty, PartEndProperty, SectionProperty);
 
     public IReadOnlyList<NoteEvent>? Notes { get => GetValue(NotesProperty); set => SetValue(NotesProperty, value); }
     public IReadOnlyList<NoteEvent>? Guide { get => GetValue(GuideProperty); set => SetValue(GuideProperty, value); }
@@ -46,6 +57,10 @@ public sealed class PianoRollEditor : Control
     public double Position { get => GetValue(PositionProperty); set => SetValue(PositionProperty, value); }
     public ICommand? EditedCommand { get => GetValue(EditedCommandProperty); set => SetValue(EditedCommandProperty, value); }
     public ICommand? SeekCommand { get => GetValue(SeekCommandProperty); set => SetValue(SeekCommandProperty, value); }
+    public long PartStart { get => GetValue(PartStartProperty); set => SetValue(PartStartProperty, value); }
+    public long PartEnd { get => GetValue(PartEndProperty); set => SetValue(PartEndProperty, value); }
+    public RollRange? Section { get => GetValue(SectionProperty); set => SetValue(SectionProperty, value); }
+    public ICommand? SectionCommand { get => GetValue(SectionCommandProperty); set => SetValue(SectionCommandProperty, value); }
 
     public PianoRollEditor()
     {
@@ -53,8 +68,14 @@ public sealed class PianoRollEditor : Control
         ClipToBounds = true;
     }
 
-    /// <summary>The strip along the top that shows bars and plays from where it's clicked.</summary>
-    const double Ruler = 16;
+    /// <summary>The strip along the top that shows bars, plays from where it's clicked and sets loop points when dragged.</summary>
+    const double Ruler = 20;
+    const long Beat = Ppq, Bar = 4 * Ppq;
+
+    enum Edge { None, New, Start, End }
+    Edge _edge;              // what a press on the bar numbers is doing
+    double _pressX;
+    RollRange? _draft;       // loop points while they're being dragged
 
     enum Drag { None, Move, Resize }
 
@@ -70,6 +91,8 @@ public sealed class PianoRollEditor : Control
     IReadOnlyList<NoteEvent> Current => _working ?? Notes ?? [];
     long Shown => Math.Max(Math.Max(1, Length), Math.Max(1, Period));
     long Loop => Math.Max(Sixteenth, Period > 0 ? Period : Shown);
+    long From => Math.Clamp(PartStart, 0, Shown);
+    long To => PartEnd > From ? Math.Min(PartEnd, Shown) : Shown;
 
     (int Low, int High) Range()
     {
@@ -106,10 +129,11 @@ public sealed class PianoRollEditor : Control
         var (low, high) = Range();
         var notes = Current;
         var loop = Loop;
-        for (long from = 0; from < Shown; from += loop)
+        for (long from = From; from < To; from += loop)
             for (var i = notes.Count - 1; i >= 0; i--)
             {
                 var n = notes[i];
+                if (from + n.Start >= To) continue;
                 double x0 = X(from + n.Start), x1 = Math.Max(x0 + 3, X(from + n.Start + n.Length)), y = Y(n.Key, low, high);
                 if (p.X >= x0 && p.X <= x1 && p.Y >= y && p.Y <= y + RowHeight(low, high))
                 {
@@ -129,8 +153,19 @@ public sealed class PianoRollEditor : Control
         var snap = (e.KeyModifiers & KeyModifiers.Alt) == 0;
         if (p.Y < Ruler)
         {
-            var at = TickAt(p.X, false);
-            if (SeekCommand?.CanExecute((double)at) == true) SeekCommand.Execute((double)at);
+            if (point.IsRightButtonPressed)
+            {
+                // Clear the loop points.
+                if (Section is not null && SectionCommand?.CanExecute(null) == true) SectionCommand.Execute(null);
+            }
+            else if (point.IsLeftButtonPressed)
+            {
+                _pressX = p.X;
+                _edge = Section is { } s && Math.Abs(p.X - X(s.Start)) <= 6 ? Edge.Start
+                      : Section is { } t && Math.Abs(p.X - X(t.End)) <= 6 ? Edge.End
+                      : Edge.New;
+                e.Pointer.Capture(this);
+            }
             e.Handled = true;
             return;
         }
@@ -147,9 +182,15 @@ public sealed class PianoRollEditor : Control
         _working = Current.ToList();
         if (hit < 0)
         {
-            // A new note where you click, as long as the last one you made or stretched.
-            var tick = TickAt(p.X, snap) % Loop;
-            _grabFrom = TickAt(p.X, snap) - tick;
+            // A new note where you click, as long as the last one you made or stretched (only where the part plays).
+            var at = TickAt(p.X, snap);
+            if (at < From || at >= To)
+            {
+                _working = null;
+                return;
+            }
+            var tick = (at - From) % Loop;
+            _grabFrom = at - tick;
             var note = new NoteEvent(tick, Math.Min(_lastLength, Loop - tick), KeyAt(p.Y, low, high), 100);
             _working.Add(note);
             _index = _working.Count - 1;
@@ -176,10 +217,31 @@ public sealed class PianoRollEditor : Control
         var p = e.GetPosition(this);
         var (low, high) = Range();
         var snap = (e.KeyModifiers & KeyModifiers.Alt) == 0;
+        if (_edge != Edge.None)
+        {
+            if (_edge == Edge.New && Math.Abs(p.X - _pressX) < 4 && _draft is null) return;
+            var unit = snap ? Bar : Beat;
+            long Snap(double x) => (long)Math.Round(TickAt(x, false) / (double)unit) * unit;
+            long a, b;
+            if (_edge == Edge.New) (a, b) = (Snap(Math.Min(_pressX, p.X)), Snap(Math.Max(_pressX, p.X)));
+            else if (_edge == Edge.Start) (a, b) = (Snap(p.X), Section!.Value.End);
+            else (a, b) = (Section!.Value.Start, Snap(p.X));
+            if (a > b) (a, b) = (b, a);
+            a = Math.Clamp(a, 0, Shown);
+            b = Math.Clamp(b, 0, Shown);
+            if (b - a < unit) b = Math.Min(Shown, a + unit);
+            if (b - a < unit) a = Math.Max(0, b - unit);
+            _draft = new RollRange(a, b);
+            InvalidateVisual();
+            return;
+        }
         if (_working is null || _index < 0)
         {
+            var onRuler = p.Y <= Ruler && p.X > Keys;
             _hover = p.X > Keys && p.Y > Ruler ? (TickAt(p.X, snap), KeyAt(p.Y, low, high)) : null;
-            Cursor = HitTest(p, out var end) >= 0 ? new Cursor(end ? StandardCursorType.SizeWestEast : StandardCursorType.SizeAll) : null;
+            Cursor = onRuler ? new Cursor(Section is { } s && (Math.Abs(p.X - X(s.Start)) <= 6 || Math.Abs(p.X - X(s.End)) <= 6)
+                                              ? StandardCursorType.SizeWestEast : StandardCursorType.Hand)
+                   : HitTest(p, out var end) >= 0 ? new Cursor(end ? StandardCursorType.SizeWestEast : StandardCursorType.SizeAll) : null;
             InvalidateVisual();
             return;
         }
@@ -205,6 +267,25 @@ public sealed class PianoRollEditor : Control
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
+        if (_edge != Edge.None)
+        {
+            e.Pointer.Capture(null);
+            var draft = _draft;
+            _edge = Edge.None;
+            _draft = null;
+            if (draft is { } range)
+            {
+                if (SectionCommand?.CanExecute(range) == true) SectionCommand.Execute(range);
+            }
+            else
+            {
+                // A click: play from there.
+                var at = (double)TickAt(_pressX, false);
+                if (SeekCommand?.CanExecute(at) == true) SeekCommand.Execute(at);
+            }
+            InvalidateVisual();
+            return;
+        }
         if (_working is null) return;
         if (_index >= 0 && _index < _working.Count) _lastLength = _working[_index].Length;
         var changed = _working;
@@ -280,8 +361,24 @@ public sealed class PianoRollEditor : Control
         }
         // Where the part goes round again.
         var loop = Loop;
-        for (var t = loop; t < shown; t += loop)
+        for (var t = From + loop; t < To; t += loop)
             using (dc.PushOpacity(0.9)) dc.FillRectangle(accent, new Rect(X(t), Ruler, 1.5, h - Ruler));
+
+        // The loop points: lit along the bar numbers, the rest of the roll dimmed.
+        if ((_draft ?? Section) is { } section)
+        {
+            double a = X(section.Start), b = X(section.End);
+            using (dc.PushOpacity(0.5)) dc.FillRectangle(Brushes.Black, new Rect(Keys, Ruler, Math.Max(0, a - Keys), h - Ruler));
+            using (dc.PushOpacity(0.5)) dc.FillRectangle(Brushes.Black, new Rect(b, Ruler, Math.Max(0, w - b), h - Ruler));
+            using (dc.PushOpacity(0.45)) dc.FillRectangle(accent, new Rect(a, 1, Math.Max(2, b - a), Ruler - 2));
+            dc.FillRectangle(accent, new Rect(a, 0, 2, h));
+            dc.FillRectangle(accent, new Rect(b - 2, 0, 2, h));
+        }
+        else if (From > 0 || To < shown)
+        {
+            using (dc.PushOpacity(0.35)) dc.FillRectangle(Brushes.Black, new Rect(Keys, Ruler, Math.Max(0, X(From) - Keys), h - Ruler));
+            using (dc.PushOpacity(0.35)) dc.FillRectangle(Brushes.Black, new Rect(X(To), Ruler, Math.Max(0, w - X(To)), h - Ruler));
+        }
 
         // The guide, grey, behind.
         var guide = Guide ?? [];
@@ -291,16 +388,16 @@ public sealed class PianoRollEditor : Control
 
         // The part: its own go full strength, repeats faint; red where it rubs a semitone against the guide.
         var notes = Current;
-        for (long from = 0; from < shown; from += loop)
+        for (long from = From; from < To; from += loop)
         {
-            using var faint = from == 0 ? (DrawingContext.PushedState?)null : dc.PushOpacity(0.35);
+            using var faint = from == From ? (DrawingContext.PushedState?)null : dc.PushOpacity(0.35);
             for (var i = 0; i < notes.Count; i++)
             {
                 var n = notes[i];
-                if (from + n.Start >= shown) continue;
+                if (from + n.Start >= To) continue;
                 var rubs = Rubs(n, from, guide);
                 var picked = _working is not null && i == _index;
-                Note(dc, rubs ? clash : accent, picked ? new Pen(text, 1.5) : null, from + n.Start, n.Length, n.Key, low, high);
+                Note(dc, rubs ? clash : accent, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high);
             }
         }
 
@@ -343,7 +440,8 @@ public sealed class PianoRollEditor : Control
         if (e.Key is Key.Delete or Key.Back && _hover is { } hov)
         {
             var notes = Current;
-            var i = notes.ToList().FindIndex(n => n.Key == hov.Key && n.Start <= hov.Tick % Loop && n.Start + n.Length > hov.Tick % Loop);
+            var t = (hov.Tick - From) % Loop;
+            var i = hov.Tick < From ? -1 : notes.ToList().FindIndex(n => n.Key == hov.Key && n.Start <= t && n.Start + n.Length > t);
             if (i >= 0)
             {
                 Commit(notes.Where((_, j) => j != i).ToList());
