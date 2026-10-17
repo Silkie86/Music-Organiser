@@ -364,7 +364,7 @@ public class ViewModelTests : IDisposable
         _db.SetList(Scanner.SampleFoldersKey, [lib]);
         var main = Main();
         var sounds = main.Sounds;
-        // The scan the Sounds page starts with runs first, so it can't be the one that takes the bounce in.
+        // The page's own first scan, of the empty folder, is done before the sound turns up.
         await Until(() => main.Activities.Items.Any(a => a.Title.Contains("ample folders")) && !sounds.IsBusy);
         var bounce = Path.Combine(lib, "Bounce 01.wav");
         Synth.Write(bounce, Synth.Kick(1));
