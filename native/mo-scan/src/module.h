@@ -3,6 +3,7 @@
 
 #include "library.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -24,6 +25,12 @@ struct Options
     std::filesystem::path load;
     /// Hand the VST2 chunk over as one program ("preset") rather than a whole bank.
     bool loadProgram = false;
+    /// VST3, with a number: set each parameter to that many even steps from 0 to 1 the way a DAW's automation
+    /// does (through the audio processor), and print the state saved at each, for working out how a plugin
+    /// stores each knob (Serum 2 saves its own units, not the 0 to 1 a DAW sees).
+    int calibrate = 0;
+    /// Only the parameters with IDs in this range (both ends included), for --calibrate.
+    uint32_t idsFrom = 0, idsTo = 0xffffffffu;
     bool wanted(const std::string& id) const;
 };
 
