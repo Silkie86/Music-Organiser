@@ -17,6 +17,13 @@ namespace MusicOrganiser.Core.Plugins.Serum;
 public sealed class Serum1State
 {
     public const int Size = 172_736;
+
+    /// <summary>
+    /// A saved preset (.fxp) holds only the start of the same layout, 20,704 bytes, without the wavetables or the
+    /// second half of the modulation matrix; the rest reads as empty.
+    /// </summary>
+    public const int PresetSize = 20_704;
+    const int FxpChunkAt = 60;
     const int KnobsAt = 13_408, LaterKnobsAt = 19_168, FirstLaterKnob = 228;
     const int OscANameAt = 15_368, OscBNameAt = 15_880, NoiseNameAt = 16_392, NameLength = 256;
     const int PresetNameAt = 18_802, AuthorAt = 18_848, DescriptionAt = 18_896;
@@ -27,15 +34,24 @@ public sealed class Serum1State
 
     readonly byte[] _raw;
 
+    /// <summary>Whether this came from a preset file, which has no wavetables and only modulation rows 1 to 16.</summary>
+    public bool IsPreset { get; private init; }
+
     Serum1State(byte[] raw) => _raw = raw;
 
-    /// <summary>Reads a Serum 1 state, from a VST2 chunk, a VST3 component state or FL Studio's copy of either.</summary>
+    /// <summary>
+    /// Reads a Serum 1 state, from a VST2 chunk, a VST3 component state, FL Studio's copy of either, or a preset
+    /// file (.fxp).
+    /// </summary>
     public static Serum1State? Read(ReadOnlySpan<byte> data)
     {
-        // A zlib stream starts 78 01 (Serum packs with the lowest setting); FL Studio puts 21 bytes before it.
+        // A zlib stream starts 78 01 (Serum packs with the lowest setting); FL Studio puts 21 bytes before it, and
+        // a preset file's header ("CcnK", "FPCh", "XfsX", the preset name) is 60 bytes.
         var start = -1;
-        for (var i = 0; i + 1 < Math.Min(data.Length, 64); i++)
-            if (data[i] == 0x78 && (data[i] << 8 | data[i + 1]) % 31 == 0) { start = i; break; }
+        if (data.Length > FxpChunkAt && data[..4].SequenceEqual("CcnK"u8)) start = FxpChunkAt;
+        else
+            for (var i = 0; i + 1 < Math.Min(data.Length, 64); i++)
+                if (data[i] == 0x78 && (data[i] << 8 | data[i + 1]) % 31 == 0) { start = i; break; }
         if (start < 0) return null;
         try
         {
@@ -43,6 +59,7 @@ public sealed class Serum1State
             var raw = new byte[Size + 1];
             var n = 0;
             while (n < raw.Length && z.Read(raw, n, raw.Length - n) is > 0 and var got) n += got;
+            if (n == PresetSize) return new Serum1State(raw[..Size]) { IsPreset = true };
             return n == Size ? new Serum1State(raw[..Size]) : null;
         }
         catch (InvalidDataException) { return null; }
@@ -52,8 +69,37 @@ public sealed class Serum1State
     /// A knob's value from 0 to 1, by its parameter number. The first 228 (up to Macro 4, Amp and the LFO 1 to 4
     /// smooths) are in one block; those added later (Mod 17 on, LFO 5 to 8, FX levels, LFO buses) in another.
     /// </summary>
-    public float Knob(int index) => BinaryPrimitives.ReadSingleLittleEndian(_raw.AsSpan(
-        index < FirstLaterKnob ? KnobsAt + 4 * index : LaterKnobsAt + 4 * (index - FirstLaterKnob)));
+    /// <remarks>
+    /// A preset saved by an older Serum leaves Pitch Bend and the later knobs out (all zero); they read as Serum's
+    /// own starting values instead.
+    /// </remarks>
+    public float Knob(int index)
+    {
+        if (index >= PitchBend && LaterKnobsMissing) return LaterKnobDefault(index);
+        return BinaryPrimitives.ReadSingleLittleEndian(_raw.AsSpan(
+            index < FirstLaterKnob ? KnobsAt + 4 * index : LaterKnobsAt + 4 * (index - FirstLaterKnob)));
+    }
+
+    const int PitchBend = 227;
+
+    bool LaterKnobsMissing => IsPreset
+        && _raw.AsSpan(KnobsAt + 4 * PitchBend, 4).IndexOfAnyExcept((byte)0) < 0
+        && _raw.AsSpan(LaterKnobsAt, 4 * (KnobCount - FirstLaterKnob)).IndexOfAnyExcept((byte)0) < 0;
+
+    /// <summary>Serum 1.3's starting value for Pitch Bend and the knobs after it (read from a fresh Serum on Solomon's PC).</summary>
+    static float LaterKnobDefault(int index) => index switch
+    {
+        PitchBend => 0.5f,
+        <= 259 => index % 2 == 0 ? 0.5f : 1f, // Mod 17 to 32: amount in the middle, output full
+        <= 263 => 0.5f,                       // LFO 5 to 8 rates
+        <= 267 => 0f,                         // their smooths
+        268 => 0.5f,                          // FX filter pan
+        269 => 1f,                            // compressor wet
+        <= 272 => 0.5f,                       // multiband compressor bands
+        <= 288 => 0f,                         // LFO rises and delays
+        <= 298 => 0.5f,                       // FX levels
+        _ => 0f,                              // LFO buses and Bypass
+    };
 
     public IReadOnlyList<float> Knobs => Enumerable.Range(0, KnobCount).Select(Knob).ToArray();
 

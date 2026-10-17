@@ -117,6 +117,31 @@ public class SerumTests
     }
 
     [Fact]
+    public void A_Serum_1_preset_file_is_read_with_the_later_knobs_at_their_starting_values()
+    {
+        // An .fxp holds only the first 20,704 bytes; an older Serum leaves Pitch Bend and the later knobs at zero.
+        var raw = new byte[Serum1State.PresetSize];
+        BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(13_408 + 4 * 1), 0.4809f);
+        Encoding.Latin1.GetBytes("Organ Bass").CopyTo(raw, 18_802);
+        var packed = new MemoryStream();
+        using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
+        var header = new byte[60];
+        "CcnK"u8.CopyTo(header);
+        "FPCh"u8.CopyTo(header.AsSpan(8));
+        "XfsX"u8.CopyTo(header.AsSpan(16));
+        Encoding.Latin1.GetBytes("xx Organ Bass").CopyTo(header, 28); // a lowercase x in the name looks like zlib's first byte
+
+        var s = Serum1State.Read([.. header, .. packed.ToArray()])!;
+
+        Assert.True(s.IsPreset);
+        Assert.Equal(0.4809f, s.Knob(1));
+        Assert.Equal("Organ Bass", s.PresetName);
+        Assert.Equal((0.5f, 0.5f, 1f, 0.5f, 0f, 1f, 0.5f, 0f), (s.Knob(227), s.Knob(228), s.Knob(229), s.Knob(260),
+            s.Knob(264), s.Knob(269), s.Knob(298), s.Knob(315)));
+        Assert.Empty(s.ModSlots);
+    }
+
+    [Fact]
     public void Something_that_isnt_a_Serum_1_state_isnt_read_as_one()
     {
         Assert.Null(Serum1State.Read("not serum"u8));
