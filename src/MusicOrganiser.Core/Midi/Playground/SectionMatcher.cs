@@ -250,11 +250,12 @@ public static class SectionMatcher
 {
     public static IReadOnlyList<PlaygroundMatch> Rank(MidiCatalogue catalogue, SectionHarmony section, string role,
                                                       Func<MidiEntry, IReadOnlyList<NoteEvent>> notesOf, string text = "",
-                                                      int limit = 60, CancellationToken ct = default)
+                                                      int limit = 60, CancellationToken ct = default, SectionFeel feel = SectionFeel.Any)
     {
-        if (role == MidiRoles.Drums) return Grooves(catalogue, section, notesOf, text, limit, ct);
+        var energy = feel == SectionFeel.Any ? null : Energy.Target(feel, (int)(section.Length / ChordLane.Bar));
+        if (role == MidiRoles.Drums) return Grooves(catalogue, section, notesOf, text, limit, ct, energy, feel);
         var target = section.Target();
-        var hits = catalogue.Search(new MidiQuery(text, role, Fit: target, Limit: target is null ? limit : Math.Max(limit * 4, 200), Notes: notesOf)
+        var hits = catalogue.Search(new MidiQuery(text, role, Fit: target, Limit: target is null && energy is null ? limit : Math.Max(limit * 4, 200), Notes: notesOf)
                                     { LeaveSongs = section.Songs }, out _, ct);
         var list = new List<PlaygroundMatch>();
         foreach (var hit in hits)
@@ -265,13 +266,19 @@ public static class SectionMatcher
             if (raw.Count == 0) continue;
             var move = hit.Fit is { } f ? f.Semitones + 12 * (hit.Entry.YourOctave ?? f.Octaves) : 12 * (hit.Entry.YourOctave ?? 0);
             var moved = raw.Select(n => n with { Key = Math.Clamp(n.Key + move, 0, 127) }).ToList();
-            if (target is null || section.Lane.Count == 0)
-            {
-                list.Add(new PlaygroundMatch(hit.Entry, hit.Fit, hit.Fit?.Score ?? 0, moved, hit.Fit is null ? "" : $"Fits {hit.Fit.Percent}%"));
-                continue;
-            }
             var period = Math.Max(1, PhraseAnalyser.BarsOf(moved)) * (long)ChordLane.Bar;
             var looped = Loop(moved, period, section.Length);
+            // How well its energy suits the section's feel (a verse, a build, a drop), when one is picked.
+            double? lift = energy is null ? null : Energy.Match(Energy.Curve(looped, section.Length, role, section.Key), energy);
+            var feelText = lift is { } lv ? $"{Energy.Name(feel)} energy {lv * 100:0}%" : "";
+            if (target is null || section.Lane.Count == 0)
+            {
+                var plain = hit.Fit?.Score ?? 0;
+                if (lift is { } l0) plain = hit.Fit is null ? l0 : 0.7 * plain + 0.3 * l0;
+                list.Add(new PlaygroundMatch(hit.Entry, hit.Fit, plain, moved,
+                    string.Join(" · ", new[] { hit.Fit is null ? "" : $"Fits {hit.Fit.Percent}%", feelText }.Where(s => s.Length > 0))));
+                continue;
+            }
             var sits = SectionFit.Score(looped, section.Lane, section.Length, role, section.Style);
             var follow = role == MidiRoles.Chords ? SectionFit.Follow(looped, section.Lane, section.Length) : null;
             var refine = hit.Fit?.Score ?? 0;
@@ -281,10 +288,12 @@ public static class SectionMatcher
                 ({ } s, null) => 0.4 * refine + 0.6 * s,
                 _ => refine,
             };
+            if (lift is { } l) score = 0.72 * score + 0.28 * l;
             var why = string.Join(" · ", new[]
             {
                 sits is { } sv ? $"Sits on the chords {sv * 100:0}%" : "",
                 follow is { } fv ? $"follows them {fv * 100:0}%" : "",
+                feelText,
                 MoveText(move),
             }.Where(s => s.Length > 0));
             list.Add(new PlaygroundMatch(hit.Entry, hit.Fit, Math.Clamp(score, 0, 1), moved, why));
@@ -303,9 +312,29 @@ public static class SectionMatcher
 
     /// <summary>Drums have no harmony: they're matched on where their hits fall against the section's rhythm.</summary>
     static IReadOnlyList<PlaygroundMatch> Grooves(MidiCatalogue catalogue, SectionHarmony section, Func<MidiEntry, IReadOnlyList<NoteEvent>> notesOf,
-                                                  string text, int limit, CancellationToken ct)
+                                                  string text, int limit, CancellationToken ct, double[]? energy, SectionFeel feel)
     {
-        var hits = catalogue.Search(new MidiQuery(text, MidiRoles.Drums, Limit: section.Notes.Count == 0 ? limit : 600) { LeaveSongs = section.Songs }, out _, ct);
+        var hits = catalogue.Search(new MidiQuery(text, MidiRoles.Drums, Limit: section.Notes.Count == 0 && energy is null ? limit : 600) { LeaveSongs = section.Songs }, out _, ct);
+        if (energy is not null)
+        {
+            var mineOrNone = section.Notes.Count == 0 ? null : SectionFit.Onsets(section.Notes);
+            var ranked = new List<PlaygroundMatch>();
+            foreach (var h in hits)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (section.Hashes.Contains(h.Entry.Phrase.Hash)) continue;
+                var notes = notesOf(h.Entry);
+                if (notes.Count == 0) continue;
+                var looped = Loop(notes, Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)ChordLane.Bar, section.Length);
+                var lift = Energy.Match(Energy.Curve(looped, section.Length, MidiRoles.Drums, null), energy);
+                double? groove = mineOrNone is null ? null : SectionFit.Cosine(mineOrNone, SectionFit.Onsets(notes));
+                var score = groove is { } g ? 0.6 * g + 0.4 * lift : lift;
+                var why = string.Join(" · ", new[] { groove is { } gv ? $"Grooves with the section {gv * 100:0}%" : "", $"{Energy.Name(feel)} energy {lift * 100:0}%" }
+                                             .Where(s => s.Length > 0));
+                ranked.Add(new PlaygroundMatch(h.Entry, null, score, notes, why));
+            }
+            return ranked.OrderByDescending(m => m.Score).Take(limit).ToList();
+        }
         if (section.Notes.Count == 0)
             return hits.Where(h => !section.Hashes.Contains(h.Entry.Phrase.Hash))
                        .Select(h => new PlaygroundMatch(h.Entry, null, 0, notesOf(h.Entry), "")).Where(m => m.Notes.Count > 0).ToList();

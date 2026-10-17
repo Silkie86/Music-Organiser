@@ -85,8 +85,14 @@ nav 3; shot 5b-playground 3
 # The playground's side panel: suggestions found, then melodies, the reharm ideas and writing parts.
 xdotool mousemove 1371 380 click 1 mousemove 1430 892; shot 5c-playground-suggest 4
 xdotool mousemove 1261 295 click 1 mousemove 1430 892; shot 5d-playground-melodies 4
-xdotool mousemove 1206 244 click 1 mousemove 1430 892; shot 5e-playground-reharm 2
+xdotool mousemove 1275 244 click 1 mousemove 1430 892; shot 5e-playground-reharm 2
 xdotool mousemove 1140 244 click 1 mousemove 1430 892; shot 5f-playground-write 1.5
+# Groove copying: find a player's comp in Suggest, Copy its groove (opens the Groove tab), slide to its whole playing, copy it.
+xdotool mousemove 1073 244 click 1; sleep 0.5; xdotool mousemove 1073 295 click 1; sleep 2; xdotool mousemove 1190 380 click 1; xdotool type --delay 30 "pro gospel"
+xdotool mousemove 1371 380 click 1 mousemove 1430 892; shot 5g-playground-groove-find 3
+xdotool mousemove 1264 655 click 1 mousemove 1430 892; shot 5h-playground-groove 1.5
+xdotool mousemove ${GROOVE_MAX_X:-1392} ${GROOVE_MAX_Y:-520} click 1 mousemove 1430 892; shot 5i-playground-groove-playing 1
+xdotool mousemove ${GROOVE_COPY_X:-1166} ${GROOVE_COPY_Y:-660} click 1 mousemove 1430 892; shot 5j-playground-grooved 2
 nav 5; shot 6-settings 2
 # The rest of Settings, a screen further down.
 xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1430 892; shot 7-settings-more

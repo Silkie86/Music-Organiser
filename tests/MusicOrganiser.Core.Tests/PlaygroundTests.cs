@@ -193,6 +193,43 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(2, tracks.Count);
     }
 
+    [Fact]
+    public void Copying_a_groove_onto_written_chords_keeps_it_when_the_chords_change()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+
+        p.ChartText = "Dm7 | G7 | Cmaj7 | %";
+        p.Rhythm = "Held";
+        p.WriteChordsCommand.Execute(null);
+        p.WriteBassCommand.Execute(null);
+        var chords = p.Layers[0];
+        p.SelectedLayer = chords;
+        // Copy the walking bass's rhythm: the held chords are now struck on every beat.
+        p.GrooveSource = p.GrooveSources.Single(r => r.Role == MidiRoles.Bass);
+        p.GrooveAmount = 5;
+        p.CopyGrooveCommand.Execute(null);
+        Assert.Equal(16, chords.Notes.Select(n => n.Start).Distinct().Count());
+        Assert.Contains("groove of", chords.Details);
+
+        // New chords: the part is written again and struck on the beats again.
+        p.ChartText = "Em7 | A7 | Dmaj7 | %";
+        Assert.Equal(16, chords.Notes.Select(n => n.Start).Distinct().Count());
+        Assert.Contains(chords.Notes, n => n.Start == 0 && n.Key % 12 == 4);
+
+        // Smooth inversions never change the notes of a chord.
+        static string Sets(IEnumerable<NoteEvent> notes) =>
+            string.Join("|", notes.GroupBy(n => n.Start).OrderBy(g => g.Key).Select(g => string.Join(",", g.Select(n => n.Key % 12).Distinct().OrderBy(k => k))));
+        var before = Sets(chords.Notes);
+        p.SmoothInversionsCommand.Execute(null);
+        Assert.Equal(before, Sets(chords.Notes));
+    }
+
     sealed class Headless : IPlatformUi
     {
         public IItemsView CreateView(IList items) => new ListView(items);
