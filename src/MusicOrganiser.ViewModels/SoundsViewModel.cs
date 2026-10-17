@@ -815,15 +815,15 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     /// <summary>
-    /// A double-click: plays or stops the sound. With Autoplay on, the first click already started it,
-    /// so it keeps playing and now counts as a play.
+    /// A double-click: the first click already started the sound as a preview (<see cref="PlayClicked"/>, Autoplay or
+    /// not), so it keeps playing and now counts as a play. A sound that isn't playing starts (and counts).
     /// </summary>
     [RelayCommand]
     void Audition()
     {
-        if (!AutoPlay || Selected is not { } s) Play(null);
-        else if (_player.Playing != s.Path) Play(s);
-        else if (_preview == s.Path) { Count(s); _preview = null; }
+        if (Selected is not { } s) return;
+        if (_preview == s.Path && IsPreviewing(s)) { Count(s); _preview = null; }
+        else if (!IsPreviewing(s)) Play(s);
     }
 
     /// <summary>A click on the waveform: jump there if it's playing, otherwise play from there.</summary>

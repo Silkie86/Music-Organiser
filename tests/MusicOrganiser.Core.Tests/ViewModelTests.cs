@@ -834,6 +834,9 @@ public class ViewModelTests : IDisposable
         Assert.Empty(played);   // arrowing onto it: Autoplay is off by default
         lab.PlayClicked();      // a click always plays, Autoplay or not
         Assert.Equal(["kick.wav"], played);
+        lab.AuditionCommand.Execute(null);   // and a double-click keeps it going as a play, Autoplay or not
+        Assert.Equal(["kick.wav"], played);
+        Assert.Equal(1, kick.Plays);
         player.Stop();
         played.Clear();
 
