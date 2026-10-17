@@ -341,7 +341,9 @@ class RoutesTest {
         Map<String, Object> result = SelfCheckTest.map(app.ask(obj("id", 1, "cmd", "selftest")).get("result"));
         assertEquals(true, result.get("ok"));
         assertEquals("Buttons for Save, Copy, Paste, focus_or_toggle_arranger, focus_or_toggle_clip_launcher on MIDI channel 16 (notes from "
-                     + "100 and from 110). The link hasn't had its own MIDI back, so only the direct and flush routes work. " + Link.LOOPBACK_SETUP,
+                     + "100 and from 110). The link hasn't had its own MIDI back, so its MIDI in and out may not be set (or their port isn't "
+                     + "working), and the routes through MIDI need them. Bitwig 6.1.3 has only saved for the link once they were set. "
+                     + Link.LOOPBACK_SETUP,
                      SelfCheckTest.detail(result, "command routes"));
         assertMatches("set both MIDI in and MIDI out to \"Music Organiser Bitwig\" \\(the loopMIDI port\\), never \"Music Organiser\"",
                       Link.LOOPBACK_SETUP);

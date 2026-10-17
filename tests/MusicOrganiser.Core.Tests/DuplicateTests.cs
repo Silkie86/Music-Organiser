@@ -160,7 +160,7 @@ public class DuplicateTests
         foreach (var x in new[] { Synth.Kick(4), Synth.Snare(3), Synth.Hat(2) })
         {
             // The same sound: resampled, quieter, with silence before it.
-            Assert.InRange(Apart(x, Pad(Gain(Dsp.Resample(x, sr, 48000), 0.5f), 0.05, 48000), 48000), 0, 0.2);
+            Assert.InRange(Apart(x, Pad(Gain(Dsp.Resample(x, sr, 48000), 0.5f), 0.05, 48000), 48000), 0, DuplicateFinder.SameDb);
             // Very similar: another EQ, more drive.
             Assert.True(Apart(x, Low(x, 0.6f)) > DuplicateFinder.SameDbLossy, $"{Apart(x, Low(x, 0.6f))}");
             Assert.True(Apart(x, x.Select(v => (float)Math.Tanh(3 * v) / 1.2f).ToArray()) > DuplicateFinder.SameDbLossy);

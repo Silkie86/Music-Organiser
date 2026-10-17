@@ -8,7 +8,7 @@ set -eo pipefail
 group=$1
 
 links="BitwigLinkTests FlLinkTests DawWatchTests BitwigSendTests DawScriptTests"
-live="BitwigLiveTestsTests LiveRunnerTests LiveTestsViewModelTests MoProbeLiveTests ProbeKnobCheckTests PluginScannerTests"
+live="BitwigLiveTestsTests BitwigRecordTests LiveRunnerTests LiveTestsViewModelTests MoProbeLiveTests ProbeKnobCheckTests PluginScannerTests"
 viewmodels="ViewModelTests"
 sounds="ReferenceTests MusicTheoryTests SoundAnalyzerTests LearningTests AudioFileTests SoundOutputSettingTests MidiRenderTests MidiDragExportTests"
 

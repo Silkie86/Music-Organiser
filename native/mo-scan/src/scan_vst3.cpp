@@ -138,7 +138,7 @@ int busChannels(Vst::IComponent* c, Vst::BusDirection dir)
     return channels;
 }
 
-void writeParams(Json& j, Vst::IEditController* ctrl)
+void writeParams(Json& j, Vst::IEditController* ctrl, int curve)
 {
     j.beginArray("params");
     for (int32 i = 0, n = ctrl->getParameterCount(); i < n; i++)
@@ -159,6 +159,19 @@ void writeParams(Json& j, Vst::IEditController* ctrl)
             .num("plainDefault", ctrl->normalizedParamToPlain(info.id, info.defaultNormalizedValue));
         Vst::String128 text{};
         if (ctrl->getParamStringByValue(info.id, value, text) == kResultOk) j.str("text", str128(text));
+        if (curve > 0)
+        {
+            j.beginArray("curve");
+            for (int k = 0; k <= curve; k++)
+            {
+                double x = double(k) / curve;
+                Vst::String128 at{};
+                j.item().num("x", x).num("plain", ctrl->normalizedParamToPlain(info.id, x));
+                if (ctrl->getParamStringByValue(info.id, x, at) == kResultOk) j.str("text", str128(at));
+                j.end();
+            }
+            j.endArray();
+        }
         j.integer("unit", info.unitId)
             .boolean("automatable", info.flags & Vst::ParameterInfo::kCanAutomate)
             .boolean("readOnly", info.flags & Vst::ParameterInfo::kIsReadOnly)
@@ -221,7 +234,7 @@ void scanClass(Json& j, IPluginFactory* factory, const TUID cid, const Options& 
     {
         ctrl->setComponentHandler(&g_handler);
         if (haveState) { state.seek(0, IBStream::kIBSeekSet, nullptr); ctrl->setComponentState(&state); }
-        if (opt.params) writeParams(j, ctrl);
+        if (opt.params) writeParams(j, ctrl, opt.curve);
     }
     else if (opt.params) j.str("paramsError", "no edit controller");
 

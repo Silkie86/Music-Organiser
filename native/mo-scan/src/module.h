@@ -12,6 +12,9 @@ struct Options
 {
     bool params = true;
     bool state = false;
+    /// With a number: each parameter's text (and, for VST3, its value in real units) at that many even steps
+    /// from 0 to 1, for matching one plugin's knobs to another's.
+    int curve = 0;
     /// Only this plugin from the file (its ID as printed), e.g. one plugin from a Waves shell.
     std::string only;
     bool wanted(const std::string& id) const;
