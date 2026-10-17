@@ -11,7 +11,9 @@ namespace MusicOrganiser.Core.Sounds;
 /// <see cref="Same"/>: it's the same sound as the one to keep (an exact copy, or the same audio in another file),
 /// not just very like it; only these are offered for hiding.
 /// </summary>
-public sealed record DuplicateMember(Sound Sound, long Size, bool Keep, CopyKind? Kind, string Why, bool Same)
+/// <see cref="SameSet"/>: which sounds in the group are the same sound as each other (same number, same sound); in each
+/// such set one stays showing and the rest can be hidden.
+public sealed record DuplicateMember(Sound Sound, long Size, bool Keep, CopyKind? Kind, string Why, bool Same, long SameSet = 0)
 {
     public string Format => System.IO.Path.GetExtension(Sound.Path).TrimStart('.').ToUpperInvariant();
 }
@@ -150,31 +152,42 @@ public static class DuplicateFinder
 
     // ---- printing, and SoundFingerprinting look-ups as each sound is printed ------------------------
 
-    sealed record Printed(long Id, long Mtime, long Size, SoundPrint? Print, AVHashes? Query);
+    /// <param name="Gone">The file couldn't be found (an unplugged drive, say): nothing is saved, so it's read next time.</param>
+    sealed record Printed(long Id, long Mtime, long Size, SoundPrint? Print, AVHashes? Query, bool Gone = false);
 
     static void PrintAndFingerprint(SoundOrganiser org, IReadOnlyList<(long Id, string Path, long Mtime, long Size)> todo,
                                     IProgress<SoundProgress>? progress, CancellationToken ct)
     {
         var lib = org.Library;
         progress?.Report(new("Getting ready", 0, 0));
-        var store = new InMemoryModelService();
+        // Everything printed before, to look new sounds up in. Loaded only once a new sound long enough to need it
+        // turns up: after a scan of new one-shots it isn't needed at all.
+        InMemoryModelService? store = null;
         var stored = 0;
-        lib.ForEachSfp((id, blob) =>
+        InMemoryModelService Store()
         {
-            ct.ThrowIfCancellationRequested();
-            store.Insert(new TrackInfo(id.ToString(), "", ""), new AVHashes(SoundPrint.Unpack(blob), null));
-            stored++;
-        });
+            if (store is not null) return store;
+            store = new InMemoryModelService();
+            lib.ForEachSfp((id, blob) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                store.Insert(new TrackInfo(id.ToString(), "", ""), new AVHashes(SoundPrint.Unpack(blob), null));
+                stored++;
+            });
+            return store;
+        }
         var keys = lib.PrintKeys();
         var exact = keys.Where(k => k.Exact is not null).ToDictionary(k => k.Id, k => Convert.ToHexString(k.Exact!));
         var seconds = keys.ToDictionary(k => k.Id, k => k.Seconds);
 
         using var queue = new BlockingCollection<Printed>(256);
+        // Stops the readers if saving fails, so none is left waiting forever to add to a queue nobody empties.
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var reader = Task.Run(() =>
         {
             try
             {
-                Parallel.ForEach(todo, Parallelism.Options(ct), t =>
+                Parallel.ForEach(todo, Parallelism.Options(stop.Token), t =>
                 {
                     Printed p;
                     try
@@ -186,23 +199,35 @@ public static class DuplicateFinder
                         });
                         p = new Printed(t.Id, t.Mtime, t.Size, print, query);
                     }
-                    catch (Exception e) when (e is not OperationCanceledException) { p = new Printed(t.Id, t.Mtime, t.Size, null, null); }
-                    queue.Add(p, ct);
+                    catch (Exception e) when (e is not OperationCanceledException)
+                    {
+                        p = new Printed(t.Id, t.Mtime, t.Size, null, null, Gone: !File.Exists(t.Path));
+                    }
+                    queue.Add(p, stop.Token);
                 });
             }
             finally { queue.CompleteAdding(); }
-        }, ct);
+        }, stop.Token);
 
         var done = 0;
         var batch = new List<Printed>();
-        foreach (var p in queue.GetConsumingEnumerable(ct))
+        try
         {
-            batch.Add(p);
-            if (batch.Count < 64 && queue.Count > 0) continue;
-            if (batch.Count < 64 && !queue.IsAddingCompleted && batch.Count < 16) continue;
+            foreach (var p in queue.GetConsumingEnumerable(ct))
+            {
+                batch.Add(p);
+                if (batch.Count < 64 && queue.Count > 0) continue;
+                if (batch.Count < 64 && !queue.IsAddingCompleted && batch.Count < 16) continue;
+                Flush();
+            }
             Flush();
         }
-        Flush();
+        catch
+        {
+            stop.Cancel();
+            try { reader.Wait(); } catch (AggregateException) { }   // its cancellation; the real error is this one
+            throw;
+        }
         reader.GetAwaiter().GetResult();
 
         void Flush()
@@ -220,16 +245,17 @@ public static class DuplicateFinder
                 // Each against everything printed before, then against the rest of its own batch.
                 var own = new InMemoryModelService();
                 foreach (var b in withSfp) own.Insert(new TrackInfo(b.Id.ToString(), "", ""), new AVHashes(SoundPrint.Unpack(b.Print!.Sfp!), null));
+                var before = Store();
                 Parallel.ForEach(withSfp, Parallelism.Options(ct), b => Parallelism.Background(() =>
                 {
-                    if (stored > 0) Look(b, store, matches);
+                    if (stored > 0) Look(b, before, matches);
                     Look(b, own, matches);
                     return 0;
                 }));
-                foreach (var b in withSfp) store.Insert(new TrackInfo(b.Id.ToString(), "", ""), new AVHashes(SoundPrint.Unpack(b.Print!.Sfp!), null));
+                foreach (var b in withSfp) before.Insert(new TrackInfo(b.Id.ToString(), "", ""), new AVHashes(SoundPrint.Unpack(b.Print!.Sfp!), null));
                 stored += withSfp.Count;
             }
-            lib.SavePrints(batch.Select(b => (b.Id, b.Mtime, b.Size, b.Print)), matches);
+            lib.SavePrints(batch.Where(b => !b.Gone).Select(b => (b.Id, b.Mtime, b.Size, b.Print)), matches);
             done += batch.Count;
             batch.Clear();
             progress?.Report(new("Reading sounds", done, todo.Count));
@@ -363,9 +389,11 @@ public static class DuplicateFinder
             var checks = new ConcurrentBag<(long, long, double, double)>();
             Parallel.ForEach(chunk, Parallelism.Options(ct), p =>
             {
-                var (typical, apart) = org.Get(p.A) is { } a && org.Get(p.B) is { } b
-                    ? Parallelism.Background(() => a.Seconds <= b.Seconds ? HowFarApart(a.Path, b.Path, p.Offset) : HowFarApart(b.Path, a.Path, p.Offset))
-                    : (Unreadable, Unreadable);
+                // A file that can't be found (an unplugged drive) is left to check next time; only one that's there
+                // but can't be read gets the final "as far apart as can be".
+                if (org.Get(p.A) is not { } a || org.Get(p.B) is not { } b || !File.Exists(a.Path) || !File.Exists(b.Path)) return;
+                var (typical, apart) = Parallelism.Background(() =>
+                    a.Seconds <= b.Seconds ? HowFarApart(a.Path, b.Path, p.Offset) : HowFarApart(b.Path, a.Path, p.Offset));
                 checks.Add((p.A, p.B, typical, apart));
             });
             org.Library.SaveSameness(checks);
@@ -409,8 +437,13 @@ public static class DuplicateFinder
     static bool IsCopy(SoundMatch m) => m.Typical is not { } typical || typical <= NotACopyDb;
 
     static bool IsSame(SoundMatch m, string? pathA, string? pathB) =>
-        m.Kind == CopyKind.Converted && m.Apart is { } apart &&
-        apart <= (Lossy.Contains(System.IO.Path.GetExtension(pathA ?? "")) || Lossy.Contains(System.IO.Path.GetExtension(pathB ?? "")) ? SameDbLossy : SameDb);
+        IsSame(m, strict: !IsLossy(pathA) && !IsLossy(pathB));
+
+    /// <summary>A converted copy close enough to be the same sound: within <see cref="SameDb"/>, or <see cref="SameDbLossy"/> when not strict.</summary>
+    static bool IsSame(SoundMatch m, bool strict) =>
+        m.Kind == CopyKind.Converted && m.Apart is { } apart && apart <= (strict ? SameDb : SameDbLossy);
+
+    static bool IsLossy(string? path) => Lossy.Contains(System.IO.Path.GetExtension(path ?? ""));
 
     static readonly HashSet<string> Lossy = new(StringComparer.OrdinalIgnoreCase) { ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wma" };
 
@@ -422,13 +455,6 @@ public static class DuplicateFinder
     {
         var lossy = Lossy.Contains(System.IO.Path.GetExtension(pathA ?? "")) || Lossy.Contains(System.IO.Path.GetExtension(pathB ?? ""));
         return Math.Abs(a - b) <= (lossy ? 0.06 : Math.Max(0.01, 0.005 * Math.Max(a, b)));
-    }
-
-    /// <summary>How alike two sounds' waveforms are over their first second (see <see cref="SoundPrint.WaveSimilarity"/>).</summary>
-    public static double WaveSimilarity(string a, string b)
-    {
-        try { return SoundPrint.WaveSimilarity(Start(a), Start(b)); }
-        catch (Exception) { return 0; }
     }
 
     static float[] Start(string path) { var x = AudioFile.Read(path, 3); return SoundPrint.WaveStart(x.Mono(), x.SampleRate, 1); }
@@ -497,47 +523,81 @@ public static class DuplicateFinder
         }
         void Same(long a, long b) { var (ra, rb) = (Root(a), Root(b)); if (ra != rb) sameParent[ra] = rb; }
 
-        var hashOf = exact.ToDictionary(e => e.Id, e => e.Hash);
-        foreach (var g in exact.GroupBy(e => e.Hash))
+        var sizes = lib.Sizes();
+        // The exact hash covers the first ReadSeconds of audio, so two long files are exact copies only if their
+        // lengths (and, past that, their sizes) match too.
+        string ExactKey(long id, string hash)
+        {
+            var secs = org.Get(id)?.Seconds ?? 0;
+            return secs > SoundPrint.ReadSeconds - 0.5 ? $"{hash}:{secs:0.000}:{sizes.GetValueOrDefault(id)}" : $"{hash}:{secs:0.000}";
+        }
+        var hashOf = exact.ToDictionary(e => e.Id, e => ExactKey(e.Id, e.Hash));
+        foreach (var g in exact.GroupBy(e => hashOf[e.Id]))
             foreach (var e in g.Skip(1)) { Join(g.First().Id, e.Id); Same(g.First().Id, e.Id); }
         var links = new Dictionary<long, List<(long Other, CopyKind Kind)>>();
+        // An MP3 is let off a little more (its encoder shifts the sound), but only as a leaf: two different files
+        // that are each close to the same MP3 aren't the same as each other (round robins, say).
+        var lossyLinks = new List<(long File, long To, double Apart)>();
         foreach (var m in matches.Where(IsCopy))
         {
             Join(m.A, m.B);
-            if (IsSame(m, org.Get(m.A)?.Path, org.Get(m.B)?.Path)) Same(m.A, m.B);
+            var (pa, pb) = (org.Get(m.A)?.Path, org.Get(m.B)?.Path);
+            if (IsSame(m, strict: true)) Same(m.A, m.B);
+            else if (IsSame(m, strict: false) && (IsLossy(pa) || IsLossy(pb)))
+            {
+                if (IsLossy(pa) && !IsLossy(pb)) lossyLinks.Add((m.A, m.B, m.Apart!.Value));
+                else if (IsLossy(pb) && !IsLossy(pa)) lossyLinks.Add((m.B, m.A, m.Apart!.Value));
+                else Same(m.A, m.B);   // both compressed: the lossy limit is the only fair one, and neither is an original
+            }
             (links.TryGetValue(m.A, out var la) ? la : links[m.A] = []).Add((m.B, m.Kind));
             (links.TryGetValue(m.B, out var lb) ? lb : links[m.B] = []).Add((m.A, m.Kind));
         }
+        // Each compressed file joins the one set it's closest to (if it isn't in one already).
+        var attached = new Dictionary<long, long>();
+        var inSet = sameParent.Keys.GroupBy(Root).Where(g => g.Count() > 1).SelectMany(g => g).ToHashSet();
+        foreach (var l in lossyLinks.OrderBy(l => l.Apart))
+            if (!inSet.Contains(l.File)) attached.TryAdd(l.File, Root(l.To));
+        long SetOf(long id) => attached.TryGetValue(id, out var to) ? Root(to) : Root(id);
 
-        var sizes = lib.Sizes();
         var groups = new List<DuplicateGroup>();
         foreach (var ids in parent.Keys.GroupBy(Find))
         {
             var sounds = ids.Select(org.Get).OfType<Sound>().ToList();
             if (sounds.Count < 2) continue;
-            var sameSize = sounds.GroupBy(s => Root(s.Id)).ToDictionary(g => g.Key, g => g.Count());
-            var keep = sounds.OrderBy(s => s.Hidden).ThenByDescending(s => s.UsedIn)
-                .ThenByDescending(s => sameSize[Root(s.Id)] > 1)   // one of the copies that are the same sound, so the others can go
+            var setSize = sounds.GroupBy(s => SetOf(s.Id)).ToDictionary(g => g.Key, g => g.Count());
+            IOrderedEnumerable<Sound> Ranked(IEnumerable<Sound> all) => all.OrderBy(s => s.Hidden).ThenByDescending(s => s.UsedIn)
+                .ThenByDescending(s => setSize[SetOf(s.Id)] > 1)   // one of the copies that are the same sound, so the others can go
                 .ThenByDescending(s => Lossless.Contains(System.IO.Path.GetExtension(s.Path)))
                 .ThenByDescending(s => Math.Round(s.Seconds, 2))
                 .ThenBy(s => s.Added)
                 .ThenByDescending(s => Math.Round(s.Analysis?.PeakDb ?? -99))   // a turned-down copy is rarely the original
-                .ThenBy(s => s.Path, StringComparer.OrdinalIgnoreCase)
-                .First();
-            CopyKind KindOf(Sound s)
+                .ThenBy(s => s.Path, StringComparer.OrdinalIgnoreCase);
+            var keep = Ranked(sounds).First();
+            var keepSet = SetOf(keep.Id);
+            // In each other set of the same sound, the best one stays and the rest are copies of it.
+            var lead = sounds.GroupBy(s => SetOf(s.Id)).ToDictionary(g => g.Key, g => g.Key == keepSet ? keep : Ranked(g).First());
+            CopyKind KindOf(Sound s, Sound of)
             {
-                if (hashOf.TryGetValue(s.Id, out var h) && hashOf.GetValueOrDefault(keep.Id) == h) return CopyKind.Exact;
+                if (hashOf.TryGetValue(s.Id, out var h) && hashOf.GetValueOrDefault(of.Id) == h) return CopyKind.Exact;
                 var own = links.GetValueOrDefault(s.Id) ?? [];
-                if (own.FirstOrDefault(l => l.Other == keep.Id) is { Other: > 0 } direct) return direct.Kind;
+                if (own.FirstOrDefault(l => l.Other == of.Id) is { Other: > 0 } direct) return direct.Kind;
                 return own.Count > 0 ? own.Max(l => l.Kind) : CopyKind.Exact;
             }
-            var keepRoot = Root(keep.Id);
-            var members = new List<DuplicateMember> { new(keep, sizes.GetValueOrDefault(keep.Id), true, null, KeepReason(keep, sounds), true) };
+            var members = new List<DuplicateMember> { new(keep, sizes.GetValueOrDefault(keep.Id), true, null, KeepReason(keep, sounds), true, keepSet) };
             members.AddRange(sounds.Where(s => s != keep)
-                .Select(s => (Sound: s, Kind: KindOf(s), Same: Root(s.Id) == keepRoot))
-                .Select(t => t.Same && t.Kind == CopyKind.Trimmed ? t with { Kind = CopyKind.Converted } : t)   // same via another copy
-                .OrderByDescending(t => t.Same).ThenBy(t => t.Kind).ThenBy(t => t.Sound.Path, StringComparer.OrdinalIgnoreCase)
-                .Select(t => new DuplicateMember(t.Sound, sizes.GetValueOrDefault(t.Sound.Id), false, t.Kind, Describe(t.Kind, t.Same, t.Sound, keep), t.Same)));
+                .Select(s =>
+                {
+                    var set = SetOf(s.Id);
+                    var of = set == keepSet ? keep : lead[set];
+                    var same = s != of;   // a set's lead is only very like the one to keep
+                    var kind = KindOf(s, same ? of : keep);
+                    if (same && kind == CopyKind.Trimmed) kind = CopyKind.Converted;   // the same via another copy
+                    return (Sound: s, Kind: kind, Same: same, Of: of, Set: set);
+                })
+                .OrderByDescending(t => t.Same && t.Set == keepSet).ThenBy(t => t.Set == keepSet ? 0 : 1).ThenBy(t => t.Set)
+                .ThenBy(t => t.Same).ThenBy(t => t.Kind).ThenBy(t => t.Sound.Path, StringComparer.OrdinalIgnoreCase)
+                .Select(t => new DuplicateMember(t.Sound, sizes.GetValueOrDefault(t.Sound.Id), false, t.Kind,
+                    Describe(t.Kind, t.Same, t.Sound, t.Of, t.Of != keep), t.Same, t.Set)));
             var spare = members.Where(m => !m.Keep && m.Same).Sum(m => m.Size);
             groups.Add(new DuplicateGroup(members, members.Skip(1).Max(m => m.Kind!.Value), spare));
         }
@@ -555,8 +615,10 @@ public static class DuplicateFinder
         return "Best to keep: the oldest copy";
     }
 
-    static string Describe(CopyKind kind, bool same, Sound s, Sound keep) => kind switch
+    static string Describe(CopyKind kind, bool same, Sound s, Sound keep, bool ofAnother = false) => kind switch
     {
+        CopyKind.Exact when same && ofAnother => $"Exact copy of {keep.Name}",
+        CopyKind.Converted when same && ofAnother => $"Same sound as {keep.Name}",
         CopyKind.Exact when same => s.Name == keep.Name ? "Exact copy" : "Exact copy, renamed",
         CopyKind.Converted when same => Changes(s, keep) is { Length: > 0 } c ? $"Same sound, {c}" : "Same sound, another file",
         CopyKind.Exact or CopyKind.Converted => "Very similar, but not the same sound all the way through",

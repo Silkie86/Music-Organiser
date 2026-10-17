@@ -78,7 +78,10 @@
             </StackPanel>
             <StackPanel Margin="0,0,16,0">
                 <TextBlock Text="Copies of the same sound" Classes="sectionHeader" />
-                <TextBlock Text="{Binding Summary}" Classes="muted" />
+                <TextBlock Text="{Binding Summary}" Classes="muted" TextWrapping="Wrap" />
+                <!-- Hidden copies whose group has gone can't be reached from the list, so they're offered back here. -->
+                <Button Classes="link" Content="{Binding StrayHiddenText}" Command="{Binding ShowAllHiddenCommand}" IsVisible="{Binding HasStrayHidden}"
+                        Padding="0" Margin="0,4,0,0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource AccentBrush}" FontSize="12.5" />
                 <CheckBox Content="Look for copies of new sounds after each scan" IsChecked="{Binding AfterScan}" Margin="0,6,0,0"
                           ToolTip.Tip="When a scan finds new or changed sounds, check them for copies straight away" />
             </StackPanel>
@@ -125,7 +128,7 @@
                         <Button.IsVisible>
                             <MultiBinding Converter="{x:Static BoolConverters.And}">
                                 <Binding Path="CanUndo" />
-                                <Binding Path="HasGroups" />
+                                <Binding Path="OnlyHiddenLeft" />
                             </MultiBinding>
                         </Button.IsVisible>
                     </Button>

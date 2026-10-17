@@ -25,6 +25,14 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         parent.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(SoundsViewModel.BusyPercent) or nameof(SoundsViewModel.IsBusy)) OnPropertyChanged(nameof(StepUnknown));
+            if (e.PropertyName == nameof(SoundsViewModel.IsBusy))
+            {
+                // Hiding and showing wait while a scan or other job runs: it works on the sounds as they were.
+                HideCopiesCommand.NotifyCanExecuteChanged();
+                UndoCommand.NotifyCanExecuteChanged();
+                UnhideCommand.NotifyCanExecuteChanged();
+                ShowAllHiddenCommand.NotifyCanExecuteChanged();
+            }
         };
         RefreshUndo();
     }
@@ -58,6 +66,15 @@ public sealed partial class DuplicatesViewModel : ObservableObject
     partial void OnBatchMessageChanged(string value) => OnPropertyChanged(nameof(HasBatchMessage));
 
     public bool IsEmpty => Groups.Count == 0;
+    /// <summary>The list is empty only because what it would show is hidden: then undo is offered right there.</summary>
+    [ObservableProperty] bool _onlyHiddenLeft;
+    /// <summary>Hidden copies no longer in any group (their copy went, or now counts as only very similar).</summary>
+    [ObservableProperty] int _strayHidden;
+    public string StrayHiddenText => StrayHidden == 1 ? "1 hidden copy is no longer in any group. Show it again"
+        : $"{StrayHidden:N0} hidden copies are no longer in any group. Show them again";
+    public bool HasStrayHidden => StrayHidden > 0;
+    partial void OnStrayHiddenChanged(int value) { OnPropertyChanged(nameof(StrayHiddenText)); OnPropertyChanged(nameof(HasStrayHidden)); }
+    partial void OnOnlyHiddenLeftChanged(bool value) => OnPropertyChanged(nameof(EmptyText));
     partial void OnGroupsChanged(IReadOnlyList<DuplicateGroupItem> value) => Changed();
     partial void OnHasLookedChanged(bool value) => Changed();
     partial void OnIsLoadingChanged(bool value) => Changed();
@@ -66,11 +83,7 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(EmptyTitle));
         OnPropertyChanged(nameof(EmptyText));
-        OnPropertyChanged(nameof(HasGroups));
     }
-
-    /// <summary>Whether any copies were found at all, filtered out or not.</summary>
-    public bool HasGroups => _all.Count > 0;
 
     /// <summary>What the empty tab says: nothing looked for yet, or nothing found, or nothing matching the filters.</summary>
     public string EmptyTitle =>
@@ -80,7 +93,7 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         : "Find duplicate sounds";
     public string EmptyText =>
         IsLoading ? ""
-        : _all.Count > 0 ? (CanUndo ? "Everything showing is hidden. Show them again below, or pick Hidden in the filter to bring back single copies." : "Try another filter or search.")
+        : _all.Count > 0 ? (OnlyHiddenLeft ? "Everything that matches is hidden. Show the last batch again below, or pick Hidden to bring back single copies." : "Try another filter or search.")
         : HasLooked ? "None of your sounds is a copy of another. New sounds are checked after each scan, or when you press Find duplicates."
         : "Finds copies of the same sound across your sample folders, even renamed, converted to another format or trimmed. "
           + "Play each copy to compare, then tick groups to hide the copies that are the same sound from the app (very similar ones are only listed). "
@@ -88,6 +101,7 @@ public sealed partial class DuplicatesViewModel : ObservableObject
           + "The first time it listens to every sound, which takes a while; after that only new ones.";
 
     IReadOnlyList<DuplicateGroup> _all = [];
+    List<long> _strays = [];
     bool _loaded;
     // Ticks and keep choices, by group (the id of the sound first suggested to keep), so they survive filtering.
     readonly HashSet<long> _ticked = [];
@@ -104,14 +118,18 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         _ = Load();
     }
 
-    async Task Load()
+    async Task Load(IReadOnlyList<DuplicateGroup>? found = null)
     {
         IsLoading = true;
         try
         {
             var org = parent.Org;
-            var (all, counts, toCheck) = await Task.Run(() => (DuplicateFinder.Groups(org), org.Library.PrintCounts(), org.Library.SamenessToCheck().Count));
+            var (all, counts, toCheck, hiddenIds) = await Task.Run(() =>
+                (found ?? DuplicateFinder.Groups(org), org.Library.PrintCounts(), org.Library.SamenessToCheck().Count, org.Library.HiddenIds()));
             _all = all;
+            var inGroups = all.SelectMany(g => g.Members).Where(m => m.Sound.Hidden).Select(m => m.Sound.Id).ToHashSet();
+            _strays = hiddenIds.Where(id => !inGroups.Contains(id)).ToList();
+            StrayHidden = _strays.Count;
             var keys = all.Select(g => g.Members[0].Sound.Id).ToHashSet();
             _ticked.IntersectWith(keys);
             foreach (var k in _keep.Keys.Where(k => !keys.Contains(k)).ToList()) _keep.Remove(k);
@@ -150,17 +168,25 @@ public sealed partial class DuplicatesViewModel : ObservableObject
     {
         var run = ++_filtering;
         var (all, kind, words) = (_all, Kind, SearchText.Split(' ', StringSplitOptions.RemoveEmptyEntries));
-        var shown = await Task.Run(() => all.Where(g => kind switch
-            {
-                SameOnly => g.SameCopies > 0,
-                SimilarOnly => g.HasSimilar,
-                HiddenOnly => g.Members.Any(m => m.Sound.Hidden),
-                _ => true,
-            })
-            .Where(g => words.Length == 0 || g.Members.Any(m => words.All(w => m.Sound.Path.Contains(w, StringComparison.OrdinalIgnoreCase))))
-            .Select(g => new DuplicateGroupItem(g, this))
-            .ToList());
+        bool Matches(DuplicateGroup g) =>
+            words.Length == 0 || g.Members.Any(m => words.All(w => m.Sound.Path.Contains(w, StringComparison.OrdinalIgnoreCase)));
+        var (shown, onlyHidden) = await Task.Run(() =>
+        {
+            var list = all.Where(g => kind switch
+                {
+                    SameOnly => g.SameCopies > 0,
+                    SimilarOnly => g.HasSimilar,
+                    HiddenOnly => g.Members.Any(m => m.Sound.Hidden),
+                    _ => true,
+                })
+                .Where(Matches)
+                .Select(g => new DuplicateGroupItem(g, this))
+                .ToList();
+            // Nothing to show, yet groups the search matches have hidden copies: the hiding emptied the list.
+            return (list, list.Count == 0 && all.Any(g => Matches(g) && g.Members.Any(m => m.Sound.Hidden)));
+        });
         if (run != _filtering) return;   // a newer filter is on its way
+        OnlyHiddenLeft = onlyHidden;
         Groups = shown;
         ShownText = shown.Count == all.Count ? "" : $"Showing {shown.Count:N0} of {all.Count:N0}";
         UpdateSelection();
@@ -185,17 +211,20 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         UpdateSelection();
     }
 
-    /// <summary>
-    /// The ticked groups' copies to hide: the ones still showing that are the same sound as the one to keep. Very
-    /// similar ones are never hidden, and if you keep a very similar one, nothing in its group is.
-    /// </summary>
+    /// <summary>The ticked groups' copies to hide: the ones still showing that are the same sound as one that stays.</summary>
     List<Sound> TickedExtras() => _all.Where(g => _ticked.Contains(g.Members[0].Sound.Id)).SelectMany(SameExtras).ToList();
 
     internal IEnumerable<Sound> SameExtras(DuplicateGroup g)
     {
+        // Within each set of copies that are the same sound, one stays: the one you keep if it's in the set, else
+        // the set's lead (the one that's only very like the one to keep). Very similar ones are never hidden.
         var keep = KeepOf(g);
-        if (!g.Members.Any(m => m.Sound.Id == keep && m.Same)) return [];
-        return g.Members.Where(m => m.Same && m.Sound.Id != keep && !m.Sound.Hidden).Select(m => m.Sound);
+        foreach (var set in g.Members.GroupBy(m => m.SameSet).Where(s => s.Count() > 1))
+        {
+            var stays = set.Any(m => m.Sound.Id == keep) ? keep : (set.FirstOrDefault(m => !m.Same) ?? set.First()).Sound.Id;
+            foreach (var m in set)
+                if (m.Sound.Id != stays && !m.Sound.Hidden) yield return m.Sound;
+        }
     }
 
     void UpdateSelection()
@@ -230,57 +259,66 @@ public sealed partial class DuplicatesViewModel : ObservableObject
     /// <summary>Looks for copies of new and changed sounds; the Sounds page calls this after a scan when <see cref="AfterScan"/> is on.</summary>
     public async Task FindAsync()
     {
-        var (groups, extra) = (0, 0);
+        IReadOnlyList<DuplicateGroup>? found = null;
         await parent.RunAsync("Finding duplicate sounds", (p, ct) =>
         {
             DuplicateFinder.Update(parent.Org, p, ct);
-            var found = DuplicateFinder.Groups(parent.Org);   // here, off the UI thread: on a big library this takes a while
-            (groups, extra) = (found.Count, found.Sum(g => g.Members.Count - 1));
-        }, () => ("Duplicate sounds checked", groups == 0
+            found = DuplicateFinder.Groups(parent.Org);   // here, off the UI thread: on a big library this takes a while
+        }, () => ("Duplicate sounds checked", found is not { Count: > 0 } f
             ? "No copies found"
-            : $"{groups:N0} sounds have copies ({extra:N0} extra files)"),
-            always: false);   // nothing in the library itself changes, so the Sounds lists aren't rebuilt   // nothing in the library itself changes, so the Sounds lists aren't rebuilt
+            : $"{f.Count:N0} sounds have copies ({f.Sum(g => g.Members.Count - 1):N0} extra files)"),
+            always: false);   // nothing in the library itself changes, so the Sounds lists aren't rebuilt
         _loaded = true;
-        await Load();
+        await Load(found);
     }
 
     /// <summary>Hides the ticked groups' extra copies from every list in the app. The files themselves aren't touched.</summary>
-    [RelayCommand(CanExecute = nameof(HasSelection))]
+    bool CanHide() => HasSelection && !parent.IsBusy;
+    bool NotBusy => !parent.IsBusy;
+
+    [RelayCommand(CanExecute = nameof(CanHide))]
     async Task HideCopies()
     {
         var extras = TickedExtras();
         if (extras.Count == 0) return;
-        await Task.Run(() => parent.Org.Library.Hide(extras.Select(s => s.Id), DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")));
+        var ids = extras.Select(s => s.Id).ToList();
+        await Task.Run(() => parent.Org.Library.Hide(ids, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fffffff")));
         BatchMessage = $"Hid {extras.Count:N0} extra copies from the app. The files are still in your folders.";
-        parent.Activities.Done($"Hid {extras.Count:N0} extra copies", "Only in the app: your files are untouched", "Show again", () => UndoCommand.Execute(null));
+        // This card's Show again brings back this batch, even if another has been hidden since.
+        parent.Activities.Done($"Hid {extras.Count:N0} extra copies", "Only in the app: your files are untouched", "Show again", () => _ = Show(ids));
         _ticked.Clear();
-        await AfterChange();
+        await AfterChange(ids, hidden: true);
     }
 
     /// <summary>Shows the last batch of hidden copies again.</summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(NotBusy))]
     async Task Undo()
     {
         if (parent.Org.Library.LastHidden() is not { } last) return;
-        await Task.Run(() => parent.Org.Library.Unhide(last.Ids));
-        BatchMessage = $"Showing {last.Ids.Count:N0} copies again.";
-        await AfterChange();
+        await Show(last.Ids);
     }
 
-    [RelayCommand]
-    async Task Unhide(DuplicateMemberItem? m)
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    Task Unhide(DuplicateMemberItem? m) => m is null ? Task.CompletedTask : Show([m.Sound.Id]);
+
+    /// <summary>Shows the hidden copies that aren't in any group any more (nothing else would bring them back).</summary>
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    Task ShowAllHidden() => Show(_strays.ToList());
+
+    async Task Show(IReadOnlyList<long> ids)
     {
-        if (m is null) return;
-        await Task.Run(() => parent.Org.Library.Unhide([m.Sound.Id]));
-        await AfterChange();
+        if (ids.Count == 0 || parent.IsBusy) return;
+        await Task.Run(() => parent.Org.Library.Unhide(ids));
+        BatchMessage = ids.Count == 1 ? "Showing it again." : $"Showing {ids.Count:N0} copies again.";
+        await AfterChange(ids, hidden: false);
     }
 
-    async Task AfterChange()
+    async Task AfterChange(IReadOnlyList<long> ids, bool hidden)
     {
-        await Task.Run(parent.Org.Reload);
-        parent.Reload();
+        // Only the hidden flags change: the library isn't read again, and the Sounds lists are rebuilt off the UI thread.
+        parent.Org.SetHidden(ids, hidden);
         RefreshUndo();
-        await Load();
+        await Task.WhenAll(parent.ReloadAsync(), Load());
     }
 
     void RefreshUndo()
