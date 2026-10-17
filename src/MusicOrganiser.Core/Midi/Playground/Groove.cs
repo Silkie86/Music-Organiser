@@ -254,8 +254,9 @@ public static class Groove
         var f = Members(from);
         var t = Members(to);
         if (interval == 0) return 0;
-        if (interval == f.Third) return t.Third;
+        // The fifth first: a power chord's "third" is its fifth too, and should stay the fifth.
         if (interval == f.Fifth) return t.Fifth;
+        if (interval == f.Third) return t.Third;
         if (f.Seventh is { } s7 && interval == s7) return t.Seventh ?? 0;
         int[] options = interval switch
         {

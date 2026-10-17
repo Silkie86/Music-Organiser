@@ -80,6 +80,7 @@ public sealed partial class MainViewModel : ObservableObject
         ];
         _selectedNav = StartPage();
         if (_selectedNav.Page == Midi || _selectedNav.Page == Playground) Midi.Opened();
+        if (_selectedNav.Page == Playground) Playground.Opened();
         _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
         _projectsShown = _soundsShown = db.ProjectsRevision;   // those two pages read the library as they open
 
@@ -161,6 +162,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _db.SetSetting(LastPageKey, value.Title);
         if (value.Page == Midi || value.Page == Playground) Midi.Opened();   // the playground matches against the MIDI page's parts
+        if (value.Page == Playground) Playground.Opened();
         if (value.Page != Midi) Midi.Left();
         if (value.Page != Playground) Playground.Left();
         // The MO Probes running now are followed only while Settings shows them.

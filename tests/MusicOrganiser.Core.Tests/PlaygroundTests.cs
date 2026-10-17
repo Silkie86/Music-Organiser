@@ -162,6 +162,7 @@ public class PlaygroundTests : IDisposable
         using var db = new LibraryDb(Path.Combine(_root, "library.db"));
         using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
         using var sounds = new SoundOrganiser(soundDb);
+        db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "export"));   // drags write here, not into ~/Documents
         var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
         var p = main.Playground;
 

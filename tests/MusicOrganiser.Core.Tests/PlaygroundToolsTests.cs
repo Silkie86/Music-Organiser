@@ -176,4 +176,62 @@ public class PlaygroundToolsTests
         Assert.Equal([36, 41, 43], smooth.GroupBy(n => n.Start).OrderBy(g => g.Key).Select(g => g.Min(n => n.Key)));
         Assert.True(Moves(smooth.Where(n => n.Key > 50).ToList()) < Moves(part.Where(n => n.Key > 50).ToList()));
     }
+
+    // ---- fixes from the code review ----
+
+    [Fact]
+    public void Chord_names_with_brackets_and_6_9_read_as_written()
+    {
+        Assert.Equal(C("C6/9").Intervals, C("C69").Intervals);
+        Assert.Equal(C("C9").Intervals, C("C7(9)").Intervals);
+        Assert.True(C("C7(b9,#11)").Has(1) && C("C7(b9,#11)").Has(6) && C("C7(b9,#11)").Has(10));
+        Assert.True(C("C7(13)").Has(9) && C("C7(13)").Has(10));
+        // The app's own names read back as the same chord.
+        foreach (var name in new[] { "C69", "Csus4(add9)", "G13(b9)", "Dm11", "Bm7b5" })
+            Assert.Equal(C(name).Intervals, C(C(name).Name).Intervals);
+    }
+
+    [Fact]
+    public void A_chart_written_from_a_lane_reads_back_with_the_same_timing()
+    {
+        // Three beats of C then one of F, a bar of G, and a lane of just one bar with two chords.
+        List<TimedChord> lane = [new(0, 3 * Beat, C("C")), new(3 * Beat, Beat, C("F")), new(Bar, Bar, C("G"))];
+        var chart = ChordLane.ToChart(lane, 2 * Bar);
+        Assert.Equal("C / / F | G", chart);
+        Assert.Equal(lane, ChordLane.ParseChart(chart, out _));
+
+        List<TimedChord> one = [new(0, 2 * Beat, C("Dm7")), new(2 * Beat, 2 * Beat, C("G7"))];
+        Assert.Equal(one, ChordLane.ParseChart(ChordLane.ToChart(one, Bar), out _));
+    }
+
+    [Fact]
+    public void A_loop_past_the_end_of_a_shorter_section_still_slices_and_keeps_held_notes()
+    {
+        var h = new SectionHarmony { Notes = Block(0, 2 * Bar, 90, 48, 52, 55), Lane = [new(0, 2 * Bar, C("C"))], Length = 2 * Bar, Songs = [], Hashes = new HashSet<string>() };
+        var past = h.Slice(4 * Bar, 6 * Bar);   // threw before
+        Assert.True(past.Length > 0);
+        // The chord held from bar 1 sounds in bar 2's slice.
+        Assert.Equal(3, h.Slice(Bar, 2 * Bar).Notes.Count);
+    }
+
+    [Fact]
+    public void Drop_2_voices_triads_too()
+    {
+        List<TimedChord> lane = [new(0, Bar, C("C")), new(Bar, Bar, C("F")), new(2 * Bar, Bar, C("Gsus4"))];
+        var notes = Voicer.Voice(lane, VoicingStyle.Drop2, CompRhythm.Held, 3 * Bar);
+        foreach (var bar in notes.GroupBy(n => n.Start / Bar)) Assert.Equal(4, bar.Count());
+    }
+
+    [Fact]
+    public void Chords_without_a_seventh_have_only_their_third_as_a_guide_tone()
+    {
+        Assert.Equal(1, ChordSymbol.Count(C("C").GuideTones));
+        Assert.NotEqual(C("C").GuideTones, C("Cmaj7").GuideTones);
+    }
+
+    [Fact]
+    public void A_power_chords_fifth_stays_a_fifth_when_its_playing_is_copied()
+    {
+        Assert.Equal(7, Groove.Map(C("C5"), C("Dm7"), 7));
+    }
 }

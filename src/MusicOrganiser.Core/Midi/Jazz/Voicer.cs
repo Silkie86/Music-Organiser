@@ -101,7 +101,8 @@ public static class Voicer
         // Places a stack of intervals (from the root) so its lowest note is in [low, high].
         void Place(int low, int high, params int[] stack)
         {
-            var sorted = stack.OrderBy(x => x).ToArray();
+            // A power chord has no third or seventh, so its "third" and "fifth" can be the same note: played once.
+            var sorted = stack.Distinct().OrderBy(x => x).ToArray();
             for (var bottom = low; bottom <= high; bottom++)
             {
                 if (ChordSymbol.Mod(bottom - r - sorted[0]) != 0) continue;
@@ -152,9 +153,11 @@ public static class Voicer
             case VoicingStyle.Drop2:
             {
                 int[] four = p.Seventh is { } d7 ? [c.Has(2) || c.Has(1) || c.Has(3) ? p.Ninth : 0, p.Third, p.Fifth, d7] : [0, p.Third, p.Fifth, 0 + 12];
-                foreach (var inv in Inversions(four.Distinct().Count() == 4 ? four : [0, p.Third, p.Fifth, p.Ninth]))
+                foreach (var close in Inversions(four.Distinct().Count() == 4 ? four : [0, p.Third, p.Fifth, p.Ninth]))
                 {
-                    if (inv.Length < 4) continue;
+                    if (close.Length < 3) { Place(43, 57, close); continue; }
+                    // A triad (or a sus chord) has three notes: its bottom note doubled on top makes the four to drop.
+                    var inv = close.Length == 3 ? [close[0], close[1], close[2], close[0] + 12] : close;
                     var dropped = new[] { inv[2] - 12, inv[0], inv[1], inv[3] };
                     Place(43, 57, dropped);
                 }

@@ -69,11 +69,11 @@
                         </Flyout>
                     </Button.Flyout>
                 </Button>
-                <Border Classes="dragChip" views:FileDrag.Source="{Binding}" DataContext="section"
+                <Border Classes="dragChip" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}" DataContext="section"
                         ToolTip.Tip="Drag this section into your DAW: one MIDI file with a track for each part">
                     <TextBlock Text="Drag the section" />
                 </Border>
-                <Border Classes="dragChip" views:FileDrag.Source="{Binding}" DataContext="arrangement"
+                <Border Classes="dragChip" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}" DataContext="arrangement"
                         ToolTip.Tip="Drag the whole arrangement (the sections in order) into your DAW: one MIDI file, a track for each part">
                     <TextBlock Text="Drag the arrangement" />
                 </Border>
@@ -82,7 +82,7 @@
             </StackPanel>
             <StackPanel>
                 <TextBlock Text="Playground" Classes="pageTitle" />
-                <TextBox Text="{Binding IdeaName}" MinWidth="260" HorizontalAlignment="Left" Margin="0,4,0,0" FontSize="13"
+                <TextBox Text="{Binding IdeaName, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter" MinWidth="260" HorizontalAlignment="Left" Margin="0,4,0,0" FontSize="13"
                          ToolTip.Tip="This idea's name: what the MIDI files are called when you drag them out" />
             </StackPanel>
         </DockPanel>
@@ -151,7 +151,7 @@
                         <Button Content="Hear them from the parts" Classes="tiny" Command="{Binding HearChordsCommand}" IsVisible="{Binding ChordsTyped}"
                                 ToolTip.Tip="Forget the typed chords and hear them from the parts again" />
                     </StackPanel>
-                    <TextBox Text="{Binding ChartText}" PlaceholderText="{Binding ChartHint}" FontFamily="{DynamicResource NumberFont}"
+                    <TextBox Text="{Binding ChartText, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter" PlaceholderText="{Binding ChartHint}" FontFamily="{DynamicResource NumberFont}"
                              ToolTip.Tip="Type the chords as a chart: Dm9 G13 | Cmaj9 | % | A7alt. Chords between bar lines share the bar; % repeats it. Parts written from the chords follow." />
                 </DockPanel>
                 <StackPanel Grid.Row="1" Spacing="2" Margin="0,0,0,8">
@@ -200,7 +200,7 @@
                 <!-- The part picked: its controls and the piano roll, the other parts grey behind. -->
                 <StackPanel Grid.Row="3" Spacing="6" Margin="0,8,0,0" IsVisible="{Binding HasSelectedLayer}">
                     <WrapPanel DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow">
-                        <TextBox Text="{Binding Name}" Width="190" Margin="0,0,6,6" ToolTip.Tip="The part's name: its track's name in your DAW" />
+                        <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter" Width="190" Margin="0,0,6,6" ToolTip.Tip="The part's name: its track's name in your DAW" />
                         <ComboBox ItemsSource="{x:Static vm:LayerRow.SoundChoices}" SelectedItem="{Binding Sound}" MinWidth="150" Margin="0,0,10,6" FontSize="12"
                                   ToolTip.Tip="The sound it plays with here (General MIDI)" />
                         <TextBlock Text="Octave" Classes="label" Margin="0,0,4,6" />

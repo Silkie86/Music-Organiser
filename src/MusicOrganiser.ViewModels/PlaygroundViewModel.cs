@@ -152,6 +152,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>After every change: saved straight away, so nothing is lost if the app closes.</summary>
     void Changed(bool harmony = true)
     {
+        // Parts written from the chords follow when an edit changed the chords heard (or the length grew), not only the chart.
+        if (harmony && Section.Layers.Any(l => l.Written.Length > 0) && _writtenFor != (Section, ChordLane.ToChart(LaneForWriting(), Section.Length)))
+            RewriteWritten();
         try { _store.SaveCurrent(_session); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save the idea: {e.Message}"; }
         if (harmony) HarmonyChanged();
@@ -239,8 +242,20 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     partial void OnTempoChanged(double value)
     {
         if (_showing) return;
-        _session.Tempo = Math.Clamp(Math.Round(value), 40, 240);
-        Changed(harmony: false);
+        var tempo = Math.Clamp(Math.Round(value), 40, 240);
+        if (tempo == _session.Tempo) return;
+        _session.Tempo = tempo;
+        _ = SaveTempoSoon();
+    }
+
+    int _tempoMoves;
+
+    /// <summary>Saved (and the music started again at the new speed) once the tempo slider stops, not on every step of a drag.</summary>
+    async Task SaveTempoSoon()
+    {
+        var move = ++_tempoMoves;
+        await Task.Delay(300);
+        if (move == _tempoMoves) Changed(harmony: false);
     }
 
     partial void OnKeyTextChanged(string value)
@@ -271,6 +286,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (_showing || value == Section.Bars) return;
         Remember();
         Section.Bars = Math.Clamp(value, 1, 64);
+        if (Loop is { } loop) SetLoop(loop);   // kept inside the section, or dropped if it's now past the end
         RewriteWritten();
         OnPropertyChanged(nameof(Length));
         foreach (var row in Layers) row.LengthChanged();
@@ -329,6 +345,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (index == _session.Current || index < 0 || index >= _session.Sections.Count) return;
         StopPlaying();
         _session.Current = index;
+        Loop = null;   // loop points belong to the section they were set on
         SelectedLayer = null;
         ShowSection();
         Changed(harmony: false);
@@ -358,7 +375,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Remember();
         var copy = new PlaygroundSection
         {
-            Name = NextSectionName(), Bars = Section.Bars, Chart = Section.Chart,
+            Name = NextSectionName(), Bars = Section.Bars, Chart = Section.Chart, Feel = Section.Feel,
             Layers = Section.Layers.Select(l => l.Copy()).ToList(),
         };
         _session.Sections.Insert(_session.Current + 1, copy);
@@ -554,6 +571,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             return;
         }
         Remember();
+        _writtenFor = (Section, ChordLane.ToChart(lane, Section.Length));
         var layer = AddLayer(name, role, Written(how, lane, Section.Length), written: how);
         layer.Program = role == MidiRoles.Melody ? 73 : layer.Program;
         Changed();
@@ -572,12 +590,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         };
     }
 
+    /// <summary>The section and chords (as a chart) its written parts were last written from.</summary>
+    (PlaygroundSection, string)? _writtenFor;
+
     /// <summary>Parts written from the chords are written again when the chords or the length change.</summary>
     void RewriteWritten()
     {
         if (Section.Layers.All(l => l.Written.Length == 0)) return;
         _harmony = null;
         var lane = LaneForWriting();
+        _writtenFor = (Section, ChordLane.ToChart(lane, Section.Length));
         foreach (var l in Section.Layers.Where(l => l.Written.Length > 0))
             l.Notes = lane.Count == 0 ? [] : WithGroove(l, Written(l.Written, lane, Section.Length), lane, Section.Length);
         foreach (var row in Layers) row.Changed();
@@ -643,6 +665,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var keep = GrooveSource?.Layer;
         GrooveSources.Clear();
         foreach (var row in Layers.Where(r => r != SelectedLayer)) GrooveSources.Add(row);
+        // A suggestion picked to copy from stays picked when you pick another part to put it on.
+        if (GrooveMatch is not null) { GrooveSource = null; return; }
         GrooveSource = GrooveSources.FirstOrDefault(r => r.Layer == keep) ?? GrooveSources.FirstOrDefault(r => r.Role == MidiRoles.Drums)
                        ?? GrooveSources.FirstOrDefault();
     }
@@ -792,17 +816,30 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     ProgressionModel? _model;
     string _modelFor = "";
 
-    async Task RefreshNextChordsAsync()
+    int _nextRequest;
+
+    /// <summary>The page was opened: the MIDI is being read now, so the next-chord ideas can learn from it.</summary>
+    public void Opened() => _ = RefreshNextChordsAsync(load: true);
+
+    /// <summary>
+    /// What usually comes next, learned from your chord parts. Only reads the MIDI when the page is open (<paramref name="load"/>),
+    /// so building this page when the app starts doesn't read and index every MIDI part for people who never come here.
+    /// </summary>
+    async Task RefreshNextChordsAsync(bool load = false)
     {
+        var request = ++_nextRequest;
         NextChords.Clear();
         var lane = Harmony.Lane;
         if (lane.Count == 0) { NextChordsText = ""; return; }
-        if (await _main.Midi.CatalogueAsync() is not { } catalogue) return;
+        var catalogue = load ? await _main.Midi.CatalogueAsync() : _main.Midi.LoadedCatalogue;
+        if (catalogue is null || request != _nextRequest) return;
         var songs = Harmony.Songs;
         var key = string.Join("|", songs.OrderBy(s => s)) + ":" + catalogue.Entries.Count;
         if (_model is null || _modelFor != key)
         {
-            _model = await UiWork.Run(() => ProgressionModel.Learn(catalogue.Entries, songs));
+            var model = await UiWork.Run(() => ProgressionModel.Learn(catalogue.Entries, songs));
+            if (request != _nextRequest) return;   // the chords changed while it learned; the newer call shows its own
+            _model = model;
             _modelFor = key;
         }
         var last = lane[^1].Chord;
@@ -821,8 +858,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     internal void AddNextChord(ChordSymbol chord)
     {
         // The chord goes on the end of the chart as a new bar.
-        var chart = ChordsTyped ? Section.Chart : ChordLane.ToChart(Harmony.Lane, Harmony.Length);
-        SetChart((chart.Length == 0 ? "" : chart.TrimEnd(' ', '|') + " | ") + chord.Name);
+        // Written out bar by bar first, so a chart typed without bar lines ("Dm7 G7") keeps its chords in their own bars.
+        var lane = Harmony.Lane;
+        var chart = lane.Count == 0 ? "" : ChordLane.ToChart(lane, ChordsTyped ? lane[^1].End : Harmony.Length);
+        SetChart((chart.Length == 0 ? "" : chart.TrimEnd(' ', '|') + " | ") + chord.Name + " |");
     }
 
     // ---- suggestions from the library ----
@@ -905,17 +944,20 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         {
             var from = (long)Math.Max(0, FromBar - 1) * Bar;
             var length = Section.Length;
-            var channels = await UiWork.Run(() => reader.ExtractChannels(project.Path));
-            var parts = new List<(string Name, string Role, List<NoteEvent> Notes)>();
-            foreach (var c in channels)
+            // Read and worked out off the screen's thread, so a big song doesn't freeze the window.
+            var parts = await UiWork.Run(() =>
             {
-                var notes = PhraseAnalyser.Normalise(c.Notes, c.Ppq, keepPlace: true)
-                    .Where(n => n.Start >= from && n.Start < from + length)
-                    .Select(n => n with { Start = n.Start - from, Length = Math.Min(n.Length, from + length - n.Start) }).ToList();
-                if (notes.Count == 0) continue;
-                var role = c.Kind == "Drums" ? MidiRoles.Drums : PhraseAnalyser.Analyse(notes, c.Name).Role;
-                parts.Add((c.Name, role, notes));
-            }
+                var found = new List<(string Name, string Role, List<NoteEvent> Notes)>();
+                foreach (var c in reader.ExtractChannels(project.Path))
+                {
+                    // Notes held into the first bar (a pushed chord, a tie) come in too, cut to start there.
+                    var notes = MidiBrowserViewModel.Cut(PhraseAnalyser.Normalise(c.Notes, c.Ppq, keepPlace: true), from, from + length);
+                    if (notes.Count == 0) continue;
+                    var role = c.Kind == "Drums" ? MidiRoles.Drums : PhraseAnalyser.Analyse(notes, c.Name).Role;
+                    found.Add((c.Name, role, notes));
+                }
+                return found;
+            });
             if (parts.Count == 0)
             {
                 Message = $"{project.Name} has no notes from bar {FromBar} for {Section.Bars} bars.";
@@ -943,7 +985,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     void SetLoop(RollRange? range)
     {
-        Loop = range is { } r && r.End > r.Start ? new RollRange(Math.Clamp(r.Start, 0, Length), Math.Clamp(r.End, 1, Length)) : null;
+        Loop = range is { } r && Math.Clamp(r.End, 1, Length) > Math.Clamp(r.Start, 0, Length)
+            ? new RollRange(Math.Clamp(r.Start, 0, Length), Math.Clamp(r.End, 1, Length)) : null;
         if (_playing) _ = PlayAsync();
     }
 
@@ -1050,12 +1093,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         if (Loop is not { } r) return channels;
         length = r.End - r.Start;
-        var end = r.End;
-        return channels.Select(c => c with
-        {
-            Notes = c.Notes.Where(n => n.Start >= r.Start && n.Start < end)
-                           .Select(n => n with { Start = n.Start - r.Start, Length = Math.Min(n.Length, end - n.Start) }).ToList(),
-        }).ToList();
+        // Chords pushed ahead of the loop's first bar, or tied into it, still sound from its start.
+        return channels.Select(c => c with { Notes = MidiBrowserViewModel.Cut(c.Notes, r.Start, r.End) }).ToList();
     }
 
     static MidiChannel Channel(string name, int? program, IReadOnlyList<NoteEvent> notes) =>
@@ -1116,12 +1155,14 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         if (row.IsPlaying) { StopPlaying(); return; }
         StopPlaying();
-        var written = Section.Layers.Where(l => l.Written.Length > 0).ToList();
-        var channels = PlaygroundSession.Audible(Section).Where(l => l.Written.Length == 0).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
-        if (written.Count == 0)
+        // What plays now (soloed parts only, when any are), with the written parts playing the idea's chords.
+        var audible = PlaygroundSession.Audible(Section).ToList();
+        var written = audible.Where(l => l.Written.Length > 0).ToList();
+        var channels = audible.Where(l => l.Written.Length == 0).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
+        if (Section.Layers.All(l => l.Written.Length == 0))
             channels.Add(Channel("Chords", 4, Voicer.Voice(row.Idea.Lane, VoicingStyle.Close, CompRhythm.Held, Section.Length)));
         else
-            foreach (var l in written.Where(l => !l.Muted))
+            foreach (var l in written)
                 channels.Add(Channel(l.Name, l.Program, WithGroove(l, Written(l.Written, row.Idea.Lane, Section.Length), row.Idea.Lane, Section.Length)));
         await PlayAsync(instead: channels);
         row.IsPlaying = _playing;
@@ -1143,6 +1184,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     /// <summary>What a drag carries: one part, the section ("section"), or the whole arrangement ("arrangement").</summary>
+    /// <summary>A part's notes within the section, cut at its end: a part keeps its notes past the end when the section is
+    /// made shorter (so making it longer again brings them back), but they don't go out to the DAW.</summary>
+    List<NoteEvent> InSection(IReadOnlyList<NoteEvent> notes) => MidiBrowserViewModel.Cut(notes, 0, Section.Length);
+
     public DragPayload? MakeDrag(IReadOnlyList<object> items)
     {
         var dir = ExportFolder();
@@ -1150,7 +1195,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         {
             var whole = items[0] is "arrangement";
             var tracks = whole ? _session.ArrangedTracks()
-                : PlaygroundSession.Audible(Section).Select(l => (l.Name, l.Program, l.Notes.Where(n => n.Start < Section.Length).ToList())).ToList();
+                : PlaygroundSession.Audible(Section).Select(l => (l.Name, l.Program, InSection(l.Notes))).ToList();
             if (tracks.Count == 0) return null;
             var clip = new MidiClip { Name = _session.Name, Ppq = Ppq };
             foreach (var t in tracks) clip.Track(t.Name).AddRange(t.Notes);
@@ -1166,7 +1211,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var files = rows.Select(r =>
         {
             var clip = new MidiClip { Name = r.Name, Ppq = Ppq };
-            clip.Track(r.Name).AddRange(r.Layer.Notes);
+            clip.Track(r.Name).AddRange(InSection(r.Layer.Notes));
             var file = Path.Combine(dir, TextScan.SafeFileName($"{r.Name} ({_session.Name})") + ".mid");
             File.WriteAllBytes(file, MidiWriter.Write(clip, _session.Tempo));
             return file;
@@ -1193,7 +1238,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             {
                 Message = $"Sending {l.Name} to Bitwig…";
                 var clip = new MidiClip { Name = l.Name, Ppq = Ppq };
-                clip.Track(l.Name).AddRange(l.Notes);
+                clip.Track(l.Name).AddRange(InSection(l.Notes));
                 var file = Path.Combine(dir, TextScan.SafeFileName($"{l.Name} ({_session.Name})") + ".mid");
                 File.WriteAllBytes(file, MidiWriter.Write(clip, _session.Tempo));
                 var track = await link.NewTrackAsync(l.Name);

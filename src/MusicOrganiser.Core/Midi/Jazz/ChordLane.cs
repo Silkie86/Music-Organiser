@@ -140,25 +140,41 @@ public static class ChordLane
         return lane.Count == 0 ? null : lane;
     }
 
-    /// <summary>The lane as a chart, bar by bar: "Dm9 G13 | Cmaj9 | % | A7alt".</summary>
+    /// <summary>
+    /// The lane as a chart, bar by bar: "Dm9 G13 | Cmaj9 | % | A7alt". A bar that isn't split evenly is written in
+    /// eighths with "/" holds ("C / / D" is three beats of C, one of D), so reading the chart back gives the same timing.
+    /// </summary>
     public static string ToChart(IReadOnlyList<TimedChord> lane, long length)
     {
         if (lane.Count == 0) return "";
+        const int slots = 8;
         var bars = (int)Math.Ceiling(Math.Max(length, lane[^1].End) / (double)Bar);
         var text = new List<string>();
         string? last = null;
         for (var b = 0; b < bars; b++)
         {
-            long from = (long)b * Bar, to = from + Bar;
-            // Chords that start in the bar, or the one still sounding at its start.
-            var inBar = lane.Where(c => c.Start < to && c.End > from).ToList();
-            if (inBar.Count == 0) { text.Add("N.C."); last = null; continue; }
-            var names = inBar.Select(c => c.Chord.Name).ToList();
-            var bar = string.Join(" ", names);
-            text.Add(names.Count == 1 && bar == last ? "%" : bar);
+            long from = (long)b * Bar;
+            // The chord sounding at the start of each eighth of the bar (null between chords).
+            var at = new string?[slots];
+            for (var i = 0; i < slots; i++)
+            {
+                var t = from + (long)i * Bar / slots;
+                at[i] = lane.FirstOrDefault(c => c.Start <= t && c.End > t)?.Chord.Name;
+            }
+            // The fewest even pieces the bar splits into: 1, 2, 4 or 8.
+            var n = new[] { 1, 2, 4, 8 }.First(k => Enumerable.Range(0, slots).All(i => at[i] == at[i / (slots / k) * (slots / k)]));
+            var tokens = new List<string>();
+            for (var i = 0; i < n; i++)
+            {
+                var name = at[i * (slots / n)];
+                tokens.Add(name is null ? "N.C." : i > 0 && name == at[(i - 1) * (slots / n)] ? "/" : name);
+            }
+            var bar = string.Join(" ", tokens);
+            text.Add(n == 1 && bar == last && bar != "N.C." ? "%" : bar);
             last = bar;
         }
-        return string.Join(" | ", text);
+        // One bar on its own gets a bar line, or "C F" would read back as two bars.
+        return bars == 1 ? text[0] + " |" : string.Join(" | ", text);
     }
 
     /// <summary>The lane moved up or down.</summary>
