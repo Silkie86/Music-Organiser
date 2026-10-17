@@ -19,6 +19,18 @@ public class InstrumentTests
     public void Names_that_say_what_plays_name_it(string name, string family) =>
         Assert.Equal(family, Instruments.Guess([name])?.Name);
 
+    [Theory]
+    [InlineData("Upright Bass", Instruments.Bass)]             // not the piano
+    [InlineData("Spitfire LABS Soft Piano", Instruments.Piano)] // the word says, not the library
+    [InlineData("Spitfire Albion One", Instruments.Strings)]    // only the library says
+    [InlineData("Drum and Bass", null)]                         // a style of music, not an instrument
+    [InlineData("Drum & Bass kick", Instruments.Drums)]
+    [InlineData("Future Bass chords", null)]
+    [InlineData("VB-3 organ", Instruments.Organ)]
+    [InlineData("Pattern B3", null)]
+    public void Instrument_words_beat_libraries_and_styles_of_music_name_nothing(string name, string? family) =>
+        Assert.Equal(family, Instruments.Guess([name])?.Name);
+
     [Fact]
     public void A_plugin_says_it_is_a_plugin_and_a_word_says_it_is_a_word()
     {
@@ -67,6 +79,15 @@ public class InstrumentTests
         // A project track on a drum machine or sampler of hits is drums.
         Assert.Equal(Instruments.Drums, MidiCatalogue.InstrumentOf(Phrase(@"k:\song.flp", MidiSource.Project, "Sampler", drums: true))?.Name);
         Assert.Equal(Instruments.Bass, MidiCatalogue.InstrumentOf(Phrase(@"d:\x\Loop.mid", MidiSource.File, "", program: 38))?.Name);
+    }
+
+    [Fact]
+    public void Search_doesnt_find_parts_by_the_default_piano_or_a_drum_kits_number()
+    {
+        var catalogue = new MidiCatalogue([Phrase(Path.Combine("d:", "x", "Loop.mid"), MidiSource.File, "", program: 0),
+                                           Phrase(Path.Combine("d:", "x", "Beat.mid"), MidiSource.File, "", drums: true, program: 25)]);
+        Assert.Empty(catalogue.Search(new MidiQuery("acoustic"), out _));   // program 0: nobody chose a sound
+        Assert.Empty(catalogue.Search(new MidiQuery("guitar"), out _));     // on drums, 25 is a drum kit
     }
 
     [Fact]

@@ -316,14 +316,28 @@ public sealed class MidiIndex : IDisposable
         return list;
     }
 
-    /// <summary>Saves embeddings (each a packed 768-byte vector) and drops any made by another export of the model.</summary>
+    /// <summary>
+    /// Drops what another export of the model made, and what was heard in notes no file holds any more (a part deleted
+    /// or changed), so the table only keeps what's used. Once each time the model listens, not with every batch.
+    /// </summary>
+    public int PruneEmbeddings(string model)
+    {
+        lock (_writeLock)
+        {
+            using var cmd = _write.CreateCommand();
+            cmd.CommandText = "DELETE FROM clamp WHERE model <> $m OR NOT EXISTS (SELECT 1 FROM phrases ph WHERE ph.hash = clamp.hash)";
+            cmd.Parameters.AddWithValue("$m", model);
+            return cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Saves embeddings (each a packed 768-byte vector), replacing any for the same notes.</summary>
     public void SetEmbeddings(string model, IReadOnlyList<(string Hash, byte[] Vector)> batch)
     {
         if (batch.Count == 0) return;
         lock (_writeLock)
         {
             using var tx = _write.BeginTransaction();
-            Exec(tx, "DELETE FROM clamp WHERE model <> $m", ("$m", model));
             using var cmd = _write.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = "INSERT INTO clamp (hash, model, vec) VALUES ($h, $m, $v) ON CONFLICT(hash) DO UPDATE SET model = $m, vec = $v";

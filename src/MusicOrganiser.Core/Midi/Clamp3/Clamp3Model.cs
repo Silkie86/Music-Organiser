@@ -38,11 +38,24 @@ public sealed class Clamp3Model : IDisposable
     public static string DefaultFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "models", "clamp3");
 
-    public static bool IsInstalled(string? folder = null)
+    /// <summary>Says which export the model folder holds, so a new <see cref="Version"/> downloads the new files.</summary>
+    const string VersionFile = "version.txt";
+    /// <summary>The first export, from before the folder said which it held.</summary>
+    const string FirstVersion = "clamp3-c2-onnx-v1";
+
+    /// <summary>Which export is in the folder, or null when it's not all there.</summary>
+    public static string? InstalledVersion(string? folder = null)
     {
         folder ??= DefaultFolder;
-        return Files.Where(f => f.Local.EndsWith(".onnx") || f.Local.EndsWith(".json")).All(f => File.Exists(Path.Combine(folder, f.Local)));
+        if (!Files.Where(f => f.Local.EndsWith(".onnx") || f.Local.EndsWith(".json")).All(f => File.Exists(Path.Combine(folder, f.Local))))
+            return null;
+        var marker = Path.Combine(folder, VersionFile);
+        try { return File.Exists(marker) ? File.ReadAllText(marker).Trim() : FirstVersion; }
+        catch (IOException) { return null; }
     }
+
+    /// <summary>The export this app expects is downloaded (an older one isn't: the MIDI page offers the download again).</summary>
+    public static bool IsInstalled(string? folder = null) => InstalledVersion(folder) == Version;
 
     /// <summary>
     /// Downloads the model into <paramref name="folder"/>. Each file goes to a .part file first, so an interrupted
@@ -54,6 +67,9 @@ public sealed class Clamp3Model : IDisposable
         folder ??= DefaultFolder;
         baseUrl ??= DownloadBase;
         Directory.CreateDirectory(folder);
+        // Another export's files are replaced, not kept because they're there.
+        if (InstalledVersion(folder) is { } had && had != Version)
+            foreach (var (_, local) in Files) File.Delete(Path.Combine(folder, local));
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("MusicOrganiser");
         foreach (var (remote, local) in Files)
@@ -81,11 +97,12 @@ public sealed class Clamp3Model : IDisposable
             }
             File.Move(part, target, overwrite: true);
         }
+        await File.WriteAllTextAsync(Path.Combine(folder, VersionFile), Version, ct);
     }
 
     // Copies of the MIDI encoder run side by side, each on its own share of the background workers (as ClapModel does),
     // so reading a big MIDI library keeps them busy but leaves two cores for the window.
-    static readonly int Copies = Math.Max(1, Parallelism.Workers / 4);
+    public static readonly int Copies = Math.Max(1, Parallelism.Workers / 4);
     readonly string _symbolicPath;
     readonly SessionOptions _symbolicOptions;
     readonly ConcurrentBag<InferenceSession> _pool = [];
@@ -123,10 +140,21 @@ public sealed class Clamp3Model : IDisposable
         };
         // ONNX Runtime's threads otherwise spin at normal priority between pieces of work, eating the cores left for the window.
         _symbolicOptions.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
-        _pool.Add(NewSymbolicSession());
-        using var textOptions = new SessionOptions { GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL };
-        _text = new InferenceSession(Path.Combine(folder, "text.onnx"), textOptions);
-        _tokenizer = UnigramTokenizer.Load(Path.Combine(folder, "tokenizer.json"));
+        try
+        {
+            _pool.Add(NewSymbolicSession());
+            using var textOptions = new SessionOptions { GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL };
+            _text = new InferenceSession(Path.Combine(folder, "text.onnx"), textOptions);
+            _tokenizer = UnigramTokenizer.Load(Path.Combine(folder, "tokenizer.json"));
+        }
+        catch
+        {
+            // A file that won't load: let go of what did, so a broken install doesn't hold a model's memory.
+            foreach (var session in _all) session.Dispose();
+            _text?.Dispose();
+            _symbolicOptions.Dispose();
+            throw;
+        }
         Interlocked.Increment(ref _live);
     }
 

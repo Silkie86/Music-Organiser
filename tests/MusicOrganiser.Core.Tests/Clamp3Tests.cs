@@ -149,12 +149,40 @@ public class Clamp3Tests
         List<string> Order(float weight) =>
             catalogue.Search(new MidiQuery("pad", Words: words, NameWeight: weight), out _).Select(h => h.Entry.Phrase.Hash).ToList();
 
-        // As it comes, the name lifts "b" a little, not past the closer sound of "a".
-        Assert.Equal(["a", "b", "c"], Order(1));
-        // Names counting three times put the part named "Pad" first.
-        Assert.Equal(["b", "a", "c"], Order(3));
+        // As it comes, parts named with every word come first (heard before not heard), then the rest by sound: a search
+        // for a name still finds it.
+        Assert.Equal(["b", "c", "a"], Order(1));
+        Assert.Equal(["b", "c", "a"], Order(3));
+        // Towards sound, the name only lifts "b" a little, not past the closer sound of "a".
+        Assert.Equal(["a", "b", "c"], Order(0.5f));
         // The model only: names are ignored, so the part not heard yet drops out.
         Assert.Equal(["a", "b"], Order(0));
+    }
+
+    [Fact]
+    public void A_model_folder_says_which_export_it_holds()
+    {
+        var dir = Fixtures.TempDir();
+        Assert.Null(Clamp3Model.InstalledVersion(dir));
+        foreach (var f in new[] { "symbolic.onnx", "text.onnx", "tokenizer.json" }) File.WriteAllText(Path.Combine(dir, f), "");
+        // Downloaded before the folder said: the first export.
+        Assert.Equal("clamp3-c2-onnx-v1", Clamp3Model.InstalledVersion(dir));
+        File.WriteAllText(Path.Combine(dir, "version.txt"), "clamp3-c2-onnx-v0");
+        Assert.False(Clamp3Model.IsInstalled(dir));   // an older export: offered again
+        File.WriteAllText(Path.Combine(dir, "version.txt"), Clamp3Model.Version);
+        Assert.True(Clamp3Model.IsInstalled(dir));
+    }
+
+    [Fact]
+    public void What_was_heard_in_notes_no_file_holds_any_more_is_let_go()
+    {
+        var dir = Fixtures.TempDir();
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));
+        index.SetEmbeddings(Clamp3Model.Version, [("gone", new byte[768])]);
+        index.SetEmbeddings("an-older-export", [("old", new byte[768])]);
+        Assert.Equal(2, index.PruneEmbeddings(Clamp3Model.Version));
+        Assert.Empty(index.Embeddings(Clamp3Model.Version));
     }
 
     [Fact]
@@ -179,8 +207,10 @@ public class Clamp3Tests
         new MidiIndexer(index, db).Run();
         using var model = new Clamp3Model(Folder);
 
-        var first = MidiEmbedder.Run(index, model);
+        var told = new Dictionary<string, sbyte[]>();
+        var first = MidiEmbedder.Run(index, model, saved: batch => { foreach (var (k, v) in batch) told[k] = v; });
         Assert.Equal(2, first.Heard);   // the copy has the same notes, so it shares the first one's
+        Assert.Equal(2, told.Count);    // and search was told as each batch was saved
         Assert.Equal(0, first.Failed);
         var meanings = index.Embeddings(Clamp3Model.Version);
         Assert.Equal(2, meanings.Count);
