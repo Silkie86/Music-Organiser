@@ -60,6 +60,18 @@ public sealed class DiagnosticsTests : IDisposable
     }
 
     [Fact]
+    public void A_log_that_cant_be_written_doesnt_stop_the_app()
+    {
+        var blocked = Path.Combine(_dir, "logs");
+        File.WriteAllText(blocked, "a file where the folder should be");
+
+        using var log = new SessionLog(blocked);
+        log.Info("App", "still running");
+
+        Assert.Contains(log.Recent(), l => l.EndsWith("still running", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Two_runs_in_the_same_second_get_a_file_each()
     {
         var now = new DateTime(2026, 10, 15, 8, 0, 0);
@@ -128,6 +140,7 @@ public sealed class WatchdogTests : IDisposable
     {
         var log = SessionLog.Start(_dir);
         var jobs = new MusicOrganiser.ViewModels.ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero };
+        var early = jobs.Start("Startup scan");   // running before the watchdog began, as the app's first scan is
         using (new UiWatchdog(jobs, () => "Plugins"))
         {
             var job = jobs.Start("Scanning plugins", "VST3");
@@ -139,12 +152,17 @@ public sealed class WatchdogTests : IDisposable
                 Thread.Sleep(20);
             }
             job.Finish("Scanned plugins");
+            jobs.Done("Note saved for Claude");
         }
+        early.Finish("Startup scan done");
 
         var recent = log.Recent();
         Assert.Contains(recent, l => l.Contains("[Job] Started: Scanning plugins (VST3)"));
-        Assert.Contains(recent, l => l.Contains("[Freeze] The app didn't respond for") && l.Contains("on Plugins, while running: Scanning plugins") && l.Contains("[memory clean-up: "));
+        Assert.Contains(recent, l => l.Contains("[Freeze] The app didn't respond for") && l.Contains("on Plugins, while running: ") && l.Contains("Startup scan") && l.Contains("Scanning plugins") && l.Contains("[memory clean-up: "));
         Assert.Contains(recent, l => l.Contains("[Job] Done: Scanned plugins after"));
+        // A one-off notice is one line, not a start and an end.
+        Assert.DoesNotContain(recent, l => l.Contains("Started: Note saved for Claude"));
+        Assert.Contains(recent, l => l.EndsWith("[Job] Done: Note saved for Claude", StringComparison.Ordinal));
         log.Dispose();
     }
 }

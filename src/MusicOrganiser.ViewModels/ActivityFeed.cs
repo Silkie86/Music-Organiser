@@ -39,7 +39,9 @@ public sealed class ActivityFeed
 
     /// <summary>A job is starting: its card shows a spinner until it is finished, stopped or failed.</summary>
     /// <param name="cancel">What Stop does, if the job can be stopped.</param>
-    public Activity Start(string title, string detail = "", Action? cancel = null)
+    public Activity Start(string title, string detail = "", Action? cancel = null) => Start(title, detail, cancel, raise: true);
+
+    Activity Start(string title, string detail, Action? cancel, bool raise)
     {
         var a = new Activity(this, title, detail, cancel);
         lock (_lock)
@@ -47,16 +49,16 @@ public sealed class ActivityFeed
             Items.Add(a);
             while (Items.Count > MaxCards && Items.FirstOrDefault(i => !i.IsRunning) is { } old) Items.Remove(old);
         }
-        Raise(a, null);
+        if (raise) Raise(a, null);
         return a;
     }
 
     /// <summary>Something happened at once (a file saved, a project sent to a DAW): a card that is already done.</summary>
     public Activity Done(string title, string detail = "", string? actionLabel = null, Action? action = null) =>
-        Start(title).Finish(title, detail, actionLabel, action);
+        Start(title, "", null, raise: false).Finish(title, detail, actionLabel, action);
 
     /// <summary>Something couldn't be done.</summary>
-    public Activity Failed(string title, string detail = "") => Start(title).Fail(title, detail);
+    public Activity Failed(string title, string detail = "") => Start(title, "", null, raise: false).Fail(title, detail);
 
     // async void: nothing may escape it, or it takes the whole app down. Two cards retiring at once off the window's
     // thread (a job finished in the background; in tests, which have no window) once removed at the same moment and did.
