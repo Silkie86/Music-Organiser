@@ -37,6 +37,8 @@ public sealed class Sound
     public int UsedIn { get; set; }
     /// <summary>How many of <see cref="UsedIn"/> were saved in the last year.</summary>
     public int UsedInRecently { get; set; }
+    /// <summary>The years the projects using it were last saved in, earliest first.</summary>
+    public int[] UsedInYears { get; set; } = [];
     /// <summary>Its Most liked score (see <see cref="LikedWeights"/>), and that as a share of the most liked sound's, for its bar.</summary>
     public double Liked { get; set; }
     public double LikedShare { get; set; }

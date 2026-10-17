@@ -112,38 +112,44 @@ public sealed class SoundOrganiser : IDisposable
 
     // ---- usage from your projects -------------------------------------------------------
 
-    IReadOnlyList<(string Path, int Projects, int Recent)> _lastUsage = [];
+    IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> _lastUsage = [];
 
     public void ApplyUsage(IReadOnlyList<(string Path, int Projects)> usage) =>
-        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Projects)).ToList());
+        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Projects, Array.Empty<int>())).ToList());
+
+    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage) =>
+        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Recent, Array.Empty<int>())).ToList());
 
     /// <summary>
-    /// Counts how many of your projects use each sound, and how many of those were saved in the last year. Projects
+    /// Counts how many of your projects use each sound, how many of those were saved in the last year, and the years
+    /// they were saved in (for the "Used in" filter). Projects
     /// store samples by full path, relative path or just a file name (Bitwig collects copies), so a full-path match is
     /// used when there is one, otherwise the file name, but only a name no other sound in the library has: thousands
     /// of packs have a "01.wav", and each one was credited with every project using any of them.
     /// </summary>
-    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage) => ApplyUsage(_sounds, usage);
+    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> usage) => ApplyUsage(_sounds, usage);
 
-    void ApplyUsage(List<Sound> sounds, IReadOnlyList<(string Path, int Projects, int Recent)> usage)
+    void ApplyUsage(List<Sound> sounds, IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> usage)
     {
         _lastUsage = usage;
-        var byPath = new Dictionary<string, (int All, int Recent)>(StringComparer.OrdinalIgnoreCase);
-        var byName = new Dictionary<string, (int All, int Recent)>(StringComparer.OrdinalIgnoreCase);
-        static (int, int) Add((int All, int Recent) a, int n, int r) => (a.All + n, a.Recent + r);
-        foreach (var (p, n, r) in usage)
+        var byPath = new Dictionary<string, (int All, int Recent, int[] Years)>(StringComparer.OrdinalIgnoreCase);
+        var byName = new Dictionary<string, (int All, int Recent, int[] Years)>(StringComparer.OrdinalIgnoreCase);
+        static (int, int, int[]) Add((int All, int Recent, int[]? Years) a, int n, int r, int[] y) =>
+            (a.All + n, a.Recent + r, a.Years is not { Length: > 0 } had ? y : y.Length == 0 ? had : had.Union(y).Order().ToArray());
+        foreach (var (p, n, r, y) in usage)
         {
-            byPath[p] = Add(byPath.GetValueOrDefault(p), n, r);
+            byPath[p] = Add(byPath.GetValueOrDefault(p), n, r, y);
             var name = p.Split('\\', '/')[^1];
-            byName[name] = Add(byName.GetValueOrDefault(name), n, r);
+            byName[name] = Add(byName.GetValueOrDefault(name), n, r, y);
         }
         var shared = sounds.GroupBy(s => System.IO.Path.GetFileName(s.Path), StringComparer.OrdinalIgnoreCase)
                            .Where(g => g.Skip(1).Any()).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var s in sounds)
         {
             var name = System.IO.Path.GetFileName(s.Path);
-            (s.UsedIn, s.UsedInRecently) = byPath.TryGetValue(s.Path, out var u) ? u
+            var (all, recent, years) = byPath.TryGetValue(s.Path, out var u) ? u
                 : shared.Contains(name) ? default : byName.GetValueOrDefault(name);
+            (s.UsedIn, s.UsedInRecently, s.UsedInYears) = (all, recent, years ?? []);
         }
     }
 
