@@ -29,7 +29,7 @@ public class FormatRegistryTests
         Assert.Equal("VST3 plugin", Bw.Class(0x728)?.Name);
         Assert.Equal("device name", Bw.Field(0x9a)?.Name);
         Assert.NotNull(Bw.MetaKey("application_version_name"));
-        Assert.Null(Fl.Event(150));
+        Assert.Null(Fl.Event(151));
     }
 
     [Fact]
@@ -274,7 +274,7 @@ public class FormatCensusTests
         Fixtures.FlStudioProject(dir);
         Fixtures.FlStudio25Project(dir);
         File.WriteAllBytes(Path.Combine(dir, "Odd.flp"),
-            new Fixtures.FlpBuilder().Ascii(199, "24.1.1.4234").Dword(150, 7).Dword(150, 8).Build());
+            new Fixtures.FlpBuilder().Ascii(199, "24.1.1.4234").Dword(151, 7).Dword(151, 8).Build());
         Fixtures.BitwigProject(dir);
         File.WriteAllBytes(Path.Combine(dir, "Broken.flp"), [1, 2, 3]);
         File.WriteAllText(Path.Combine(dir, "notes.txt"), "not a project");
@@ -283,14 +283,14 @@ public class FormatCensusTests
         Assert.Equal((3, 1, 1), (census.FlProjects, census.BitwigProjects, census.UnreadableCount));
         Assert.Equal(["21", "24", "25"], census.FlVersions.Keys);
         var (id, tally) = Assert.Single(census.UnknownFlEvents);
-        Assert.Equal((150, 1, 2L), (id, tally.Projects, tally.Times));
+        Assert.Equal((151, 1, 2L), (id, tally.Projects, tally.Times));
         Assert.Contains(census.UnknownBitwigClasses, c => c.Id == 0x2e);
         Assert.DoesNotContain(census.UnknownBitwigClasses, c => c.Id == 0x728);
         Assert.DoesNotContain(census.UnknownBitwigFields, c => c.Id == 0x9a);
 
         var report = census.Report();
         Assert.Contains("Format census of 5 projects", report);
-        Assert.Contains("event 150  in 1 (33.3%)", report);
+        Assert.Contains("event 151  in 1 (33.3%)", report);
         Assert.Contains("Broken.flp", report);
     }
 }
