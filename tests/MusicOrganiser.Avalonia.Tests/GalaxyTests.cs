@@ -57,4 +57,22 @@ public sealed class GalaxyTests
         Assert.True(played.Count >= 3, string.Join(", ", played));
         Assert.Equal(played.Order(), played);
     }
+
+    [AvaloniaFact]
+    public void A_galaxy_taken_off_screen_lets_go_of_the_graphics_cards_notices()
+    {
+        static int Listeners() =>
+            (typeof(GalaxyGpu).GetField("Changed", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+                .GetValue(null) as Delegate)?.GetInvocationList().Length ?? 0;
+        var before = Listeners();
+        var window = new Window { Content = new GalaxyCanvas(), Width = 300, Height = 300 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(before + 1, Listeners());
+
+        window.Content = null;   // as when you go to another page
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(before, Listeners());
+        window.Close();
+    }
 }
