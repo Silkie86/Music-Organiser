@@ -157,6 +157,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _db.SetSetting(LastPageKey, value.Title);
         if (value.Page == Midi) Midi.Opened();
+        else Midi.Left();
         // The MO Probes running now are followed only while Settings shows them.
         if (value.Page != Settings)
         {

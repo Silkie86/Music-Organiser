@@ -13,6 +13,12 @@ public sealed record MidiChannel(string Name, string Source, int Ppq, IReadOnlyL
     /// <summary>FL Studio: the channel's place in the channel rack, from 0, which its plugin's settings also carry.</summary>
     public int? Channel { get; init; }
 
+    /// <summary>For previewing: the General MIDI sound to play it with (<see cref="Sounds.GmSounds"/>), or null for the usual stand-in.</summary>
+    public int? GmProgram { get; init; }
+
+    /// <summary>For previewing: how loud, from 0 to 1.</summary>
+    public float Volume { get; init; } = 1;
+
     public int Lowest => Notes.Count == 0 ? 0 : Notes.Min(n => n.Key);
     public int Highest => Notes.Count == 0 ? 0 : Notes.Max(n => n.Key);
     public long End => Notes.Count == 0 ? 0 : Notes.Max(n => n.Start + n.Length);
