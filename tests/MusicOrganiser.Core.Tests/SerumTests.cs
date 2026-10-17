@@ -142,12 +142,17 @@ public class SerumTests
     }
 
     [Fact]
-    public void A_preset_from_a_later_Serum_1_is_read_up_to_where_the_older_ones_end()
+    public void A_preset_from_a_later_Serum_1_is_read_with_its_later_modulation_rows()
     {
-        // Later versions save more after the first 20,704 bytes (21,524 seen); that part isn't read.
+        // Later versions save modulation rows 17 to 32 after the first 20,704 bytes, then more that isn't read
+        // (21,524 to 33,872 bytes seen).
         var raw = new byte[21_524];
         BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(13_408 + 4 * 1), 0.25f);
-        raw[^1] = 0xff;
+        var row17 = 20_704;
+        BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(row17 + 4), -0.2f);
+        BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(row17 + 20), 27);
+        BinaryPrimitives.WriteUInt16LittleEndian(raw.AsSpan(row17 + 26), 148);
+        raw.AsSpan(row17 + 16 * 40).Fill(0xff);
         var packed = new MemoryStream();
         using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
 
@@ -155,11 +160,13 @@ public class SerumTests
 
         Assert.True(s.IsPreset);
         Assert.Equal(0.25f, s.Knob(1));
-        Assert.Empty(s.ModSlots);
+        Assert.Equal(new Serum1State.ModSlot(16, 27, -0.2f, 148, false), Assert.Single(s.ModSlots));
     }
 
     [Theory]
     [InlineData(0f, null)]                  // off, Serum 2's default
+    [InlineData(1 / 23f, "kSync")]          // Serum 2 saves all three of Serum 1's sync modes as kSync
+    [InlineData(3 / 23f, "kSync")]
     [InlineData(4 / 23f, "kBendPos")]
     [InlineData(18 / 23f, "kFM_OSC")]       // FM from the other oscillator
     [InlineData(1f, null)]                  // past the last mode, which Serum 1 shows blank
@@ -172,6 +179,41 @@ public class SerumTests
 
         var wt = Serum1To2.Translate(Serum1State.Read(packed.ToArray())!).State.Settings["Oscillator0"]!["WTOsc0"]!["plainParams"];
         Assert.Equal(expected, (wt as JsonObject)?["kParamWarpMenu"]?.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(6 * 2048, 3.5)]  // a 6-frame table: halfway is between frames 3 and 4
+    [InlineData(null, 128.5)]   // table not found: taken as 256 frames
+    public void A_wavetable_position_is_saved_as_a_frame_number_from_1(int? samples, double expected)
+    {
+        var raw = new byte[Serum1State.Size];
+        BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(13_408 + 4 * 11), 0.5f);
+        Encoding.Latin1.GetBytes(@"Analog\Basic Shapes.wav").CopyTo(raw, 15_368);
+        var packed = new MemoryStream();
+        using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
+
+        var result = Serum1To2.Translate(Serum1State.Read(packed.ToArray())!,
+            path => samples is { } n && path == "Analog/Basic Shapes.wav" ? new Serum1To2.AudioInfo(n, 1, 44_100) : null);
+
+        var wt = result.State.Settings["Oscillator0"]!["WTOsc0"]!;
+        Assert.Equal(expected, wt["plainParams"]!["kParamTablePos"]!.GetValue<double>(), 6);
+        Assert.Equal(samples is null, result.Rough.Contains("oscillator A's wavetable position"));
+    }
+
+    [Fact]
+    public void A_synced_delay_time_is_left_to_Serum_2_and_listed_as_rough()
+    {
+        var raw = new byte[Serum1State.Size];
+        void F(int knob, float v) => BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(13_408 + 4 * knob), v);
+        F(158, 1); F(127, 1); F(129, 0.6726f); F(130, 0.6405f); // delay on, synced
+        var packed = new MemoryStream();
+        using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
+
+        var result = Serum1To2.Translate(Serum1State.Read(packed.ToArray())!);
+
+        var delay = ((JsonArray)result.State.Settings["FXRack0"]!["FX"]!).Single(fx => fx!["FXDelay"] is not null)!["FXDelay"]!["plainParams"]!;
+        Assert.Null(delay["kParamTimeL"]);
+        Assert.Contains("the delay's synced time", result.Rough);
     }
 
     [Fact]

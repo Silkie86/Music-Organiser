@@ -19,15 +19,15 @@ public sealed class Serum1State
     public const int Size = 172_736;
 
     /// <summary>
-    /// A saved preset (.fxp) holds only the start of the same layout, 20,704 bytes, without the wavetables or the
-    /// second half of the modulation matrix; the rest reads as empty.
+    /// A saved preset (.fxp) holds only the start of the same layout, 20,704 bytes, without the wavetables; one from a
+    /// later Serum 1 also holds the second half of the modulation matrix. The rest reads as empty.
     /// </summary>
     public const int PresetSize = 20_704;
     const int FxpChunkAt = 60;
     const int KnobsAt = 13_408, LaterKnobsAt = 19_168, FirstLaterKnob = 228;
     const int OscANameAt = 15_368, OscBNameAt = 15_880, NoiseNameAt = 16_392, NameLength = 256;
     const int PresetNameAt = 18_802, AuthorAt = 18_848, DescriptionAt = 18_896;
-    const int SlotSize = 40, SlotsAt = 0, MoreSlotsAt = 20_704, SlotCount = 32;
+    const int SlotSize = 40, SlotsAt = 0, MoreSlotsAt = 20_704, SlotCount = 32, MoreSlotsEnd = MoreSlotsAt + 16 * SlotSize;
     const int FxOrderAt = 15_324, FxCount = 10, NoiseFlagsAt = 18_768;
 
     /// <summary>How many knob values the state holds, one per parameter Serum 1.3 shows a DAW (316, checked on Solomon's PC).</summary>
@@ -35,7 +35,7 @@ public sealed class Serum1State
 
     readonly byte[] _raw;
 
-    /// <summary>Whether this came from a preset file, which has no wavetables and only modulation rows 1 to 16.</summary>
+    /// <summary>Whether this came from a preset file, which has no wavetables (and from an older Serum 1, only modulation rows 1 to 16).</summary>
     public bool IsPreset { get; private init; }
 
     Serum1State(byte[] raw) => _raw = raw;
@@ -62,10 +62,11 @@ public sealed class Serum1State
             while (n < raw.Length && z.Read(raw, n, raw.Length - n) is > 0 and var got) n += got;
             if (n == Size) return new Serum1State(raw[..Size]);
             // Presets from later Serum 1 versions carry more after the first part (21,524 to 33,872 bytes seen in
-            // Serum's own presets); what's past it isn't read, so it reads as empty.
+            // Serum's own presets): modulation rows 17 to 32, where a whole state has them, then more that isn't
+            // understood yet, so that reads as empty.
             if (n >= PresetSize && n < Size)
             {
-                Array.Clear(raw, PresetSize, raw.Length - PresetSize);
+                Array.Clear(raw, MoreSlotsEnd, raw.Length - MoreSlotsEnd);
                 return new Serum1State(raw[..Size]) { IsPreset = true };
             }
             return null;
