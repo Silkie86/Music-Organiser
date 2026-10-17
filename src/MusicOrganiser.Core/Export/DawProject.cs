@@ -37,8 +37,8 @@ public static class DawProject
     /// <summary>What's said of a channel whose on/off is automated (<see cref="FlChannel.SwitchedBy"/>); <paramref name="audio"/> when its audio clips are carried.</summary>
     internal static string SwitchedOnAndOff(FlChannel c, bool audio)
     {
-        var partly = audio ? c.AudioClips.Count(x => x.PartlyOff && !x.Muted) : 0;
-        return $"switched on and off by \"{c.SwitchedBy}\" in FL Studio, so what it plays while it's off is muted" +
+        var partly = audio ? c.AudioClips.Count(x => x.PartlyOff && !x.Muted && !x.OnMutedTrack) : 0;
+        return $"switched on and off by {string.Join(" and ", c.SwitchedBy.Select(n => $"\"{n}\""))} in FL Studio, so what it plays while it's off is muted" +
                (partly == 0 ? "" : partly == 1 ? "; one audio clip it switches off part of the way through plays whole"
                                                : $"; {partly} audio clips it switches off part of the way through play whole");
     }
@@ -69,7 +69,7 @@ public static class DawProject
             FlControl.MainVolume => "the master volume isn't automated here yet",
             FlControl.InsertVolume => $"the fader of {insert} isn't automated here yet",
             FlControl.InsertPan => $"the pan of {insert} isn't automated here yet",
-            FlControl.InsertSlotOnOff => $"switching an effect on {insert} on and off isn't carried over yet",
+            FlControl.InsertSlotOnOff => $"switching an effect on {insert} on and off isn't carried over yet, so it stays on",
             FlControl.Pitch => "pitch has no equivalent here",
             _ => "this control has no equivalent here",
         };
@@ -118,16 +118,20 @@ public static class DawProject
 
         XElement? Device(FlPlugin p, string role, List<string> skipped)
         {
-            if (p.Native || p.State is null)
+            if (p.Native || p.State is null && !p.NothingSaved)
             {
                 skipped.Add(p.Native ? $"{p.Name} (FL Studio plugin)" : $"{p.Name} (settings not readable)");
                 return null;
             }
-            // VST2 settings go in as a bank (.fxb), as Bitwig's own DAWproject files have them.
-            var (data, extension) = p.Format == "VST2" && p.State.Extension == ".fxp"
-                ? (Fxp.ToBank(p.State.Data), ".fxb") : (p.State.Data, p.State.Extension);
-            var path = $"plugins/{Guid.NewGuid()}{extension}";
-            files.Add((path, data));
+            string? path = null;
+            if (p.State is { } s)
+            {
+                // VST2 settings go in as a bank (.fxb), as Bitwig's own DAWproject files have them.
+                var (data, extension) = p.Format == "VST2" && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data), ".fxb") : (s.Data, s.Extension);
+                path = $"plugins/{Guid.NewGuid()}{extension}";
+                files.Add((path, data));
+            }
+            else skipped.Add($"{p.Name}'s sound (FL Studio saved none in this file, so it opens at its default)");
             return new XElement(p.Format == "VST3" ? "Vst3Plugin" : "Vst2Plugin",
                 new XAttribute("id", Id()),
                 p.DeviceId.Length > 0 ? new XAttribute("deviceID", p.DeviceId) : null,
@@ -136,7 +140,7 @@ public static class DawProject
                 new XAttribute("deviceVendor", p.Vendor),
                 new XAttribute("loaded", "true"),
                 new XElement("Enabled", new XAttribute("id", Id()), new XAttribute("value", p.Enabled ? "true" : "false")),
-                new XElement("State", new XAttribute("path", path)));
+                path is null ? null : new XElement("State", new XAttribute("path", path)));
         }
 
         XElement Channel(string role, string? destination, IEnumerable<XElement> devices, double volume = 1, double pan = 0.5,
@@ -234,7 +238,7 @@ public static class DawProject
             var track = Track(c.Name, "notes", ch, skipped, todo);
             structure.Add(track);
             if (!c.Enabled) notes.Add($"{c.Name}: {SwitchedOff(1)}");
-            if (c.SwitchedBy.Length > 0) notes.Add($"{c.Name}: {SwitchedOnAndOff(c, audio: false)}");
+            if (c.SwitchedBy.Count > 0) notes.Add($"{c.Name}: {SwitchedOnAndOff(c, audio: false)}");
             if (OnMutedTracks(c.Name, c.Clips.Where(x => x.OnMutedTrack).Select(x => x.Track), song.MutedTracks, trackMuted) is { } onMuted)
                 notes.Add(onMuted);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");

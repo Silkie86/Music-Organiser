@@ -345,6 +345,23 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void FollowsEveryClipThatSwitchesAChannelAndKeepsAutomatedEffectsOn()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir(), more: true));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 2));
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+        var bass = doc.Root!.Obj(0x4dd)!.List(0x4de).First();
+        Assert.Equal([1.0, 0.0, 0.0, 1.0, 0.0], Clips(bass).Select(c => c.Num(0x10f8) ?? 0));
+        Assert.Equal([("Serum", 1.0), ("Pro-Q 3", 1.0), ("WOW2", 1.0)], Chain(bass).Select(d => (Def(d).Str(0x9a), Def(d).Num(0xa3)!.Value)));
+        Assert.Contains("Bass: switched on and off by \"Bass - Mute / solo\" and \"Bass - Mute / solo #2\" in FL Studio, so what it plays while it's off is muted",
+                        result.Notes);
+        // The vox's clips are on a muted playlist track, so the one it switches off part of the way through doesn't play at all.
+        Assert.Contains("Vox: switched on and off by \"Vox - Mute / solo\" in FL Studio, so what it plays while it's off is muted", result.Notes);
+        Assert.Contains("WOW2 - On: automation left out (switching an effect on insert 1 on and off isn't carried over yet, so it stays on)", result.Notes);
+    }
+
+    [Fact]
     public void MutesSwitchedOffChannelsAndClipsOnMutedPlaylistTracks()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutedTracks(Fixtures.TempDir()));
@@ -444,6 +461,39 @@ public class BitwigProjectTests
         Assert.Contains("Drop stretched: its audio clips are left out (the Bitwig template has no audio track with an audio clip on it " +
                         "that can be copied; it can't be in a group)", result.Notes);
         Assert.Contains("Drop - Volume: automation left out (what it moves isn't converted)", result.Notes);
+    }
+
+    [Fact]
+    public void SwitchedChannelsLeftOutAudioClipsArentSaidToPlayWhole()
+    {
+        // The template has no audio track, so the vox's audio clips are left out, even the one switched off part of the way.
+        var vox = new FlChannel(0, "Vox", null, @"C:\Samples\Vox.wav", 0, [new NoteEvent(0, 96, 60, 100)])
+        {
+            Clips = [new FlClip("Verse", 0, 384, [new NoteEvent(0, 96, 60, 100)])],
+            AudioClips = [new FlAudioClip(0, 384) { Track = 2, PartlyOff = true }],
+            SwitchedBy = ["Vox - Mute / solo"],
+        };
+        var song = new FlSong("", 96, 120, [vox], [], [new FlAutomation("Vox - Mute / solo", 0, FlControl.OnOff, 0, [new(0, 1), new(2, 0)])]);
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(audioTrack: false), _ => null);
+        Assert.Contains("Vox: its audio clips are left out (the Bitwig template has no audio track with an audio clip on it " +
+                        "that can be copied; it can't be in a group)", result.Notes);
+        Assert.Contains("Vox: switched on and off by \"Vox - Mute / solo\" in FL Studio, so what it plays while it's off is muted", result.Notes);
+    }
+
+    [Fact]
+    public void WhereTwoClipsMovingASettingMeetTheLaneGoesOnFromTheOneStartingThere()
+    {
+        // FL lists the later clip first. The earlier one pans right and jumps back to the centre at its end, at beat 4,
+        // where the later one starts half right and stays there.
+        var song = new FlSong("", 96, 120,
+            [new FlChannel(0, "Keys", null, @"C:\Samples\Keys.wav", 0, [new(0, 96, 60, 100)])],
+            [],
+            [new FlAutomation("Pan later", 0, FlControl.Pan, 0, [new(4, 0.75), new(8, 0.75)]) { Starts = [4] },
+             new FlAutomation("Pan earlier", 0, FlControl.Pan, 0, [new(0, 0.5), new(4, 1), new(4, 0.5)]) { Starts = [0] }]);
+        var doc = Decode(BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => null).Bytes);
+        var lane = doc.Root!.Obj(0x4dd)!.List(0x4de).Single().Obj(0x2dc9)!.List(0x4ba).Single();
+        Assert.Equal([(0.0, 0.0), (4.0, 1.0), (4.0, 0.0), (4.0, 0.5), (8.0, 0.5)],
+                     lane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, p.Num(0x28f)!.Value)));
     }
 
     [Fact]

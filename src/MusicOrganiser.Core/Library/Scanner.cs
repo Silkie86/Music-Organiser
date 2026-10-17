@@ -55,35 +55,24 @@ public sealed class Scanner(LibraryDb db)
             return Readers.For(f) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
         }, SkipDir, ct: ct);
 
-    public static bool SampleFound(string sample, string projectPath)
+    /// <summary>
+    /// Reads one project. Whether each of its samples is on this PC is decided by <paramref name="samples"/> (see
+    /// <see cref="SampleLocator"/> for where it looks); a scan passes one locator for all its projects, so each folder is
+    /// read once, and a project read on its own gets a fresh one, so a sample put back just now counts.
+    /// </summary>
+    public static LibraryDb.IndexedFile Analyse(string path, SampleLocator? samples = null)
     {
-        if (sample.StartsWith('%')) return true;   // FL Studio factory content, e.g. %FLStudioFactoryData%
-        var projectDir = Path.GetDirectoryName(projectPath) ?? "";
-        try
-        {
-            if (Path.IsPathRooted(sample) && File.Exists(sample)) return true;
-            if (!Path.IsPathRooted(sample) && File.Exists(Path.Combine(projectDir, sample))) return true;
-            // Collected / consolidated copies next to the project.
-            var name = sample.Split('\\', '/')[^1];
-            foreach (var sub in new[] { "", "samples", "recordings", "Media", "Audio", "audio" })
-                if (File.Exists(Path.Combine(projectDir, sub, name))) return true;
-        }
-        catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException) { }
-        return false;
-    }
-
-    public static LibraryDb.IndexedFile Analyse(string path)
-    {
+        samples ??= new SampleLocator();
         var fi = new FileInfo(path);
         var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
         try
         {
             var info = Readers.For(path)!.Read(path);
-            var samples = info.Samples.Select(s => (s, SampleFound(s, path))).ToList();
+            var found = info.Samples.Select(s => (s, samples.Found(s, path))).ToList();
             var hardware = info.Plugins.Select(p => p.Name).Concat(info.Hardware)
                                .Select(PluginCatalog.ElektronDevice)
                                .OfType<string>().Distinct().Order().ToList();
-            return new(path, fi.Length, mtime, info, null, samples, hardware);
+            return new(path, fi.Length, mtime, info, null, found, hardware);
         }
         catch (Exception e)   // one unreadable file must never stop a scan
         {
@@ -102,6 +91,8 @@ public sealed class Scanner(LibraryDb db)
         progress?.Report(new("Finding projects", 0, 0, ""));
         var files = FindProjects(roots, ct);
         var known = db.KnownFiles();
+        // DAWs whose reader has got better since the library last read their projects: read those again.
+        var reread = Readers.All.Where(r => db.GetSetting(ReaderVersionKey(r)) != r.Version.ToString()).Select(r => r.Daw).ToHashSet();
         var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
             .Where(f =>
             {
@@ -109,17 +100,19 @@ public sealed class Scanner(LibraryDb db)
                 {
                     var fi = new FileInfo(f);
                     var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                    return full || !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length;
+                    return full || reread.Contains(Readers.For(f)!.Daw) ||
+                           !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length;
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
             }).ToList();
 
         // Read the projects on every core; save them here, in path order, a batch at a time,
         // so a new numbered save always finds the earlier ones it takes its status from.
+        var samples = new SampleLocator();
         var analysed = todo.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
             .Select(f =>
             {
-                try { return Parallelism.Background(() => Analyse(f)); }
+                try { return Parallelism.Background(() => Analyse(f, samples)); }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }   // deleted or locked since it was found
             });
         var batch = new List<LibraryDb.IndexedFile>();
@@ -138,9 +131,12 @@ public sealed class Scanner(LibraryDb db)
             }
         }
         db.UpsertMany(batch);
+        foreach (var r in Readers.All) db.SetSetting(ReaderVersionKey(r), r.Version.ToString());
         db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
         progress?.Report(new("Done", files.Count, files.Count, ""));
     }
+
+    static string ReaderVersionKey(IProjectReader r) => $"reader_version:{r.Daw}";
 
     /// <summary>Refresh the list of plugins installed on this PC.</summary>
     public int ScanInstalledPlugins() => ScanInstalledPlugins(out _);

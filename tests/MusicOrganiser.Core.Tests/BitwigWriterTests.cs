@@ -30,6 +30,25 @@ public class BitwigWriterTests
     }
 
     [Fact]
+    public void ReadsAndWritesListsOfDoubles()
+    {
+        // Bitwig 6.1 keeps a Sampler sample's analysis as counted lists of doubles (type 0x18).
+        // Not knowing the type stopped Solomon's "analog full set" from being read at all.
+        var raw = Fixtures.BwWriter.File(meta: _ => { }, body: b =>
+        {
+            b.Begin(0x2e);
+            b.Obj(0x40fe); b.Begin(0x15df); b.Doubles(0x40fd, 28.074285715, 31.502857142, 34.931519273); b.End();
+            b.Str(0x15b, "after");
+            b.End();
+        }, zip: null);
+        var doc = BitwigFormat.Decode(raw);
+        Assert.Null(doc.BodyError);
+        Assert.Equal([28.074285715, 31.502857142, 34.931519273], (double[])doc.Root!.Obj(0x40fe)![0x40fd]!);
+        Assert.Equal("after", doc.Root.Str(0x15b));
+        Assert.Equal(raw, BitwigFormat.Encode(doc));
+    }
+
+    [Fact]
     public void EditsKeepReferencesPointingAtTheRightObjects()
     {
         var doc = BitwigFormat.Decode(File.ReadAllBytes(Fixtures.BitwigProject(Fixtures.TempDir())));

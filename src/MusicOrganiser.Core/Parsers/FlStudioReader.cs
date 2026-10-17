@@ -16,6 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
+    public int Version => 3;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
@@ -137,7 +138,69 @@ public sealed partial class FlStudioReader : IProjectReader
             if (parts.Length >= 2 && major > 0 && int.TryParse(parts[1], out var minor))
                 flp.Utf16 = major > 11 || (major == 11 && minor >= 5);
         }
+        if (major is > 0 and < 12) StepsAsNotes(flp);
         return flp;
+    }
+
+    // FL 9 and older keep the step sequencer's steps in each channel's events, after the pattern they're in (event 65):
+    // a dot (WORD 91: step + 256), the step's volume (WORD 72: step, volume) and its shift (WORD 92: step, shift).
+    // Newer FL saves steps as notes with no length, as FL 25 did when funk step_8 was saved again.
+    const int EvShuffle = 11, EvDot = 91, EvDotVolume = 72, EvDotShift = 92;
+
+    /// <summary>
+    /// Turns old step sequencer dots into note events (224) placed right after them, so they're read like FL 25's
+    /// steps: key C5, no length, the step's volume as velocity. Odd steps are swung by the song's shuffle, and a shift
+    /// moves its step in 192nds of a beat; both checked against FL 25's re-save of funk step_8 (shuffle 36 moves odd
+    /// steps 3 ticks at 96 PPQ, shift 24 moves a step 12).
+    /// </summary>
+    static void StepsAsNotes(Flp flp)
+    {
+        if (!flp.Events.Any(e => e.Id == EvDot)) return;
+        var step = flp.Ppq / 4;
+        var swing = (int)(flp.Events.FirstOrDefault(e => e.Id == EvShuffle).Int * step / 256);
+        var events = new List<Event>(flp.Events.Count);
+        int? channel = null;
+        var dots = new SortedSet<int>();
+        var volumes = new Dictionary<int, int>();
+        var shifts = new Dictionary<int, int>();
+        void Flush()
+        {
+            if (channel is { } ch && dots.Count > 0)
+            {
+                var notes = new byte[24 * dots.Count];
+                var i = 0;
+                foreach (var d in dots)
+                {
+                    var n = notes.AsSpan(24 * i++, 24);
+                    var at = d * step + (d % 2 == 1 ? swing : 0) + shifts.GetValueOrDefault(d) * flp.Ppq / 192;
+                    BinaryPrimitives.WriteInt32LittleEndian(n, Math.Max(at, 0));
+                    BinaryPrimitives.WriteUInt16LittleEndian(n[4..], 0x4000);
+                    BinaryPrimitives.WriteUInt16LittleEndian(n[6..], (ushort)ch);
+                    BinaryPrimitives.WriteUInt16LittleEndian(n[12..], (ushort)DefaultRoot);
+                    n[16] = 120; n[18] = 64; n[20] = 64; n[22] = 128; n[23] = 128;   // fine pitch, pan, release and mods centred, as FL writes them
+                    n[21] = (byte)Math.Clamp(volumes.GetValueOrDefault(d, 100), 0, 128);
+                }
+                events.Add(new Event(EvPatternNotes, notes));
+            }
+            dots.Clear(); volumes.Clear(); shifts.Clear();
+        }
+        foreach (var e in flp.Events)
+        {
+            switch (e.Id)
+            {
+                case EvDot when channel is not null: dots.Add((int)(e.Int & 0xff)); break;
+                case EvDotVolume when channel is not null: volumes[(int)(e.Int & 0xff)] = (int)(e.Int >> 8); break;
+                case EvDotShift when channel is not null: shifts[(int)(e.Int & 0xff)] = (int)(e.Int >> 8); break;
+                default:
+                    Flush();
+                    if (e.Id == EvChannelNew) channel = (int)e.Int;
+                    break;
+            }
+            events.Add(e);
+        }
+        Flush();
+        flp.Events.Clear();
+        flp.Events.AddRange(events);
     }
 
     static Dictionary<int, byte[]> WrapperFields(ReadOnlySpan<byte> blob)
@@ -183,6 +246,7 @@ public sealed partial class FlStudioReader : IProjectReader
         var pendingInternal = "";
         var channelHasPlugin = false;
         int patterns = 0, notes = 0;
+        var nothingSaved = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var e in flp.Events)
         {
@@ -220,14 +284,18 @@ public sealed partial class FlStudioReader : IProjectReader
                     var f = WrapperFields(e.Payload.Span);
                     var name = WrapperText(f, VstName);
                     var vpath = WrapperText(f, VstPath);
+                    if (f.TryGetValue(VstState, out var st) && SavedNothing(st) && (name.Length > 0 || vpath.Length > 0))
+                        nothingSaved.Add(name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath));
                     if (name.Length > 0 || vpath.Length > 0)
                     {
                         var isInst = !inMixer && channel is not null && channelTypes.GetValueOrDefault(channel.Value) == ChannelTypeInstrument;
-                        info.Plugins.Add(new PluginRef(
-                            name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath),
-                            WrapperText(f, VstVendor),
+                        var vendor = WrapperText(f, VstVendor);
+                        var shown = name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath);
+                        // Old FL (FL 9) hosted its own effects, such as Fruity Compressor, in the wrapper: they're still FL's own.
+                        var own = PluginCatalog.IsFlStudioBundled(shown, vendor, vpath);
+                        info.Plugins.Add(new PluginRef(shown, own && vendor.Length == 0 ? "Image-Line" : vendor,
                             isInst ? PluginKind.Instrument : PluginKind.Effect,
-                            TextScan.PluginFormatFromPath(vpath) is { Length: > 0 } fmt ? fmt : "VST",
+                            own ? "Native" : TextScan.PluginFormatFromPath(vpath) is { Length: > 0 } fmt ? fmt : "VST",
                             vpath));
                     }
                     pendingInternal = "";
@@ -237,6 +305,9 @@ public sealed partial class FlStudioReader : IProjectReader
 
         foreach (var i in channelNames.Keys.Union(channelTypes.Keys).Order())
             info.Tracks.Add(channelNames.GetValueOrDefault(i, $"Channel {i + 1}"));
+        foreach (var n in nothingSaved)
+            info.Warnings.Add($"{n} has no saved sound in this file (it gave FL Studio nothing when the project was saved), " +
+                              "so it opens at its default sound. An earlier save of the project may still have it.");
         info.Details["Channels"] = info.Tracks.Count.ToString();
         info.Details["Patterns"] = patterns.ToString();
         info.Details["Notes"] = notes.ToString();
@@ -282,35 +353,50 @@ public sealed partial class FlStudioReader : IProjectReader
             return new PresetBlob(name, plugin, ".vst3state", state);
         }
 
-        // VST2: FL puts a 21-byte header in front of the plugin's state:
-        // i32 -9, u8 flags (0x08 = the plugin saves a chunk), i32 -2, u32 chunk length, 8 zero bytes.
         var id = f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4
             ? BinaryPrimitives.ReadInt32LittleEndian(cc)
             : 0;
         var chunk = state;
-        if (state.Length >= 21 && BinaryPrimitives.ReadInt32LittleEndian(state) == -9)
+        if (Vst2Header(state) is var (start, len))
         {
-            var len = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9));
-            if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state) is var (values, program))
+            if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state, start) is var (values, program))
                 return new PresetBlob(name, plugin, ".fxp", Fxp.WrapParams(values, program.Length > 0 ? program : plugin, id));
-            if (21 + (long)len <= state.Length) chunk = state.AsSpan(21, (int)len).ToArray();
+            if (start + (long)len <= state.Length) chunk = state.AsSpan(start, (int)len).ToArray();
         }
         return new PresetBlob(name, plugin, ".fxp", Fxp.WrapChunk(chunk, plugin, id));
     }
 
     /// <summary>
+    /// Where the plugin's own state starts after the header FL puts in front of a VST2's state, and its chunk length.
+    /// Newer FL (seen in FL 21 and 25): i32 -9, u8 flags (0x08 = the plugin saves a chunk), i32 -2,
+    /// u32 chunk length, u32 0, u32 program, so 21 bytes. FL 9 (wrapper version 6) has no -2 or 0:
+    /// i32 -9, u8 flags, u32 chunk length, u32 program, so 13 bytes, and reading it as the newer one
+    /// kept only a few bytes of a big chunk, so the plugin came up at its default sound.
+    /// </summary>
+    static (int Start, uint Length)? Vst2Header(byte[] state)
+    {
+        if (state.Length < 13 || BinaryPrimitives.ReadInt32LittleEndian(state) != -9) return null;
+        if (BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(5)) == -2)
+            return state.Length >= 21 ? (21, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9))) : null;
+        return (13, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(5)));
+    }
+
+    /// <summary>A VST2 that saves its sound as a chunk but gave FL an empty one, so FL kept none of it.</summary>
+    static bool SavedNothing(byte[] state) => Vst2Header(state) is (_, 0) && (state[4] & 0x08) != 0;
+
+    /// <summary>
     /// Plugins that don't save a chunk (Predator, older FabFilter) have their parameters after
     /// FL's header instead: u32 count, the values as floats, then u32 1 and the program name.
     /// </summary>
-    static (float[] Values, string Program)? ParamState(byte[] state)
+    static (float[] Values, string Program)? ParamState(byte[] state, int start)
     {
-        if (state.Length < 25) return null;
-        var n = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(21));
-        if (n == 0 || 25 + 4L * n > state.Length) return null;
+        if (state.Length < start + 4) return null;
+        var n = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(start));
+        if (n == 0 || start + 4 + 4L * n > state.Length) return null;
         var values = new float[n];
-        for (var i = 0; i < n; i++) values[i] = BinaryPrimitives.ReadSingleLittleEndian(state.AsSpan(25 + 4 * i));
+        for (var i = 0; i < n; i++) values[i] = BinaryPrimitives.ReadSingleLittleEndian(state.AsSpan(start + 4 + 4 * i));
         var program = "";
-        var at = 25 + 4 * (int)n;
+        var at = start + 4 + 4 * (int)n;
         if (at + 4 < state.Length && BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(at)) == 1)
         {
             var text = state.AsSpan(at + 4, Math.Min(28, state.Length - at - 4));
@@ -686,6 +772,22 @@ public sealed partial class FlStudioReader : IProjectReader
                                            BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 12)..])));
             break;
         }
+        // FL 9: 32-byte items with 0 and 0x6000 where newer FL has the pattern, and the playlist row, counted
+        // from 999 down, at 12. Each row plays one pattern there: row 999 - n is pattern n (checked against
+        // FL 25's re-save of funk step_8, which put the same 123 items on its own tracks).
+        if (items.Count == 0 && d.Length > 0 && d.Length % 32 == 0)
+        {
+            for (var off = 0; off < d.Length; off += 32)
+            {
+                var row = BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 12)..]);
+                if (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 4)..]) != 0 || BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 6)..]) != 0x6000 ||
+                    row is 0 or > 999)
+                    return [];
+                items.Add(new PlaylistItem(PatternBase + 999 - row, BinaryPrimitives.ReadUInt32LittleEndian(d[off..]),
+                                           BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), ItemOffset(d[(off + 24)..]),
+                                           (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 0x2000) != 0, row));
+            }
+        }
         return items;
     }
 
@@ -747,7 +849,7 @@ public sealed partial class FlStudioReader : IProjectReader
                         var f = WrapperFields(e.Payload.Span);
                         var plugin = WrapperText(f, VstName) is { Length: > 0 } n ? n : TextScan.PluginNameFromPath(WrapperText(f, VstPath));
                         var name = currentName.Length > 0 ? currentName : plugin;
-                        if (f.TryGetValue(VstState, out var state) && state.Length > 0)
+                        if (f.TryGetValue(VstState, out var state) && state.Length > 0 && !SavedNothing(state))
                             presets.Add(WrapperPreset(f, state, name, plugin) with
                             {
                                 Kind = onChannel ? PluginKind.Instrument : PluginKind.Effect,

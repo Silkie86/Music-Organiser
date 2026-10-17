@@ -208,16 +208,17 @@ public class FlStudioTests
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir()));
 
         // The on/off holds each point's value until the next, and the points just past the clip's end (as FL saves its
-        // sums of point gaps) count as at its end: off 0-4, on 4-8, off 8-12, then on.
+        // sums of point gaps) count as at its end, jump and all: off 0-4, on 4-8, off 8-12, then on.
         var onOff = song.Automation.Single(a => a.Name == "Bass - Mute / solo");
         Assert.Equal((0, FlControl.OnOff), (onOff.Channel, onOff.Control));
-        Assert.Equal([(0.0, 0.0), (4.0, 1.0), (8.0, 0.0), (12.0, 0.97)], onOff.Points.Select(p => (p.Beat, p.Value)));
+        Assert.Equal([(0.0, 0.0), (4.0, 1.0), (8.0, 0.0), (12.0, 0.0), (12.0, 0.97)], onOff.Points.Select(p => (p.Beat, p.Value)));
 
         // The bass is switched off in the Channel Rack, but that's only where the automation left it: it plays while it's
         // on. The clip at beats 0-4 is off all the way through, so it's muted; at 4-8 it plays; at 10-14 only its first
         // note (beat 10) starts while it's off.
         var bass = song.Channels.Single(c => c.Name == "Bass");
-        Assert.Equal((true, "Bass - Mute / solo"), (bass.Enabled, bass.SwitchedBy));
+        Assert.True(bass.Enabled);
+        Assert.Equal(["Bass - Mute / solo"], bass.SwitchedBy);
         Assert.Equal([(0L, true), (384L, false), (960L, false)], bass.Clips.Select(c => (c.Start, c.Muted)));
         Assert.Equal([true, false], bass.Clips[2].Notes.Select(n => n.Muted));
         Assert.Equal([384L, 576L, 1152L], bass.Notes.Select(n => n.Start));
@@ -225,6 +226,46 @@ public class FlStudioTests
         // The vox is off from beat 2: its clip at 0-4 plays part of the way, the one at 4-6 is muted.
         var vox = song.Channels.Single(c => c.Name == "Vox");
         Assert.Equal([(false, true), (true, false)], vox.AudioClips.Select(c => (c.Muted, c.PartlyOff)));
+    }
+
+    [Fact]
+    public void FollowsEveryClipThatSwitchesAChannelAndKeepsAutomatedEffectsOn()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir(), more: true));
+
+        // The first clip leaves the bass on from beat 12; the second switches it off at 16 and on again at 20.
+        var bass = song.Channels.Single(c => c.Name == "Bass");
+        Assert.Equal(["Bass - Mute / solo", "Bass - Mute / solo #2"], bass.SwitchedBy);
+        Assert.Equal([(0L, true), (384L, false), (960L, false), (1536L, true), (1920L, false)], bass.Clips.Select(c => (c.Start, c.Muted)));
+
+        // WOW2 was off when the song was saved, but automation switches it, so it stays on.
+        Assert.Equal([true, true], song.Inserts.Single(i => i.Index == 1).Effects.Select(e => e.Enabled));
+
+        // A rise that jumps back down at the clip's end rises each time the clip plays.
+        Assert.Equal([(0.0, 0.0), (4.0, 1.0), (4.0, 0.0), (8.0, 1.0), (8.0, 0.0)],
+                     song.Automation.Single(a => a.Name == "Bass - Volume").Points.Select(p => (p.Beat, p.Value)));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WhereClipsSwitchingAChannelMeetTheOneStartingThereDecides(bool onLinkedFirst)
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25BackToBack(Fixtures.TempDir(), onLinkedFirst));
+
+        // "Kick off" in bars 1 and 3, "Kick on" in bar 2, whichever is linked first in the file.
+        var kick = song.Channels.Single(c => c.Name == "Kick");
+        Assert.Equal(["Kick off", "Kick on"], kick.SwitchedBy.Order());
+        Assert.Equal([(0L, true), (384L, false), (768L, true)], kick.Clips.Select(c => (c.Start, c.Muted)));
+
+        // The volume clip placed again over the second half of itself takes over where it starts: halfway up, it starts again.
+        Assert.Equal([(0.0, 0.0), (4.0, 0.5), (4.0, 0.0), (12.0, 1.0)],
+                     song.Automation.Single(a => a.Name == "Kick - Volume").Points.Select(p => (p.Beat, p.Value)));
+        // Placed again inside itself, it plays that stretch, then the longer placement carries on.
+        Assert.Equal([(0.0, 0.0), (2.0, 0.25), (2.0, 0.0), (4.0, 0.25), (4.0, 0.5), (8.0, 1.0)],
+                     song.Automation.Single(a => a.Name == "Kick - Pan").Points.Select(p => (p.Beat, p.Value)));
+        Assert.Equal([(0.0, 0.0), (4.0, 0.5), (8.0, 1.0)],
+                     song.Automation.Single(a => a.Name == "Kick - Pitch").Points.Select(p => (p.Beat, p.Value)));
     }
 
     [Fact]
@@ -349,6 +390,78 @@ public class FlStudio25Tests
     }
 }
 
+public class FlStudio9Tests
+{
+    static readonly byte[] Chunk = [.. Enumerable.Range(0, 300).Select(i => (byte)(i * 7))];
+    readonly string _path = Fixtures.FlStudio9Project(Fixtures.TempDir(), Chunk);
+
+    [Fact]
+    public void KeepsAnFl9PluginsWholeSavedSound()
+    {
+        var cell = new FlStudioReader().ExtractPresets(_path).Single(p => p.Plugin == "LegacyCell");
+        Assert.Equal("FPCh", Encoding.ASCII.GetString(cell.Data, 8, 4));
+        Assert.Equal("KLCV", Encoding.ASCII.GetString(cell.Data, 16, 4));
+        Assert.Equal(Chunk.Length, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(cell.Data.AsSpan(56)));
+        Assert.Equal(Chunk, cell.Data[60..]);
+
+        var song = Readers.FlStudio.ReadSong(_path);
+        Assert.Equal(Chunk, song.Channels.Single(c => c.Name == "Cell").Instrument!.State!.Data[60..]);
+    }
+
+    [Fact]
+    public void ReadsAnFl9PluginsSettingsAfterTheShorterHeader()
+    {
+        var d = new FlStudioReader().ExtractPresets(_path).Single(p => p.Plugin == "Fruity Compressor").Data;
+        Assert.Equal("FxCk", Encoding.ASCII.GetString(d, 8, 4));
+        Assert.Equal("Full Reset", Encoding.ASCII.GetString(d, 28, 28).TrimEnd('\0'));
+        Assert.Equal([0.5f, 0.02f, 0.5f], Enumerable.Range(0, 3)
+            .Select(i => System.Buffers.Binary.BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(56 + 4 * i))));
+    }
+
+    [Fact]
+    public void ReadsFl9StepSequencerDrumsAndPlaylist()
+    {
+        var path = Fixtures.FlStudio9Steps(Fixtures.TempDir());
+        var kick = Readers.FlStudio.ReadSong(path).Channels.Single();
+        // Placed at beat 8 (768 ticks): odd steps swung 3 ticks by shuffle 36, step 7 also shifted 12.
+        Assert.Equal([(768L, 60), (768L + 123, 60), (768L + 183, 60)], kick.Notes.Select(n => ((long)n.Start, n.Key)));
+        Assert.True(kick.Notes[1].Velocity < kick.Notes[0].Velocity);
+        Assert.Equal("3", new FlStudioReader().Read(path).Details["Notes"]);
+    }
+
+    [Fact]
+    public void ListsFlsOwnEffectsHostedInTheOldWrapperAsNative()
+    {
+        var plugins = new FlStudioReader().Read(_path).Plugins.ToDictionary(p => p.Name);
+        Assert.Equal(("Native", "Image-Line"), (plugins["Fruity Compressor"].Format, plugins["Fruity Compressor"].Vendor));
+        Assert.Equal(("VST", PluginKind.Instrument), (plugins["LegacyCell"].Format, plugins["LegacyCell"].Kind));
+    }
+
+    [Fact]
+    public void SaysWhenAPluginGaveFlNothingToSaveAndCarriesNoEmptySound()
+    {
+        var path = Fixtures.FlStudio25NothingSaved(Fixtures.TempDir());
+        var warning = Assert.Single(new FlStudioReader().Read(path).Warnings);
+        Assert.StartsWith("LegacyCell has no saved sound in this file", warning);
+        Assert.Empty(new FlStudioReader().ExtractPresets(path));
+
+        var song = Readers.FlStudio.ReadSong(path);
+        var cell = song.Channels.Single().Instrument!;
+        Assert.Equal((null, true), (cell.State, cell.NothingSaved));
+        Assert.Contains("Cell: left out LegacyCell's sound (FL Studio saved none in this file, so it opens at its default)",
+                        BitwigProject.FromFl(song, Fixtures.BitwigTemplate()).Notes);
+
+        // DAWproject keeps the plugin, just without settings for it.
+        var daw = DawProject.FromFl(song, "funk step_9");
+        using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(daw.Bytes));
+        using var xml = zip.GetEntry("project.xml")!.Open();
+        var plugin = System.Xml.Linq.XDocument.Load(xml).Descendants("Vst2Plugin").Single();
+        Assert.Equal("LegacyCell", (string?)plugin.Attribute("deviceName"));
+        Assert.Null(plugin.Element("State"));
+        Assert.Contains("Cell: left out LegacyCell's sound (FL Studio saved none in this file, so it opens at its default)", daw.Notes);
+    }
+}
+
 public class BitwigTests
 {
     readonly string _path = Fixtures.BitwigProject(Fixtures.TempDir());
@@ -431,11 +544,78 @@ public class BitwigTests
         Assert.DoesNotContain("Serum", names);   // not installed, so plain text isn't trusted as a plugin
         Assert.Contains(@"D:\Splice\Snare 808.wav", info.Samples);   // from the compressed section
         Assert.Contains(info.Samples, s => s.EndsWith("Recorded Bass.wav"));
+        // What the text scan reads next to a path doesn't stick to it, and bare names aren't files.
+        Assert.Contains(@"F:\Bitwig Studio\Projects\Loop Idea\recordings\Syntakt 2-1.wav", info.Samples);
+        Assert.Contains(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, "recordings/Untitled Project [0m27s-1m22s].wav")), info.Samples);
+        Assert.DoesNotContain(info.Samples, s => s.Contains("BASSDRUM"));
+        Assert.All(info.Samples, s => Assert.True(s.StartsWith("D:") || s.StartsWith("F:") || Path.IsPathRooted(s), s));
         Assert.False(info.CanExtractMidi);
         Assert.Empty(new BitwigReader().ExtractMidi(path));
 
         var known = new BitwigReader { KnownPlugins = new HashSet<string>(["Serum"], StringComparer.OrdinalIgnoreCase) };
         Assert.Contains(known.Read(path).Plugins, p => p.Name == "Serum");
+    }
+
+    [Fact]
+    public void TheTextScanReadsNetworkAndAccentedPathsWholeAndCountsCollectedFilesOnce()
+    {
+        // The metadata reads but the body doesn't (a value of a kind this app doesn't know, as 6.1's lists of doubles were).
+        const string accented = @"F:\Samples\Beyoncé Acapellas\Vocal Chop 03.wav", network = @"\\NAS\Samples\Breaks\Amen Break 136bpm.wav",
+                     cyrillic = @"D:\Музыка\Сэмплы\Ударные\Бочка\Kick 01.wav", japanese = @"D:\音楽\サンプル\ドラム\キック.wav";
+        var dir = Path.Combine(Fixtures.TempDir(), "Song");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "Song.bwproject");
+        File.WriteAllBytes(path, Fixtures.BwWriter.File(
+            meta: m => { m.MetaEntry("used_files", 0x19); m.U32(1); m.StrVal("recordings/BD 1-2.wav"); },
+            body: b =>
+            {
+                b.Begin(0x2e);
+                // Bitwig writes a string's length before it: 42 is "*", which joins the network path's text.
+                foreach (var s in new[] { @"F:\Bitwig Studio\Projects\Song\recordings\BD 1-2.wav", network, @"F:\Samples\Drums\Kick 01.wav" })
+                    b.Str(0x2b9, s);
+                // As Bitwig writes any text with a character outside ASCII, even when most of it is.
+                foreach (var s in new[] { accented, cyrillic, japanese })
+                    b.Str(0x2b9, s, utf16: true);
+                b.U32(0x123); b.S.WriteByte(0x7e);
+            }, zip: null));
+
+        var info = new BitwigReader().Read(path);
+        Assert.Equal(Confidence.Heuristic, info.Confidence);
+        // The recording collected into the project counts once, as its copy there, not again where it was recorded.
+        Assert.Equal(new[] { Path.Combine(dir, "recordings", "BD 1-2.wav"), network, @"F:\Samples\Drums\Kick 01.wav", accented, cyrillic, japanese }
+                         .Order(StringComparer.Ordinal),
+                     info.Samples.Order(StringComparer.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AFileCollectedIntoTheProjectHidesOnlyItsOwnOriginal(bool decodable)
+    {
+        // Kick-01 and Snare (as "Snare-2", the name being taken) were collected into the project; Kick-02 from the same
+        // pack wasn't, so it's still listed where it is.
+        var dir = Path.Combine(Fixtures.TempDir(), "Song");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "Song.bwproject");
+        File.WriteAllBytes(path, Fixtures.BwWriter.File(
+            meta: m => { m.MetaEntry("used_files", 0x19); m.U32(2); m.StrVal("samples/Kick-01.wav"); m.StrVal("samples/Snare-2.wav"); },
+            body: b =>
+            {
+                b.Begin(0x2e);
+                var id = 0x4100;
+                foreach (var file in new[] { @"D:\Packs\Drums\Kick-01.wav", @"D:\Packs\Drums\Kick-02.wav", @"D:\Packs\Drums\Snare.wav" })
+                {
+                    b.Obj(id++); b.Begin(0x2a); b.Str(0x3b, file); b.End();
+                }
+                if (!decodable) { b.U32(0x123); b.S.WriteByte(0x7e); }   // a value of a kind this app doesn't know
+                b.End();
+            }, zip: null));
+
+        var info = new BitwigReader().Read(path);
+        Assert.Equal(decodable ? Confidence.Partial : Confidence.Heuristic, info.Confidence);
+        Assert.Equal(new[] { Path.Combine(dir, "samples", "Kick-01.wav"), Path.Combine(dir, "samples", "Snare-2.wav"), @"D:\Packs\Drums\Kick-02.wav" }
+                         .Order(StringComparer.Ordinal),
+                     info.Samples.Order(StringComparer.Ordinal));
     }
 
     [Fact]
