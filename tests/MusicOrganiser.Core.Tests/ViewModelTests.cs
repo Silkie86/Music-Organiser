@@ -810,6 +810,18 @@ public class ViewModelTests : IDisposable
         Assert.All(usage.Where(u => u.Name == "Arpeggiator"), u => Assert.True(u.Installed));
         var k = Assert.Single(usage, u => u.Name == "Kontakt 5");
         Assert.Equal((3, PluginKind.Instrument), (k.Projects, k.Kind));
+
+        // Picking Studio One's Arpeggiator lists only Studio One's projects, and stays picked when the page reloads.
+        var page = Main().Plugins;
+        page.Selected = page.Items.Single(u => u.Name == "Arpeggiator" && u.Daws == "Studio One");
+        Assert.Equal(["B"], page.Projects.Select(p => p.Name));
+        Assert.Equal("Used in 1 project", page.ProjectsTitle);
+        Assert.Single(_db.ProjectsUsingPlugin("Arpeggiator", page.Selected.Own));
+        page.Reload();
+        Assert.Equal("Studio One", page.Selected?.Daws);
+        // A plugin's row still lists all its projects.
+        page.Selected = page.Items.Single(u => u.Name == "Kontakt 5");
+        Assert.Equal(3, page.Projects.Count);
     }
 
     [Fact]

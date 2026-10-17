@@ -73,7 +73,11 @@ public sealed class ProjectDetail
 /// installing it would open them with nothing missing; <see cref="LastUsed"/> is when a project using it was last saved.
 /// </summary>
 public sealed record PluginUsage(string Name, string Vendor, string Format, int Projects, string Daws, bool Installed,
-                                 int Unlocks = 0, DateTime? LastUsed = null, PluginKind Kind = PluginKind.Unknown);
+                                 int Unlocks = 0, DateTime? LastUsed = null, PluginKind Kind = PluginKind.Unknown)
+{
+    /// <summary>For a DAW's own device, that DAW (each DAW's is its own row); "" for a plugin.</summary>
+    public string Own => Format == "Native" ? Daws : "";
+}
 
 /// <summary>A project that uses a plugin, for the Plugins page's side panel.</summary>
 public sealed record PluginProject(long Id, string Name, string Daw, DateTime Saved);

@@ -691,12 +691,23 @@ public sealed partial class LibraryDb : IDisposable
             """, r => ((long)r["project_id"], Str(r, "name_key")))
             .GroupBy(t => t.Item1).ToDictionary(g => g.Key, g => g.Select(t => t.Item2).ToHashSet());
 
-    /// <summary>The projects using a plugin, most recently saved first.</summary>
-    public IReadOnlyList<PluginProject> ProjectsWithPlugin(string name) => Query("""
+    /// <summary>
+    /// The projects using a plugin, most recently saved first. With <paramref name="own"/> (see <see cref="MusicOrganiser.Core.Library.PluginUsage.Own"/>)
+    /// only that row's ones: a DAW's own device in that DAW's projects, or "" for the plugin rather than a device.
+    /// </summary>
+    public IReadOnlyList<PluginProject> ProjectsWithPlugin(string name, string? own = null) => Query($"""
         SELECT DISTINCT p.id, p.name, p.daw, p.mtime FROM plugins pl JOIN projects p ON p.id = pl.project_id
-        WHERE pl.name_key = $k AND p.file_missing = 0 ORDER BY p.mtime DESC
+        WHERE pl.name_key = $k AND p.file_missing = 0 {OwnFilter(own)} ORDER BY p.mtime DESC
         """, r => new PluginProject((long)r["id"], Str(r, "name"), Str(r, "daw"), DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime),
-        ("$k", NameKey(name)));
+        ("$k", NameKey(name)), ("$own", own ?? ""));
+
+    /// <summary>The part of a query on <c>plugins pl JOIN projects p</c> that keeps one Plugins page row's uses.</summary>
+    static string OwnFilter(string? own) => own switch
+    {
+        null => "",
+        "" => "AND pl.format <> 'Native'",
+        _ => "AND pl.format = 'Native' AND p.daw = $own",
+    };
 
     public IReadOnlyList<SampleUsage> SampleUsage() => Query("""
         SELECT s.path, COUNT(DISTINCT s.project_id) AS n, MIN(s.found) AS found
@@ -720,8 +731,9 @@ public sealed partial class LibraryDb : IDisposable
         ("$c", new DateTimeOffset(recentSince).ToUnixTimeSeconds()));
 
     /// <summary>Projects using a plugin (by name) or a sample (by path).</summary>
-    public IReadOnlyList<long> ProjectsUsingPlugin(string name) =>
-        Query("SELECT DISTINCT project_id FROM plugins WHERE name_key = $k", r => (long)r["project_id"], ("$k", NameKey(name)));
+    public IReadOnlyList<long> ProjectsUsingPlugin(string name, string? own = null) =>
+        Query($"SELECT DISTINCT pl.project_id FROM plugins pl JOIN projects p ON p.id = pl.project_id WHERE pl.name_key = $k {OwnFilter(own)}",
+              r => (long)r["project_id"], ("$k", NameKey(name)), ("$own", own ?? ""));
 
     public IReadOnlyList<long> ProjectsUsingSample(string path) =>
         Query("SELECT DISTINCT project_id FROM samples WHERE path = $p COLLATE NOCASE", r => (long)r["project_id"], ("$p", path));
