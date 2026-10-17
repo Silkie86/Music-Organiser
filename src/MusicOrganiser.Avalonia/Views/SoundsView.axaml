@@ -1,0 +1,890 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:snd="using:MusicOrganiser.Core.Sounds"
+             xmlns:sys="using:System"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
+             x:Class="MusicOrganiser.Avalonia.Views.SoundsView"
+             x:DataType="vm:SoundsViewModel">
+    <UserControl.Styles>
+        <Style Selector="Border.row">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.row:pointerover">
+            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+        </Style>
+        <Style Selector="TextBlock.cardTitle">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <!-- Tiles -->
+        <Style Selector="ListBox.tiles ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <!-- A row of tiles is one list item: it never lights up itself (only the tile you picked does), however it's
+             pressed or chosen. -->
+        <Style Selector="ListBox.tiles ListBoxItem /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:pressed /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter,
+                         ListBox.tiles ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Transitions" Value="{x:Null}" />
+        </Style>
+        <Style Selector="Border.tile">
+            <Setter Property="Margin" Value="0,0,10,10" />
+            <Setter Property="Padding" Value="12,11" />
+            <Setter Property="Height" Value="112" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="Border.tile:pointerover">
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+        </Style>
+        <Style Selector="Border.tile.selected">
+            <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <Style Selector="Border.likedTrack">
+            <Setter Property="Height" Value="4" />
+            <Setter Property="Width" Value="60" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="CornerRadius" Value="2" />
+            <Setter Property="Background" Value="{StaticResource StrokeBrush}" />
+        </Style>
+        <Style Selector="Border.likedBar">
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="CornerRadius" Value="2" />
+            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <Style Selector="Button.galaxyTool">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="Button.trailChip">
+            <Setter Property="Padding" Value="10,4,12,5" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*">
+        <!-- Header -->
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                <Border VerticalAlignment="Center" Margin="0,0,12,0" Padding="12,8" CornerRadius="{DynamicResource RadiusM}" Width="300"
+                        Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1"
+                        IsVisible="{Binding IsBusy}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding BusyText}" Foreground="{StaticResource MutedBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                        <ProgressBar Height="4" MinHeight="4" Margin="0,6,0,0" Maximum="100" Value="{Binding BusyPercent}" />
+                    </StackPanel>
+                </Border>
+                <Button Content="Stop" Command="{Binding CancelCommand}" Margin="0,0,6,0" IsVisible="{Binding IsBusy}" />
+                <Button Content="Deep listen" Command="{Binding DeepListenCommand}" Margin="0,0,6,0" IsVisible="{Binding ClapInstalled}"
+                        ToolTip.Tip="Let the sound-understanding model hear every sound (unlocks search by description)" />
+                <Button Content="Scan sample folders" Classes="accent" Command="{Binding ScanCommand}" />
+            </StackPanel>
+            <StackPanel>
+                <TextBlock Text="Sounds" Classes="pageTitle" />
+                <TextBlock Text="{Binding Summary}" Classes="pageSubtitle" />
+            </StackPanel>
+        </DockPanel>
+        <Border Grid.Row="1" Margin="0,12,0,0" Padding="12,8" CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource AccentFaintBrush}"
+                IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12.5" />
+        </Border>
+
+        <TabControl Grid.Row="2" Margin="0,10,0,0" SelectedIndex="{Binding TabIndex}">
+            <!-- ============ Library ============ -->
+            <TabItem Header="Library">
+                <Grid ColumnDefinitions="Auto,*,350" Margin="0,8,0,0">
+                    <!-- Filters -->
+                    <Border Classes="card" Padding="12,14,4,14" Margin="0,0,16,0" Width="240"
+                            IsVisible="{Binding #SoundFiltersToggle.IsChecked}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="0,0,10,0">
+                                <TextBlock Text="TYPE" Classes="filterLabel" />
+                                <ListBox ItemsSource="{Binding TypeCounts}" SelectedItem="{Binding SelectedType}" MaxHeight="320" Background="Transparent" />
+                                <TextBlock Text="LENGTH" Classes="filterLabel" Margin="2,16,0,6" />
+                                <StackPanel Orientation="Horizontal">
+                                    <RadioButton GroupName="Length" Content="All" MinWidth="0" Margin="0,0,8,0"
+                                                 IsChecked="{Binding LoopFilter, Converter={StaticResource IndexToBool}, ConverterParameter=0}" />
+                                    <RadioButton GroupName="Length" Content="Hits" MinWidth="0" Margin="0,0,8,0"
+                                                 IsChecked="{Binding LoopFilter, Converter={StaticResource IndexToBool}, ConverterParameter=1}" />
+                                    <RadioButton GroupName="Length" Content="Loops" MinWidth="0"
+                                                 IsChecked="{Binding LoopFilter, Converter={StaticResource IndexToBool}, ConverterParameter=2}" />
+                                </StackPanel>
+                                <TextBlock Text="KEY" Classes="filterLabel" Margin="2,16,0,6" />
+                                <ComboBox ItemsSource="{x:Static vm:SoundsViewModel.KeyChoices}" SelectedItem="{Binding KeyFilter}" />
+                                <CheckBox Content="Include keys that mix well" IsChecked="{Binding CompatibleKeys}" Margin="0,4,0,0" />
+                                <TextBlock Text="BPM" Classes="filterLabel" Margin="2,16,0,6" />
+                                <Grid ColumnDefinitions="*,Auto,*">
+                                    <TextBox Classes="clearButton" PlaceholderText="from" Text="{Binding BpmFrom}" />
+                                    <TextBlock Grid.Column="1" Text="–" Margin="6,0" VerticalAlignment="Center" Foreground="{StaticResource FaintBrush}" />
+                                    <TextBox Classes="clearButton" Grid.Column="2" PlaceholderText="to" Text="{Binding BpmTo}" />
+                                </Grid>
+                                <TextBlock Text="USED IN" Classes="filterLabel" Margin="2,16,0,6" />
+                                <ComboBox ItemsSource="{Binding YearChoices}" SelectedItem="{Binding YearFilter}" HorizontalAlignment="Stretch"
+                                          ToolTip.Tip="Only sounds used in a project last saved in that year" />
+                                <CheckBox Content="Never used in a project" IsChecked="{Binding OnlyUnused}" Margin="0,12,0,0" />
+                                <CheckBox Content="Favourites" IsChecked="{Binding OnlyFavourites}" />
+                                <TextBlock Text="TAG" Classes="filterLabel" Margin="2,16,0,6" />
+                                <TextBox Classes="clearButton" PlaceholderText="any tag" Text="{Binding TagFilter}" />
+                                <Button Content="Clear filters" Command="{Binding ClearFiltersCommand}" Margin="0,14,0,0"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Background="Transparent" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+
+                    <!-- Sounds: tiles, a list, or what you played lately -->
+                    <DockPanel Grid.Column="1">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                            <ToggleButton x:Name="SoundFiltersToggle" DockPanel.Dock="Left" Classes="filters" IsChecked="True" Margin="0,0,10,0"
+                                          ToolTip.Tip="Show or hide the filters, to give the sounds more room">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Path Data="{StaticResource FilterIcon}" Classes="navIcon" Width="14" Height="14" Stroke="{Binding $parent[ToggleButton].Foreground}" />
+                                    <TextBlock Text="Filters" />
+                                </StackPanel>
+                            </ToggleButton>
+                            <ToggleButton DockPanel.Dock="Right" Content="Describe it" IsChecked="{Binding DescribeMode}" Margin="8,0,0,0"
+                                          ToolTip.Tip="Search by describing the sound, e.g. “dusty vinyl snare” or “dark gritty reese”. Press Enter to search." />
+                            <TextBox Classes="clearButton" PlaceholderText="Search names, types and tags… or switch on Describe it" Text="{Binding SearchText}">
+                                <TextBox.KeyBindings>
+                                    <KeyBinding Gesture="Enter" Command="{Binding SearchCommand}" />
+                                </TextBox.KeyBindings>
+                            </TextBox>
+                        </DockPanel>
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                            <ListBox DockPanel.Dock="Left" Classes="chips" ItemsSource="{x:Static vm:SoundsViewModel.ViewChoices}" SelectedItem="{Binding ViewMode}"
+                                     ToolTip.Tip="Tiles, a compact list, the sound galaxy (sound-alikes close together), or the sounds you played lately">
+                                <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
+                            </ListBox>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding ShowsOrder}">
+                                <CheckBox Content="Autoplay" IsChecked="{Binding AutoPlay}" VerticalAlignment="Center"
+                                          ToolTip.Tip="Play each sound as you arrow onto it (a click always plays)" />
+                                <TextBlock Text="Order" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0" />
+                                <ComboBox ItemsSource="{x:Static vm:SoundsViewModel.SortChoices}" SelectedItem="{Binding SortBy}" MinWidth="130"
+                                          ToolTip.Tip="Shuffled is a new order each time the app opens, to stumble on sounds you'd forgotten. Most liked counts projects, drags, sends, plays and favourites (weights in Settings)." />
+                                <Button Command="{Binding ShuffleCommand}" ToolTip.Tip="Shuffle again">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <Path Data="M3,7 L7,7 C11,7 13,17 17,17 L21,17 M17,13 L21,17 L17,21 M3,17 L7,17 C9,17 10,15 11,13 M13,11 C14,9 15,7 17,7 L21,7 M17,3 L21,7 L17,11"
+                                              Stroke="{Binding $parent[Button].Foreground}" StrokeThickness="1.8" StrokeLineCap="Round" StrokeJoin="Round"
+                                              Width="14" Height="14" Stretch="Uniform" />
+                                        <TextBlock Text="Shuffle" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsGalaxy}">
+                                <TextBlock Text="Placed by" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                <ComboBox ItemsSource="{x:Static vm:SoundsViewModel.PlacedByChoices}" SelectedItem="{Binding PlacedBy}" MinWidth="170"
+                                          ToolTip.Tip="What decides where each star sits. Both: CLAP (what kind of sound it is) and the app's own measurements (brightness, attack, length, tone). If CLAP hasn't listened to your sounds, the app's measurements are used." />
+                            </StackPanel>
+                            <Panel />
+                        </DockPanel>
+                        <Panel>
+                            <!-- Tiles: a row of tiles per list row, so only what's on screen is drawn. -->
+                            <ListBox x:Name="TileList" Classes="tiles" ItemsSource="{Binding TileRows}" IsVisible="{Binding IsTiles}"
+                                     Background="Transparent" SizeChanged="OnTilesSizeChanged" Focusable="True">
+                                <ListBox.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" />
+                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}"
+                                                  ToolTip.Tip="Puts the sound on a Sampler on a new track in the project open in Bitwig" />
+                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" />
+                                    </ContextMenu>
+                                </ListBox.ContextMenu>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:TileRow">
+                                        <ItemsControl ItemsSource="{Binding Tiles}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <UniformGrid Rows="1" Columns="{Binding $parent[ListBox].((vm:SoundsViewModel)DataContext).TileColumns}" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:SoundTile">
+                                                    <Border Classes="tile" Classes.selected="{Binding IsSelected}" Cursor="Hand"
+                                                            PointerPressed="OnTilePressed" DoubleTapped="OnTileDoubleTapped"
+                                                            views:FileDrag.Source="{Binding $parent[UserControl].DataContext}" ToolTip.Tip="{Binding Sound.Path}">
+                                                        <DockPanel>
+                                                            <Border DockPanel.Dock="Bottom" Classes="likedTrack" Margin="0,8,0,0" ToolTip.Tip="{Binding Sound.LikedTip}">
+                                                                <Border Classes="likedBar" Width="{Binding Sound.LikedShare, Converter={StaticResource Scale}, ConverterParameter=60}" />
+                                                            </Border>
+                                                            <views:MiniWave DockPanel.Dock="Bottom" Height="26" Margin="0,8,0,0" Peaks="{Binding Sound.Analysis.Waveform}"
+                                                                            Fill="{Binding Sound.Type, Converter={StaticResource TypeBrush}}" />
+                                                            <DockPanel DockPanel.Dock="Top">
+                                                                <TextBlock DockPanel.Dock="Right" Text="★" Foreground="{StaticResource WarningBrush}" Margin="6,0,0,0"
+                                                                           IsVisible="{Binding Sound.Favourite}" />
+                                                                <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                                         Fill="{Binding Sound.Type, Converter={StaticResource TypeBrush}}" />
+                                                                <TextBlock Text="{Binding Sound.Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                            </DockPanel>
+                                                            <TextBlock Text="{Binding Details}" FontSize="11.5" Foreground="{StaticResource MutedBrush}"
+                                                                       TextTrimming="CharacterEllipsis" Margin="0,4,0,0" FontFamily="{DynamicResource NumberFont}" />
+                                                        </DockPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                        <Border Classes="card" Padding="8,10,8,8" IsVisible="{Binding IsList}">
+                            <DataGrid x:Name="SoundGrid" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
+                                      AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" CanUserSortColumns="True"
+                                      GridLinesVisibility="None" Background="Transparent" views:FileDrag.Source="{Binding}"
+                                      DoubleTapped="OnGridDoubleTapped" KeyDown="OnGridKeyDown">
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Play" Command="{Binding PlayCommand}" />
+                                        <MenuItem Header="To Bitwig" Command="{Binding ToBitwigCommand}"
+                                                  ToolTip.Tip="Puts the sound on a Sampler on a new track in the project open in Bitwig" />
+                                        <MenuItem Header="Show file" Command="{Binding RevealCommand}" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Header="" Width="32" SortMemberPath="Favourite">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate x:DataType="snd:Sound">
+                                                <TextBlock Text="{Binding Favourite, Converter={StaticResource BoolToStar}}" Foreground="{StaticResource WarningBrush}"
+                                                           VerticalAlignment="Center" Margin="8,0,0,0" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Sound" Width="2*" MinWidth="170" SortMemberPath="Name">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate x:DataType="snd:Sound">
+                                                <!-- The same colour per type as the tiles and the galaxy. -->
+                                                <DockPanel Margin="8,0" VerticalAlignment="Center">
+                                                    <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                             Fill="{Binding Type, Converter={StaticResource TypeBrush}}" />
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}" />
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Liked" Width="70" SortMemberPath="Liked">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate x:DataType="snd:Sound">
+                                                <Border Classes="likedTrack" Margin="8,0" ToolTip.Tip="{Binding LikedTip}">
+                                                    <Border Classes="likedBar" Width="{Binding LikedShare, Converter={StaticResource Scale}, ConverterParameter=46}" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Type" Width="96" Binding="{Binding Type}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Key" Width="58" Binding="{Binding Key}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="BPM" Width="62" Binding="{Binding Bpm, StringFormat={}{0:0.#}}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Note" Width="62" Binding="{Binding RootNote}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Length" Width="74" SortMemberPath="Seconds" x:DataType="snd:Sound"
+                                                        Binding="{Binding Seconds, Converter={StaticResource Seconds}}" />
+                                    <DataGridTemplateColumn Header="Character" Width="*" MinWidth="110" SortMemberPath="Character">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate x:DataType="snd:Sound">
+                                                <TextBlock Text="{Binding Character}" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center" Margin="8,0" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Used" Width="62" Binding="{Binding UsedIn}" x:DataType="snd:Sound" />
+                                    <DataGridTemplateColumn Header="Folder" Width="*" MinWidth="110" SortMemberPath="Folder">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate x:DataType="snd:Sound">
+                                                <TextBlock Text="{Binding Folder}" Foreground="{StaticResource FaintBrush}" TextTrimming="CharacterEllipsis"
+                                                           ToolTip.Tip="{Binding Folder}" VerticalAlignment="Center" Margin="8,0" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
+
+                            <!-- The galaxy: every sound a star, sound-alikes close together. -->
+                            <Grid IsVisible="{Binding IsGalaxy}" RowDefinitions="Auto,Auto,*,Auto">
+                                <DockPanel Margin="0,0,0,8">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="Colour by" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                        <ListBox Classes="chips" ItemsSource="{x:Static vm:SoundsViewModel.ColourChoices}" SelectedItem="{Binding ColourBy}"
+                                                 ToolTip.Tip="What the colours show: the type of sound, its key (Camelot wheel), its pack, how much you like it, whether a project uses it, or how new it is">
+                                            <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
+                                        </ListBox>
+                                    </StackPanel>
+                                </DockPanel>
+
+                                <!-- CLAP was asked for but hasn't listened: say so, with the fix one click away. -->
+                                <Border Grid.Row="1" IsVisible="{Binding HasGalaxyWarning}" Background="{StaticResource MissingSoftBrush}"
+                                        BorderBrush="{StaticResource WarningBrush}" BorderThickness="1" CornerRadius="{DynamicResource RadiusM}"
+                                        Padding="12,8" Margin="0,0,0,8">
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="{Binding GalaxyWarningAction}" Command="{Binding FixGalaxyWarningCommand}" Margin="12,0,0,0" />
+                                        <TextBlock DockPanel.Dock="Left" Text="⚠" Foreground="{StaticResource WarningBrush}" FontSize="15" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                        <TextBlock Text="{Binding GalaxyWarning}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                </Border>
+
+                                <Border Grid.Row="2" CornerRadius="{DynamicResource RadiusM}" ClipToBounds="True" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1">
+                                    <Panel>
+                                        <views:GalaxyCanvas x:Name="Galaxy" Stars="{Binding Stars}" Regions="{Binding Regions}" Trail="{Binding Trail}"
+                                                            Constellation="{Binding Constellation}" Selected="{Binding Selected}"
+                                                            SweepCommand="{Binding SweepCommand}" SweepEndedCommand="{Binding EndSweepCommand}"
+                                                            PickCommand="{Binding PickStarCommand}" />
+                                        <!-- What placed the stars, and how many show. -->
+                                        <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10" Padding="10,6,12,7" IsHitTestVisible="False"
+                                                CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource SurfaceBrush}" Opacity="0.88">
+                                        <StackPanel>
+                                            <TextBlock FontFamily="{DynamicResource NumberFont}" FontSize="12" Foreground="{StaticResource TextBrush}">
+                                                <Run Text="{Binding ShownStars, StringFormat={}{0:N0}}" /><Run Text=" stars" Foreground="{StaticResource MutedBrush}" />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding GalaxyNote}" FontSize="11.5" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" MaxWidth="340" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        </Border>
+                                        <!-- Zoom and fit. -->
+                                        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10" Spacing="6">
+                                            <Button Classes="galaxyTool" Content="+" Click="OnGalaxyZoomIn" ToolTip.Tip="Zoom in (or scroll, or +)" />
+                                            <Button Classes="galaxyTool" Content="−" Click="OnGalaxyZoomOut" ToolTip.Tip="Zoom out (or scroll, or −)" />
+                                            <Button Classes="galaxyTool" Click="OnGalaxyFit" ToolTip.Tip="See the whole galaxy (Home)">
+                                                <Path Data="M4,9 L4,4 L9,4 M15,4 L20,4 L20,9 M20,15 L20,20 L15,20 M9,20 L4,20 L4,15" Stroke="{Binding $parent[Button].Foreground}"
+                                                      StrokeThickness="1.8" StrokeLineCap="Round" Width="13" Height="13" Stretch="Uniform" />
+                                            </Button>
+                                            <Button Classes="galaxyTool" Command="{Binding RemapCommand}" ToolTip.Tip="Lay the galaxy out again from scratch">
+                                                <Path Data="M20,11 A8,8 0 1 0 17.6,16.6 M20,5 L20,11 L14,11" Stroke="{Binding $parent[Button].Foreground}"
+                                                      StrokeThickness="1.8" StrokeLineCap="Round" StrokeJoin="Round" Width="13" Height="13" Stretch="Uniform" />
+                                            </Button>
+                                        </StackPanel>
+                                        <!-- The key to the colours. -->
+                                        <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12" Padding="12,8" CornerRadius="{DynamicResource RadiusM}"
+                                                Background="{StaticResource SurfaceBrush}" Opacity="0.92" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1"
+                                                MaxWidth="500" IsHitTestVisible="False">
+                                            <StackPanel Spacing="4">
+                                                <ItemsControl ItemsSource="{Binding Legend}">
+                                                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="vm:LegendItem">
+                                                            <StackPanel Orientation="Horizontal" Margin="0,2,12,2">
+                                                                <Ellipse Width="8" Height="8" Fill="{Binding Colour, Converter={StaticResource HexBrush}}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                                                <TextBlock Text="{Binding Label}" FontSize="11.5" MaxWidth="120" TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <TextBlock Text="{Binding LegendNote}" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                                           IsVisible="{Binding LegendNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="14,10" FontSize="11" Foreground="{StaticResource FaintBrush}"
+                                                   IsHitTestVisible="False" Text="Hold the left button and sweep to listen · click to pick · middle drag to move · scroll to zoom" />
+                                    </Panel>
+                                </Border>
+
+                                <!-- The trail: what you swept past, newest first. -->
+                                <Border Grid.Row="3" Classes="card" Margin="0,8,0,0" Padding="12,8">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Left" Text="Trail" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasTrail}" Margin="12,0,0,0">
+                                            <Border Classes="dragChip" Margin="0" DataContext="{Binding TrailDrag}"
+                                                    views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
+                                                    ToolTip.Tip="Drag every sound on the trail into your DAW at once">
+                                                <TextBlock Text="Drag all out" FontSize="12.5" />
+                                            </Border>
+                                            <Button Classes="accent" Content="Make a kit" Command="{Binding TrailToKitCommand}"
+                                                    ToolTip.Tip="A pad for each sound on the trail, in the Kit builder" />
+                                            <Button Content="Clear" Command="{Binding ClearTrailCommand}" />
+                                        </StackPanel>
+                                        <TextBlock Classes="muted" VerticalAlignment="Center" IsVisible="{Binding !HasTrail}"
+                                                   Text="Hold the left button and sweep over the stars: the sounds you pass collect here, so a good one is never lost." />
+                                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" IsVisible="{Binding HasTrail}">
+                                            <ItemsControl ItemsSource="{Binding Trail}">
+                                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="snd:Sound">
+                                                        <Button Classes="trailChip" Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).PickStarCommand}"
+                                                                CommandParameter="{Binding}" ToolTip.Tip="{Binding Path}"
+                                                                views:FileDrag.Source="{Binding $parent[UserControl].DataContext}">
+                                                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                                                <Ellipse Width="7" Height="7" VerticalAlignment="Center" Fill="{Binding Type, Converter={StaticResource TypeBrush}}" />
+                                                                <TextBlock Text="{Binding Name}" FontSize="12.5" MaxWidth="150" TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </DockPanel>
+                                </Border>
+                            </Grid>
+
+                            <!-- History: what you played on purpose, newest first. -->
+                            <Border Classes="card" Padding="8,10,8,8" IsVisible="{Binding IsHistory}">
+                                <Panel>
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32" IsVisible="{Binding !HasHistory}">
+                                        <TextBlock Text="Nothing played yet" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                        <TextBlock Classes="muted" TextAlignment="Center" MaxWidth="320" Margin="0,6,0,0" TextWrapping="Wrap"
+                                                   Text="Sounds you play on purpose (a click on Play, Space or a double-click) land here, newest first. Autoplay previews don't." />
+                                    </StackPanel>
+                                    <ListBox x:Name="HistoryList" ItemsSource="{Binding HistoryItems}" SelectedItem="{Binding HistorySelected}" Background="Transparent"
+                                             IsVisible="{Binding HasHistory}" views:FileDrag.Source="{Binding}" DoubleTapped="OnHistoryDoubleTapped">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:HistoryItem">
+                                                <DockPanel Margin="4,2">
+                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding When}" Foreground="{StaticResource MutedBrush}" FontSize="12"
+                                                               FontFamily="{DynamicResource NumberFont}" VerticalAlignment="Center" Margin="12,0,0,0" />
+                                                    <Border DockPanel.Dock="Right" Classes="likedTrack" VerticalAlignment="Center" ToolTip.Tip="{Binding Sound.LikedTip}">
+                                                        <Border Classes="likedBar" Width="{Binding Sound.LikedShare, Converter={StaticResource Scale}, ConverterParameter=60}" />
+                                                    </Border>
+                                                    <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center"
+                                                             Fill="{Binding Sound.Type, Converter={StaticResource TypeBrush}}" />
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Sound.Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Sound.Folder}" FontSize="11.5" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </Panel>
+                            </Border>
+                        </Panel>
+                    </DockPanel>
+
+                    <!-- Selected sound -->
+                    <Border Grid.Column="2" Classes="card" Margin="16,0,0,0" Padding="0">
+                        <Panel>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32"
+                                        IsVisible="{Binding Selected, Converter={x:Static ObjectConverters.IsNull}}">
+                                <TextBlock Text="♪" FontSize="36" Foreground="{StaticResource FaintBrush}" HorizontalAlignment="Center" />
+                                <TextBlock Text="Pick a sound" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,4" />
+                                <TextBlock Text="Press Space or double-click to play. Its key, notes, tags and sound-alikes show up here."
+                                           Classes="muted" TextAlignment="Center" MaxWidth="260" />
+                            </StackPanel>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                          IsVisible="{Binding Selected, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                <StackPanel Margin="20,18,20,20">
+                                    <TextBlock Text="{Binding Selected.Name}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding Selected.Path}" Classes="muted" FontSize="12" />
+                                    <Border Height="84" Margin="0,12,0,4" CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource SurfaceRaisedBrush}">
+                                        <views:WaveformView Peaks="{Binding Selected.Analysis.Waveform}" Duration="{Binding WaveSeconds}"
+                                                            Position="{Binding PlayPosition}" SeekCommand="{Binding SeekCommand}" Margin="8" />
+                                    </Border>
+                                    <TextBlock Text="Click the waveform to play from any point. Drag the sound from the list into your DAW." TextWrapping="Wrap" Classes="muted" FontSize="11.5" Margin="0,0,0,10" />
+                                    <WrapPanel>
+                                        <Button Content="Play" Classes="accent" Command="{Binding PlayCommand}" Margin="0,0,6,6" />
+                                        <Button Content="☆" Command="{Binding ToggleFavouriteCommand}" ToolTip.Tip="Favourite" Margin="0,0,6,6" />
+                                        <Button Content="To Bitwig" Command="{Binding ToBitwigCommand}" Margin="0,0,6,6"
+                                                ToolTip.Tip="Puts it on a Sampler on a new track in the project open in Bitwig (needs the Music Organiser extension, with &quot;Let the app make changes&quot; on)" />
+                                        <Button Content="Show file" Command="{Binding RevealCommand}" Margin="0,0,6,6" />
+                                        <Button Content="Projects using it" Command="{Binding ShowProjectsCommand}" Margin="0,0,6,6"
+                                                IsVisible="{Binding Selected.UsedIn, Converter={StaticResource NonZero}, FallbackValue=False}" />
+                                    </WrapPanel>
+
+                                    <TextBlock Text="What it is" Classes="sectionHeader" Margin="0,8,0,4" />
+                                    <DockPanel>
+                                        <TextBlock Text="This is a" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                        <ComboBox ItemsSource="{x:Static vm:SoundsViewModel.AllTypes}" SelectedItem="{Binding SelectedTypeLabel}" />
+                                    </DockPanel>
+                                    <TextBlock Classes="muted" FontSize="12" Margin="0,4,0,0">
+                                        <Run Text="Type from:" />
+                                        <Run Text="{Binding Selected.TypeSource, Mode=OneWay}" />
+                                        <Run Text="·" />
+                                        <Run Text="{Binding Selected.Character, Mode=OneWay}" />
+                                    </TextBlock>
+
+                                    <TextBlock Text="Pitch, key and chords" Classes="sectionHeader" Margin="0,12,0,4" />
+                                    <TextBlock Text="{Binding KeyDetail}" TextWrapping="Wrap" />
+                                    <TextBlock TextWrapping="Wrap" IsVisible="{Binding Selected.RootNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                        <Run Text="Root note:" /> <Run Text="{Binding Selected.RootNote, Mode=OneWay}" FontWeight="SemiBold" />
+                                    </TextBlock>
+                                    <TextBlock TextWrapping="Wrap" IsVisible="{Binding Selected.Chord, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                        <Run Text="Chord:" /> <Run Text="{Binding Selected.Chord, Mode=OneWay}" FontWeight="SemiBold" />
+                                    </TextBlock>
+                                    <ItemsControl ItemsSource="{Binding Selected.Analysis.Chords}" Margin="0,4,0,0">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="snd:ChordSpan">
+                                                <Border Margin="0,0,4,4" Padding="6,2" CornerRadius="3" Background="{StaticResource SurfaceRaisedBrush}"
+                                                        ToolTip.Tip="{Binding Start, StringFormat='from {0:0.0}s'}">
+                                                    <TextBlock Text="{Binding Name}" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <WrapPanel Margin="0,6,0,0">
+                                        <Button Content="Detect notes" Command="{Binding DetectNotesCommand}" Margin="0,0,6,0"
+                                                ToolTip.Tip="Transcribe the notes with the Basic Pitch model (runs on this computer)" />
+                                        <Button Content="Save as MIDI" Command="{Binding ExportMidiCommand}" />
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding NotesMessage}" Classes="muted" Margin="0,4,0,0"
+                                               IsVisible="{Binding NotesMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                    <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl ItemsSource="{Binding Notes}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="snd:TranscribedNote">
+                                                    <TextBlock Margin="0,0,10,2" FontFamily="monospace">
+                                                        <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" /><Run
+                                                             Text="{Binding Start, StringFormat=' @{0:0.00}s', Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+
+                                    <TextBlock Text="Tags" Classes="sectionHeader" Margin="0,12,0,4" />
+                                    <ItemsControl ItemsSource="{Binding Selected.Tags}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="sys:String">
+                                                <Border Margin="0,0,4,4" Padding="8,2,2,2" CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource SurfaceRaisedBrush}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding}" VerticalAlignment="Center" />
+                                                        <Button Content="✕" Padding="4,0" Margin="4,0,0,0" Background="Transparent"
+                                                                Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).RemoveTagCommand}"
+                                                                CommandParameter="{Binding}" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <DockPanel Margin="0,4,0,0">
+                                        <Button DockPanel.Dock="Right" Content="Add" Command="{Binding AddTagCommand}" Margin="6,0,0,0" />
+                                        <TextBox Classes="clearButton" PlaceholderText="Add a tag (e.g. dusty, signature)" Text="{Binding NewTag}">
+                                            <TextBox.KeyBindings>
+                                                <KeyBinding Gesture="Enter" Command="{Binding AddTagCommand}" />
+                                            </TextBox.KeyBindings>
+                                        </TextBox>
+                                    </DockPanel>
+
+                                    <TextBlock Text="Sounds like this" Classes="sectionHeader" Margin="0,12,0,4" />
+                                    <ItemsControl ItemsSource="{Binding Similar}" views:FileDrag.Source="{Binding}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="snd:SimilarSound">
+                                                <DockPanel Margin="0,1">
+                                                    <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,6,0"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).SelectCommand}"
+                                                            CommandParameter="{Binding Sound}" />
+                                                    <Button DockPanel.Dock="Right" Content="To Bitwig" Padding="6,1" FontSize="11" Margin="6,0,0,0"
+                                                            ToolTip.Tip="Put it on a Sampler on a new track in Bitwig"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).ToBitwigCommand}"
+                                                            CommandParameter="{Binding Sound}" />
+                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Score, StringFormat={}{0:P0}}" Classes="muted"
+                                                               Margin="6,0,0,0" VerticalAlignment="Center" />
+                                                    <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                                        <Run Text="{Binding Sound.Name, Mode=OneWay}" /> <Run Text="{Binding Sound.Type, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
+                                                    </TextBlock>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Panel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <!-- ============ Rediscover ============ -->
+            <TabItem Header="Rediscover">
+                <Panel DataContext="{Binding Rediscover}" Margin="0,8,0,0">
+                    <Grid ColumnDefinitions="*,360" x:DataType="vm:RediscoverViewModel">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Top">
+                                <TextBlock Text="Sounds you haven't used much, picked to fit your taste and kept varied." Classes="muted" />
+                                <WrapPanel Margin="0,8,0,8">
+                                    <ComboBox ItemsSource="{Binding Types}" SelectedItem="{Binding Type}" Width="170" Margin="0,0,12,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="Safe" VerticalAlignment="Center" />
+                                    <Slider Width="140" Minimum="0" Maximum="1" Value="{Binding Adventure}" Margin="8,0" VerticalAlignment="Center"
+                                            ToolTip.Tip="How adventurous: left sticks close to what you already use, right goes further afield" />
+                                    <TextBlock Text="Adventurous" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                    <CheckBox Content="Include sounds used once" IsChecked="{Binding IncludeRarelyUsed}" Margin="0,0,12,0" />
+                                    <Button Content="{Binding ShuffleText}" Classes="accent" Command="{Binding ShuffleCommand}" VerticalAlignment="Center" />
+                                </WrapPanel>
+                                <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="3" MinHeight="3" Margin="0,0,0,6" />
+                                <TextBlock Text="{Binding Intro}" Classes="muted" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Border Classes="card" Padding="8">
+                                <Panel>
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32"
+                                                IsVisible="{Binding Suggestions.Count, Converter={StaticResource Zero}}">
+                                        <TextBlock Text="⤨" FontSize="36" Foreground="{StaticResource FaintBrush}" HorizontalAlignment="Center" />
+                                        <TextBlock Text="{Binding EmptyTitle}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,4" />
+                                        <TextBlock Text="{Binding EmptyText}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="420" />
+                                    </StackPanel>
+                                    <ListBox ItemsSource="{Binding Suggestions}" Background="Transparent" SelectionMode="Multiple"
+                                             views:FileDrag.Source="{Binding Parent}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate x:DataType="snd:Suggestion">
+                                                <DockPanel Margin="0,2">
+                                                    <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).PlayCommand}"
+                                                            CommandParameter="{Binding Sound}" />
+                                                    <Button DockPanel.Dock="Right" Content="Open" Padding="8,2" Margin="8,0,0,0"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).RevealCommand}"
+                                                            CommandParameter="{Binding Sound}" />
+                                                    <Button DockPanel.Dock="Right" Content="To Bitwig" Padding="8,2" Margin="8,0,0,0"
+                                                            ToolTip.Tip="Put it on a Sampler on a new track in Bitwig"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).ToBitwigCommand}"
+                                                            CommandParameter="{Binding Sound}" />
+                                                    <StackPanel>
+                                                        <TextBlock>
+                                                            <Run Text="{Binding Sound.Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                                            <Run Text="{Binding Sound.Type, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
+                                                            <Run Text="{Binding Sound.Key, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
+                                                        </TextBlock>
+                                                        <TextBlock Text="{Binding Reason}" FontSize="12" Foreground="{StaticResource MutedBrush}" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </Panel>
+                            </Border>
+                        </DockPanel>
+                        <Border Grid.Column="1" Classes="card" Margin="16,0,0,0">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Top" Text="Forgotten folders" Classes="sectionHeader" />
+                                <TextBlock DockPanel.Dock="Top" Text="Sample folders by how much of them your projects use." Classes="muted"
+                                           FontSize="12" Margin="0,0,0,8" />
+                                <ListBox ItemsSource="{Binding Folders}" Background="Transparent">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="snd:FolderUse">
+                                            <StackPanel Margin="0,2">
+                                                <TextBlock Text="{Binding Folder}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Folder}" />
+                                                <TextBlock FontSize="12" Foreground="{StaticResource MutedBrush}">
+                                                    <Run Text="{Binding Used, Mode=OneWay}" /> <Run Text="of" /> <Run Text="{Binding Sounds, Mode=OneWay}" /> <Run Text="sounds used" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Panel>
+            </TabItem>
+
+            <!-- ============ Kit builder ============ -->
+            <TabItem Header="Kit builder">
+                <Panel DataContext="{Binding Kit}" Margin="0,8,0,0">
+                    <Grid ColumnDefinitions="*,320" x:DataType="vm:KitViewModel">
+                        <DockPanel>
+                            <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                <Button Content="Roll a kit" Classes="accent" Command="{Binding RollCommand}" Margin="0,0,8,0" />
+                                <Button Content="Export kit" Command="{Binding ExportCommand}" Margin="0,0,8,0" />
+                                <Button Content="Send to Bitwig" Command="{Binding SendToBitwigCommand}" Margin="0,0,8,0"
+                                        ToolTip.Tip="Put the kit on a Drum Machine in the project open in Bitwig, on a new track: kick on C1, snare on D1, closed hat on F#1, and the rest on the free pads" />
+                                <Border Classes="dragChip" views:FileDrag.Source="{Binding}" views:FileDrag.AllOf="{Binding #KitSlots}"
+                                        ToolTip.Tip="Drag the whole kit into your DAW or sampler, pads in order (exported with the options on the right)">
+                                    <TextBlock Text="Drag kit" />
+                                </Border>
+                            </WrapPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="{Binding Status}" Classes="muted" TextWrapping="Wrap" Margin="0,0,0,8"
+                                       IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsControl x:Name="KitSlots" ItemsSource="{Binding Slots}" views:FileDrag.Source="{Binding}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:KitSlotItem">
+                                            <Border Classes="card" Margin="0,0,0,8" Padding="14,10">
+                                                <DockPanel>
+                                                    <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" Width="110" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                    <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).Kit.PlaySlotCommand}"
+                                                            CommandParameter="{Binding}" />
+                                                    <Button DockPanel.Dock="Right" Content="To Bitwig" Padding="6,2" Margin="6,0,0,0"
+                                                            ToolTip.Tip="Put just this pad's sound on a Sampler on a new track in Bitwig"
+                                                            IsEnabled="{Binding Slot.Sound, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).ToBitwigCommand}"
+                                                            CommandParameter="{Binding Slot.Sound}" />
+                                                    <Button DockPanel.Dock="Right" Content="✕" Padding="6,2" Margin="6,0,0,0" ToolTip.Tip="Remove this pad"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).Kit.RemoveSlotCommand}"
+                                                            CommandParameter="{Binding}" />
+                                                    <Button DockPanel.Dock="Right" Content="↻" Padding="6,2" Margin="6,0,0,0" ToolTip.Tip="Re-roll just this pad"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).Kit.RollOneCommand}"
+                                                            CommandParameter="{Binding}" />
+                                                    <CheckBox DockPanel.Dock="Right" Content="Lock" IsChecked="{Binding Locked}" MinWidth="0" />
+                                                    <StackPanel VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding SoundName}" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+
+                        <Border Grid.Column="1" Classes="card" Margin="16,0,0,0">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <TextBlock Text="How to pick" Classes="sectionHeader" Margin="0,0,0,8" />
+                                    <CheckBox Content="Favour sounds I haven't used" IsChecked="{Binding PreferUnused}" />
+                                    <CheckBox Content="Keep it to one pack" IsChecked="{Binding SamePack}" />
+                                    <TextBlock Text="VIBE (NEEDS DEEP LISTENING)" Classes="filterLabel" Margin="2,10,0,4" />
+                                    <TextBox Classes="clearButton" PlaceholderText="e.g. dusty lo-fi, hard techno, 90s boom bap" Text="{Binding Vibe}" />
+                                    <TextBlock Text="KEY FOR BASS AND 808 PADS" Classes="filterLabel" Margin="2,10,0,4" />
+                                    <ComboBox ItemsSource="{x:Static vm:SoundsViewModel.KeyChoices}" SelectedItem="{Binding Key}" />
+                                    <TextBlock Text="RANDOMNESS" Classes="filterLabel" Margin="2,10,0,4" />
+                                    <Slider Minimum="0" Maximum="1" Value="{Binding Randomness}" />
+
+                                    <TextBlock Text="ADD A PAD" Classes="filterLabel" Margin="2,12,0,4" />
+                                    <ComboBox x:Name="PadType" ItemsSource="{x:Static vm:SoundsViewModel.AllTypes}" SelectedIndex="0" />
+                                    <Button Content="Add pad" Margin="0,4,0,0" Command="{Binding AddSlotCommand}" CommandParameter="{Binding #PadType.SelectedItem}" />
+
+                                    <TextBlock Text="Export" Classes="sectionHeader" Margin="0,16,0,8" />
+                                    <CheckBox Content="Elektron ready (48 kHz, 16-bit WAV)" IsChecked="{Binding ElektronReady}"
+                                              ToolTip.Tip="For Digitakt II and Analog Rytm MKII: drag the folder into Elektron Transfer" />
+                                    <CheckBox Content="Mono" IsChecked="{Binding Mono}" />
+                                    <CheckBox Content="Normalise" IsChecked="{Binding Normalise}" />
+                                    <TextBlock Text="Kits go to your export folder (Settings), under Kits, with a kit.txt listing the original files."
+                                               Classes="muted" FontSize="12" Margin="0,6,0,0" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+                </Panel>
+            </TabItem>
+
+            <!-- ============ Teach ============ -->
+            <TabItem Header="Teach">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="1000" HorizontalAlignment="Left" Margin="0,16,16,16">
+                        <Border Classes="card" Margin="0,0,0,14">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" VerticalAlignment="Top" Content="Retrain now" Command="{Binding RetrainCommand}" Margin="16,0,0,0" />
+                                <StackPanel>
+                                    <TextBlock Text="Sound types, learned from your library" Classes="cardTitle" />
+                                    <TextBlock Text="The Sound Lab learns what kicks, snares, pads and the rest sound like from your own folders and file names, and from every label you correct. It then sorts the sounds whose names don't say. Your corrections count three times as much as folder names."
+                                               Classes="muted" Margin="0,4,0,0" />
+                                    <TextBlock Text="{Binding ModelSummary}" Margin="0,10,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <Border Classes="card" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="Worth a listen" Classes="cardTitle" />
+                                <TextBlock Text="Sounds where what it hears disagrees with the name. Tell it which is right; it learns from your answer."
+                                           Classes="muted" Margin="0,4,0,10" />
+                                <TextBlock Text="Nothing to check right now." Foreground="{StaticResource FaintBrush}" FontSize="12"
+                                           IsVisible="{Binding Disagreements.Count, Converter={StaticResource Zero}}" />
+                                <ItemsControl ItemsSource="{Binding Disagreements}" views:FileDrag.Source="{Binding}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:Disagreement">
+                                            <Border Classes="row" Padding="8,6" CornerRadius="{DynamicResource RadiusS}" Margin="0,1">
+                                                <DockPanel>
+                                                    <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
+                                                            Background="Transparent"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).PlayCommand}"
+                                                            CommandParameter="{Binding Sound}" />
+                                                    <Button DockPanel.Dock="Right" Padding="8,2" Margin="6,0,0,0"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).ConfirmCommand}"
+                                                            CommandParameter="{Binding}">
+                                                        <TextBlock Text="{Binding Thinks, StringFormat='It’s a {0}'}" />
+                                                    </Button>
+                                                    <Button DockPanel.Dock="Right" Content="Name is right" Padding="8,2" Margin="6,0,0,0"
+                                                            Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).KeepNameCommand}"
+                                                            CommandParameter="{Binding}" />
+                                                    <StackPanel VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Sound.Name}" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Text}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="Your own tags" Classes="cardTitle" />
+                                <TextBlock Text="Tag at least five sounds with any word you like (dusty, signature, too clean…). On the next retrain it learns what they share and suggests the tag for other sounds."
+                                           Classes="muted" Margin="0,4,0,10" />
+                                <TextBlock Text="No tags yet. Add one from a sound in the Library tab." Foreground="{StaticResource FaintBrush}" FontSize="12"
+                                           IsVisible="{Binding TagSummaries.Count, Converter={StaticResource Zero}}" />
+                                <ItemsControl ItemsSource="{Binding TagSummaries}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:TagSummary">
+                                            <DockPanel Margin="0,3">
+                                                <Button DockPanel.Dock="Right" Content="Show" Padding="8,2" Background="Transparent"
+                                                        Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).FilterByTagCommand}"
+                                                        CommandParameter="{Binding Tag}" />
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Border Classes="pill" Background="{StaticResource AccentFaintBrush}" Margin="0,0,10,0">
+                                                        <TextBlock Text="{Binding Tag}" Classes="pillText" />
+                                                    </Border>
+                                                    <TextBlock Text="{Binding Text}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="Sound-understanding model (CLAP)" Classes="cardTitle" />
+                                <TextBlock Text="An open neural network from LAION trained on music and sound with descriptions. It lets you search by describing a sound, matches a kit to a vibe, and makes sound-alikes and type guesses sharper. It runs on this computer."
+                                           Classes="muted" Margin="0,4,0,0" />
+                                <TextBlock Text="{Binding ClapStatus}" Margin="0,10,0,0" TextWrapping="Wrap" />
+                                <StackPanel Margin="0,10,0,0" IsVisible="{Binding IsDownloading}">
+                                    <TextBlock Text="{Binding DownloadText}" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" />
+                                    <ProgressBar Height="6" MinHeight="6" Margin="0,6,0,0" Maximum="100" Value="{Binding DownloadPercent}"
+                                                 IsIndeterminate="{Binding DownloadSizeUnknown}" />
+                                    <Button Content="Stop" Command="{Binding CancelCommand}" Margin="0,8,0,0" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding ModelMessage}" Margin="0,10,0,0" TextWrapping="Wrap" FontWeight="SemiBold"
+                                           IsVisible="{Binding ModelMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                <WrapPanel Margin="0,12,0,0">
+                                    <Button Content="Download model" Classes="accent" Command="{Binding DownloadModelCommand}" Margin="0,0,6,0"
+                                            IsEnabled="{Binding CanStartDownload}" IsVisible="{Binding !ClapInstalled}" />
+                                    <Button Content="Deep listen" Classes="accent" Command="{Binding DeepListenCommand}" IsVisible="{Binding ClapInstalled}" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card">
+                            <StackPanel>
+                                <TextBlock Text="Note detection (Basic Pitch)" Classes="cardTitle" />
+                                <TextBlock Text="Spotify's open Basic Pitch model is built in. Use Detect notes on any sound in the Library tab to see its notes and chords and save them as MIDI."
+                                           Classes="muted" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <!-- ============ Samples your projects use ============ -->
+            <TabItem Header="In your projects">
+                <views:SamplesView DataContext="{Binding Samples}" Margin="0,8,0,0" />
+            </TabItem>
+            <!-- ============ Copies of the same sound ============ -->
+            <TabItem Header="Duplicates">
+                <views:DuplicatesView DataContext="{Binding Duplicates}" Margin="0,8,0,0" />
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>

@@ -14,6 +14,26 @@ public static class Fixtures
         return d;
     }
 
+    /// <summary>
+    /// A temp folder for tests that scan sounds. The organiser reads a sound's type from its name and up to
+    /// four folders above it, and a random temp name can read as one ("aoSD9a" says snare, "ohQCpE" open hat),
+    /// so four plain folders keep the random part out of reach.
+    /// </summary>
+    public static string SoundsDir()
+    {
+        var d = Path.Combine(TempDir(), "nothing", "to", "read", "here");
+        Directory.CreateDirectory(d);
+        return d;
+    }
+
+    /// <summary>A file in the repository (e.g. extensions/bitwig/test/serve.js), found from where the tests run.</summary>
+    public static string? RepoFile(string relative)
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+            if (File.Exists(Path.Combine(dir.FullName, relative))) return Path.Combine(dir.FullName, relative);
+        return null;
+    }
+
     // ---- FL Studio ---------------------------------------------------------
 
     public sealed class FlpBuilder
@@ -396,7 +416,8 @@ public static class Fixtures
     /// An FL Studio 25 project inside "FL Studio/Projects": wrapper state version 12 with a
     /// VST2 (Serum) and a VST3 (Arcade), and a sample under %FLStudioUserData%.
     /// </summary>
-    public static string FlStudio25Project(string dir, bool withNotes = false)
+    /// <param name="serumChunk">Serum's own state (a Serum 1 chunk) in place of three placeholder bytes.</param>
+    public static string FlStudio25Project(string dir, bool withNotes = false, byte[]? serumChunk = null)
     {
         var projects = Path.Combine(dir, "FL Studio", "Projects");
         Directory.CreateDirectory(projects);
@@ -410,7 +431,7 @@ public static class Fixtures
             .Word(64, 1).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Lead")
             .Data(213, WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Xfer\Serum_x64.dll", "Xfer Records",
-                                   FlVst2State([1, 2, 3]), version: 12, kind: 4, fourCc: "XsfX"))
+                                   FlVst2State(serumChunk ?? [1, 2, 3]), version: 12, kind: 4, fourCc: "XsfX"))
             .Word(64, 2).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Keys")
             .Data(213, WrapperBlob("Arcade", @"C:\Program Files\Common Files\VST3\Arcade.vst3", "Output",
