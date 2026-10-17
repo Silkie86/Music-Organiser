@@ -2,13 +2,25 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.VisualTree;
 using Avalonia.Input;
+using Avalonia.Threading;
 using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
 
 public partial class MidiView : UserControl
 {
-    public MidiView() => InitializeComponent();
+    MidiBrowserViewModel? _vm;
+
+    public MidiView()
+    {
+        InitializeComponent();
+        DataContextChanged += (_, _) =>
+        {
+            if (_vm is not null) _vm.NewSearchShown -= OnNewSearch;
+            _vm = Vm;
+            if (_vm is not null) _vm.NewSearchShown += OnNewSearch;
+        };
+    }
 
     MidiBrowserViewModel? Vm => DataContext as MidiBrowserViewModel;
     MidiBrowserViewModel? _watched;
@@ -33,6 +45,10 @@ public partial class MidiView : UserControl
         var wide = Vm?.IsPairing == true;
         Body.ColumnDefinitions[1].Width = wide ? new GridLength(2, GridUnitType.Star) : new GridLength(370);
     }
+
+    /// <summary>After the list has scrolled to the part still picked, go back to the top, where the best match is.</summary>
+    void OnNewSearch(object? sender, EventArgs e) =>
+        Dispatcher.UIThread.Post(() => { if (Parts.ItemCount > 0) Parts.ScrollIntoView(0); }, DispatcherPriority.Background);
 
     void OnDoubleTapped(object? sender, TappedEventArgs e)
     {
