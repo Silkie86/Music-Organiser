@@ -380,6 +380,9 @@
                                 ToolTip.Tip="Drag into your DAW as a MIDI clip: moved into key and octave, with your edits">
                             <TextBlock Text="Drag into your DAW" />
                         </Border>
+                        <Button Content="To the playground" Margin="0,0,6,6" Classes="accent"
+                                Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SendToPlaygroundCommand}"
+                                ToolTip.Tip="Add this part, as it plays here (moved, octave and edits), to the section you're building in the playground" />
                         <Button Content="Send to Bitwig" Margin="0,0,6,6" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SendBothToBitwigCommand}"
                                 ToolTip.Tip="This part, and what it's fitted to, each on a new track in Bitwig as a clip, to carry on with the idea there" />
                         <Button Content="Get better sounds" Margin="0,0,6,6" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).GetSoundsCommand}"
