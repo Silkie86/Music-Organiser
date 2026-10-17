@@ -992,9 +992,11 @@ public static class BitwigLiveTests
     /// armed and fast goes run only when the goes before them call for it (<paramref name="earlier"/>, what each answered),
     /// and are Skipped saying why otherwise. Returns the job's answer too, for the goes after.
     /// </summary>
+    /// <param name="clipNotes">How many notes the clip has: by default, the live run's clip (<see cref="LiveFiles.RecordNotes"/>).</param>
     public static async Task<(LiveVerdict Verdict, BitwigRecorded? Answer)> RecordGoAsync(BitwigLink link, RecordGo go, string track, string trackId,
                                                                                            IReadOnlyDictionary<RecordGo, BitwigRecorded> earlier,
-                                                                                           double clipBeats = RecordClipBeats, CancellationToken ct = default)
+                                                                                           double clipBeats = RecordClipBeats, int? clipNotes = null,
+                                                                                           CancellationToken ct = default)
     {
         var hello = link.Hello;
         if (!IsNewer(hello)) return (LiveVerdict.Skip(NeedsJava), null);
@@ -1011,7 +1013,7 @@ public static class BitwigLiveTests
         var p = await link.ProjectAsync(ct);
         var (request, timeout) = RecordRequest(go, p, trackId, clipBeats, armed: first?.Decided == "nothing" && armed?.Decided is "recorded" or "cantTell");
         var answer = await link.RecordAsync(request, timeout, ct);
-        return (RecordVerdict(answer, go, track, earlier), answer);
+        return (RecordVerdict(answer, go, track, earlier, clipNotes ?? LiveFiles.RecordNotes.Count), answer);
     }
 
     /// <summary>
@@ -1021,7 +1023,8 @@ public static class BitwigLiveTests
     /// ask the person to look.</item>
     /// <item>A recording: Passed when the replay heard the clip's notes where it was recorded with the launcher clip not
     /// playing, asking the person to look at it too (the 3.7 run showed a value reading back isn't proof); Noted when the
-    /// link heard no notes at all, so only a look tells; Failed when the clip played but the replay heard nothing.</item>
+    /// link heard no notes at all, so only a look tells, or when it heard fewer than the clip has, as it played or in the
+    /// replay, so only part of it went in; Failed when the clip played but the replay heard nothing.</item>
     /// <item>Failed when the job didn't get to play: a setting didn't take, Bitwig didn't start, the job stopped part way or
     /// failed, or another project came to the front.</item>
     /// <item>Failed whatever the notes said when anything else changed (a track added or removed, a launcher clip on another
@@ -1030,7 +1033,9 @@ public static class BitwigLiveTests
     /// The data is the job's whole answer.
     /// </summary>
     /// <param name="earlier">What the goes before this one answered: the fast go's replay is checked against theirs.</param>
-    public static LiveVerdict RecordVerdict(BitwigRecorded r, RecordGo go, string track, IReadOnlyDictionary<RecordGo, BitwigRecorded>? earlier = null)
+    /// <param name="clipNotes">How many notes the clip has, or 0 when that isn't known (nothing is checked against it).</param>
+    public static LiveVerdict RecordVerdict(BitwigRecorded r, RecordGo go, string track, IReadOnlyDictionary<RecordGo, BitwigRecorded>? earlier = null,
+                                            int clipNotes = 0)
     {
         var data = JsonSerializer.SerializeToNode(r, AnswerJson)!;
         var bars = Bars(r.At, r.Length, r.Bar);
@@ -1091,6 +1096,14 @@ public static class BitwigLiveTests
                 var inPass = r.Replay?.InPass ?? 0;
                 var detail = $"Bitwig recorded the clip into its arranger on “{track}” at {bars}{speed}{armed}: playing the arranger back, the link " +
                              $"heard {Checks.Count(inPass, "note")} there, with the launcher clip not playing.";
+                // Part of the clip: in Solomon's second run, the unarmed go played only the clip's first bar (3 of its 6
+                // notes), and that went in, which read as a pass.
+                var playedPart = heard > 0 && heard < clipNotes;
+                var part = clipNotes > 0 && (playedPart || inPass < clipNotes);
+                if (part)
+                    detail += $" That's only part of the clip, which has {Checks.Count(clipNotes, "note")}: " +
+                              (playedPart ? $"Bitwig played only {heard} of them, so only those went in."
+                                          : heard > 0 ? $"Bitwig played them all, but only {inPass} went in." : $"only {inPass} went in.");
                 var alias = false;
                 if (r.LauncherClipDeleted == true)
                 {
@@ -1110,7 +1123,7 @@ public static class BitwigLiveTests
                     }
                 }
                 detail += $" The link can't see an arranger clip itself: look at {bars} on “{track}” in Bitwig's arranger and say whether it's there.";
-                verdict = alias ? LiveVerdict.Note(detail, data) : LiveVerdict.Pass(detail, data);
+                verdict = alias || part ? LiveVerdict.Note(detail, data) : LiveVerdict.Pass(detail, data);
                 break;
             case "nothing":
                 var missed = $"Bitwig played the clip on “{track}”{speed}{armed} with arranger record on (the link heard " +
