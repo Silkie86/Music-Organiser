@@ -168,12 +168,22 @@ public class FlStudioTests
 
         // Fix can relink one too, even when the junk "length" reads as a negative number.
         new byte[] { 0x60, 0xfb, 0x12, 0x00, 0xd9, 0x4a, 0x06, 0x91 }.CopyTo(garbled, 14);
-        var (data, changed) = FlStudioReader.RelinkSamples(garbled, Path.Combine(dir, "side.flp"),
+        var (data, changed, _) = FlStudioReader.RelinkSamples(garbled, Path.Combine(dir, "side.flp"),
             new Dictionary<string, string> { [@"C:\Samples\Kick.wav"] = @"D:\Packs\Kick 2.wav" });
         Assert.Equal(1, changed);
         Assert.Equal(garbled.AsSpan(0, 22).ToArray(), data.AsSpan(0, 22).ToArray());
         File.WriteAllBytes(Path.Combine(dir, "relinked.flp"), data);
         Assert.Equal([@"D:\Packs\Kick 2.wav"], new FlStudioReader().Read(Path.Combine(dir, "relinked.flp")).Samples);
+
+        // FL 7 keeps paths one byte a letter: a file named in letters it can't store is left as it was, and said.
+        var (same, none, cantWrite) = FlStudioReader.RelinkSamples(garbled, Path.Combine(dir, "side.flp"),
+            new Dictionary<string, string> { [@"C:\Samples\Kick.wav"] = @"D:\Łódź\Kick.wav" });
+        Assert.Equal(0, none);
+        Assert.Equal([@"D:\Łódź\Kick.wav"], cantWrite);
+        Assert.Equal(garbled, same);
+        // Western European letters it can store.
+        Assert.Equal(1, FlStudioReader.RelinkSamples(garbled, Path.Combine(dir, "side.flp"),
+            new Dictionary<string, string> { [@"C:\Samples\Kick.wav"] = @"D:\Café\Kick.wav" }).Changed);
     }
 
     [Fact]
