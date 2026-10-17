@@ -257,14 +257,16 @@ public sealed class ArrangementView : Control
         // Lanes.
         var y = RulerHeight - _top;
         var hoverText = (string?)null;
+        var shown = 0;
         for (var i = 0; i < a.Lanes.Count; i++)
         {
             var lane = a.Lanes[i];
             var lh = LaneHeight(lane);
             if (y + lh >= RulerHeight && y <= h)
             {
-                // Each lane slides in a little after the one above it.
-                var delay = Math.Clamp(ease * 1.6 - i * 0.04, 0, 1);
+                // Each on-screen lane fades in a little after the one above it. The stagger is
+                // capped so every lane is fully drawn once the intro ends, however many tracks there are.
+                var delay = Math.Clamp(ease * 1.6 - Math.Min(shown++, 15) * 0.04, 0, 1);
                 using (dc.PushOpacity(delay))
                 {
                     var tip = DrawLane(dc, a, lane, y, lh, w, text, muted, faint, stroke, raised);
