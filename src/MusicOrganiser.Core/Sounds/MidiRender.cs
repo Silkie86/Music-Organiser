@@ -30,9 +30,17 @@ public static class MidiRender
         var end = channels.Count == 0 ? 0 : channels.Max(c => TicksToSeconds(c.End, c.Ppq, bpm));
         var mix = new float[(int)(Math.Min(end + 2, MaxSeconds) * Rate)];
         var voices = new List<string>();
+        // Parts given a General MIDI sound play through the SoundFont, when there is one.
+        var font = channels.Any(c => c.GmProgram is not null) ? GmSounds.Font() : null;
+        if (font is not null) GmSounds.Render(mix, Rate, channels, bpm, font, ct);
         foreach (var c in channels)
         {
             ct.ThrowIfCancellationRequested();
+            if (font is not null && c.GmProgram is { } program)
+            {
+                voices.Add(GmSounds.ChoiceFor(program).Name);
+                continue;
+            }
             var sample = LoadSample(c, projectPath);
             voices.Add(sample is not null ? $"its sample, {Path.GetFileName(c.SamplePath)}"
                      : c.SamplePath.Length > 0 ? "a stand-in tone (sample not found)"
@@ -43,7 +51,7 @@ public static class MidiRender
                 var at = (int)(TicksToSeconds(n.Start, c.Ppq, bpm) * Rate);
                 if (at >= mix.Length) continue;
                 var held = TicksToSeconds(Math.Max(1, n.Length), c.Ppq, bpm);
-                var gain = 0.25f * Math.Clamp(n.Velocity, 1, 127) / 100f;
+                var gain = 0.25f * c.Volume * Math.Clamp(n.Velocity, 1, 127) / 100f;
                 if (sample is not null) PlaySample(mix, at, sample.Value.Data, sample.Value.Step * Math.Pow(2, (n.Key - c.RootKey) / 12.0 + c.PitchCents / 1200.0), gain);
                 else if (drums) Hit(mix, at, n.Key, gain);
                 else Tone(mix, at, held, n.Key, gain);

@@ -353,6 +353,18 @@ public static class HarmonyMatcher
 
     static int Gcd(int a, int b) => b == 0 ? Math.Max(1, a) : Gcd(b, a % b);
 
+    /// <summary>
+    /// How well one part's notes sit with another's sounding at the same time, both looping from the same bar (0 to 1),
+    /// as they are: for showing the effect of an edit straight away. Null when they hardly overlap.
+    /// </summary>
+    public static double? SitsTogether(IReadOnlyList<NoteEvent> mine, IReadOnlyList<NoteEvent> theirs)
+    {
+        if (mine.Count == 0 || theirs.Count == 0) return null;
+        var timeline = HarmonyTimeline.Of(theirs);
+        var count = Math.Max(1, PhraseAnalyser.BarsOf(mine) * 2);
+        return Together(HarmonyTimeline.Weights(mine, count), count, timeline, 0, loops: true, out _);
+    }
+
     /// <summary>The note score alone for each of the 12 moves (cheap: used to pick which parts are worth a closer look).</summary>
     public static double QuickScore(ReadOnlySpan<float> chroma, HarmonyTarget target)
     {

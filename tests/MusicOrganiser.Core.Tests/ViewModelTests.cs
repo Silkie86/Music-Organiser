@@ -1485,6 +1485,82 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Trying_an_idea_edits_on_the_piano_roll_moves_each_part_and_stops_when_you_move_on()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        int[][] tune = [[69, 72, 76, 72], [65, 69, 72, 69], [67, 72, 76, 72], [67, 71, 74, 71]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Keys", Ppq = 96 };
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Keys Am.mid"), Core.Export.MidiWriter.Write(chords));
+        var lead = new Core.Parsers.MidiClip { Name = "Lead", Ppq = 96 };
+        lead.Track("Lead").AddRange(tune.SelectMany((b, i) => b.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96, 96, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Lead melody.mid"), Core.Export.MidiWriter.Write(lead));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        var played = new List<string>();
+        var player = new Recorder(played);
+        ((HeadlessUi)Ui.Current).Player = () => player;
+
+        var main = Main();
+        var midi = main.Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        midi.Selected = midi.Results.Single(r => r.Title.Contains("Keys"));
+        midi.FitToSelectedCommand.Execute(null);
+        var melody = midi.Results.Single(r => r.Title.Contains("Lead"));
+        midi.Selected = melody;
+        Assert.Contains("100% of its notes fit", melody.TogetherText);
+
+        // A note moved a semitone off: the score shows it, and Undo puts it back.
+        var edited = melody.BarNotes.Select((n, i) => i == 0 ? n with { Key = n.Key + 1 } : n).ToList();
+        await melody.EditCommand.ExecuteAsync(edited);
+        Assert.True(melody.IsEdited);
+        Assert.Contains("rubs a semitone", melody.TogetherText);
+        Assert.Equal(edited[0].Key, melody.BarNotes[0].Key);
+        Assert.Equal(edited[0].Key, melody.FileClip().Tracks.Single().Value[0].Key);   // dragged out with the edit
+        await melody.UndoEditCommand.ExecuteAsync(null);
+        Assert.False(melody.IsEdited);
+        Assert.False(melody.CanUndoEdit);
+
+        // Each part's octave on its own; the edits follow this part's octave.
+        await melody.EditCommand.ExecuteAsync(edited);
+        var before = melody.EditorGuide!.Min(n => n.Key);
+        await midi.WithOctaveDownCommand.ExecuteAsync(null);
+        Assert.Equal(before - 12, melody.EditorGuide!.Min(n => n.Key));
+        Assert.Equal("Octave -1", midi.WithOctaveText);
+        await melody.OctaveUpCommand.ExecuteAsync(null);
+        Assert.Equal(edited[0].Key + 12, melody.BarNotes[0].Key);
+
+        // Changing the octave while it plays carries on playing.
+        await melody.PlayCommand.ExecuteAsync(null);
+        Assert.True(melody.IsPlayingTogether);
+        await melody.OctaveDownCommand.ExecuteAsync(null);
+        Assert.True(melody.IsPlayingTogether);
+        Assert.EndsWith(":together", player.Playing);
+
+        // Tempo and mute take effect; picking another part stops it, and so does leaving the page.
+        midi.TempoValue = 90;
+        Assert.Equal("90 BPM", midi.TempoText);
+        midi.MuteWith = true;
+        Assert.True(melody.IsPlaying);
+        midi.Selected = null;   // another part picked (here, none)
+        Assert.False(melody.IsPlaying);
+        Assert.Null(player.Playing);
+        midi.Selected = melody;
+        await midi.PlaySelectedTogetherCommand.ExecuteAsync(null);
+        Assert.True(melody.IsPlaying);
+        main.SelectedNav = main.Nav.First(n => n.Page != midi);
+        Assert.False(melody.IsPlaying);
+
+        // A sound for each kind, remembered.
+        melody.Sound = Core.Sounds.GmSounds.Choices.Single(c => c.Name == "Flute");
+        Assert.Equal("73", _db.GetSetting(MidiBrowserViewModel.SoundKey + melody.Role));
+        Assert.Equal("Flute", melody.Sound.Name);
+    }
+
+    [Fact]
     public async Task A_songs_midi_tab_lists_parts_that_fit_it_already_moved_and_not_its_own()
     {
         const int bar = 4 * 96;
