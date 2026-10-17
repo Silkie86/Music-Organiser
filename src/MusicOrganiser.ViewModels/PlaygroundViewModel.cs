@@ -1077,6 +1077,23 @@ public sealed partial class LayerRow : ObservableObject
     public IReadOnlyList<NoteEvent> Guide =>
         PlaygroundSession.Audible(_owner.CurrentSection).Where(l => l != Layer && l.Role != MidiRoles.Drums).SelectMany(l => l.Notes).ToList();
 
+    /// <summary>
+    /// Which notes fight the chords, for the piano roll to mark red: judged by chord-scale theory against the chord
+    /// lane with the section's ears, so jazz tensions and blue notes aren't marked; a short note stepping into a good
+    /// one is let off as a passing note.
+    /// </summary>
+    public Func<NoteEvent, bool> Clashes
+    {
+        get
+        {
+            var h = _owner.Harmony;
+            var style = h.Style;
+            if (Layer.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => false;
+            return n => ChordLane.At(h.Lane, n.Start + 1, h.Length) is { } chord && n.Length > PhraseAnalyser.Ppq / 2 &&
+                        ChordScales.Sit(chord, n.Key % 12, style) < 0.05;
+        }
+    }
+
     public GmSounds.Choice Sound
     {
         get => GmSounds.ChoiceFor(Layer.Program ?? GmSounds.DefaultFor(Layer.Role));
@@ -1101,7 +1118,11 @@ public sealed partial class LayerRow : ObservableObject
         OnPropertyChanged(nameof(Sound));
     }
 
-    internal void GuideChanged() => OnPropertyChanged(nameof(Guide));
+    internal void GuideChanged()
+    {
+        OnPropertyChanged(nameof(Guide));
+        OnPropertyChanged(nameof(Clashes));
+    }
     internal void LengthChanged() => OnPropertyChanged(nameof(Length));
 
     [RelayCommand] void Remove() => _owner.RemoveLayer(this);

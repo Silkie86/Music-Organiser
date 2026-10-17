@@ -219,8 +219,8 @@
                     <views:PianoRollEditor Height="230" Notes="{Binding SelectedLayer.Notes}" Guide="{Binding SelectedLayer.Guide}"
                                            Period="{Binding Length}" Length="{Binding Length}" Position="{Binding Position}"
                                            Section="{Binding Loop}" SectionCommand="{Binding SetLoopCommand}"
-                                           EditedCommand="{Binding SelectedLayer.EditedCommand}"
-                                           ToolTip.Tip="The other parts are grey behind. Click to add a note, drag to move, drag its end to stretch, right-click to remove; red notes rub a semitone against another part. Drag along the bar numbers to loop some bars." />
+                                           EditedCommand="{Binding SelectedLayer.EditedCommand}" ClashTest="{Binding SelectedLayer.Clashes}"
+                                           ToolTip.Tip="The other parts are grey behind. Click to add a note, drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Drag along the bar numbers to loop some bars." />
                 </StackPanel>
             </Grid>
 
