@@ -119,7 +119,16 @@
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32" MaxWidth="520">
                     <TextBlock Text="⧉" FontSize="40" Foreground="{StaticResource FaintBrush}" HorizontalAlignment="Center" />
                     <TextBlock Text="{Binding EmptyTitle}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,4" />
-                    <TextBlock Text="{Binding EmptyText}" Classes="muted" TextAlignment="Center" />
+                    <TextBlock Text="{Binding EmptyText}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap" />
+                    <!-- Hiding everything showing empties the list, and the batch bar with its undo, so undo is offered here too. -->
+                    <Button Content="{Binding UndoText}" Command="{Binding UndoCommand}" Classes="accent" HorizontalAlignment="Center" Margin="0,14,0,0">
+                        <Button.IsVisible>
+                            <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                <Binding Path="CanUndo" />
+                                <Binding Path="HasGroups" />
+                            </MultiBinding>
+                        </Button.IsVisible>
+                    </Button>
                     <StackPanel Margin="0,18,0,0" IsVisible="{Binding Parent.IsBusy}" Width="360">
                         <TextBlock Text="{Binding Parent.BusyText}" Foreground="{StaticResource MutedBrush}" FontSize="12" HorizontalAlignment="Center" />
                         <ProgressBar Height="6" MinHeight="6" Margin="0,8,0,0" Maximum="100" Value="{Binding Parent.BusyPercent}"
