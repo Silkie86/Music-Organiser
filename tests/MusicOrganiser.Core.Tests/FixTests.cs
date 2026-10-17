@@ -118,7 +118,7 @@ public class FixTests : IDisposable
     }
 
     [Fact]
-    public void Plugins_are_listed_as_swaps_to_make_by_hand_never_written()
+    public void Plugins_other_than_Serum_are_listed_as_swaps_to_make_by_hand_never_written()
     {
         var dir = Path.Combine(_root, "Projects");
         Directory.CreateDirectory(dir);
@@ -126,8 +126,9 @@ public class FixTests : IDisposable
         _db.ReplaceInstalledPlugins(["Serum 2", "FabFilter Pro-Q 4"]);
 
         var plan = ProjectFixer.Plan(_db, Scan("FL Studio"));
+        // Serum is the one the app can swap itself, with its sound translated.
         var serum = plan.Single(l => l.Name == "Serum");
-        Assert.Equal((FixAction.Suggestion, "Serum 2"), (serum.Action, serum.Use));
+        Assert.Equal((FixAction.Relink, "Serum 2", true), (serum.Action, serum.Use, serum.IsSwap));
         var proq = plan.Single(l => l.Name == "Pro-Q 3");
         Assert.Equal((FixAction.Suggestion, "Pro-Q 3", "FabFilter Pro-Q 4"), (proq.Action, proq.Name, proq.Use));
         Assert.False(proq.CanWrite);
@@ -189,6 +190,34 @@ public class FixTests : IDisposable
         using (var entry = zip.GetEntry($"plugin-states/{serum2.Str(0xbe5)}")!.Open()) entry.CopyTo(file);
         var sound = Serum2State.Read(VstPreset.Component(file.ToArray()))!;
         Assert.Equal(0.4809 * 0.4809, sound.Settings["Oscillator0"]!["plainParams"]!["kParamVolume"]!.GetValue<double>(), 4);
+    }
+
+    [Fact]
+    public void An_FL_projects_Serum_is_swapped_for_Serum_2_with_its_sound_translated()
+    {
+        var path = Fixtures.FlStudio25Project(Path.Combine(_root, "Projects"), serumChunk: SerumTests.Serum1());
+        var before = File.ReadAllBytes(path);
+        _db.ReplaceInstalledPlugins(["Serum2", "Arcade", "Predator 2"]);
+
+        var swap = ProjectFixer.Plan(_db, Scan("FL Studio")).Single(l => l.IsSwap);
+        Assert.Equal(("Serum", FixAction.Relink), (swap.Name, swap.Action));
+
+        var result = ProjectFixer.Write(path, [swap], _ => null);
+        Assert.Equal((1, 0), (result.Swapped, result.Relinked));
+        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.StartsWith("Lead: Serum swapped for Serum 2, with its sound translated", Assert.Single(result.Notes));
+
+        // The channel now holds Serum 2's VST3, as FL saves it, with the translated sound; the others are as they were.
+        var song = Readers.FlStudio.ReadSong(result.Path);
+        var lead = song.Channels.Single(c => c.Name == "Lead").Instrument!;
+        Assert.Equal(("Serum2", "VST3", "56534558667350736572756D20320000"), (lead.Name, lead.Format, lead.DeviceId));
+        var sound = Serum2State.Read(VstPreset.Component(lead.State!.Data))!;
+        Assert.Equal(0.4809 * 0.4809, sound.Settings["Oscillator0"]!["plainParams"]!["kParamVolume"]!.GetValue<double>(), 4);
+        var old = Readers.FlStudio.ReadSong(path);
+        Assert.Equal(old.Channels.Where(c => c.Name != "Lead").Select(c => c.Instrument?.State?.Data),
+                     song.Channels.Where(c => c.Name != "Lead").Select(c => c.Instrument?.State?.Data));
+        Assert.Equal(FlStudioReader.ReadEvents(before).Events.Select(e => e.Id),
+                     FlStudioReader.ReadEvents(File.ReadAllBytes(result.Path)).Events.Select(e => e.Id));
     }
 
     [Fact]
