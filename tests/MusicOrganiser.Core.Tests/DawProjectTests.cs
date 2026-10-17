@@ -188,6 +188,26 @@ public class DawProjectTests
     }
 
     [Fact]
+    public void ChannelsThePlaylistNeverPlaysAreTracksWithNoClipsInADawProject()
+    {
+        var notes = new NoteEvent[] { new(0, 96, 60, 100) };
+        var m1 = new FlPlugin("M1", "KORG", "VST2", "1263359281", null);
+        var song = new FlSong("", 96, 120,
+        [
+            new FlChannel(0, "M1", m1, "", 0, notes) { Clips = [new FlClip("A", 0, 384, notes)] },
+            new FlChannel(1, "M1 #2", m1, "", 0, []),
+            new FlChannel(2, "Layer", null, "", 0, []),
+        ], [], []);
+        var result = DawProject.FromFl(song, "Unplayed");
+        using var zip = new ZipArchive(new MemoryStream(result.Bytes));
+        using var p = zip.GetEntry("project.xml")!.Open();
+        var tracks = XDocument.Load(p).Root!.Element("Structure")!.Elements("Track").Select(t => (string?)t.Attribute("name"));
+        Assert.Equal(["M1", "M1 #2", "Master"], tracks);
+        Assert.Contains("M1 #2: the FL Studio playlist never plays it, so its track is here with its sound but no clips", result.Notes);
+        Assert.DoesNotContain(result.Notes, n => n.StartsWith("M1:") && n.Contains("never plays"));
+    }
+
+    [Fact]
     public void WorksOutHowLongAndHowHighFlPlaysAStretchedSample()
     {
         // FL's stretch modes keep pitch and length apart.
