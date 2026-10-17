@@ -321,13 +321,16 @@ void calibrate(Vst::IComponent* comp, Vst::IEditController* ctrl, const Options&
         if (info.id < opt.idsFrom || info.id > opt.idsTo) continue;
         if (info.flags & (Vst::ParameterInfo::kIsReadOnly | Vst::ParameterInfo::kIsProgramChange)) continue;
         Json j;
-        j.begin().integer("calibrate", info.id).str("name", str128(info.title)).num("default", info.defaultNormalizedValue);
+        j.begin().integer("calibrate", info.id).str("name", str128(info.title)).integer("stepCount", info.stepCount)
+            .num("default", info.defaultNormalizedValue);
         j.beginArray("steps");
         change.id = info.id;
         change.active = true;
-        for (int k = 0; k <= opt.calibrate; k++)
+        // A switch or a list (a filter type, say) is stepped through every choice, up to 256 of them.
+        int steps = info.stepCount > 0 && info.stepCount <= 256 ? info.stepCount : opt.calibrate;
+        for (int k = 0; k <= steps; k++)
         {
-            change.value = double(k) / opt.calibrate;
+            change.value = double(k) / steps;
             run.block(&change);
             MemoryStream state;
             comp->getState(&state);

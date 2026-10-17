@@ -84,6 +84,7 @@ like Waves holds many):
 - `--calibrate <steps>` (VST3) starts the plugin's audio, sets each parameter to that many even steps from 0 to 1
   through the audio processor, as a DAW's automation does, and prints one line per parameter with the state saved at
   each step (`{"calibrate":<id>,"steps":[{"x":0,"state":"..."},…]}`), after a first line with the starting state.
+  A switch or list is stepped through each of its choices (up to 256) instead.
   `--ids <from>-<to>` keeps it to those parameter IDs. It's for working out how a plugin stores each knob: Serum 2
   saves its own units (seconds, percent, amplitude), not the 0 to 1 a DAW sees.
 - A plugin that can't be loaded gives `{"path":..., "error":"..."}` and exit code 2. A 32-bit
