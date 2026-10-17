@@ -177,7 +177,7 @@ public static class SelfCheck
         var loadMs = watch.Elapsed.TotalMilliseconds;
         ct.ThrowIfCancellationRequested();
         watch.Restart();
-        // Each kind of placing keeps its own map; time the fullest one the galaxy would show.
+        // Each galaxy "Placed by" keeps its own saved map: time the fullest one.
         var map = new[] { "clap+features", "clap", "features" }.Select(sounds.Map).FirstOrDefault(m => m.Count > 0) ?? new();
         var mapMs = watch.Elapsed.TotalMilliseconds;
         watch.Restart();
