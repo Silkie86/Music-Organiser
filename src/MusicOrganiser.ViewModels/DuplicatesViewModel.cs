@@ -66,7 +66,11 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(EmptyTitle));
         OnPropertyChanged(nameof(EmptyText));
+        OnPropertyChanged(nameof(HasGroups));
     }
+
+    /// <summary>Whether any copies were found at all, filtered out or not.</summary>
+    public bool HasGroups => _all.Count > 0;
 
     /// <summary>What the empty tab says: nothing looked for yet, or nothing found, or nothing matching the filters.</summary>
     public string EmptyTitle =>
@@ -76,7 +80,7 @@ public sealed partial class DuplicatesViewModel : ObservableObject
         : "Find duplicate sounds";
     public string EmptyText =>
         IsLoading ? ""
-        : _all.Count > 0 ? "Try another filter or search."
+        : _all.Count > 0 ? (CanUndo ? "Everything showing is hidden. Show them again below, or pick Hidden in the filter to bring back single copies." : "Try another filter or search.")
         : HasLooked ? "None of your sounds is a copy of another. New sounds are checked after each scan, or when you press Find duplicates."
         : "Finds copies of the same sound across your sample folders, even renamed, converted to another format or trimmed. "
           + "Play each copy to compare, then tick groups to hide the copies that are the same sound from the app (very similar ones are only listed). "
@@ -283,6 +287,7 @@ public sealed partial class DuplicatesViewModel : ObservableObject
     {
         var last = parent.Org.Library.LastHidden();
         CanUndo = last is not null;
+        OnPropertyChanged(nameof(EmptyText));
         UndoText = last is { } l ? $"Show the {l.Ids.Count:N0} copies hidden at {l.At:HH:mm, d MMM} again" : "";
     }
 
