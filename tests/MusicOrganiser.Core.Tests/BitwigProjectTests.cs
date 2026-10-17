@@ -194,6 +194,28 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void ChannelsThePlaylistNeverPlaysComeAcrossWithTheirSoundButNoClips()
+    {
+        // As in Solomon's funk step: a second M1 and a sample the playlist never plays, and a channel with nothing to make a sound.
+        var notes = new NoteEvent[] { new(0, 96, 60, 100) };
+        var m1 = new FlPlugin("M1", "KORG", "VST2", "1263359281", null);
+        var song = new FlSong("", 96, 120,
+        [
+            new FlChannel(0, "M1", m1, "", 0, notes) { Clips = [new FlClip("A", 0, 384, notes)] },
+            new FlChannel(1, "M1 #2", m1, "", 0, []),
+            new FlChannel(2, "Synth ld 87", null, @"C:\Samples\Synth ld 87.wav", 0, []),
+            new FlChannel(3, "Layer", null, "", 0, []),
+        ], [], []);
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), Snare);
+        var tracks = Decode(result.Bytes).Root!.Obj(0x4dd)!.List(0x4de);
+        Assert.Equal(["M1", "M1 #2", "Synth ld 87"], tracks.Select(t => t.Str(0x15b)));
+        Assert.Equal([1, 0, 0], tracks.Select(t => Clips(t).Count()));
+        Assert.Contains("M1 #2: the FL Studio playlist never plays it, so its track is here with its sound but no clips", result.Notes);
+        Assert.Contains("Synth ld 87: the FL Studio playlist never plays it, so its track is here with its sound but no clips", result.Notes);
+        Assert.DoesNotContain(result.Notes, n => n.StartsWith("M1:") && n.Contains("never plays") || n.StartsWith("Layer"));
+    }
+
+    [Fact]
     public void TransposesByOctavesAndSemitonesTheSameWay()
     {
         int[] roots = [57, 64, 74, 48, 72, 12];   // A4, E5, D6, C4, C6 and C0 (four octaves up: three on the octave knob)
