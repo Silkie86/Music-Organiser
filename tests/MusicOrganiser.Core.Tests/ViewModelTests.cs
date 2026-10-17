@@ -141,7 +141,8 @@ public class ViewModelTests : IDisposable
         _db.SetList(Scanner.SampleFoldersKey, [libRoot]);
         new Scanner(_db).ScanSampleFolders();
         ScanFixtures();
-        var projects = Main().Projects;
+        var main = Main();
+        var projects = main.Projects;
         projects.Reload();
         projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
         var detail = projects.Detail!;
@@ -157,6 +158,15 @@ public class ViewModelTests : IDisposable
         Assert.Equal(["Night Drive"], song.OlderSaves.Select(o => o.Name));
         Assert.Same(song, projects.Selected);
         Assert.True(projects.Detail!.HasPendingFix);
+
+        // The finished card's "Open it" opens it from the panel showing now, which then asks whether it loaded,
+        // and still does after leaving the song and coming back.
+        _db.SetSetting(ProjectDetailViewModel.DawExeKey("FL Studio"), "/bin/true");
+        main.Activities.Items.First(a => a.Title.StartsWith("Saved Night Drive (fixed)")).RunActionCommand.Execute(null);
+        Assert.True(projects.Detail.PendingFixOpened);
+        projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
+        projects.Selected = song;
+        Assert.True(projects.Detail!.PendingFixOpened);
 
         // Leave it and come back: the question is still there until it's answered.
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
