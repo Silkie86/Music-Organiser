@@ -745,6 +745,33 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_project_re_saved_in_another_year_moves_its_sounds_to_that_year_after_a_scan()
+    {
+        _soundDb.Save(new[] { "/samples/Kick A.wav", "/samples/Snare B.wav" }.Select(p =>
+            new SoundLibrary.Analysed(p, 1, 1, new SoundAnalysis { Features = [1, 0, 0] }, null, null, null)));
+        _sounds.Reload();
+        var file = Path.Combine(_root, "Old one.flp");
+        File.WriteAllBytes(file, [0]);
+        void Save(int year) => _db.Upsert(new LibraryDb.IndexedFile(file, 1,
+            new DateTimeOffset(new DateTime(year, 6, 1, 12, 0, 0, DateTimeKind.Local)).ToUnixTimeSeconds(),
+            new ProjectInfo { Daw = "FL Studio" }, null, [("/samples/Kick A.wav", true)], []));
+        Save(2019);
+        var other = Path.Combine(_root, "Other.flp");
+        File.WriteAllBytes(other, [0]);
+        _db.Upsert(new LibraryDb.IndexedFile(other, 1, new DateTimeOffset(new DateTime(2019, 3, 1, 12, 0, 0, DateTimeKind.Local)).ToUnixTimeSeconds(),
+            new ProjectInfo { Daw = "FL Studio" }, null, [("/samples/Snare B.wav", true)], []));
+        var lab = Main().Sounds;
+        lab.YearFilter = "2019";
+        Assert.Equal(["Kick A", "Snare B"], lab.Shown.Select(s => s.Name).Order());
+
+        // Same sounds, same number of projects: only the year changed.
+        Save(2021);
+        await lab.RefreshUsageAsync();
+        Assert.Equal(["Snare B"], lab.Shown.Select(s => s.Name));
+        Assert.Contains("2021", lab.YearChoices);
+    }
+
+    [Fact]
     public void The_galaxy_places_sounds_plays_what_you_sweep_and_turns_the_trail_into_a_kit()
     {
         var played = new List<string>();

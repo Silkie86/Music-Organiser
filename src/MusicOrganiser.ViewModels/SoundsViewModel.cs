@@ -311,16 +311,18 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         }
         var since = DateTime.Now.AddYears(-1);
         var weights = _weights;
-        var (changed, liked) = await Task.Run(() =>
+        var (changed, years, liked) = await Task.Run(() =>
         {
-            var before = items.Select(s => (s.UsedIn, s.UsedInRecently)).ToArray();
+            var before = items.Select(s => (s.UsedIn, s.UsedInRecently, s.UsedInYears)).ToArray();
             Org.ApplyUsage(_db.SampleUsageByAge(since));
-            var changed = items.Where((s, i) => (s.UsedIn, s.UsedInRecently) != before[i]).Any();
-            return (changed, changed ? items.Select(weights.Score).ToArray() : []);
+            var changed = items.Where((s, i) => (s.UsedIn, s.UsedInRecently) != (before[i].UsedIn, before[i].UsedInRecently)).Any();
+            // A project re-saved in a new year changes only the years its sounds are used in, which the year filter goes by.
+            var years = changed || items.Where((s, i) => !s.UsedInYears.AsSpan().SequenceEqual(before[i].UsedInYears)).Any();
+            return (changed, years, changed ? items.Select(weights.Score).ToArray() : []);
         });
-        if (!changed || !ReferenceEquals(items, Items)) return;
+        if (!years || !ReferenceEquals(items, Items)) return;
         var top = liked.Length == 0 ? 0 : liked.Max();
-        for (var i = 0; i < items.Count; i++)
+        for (var i = 0; i < liked.Length; i++)
         {
             items[i].Liked = liked[i];
             items[i].LikedShare = top > 0 ? liked[i] / top : 0;
