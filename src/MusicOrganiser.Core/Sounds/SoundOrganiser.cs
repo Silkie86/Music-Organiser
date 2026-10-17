@@ -302,8 +302,6 @@ public sealed class SoundOrganiser : IDisposable
 
     // ---- the sound galaxy ---------------------------------------------------------------------
 
-    public const string GalaxySpaceKey = "galaxy_space";
-
     /// <summary>What can place the galaxy's stars: CLAP and the measurements together, CLAP alone, or the measurements alone.</summary>
     public const string Both = "Both", ClapOnly = "CLAP", OwnOnly = "Own measurements";
 
@@ -343,37 +341,37 @@ public sealed class SoundOrganiser : IDisposable
         });
     }
 
-    /// <summary>True when the saved map is missing, made from the other kind of fingerprint, or lacks some sounds.</summary>
+    /// <summary>True when the saved map for this kind of placing is missing or lacks some sounds.</summary>
     public bool GalaxyOutOfDate(string wanted)
     {
         if (_features is not { Count: > 0 } f) return false;
-        if (Library.GetSetting(GalaxySpaceKey) != GalaxySpace(wanted)) return true;
-        var map = Library.Map();
+        var map = Library.Map(GalaxySpace(wanted));
         return f.Units.Keys.Any(id => !map.ContainsKey(id));
     }
 
     /// <summary>
-    /// Brings the galaxy up to date and returns it. It's laid out afresh when there's no map yet, the fingerprints
-    /// changed kind (deep listening finished) or more than a fifth of the sounds are new; otherwise the new sounds are
-    /// placed beside their sound-alikes, so the stars you know stay where they were.
+    /// Brings the galaxy up to date and returns it. Each kind of placing (<see cref="GalaxySpace"/>) keeps a map of its
+    /// own, so switching between them only works one out the first time. It's laid out afresh when that kind has no map
+    /// yet, <paramref name="fresh"/> asks for it, or more than a fifth of the sounds are new; otherwise the new sounds
+    /// are placed beside their sound-alikes, so the stars you know stay where they were.
     /// </summary>
-    public Dictionary<long, StarPoint> UpdateGalaxy(string wanted, IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
+    public Dictionary<long, StarPoint> UpdateGalaxy(string wanted, IProgress<SoundProgress>? progress = null, CancellationToken ct = default,
+                                                    bool fresh = false)
     {
         var space = GalaxySpace(wanted);
         var (ids, vector) = GalaxyVectors(space);
-        var map = Library.Map();
+        var map = Library.Map(space);
         var newIds = ids.Where(id => !map.ContainsKey(id)).ToArray();
-        if (map.Count == 0 || Library.GetSetting(GalaxySpaceKey) != space || newIds.Length > ids.Count / 5)
+        if (fresh || map.Count == 0 || newIds.Length > ids.Count / 5)
         {
             map = GalaxyMap.Layout(ids, vector, progress, ct);
-            Library.SaveMap(map, replace: true);
-            Library.SetSetting(GalaxySpaceKey, space);
+            Library.SaveMap(space, map, replace: true);
         }
         else if (newIds.Length > 0)
         {
             var mapped = ids.Where(map.ContainsKey).ToArray();
             var added = GalaxyMap.PlaceNew(newIds, mapped, vector, map);
-            Library.SaveMap(added, replace: false);
+            Library.SaveMap(space, added, replace: false);
             foreach (var (id, p) in added) map[id] = p;
         }
         return map;
