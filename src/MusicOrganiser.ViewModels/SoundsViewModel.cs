@@ -728,6 +728,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     void Start(Sound s, double from, bool count = true)
     {
+        _previews?.Cancel();   // a preview still opening mustn't start over this one
         _player.Play(s.Path, from);
         _preview = count ? null : s.Path;
         if (count) Count(s);
