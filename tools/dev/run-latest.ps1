@@ -30,6 +30,9 @@ param(
     [string]$Repo
 )
 
+# Raised whenever this script changes, so an older branch's copy never replaces a newer installed one.
+$LauncherVersion = 5
+
 $ErrorActionPreference = 'Continue'   # git writes progress to stderr, which Windows PowerShell would treat as failure
 $GitHubRepo = 'Silkie86/Music-Organiser'
 $AppProject = 'src/MusicOrganiser.Avalonia'
@@ -98,9 +101,13 @@ if (-not $Branch) {
     $remembered = if (Test-Path $LastChoice) { (Get-Content $LastChoice -Raw).Trim() } else { '' }
     $choices = @()
     try {
+        # Windows PowerShell 5.1 may not offer TLS 1.2 by itself, which GitHub requires.
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
         $prs = Invoke-RestMethod -UseBasicParsing -TimeoutSec 15 -Headers @{ 'User-Agent' = 'music-organiser-run-latest' } `
             -Uri "https://api.github.com/repos/$GitHubRepo/pulls?state=open&sort=updated&direction=desc&per_page=15"
         foreach ($pr in $prs) {
+            # A pull request from someone's fork has its branch there, not here: this clone can't fetch it.
+            if ($pr.head.repo.full_name -ne $pr.base.repo.full_name) { continue }
             $choices += [pscustomobject]@{ Branch = $pr.head.ref; Label = "#$($pr.number)  $($pr.title)"; Updated = [datetime]$pr.updated_at }
         }
     }
@@ -150,21 +157,40 @@ if ($LASTEXITCODE -eq 0) { Git switch --quiet $Branch } else { Git switch --quie
 function Update-ToRemote {
     # Moves the branch to GitHub's version. Normally that's a fast-forward; if the branch was rewritten on GitHub,
     # the old copy is kept as a backup branch first, so nothing is lost.
-    & $GitExe -C $Repo merge --ff-only --quiet "origin/$Branch" 2>$null
+    & $GitExe -C $Repo merge --ff-only --quiet "origin/$Branch" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { return $true }
+    # Not a fast-forward because of files changed here (an edit while testing): put them aside and try again.
+    if (& $GitExe -C $Repo status --porcelain) {
+        & $GitExe -C $Repo stash push --quiet --include-untracked -m "Put aside by Run latest, $(Get-Date -Format 'yyyy-MM-dd HH:mm')" 2>$null | Out-Null
+        Say "Changes in $Repo were put aside (git stash list shows them)." 'Yellow'
+        & $GitExe -C $Repo merge --ff-only --quiet "origin/$Branch" 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { return $true }
+    }
+    # Rewritten on GitHub: keep the old copy as a backup branch, then take GitHub's.
+    & $GitExe -C $Repo merge-base --is-ancestor HEAD "origin/$Branch" 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         $backup = "backup/$Branch-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-        Git branch $backup
-        Git reset --quiet --keep "origin/$Branch"
-        Say "The branch was rewritten on GitHub; the old copy is kept as $backup." 'Yellow'
+        & $GitExe -C $Repo branch $backup 2>$null | Out-Null
+        & $GitExe -C $Repo reset --quiet --keep "origin/$Branch" 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Say "The branch was rewritten on GitHub; the old copy is kept as $backup." 'Yellow'
+            return $true
+        }
     }
+    Say "Couldn't bring in the latest from GitHub (git said no, see above). The app keeps running the version it has." 'Yellow'
+    return $false
 }
-Update-ToRemote
+Update-ToRemote | Out-Null
 Say ("Now on: " + (& $GitExe -C $Repo log -1 --format='%h  %s  (%cr)')) 'Green'
 
-# A newer copy of this script in that version is used from the next run.
+# A newer copy of this script in that version is used from the next run (never an older one, from an older branch).
+function Get-LauncherVersion([string]$Path) {
+    $line = Select-String -Path $Path -Pattern '^\$LauncherVersion\s*=\s*(\d+)' -List -ErrorAction SilentlyContinue
+    if ($line) { [int]$line.Matches[0].Groups[1].Value } else { 0 }
+}
 $newer = Join-Path $Repo 'tools/dev/run-latest.ps1'
-if ((Test-Path $newer) -and (Test-Path $Installed) -and
-    ((Get-FileHash $newer).Hash -ne (Get-FileHash $Installed).Hash) -and $PSCommandPath -eq $Installed) {
+if ((Test-Path $newer) -and (Test-Path $Installed) -and $PSCommandPath -eq $Installed -and
+    (Get-LauncherVersion $newer) -gt $LauncherVersion) {
     Copy-Item -Force $newer $Installed
     Say 'This launcher has been updated; the new one is used next time.' 'DarkGray'
 }
@@ -251,6 +277,7 @@ function Test-NeedsRestart([string]$From, [string]$To) {
 }
 
 $watch = Start-Watch
+$null = $watch.Handle   # keeps its exit code readable after it ends
 
 try {
     $next = (Get-Date).AddSeconds($PullEvery)
@@ -268,7 +295,7 @@ try {
         $news = @(& $GitExe -C $Repo log --format='  %h %s' "$here..$there")
         $changed = @(& $GitExe -C $Repo diff --name-only $here $there)
         $restart = Test-NeedsRestart $here $there
-        Update-ToRemote
+        if (-not (Update-ToRemote)) { continue }
         Say ''
         Say "$(Get-Date -Format 'HH:mm:ss')  New from GitHub ($($news.Count) change(s)), now in the app:" 'Green'
         $news | ForEach-Object { Say $_ 'Green' }
@@ -287,6 +314,11 @@ try {
             if (Test-Path $path) { [IO.File]::WriteAllBytes($path, [IO.File]::ReadAllBytes($path)) }
         }
     }
+    # Here only when dotnet watch ended by itself (Ctrl+C ends the whole script): say so, so the window stays open
+    # ("Run latest.cmd" pauses on a failure) long enough to read why.
+    Say ''
+    Say "dotnet watch stopped by itself (exit code $($watch.ExitCode)). What it said is above; start the shortcut again to retry." 'Red'
+    exit 1
 }
 finally {
     Stop-Watch $watch

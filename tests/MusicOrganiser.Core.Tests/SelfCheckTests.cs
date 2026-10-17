@@ -62,4 +62,31 @@ public sealed class SelfCheckTests
         Assert.Equal(LiveOutcome.Skipped, run.Results.Single(r => r.Name == "Every project opens").Outcome);
         Assert.Equal(LiveOutcome.Skipped, run.Results.Single(r => r.Name == "Sound library loads").Outcome);
     }
+
+    [Fact]
+    public void An_empty_project_file_is_damaged_whatever_daw_made_it()
+    {
+        var dir = Fixtures.TempDir();
+        var empty = Path.Combine(dir, "Crashed while saving.bwproject");
+        File.WriteAllBytes(empty, []);
+
+        var verdict = SelfCheck.ReadProjects([empty], CancellationToken.None);
+
+        Assert.NotEqual(LiveOutcome.Failed, verdict.Outcome);
+        Assert.Contains(verdict.Lines, l => l.StartsWith("Damaged: " + empty, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Stopping_part_way_keeps_what_was_read()
+    {
+        var dir = Fixtures.TempDir();
+        var good = Fixtures.FlStudioProject(dir);
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+
+        var verdict = SelfCheck.ReadProjects([good, good], stop.Token);
+
+        Assert.Equal(LiveOutcome.Noted, verdict.Outcome);
+        Assert.StartsWith("Stopped after 0 of 2 projects", verdict.Detail, StringComparison.Ordinal);
+    }
 }

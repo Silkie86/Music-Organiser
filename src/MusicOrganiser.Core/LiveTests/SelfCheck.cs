@@ -92,8 +92,12 @@ public static class SelfCheck
 
     static LiveVerdict FoldersThere(SelfCheckOptions o)
     {
+        // The standard plugin folders (VST3, CLAP...) are only where plugins would be: one this computer doesn't have
+        // isn't an unplugged drive, whether the list is the app's own or Solomon kept them in an edited one.
+        var standard = PluginCatalog.DefaultFolders().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var plugins = o.PluginFoldersAreDefaults ? [] : o.PluginFolders.Where(f => !standard.Contains(f) || Directory.Exists(f));
         var all = o.ProjectFolders.Select(f => ("Projects", f)).Concat(o.SampleFolders.Select(f => ("Samples", f)))
-                   .Concat(o.PluginFoldersAreDefaults ? [] : o.PluginFolders.Select(f => ("Plugins", f))).ToList();
+                   .Concat(plugins.Select(f => ("Plugins", f))).ToList();
         if (all.Count == 0) return LiveVerdict.Skip("No folders are set up in Settings yet.");
         var missing = all.Where(f => !Directory.Exists(f.Item2)).Select(f => $"{f.Item1}: {f.Item2}").ToList();
         var data = new JsonObject { ["checked"] = all.Count, ["missing"] = new JsonArray(missing.Select(m => (JsonNode?)m).ToArray()) };
@@ -103,7 +107,7 @@ public static class SelfCheck
     }
 
     /// <summary>Opens every project with its reader, as a scan does, timing each and noting any that fail.</summary>
-    internal static LiveVerdict ReadProjects(IReadOnlyList<string> projects, CancellationToken ct)
+    public static LiveVerdict ReadProjects(IReadOnlyList<string> projects, CancellationToken ct)
     {
         if (projects.Count == 0) return LiveVerdict.Skip("The library has no projects yet.");
         var failures = new List<(string Daw, string Path, string Error)>();
@@ -111,16 +115,20 @@ public static class SelfCheck
         var times = new Dictionary<string, List<double>>();
         var slowest = new List<(double Ms, string Path)>();
         var gone = 0;
+        var cutShort = false;
         foreach (var path in projects)
         {
-            ct.ThrowIfCancellationRequested();
+            // Stopped, or out of time: what's been read so far still goes in the report.
+            if (ct.IsCancellationRequested) { cutShort = true; break; }
             if (Readers.For(path) is not { } reader) continue;
             if (!File.Exists(path)) { gone++; continue; }
+            // An empty file is damaged whatever made it (a crash while saving, a copy that stopped): not a reader fault.
+            if (new FileInfo(path).Length == 0) { damaged.Add(path); continue; }
             var watch = Stopwatch.StartNew();
             try
             {
                 var info = reader.Read(path);
-                if (info.Confidence == Confidence.Catalogue && info.Warnings.Any(w => w.Contains("empty or damaged", StringComparison.Ordinal)))
+                if (info.Confidence == Confidence.Catalogue && info.Warnings.Any(w => w.StartsWith(FlStudioReader.Damaged, StringComparison.Ordinal)))
                     damaged.Add(path);
             }
             catch (Exception e) when (e is not OperationCanceledException)
@@ -162,6 +170,14 @@ public static class SelfCheck
         if (gone > 0) notes.Add($"{gone} in the library aren't on disk any more");
         if (damaged.Count > 0) notes.Add(damaged.Count == 1 ? "1 is a damaged file" : $"{damaged.Count} are damaged files");
         var missingNote = notes.Count > 0 ? $" ({string.Join("; ", notes)})" : "";
+        if (cutShort)
+        {
+            data["stoppedAfter"] = read;
+            var sofar = $"Stopped after {read} of {projects.Count} projects";
+            return failures.Count == 0
+                ? LiveVerdict.Note($"{sofar}; all of those opened{missingNote}.", data) with { Lines = lines }
+                : LiveVerdict.Fail($"{sofar}; {failures.Count} of those couldn't be read{missingNote}.", data) with { Lines = lines };
+        }
         return failures.Count == 0
             ? LiveVerdict.Pass($"All {read} projects opened{missingNote}.", data) with { Lines = lines }
             : LiveVerdict.Fail($"{failures.Count} of {read} projects couldn't be read{missingNote}.", data) with { Lines = lines };
@@ -200,10 +216,15 @@ public static class SelfCheck
         if (scanner.Executable is not { } exe || !File.Exists(exe))
             return LiveVerdict.Fail("The plugin scanner (mo-scan) isn't with the app. " +
                                     (PluginScanner.BuildProblem() ?? "It needs Visual Studio's C++ workload to build."));
-        var file = o.PluginFolders.Where(Directory.Exists).SelectMany(PluginFiles).FirstOrDefault();
-        if (file is null) return LiveVerdict.Skip($"Found the scanner ({scanner.Executable}), but no CLAP or VST3 plugin to try it on.");
+        var files = o.PluginFolders.Where(Directory.Exists).SelectMany(PluginFiles).ToList();
+        if (files.Count == 0) return LiveVerdict.Skip($"Found the scanner ({scanner.Executable}), but no CLAP or VST3 plugin to try it on.");
+        // A VST3 with a moduleinfo.json is listed without starting the scanner at all, so try one that needs it; if
+        // every plugin has one, read its parameters, which always goes through the scanner.
+        var file = files.FirstOrDefault(f => f.EndsWith(".clap", StringComparison.OrdinalIgnoreCase) || Vst3ModuleInfo.Read(f) is null);
+        var parameters = file is null;
+        file ??= files[0];
         var watch = Stopwatch.StartNew();
-        var scan = await scanner.ScanAsync(file, ct: ct);
+        var scan = await scanner.ScanAsync(file, parameters, ct: ct);
         var data = new JsonObject { ["scanner"] = scanner.Executable, ["file"] = file, ["plugins"] = scan.Plugins.Count, ["ms"] = Math.Round(watch.Elapsed.TotalMilliseconds) };
         return scan.Error.Length > 0 || scan.Plugins.Count == 0
             ? LiveVerdict.Fail($"{Path.GetFileName(file)}: {(scan.Error.Length > 0 ? scan.Error : "no plugin found inside")}", data)
@@ -217,7 +238,7 @@ public static class SelfCheck
         {
             found = Directory.EnumerateFileSystemEntries(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 3, IgnoreInaccessible = true })
                              .Where(p => p.EndsWith(".clap", StringComparison.OrdinalIgnoreCase) || p.EndsWith(".vst3", StringComparison.OrdinalIgnoreCase))
-                             .ToList();
+                             .Take(50).ToList();   // enough to find one the scanner has to read
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
         return found;

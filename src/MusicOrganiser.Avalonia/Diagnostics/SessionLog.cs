@@ -45,17 +45,16 @@ public sealed class SessionLog : IDisposable
     public SessionLog(string folder, DateTime? now = null)
     {
         var start = now ?? DateTime.Now;
-        Directory.CreateDirectory(folder);
         Path = System.IO.Path.Combine(folder, $"session-{start:yyyy-MM-dd_HH-mm-ss}.log");
-        // Two runs started in the same second (tests, or a quick restart) each get their own file.
-        for (var n = 2; File.Exists(Path); n++) Path = System.IO.Path.Combine(folder, $"session-{start:yyyy-MM-dd_HH-mm-ss}-{n}.log");
         try
         {
+            Directory.CreateDirectory(folder);
+            // Two runs started in the same second (tests, or a quick restart) each get their own file.
+            for (var n = 2; File.Exists(Path); n++) Path = System.IO.Path.Combine(folder, $"session-{start:yyyy-MM-dd_HH-mm-ss}-{n}.log");
             _writer = new StreamWriter(new FileStream(Path, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete),
                                        new UTF8Encoding(false));
         }
-        catch (IOException) { }   // no log is better than no app
-        catch (UnauthorizedAccessException) { }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException) { }   // no log is better than no app
         if (_writer is not null)
         {
             _thread = new Thread(WriteQueued) { IsBackground = true, Name = "Session log", Priority = ThreadPriority.BelowNormal };
@@ -177,7 +176,7 @@ public sealed class SessionLog : IDisposable
                 try { old.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
         }
-        catch (IOException) { }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 
     public void Dispose()

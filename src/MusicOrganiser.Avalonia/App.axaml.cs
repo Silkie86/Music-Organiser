@@ -48,8 +48,10 @@ public partial class App : Application
                 e.Handled = true;
                 await NoteForClaude.AskAsync(window, main);
             };
-            // Freezes, and each job's start and end, in the run log too, so a note to Claude says what froze.
-            var watchdog = new UiWatchdog(main);
+            // Freezes, and each job's start and end, in the run log too, so a note to Claude says what froze. It starts
+            // once the window shows: the work before that (the window being built) isn't a freeze anyone sees.
+            UiWatchdog? watchdog = null;
+            window.Opened += (_, _) => watchdog ??= new UiWatchdog(main);
             Facts(window);
             main.PropertyChanged += (_, e) =>
             {
@@ -57,7 +59,7 @@ public partial class App : Application
             };
             desktop.Exit += (_, _) =>
             {
-                watchdog.Dispose();
+                watchdog?.Dispose();
                 main.Shutdown();
                 _sounds?.Dispose();
                 _soundDb?.Dispose();
@@ -75,11 +77,10 @@ public partial class App : Application
         window.Opened += (_, _) =>
         {
             log.Info("Facts", $"Screen scale {window.RenderScaling:0.##}, window {window.Bounds.Width:0}×{window.Bounds.Height:0}");
+            // Not the sound output: finding it opens the audio device, which the app leaves until a sound plays (a DAW
+            // may want the interface to itself). Audio/AudioLog.cs says which output opened, when one does.
             Task.Run(() =>
-            {
-                log.Info("Facts", Audio.OpenAlPlayer.HasOutput ? "Sound output found" : "No sound output found");
-                log.Info("Facts", Core.Plugins.PluginScanner.Find() is { } scanner ? $"Plugin scanner: {scanner}" : "Plugin scanner (mo-scan) not found");
-            });
+                log.Info("Facts", Core.Plugins.PluginScanner.Find() is { } scanner ? $"Plugin scanner: {scanner}" : "Plugin scanner (mo-scan) not found"));
         };
         // The galaxy logs which way it draws itself, through Core.AppLog (Views/GalaxyGpu.cs, wired up in Program.cs).
     }
