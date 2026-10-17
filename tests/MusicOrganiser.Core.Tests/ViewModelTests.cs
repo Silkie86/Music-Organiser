@@ -349,6 +349,25 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Sounds_seen_changing_while_another_job_starts_are_taken_in_once_it_ends()
+    {
+        var lib = Directory.CreateDirectory(Path.Combine(_root, "Lib")).FullName;
+        _db.SetList(Scanner.SampleFoldersKey, [lib]);
+        var bounce = Path.Combine(lib, "Bounce 01.wav");
+        Synth.Write(bounce, Synth.Kick(1));
+        var sounds = Main().Sounds;
+
+        // The watcher reports a sound while a job is running, then a take-in starts before that job has let go.
+        sounds.IsBusy = true;
+        sounds.SampleFilesChanged(new([bounce], []));
+        await sounds.TakeInChangedSoundsAsync();
+        Assert.Empty(sounds.Org.Sounds);
+        sounds.IsBusy = false;
+        await sounds.TakeInChangedSoundsAsync();
+        Assert.EndsWith("Bounce 01.wav", Assert.Single(sounds.Org.Sounds).Path);
+    }
+
+    [Fact]
     public void OpensOnThePagePickedInSettings()
     {
         _db.AddRoot(_root);

@@ -196,7 +196,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     public void StopWatching() => _sampleWatch?.Dispose();
 
-    void SampleFilesChanged(FolderWatch.Changes changes)
+    internal void SampleFilesChanged(FolderWatch.Changes changes)
     {
         _changedSounds.UnionWith(changes.Files);
         _sampleFoldersOverflowed |= changes.Overflowed.Count > 0;
@@ -206,6 +206,9 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>Takes in what the sample folders' watcher saw change, or walks the folders when too much changed to name.</summary>
     internal async Task TakeInChangedSoundsAsync()
     {
+        // A job started meanwhile (RunAsync awaits a reload before calling this): leave the changes queued for it to
+        // take in when it's done, as RunAsync and ScanAsync wouldn't run now.
+        if (IsBusy) return;
         if (_sampleFoldersOverflowed)
         {
             _sampleFoldersOverflowed = false;
