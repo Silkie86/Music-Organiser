@@ -681,7 +681,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (delayMs > 0 && UiWork.InBackground) await Task.Delay(delayMs);
         if (request != _searchRequest || _catalogue is not { } catalogue) return;
         var text = Search.Trim();
-        var words = text.Length > 0 && Fit is null && _sectionTarget is null && Like is null && PhrasesOf is null ? await WordsAsync(text) : null;
+        var words = text.Length > 0 && (_sectionTarget ?? Fit) is null && Like is null && PhrasesOf is null ? await WordsAsync(text) : null;
         if (request != _searchRequest) return;
         var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
                                   From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, _sectionTarget ?? Fit, Like, Leave: _fitPath,
