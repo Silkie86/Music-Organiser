@@ -167,7 +167,9 @@ public sealed class MidiCatalogue
     {
         var parts = new List<string> { p.Part, p.Clip, Path.GetFileNameWithoutExtension(p.Source.Path), role, MidiRoles.Plural(role), p.Source.Daw };
         if (instrument is not null) parts.Add(Instruments.SearchWords(instrument.Name));
-        if (p.Program is { } program and >= 0 and < 128) parts.Add(Instruments.GeneralMidi[program]);
+        // The General MIDI sound it asks for, except the default piano (what files write when nobody chose) and on drums,
+        // where the number picks a drum kit, not one of these sounds.
+        if (p.Program is { } program and > 0 and < 128 && !p.Drums) parts.Add(Instruments.GeneralMidi[program]);
         // The folders it's in (the last few): MIDI packs are sorted into folders like "Chords" and "Trap Melodies".
         parts.AddRange((Path.GetDirectoryName(p.Source.Path) ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).TakeLast(4));
         if (p.Key is { Confidence: >= 0.05 } k) parts.AddRange([k.Name, k.Short]);
@@ -255,25 +257,30 @@ public sealed class MidiCatalogue
     /// <summary>
     /// Search by description: every part (of the chosen kind and place) ranked by how close CLaMP 3 thinks it sounds to
     /// the words, lifted a little for each word that also appears in its names, kind, key or chords. Parts the model
-    /// hasn't heard yet still show up when all the words match their names, as they do without the model.
+    /// hasn't heard yet still show up when all the words match their names, as they do without the model. With names
+    /// counting as much as sound or more (<see cref="MidiQuery.NameWeight"/> 1 or above), parts whose names have every
+    /// word come first, so a search for a name, key or chord ("Bass 3", "Am", "F#m7") still finds those before the
+    /// parts that only sound a bit like it; the sound puts each group in order.
     /// </summary>
     IReadOnlyList<MidiHit> Describe(MidiQuery q, string[] words, float[] described, out int matching, CancellationToken ct)
     {
         var leave = q.Leave is null ? null : MidiEntry.SongOf(q.Leave);
-        var scored = new List<(MidiEntry Entry, float Score)>();
+        var scored = new List<(MidiEntry Entry, bool Named, float Score)>();
+        var namesLead = q.NameWeight >= 1;
         foreach (var e in Entries)
         {
             if ((q.Role is not null && e.Role != q.Role) || (q.From is not null && (q.From == "projects") != e.IsProject) ||
                 (leave is not null && e.IsInSong(leave))) continue;
             var found = q.NameWeight > 0 ? words.Count(w => e.SearchText.Contains(w, StringComparison.Ordinal)) : 0;
             var lift = WordBonus * q.NameWeight * found;
-            if (e.Meaning is { } m) scored.Add((e, Clamp3Model.Similarity(described, m) + lift));
+            var named = namesLead && found == words.Length;
+            if (e.Meaning is { } m) scored.Add((e, named, Clamp3Model.Similarity(described, m) + lift));
             // Parts not heard yet only show when their names have every word (and names count at all).
-            else if (q.NameWeight > 0 && found == words.Length) scored.Add((e, lift));
+            else if (q.NameWeight > 0 && found == words.Length) scored.Add((e, named, lift));
             if (scored.Count % 8192 == 0) ct.ThrowIfCancellationRequested();
         }
         matching = scored.Count;
-        var hits = scored.OrderByDescending(s => s.Score).Take(q.Limit).Select(s => new MidiHit(s.Entry)).ToList();
+        var hits = scored.OrderByDescending(s => s.Named).ThenByDescending(s => s.Score).Take(q.Limit).Select(s => new MidiHit(s.Entry)).ToList();
         // Shuffle: the closest few hundred, in a random order.
         return q.Shuffle is { } seed ? Shuffled(hits, seed) : hits;
     }

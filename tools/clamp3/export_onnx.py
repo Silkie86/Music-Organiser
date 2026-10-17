@@ -329,8 +329,13 @@ def main():
     with torch.no_grad():
         export(symbolic, (torch.tensor(sym_inputs[0]["patches"]), torch.tensor(sym_inputs[0]["mask"])), ["patches", "mask"], "embedding", sym32)
         export(text, (torch.tensor(txt_inputs[0]["input_ids"]), torch.tensor(txt_inputs[0]["attention_mask"])), ["input_ids", "attention_mask"], "embedding", txt32)
-    check("symbolic fp32", sym32, symbolic, sym_inputs, reference=symbolic.reference)
-    check("text fp32", txt32, text, txt_inputs)
+    # A real export that drifts from PyTorch must not be published: it fails here, so the workflow stops before releasing.
+    # (v1 gave 0.9995 or better on all four; the tiny test model's random weights aren't held to it.)
+    def must(worst, least, what):
+        if not a.tiny and worst < least:
+            sys.exit(f"{what}: worst cosine {worst:.6f} is below {least}, so this export isn't safe to publish")
+    must(check("symbolic fp32", sym32, symbolic, sym_inputs, reference=symbolic.reference), 0.9999, "symbolic fp32")
+    must(check("text fp32", txt32, text, txt_inputs), 0.9999, "text fp32")
 
     sym8, txt8 = os.path.join(a.out, "symbolic.onnx"), os.path.join(a.out, "text.onnx")
     quantise(sym32, sym8)
@@ -341,8 +346,8 @@ def main():
     text.int8_embeddings = False   # PyTorch with the original table stays the reference
     quantise(txt_q, txt8)
     os.remove(txt_q)
-    check("symbolic int8", sym8, symbolic, sym_inputs, reference=symbolic.reference)
-    check("text int8", txt8, text, txt_inputs)
+    must(check("symbolic int8", sym8, symbolic, sym_inputs, reference=symbolic.reference), 0.999, "symbolic int8")
+    must(check("text int8", txt8, text, txt_inputs), 0.999, "text int8")
 
     # Does int8 keep the ranking? Cosine of each query to each MIDI part, fp32 against int8.
     s32, s8, t32, t8 = session(sym32), session(sym8), session(txt32), session(txt8)
@@ -353,6 +358,8 @@ def main():
     same_top = np.mean(sim32.argmax(1) == sim8.argmax(1))
     corr = np.mean([np.corrcoef(sim32[i], sim8[i])[0, 1] for i in range(len(queries))])
     print(f"int8 against fp32 on text-to-MIDI search: same best match {same_top:.0%}, score correlation {corr:.3f}")
+    if not a.tiny and (same_top < 0.85 or corr < 0.99):
+        sys.exit("int8 changes which MIDI parts a description finds too much to publish")
 
     if a.tiny:
         # Expected outputs for the C# tests: the MTF texts, the patches CLaMP 3's Python makes, and both embeddings. The

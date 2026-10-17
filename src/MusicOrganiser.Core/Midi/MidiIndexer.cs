@@ -26,11 +26,12 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     /// <summary>Raised when the analysis changes, so every file is read again once.</summary>
     public const int Version = 3;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes
     /// <summary>
-    /// .mid files have their own version on top: 4 keeps the General MIDI sound each part's channel is set to (2026-10-16),
-    /// and a file's only track's name (which the part leaves out, but may say "Keyscape"), so library files are read again
-    /// once while projects, which have no such things, aren't.
+    /// .mid files have their own changes on top, counted here: 1 keeps the General MIDI sound each part's channel is set
+    /// to and a file's only track's name (which the part leaves out, but may say "Keyscape"), 2026-10-16. Raising either
+    /// this or <see cref="Version"/> reads library files again; projects, which have no such things, only follow Version.
     /// </summary>
-    public const int FileVersion = 4;
+    public const int FileRevision = 1;
+    public const int FileVersion = Version + FileRevision;
 
     static int VersionFor(MidiSource s) => s.Kind == MidiSource.File ? FileVersion : Version;
 

@@ -507,7 +507,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// The order the list is in when it isn't shuffled, as a choice next to Shuffle (Solomon, 2026-10-17: "should be an
     /// option to list the matches by highest match").
     /// </summary>
-    public string OrderText => Fit is not null ? "Best match first" : Like is not null ? "Most alike first" : PhrasesOf is not null ? "Longest first" : "Newest first";
+    public string OrderText => Fit is not null ? "Best match first" : Like is not null ? "Most alike first" : PhrasesOf is not null ? "Longest first"
+        : _describing ? "Closest to your words first" : "Newest first";
+
+    // The list shown is a search by description (closest first), not newest first.
+    bool _describing;
 
     [RelayCommand]
     async Task Shuffle()
@@ -544,6 +548,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     readonly object _clampLock = new();
     bool _clampFailed;
     Task? _hearing;
+    // The listening itself, on a background thread: waited for on quit before the model is freed.
+    Task? _hearWork;
+    // Asked to listen again while listening (new parts were read meanwhile): it goes round once more when done.
+    bool _hearAgain;
     CancellationTokenSource? _hearCts;
     (string Text, float[] Vector)? _lastWords;
 
@@ -566,7 +574,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     public string NameWeightText => NameWeight <= 0 ? "Sound only: names are ignored"
         : NameWeight < 1 ? "Mostly sound, names help a little"
-        : NameWeight == 1 ? "Sound and names, balanced"
+        : NameWeight == 1 ? "Matching names first, then by sound"
         : NameWeight < 3 ? "Names count more than sound" : "Names lead, sound sorts them";
 
     partial void OnNameWeightChanged(double value)
@@ -694,6 +702,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _lastAsked = asked;
         Results = hits.Select(h => new MidiRow(h, this)).ToList();
         Selected = Results.FirstOrDefault(r => r.Entry == keep) ?? Results.FirstOrDefault();
+        if (_describing != words is not null)
+        {
+            _describing = words is not null;
+            OnPropertyChanged(nameof(OrderText));
+        }
         if (PhrasesOf is not null) Message = "";
         // The part picked stays picked, but a new search shows its best match first rather than scrolling to it.
         if (newSearch) NewSearchShown?.Invoke(this, EventArgs.Empty);
@@ -875,7 +888,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     public Task HearAsync()
     {
         if (!MeaningInstalled || _catalogue is null) return Task.CompletedTask;
-        if (_hearing is { IsCompleted: false }) return _hearing;
+        if (_hearing is { IsCompleted: false })
+        {
+            _hearAgain = true;
+            return _hearing;
+        }
         return _hearing = RunHearAsync();
     }
 
@@ -897,16 +914,38 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             if (p.Total > 0) card.Report(100.0 * p.Done / p.Total, $"{p.Done:N0} of {p.Total:N0} parts");
         }, 500);
         IsHearing = true;
+        // Each batch heard joins the catalogue as it's saved, so description search uses it during a long first listen;
+        // the list is searched again now and then while a description is showing.
+        var catalogue = _catalogue;
+        var ui = SynchronizationContext.Current;
+        long lastShown = Environment.TickCount64;
+        void Heard(IReadOnlyDictionary<string, sbyte[]> batch)
+        {
+            catalogue?.AddMeanings(batch);
+            if (ui is null || Environment.TickCount64 - lastShown < 20_000) return;
+            lastShown = Environment.TickCount64;
+            ui.Post(_ => { if (!_disposed && (Search.Trim().Length > 0 || Like is not null)) _ = RefreshAsync(); }, null);
+        }
         try
         {
-            var result = await Task.Run(() => MidiEmbedder.Run(_index, model, progress, cts.Token), cts.Token);
-            if (result.Heard > 0) await AddMeaningsAsync();
-            card?.Finish("Heard your MIDI", $"{result.Heard:N0} parts can be found by description" +
-                                            (result.Failed > 0 ? $"; {result.Failed:N0} couldn't be heard" : ""));
+            int heard = 0, failed = 0;
+            do
+            {
+                _hearAgain = false;
+                var work = Task.Run(() => MidiEmbedder.Run(_index, model, progress, cts.Token, Heard), cts.Token);
+                _hearWork = work;
+                var result = await work;
+                heard += result.Heard;
+                failed += result.Failed;
+            }
+            while (_hearAgain && !cts.IsCancellationRequested);   // parts read while it listened are heard now, not next time
+            if (heard > 0) await AddMeaningsAsync();
+            card?.Finish("Heard your MIDI", $"{heard:N0} parts can be found by description" +
+                                            (failed > 0 ? $"; {failed:N0} couldn't be heard" : ""));
         }
         catch (OperationCanceledException)
         {
-            await AddMeaningsAsync();
+            if (!_disposed) await AddMeaningsAsync();
             card?.Stop("Stopped listening to MIDI", "It carries on from there next time");
         }
         catch (Exception e)
@@ -1375,11 +1414,19 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         catch (Exception ex) when (ex is Microsoft.Data.Sqlite.SqliteException or InvalidOperationException) { return []; }
     }
 
+    bool _disposed;
+
     public void Dispose()
     {
+        _disposed = true;
         _indexCts?.Cancel();
         _hearCts?.Cancel();
-        _clamp?.Dispose();
+        // The model is only freed once nothing is using it: a part being heard finishes within a second or so. If it's
+        // still going after that, it's left to the end of the app rather than freed under it.
+        var stopped = true;
+        try { stopped = _hearWork?.Wait(TimeSpan.FromSeconds(3)) ?? true; }
+        catch (AggregateException) { }
+        if (stopped) _clamp?.Dispose();
         StopPlaying();
         _player?.Dispose();
     }
@@ -1761,6 +1808,9 @@ public sealed partial class MidiRow : ObservableObject
         OnPropertyChanged(nameof(RoleLabel));
         OnPropertyChanged(nameof(RoleWhy));
         OnPropertyChanged(nameof(Details));
+        // The instrument pill hides when it would only repeat the kind, so it changes with it.
+        OnPropertyChanged(nameof(InstrumentText));
+        OnPropertyChanged(nameof(ShowsInstrument));
         OnPropertyChanged(nameof(CanChangeOctave));
         OnPropertyChanged(nameof(Sound));
         if (_roleOptions is not null) foreach (var o in _roleOptions) o.Changed();
