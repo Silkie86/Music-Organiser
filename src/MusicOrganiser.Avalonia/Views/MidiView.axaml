@@ -183,6 +183,8 @@
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding FitName, StringFormat='Fitting to {0}'}" />
                     <TextBlock VerticalAlignment="Center" Classes="small" Text="{Binding FitText}" />
+                    <Button Content="All bars" Padding="8,2" FontSize="12" Command="{Binding WholeFitCommand}" IsVisible="{Binding IsFittingSection}"
+                            ToolTip.Tip="Back to parts that fit all of it" />
                     <Button Content="✕" Padding="8,2" Command="{Binding ClearFitCommand}" ToolTip.Tip="Stop fitting" />
                 </StackPanel>
             </Border>
@@ -229,12 +231,13 @@
             </StackPanel>
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
-                    <Button Classes="chip" Content="Back to the usual order" FontSize="12" Command="{Binding UnshuffleCommand}"
-                            IsVisible="{Binding IsShuffled}" />
-                    <Button Classes="chip" FontSize="12" Command="{Binding ShuffleCommand}"
-                            ToolTip.Tip="A random pick from everything that matches, in a random order. Press again for another.">
+                    <!-- The order: best match first (or newest, or most alike), or shuffled. -->
+                    <ToggleButton Classes="chip" FontSize="12" Content="{Binding OrderText}" Command="{Binding UnshuffleCommand}"
+                                  IsChecked="{Binding !IsShuffled, Mode=OneWay}" ToolTip.Tip="List them in this order" />
+                    <ToggleButton Classes="chip" FontSize="12" Command="{Binding ShuffleCommand}" IsChecked="{Binding IsShuffled, Mode=OneWay}"
+                                  ToolTip.Tip="A random pick from everything that matches, in a random order. Press again for another.">
                         <TextBlock Text="⤨  Shuffle" />
-                    </Button>
+                    </ToggleButton>
                     <ToggleButton Classes="chip" IsChecked="{Binding Loop}" FontSize="12"
                                   ToolTip.Tip="Play parts round and round until you stop them">
                         <TextBlock Text="↻  Loop" />
@@ -321,8 +324,30 @@
                         </DockPanel>
                         <views:PianoRollEditor Height="300" Notes="{Binding BarNotes}" Guide="{Binding EditorGuide}" Period="{Binding LoopLength}"
                                                Length="{Binding PairLength}" Position="{Binding PairPosition}"
+                                               PartStart="{Binding PartStart}" PartEnd="{Binding PartEnd}"
+                                               Section="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Section}"
+                                               SectionCommand="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetSectionCommand}"
                                                EditedCommand="{Binding EditCommand}" SeekCommand="{Binding PairSeekCommand}"
-                                               ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Alt to place without snapping. Click the bar numbers to play from there." />
+                                               ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Alt to place without snapping. Click the bar numbers to play from there; drag along them to set loop points." />
+                        <!-- Loop points: what's looping, parts for just those bars, or how to set them. -->
+                        <WrapPanel>
+                            <TextBlock Text="Drag along the bar numbers to loop some bars and find parts for just those bars." Classes="small"
+                                       VerticalAlignment="Center" Margin="0,0,10,6" IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasSection}" />
+                            <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SectionText}" FontWeight="SemiBold" Classes="small"
+                                       VerticalAlignment="Center" Margin="0,0,10,6" IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasSection}" />
+                            <Button Content="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).FindForSectionText}" Classes="accent" Padding="10,3" FontSize="12" Margin="0,0,6,6"
+                                    Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).FindForSectionCommand}"
+                                    IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasSection}"
+                                    ToolTip.Tip="Rank every part by how well it fits just these bars. Each one you pick plays in them." />
+                            <Button Content="All bars" Padding="10,3" FontSize="12" Margin="0,0,6,6"
+                                    Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).WholeFitCommand}"
+                                    IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsFittingSection}"
+                                    ToolTip.Tip="Back to parts that fit all of it" />
+                            <Button Content="Clear loop points" Padding="10,3" FontSize="12" Margin="0,0,6,6"
+                                    Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).ClearSectionCommand}"
+                                    IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasSection}"
+                                    ToolTip.Tip="Loop all of it again (a right-click on the bar numbers does this too)" />
+                        </WrapPanel>
                         <DockPanel>
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
                                 <ComboBox ItemsSource="{x:Static vm:MidiBrowserViewModel.SoundChoices}" SelectedItem="{Binding Sound}"

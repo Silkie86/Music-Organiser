@@ -202,7 +202,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [ObservableProperty] IReadOnlyList<ProjectItem> _fitChoices = [];
     [ObservableProperty] bool _fitChoicesOpen;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsFitting), nameof(IsPairing), nameof(PairButtonText), nameof(FitName))] HarmonyTarget? _fit;
-    public string FitName => Fit?.Name ?? "";
+    public string FitName => _sectionTarget?.Name ?? Fit?.Name ?? "";
     [ObservableProperty] string _fitText = "";
     public bool IsFitting => Fit is not null;
 
@@ -223,6 +223,129 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _db.SetSetting(LoopKey, value ? "1" : "0");
         // Carry on with what's playing, now looping (or not).
         _ = RefreshPlayingAsync();
+    }
+
+    // ---- loop points, and parts for just some bars ----
+
+    /// <summary>
+    /// The bars to loop on the piano roll (ticks from its first bar), dragged out along the bar numbers, or null for all
+    /// of it (Solomon, 2026-10-17: "there should be a way to set the loop points"). Kept while trying other parts.
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSection), nameof(SectionText), nameof(FindForSectionText))] RollRange? _section;
+    public bool HasSection => Section is not null;
+    public string SectionText => Section is { } s ? $"Looping {s.Describe()}" : "";
+    public string FindForSectionText => Section is { } s ? $"Find parts for {s.Describe()}" : "";
+
+    partial void OnSectionChanged(RollRange? value)
+    {
+        foreach (var r in Results) r.SectionChanged();
+        if (_frame is not null)
+        {
+            // Finding parts for some bars: they follow the bars you pick, and all of them again when cleared.
+            if (value is { } s) FitSection(s);
+            else WholeFit();
+        }
+        // Loop points loop.
+        if (value is not null && !Loop) Loop = true;
+        else _ = RefreshPlayingAsync();
+    }
+
+    [RelayCommand]
+    void SetSection(RollRange? range) => Section = range is { } r && r.Length >= PhraseAnalyser.Ppq / 4 ? r : null;
+
+    [RelayCommand]
+    void ClearSection() => Section = null;
+
+    /// <summary>
+    /// Finding parts for some bars: what they're played with stays as it was on the roll when you asked (the part, or
+    /// the stretch of the song), and each part tried plays in those bars.
+    /// </summary>
+    internal sealed record SectionFrame(IReadOnlyList<NoteEvent> Guide, long Length, int Octaves, string PairText)
+    {
+        public IReadOnlyList<NoteEvent> GuideAt(int octaves) => octaves == Octaves ? Guide
+            : Guide.Select(n => n with { Key = Math.Clamp(n.Key + 12 * (octaves - Octaves), 0, 127) }).ToList();
+    }
+
+    SectionFrame? _frame;
+    HarmonyTarget? _sectionTarget;
+    string _wholeFitText = "";
+
+    /// <summary>The list is ranked for the bars you picked, not the whole part or song.</summary>
+    public bool IsFittingSection => _sectionTarget is not null;
+
+    internal SectionFrame? FrameFor(MidiRow row) => _frame is not null && row.With is { } with && ReferenceEquals(with, Fit) ? _frame : null;
+
+    /// <summary>
+    /// Parts that fit just the bars you picked (Solomon, 2026-10-17: "highlight a section of the midi and find a match
+    /// for that section"): the list is ranked again for what plays there, and each part you try plays in those bars.
+    /// </summary>
+    [RelayCommand]
+    void FindForSection()
+    {
+        if (Section is not { } s || Fit is null) return;
+        if (_frame is null)
+        {
+            if (Selected is not { CanPlayTogether: true, EditorGuide: { Count: > 0 } guide } row) return;
+            _frame = new SectionFrame(guide, row.PairLength, WithOctaves, row.PairText);
+            _wholeFitText = FitText;
+        }
+        FitSection(s);
+    }
+
+    void FitSection(RollRange range)
+    {
+        if (_frame is not { } frame || Fit is not { } fit) return;
+        var s = range.Within(frame.Length);
+        var notes = Cut(frame.GuideAt(WithOctaves), s.Start, s.End);
+        if (HarmonyTarget.FromStretch($"{s.Describe()} of {fit.Name}", notes, s.Length, fit.Key, fit.Registers) is not { } target)
+        {
+            Message = $"Nothing of {fit.Name} plays in {s.Describe()}, so there's nothing there to fit to.";
+            return;
+        }
+        StopPlaying();
+        _sectionTarget = target;
+        FitText = string.Join(" · ", new[] { target.Chords.Count > 0 ? target.ChordText() : "", "each part plays in those bars" }.Where(t => t.Length > 0));
+        SectionFitChanged();
+        _ = RefreshAsync();
+    }
+
+    /// <summary>Back to parts that fit all of it.</summary>
+    [RelayCommand]
+    void WholeFit()
+    {
+        if (_frame is null && _sectionTarget is null) return;
+        StopPlaying();
+        _frame = null;
+        _sectionTarget = null;
+        FitText = _wholeFitText;
+        SectionFitChanged();
+        _ = RefreshAsync();
+    }
+
+    void ForgetSection()
+    {
+        _frame = null;
+        _sectionTarget = null;
+        Section = null;
+        SectionFitChanged();
+    }
+
+    void SectionFitChanged()
+    {
+        OnPropertyChanged(nameof(IsFittingSection));
+        OnPropertyChanged(nameof(FitName));
+    }
+
+    /// <summary>The notes sounding from <paramref name="from"/> to <paramref name="to"/>, timed from there: ones already held are cut to start there, ones running on end there.</summary>
+    public static List<NoteEvent> Cut(IReadOnlyList<NoteEvent> notes, long from, long to)
+    {
+        var list = new List<NoteEvent>();
+        foreach (var n in notes)
+        {
+            long a = Math.Max(n.Start, from), b = Math.Min(n.Start + Math.Max(1, n.Length), to);
+            if (b > a) list.Add(n with { Start = a - from, Length = b - a });
+        }
+        return list;
     }
 
     // ---- trying an idea: edits, tempo, mute, into Bitwig ----
@@ -306,11 +429,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             var dir = ExportFolder();
             var tempo = TempoOf(row);
             var parts = new List<(string Name, string File)> { (row.Title, WriteMidi(row, dir, tempo)) };
-            if (row.CanPlayTogether && row.PartnerNotes is { Count: > 0 } theirs)
+            if (row.CanPlayTogether && row.EditorGuide is { Count: > 0 } theirs)
             {
                 var name = row.With!.Name;
                 var clip = new MidiClip { Name = name, Ppq = PhraseAnalyser.Ppq };
-                clip.Track(name).AddRange(Repeat(theirs, row.PartnerLength, row.PairLength));
+                clip.Track(name).AddRange(theirs);
                 var file = Path.Combine(dir, TextScan.SafeFileName($"{name} (with {row.Title})") + ".mid");
                 File.WriteAllBytes(file, MidiWriter.Write(clip, tempo));
                 parts.Insert(0, (name, file));
@@ -371,10 +494,20 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         await RefreshPlayingAsync();
     }
 
-    partial void OnFitChanged(HarmonyTarget? value) => OnPropertyChanged(nameof(WithSound));
+    partial void OnFitChanged(HarmonyTarget? value)
+    {
+        OnPropertyChanged(nameof(WithSound));
+        OnPropertyChanged(nameof(OrderText));
+    }
 
     /// <summary>Showing a random pick in a random order (Shuffle), until the search changes.</summary>
     public bool IsShuffled => _shuffle is not null;
+
+    /// <summary>
+    /// The order the list is in when it isn't shuffled, as a choice next to Shuffle (Solomon, 2026-10-17: "should be an
+    /// option to list the matches by highest match").
+    /// </summary>
+    public string OrderText => Fit is not null ? "Best match first" : Like is not null ? "Most alike first" : PhrasesOf is not null ? "Longest first" : "Newest first";
 
     [RelayCommand]
     async Task Shuffle()
@@ -390,10 +523,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [RelayCommand]
     void Unshuffle()
     {
-        if (_shuffle is null) return;
+        var was = _shuffle;
         _shuffle = null;
+        // Said again even when it was already in order, so the order chips show the right one after a click.
         OnPropertyChanged(nameof(IsShuffled));
-        _ = RefreshAsync();
+        if (was is not null) _ = RefreshAsync();
     }
     /// <summary>The project being fitted to, whose own parts are left out of the list.</summary>
     string? _fitPath;
@@ -453,7 +587,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     public bool IsShowingPhrases => PhrasesOf is not null;
     public string PhrasesText => PhrasesOf is null ? "" : $"Longer phrases with {PhrasesOf.Title} in them";
 
-    partial void OnPhrasesOfChanged(MidiEntry? value) => _ = RefreshAsync();
+    partial void OnPhrasesOfChanged(MidiEntry? value)
+    {
+        OnPropertyChanged(nameof(OrderText));
+        _ = RefreshAsync();
+    }
 
     /// <summary>The longer phrases the selected part is in, with it lit up inside each.</summary>
     [RelayCommand]
@@ -487,6 +625,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     partial void OnLikeChanged(MidiEntry? value)
     {
         OnPropertyChanged(nameof(LikeText));
+        OnPropertyChanged(nameof(OrderText));
         if (value is not null) PhrasesOf = null;
         _ = RefreshAsync();
     }
@@ -542,10 +681,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (delayMs > 0 && UiWork.InBackground) await Task.Delay(delayMs);
         if (request != _searchRequest || _catalogue is not { } catalogue) return;
         var text = Search.Trim();
-        var words = text.Length > 0 && Fit is null && Like is null && PhrasesOf is null ? await WordsAsync(text) : null;
+        var words = text.Length > 0 && (_sectionTarget ?? Fit) is null && Like is null && PhrasesOf is null ? await WordsAsync(text) : null;
         if (request != _searchRequest) return;
         var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
-                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, Fit, Like, Leave: _fitPath,
+                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, _sectionTarget ?? Fit, Like, Leave: _fitPath,
                                   Words: words, Within: PhrasesOf, NameWeight: (float)NameWeight, Notes: NotesOf, Shuffle: _shuffle);
         var (hits, matching) = await UiWork.Run(() => (catalogue.Search(query, out var n), n));
         if (request != _searchRequest) return;
@@ -561,7 +700,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         ResultText = matching == 0 ? (HasParts ? "Nothing matches. Try fewer words, or another kind." : "")
             : PhrasesOf is not null ? (matching == 1 ? "1 longer phrase" : $"{matching:N0} longer phrases") + ", longest first. The part you picked is lit up in each."
             : _shuffle is not null ? $"Shuffled · {hits.Count:N0} picked at random from {matching:N0}" + (Fit is not null ? " of the best fits" : "")
-            : Fit is not null ? $"Best fits first · {Math.Min(matching, hits.Count):N0} shown of {matching:N0}, each moved into the right key and octave"
+            : _sectionTarget is not null ? $"Best match first for {Section?.Describe()} · {Math.Min(matching, hits.Count):N0} shown of {matching:N0}, each played in those bars"
+            : Fit is not null ? $"Best match first · {Math.Min(matching, hits.Count):N0} shown of {matching:N0}, each moved into the right key and octave"
             : Like is not null ? $"Most alike first · {hits.Count:N0} of {matching:N0}"
             : words is not null ? $"Closest to “{text}” first · {hits.Count:N0} of {matching:N0}" +
                                   (catalogue.HeardCount < catalogue.Entries.Count ? $" · {catalogue.Entries.Count - catalogue.HeardCount:N0} not heard yet" : "")
@@ -883,6 +1023,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     public void FitToHarmony(HarmonyTarget target, string? leave = null)
     {
         StopPlaying();
+        ForgetSection();
         _fitPath = leave;
         _fitSource = null;
         WithOctaves = 0;
@@ -904,6 +1045,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     void ClearFit()
     {
         StopPlaying();
+        ForgetSection();
         Fit = null;
         _fitPath = null;
         FitText = "";
@@ -976,10 +1118,12 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     // ---- listening ----
 
     /// <summary>Played on its own, or on top of what's being fitted to (<see cref="IsPairing"/>).</summary>
-    internal async Task Toggle(MidiRow row, double fromTicks = 0, bool? together = null)
+    /// <param name="fromTicks">Where on the part's own roll to start (from its first note).</param>
+    /// <param name="pairTicks">Where on the piano roll to start (from its first bar).</param>
+    internal async Task Toggle(MidiRow row, double fromTicks = 0, bool? together = null, double? pairTicks = null)
     {
         var both = (together ?? row.CanPlayTogether) && row.CanPlayTogether;
-        if (row.IsPlaying && fromTicks <= 0 && (together is null || _plan?.Together == both)) { StopPlaying(); return; }
+        if (row.IsPlaying && fromTicks <= 0 && pairTicks is null && (together is null || _plan?.Together == both)) { StopPlaying(); return; }
         StopPlaying();
         var request = _listenRequest;
         var tempo = TempoOf(row);
@@ -992,8 +1136,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         }
         _clock ??= Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), Tick);
         plan = plan with { Audio = audio, Tempo = tempo };
-        // Where to start: ticks on the part's own roll (from its first note), which a loop plays from its first bar.
-        var from = fromTicks <= 0 ? 0 : fromTicks + (plan.Loop || plan.Together ? plan.Lead : 0);
+        // Where to start: a click on the piano roll (inside the loop points, or from their start), or on the part's own
+        // roll (from its first note), which a loop plays from its first bar.
+        var from = pairTicks is { } p ? (plan.FromBar ? plan.Inside(p) : 0)
+            : fromTicks <= 0 ? 0 : fromTicks + (plan.FromBar ? plan.Lead : 0);
         var start = MidiRender.TicksToSeconds((long)(Math.Max(0, from) % Math.Max(1, plan.Length)), PhraseAnalyser.Ppq, tempo);
         try { _player.Play(audio, MidiRender.Rate, plan.Key, start); }
         catch (Exception e)
@@ -1044,8 +1190,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (PlanFor(row, old.Together, tempo) is not { } plan) return;
         if (await RenderAsync(plan, tempo) is not { } audio || request != _listenRequest || _playing != row) return;
         var at = _player.Playing == old.Key && _player.Position is { } seconds ? MidiRender.SecondsToTicks(seconds, PhraseAnalyser.Ppq, old.Tempo) : 0;
-        // Out of a loop back to playing once: carry on in the first go round.
-        var start = MidiRender.TicksToSeconds((long)(at % Math.Max(1, plan.Loop ? plan.Length : old.Length)), PhraseAnalyser.Ppq, tempo);
+        // Carry on from the same bar: inside new loop points, or from their start. Out of a loop back to playing once:
+        // carry on in the first go round.
+        var from = old.FromBar && plan.FromBar ? plan.Inside(old.Offset + at % Math.Max(1, old.Length))
+            : at % Math.Max(1, plan.Loop ? plan.Length : old.Length);
+        var start = MidiRender.TicksToSeconds((long)from, PhraseAnalyser.Ppq, tempo);
         if (start >= audio.Length / (double)MidiRender.Rate) start = 0;
         plan = plan with { Audio = audio, Tempo = tempo };
         try { _player.Play(audio, MidiRender.Rate, plan.Key, start); }
@@ -1060,36 +1209,50 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     /// <summary>
     /// What to play: the part alone (from its first note, once), or from its first bar going round, or with the harmony
-    /// it's fitted to on top, both going round from the same bar until they meet again.
+    /// it's fitted to on top. Together, both play exactly as the piano roll shows them, and go round together where it
+    /// does (Solomon, 2026-10-17: "the moment they just go out of sync and it's not following what is on screen"): over
+    /// both parts until they meet again, or the loop points you set.
     /// </summary>
     PlayPlan? PlanFor(MidiRow row, bool together, double tempo)
     {
         if (row.Channel.Notes.Count == 0) return null;
         var key = $"midi-browser:{row.Entry.Id}{(together ? ":together" : "")}";
         var sound = row.Sound.Program;
-        if (!together && !Loop)
+        var onRoll = row.CanPlayTogether && row.EditorGuide is { Count: > 0 } && (together || Section is not null);
+        if (!together && !Loop && !onRoll)
             return new PlayPlan([row.Channel with { GmProgram = sound }], row.Channel.End, row.Channel.End, 0, false, false, key);
-        var mute = together && MuteMine;
 
-        var mine = row.BarNotes;
-        var period = row.LoopLength;
-        var length = period;
-        var channels = new List<MidiChannel>();
-        List<NoteEvent>? partner = null;
-        if (together && row.PartnerNotes is { Count: > 0 } theirs)
+        IReadOnlyList<NoteEvent> mine, theirs = [];
+        long length, offset = 0;
+        if (onRoll)
         {
-            partner = [.. theirs];
-            length = row.PairLength;
+            // The stretch of the piano roll that plays, both parts cut to it: one go round.
+            var range = row.Region;
+            offset = range.Start;
+            length = range.Length;
+            mine = Cut(row.MineOnRoll, range.Start, range.End);
+            if (together) theirs = Cut(row.EditorGuide!, range.Start, range.End);
+        }
+        else
+        {
+            // On its own: its own bars, from the first.
+            mine = row.BarNotes;
+            length = row.LoopLength;
         }
         // Going round: enough times over to play for a minute or so without a break.
         var once = MidiRender.TicksToSeconds(length, PhraseAnalyser.Ppq, tempo);
         var times = Loop ? (int)Math.Clamp(Math.Ceiling(60 / Math.Max(0.1, once)), 1, Math.Max(1, (MidiRender.MaxSeconds - 4) / Math.Max(0.1, once))) : 1;
         var total = length * times;
-        if (partner is not null && !MuteWith)
-            channels.Add(new MidiChannel(row.With?.Name ?? "With", "", PhraseAnalyser.Ppq, Repeat(partner, row.PartnerLength, total))
-                         { GmProgram = WithSound.Program });
-        if (!mute) channels.Add(row.Channel with { Notes = Repeat(mine, period, total), GmProgram = sound });
-        return new PlayPlan(channels, length, total, row.Lead, partner is not null, Loop, key) { RowLength = period };
+        var channels = new List<MidiChannel>();
+        if (theirs.Count > 0 && !MuteWith)
+            channels.Add(new MidiChannel(row.With?.Name ?? "With", "", PhraseAnalyser.Ppq, Repeat(theirs, length, total)) { GmProgram = WithSound.Program });
+        if (!(together && MuteMine)) channels.Add(row.Channel with { Notes = Repeat(mine, length, total), GmProgram = sound });
+        return new PlayPlan(channels, length, total, row.Lead, together && theirs.Count > 0, Loop, key)
+        {
+            RowLength = onRoll ? length : row.LoopLength,
+            Offset = offset,
+            FromBar = true,
+        };
     }
 
     /// <summary>The notes over and over, every <paramref name="period"/> ticks, up to <paramref name="total"/>.</summary>
@@ -1123,10 +1286,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             return;
         }
         var ticks = MidiRender.SecondsToTicks(seconds, PhraseAnalyser.Ppq, plan.Tempo);
-        if (plan.Loop || plan.Together)
+        if (plan.FromBar)
         {
             row.Position = ticks % Math.Max(1, plan.RowLength) - plan.Lead;
-            row.PairPosition = ticks % Math.Max(1, plan.Length);
+            row.PairPosition = plan.Offset + ticks % Math.Max(1, plan.Length);
         }
         else
         {
@@ -1378,7 +1541,7 @@ public sealed partial class MidiRow : ObservableObject
     {
         $"{f.Percent}% fit, {MoveText}.",
         f.Together is { } t ? $"Played together, {Math.Round(t * 100)}% of its notes sit with what sounds at the same moment." : "",
-        With is { Loops: false } && f.Together is not null ? $"Fits best from bar {f.At / Bar + 1} of the song." : "",
+        With is { Loops: false } && f.Together is not null && Frame is null ? $"Fits best from bar {f.At / Bar + 1} of the song." : "",
         f.ChordScore is { } c ? $"Its chords follow {(With is { Loops: true } ? "the part's" : "the song's")} {Math.Round(c * 100)}%." : "",
         f.Clash > 0.02 ? $"{Math.Round(f.Clash * 100)}% of its notes are on notes the other hardly plays." : "Its notes are all ones the other plays too.",
     }.Where(s => s.Length > 0));
@@ -1464,30 +1627,64 @@ public sealed partial class MidiRow : ObservableObject
     /// <summary>What it's fitted to moved: the together view follows.</summary>
     internal void PartnerChanged()
     {
-        foreach (var name in new[] { nameof(PairPartner), nameof(PartnerNotes), nameof(EditorGuide), nameof(TogetherText) })
+        foreach (var name in new[] { nameof(PairPartner), nameof(PartnerNotes), nameof(EditorGuide), nameof(TogetherText), nameof(PairLength), nameof(PartEnd) })
             OnPropertyChanged(name);
     }
 
     // ---- the piano roll ----
 
     /// <summary>What it's fitted to, over the stretch both play before meeting again: grey behind the part on the piano roll.</summary>
-    public IReadOnlyList<NoteEvent>? EditorGuide => PartnerNotes is { Count: > 0 } theirs ? MidiBrowserViewModel.Repeat(theirs, PartnerLength, PairLength) : null;
+    public IReadOnlyList<NoteEvent>? EditorGuide => Frame is { } frame ? frame.GuideAt(_owner.WithOctaves)
+        : PartnerNotes is { Count: > 0 } theirs ? MidiBrowserViewModel.Repeat(theirs, PartnerLength, PairLength) : null;
+
+    /// <summary>Finding parts for some bars: what's fitted to stays as it was then, and this part plays in those bars.</summary>
+    MidiBrowserViewModel.SectionFrame? Frame => _owner.FrameFor(this);
+
+    /// <summary>Where the part plays on the piano roll: from the first bar, or in the bars it's being tried in.</summary>
+    public long PartStart => Frame is not null && _owner.Section is { } s ? s.Within(PairLength).Start : 0;
+    public long PartEnd => Frame is not null && _owner.Section is { } s ? s.Within(PairLength).End : PairLength;
+
+    /// <summary>The part as it plays on the piano roll: from <see cref="PartStart"/>, going round, up to <see cref="PartEnd"/>.</summary>
+    public IReadOnlyList<NoteEvent> MineOnRoll
+    {
+        get
+        {
+            long from = PartStart, to = PartEnd;
+            return MidiBrowserViewModel.Repeat(BarNotes, LoopLength, to - from)
+                .Select(n => n with { Start = n.Start + from, Length = Math.Min(n.Length, to - from - n.Start) }).ToList();
+        }
+    }
+
+    /// <summary>The stretch of the piano roll that plays and is scored: the loop points, or all of it.</summary>
+    public RollRange Region => _owner.Section is { } s ? s.Within(PairLength) : new RollRange(0, PairLength);
+
+    internal void SectionChanged()
+    {
+        foreach (var name in new[] { nameof(PartStart), nameof(PartEnd), nameof(TogetherText) })
+            OnPropertyChanged(name);
+    }
 
     public bool IsEdited => _owner.EditsOf(Entry) is not null;
     public bool CanUndoEdit => _owner.CanUndo(Entry);
 
-    /// <summary>How much of it sits with what it's fitted to, as it is now (edits and octaves too).</summary>
+    /// <summary>
+    /// How much of it sits with what it's fitted to as they play now, over the loop points or all of it: edits, octaves
+    /// and loop points too.
+    /// </summary>
     public string TogetherText
     {
         get
         {
-            if (PartnerNotes is not { Count: > 0 } theirs) return "";
-            var mine = BarNotes;
-            if (HarmonyMatcher.SitsTogether(mine, theirs) is not { } sits) return "They hardly play at the same time.";
+            if (EditorGuide is not { Count: > 0 } guide) return "";
+            var range = Region;
+            var mine = MidiBrowserViewModel.Cut(MineOnRoll, range.Start, range.End);
+            var theirs = MidiBrowserViewModel.Cut(guide, range.Start, range.End);
+            var where = _owner.Section is null ? "" : $"Looping {range.Describe()}: ";
+            if (HarmonyMatcher.SitsWithin(mine, theirs, range.Length) is not { } sits) return where + "they hardly play at the same time.";
             var rubs = mine.Count(n => theirs.Any(g => g.Start < n.Start + n.Length && g.Start + g.Length > n.Start &&
                                                        (((n.Key - g.Key) % 12 + 12) % 12) is 1 or 11));
             // Two different checks: the score is per half bar (the harmony around a note), the red is note against note.
-            return $"{Math.Round(sits * 100)}% of its notes fit the other part's harmony" +
+            return where + $"{Math.Round(sits * 100)}% of its notes fit the other part's harmony" +
                    (rubs == 0 ? "." : rubs == 1 ? ". 1 note rubs a semitone against a note playing at the same moment (red)."
                                                 : $". {rubs} notes rub a semitone against a note playing at the same moment (red).");
         }
@@ -1505,7 +1702,8 @@ public sealed partial class MidiRow : ObservableObject
     internal void EditsChanged()
     {
         MoveChanged();
-        foreach (var name in new[] { nameof(IsEdited), nameof(CanUndoEdit), nameof(TogetherText), nameof(LoopLength), nameof(PairLength), nameof(EditorGuide) })
+        foreach (var name in new[] { nameof(IsEdited), nameof(CanUndoEdit), nameof(TogetherText), nameof(LoopLength), nameof(PairLength), nameof(EditorGuide),
+                                     nameof(PartStart), nameof(PartEnd) })
             OnPropertyChanged(name);
     }
 
@@ -1517,6 +1715,7 @@ public sealed partial class MidiRow : ObservableObject
     {
         get
         {
+            if (Frame is { } frame) return frame.Length;
             long a = LoopLength, b = PartnerLength;
             if (a == b) return a;
             var both = a / Gcd(a, b) * b;
@@ -1534,7 +1733,8 @@ public sealed partial class MidiRow : ObservableObject
         ? Channel with { Notes = MidiBrowserViewModel.Repeat(BarNotes, LoopLength, PairLength) }
         : null;
 
-    public string PairText => With is not { Notes.Count: > 0 } target ? ""
+    public string PairText => Frame is { } frame ? frame.PairText
+        : With is not { Notes.Count: > 0 } target ? ""
         : target.Loops ? $"With {target.Name}"
         : $"With {target.Name}, bars {(Fit?.At ?? 0) / Bar + 1}–{((Fit?.At ?? 0) + LoopLength) / Bar}";
 
@@ -1553,7 +1753,7 @@ public sealed partial class MidiRow : ObservableObject
 
     /// <summary>A click on the together view: both from there.</summary>
     [RelayCommand]
-    Task PairSeek(double ticks) => _owner.Toggle(this, Math.Max(1, (ticks % Math.Max(1, LoopLength)) - Lead), together: true);
+    Task PairSeek(double ticks) => _owner.Toggle(this, together: true, pairTicks: Math.Max(0, ticks));
 
     internal void RoleChanged()
     {
@@ -1598,6 +1798,41 @@ sealed record PlayPlan(IReadOnlyList<MidiChannel> Channels, long Length, long To
     public long RowLength { get; init; } = Length;
     public float[]? Audio { get; init; }
     public double Tempo { get; init; } = 120;
+    /// <summary>It starts at a bar (looping, together, or loop points), not at the part's first note.</summary>
+    public bool FromBar { get; init; }
+    /// <summary>Where on the piano roll it starts: the first loop point, or 0.</summary>
+    public long Offset { get; init; }
+
+    /// <summary>A place on the piano roll as ticks into this: inside the loop points, or their start.</summary>
+    public long Inside(double pairTicks) => pairTicks >= Offset && pairTicks < Offset + Length ? (long)pairTicks - Offset : 0;
+}
+
+/// <summary>A stretch of the piano roll (ticks from its first bar): loop points.</summary>
+public readonly record struct RollRange(long Start, long End)
+{
+    const long Bar = 4 * PhraseAnalyser.Ppq;
+    public long Length => End - Start;
+
+    /// <summary>Kept inside something this long; all of it when nothing's left.</summary>
+    public RollRange Within(long length)
+    {
+        var a = Math.Clamp(Start, 0, Math.Max(0, length));
+        var b = Math.Clamp(End, a, Math.Max(0, length));
+        return b > a ? new RollRange(a, b) : new RollRange(0, length);
+    }
+
+    /// <summary>"bars 5–8", "bar 3", or "bars 3.2–5.1" (bar.beat) when it doesn't start and end on bar lines.</summary>
+    public string Describe()
+    {
+        if (Start % Bar == 0 && End % Bar == 0)
+        {
+            long a = Start / Bar + 1, b = End / Bar;
+            return a == b ? $"bar {a}" : $"bars {a}–{b}";
+        }
+        return $"bars {Pos(Start)}–{Pos(End)}";
+    }
+
+    static string Pos(long t) => $"{t / Bar + 1}.{t % Bar / PhraseAnalyser.Ppq + 1}";
 }
 
 /// <summary>A stretch of a note roll (ticks): where a clip sits inside a joined phrase, lit when it's the one looked for.</summary>

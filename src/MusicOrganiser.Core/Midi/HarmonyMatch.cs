@@ -22,11 +22,15 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
     /// <summary>Where each kind of part sits in it: the middle of its notes (MIDI note numbers), by kind (<see cref="MidiRoles"/>).</summary>
     public IReadOnlyDictionary<string, double> Registers { get; init; } = new Dictionary<string, double>();
 
+    /// <summary>How long it lasts when that isn't its notes' bars: a stretch cut from a longer part (ticks).</summary>
+    public long? Span { get; init; }
+
     /// <summary>How long it plays before it goes round again (a part) or ends (a song), in ticks.</summary>
-    public long Length => (long)PhraseAnalyser.BarsOf(Notes) * 4 * PhraseAnalyser.Ppq;
+    public long Length => Span ?? (long)PhraseAnalyser.BarsOf(Notes) * 4 * PhraseAnalyser.Ppq;
 
     HarmonyTimeline? _timeline;
-    internal HarmonyTimeline? Timeline => Notes.Count == 0 ? null : _timeline ??= HarmonyTimeline.Of(Notes);
+    internal HarmonyTimeline? Timeline => Notes.Count == 0 ? null
+        : _timeline ??= Span is { } span ? HarmonyTimeline.Of(Notes, HarmonyTimeline.SlotsIn(span)) : HarmonyTimeline.Of(Notes);
 
     /// <summary>The chords as names, a few at most: "Am – F – C – G".</summary>
     public string ChordText(int most = 8) =>
@@ -75,6 +79,27 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
             Loops = true,
             Registers = notes.Count == 0 ? new Dictionary<string, double>() : new Dictionary<string, double> { [role] = HarmonyMatcher.Centre(notes) },
         };
+
+    /// <summary>
+    /// A stretch of what's being fitted to (bars you picked on the piano roll), looping on its own, to find parts that fit
+    /// just there (Solomon, 2026-10-17: "highlight a section of the midi and find a match for that section").
+    /// </summary>
+    /// <param name="notes">Its notes, from the start of the stretch.</param>
+    /// <param name="span">How long the stretch is (ticks).</param>
+    public static HarmonyTarget? FromStretch(string name, IReadOnlyList<NoteEvent> notes, long span, KeyEstimate? key,
+                                             IReadOnlyDictionary<string, double> registers)
+    {
+        if (notes.Count == 0 || span <= 0) return null;
+        var chroma = new float[12];
+        foreach (var n in notes) chroma[n.Key % 12] += (float)Math.Clamp(n.Length / (4.0 * PhraseAnalyser.Ppq), 1 / 16.0, 2);
+        return new HarmonyTarget(name, Strongest(chroma), PhraseAnalyser.Progression(notes), key)
+        {
+            Notes = notes,
+            Loops = true,
+            Span = span,
+            Registers = registers,
+        };
+    }
 
     static NoteEvent Scale(NoteEvent n, int ppq)
     {
@@ -150,10 +175,14 @@ internal sealed class HarmonyTimeline
     /// <summary>How much two notes this far apart rub: a semitone most, then a tritone, then a whole tone a little.</summary>
     static readonly float[] Rub = [0, 1f, 0.2f, 0, 0, 0, 0.35f, 0, 0, 0, 0.2f, 1f];
 
-    public static HarmonyTimeline Of(IReadOnlyList<NoteEvent> notes)
+    /// <summary>Half bars in a stretch this long (ticks), counting a part-filled one.</summary>
+    public static int SlotsIn(long ticks) => (int)Math.Clamp((ticks + Slot - 1) / Slot, 1, 4096);
+
+    // Bar-long slots for the count, so a part's last bar is whole.
+    public static HarmonyTimeline Of(IReadOnlyList<NoteEvent> notes) => Of(notes, (int)Math.Min(4096, PhraseAnalyser.BarsOf(notes) * 2));
+
+    public static HarmonyTimeline Of(IReadOnlyList<NoteEvent> notes, int count)
     {
-        // Bar-long slots for the count, so a part's last bar is whole.
-        var count = (int)Math.Min(4096, PhraseAnalyser.BarsOf(notes) * 2);
         var w = Weights(notes, count);
         var sits = new float[count * 12];
         for (var k = 0; k < count; k++)
@@ -272,7 +301,7 @@ public static class HarmonyMatcher
             foreach (var move in moves.OrderByDescending(m => m.Score).Take(3))
             {
                 var s = (move.Semitones + 12) % 12;
-                if (Together(weights, count, timeline, s, target.Loops, out var at) is not { } together) continue;
+                if (Together(weights, count, timeline, s, target.Loops, out var at, stretch: target.Span is not null) is not { } together) continue;
                 var fit = move with { Score = Math.Clamp(0.4 * move.Score + 0.6 * together, 0, 1) };
                 fit = fit with { Together = together, At = at };
                 if (best is null || fit.Score > best.Score) best = fit;
@@ -305,11 +334,17 @@ public static class HarmonyMatcher
     /// (32 bars at most). A song: the part is tried at every 4th bar and the best place wins. Null when they hardly
     /// overlap (the song is silent where the part plays).
     /// </summary>
-    static double? Together(float[] weights, int count, HarmonyTimeline target, int shift, bool loops, out long at)
+    /// <param name="stretch">The target is a stretch a part is tried in: only as much of the part as fits in it plays there.</param>
+    static double? Together(float[] weights, int count, HarmonyTimeline target, int shift, bool loops, out long at, bool stretch = false)
     {
         at = 0;
         int length, places;
-        if (loops)
+        if (stretch)
+        {
+            length = target.Count;
+            places = 1;
+        }
+        else if (loops)
         {
             var both = (long)count / Gcd(count, target.Count) * target.Count;
             length = both <= 64 ? (int)both : Math.Max(count, target.Count);
@@ -363,6 +398,18 @@ public static class HarmonyMatcher
         var timeline = HarmonyTimeline.Of(theirs);
         var count = Math.Max(1, PhraseAnalyser.BarsOf(mine) * 2);
         return Together(HarmonyTimeline.Weights(mine, count), count, timeline, 0, loops: true, out _);
+    }
+
+    /// <summary>
+    /// The same over one stretch exactly as it plays (both cut to it and starting at 0, <paramref name="length"/> ticks
+    /// long): how the loop you set sounds, kept up to date as you change it (Solomon, 2026-10-17: "dynamically tell you
+    /// if you still match based on how it's looping").
+    /// </summary>
+    public static double? SitsWithin(IReadOnlyList<NoteEvent> mine, IReadOnlyList<NoteEvent> theirs, long length)
+    {
+        if (mine.Count == 0 || theirs.Count == 0 || length <= 0) return null;
+        var count = HarmonyTimeline.SlotsIn(length);
+        return Together(HarmonyTimeline.Weights(mine, count), count, HarmonyTimeline.Of(theirs, count), 0, loops: true, out _);
     }
 
     /// <summary>The note score alone for each of the 12 moves (cheap: used to pick which parts are worth a closer look).</summary>
