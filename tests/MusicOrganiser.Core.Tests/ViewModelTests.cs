@@ -179,6 +179,27 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Another_project_being_saved_leaves_the_open_songs_panel_as_it_was()
+    {
+        ScanFixtures();
+        var projects = Main().Projects;
+        projects.Reload();
+        projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
+        var panel = projects.Detail!;
+        await panel.PlanFixCommand.ExecuteAsync(null);
+        Assert.NotEmpty(panel.FixRows);
+
+        // Another song saved in its DAW: the watcher reads it and the list reloads.
+        var other = projects.Items.First(i => i.Daw != "FL Studio");
+        File.SetLastWriteTime(other.Path, DateTime.Now.AddMinutes(1));
+        _db.Upsert(Scanner.Analyse(other.Path));
+        await projects.ReloadAsync();
+
+        Assert.Same(panel, projects.Detail);
+        Assert.NotEmpty(panel.FixRows);
+    }
+
+    [Fact]
     public void The_song_panel_takes_two_thirds_until_its_divider_is_moved_and_then_keeps_its_place()
     {
         Assert.Equal(2 / 3.0, Main().Projects.PanelShare, 3);
