@@ -45,7 +45,7 @@ code; it picks up `CMakePresets.json`.
 ## mo-scan
 
 ```
-mo-scan [--no-params] [--state] [--curve <steps>] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>
+mo-scan [--no-params] [--state] [--curve <steps>] [--load <state file> [--load-program]] [--calibrate <steps> [--ids <from>-<to>]] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>
 mo-scan --version
 ```
 
@@ -76,6 +76,17 @@ like Waves holds many):
 - `--curve <steps>` adds each parameter's text at that many even steps from 0 to 1 (`"curve":[{"x":0,"text":"0.00"},…]`),
   with the value in real units for VST3 (`"plain"`). A VST2 knob is set to each step and put back. It's for matching
   one plugin's knobs to another's, such as Serum's to Serum 2's.
+- `--load <state file>` hands the plugin that saved state before anything is read (a VST2 bank chunk, or with
+  `--load-program` one program; a VST3 component state, given to the controller too), then prints the knobs and
+  the state it ends up with, plus `"loadResult"`. It's for seeing whether a plugin can open another's saved sound,
+  such as Serum 2 opening Serum 1's. With `--no-params` the state only goes to the component, since Serum 2's
+  controller crashed when handed a state of its own outside a DAW.
+- `--calibrate <steps>` (VST3) starts the plugin's audio, sets each parameter to that many even steps from 0 to 1
+  through the audio processor, as a DAW's automation does, and prints one line per parameter with the state saved at
+  each step (`{"calibrate":<id>,"steps":[{"x":0,"state":"..."},…]}`), after a first line with the starting state.
+  A switch or list is stepped through each of its choices (up to 256) instead.
+  `--ids <from>-<to>` keeps it to those parameter IDs. It's for working out how a plugin stores each knob: Serum 2
+  saves its own units (seconds, percent, amplitude), not the 0 to 1 a DAW sees.
 - A plugin that can't be loaded gives `{"path":..., "error":"..."}` and exit code 2. A 32-bit
   VST2 says so.
 

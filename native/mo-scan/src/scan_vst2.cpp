@@ -53,7 +53,7 @@ constexpr int32_t kMagic = ('V' << 24) | ('s' << 16) | ('t' << 8) | 'P';
 enum : int32_t
 {
     effOpen = 0, effClose = 1, effGetParamLabel = 6, effGetParamDisplay = 7, effGetParamName = 8,
-    effSetSampleRate = 10, effSetBlockSize = 11, effGetChunk = 23, effGetProgramNameIndexed = 29,
+    effSetSampleRate = 10, effSetBlockSize = 11, effGetChunk = 23, effSetChunk = 24, effGetProgramNameIndexed = 29,
     effGetPlugCategory = 35, effGetEffectName = 45, effGetVendorString = 47, effGetProductString = 48,
     effGetVendorVersion = 49, effGetVstVersion = 58, effShellGetNextPlugin = 70,
 };
@@ -130,6 +130,18 @@ void writePlugin(Json& j, const std::filesystem::path& path, AEffect* e, const O
         .boolean("chunks", e->flags & effFlagsProgramChunks)
         .boolean("editor", e->flags & effFlagsHasEditor);
 
+    if (!opt.load.empty())
+    {
+        std::vector<uint8_t> given;
+        std::string error;
+        if (!readLoad(opt, given, error)) j.str("loadError", error);
+        else
+        {
+            auto took = e->dispatcher(e, effSetChunk, opt.loadProgram ? 1 : 0, static_cast<intptr_t>(given.size()), given.data(), 0);
+            j.integer("loaded", static_cast<int64_t>(given.size())).integer("loadResult", static_cast<int64_t>(took));
+        }
+    }
+
     if (opt.params)
     {
         j.beginArray("params");
@@ -160,7 +172,7 @@ void writePlugin(Json& j, const std::filesystem::path& path, AEffect* e, const O
         j.endArray();
     }
 
-    if (opt.state)
+    if (opt.state || !opt.load.empty())
     {
         std::vector<uint8_t> bytes;
         if (e->flags & effFlagsProgramChunks)

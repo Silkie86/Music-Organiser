@@ -70,7 +70,7 @@ public class SerumTests
     }
 
     /// <summary>A Serum 1 state laid out as Serum 1.3 saves one, with a few things set.</summary>
-    static byte[] Serum1(bool flWrapped = false)
+    internal static byte[] Serum1(bool flWrapped = false)
     {
         var raw = new byte[Serum1State.Size];
         void F(int at, float v) => BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(at), v);
@@ -117,11 +117,125 @@ public class SerumTests
     }
 
     [Fact]
+    public void A_Serum_1_preset_file_is_read_with_the_later_knobs_at_their_starting_values()
+    {
+        // An .fxp holds only the first 20,704 bytes; an older Serum leaves Pitch Bend and the later knobs at zero.
+        var raw = new byte[Serum1State.PresetSize];
+        BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(13_408 + 4 * 1), 0.4809f);
+        Encoding.Latin1.GetBytes("Organ Bass").CopyTo(raw, 18_802);
+        var packed = new MemoryStream();
+        using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
+        var header = new byte[60];
+        "CcnK"u8.CopyTo(header);
+        "FPCh"u8.CopyTo(header.AsSpan(8));
+        "XfsX"u8.CopyTo(header.AsSpan(16));
+        Encoding.Latin1.GetBytes("xx Organ Bass").CopyTo(header, 28); // a lowercase x in the name looks like zlib's first byte
+
+        var s = Serum1State.Read([.. header, .. packed.ToArray()])!;
+
+        Assert.True(s.IsPreset);
+        Assert.Equal(0.4809f, s.Knob(1));
+        Assert.Equal("Organ Bass", s.PresetName);
+        Assert.Equal((0.5f, 0.5f, 1f, 0.5f, 0f, 1f, 0.5f, 0f), (s.Knob(227), s.Knob(228), s.Knob(229), s.Knob(260),
+            s.Knob(264), s.Knob(269), s.Knob(298), s.Knob(315)));
+        Assert.Empty(s.ModSlots);
+    }
+
+    [Fact]
     public void Something_that_isnt_a_Serum_1_state_isnt_read_as_one()
     {
         Assert.Null(Serum1State.Read("not serum"u8));
         var small = new MemoryStream();
         using (var z = new ZLibStream(small, CompressionLevel.Fastest, leaveOpen: true)) z.Write(new byte[1000]);
         Assert.Null(Serum1State.Read(small.ToArray()));
+    }
+
+    /// <summary>
+    /// A Serum 1 state with BA Organ Bass's main knobs and its first three modulation rows, as Serum 1 saved them in
+    /// Solomon's project.
+    /// </summary>
+    static Serum1State OrganBass()
+    {
+        var raw = new byte[Serum1State.Size];
+        void K(int knob, float v) => BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(knob < 228 ? 13_408 + 4 * knob : 19_168 + 4 * (knob - 228)), v);
+        void Row(int row, float amount, int source, int knob)
+        {
+            BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(row * 40 + 4), amount);
+            BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(row * 40 + 20), source);
+            BinaryPrimitives.WriteUInt16LittleEndian(raw.AsSpan(row * 40 + 26), (ushort)knob);
+        }
+        K(0, 0.7f); K(1, 0.48094845f);                                              // master, Osc A level
+        K(27, 0.33790776f); K(28, 0.44589499f); K(30, 0.5f); K(31, 0.17374246f); K(32, 0.020781932f); // noise
+        K(33, 0.83381307f); K(34, 0.5f); K(171, 0.375f);                            // sub level, pan, octave
+        foreach (var on in new[] { 40, 41, 160, 164, 165, 212, 213, 214, 215, 216 }) K(on, 1);
+        K(44, 2 / 95f); K(45, 0.28294614f); K(47, 0.2225192f); K(48, 0.54303724f); K(49, 1); K(50, 0.5f); // filter
+        K(69, 0.25118899f);                                                         // Chaos 1 rate
+        K(81, 0.10234101f); K(82, 0.24572438f); K(83, 0.12f); K(85, 0.28f); K(86, 0.5f); K(87, 1); // reverb
+        for (var i = 0; i < 10; i++) BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(15_324 + 4 * i), i); // FX order
+        raw[18_768] = raw[18_769] = 1;
+        Row(0, 0.7314967f, 4, 14);     // Env 3 to Osc B level
+        Row(1, 0.72539747f, 3, 45);    // Env 2 to the cutoff
+        Row(2, -0.12085938f, 33, 222); // Fixed to Amp
+        var packed = new MemoryStream();
+        using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
+        return Serum1State.Read(packed.ToArray())!;
+    }
+
+    [Fact]
+    public void A_Serum_1_sound_is_translated_to_the_values_Serum_2_gives_it()
+    {
+        // The expected values are what Serum 2 wrote when it opened BA Organ Bass itself.
+        var result = Serum1To2.Translate(OrganBass());
+        var s = result.State.Settings;
+        double P(string module, string key, string? sub = null) =>
+            (sub == null ? s[module] : s[module]![sub])!["plainParams"]![key]!.GetValue<double>();
+
+        Assert.Equal(0.29297, P("Global0", "kParamMasterVolume"), 3);
+        Assert.Equal(1.0, P("Global0", "kParamS1Compatibility"));
+        Assert.Equal(0.2313, P("Oscillator0", "kParamVolume"), 4);
+        Assert.Equal("MgL18", s["VoiceFilter0"]!["plainParams"]!["kParamType"]!.GetValue<string>());
+        Assert.Equal(0.2829, P("VoiceFilter0", "kParamFreq"), 4);
+        Assert.Equal(22.25, P("VoiceFilter0", "kParamDrive"), 2);
+        Assert.Equal(54.30, P("VoiceFilter0", "kParamVar"), 2);
+        Assert.Equal(0.0, P("VoiceFilter0", "kParamReso"));
+        Assert.Equal("kRoutingDestFilter", s["RoutingSlot1"]!["plainParams"]!["kParamRoutingDest"]!.GetValue<string>());
+        Assert.Equal(-1.0, P("Oscillator4", "kParamOctave"));
+        Assert.Equal(0.6952, P("Oscillator4", "kParamVolume"), 4);
+        Assert.Equal(0.4459, P("Oscillator3", "kParamColor", "NoiseOsc3"), 4);
+        Assert.Equal(-1.0, P("Oscillator3", "kParamFine", "NoiseOsc3"));
+        Assert.Equal(2.078, P("Oscillator3", "kParamInitialPhase", "NoiseOsc3"), 3);
+        Assert.Equal(17.37, P("Oscillator3", "kParamRandomPhase", "NoiseOsc3"), 2);
+        Assert.Equal(1.0, P("Oscillator3", "kParamOneShot", "NoiseOsc3"));
+        Assert.Equal(0.1, P("LFO8", "kParamRate"), 4);
+
+        var fx = Assert.Single((JsonArray)s["FXRack0"]!["FX"]!)!;
+        Assert.Equal(6, fx["type"]!.GetValue<long>());
+        var reverb = fx["FXReverb"]!["plainParams"]!;
+        Assert.Equal((10.23, 24.57, 28.0, 50.0, 100.0), (Math.Round(reverb["kParamWet"]!.GetValue<double>(), 2),
+            Math.Round(reverb["kParamSize"]!.GetValue<double>(), 2), Math.Round(reverb["kParamFeedback"]!.GetValue<double>()),
+            reverb["kParamFreqB"]!.GetValue<double>(), reverb["kParamWidth"]!.GetValue<double>()));
+
+        var toOscB = s["ModSlot0"]!;
+        Assert.Equal(("Oscillator", 1L, "kParamVolume"), (toOscB["destModuleTypeString"]!.GetValue<string>(),
+            toOscB["destModuleID"]!.GetValue<long>(), toOscB["destModuleParamName"]!.GetValue<string>()));
+        Assert.Equal(73.15, P("ModSlot0", "kParamAmount"), 2);
+        Assert.Equal([4L, 0L], toOscB["source"]!.AsArray().Select(n => n!.GetValue<long>()));
+        Assert.Equal("VoiceFilter", s["ModSlot1"]!["destModuleTypeString"]!.GetValue<string>());
+        Assert.Equal(38L, s["ModSlot2"]!["source"]![0]!.GetValue<long>());
+        Assert.Equal(-12.09, P("ModSlot2", "kParamAmount"), 2);
+
+        // Only the reverb's decay curve is still a guess for this sound.
+        Assert.Equal(["the reverb's decay and spin"], result.Rough);
+    }
+
+    [Fact]
+    public void A_translated_sound_keeps_Serum_2s_floats_as_floats()
+    {
+        // Serum 2 saves its switches as 1.0, not 1; the template's must come out the same way.
+        var global = Serum2State.Cbor.Write(Serum1To2.Translate(OrganBass()).State.Settings["Global0"]!["plainParams"]);
+        Assert.Contains(Convert.ToHexString("kParamS1Compatibility"u8) + "FA3F800000", Convert.ToHexString(global));
+
+        var back = Serum2State.Read(Serum1To2.Translate(OrganBass()).State.Write())!;
+        Assert.Equal("Serum2", back.Header["product"]!.GetValue<string>());
     }
 }
