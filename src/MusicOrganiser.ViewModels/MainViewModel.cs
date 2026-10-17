@@ -34,6 +34,8 @@ public sealed partial class MainViewModel : ObservableObject
     public SoundsViewModel Sounds { get; }
     /// <summary>The MIDI page: every MIDI part in your projects and MIDI libraries.</summary>
     public MidiBrowserViewModel Midi { get; }
+    /// <summary>The MIDI playground: layer, write and match MIDI parts in sections, then drag them into the DAW.</summary>
+    public PlaygroundViewModel Playground { get; }
     public SettingsViewModel Settings { get; }
 
     /// <summary>Bitwig and FL Studio as they are now, through their links (the sidebar's "In your DAWs").</summary>
@@ -72,17 +74,19 @@ public sealed partial class MainViewModel : ObservableObject
         Settings = new SettingsViewModel(db, this, dataFolder);
         Sounds = new SoundsViewModel(db, sounds, this);
         Midi = new MidiBrowserViewModel(db, this);
+        Playground = new PlaygroundViewModel(db, this);
         Settings.Liked.Changed += Sounds.WeightsChanged;
         Nav =
         [
             new("Projects", "", Projects),
             new("Sound Lab", "\uE8D6", Sounds),
             new("MIDI", "", Midi),
+            new("Playground", "", Playground),
             new("Plugins", "", Plugins),
             new("Settings", "", Settings),
         ];
         _selectedNav = StartPage();
-        if (_selectedNav.Page == Midi) Midi.Opened();
+        if (_selectedNav.Page == Midi || _selectedNav.Page == Playground) Midi.Opened();
         _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
         _projectsShown = _soundsShown = db.ProjectsRevision;   // those two pages read the library as they open
 
@@ -163,8 +167,9 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnSelectedNavChanged(NavItem value)
     {
         _db.SetSetting(LastPageKey, value.Title);
-        if (value.Page == Midi) Midi.Opened();
-        else Midi.Left();
+        if (value.Page == Midi || value.Page == Playground) Midi.Opened();   // the playground matches against the MIDI page's parts
+        if (value.Page != Midi) Midi.Left();
+        if (value.Page != Playground) Playground.Left();
         // The MO Probes running now are followed only while Settings shows them.
         if (value.Page != Settings)
         {
@@ -252,6 +257,7 @@ public sealed partial class MainViewModel : ObservableObject
         _projectWatch?.Dispose();
         Sounds.StopWatching();
         CancelScan();
+        Playground.Dispose();
         Midi.Dispose();
         PluginScanner.StopAll();
     }

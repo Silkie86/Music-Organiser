@@ -459,6 +459,18 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     bool CanSend() => !IsSending;
 
+    /// <summary>
+    /// The part picked, as it plays here (moved, in its octave, with your edits), into the section being built in the
+    /// MIDI playground (Solomon, 2026-10-17: building parts together "like lego").
+    /// </summary>
+    [RelayCommand]
+    void SendToPlayground()
+    {
+        if (Selected is not { } row) return;
+        _main.Playground.AddFromLibrary(row.Entry, row.BarNotes, row.Title);
+        Message = $"{row.Title} is in the playground, in section {_main.Playground.SectionName}.";
+    }
+
     // ---- the octave of what it's fitted to ----
 
     /// <summary>
