@@ -154,8 +154,7 @@ public sealed partial class LiveDawsViewModel : ObservableObject
                 // A scan running now finds it, but reading plugins' parameters doesn't: that makes way for the scan.
                 if (DateTime.UtcNow - _lastScan < ScanEvery || _main.IsScanning && !_main.IsReadingParameters) continue;
                 _lastScan = DateTime.UtcNow;
-                await _main.ScanAsync(false, plugins: false);
-                Match();
+                _ = ScanForSaveAsync();
                 continue;
             }
             (long Mtime, long Size)? now = null;
@@ -175,6 +174,16 @@ public sealed partial class LiveDawsViewModel : ObservableObject
             _saving.Remove(daw);
             await RereadAsync(project, daw);
         }
+    }
+
+    /// <summary>
+    /// The scan for a saved project the library doesn't have yet, which the looks at the DAWs don't wait for: a scan of a
+    /// big library takes a while, and the sidebar and other saves carry on meanwhile.
+    /// </summary>
+    async Task ScanForSaveAsync()
+    {
+        await _main.ScanAsync(false, plugins: false);
+        Match();
     }
 
     async Task RereadAsync(ProjectSummary project, string daw)

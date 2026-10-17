@@ -43,4 +43,12 @@ expect_not("${one}" "Fake Synth")
 # Everything.
 scan(all)
 expect("${all}" "\"kind\":\"instrument\"" "\"kind\":\"effect\"" "\"name\":\"Mode\"" "\"version\":\"1200\"")
+# A plugin that sets a locale with a decimal comma as it loads still gets its numbers written with a point, so the
+# line stays JSON. (Where the system has no such locale, this reads as above.)
+set(ENV{FAKE_VST2_LOCALE} "de_DE.UTF-8")
+scan(comma --only MoB2)
+unset(ENV{FAKE_VST2_LOCALE})
+expect("${comma}" "\"value\":0.25")
+expect_not("${comma}" "\"value\":0,25")
+
 message(STATUS "mo-scan read the fake VST2 shell")

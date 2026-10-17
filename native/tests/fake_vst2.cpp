@@ -3,8 +3,10 @@
 // "Fake Synth" (MoA1) and "Fake Delay" (MoB2), each with three parameters.
 //
 // It declares the VST 2.4 binary interface itself, the same way scan_vst2.cpp does.
+#include <clocale>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #if defined(_WIN32)
@@ -111,6 +113,8 @@ float VSTCALL getParameter(AEffect* e, int32_t index) { return index >= 0 && ind
 
 FAKE_EXPORT AEffect* VSTPluginMain(HostCallback host)
 {
+    // As some plugins do while loading: a locale with a decimal comma, when the test asks for one.
+    if (const char* locale = std::getenv("FAKE_VST2_LOCALE")) std::setlocale(LC_ALL, locale);
     // A shell is asked again for each plugin inside it, with the plugin's ID as audioMasterCurrentId.
     auto want = static_cast<int32_t>(host(nullptr, 2, 0, 0, nullptr, 0));
     auto in = new Instance;
