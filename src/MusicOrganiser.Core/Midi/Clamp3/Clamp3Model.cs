@@ -95,8 +95,25 @@ public sealed class Clamp3Model : IDisposable
     readonly object _textLock = new();
     readonly UnigramTokenizer _tokenizer;
 
+    // Models not disposed yet. When none are left as the process ends, ONNX Runtime's environment is released first,
+    // before the C++ runtime tears down its globals: left to that, macOS sometimes aborts at exit ("mutex lock failed").
+    static int _live;
+    static int _exitHooked;
+    int _disposed;
+
+    static void ReleaseOrtAtExit()
+    {
+        if (Interlocked.Exchange(ref _exitHooked, 1) == 1) return;
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            try { if (Volatile.Read(ref _live) == 0 && OrtEnv.IsCreated) OrtEnv.Instance().Dispose(); }
+            catch (Exception e) { AppLog.Info("MIDI", $"Couldn't release ONNX Runtime at exit: {e.Message}"); }
+        };
+    }
+
     public Clamp3Model(string? folder = null)
     {
+        ReleaseOrtAtExit();
         folder ??= DefaultFolder;
         _symbolicPath = Path.Combine(folder, "symbolic.onnx");
         _symbolicOptions = new SessionOptions
@@ -110,6 +127,7 @@ public sealed class Clamp3Model : IDisposable
         using var textOptions = new SessionOptions { GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL };
         _text = new InferenceSession(Path.Combine(folder, "text.onnx"), textOptions);
         _tokenizer = UnigramTokenizer.Load(Path.Combine(folder, "tokenizer.json"));
+        Interlocked.Increment(ref _live);
     }
 
     InferenceSession NewSymbolicSession()
@@ -121,10 +139,12 @@ public sealed class Clamp3Model : IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
         lock (_all) foreach (var s in _all) s.Dispose();
         _symbolicOptions.Dispose();
         _slots.Dispose();
         _text.Dispose();
+        Interlocked.Decrement(ref _live);
     }
 
     /// <summary>Unit-length vector for a MIDI part (notes at <paramref name="ppq"/>).</summary>
