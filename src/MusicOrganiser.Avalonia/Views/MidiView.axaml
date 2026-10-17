@@ -70,6 +70,20 @@
                         </Flyout>
                     </Button.Flyout>
                 </Button>
+                <Button Content="Sounds" ToolTip.Tip="What MIDI plays with: General MIDI instruments, or one stand-in tone">
+                    <Button.Flyout>
+                        <Flyout Placement="BottomEdgeAlignedRight">
+                            <StackPanel Width="380" Spacing="8">
+                                <TextBlock Text="Sounds to play MIDI with" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding SoundsText}" TextWrapping="Wrap" Classes="small" TextTrimming="None" />
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Button Content="Get better sounds" Classes="accent" Command="{Binding GetSoundsCommand}" IsVisible="{Binding !HasGoodSounds}" />
+                                    <Button Content="Choose a SoundFont…" Command="{Binding ChooseSoundFontCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
                 <Button Content="Read MIDI again" Command="{Binding ReindexCommand}" IsVisible="{Binding !IsIndexing}"
                         ToolTip.Tip="Look for new and changed projects and MIDI files. Only those are read." />
                 <Button Content="MIDI folders" Classes="accent"
@@ -167,7 +181,7 @@
             <!-- What the list is ranked by, when it's fitting a song or finding parts like one. -->
             <Border Classes="targetPill" IsVisible="{Binding IsFitting}">
                 <StackPanel Orientation="Horizontal" Spacing="10">
-                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding Fit.Name, StringFormat='Fitting to {0}'}" />
+                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding FitName, StringFormat='Fitting to {0}'}" />
                     <TextBlock VerticalAlignment="Center" Classes="small" Text="{Binding FitText}" />
                     <Button Content="✕" Padding="8,2" Command="{Binding ClearFitCommand}" ToolTip.Tip="Stop fitting" />
                 </StackPanel>
@@ -289,15 +303,100 @@
                     </StackPanel>
                     <views:NoteRoll Height="130" Channel="{Binding Channel}" Position="{Binding Position}" Spans="{Binding Spans}"
                                     SeekCommand="{Binding SeekCommand}" IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}" />
-                    <!-- Fitting: what it's fitted to above, this part below, lined up bar for bar as they'll play together. -->
-                    <StackPanel Spacing="4" IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}">
-                        <TextBlock Text="{Binding PairText}" Classes="small" />
-                        <views:NoteRoll Height="110" Channel="{Binding PairPartner}" SongEnd="{Binding PairLength}"
-                                        Position="{Binding PairPosition}" SeekCommand="{Binding PairSeekCommand}" />
-                        <TextBlock Text="{Binding Title, StringFormat='This part: {0}'}" Classes="small" Margin="0,6,0,0" />
-                        <views:NoteRoll Height="150" Channel="{Binding PairMine}" SongEnd="{Binding PairLength}"
-                                        Position="{Binding PairPosition}" SeekCommand="{Binding PairSeekCommand}" />
+                    <!-- Fitting: a piano roll with what it's fitted to grey behind and this part on top, to edit and play together. -->
+                    <StackPanel Spacing="6" IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                                <ComboBox ItemsSource="{x:Static vm:MidiBrowserViewModel.SoundChoices}" SelectedItem="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).WithSound}"
+                                          FontSize="12" MinWidth="150" ToolTip.Tip="The sound it plays with" />
+                                <Button Content="−" Padding="8,1" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).WithOctaveDownCommand}" ToolTip.Tip="An octave down, on its own" />
+                                <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).WithOctaveText}" Classes="small" VerticalAlignment="Center" MinWidth="90" TextAlignment="Center" />
+                                <Button Content="+" Padding="8,1" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).WithOctaveUpCommand}" ToolTip.Tip="An octave up, on its own" />
+                                <ToggleButton Classes="chip" FontSize="12" Content="Mute" IsChecked="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).MuteWith}" ToolTip.Tip="Hear this part without it" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <Border Width="10" Height="10" CornerRadius="2" Background="{StaticResource MutedBrush}" Opacity="0.6" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding PairText}" Classes="small" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DockPanel>
+                        <views:PianoRollEditor Height="300" Notes="{Binding BarNotes}" Guide="{Binding EditorGuide}" Period="{Binding LoopLength}"
+                                               Length="{Binding PairLength}" Position="{Binding PairPosition}"
+                                               EditedCommand="{Binding EditCommand}" SeekCommand="{Binding PairSeekCommand}"
+                                               ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Alt to place without snapping. Click the bar numbers to play from there." />
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                                <ComboBox ItemsSource="{x:Static vm:MidiBrowserViewModel.SoundChoices}" SelectedItem="{Binding Sound}"
+                                          FontSize="12" MinWidth="150" ToolTip.Tip="The sound this kind of part plays with" />
+                                <Button Content="−" Padding="8,1" Command="{Binding OctaveDownCommand}" IsVisible="{Binding CanChangeOctave}" ToolTip.Tip="An octave down (remembered)" />
+                                <TextBlock Text="{Binding OctaveText}" Classes="small" VerticalAlignment="Center" MinWidth="90" TextAlignment="Center"
+                                           IsVisible="{Binding CanChangeOctave}" ToolTip.Tip="{Binding OctaveWhy}" />
+                                <Button Content="+" Padding="8,1" Command="{Binding OctaveUpCommand}" IsVisible="{Binding CanChangeOctave}" ToolTip.Tip="An octave up (remembered)" />
+                                <ToggleButton Classes="chip" FontSize="12" Content="Mute" IsChecked="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).MuteMine}" ToolTip.Tip="Hear what it's fitted to on its own" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                <Border Width="10" Height="10" CornerRadius="2" Background="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding Title, StringFormat='This part: {0}'}" Classes="small" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DockPanel>
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                                <Button Content="Undo" Padding="8,2" FontSize="12" Command="{Binding UndoEditCommand}" IsEnabled="{Binding CanUndoEdit}"
+                                        ToolTip.Tip="Take back the last edit" />
+                                <Button Content="Back to as it was" Padding="8,2" FontSize="12" Command="{Binding ResetEditsCommand}" IsVisible="{Binding IsEdited}"
+                                        ToolTip.Tip="Undo every edit to this part. The file it came from is never changed." />
+                            </StackPanel>
+                            <TextBlock Text="{Binding TogetherText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" VerticalAlignment="Center" />
+                        </DockPanel>
                     </StackPanel>
+                    <!-- Listening: on its own or together, looping, at a tempo to try it at. -->
+                    <WrapPanel>
+                        <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedTogetherCommand}" Margin="0,0,6,6" Padding="12,6" Classes="accent"
+                                IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}"
+                                ToolTip.Tip="Both at once, so you can hear if they go together. Click the bar numbers on the piano roll to jump.">
+                            <Panel>
+                                <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PairButtonText, StringFormat='▶  {0}'}" IsVisible="{Binding !IsPlayingTogether}" />
+                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingTogether}" />
+                            </Panel>
+                        </Button>
+                        <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedAloneCommand}" Margin="0,0,6,6" Padding="12,6"
+                                ToolTip.Tip="Listen to this part on its own. Click along the notes to jump.">
+                            <Panel>
+                                <TextBlock Text="▶  Play" IsVisible="{Binding !IsPlayingAlone}" />
+                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAlone}" />
+                            </Panel>
+                        </Button>
+                        <ToggleButton Classes="chip" Margin="0,0,6,6" VerticalAlignment="Center" IsChecked="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Loop}"
+                                      ToolTip.Tip="Play round and round until you stop it">
+                            <TextBlock Text="↻  Loop" />
+                        </ToggleButton>
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="4,0,10,6" VerticalAlignment="Center"
+                                    ToolTip.Tip="The tempo to try it at. Drag files and Bitwig clips take this tempo too.">
+                            <Slider Width="130" Minimum="40" Maximum="240" Value="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).TempoValue}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).TempoText}" Classes="small" VerticalAlignment="Center" MinWidth="78" />
+                            <Button Content="Own" Padding="6,1" FontSize="11" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).OwnTempoCommand}"
+                                    IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasOwnTempo}" ToolTip.Tip="Back to its own tempo" />
+                        </StackPanel>
+                        <Border Classes="dragChip" Margin="0,0,6,6" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
+                                ToolTip.Tip="Drag into your DAW as a MIDI clip: moved into key and octave, with your edits">
+                            <TextBlock Text="Drag into your DAW" />
+                        </Border>
+                        <Button Content="Send to Bitwig" Margin="0,0,6,6" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SendBothToBitwigCommand}"
+                                ToolTip.Tip="This part, and what it's fitted to, each on a new track in Bitwig as a clip, to carry on with the idea there" />
+                        <Button Content="Get better sounds" Margin="0,0,6,6" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).GetSoundsCommand}"
+                                IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasGoodSounds}" ToolTip.Tip="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SoundsText}" />
+                    </WrapPanel>
+                    <!-- Octave, when not fitting (fitting has it by the piano roll). -->
+                    <WrapPanel IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}" ToolTip.Tip="{Binding OctaveWhy}">
+                        <ComboBox ItemsSource="{x:Static vm:MidiBrowserViewModel.SoundChoices}" SelectedItem="{Binding Sound}" Margin="0,0,6,6"
+                                  FontSize="12" MinWidth="150" ToolTip.Tip="The sound this kind of part plays with" />
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,0,6">
+                        <Button Content="−" Padding="10,3" Command="{Binding OctaveDownCommand}" IsVisible="{Binding CanChangeOctave}" ToolTip.Tip="An octave down" />
+                        <TextBlock Text="{Binding OctaveText}" VerticalAlignment="Center" MinWidth="96" TextAlignment="Center" IsVisible="{Binding CanChangeOctave}" />
+                        <Button Content="+" Padding="10,3" Command="{Binding OctaveUpCommand}" IsVisible="{Binding CanChangeOctave}" ToolTip.Tip="An octave up" />
+                        <Button Content="Reset" Padding="8,3" FontSize="12" Command="{Binding ResetOctaveCommand}" IsVisible="{Binding IsYourOctave}"
+                                ToolTip.Tip="Let the app pick the octave again" />
+                        </StackPanel>
+                    </WrapPanel>
                     <WrapPanel>
                         <Border Classes="pill" Margin="0,0,6,6" IsVisible="{Binding ShowsInstrument}" ToolTip.Tip="{Binding InstrumentWhy}">
                             <TextBlock Classes="pillText" Text="{Binding InstrumentText}" />
@@ -311,6 +410,9 @@
                         <Border Classes="pill" Margin="0,0,6,6">
                             <TextBlock Classes="pillText" Text="{Binding BarsText}" />
                         </Border>
+                        <Border Classes="pill" Margin="0,0,6,6" IsVisible="{Binding IsEdited}" ToolTip.Tip="You've edited it on the piano roll: playing, dragging and saving use your edits">
+                            <TextBlock Classes="pillText" Text="Edited" />
+                        </Border>
                         <Border Classes="pill" Margin="0,0,6,6" IsVisible="{Binding HasPhrase}" ToolTip.Tip="{Binding PhraseWhy}">
                             <TextBlock Classes="pillText" Text="{Binding PhraseText}" />
                         </Border>
@@ -321,39 +423,6 @@
                                Foreground="{StaticResource MutedBrush}" IsVisible="{Binding HasInstrument}" />
                     <TextBlock Text="{Binding FitWhy}" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}"
                                IsVisible="{Binding HasFit}" />
-                    <WrapPanel>
-                        <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedTogetherCommand}" Margin="0,0,6,6" Padding="12,6" Classes="accent"
-                                IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}"
-                                ToolTip.Tip="Both at once, with stand-in sounds, so you can hear if they go together. Click along the notes to jump.">
-                            <Panel>
-                                <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PairButtonText, StringFormat='▶  {0}'}" IsVisible="{Binding !IsPlayingTogether}" />
-                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingTogether}" />
-                            </Panel>
-                        </Button>
-                        <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedAloneCommand}" Margin="0,0,6,6" Padding="12,6"
-                                ToolTip.Tip="Listen (with a stand-in sound). Click along the notes to jump.">
-                            <Panel>
-                                <TextBlock Text="▶  Play" IsVisible="{Binding !IsPlayingAlone}" />
-                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAlone}" />
-                            </Panel>
-                        </Button>
-                        <ToggleButton Classes="chip" Margin="0,0,6,6" VerticalAlignment="Center" IsChecked="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Loop}"
-                                      ToolTip.Tip="Play round and round until you stop it">
-                            <TextBlock Text="↻  Loop" />
-                        </ToggleButton>
-                        <Border Classes="dragChip" Margin="0,0,6,6" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
-                                ToolTip.Tip="Drag into your DAW as a MIDI clip (already moved into the right key when fitting)">
-                            <TextBlock Text="Drag into your DAW" />
-                        </Border>
-                    </WrapPanel>
-                    <!-- Octave: moved where it fits, or where you put it (remembered). -->
-                    <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding CanChangeOctave}" ToolTip.Tip="{Binding OctaveWhy}">
-                        <Button Content="−" Padding="10,3" Command="{Binding OctaveDownCommand}" ToolTip.Tip="An octave down" />
-                        <TextBlock Text="{Binding OctaveText}" VerticalAlignment="Center" MinWidth="96" TextAlignment="Center" />
-                        <Button Content="+" Padding="10,3" Command="{Binding OctaveUpCommand}" ToolTip.Tip="An octave up" />
-                        <Button Content="Reset" Padding="8,3" FontSize="12" Command="{Binding ResetOctaveCommand}" IsVisible="{Binding IsYourOctave}"
-                                ToolTip.Tip="Let the app pick the octave again" />
-                    </StackPanel>
                     <!-- What kind of part it is: one click puts it right, for every copy. -->
                     <StackPanel Spacing="4">
                         <TextBlock Text="What kind of part is it?" Classes="small" ToolTip.Tip="{Binding RoleWhy}" />
