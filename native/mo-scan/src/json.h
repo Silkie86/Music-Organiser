@@ -26,6 +26,9 @@ public:
         char buf[64];
         if (std::isfinite(value)) std::snprintf(buf, sizeof buf, "%.17g", value);
         else std::snprintf(buf, sizeof buf, "null");
+        // A plugin may set a locale with a decimal comma while it loads; JSON always has a point.
+        for (char* c = buf; *c; c++)
+            if (*c == ',') *c = '.';
         out_ += buf;
         first_ = false;
         return *this;
