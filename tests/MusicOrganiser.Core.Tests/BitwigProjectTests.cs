@@ -195,6 +195,13 @@ public class BitwigProjectTests
         Assert.Equal("Serum (Serum).fxp", Path.GetFileName(saved));
         Assert.Equal("CcnK", System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(saved), 0, 4));
 
+        // Two channels with the same name each keep their sound.
+        var song = Readers.FlStudio.ReadSong(project);
+        var twice = song with { Channels = [.. song.Channels, song.Channels[1] with { Index = song.Channels.Max(c => c.Index) + 1 }] };
+        var result = BitwigProject.FromFl(twice, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        Assert.Equal(["Serum", "Serum (2)"], result.Upgraded!.Select(u => u.Channel));
+        Assert.Contains(result.Notes, n => n.Contains("\"Serum (2) (Serum)\""));
+
         // Without it, Serum stays Serum and nothing extra is saved.
         var (plain, _) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Plain"), Fixtures.BitwigTemplate());
         Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(plain)!, BitwigProject.UpgradedFolder)));

@@ -32,7 +32,10 @@ public static class BitwigProject
     public sealed record SampleFile(long Bytes, byte[] Md5, int Rate, int Channels, double Seconds);
 
     /// <param name="Notes">What couldn't come across.</param>
-    /// <param name="Upgraded">The synths swapped for newer versions: each channel's name and the older synth's own settings.</param>
+    /// <param name="Upgraded">
+    /// The synths swapped for newer versions: the name to save each under (its channel's, numbered when channels share
+    /// one) and the older synth's own settings.
+    /// </param>
     public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<(string Channel, PresetBlob Sound)>? Upgraded = null);
 
     const string SamplerId = "468bc14b-b2e7-45a1-9666-e83117fe404e";
@@ -216,8 +219,11 @@ public static class BitwigProject
                 if (swapped)
                 {
                     upgraded.Add(c.Index);
-                    sounds.Add((c.Name, c.Instrument.State!));
-                    var backup = $"The original is saved as \"{c.Name} ({c.Instrument.Name})\" in the \"{UpgradedFolder}\" folder next to this project, " +
+                    // Channels often share a name ("Serum" twice): each gets its own file, numbered.
+                    var saveAs = c.Name;
+                    for (var n = 2; sounds.Any(s => s.Channel.Equals(saveAs, StringComparison.OrdinalIgnoreCase)); n++) saveAs = $"{c.Name} ({n})";
+                    sounds.Add((saveAs, c.Instrument.State!));
+                    var backup = $"The original is saved as \"{saveAs} ({c.Instrument.Name})\" in the \"{UpgradedFolder}\" folder next to this project, " +
                                  $"to load in {instrument.Name}'s preset browser";
                     if (Translate(c.Instrument, instrument, serumAudio) is var (state, rough))
                     {
