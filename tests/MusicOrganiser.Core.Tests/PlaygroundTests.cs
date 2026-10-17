@@ -10,6 +10,8 @@ using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Core.Tests;
 
+// Ui.Current and UiWork.InBackground are app-wide: tests that set them run one class at a time.
+[Collection("Global UI")]
 public class PlaygroundTests : IDisposable
 {
     const int Ppq = PhraseAnalyser.Ppq, Beat = Ppq, Bar = 4 * Ppq;
@@ -17,6 +19,7 @@ public class PlaygroundTests : IDisposable
 
     public void Dispose()
     {
+        UiWork.InBackground = true;
         try { Directory.Delete(_root, true); } catch (IOException) { }
     }
 
