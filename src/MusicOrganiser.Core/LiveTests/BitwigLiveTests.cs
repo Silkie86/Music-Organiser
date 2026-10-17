@@ -1066,6 +1066,9 @@ public static class BitwigLiveTests
                       "nothing then, so nothing should have been written, but look for automation on the tracks.");
         if (r.Played?.Ended == "timedOut")
             notes.Add($"Bitwig didn't stop the track at the clip's end, so the link stopped Bitwig when the time ran out: what went in may run past {bars}.");
+        else if (r.Played?.Ended == "cut")
+            notes.Add("Bitwig didn't stop the track at the clip's end, so the link turned arranger record off just past it and stopped Bitwig: " +
+                      $"what went in may run a moment past {bars}.");
         if (r.Played?.PositionFrom == "clock" || r.Replay?.PositionFrom == "clock")
             notes.Add("Bitwig's play position didn't move as it played, so the link went by the clock and the tempo to tell where it was.");
 
@@ -1110,9 +1113,15 @@ public static class BitwigLiveTests
                 verdict = alias ? LiveVerdict.Note(detail, data) : LiveVerdict.Pass(detail, data);
                 break;
             case "nothing":
-                verdict = LiveVerdict.Fail($"Bitwig played the clip on “{track}”{speed}{armed} with arranger record on (the link heard " +
-                                           $"{Checks.Count(heard, "note")}), but playing the arranger back it heard none of them at {bars}, so nothing went " +
-                                           "in the arranger." + (go == RecordGo.Record ? " The next go tries with the track armed." : "") + " " + look, data);
+                var missed = $"Bitwig played the clip on “{track}”{speed}{armed} with arranger record on (the link heard " +
+                             $"{Checks.Count(heard, "note")}), but playing the arranger back it heard none of them at {bars}, so nothing went " +
+                             "in the arranger.";
+                // Unarmed is a finding, not a fault: the app records with the track armed, which the next go tries (Solomon's
+                // first run recorded armed, and unarmed Bitwig ignored the track's stop).
+                verdict = go == RecordGo.Record && !r.Arm
+                    ? LiveVerdict.Note($"{missed} With the track unarmed, that's what Bitwig may do: the next go tries with it armed, as the app " +
+                                       $"records. {look}", data)
+                    : LiveVerdict.Fail($"{missed} {look}", data);
                 break;
             case "cantTell":
                 verdict = LiveVerdict.Note($"Bitwig played the clip on “{track}”{speed}{armed} with arranger record on, but the link heard no notes, as it " +
@@ -1188,6 +1197,7 @@ public static class BitwigLiveTests
         {
             "done" => "",
             "timedOut" => " It ran out of time.",
+            "cut" => " Bitwig didn't stop the track at the clip's end, so the link stopped there.",
             "stoppedEarly" => " Bitwig stopped early.",
             null => "",
             var other => $" It ended {other}.",

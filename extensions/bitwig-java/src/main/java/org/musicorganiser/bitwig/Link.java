@@ -160,6 +160,11 @@ final class Link {
     static final long SETTLE = 500;
     /** How long the record job waits after pressing Stop before pressing it again while Bitwig still shows playing. */
     static final long RESTOP = 500;
+    /**
+     * How long past the clip's end the record job lets the clip's track go on playing before it ends the recording itself
+     * (see watch), in milliseconds: Bitwig shows the track stopping a moment late.
+     */
+    static final long LATE_STOP = 150;
     /** The tempos Bitwig takes, in BPM: the record job asks for none outside them. */
     static final double MIN_TEMPO = 20;
     static final double MAX_TEMPO = 666;
@@ -2606,10 +2611,11 @@ final class Link {
      * <li>It turns arranger record on (unless `record` is false) and launches the clip. While it plays, the link reads where
      * Bitwig is, the notes the track plays, and whether the slot plays and records. In the clip's last bar it stops the
      * track, which Bitwig does on the next bar line, at the clip's end.</li>
-     * <li>Then, or once the time it should take has passed (`timedOut`), or recordabort asks, or someone stops Bitwig, it
+     * <li>Then, or just past the clip's end when the track still plays (`cut`: Bitwig once ignored the stop on a track that
+     * wasn't armed), or once the time it should take has passed (`timedOut`), or recordabort asks, or someone stops Bitwig, it
      * turns record off, stops Bitwig (only if it's playing or may be about to: Stop while stopped moves the play start to the beginning) and
      * returns the track to the arrangement, so it plays its arranger timeline again.</li>
-     * <li>After a recording, it deletes the launcher clip if asked, then plays the arranger back from `replayFrom` (`at`
+     * <li>After a recording, it deletes the launcher clip if asked, returns the track to the arrangement again, then plays the arranger back from `replayFrom` (`at`
      * unless given) to a bar past the clip's end, still muted, and notes the notes the track plays: with the launcher clip
      * not playing, those come from the arranger.</li>
      * <li>It puts back everything it changed, reads it back, and answers.</li>
@@ -2907,6 +2913,8 @@ final class Link {
         boolean slotRecording;
         boolean automationWriteSeenOn;
         Double stopSentAt;
+        /** When the job first saw Bitwig past the clip's end, in clock time, else null. */
+        Long endPassed;
         Boolean launcherClipDeleted;
         boolean replayLauncherPlayed;
         String error;
@@ -3057,9 +3065,18 @@ final class Link {
                     trackItems[t].stop();
                     stopSentAt = position;
                 }
-                if (stopSentAt != null && position >= at + length - 1e-9 && !slot.isPlaying().get() && !slot.isPlaybackQueued().get()) {
-                    end("done");
-                    return;
+                if (stopSentAt != null && position >= at + length - 1e-9) {
+                    if (!slot.isPlaying().get() && !slot.isPlaybackQueued().get()) {
+                        end("done");
+                        return;
+                    }
+                    // Bitwig hasn't stopped the track at the clip's end (it once didn't on a track that wasn't armed): the job
+                    // ends now, record off first, so what goes in the arranger ends here, not when the time runs out.
+                    if (endPassed == null) endPassed = now;
+                    else if (now - endPassed >= LATE_STOP) {
+                        end("cut");
+                        return;
+                    }
                 }
             }
             if (now >= deadline) {
@@ -3078,7 +3095,8 @@ final class Link {
             if (t >= 0) trackItems[t].returnToArrangement();
             waitUntil(() -> stopped() && !(recordOn && transport.isArrangerRecordEnabled().get()), CHANGE_WAIT, stopped -> {
                 if (recordOn && !transport.isArrangerRecordEnabled().get()) recordOn = false;
-                boolean recorded = rec && play != null && play.started != null && (why.equals("done") || why.equals("timedOut") || why.equals("stoppedEarly"));
+                boolean recorded = rec && play != null && play.started != null
+                                   && (why.equals("done") || why.equals("cut") || why.equals("timedOut") || why.equals("stoppedEarly"));
                 if (!stopped || !recorded || !mayGoOn()) {
                     restore();
                     return;
@@ -3150,6 +3168,8 @@ final class Link {
                 long now = clock.millis();
                 replayed = new Playing(replayFrom, now);
                 deadline = now + START_WAIT + ms(at + length + bar - replayFrom);
+                // Again, as Bitwig once didn't take it after a recording: a track still on its launcher doesn't play the arranger.
+                trackItems[indexOf(trackId)].returnToArrangement();
                 transport.play();
                 startAsked = now;
                 later(this::watchReplay);

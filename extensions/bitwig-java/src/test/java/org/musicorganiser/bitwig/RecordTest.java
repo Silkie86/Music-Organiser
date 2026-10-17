@@ -155,10 +155,11 @@ class RecordTest {
         int off = bitwig.calls.indexOf(List.of("transport", "isArrangerRecordEnabled", false));
         assertTrue(on > 0 && off > on, Json.write(bitwig.calls));
         assertEquals(List.of(List.of("launch", 2, 0), List.of("stopTrack", 2)), bitwig.calls.subList(on + 1, off));
-        // Record went off before Bitwig stopped, and the track went back to the arrangement before the replay played it.
-        assertEquals(List.of("stop", "returnToArrangement", "playStart", "play", "stop"),
+        // Record went off before Bitwig stopped, and the track went back to the arrangement before the replay played it (again
+        // just before, as Bitwig once didn't take the first).
+        assertEquals(List.of("stop", "returnToArrangement", "playStart", "returnToArrangement", "play", "stop"),
                      calls().subList(off + 1, calls().size()).stream().filter(c -> List.of("stop", "returnToArrangement", "playStart", "play").contains(c))
-                            .collect(Collectors.toList()).subList(0, 5));
+                            .collect(Collectors.toList()).subList(0, 6));
     }
 
     @Test
@@ -252,16 +253,21 @@ class RecordTest {
     }
 
     @Test
-    @DisplayName("turns record off and stops when Bitwig ignores stopping the track, once the time it should take has passed")
+    @DisplayName("turns record off and stops just past the clip's end when Bitwig ignores stopping the track, then returns it to the arrangement for the replay")
     void endsWhenTheTrackDoesntStop() {
         studio(m -> m.trackStopIgnored = true);
         Map<String, Object> result = result(record(1, "rec", BAR_5));
-        assertEquals("timedOut", at(result, "played", "ended"));
+        assertEquals("cut", at(result, "played", "ended"));
         int off = bitwig.calls.indexOf(List.of("transport", "isArrangerRecordEnabled", false));
         int stop = bitwig.calls.indexOf(List.of("stop"));
         assertTrue(off > 0 && stop > off, "record off first: " + Json.write(bitwig.calls));
         Recorded clip = bitwig.state.recorded.get(0);
-        assertTrue(clip.end() > 24, "it went on past the clip's end: " + clip);
+        // 150 ms is 0.3 beats at 120 BPM, and the link looks every 25 ms.
+        assertTrue(clip.end() > 24 && clip.end() < 24.45, "it ended just past the clip's end: " + clip);
+        int play = bitwig.calls.indexOf(List.of("play"));
+        assertTrue(play > 0 && bitwig.calls.subList(stop, play).stream().filter(c -> c.get(0).equals("returnToArrangement")).count() == 2,
+                   "back to the arrangement after the recording and again before the replay: " + Json.write(bitwig.calls));
+        assertEquals("recorded", result.get("decided"));
         assertPutBack(0);
     }
 

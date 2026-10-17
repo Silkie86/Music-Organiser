@@ -215,9 +215,11 @@ public class BitwigRecordTests
             if (answer is not null) takes[go] = answer;
         }
 
-        Assert.Equal((LiveOutcome.Failed, "Bitwig played the clip on “Rec 143012” with arranger record on (the link heard 6 notes), but playing the " +
-                                          "arranger back it heard none of them at bars 5 to 6, so nothing went in the arranger. The next go tries with the " +
-                                          "track armed. Look at bars 5 to 6 on “Rec 143012” in Bitwig's arranger and say whether the clip is there."),
+        // Unarmed and nothing in: a finding, as the app records armed.
+        Assert.Equal((LiveOutcome.Noted, "Bitwig played the clip on “Rec 143012” with arranger record on (the link heard 6 notes), but playing the " +
+                                         "arranger back it heard none of them at bars 5 to 6, so nothing went in the arranger. With the track unarmed, " +
+                                         "that's what Bitwig may do: the next go tries with it armed, as the app records. Look at bars 5 to 6 on " +
+                                         "“Rec 143012” in Bitwig's arranger and say whether the clip is there."),
                      (verdicts[RecordGo.Record].Outcome, verdicts[RecordGo.Record].Detail));
         Assert.StartsWith("Bitwig recorded the clip into its arranger on “Rec 143012” at bars 9 to 10, with the track armed:", verdicts[RecordGo.Armed].Detail);
         // The fast go arms the track as well, since only the armed go recorded.
@@ -395,6 +397,16 @@ public class BitwigRecordTests
                         "end, so the link stopped Bitwig when the time ran out: what went in may run past bars 5 to 6. Bitwig's play position didn't " +
                         "move as it played, so the link went by the clock and the tempo to tell where it was.", noted.Detail);
         Assert.EndsWith(" It ran out of time.", noted.Lines[0]);
+        // Armed and nothing in: a fault.
+        var armedNothing = RecordVerdict(Answer(a => { a["decided"] = "nothing"; a["arm"] = true; }), RecordGo.Armed, "Rec 143012");
+        Assert.Equal(LiveOutcome.Failed, armedNothing.Outcome);
+        Assert.DoesNotContain("unarmed", armedNothing.Detail);
+        // Bitwig went on playing past the clip's end, so the extension (3.10) cut the take there.
+        var cut = Verdict(a => a["played"]!["ended"] = "cut");
+        Assert.Equal(LiveOutcome.Passed, cut.Outcome);
+        Assert.EndsWith(" Bitwig didn't stop the track at the clip's end, so the link turned arranger record off just past it and stopped Bitwig: " +
+                        "what went in may run a moment past bars 5 to 6.", cut.Detail);
+        Assert.EndsWith(" Bitwig didn't stop the track at the clip's end, so the link stopped there.", cut.Lines[0]);
 
         // The fast go deleted the launcher clip, and then the earlier recording went silent: noted, as Bitwig may record alias clips.
         var earlier = new Dictionary<RecordGo, BitwigRecorded> { [RecordGo.Record] = Answer() };
