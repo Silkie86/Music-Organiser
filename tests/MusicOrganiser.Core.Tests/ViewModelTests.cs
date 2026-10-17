@@ -361,9 +361,12 @@ public class ViewModelTests : IDisposable
     {
         var lib = Directory.CreateDirectory(Path.Combine(_root, "Lib")).FullName;
         _db.SetList(Scanner.SampleFoldersKey, [lib]);
+        var main = Main();
+        var sounds = main.Sounds;
+        // The page's own first scan, of the empty folder, is done before the sound turns up.
+        await Until(() => main.Activities.Items.Any(a => a.Title.Contains("ample folders")) && !sounds.IsBusy);
         var bounce = Path.Combine(lib, "Bounce 01.wav");
         Synth.Write(bounce, Synth.Kick(1));
-        var sounds = Main().Sounds;
 
         // The watcher reports a sound while a job is running, then a take-in starts before that job has let go.
         sounds.IsBusy = true;

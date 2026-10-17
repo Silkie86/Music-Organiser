@@ -164,7 +164,7 @@ public class FlStudioTests
         Assert.Equal(a.Details, b.Details);
         Assert.Empty(a.Warnings);
         Assert.Equal(["Saved by an old FL Studio that garbled the start of its data; everything after it was read as usual."], b.Warnings);
-        Assert.Equal(1, Readers.FlStudio.ReadSong(Path.Combine(dir, "side.flp")).Channels.Single().Notes.Count);
+        Assert.Single(Readers.FlStudio.ReadSong(Path.Combine(dir, "side.flp")).Channels.Single().Notes);
 
         // Fix can relink one too, even when the junk "length" reads as a negative number.
         new byte[] { 0x60, 0xfb, 0x12, 0x00, 0xd9, 0x4a, 0x06, 0x91 }.CopyTo(garbled, 14);
