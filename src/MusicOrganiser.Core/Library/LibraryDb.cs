@@ -646,16 +646,25 @@ public sealed partial class LibraryDb : IDisposable
     public IReadOnlyList<(string Tag, int Count)> AllTags() =>
         Query("SELECT tag, COUNT(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag", r => ((string)r["tag"], (int)(long)r["n"]));
 
+    /// <summary>
+    /// Each plugin across the projects. A DAW's own device is one row per DAW (Bitwig's Arpeggiator isn't Studio
+    /// One's); a plugin is shown as the kind most of its projects have it as.
+    /// </summary>
     public IReadOnlyList<PluginUsage> PluginUsage() => Query("""
         WITH live AS (
-            SELECT pl.*, p.mtime AS saved, p.daw AS daw FROM plugins pl JOIN projects p ON p.id = pl.project_id WHERE p.file_missing = 0),
-        missing AS (SELECT project_id, COUNT(DISTINCT name_key) AS n FROM live WHERE installed = 0 GROUP BY project_id)
+            SELECT pl.*, p.mtime AS saved, p.daw AS daw, CASE WHEN pl.format = 'Native' THEN p.daw ELSE '' END AS own
+            FROM plugins pl JOIN projects p ON p.id = pl.project_id WHERE p.file_missing = 0),
+        missing AS (SELECT project_id, COUNT(DISTINCT name_key) AS n FROM live WHERE installed = 0 GROUP BY project_id),
+        kinds AS (
+            SELECT name_key, own, kind, ROW_NUMBER() OVER (PARTITION BY name_key, own ORDER BY COUNT(*) DESC, kind) AS r
+            FROM live GROUP BY name_key, own, kind)
         SELECT MIN(l.name) AS name, MAX(l.vendor) AS vendor, MAX(l.format) AS format,
                COUNT(DISTINCT l.project_id) AS n, group_concat(DISTINCT l.daw) AS daws, MIN(l.installed) AS installed,
                COUNT(DISTINCT CASE WHEN l.installed = 0 AND m.n = 1 THEN l.project_id END) AS unlocks,
-               MAX(l.saved) AS last, MAX(l.kind) AS kind
+               MAX(l.saved) AS last, MIN(k.kind) AS kind
         FROM live l LEFT JOIN missing m ON m.project_id = l.project_id
-        GROUP BY l.name_key ORDER BY n DESC, name
+        JOIN kinds k ON k.name_key = l.name_key AND k.own = l.own AND k.r = 1
+        GROUP BY l.name_key, l.own ORDER BY n DESC, name
         """, r => new PluginUsage(Str(r, "name"), Str(r, "vendor"), Str(r, "format"), (int)Long(r, "n"), Str(r, "daws").Replace(",", ", "), Long(r, "installed") == 1,
                                   (int)Long(r, "unlocks"), Long(r, "last") is > 0 and var t ? DateTimeOffset.FromUnixTimeSeconds(t).LocalDateTime : null,
                                   (PluginKind)Long(r, "kind")));

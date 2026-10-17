@@ -702,6 +702,30 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void A_DAWs_own_device_is_its_own_row_and_a_plugin_shows_as_its_usual_kind()
+    {
+        void Song(string name, string daw, params PluginRef[] plugins)
+        {
+            var info = new ProjectInfo { Daw = daw };
+            info.Plugins.AddRange(plugins);
+            var file = Path.Combine(_root, name);
+            File.WriteAllBytes(file, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(file, 1, 100, info, null, [], []));
+        }
+        var kontakt = new PluginRef("Kontakt 5", "Native Instruments", PluginKind.Instrument, "VST2");
+        Song("A.bwproject", "Bitwig Studio", new PluginRef("Arpeggiator", "Bitwig", PluginKind.NoteEffect, "Native"), kontakt);
+        Song("B.song", "Studio One", new PluginRef("Arpeggiator", "PreSonus", PluginKind.NoteEffect, "Native"), kontakt);
+        Song("C.flp", "FL Studio", kontakt with { Kind = PluginKind.Effect });
+        _db.ReplaceInstalledPlugins(["Something Else"]);
+
+        var usage = _db.PluginUsage();
+        Assert.Equal(["Bitwig Studio", "Studio One"], usage.Where(u => u.Name == "Arpeggiator").Select(u => u.Daws).Order());
+        Assert.All(usage.Where(u => u.Name == "Arpeggiator"), u => Assert.True(u.Installed));
+        var k = Assert.Single(usage, u => u.Name == "Kontakt 5");
+        Assert.Equal((3, PluginKind.Instrument), (k.Projects, k.Kind));
+    }
+
+    [Fact]
     public void The_plugins_page_puts_first_what_would_open_the_most_projects()
     {
         void Song(string name, params string[] plugins)
