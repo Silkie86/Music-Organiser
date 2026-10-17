@@ -585,6 +585,28 @@ public class GalaxyMapTests
     }
 }
 
+public class SoundUsageTests
+{
+    [Fact]
+    public void A_file_name_many_packs_share_gets_no_credit_from_projects_that_store_only_the_name()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-usage-").FullName;
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        var paths = new[] { "/lib/Pack A/01.wav", "/lib/Pack B/01.wav", "/lib/Pack C/Snare Tight.wav" };
+        lib.Save(paths.Select(p => new SoundLibrary.Analysed(p, 1, 1,
+            new SoundAnalysis { Seconds = 0.5, Features = new float[40] }, null, null, "Kick")));
+        using var org = new SoundOrganiser(lib);
+
+        // A Bitwig project's collected copies are listed by name only.
+        org.ApplyUsage([("01.wav", 40), ("Snare Tight.wav", 2), ("/lib/Pack B/01.wav", 3)]);
+
+        int Used(string path) => org.Sounds.Single(s => s.Path == path).UsedIn;
+        Assert.Equal(0, Used("/lib/Pack A/01.wav"));   // which "01.wav" those 40 projects used can't be told
+        Assert.Equal(3, Used("/lib/Pack B/01.wav"));   // a full path still counts
+        Assert.Equal(2, Used("/lib/Pack C/Snare Tight.wav"));   // a name only one sound has still counts
+    }
+}
+
 public class RediscoverScaleTests
 {
     [Fact]

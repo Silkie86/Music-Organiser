@@ -120,7 +120,8 @@ public sealed class SoundOrganiser : IDisposable
     /// <summary>
     /// Counts how many of your projects use each sound, and how many of those were saved in the last year. Projects
     /// store samples by full path, relative path or just a file name (Bitwig collects copies), so a full-path match is
-    /// used when there is one, otherwise the file name.
+    /// used when there is one, otherwise the file name, but only a name no other sound in the library has: thousands
+    /// of packs have a "01.wav", and each one was credited with every project using any of them.
     /// </summary>
     public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage) => ApplyUsage(_sounds, usage);
 
@@ -136,8 +137,14 @@ public sealed class SoundOrganiser : IDisposable
             var name = p.Split('\\', '/')[^1];
             byName[name] = Add(byName.GetValueOrDefault(name), n, r);
         }
+        var shared = sounds.GroupBy(s => System.IO.Path.GetFileName(s.Path), StringComparer.OrdinalIgnoreCase)
+                           .Where(g => g.Skip(1).Any()).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var s in sounds)
-            (s.UsedIn, s.UsedInRecently) = byPath.TryGetValue(s.Path, out var u) ? u : byName.GetValueOrDefault(System.IO.Path.GetFileName(s.Path));
+        {
+            var name = System.IO.Path.GetFileName(s.Path);
+            (s.UsedIn, s.UsedInRecently) = byPath.TryGetValue(s.Path, out var u) ? u
+                : shared.Contains(name) ? default : byName.GetValueOrDefault(name);
+        }
     }
 
     // ---- scanning ----------------------------------------------------------------------
