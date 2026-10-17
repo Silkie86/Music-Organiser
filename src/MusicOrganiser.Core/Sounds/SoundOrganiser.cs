@@ -295,7 +295,9 @@ public sealed class SoundOrganiser : IDisposable
         {
             try
             {
-                Parallelism.Background(() => Library.SetClap(s.Id, clap.EmbedAudio(AudioFile.Read(s.Path, 30))));
+                // Not all in one slot: EmbedAudio takes them only while it works, not while it waits for the model.
+                var audio = Parallelism.Background(() => AudioFile.Read(s.Path, 30));
+                Library.SetClap(s.Id, clap.EmbedAudio(audio));
             }
             catch (Exception) { }   // unreadable now; it'll be retried next time
             var n = Interlocked.Increment(ref done);

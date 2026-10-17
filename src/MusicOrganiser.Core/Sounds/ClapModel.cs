@@ -144,6 +144,30 @@ public sealed class ClapModel : IDisposable
     /// <summary>Unit-length embedding for a sound.</summary>
     public float[] EmbedAudio(AudioData audio)
     {
+        // Getting the sound ready takes a background worker slot; queueing for a free copy of the model doesn't, so deep
+        // listening's sounds waiting their turn don't hold every slot while the galaxy or a scan wants one. (Called from
+        // inside background work, the slot it's in is still held while it waits.)
+        var inputs = Parallelism.Background(() => AudioInputs(audio));
+        _audioSlots.Wait();
+        try
+        {
+            return Parallelism.Background(() =>
+            {
+                // A free copy, or a new one: there are never more copies than slots.
+                if (!_audioPool.TryTake(out var session)) session = NewAudioSession();
+                try
+                {
+                    using var res = session.Run(inputs, [_audioOutput]);
+                    return Normalise(res.First().AsEnumerable<float>().ToArray());
+                }
+                finally { _audioPool.Add(session); }
+            });
+        }
+        finally { _audioSlots.Release(); }
+    }
+
+    List<NamedOnnxValue> AudioInputs(AudioData audio)
+    {
         var feats = _extractor.Extract(Dsp.Resample(audio.Mono(), audio.SampleRate, _extractor.SampleRate), out var longer);
         var channels = _channels == 1 ? feats[..1] : feats.Length == 1 ? [feats[0], feats[0], feats[0], feats[0]] : feats;
         var frames = channels[0].Length;
@@ -154,19 +178,7 @@ public sealed class ClapModel : IDisposable
                 for (var m = 0; m < mels; m++) t[0, c, f, m] = channels[c][f][m];
         var inputs = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor(_audioInput, t) };
         if (_wantsIsLonger) inputs.Add(NamedOnnxValue.CreateFromTensor("is_longer", new DenseTensor<bool>(new[] { longer }, [1, 1])));
-        _audioSlots.Wait();
-        try
-        {
-            // A free copy, or a new one: there are never more copies than slots.
-            if (!_audioPool.TryTake(out var session)) session = NewAudioSession();
-            try
-            {
-                using var res = session.Run(inputs, [_audioOutput]);
-                return Normalise(res.First().AsEnumerable<float>().ToArray());
-            }
-            finally { _audioPool.Add(session); }
-        }
-        finally { _audioSlots.Release(); }
+        return inputs;
     }
 
     /// <summary>Unit-length embedding for a description such as "punchy acoustic kick".</summary>
