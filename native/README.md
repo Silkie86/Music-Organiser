@@ -45,7 +45,7 @@ code; it picks up `CMakePresets.json`.
 ## mo-scan
 
 ```
-mo-scan [--no-params] [--state] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>
+mo-scan [--no-params] [--state] [--curve <steps>] [--only <plugin id>] [--format clap|vst3|vst2] <plugin path>
 mo-scan --version
 ```
 
@@ -73,6 +73,9 @@ like Waves holds many):
 - `--only <id>` reads one plugin from the file, e.g. one from a Waves shell.
 - `--state` adds the plugin's default state (base64), for working out how its settings are stored.
   (Scanning the probe with `--state` writes a probe report, since saving its state counts as using it.)
+- `--curve <steps>` adds each parameter's text at that many even steps from 0 to 1 (`"curve":[{"x":0,"text":"0.00"},…]`),
+  with the value in real units for VST3 (`"plain"`). A VST2 knob is set to each step and put back. It's for matching
+  one plugin's knobs to another's, such as Serum's to Serum 2's.
 - A plugin that can't be loaded gives `{"path":..., "error":"..."}` and exit code 2. A 32-bit
   VST2 says so.
 

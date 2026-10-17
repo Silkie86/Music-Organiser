@@ -253,6 +253,111 @@ public sealed record BitwigShown(bool Before, bool After);
 /// <summary>The clip selected in Bitwig's arranger: whether there is one, and the name of the track it's on (null when there's none).</summary>
 public sealed record BitwigArrangerClip(bool Exists, string? Track);
 
+/// <summary>A track Bitwig added (<see cref="BitwigLink.NewTrackWithIdAsync"/>): its place in the listing, its name and its ID (null from a link before the extension 3.9).</summary>
+public sealed record BitwigNewTrack(int Index, string Name, string? Id = null);
+
+/// <summary>
+/// What the record job is asked to do (the Java extension 3.9: see <see cref="BitwigLink.RecordAsync"/>): record the clip in
+/// launcher slot <paramref name="Slot"/> of the track with ID <paramref name="TrackId"/> into the arranger at <paramref
+/// name="At"/> beats (quarter notes) from the start, <paramref name="Length"/> beats long. Both are whole bars.
+/// </summary>
+public sealed record BitwigRecordRequest(string TrackId, int Slot, double At, double Length)
+{
+    /// <summary>False to play the clip without recording it, to tell whether the link hears the track's notes.</summary>
+    public bool Record { get; init; } = true;
+    /// <summary>Whether to arm the track while it records (every other track is disarmed either way).</summary>
+    public bool Arm { get; init; }
+    /// <summary>Whether to delete the launcher clip once it's recorded, before the replay: what's heard then comes from the arranger alone.</summary>
+    public bool DeleteLauncherClip { get; init; }
+    /// <summary>Whether to play the arranger back afterwards to hear what went in (null: when it records).</summary>
+    public bool? Replay { get; init; }
+    /// <summary>Where the replay starts, in beats (null: at <see cref="At"/>); earlier takes in an earlier recording on the way.</summary>
+    public double? ReplayFrom { get; init; }
+    /// <summary>The tempo to record at (BPM, 20 to 666), or null for the project's: a faster one records the same beats sooner.</summary>
+    public double? Tempo { get; init; }
+    /// <summary>A name for the go, which the answer gives back.</summary>
+    public string? Pass { get; init; }
+}
+
+/// <summary>
+/// What the record job did (the Java extension 3.9: see <see cref="BitwigLink.RecordAsync"/>).
+/// </summary>
+/// <param name="Decided">
+/// What it made of it: "recorded" (the replay heard the clip's notes where it was recorded, with the launcher clip not
+/// playing), "nothing" (it heard the clip play but not in the replay), "cantTell" (it heard no notes either time, so only a
+/// look tells), "heard" or "cantHear" (it played without recording, and heard the notes or not), "notChecked" (no replay),
+/// "didntStart" (Bitwig didn't play), "refused" (a setting didn't take, so it recorded nothing), "aborted", "failed",
+/// or "abandoned" (another project came to the front, so it left Bitwig alone).
+/// </param>
+/// <param name="Bar">A bar's length in beats, from the project's time signature.</param>
+/// <param name="Refused">The settings that didn't take (by the extension's names, such as "pre-roll"), so it didn't record.</param>
+/// <param name="Played">The clip's play: where from, whether and when Bitwig started, how it ended, and the notes heard. Null when it didn't launch.</param>
+/// <param name="Heard">How many notes the link heard the track play while the clip played.</param>
+/// <param name="LauncherClipDeleted">Whether the launcher clip was deleted after recording, or null when that wasn't asked for (or it didn't record).</param>
+/// <param name="Replay">The replay of the arranger after, or null when there was none.</param>
+/// <param name="After">What Bitwig showed at the end.</param>
+/// <param name="Diff">What changed in the tracks and launcher slots since the job started, by track ID; null when it couldn't look.</param>
+/// <param name="Ms">How long the job took.</param>
+public sealed record BitwigRecorded(string Decided, string TrackId, string? Track, int Slot, double At, double Length, double Bar, bool Record,
+                                    bool Arm, BitwigRecordTempo Tempo, IReadOnlyList<string> Refused, BitwigPlayed? Played, BitwigRecordSeen Seen,
+                                    bool? LauncherClipDeleted, BitwigPlayed? Replay, BitwigRecordAfter After, BitwigRecordDiff? Diff, double Ms,
+                                    string? Pass = null, string? AbortWhy = null, string? Error = null, int Heard = 0);
+
+/// <summary>The project's tempo, and the one the job recorded at (BPM).</summary>
+public sealed record BitwigRecordTempo(double Project, double Used);
+
+/// <summary>
+/// One time the record job played the clip, or the arranger back: where from (beats), whether Bitwig started and how long
+/// after it was asked, how it ended ("done", "timedOut", "stoppedEarly", "aborted"...), whether where it was came from
+/// Bitwig ("bitwig") or the clock ("clock", when Bitwig's play position didn't move), and the notes the link heard the
+/// track play. A replay also says where it played to, and how many notes it heard in the recording's bars (<paramref
+/// name="InPass"/>), before them (<paramref name="Before"/>, earlier recordings), and whether the launcher clip played.
+/// </summary>
+public sealed record BitwigPlayed(double From, bool Started, double? StartedAfterMs, string? Ended, string PositionFrom, int Heard,
+                                  IReadOnlyList<BitwigHeardNote> Notes, double? To = null, int? InPass = null, int? Before = null,
+                                  bool? LauncherPlayed = null);
+
+/// <summary>A note the link heard a track play: its key (60 = C3) and where it started, in beats.</summary>
+public sealed record BitwigHeardNote(int Key, double At);
+
+/// <summary>
+/// What the record job saw while it recorded: whether the launcher slot played, whether Bitwig said it was recording into
+/// it (it shouldn't), whether Bitwig turned automation write on (its "Write automation when recording" preference), and
+/// where the link asked the track to stop (beats), or null when it didn't.
+/// </summary>
+public sealed record BitwigRecordSeen(bool ClipPlayed, bool SlotRecording, bool AutomationWriteSeenOn, double? StopSentAt);
+
+/// <summary>
+/// What Bitwig showed at the end of the record job, when its project was still in front (<paramref name="Checked"/>):
+/// whether arranger record is off, whether it plays, where the play start is (beats), and the settings that didn't come
+/// back as they were (null when the job didn't wait to see).
+/// </summary>
+public sealed record BitwigRecordAfter(bool Checked, bool? RecordOff, bool? Playing, double? PlayStart, IReadOnlyList<string>? RestoreFailed);
+
+/// <summary>What changed while the record job ran: the tracks added (by ID, with their names) and removed (IDs), and the launcher slots whose clip came or went.</summary>
+public sealed record BitwigRecordDiff(IReadOnlyList<BitwigTrackRef> TracksAdded, IReadOnlyList<string> TracksRemoved,
+                                      IReadOnlyList<BitwigClipChange> ClipsChanged);
+
+/// <summary>A track by its ID and name.</summary>
+public sealed record BitwigTrackRef(string Id, string Name);
+
+/// <summary>A launcher slot whose clip came or went: whether it had one before and after.</summary>
+public sealed record BitwigClipChange(string TrackId, int Slot, bool Before, bool After);
+
+/// <summary>
+/// What the probe of Bitwig's panel commands found (the Java extension 3.9: see <see cref="BitwigLink.ProbeAsync"/>): the
+/// route, the panel layout before, and a step for each command.
+/// </summary>
+public sealed record BitwigProbed(string Via, string Layout, IReadOnlyList<BitwigProbeStep> Steps);
+
+/// <summary>
+/// One of the probe's commands: its action ID, whether the route ran each of its two goes, whether its panel showed before
+/// and after each (three values), and whether the link showed or hid the panel as it was afterwards (null when it needn't),
+/// or <paramref name="Missing"/> when Bitwig has no such action.
+/// </summary>
+public sealed record BitwigProbeStep(string Action, IReadOnlyList<bool>? Ran = null, IReadOnlyList<bool>? Visible = null, bool? Restored = null,
+                                     bool Missing = false);
+
 /// <summary>
 /// Talks to Bitwig Studio through the Music Organiser controller script
 /// (extensions/bitwig/MusicOrganiser.control.js), which listens on port 19791 on this computer.
@@ -273,22 +378,29 @@ public sealed class BitwigLink : IDisposable
     public const string LoopbackPort = "Music Organiser Bitwig";
     /// <remarks>
     /// Bitwig starts the extension 3.7 and later, and the link answers, with its MIDI in and out unassigned (confirmed on
-    /// Bitwig 6.1.3), so they're no reason for it not to answer: <see cref="LoopbackMissing"/> says when they're needed.
+    /// Bitwig 6.1.3): <see cref="LoopbackMissing"/> says when they're needed. Whether it starts the extension while they're
+    /// set to a port that isn't there (loopMIDI not running) isn't known, and Bitwig stops a controller whose device goes
+    /// away, so this says to check that port too.
     /// </remarks>
     public const string NotRunning = "Bitwig isn't answering. Check that Bitwig Studio is open, with the Music Organiser " +
-                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link).";
+                                     "controller added (Settings > Controllers > Add controller > Music Organiser > DAW link). " +
+                                     $"If that controller's MIDI in and out are set to “{LoopbackPort}”, check that the port is there " +
+                                     "(on Windows, that loopMIDI is running): Bitwig may not start a controller whose port is missing.";
 
     /// <summary>
     /// What to set up when the extension's MIDI loopback doesn't work (its hello's <see cref="BitwigHello.Loopback"/> is
     /// false), as a sentence to add after saying the app connected; null when it works, or the link doesn't say (the
-    /// script, or an extension before 3.7). Bitwig 6.1.3 answered the link without it, but saved for it only once the
-    /// extension's MIDI in and out were set (then from its flush), so the app's commands need it too.
+    /// script, or an extension before 3.7). Bitwig 6.1.3 answered the link without it, but has only saved for it once the
+    /// extension's MIDI in and out were set (from its flush, and once straight away), so the app asks for them. The extension can't
+    /// tell unset ports from a port that doesn't hand its MIDI back, so this says it may be either.
     /// </summary>
     public static string? LoopbackMissing(BitwigHello hello) => hello.Loopback is false
-        ? $"Its MIDI in and out aren't set to the MIDI port “{LoopbackPort}” yet, and Bitwig only saves for the app once they are: " +
-          (OperatingSystem.IsWindows() ? $"make a port called “{LoopbackPort}” in loopMIDI, then " : "") +
-          "in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it (never to “Music Organiser”, " +
-          "FL Studio's port)."
+        ? $"The extension's own MIDI hasn't come back to it through the MIDI port “{LoopbackPort}”, so its MIDI in and out may not be " +
+          "set to that port yet (or the port isn't working), and Bitwig has only saved for the app once they were: " +
+          (OperatingSystem.IsWindows() ? $"make a port called “{LoopbackPort}” in loopMIDI, then "
+                                       : $"make a virtual MIDI port called “{LoopbackPort}” (on a Mac, an IAC bus in Audio MIDI Setup may do), then ") +
+          "in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it (never to FL Studio's port, " +
+          "“Music Organiser”)."
         : null;
     const int MaxMessage = 64 << 20;
 
@@ -340,8 +452,9 @@ public sealed class BitwigLink : IDisposable
     public string? OnlyIn { get; set; }
 
     /// <summary>The commands that change or select something in the project, as the script and the extension list them.</summary>
+    /// <remarks>Not recordabort, which must reach the record job whatever project is in front.</remarks>
     static readonly HashSet<string> ProjectCommands = ["set", "insert", "newtrack", "clip", "pads", "transpose", "action", "recorder", "arrange", "select",
-                                                       "filetrack"];
+                                                       "filetrack", "record", "probe"];
 
     BitwigLink(TcpClient tcp)
     {
@@ -502,7 +615,11 @@ public sealed class BitwigLink : IDisposable
     /// </summary>
     /// <param name="color">"#rrggbb", or null for Bitwig's choice.</param>
     public async Task<int> NewTrackAsync(string name, string? color = null, CancellationToken ct = default) =>
-        Parse<NewTrack>(await ChangeAsync(new() { ["cmd"] = "newtrack", ["name"] = name, ["color"] = color }, ct)).Index;
+        (await NewTrackWithIdAsync(name, color, ct)).Index;
+
+    /// <summary>The same, saying the new track's ID too, which the Java extension 3.9 says (null from an older link).</summary>
+    public async Task<BitwigNewTrack> NewTrackWithIdAsync(string name, string? color = null, CancellationToken ct = default) =>
+        Parse<BitwigNewTrack>(await ChangeAsync(new() { ["cmd"] = "newtrack", ["name"] = name, ["color"] = color }, ct));
 
     /// <summary>
     /// Adds a file to a track's chain, as if it were dropped there: a preset (.bwpreset, .vstpreset...) loads its
@@ -526,6 +643,13 @@ public sealed class BitwigLink : IDisposable
     /// <summary>Puts a MIDI file in a track's clip launcher slot (the first empty one unless given), and returns the slot.</summary>
     public async Task<int> AddClipAsync(int track, string path, int? slot = null, CancellationToken ct = default) =>
         Parse<AddedClip>(await ChangeAsync(new() { ["cmd"] = "clip", ["track"] = track, ["path"] = path, ["slot"] = slot }, ct)).Slot;
+
+    /// <summary>
+    /// The same on the track with the ID given (the Java extension 3.9), which stays the same when a track goes in above it
+    /// meanwhile, as its place in the listing doesn't.
+    /// </summary>
+    public async Task<int> AddClipAsync(string trackId, string path, int? slot = null, CancellationToken ct = default) =>
+        Parse<AddedClip>(await ChangeAsync(new() { ["cmd"] = "clip", ["trackId"] = trackId, ["path"] = path, ["slot"] = slot }, ct)).Slot;
 
     /// <summary>
     /// Puts samples on a Drum Machine's pads, leaving pads that already have something on them alone. The Drum
@@ -588,6 +712,74 @@ public sealed class BitwigLink : IDisposable
     public async Task<BitwigFileTrack> FileTrackAsync(int track, string path, double? at = null, CancellationToken ct = default) =>
         Parse<BitwigFileTrack>(await ChangeAsync(new() { ["cmd"] = "filetrack", ["track"] = track, ["path"] = path, ["at"] = at }, ct));
 
+    /// <summary>How long the record job gets after <see cref="RecordAsync"/>'s time runs out, once it's asked to stop (recordabort), to stop, put everything back and answer.</summary>
+    public TimeSpan RecordAbortGrace { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// An experiment, for the live tests only (the Java extension 3.9): records a launcher clip into Bitwig's arranger, as a
+    /// person does (Bitwig documents it): the extension turns arranger record on and launches the clip, stops its track on
+    /// the clip's last bar, then turns record off. Before, it sets Bitwig up so only that clip records and nothing is heard
+    /// (the master muted, every other track disarmed, no metronome, pre-roll, loop, punch or overdub, touch automation),
+    /// reading each setting back, and refuses to record when one doesn't take. After, it plays the arranger back to hear
+    /// what went in (<see cref="BitwigRecorded.Decided"/>), and puts every setting back as it was. It runs in real time, so
+    /// it takes the clip's length and the replay's at the tempo used.
+    ///
+    /// When <paramref name="timeout"/> passes with no answer, or <paramref name="ct"/> stops it, the app asks the job to
+    /// stop (recordabort), so Bitwig isn't left recording; the job then has <see cref="RecordAbortGrace"/> to answer.
+    /// </summary>
+    public async Task<BitwigRecorded> RecordAsync(BitwigRecordRequest request, TimeSpan timeout, CancellationToken ct = default)
+    {
+        var send = new JsonObject
+        {
+            ["cmd"] = "record", ["trackId"] = request.TrackId, ["slot"] = request.Slot, ["at"] = request.At, ["length"] = request.Length,
+            ["record"] = request.Record, ["arm"] = request.Arm, ["deleteLauncherClip"] = request.DeleteLauncherClip,
+        };
+        if (request.Replay is { } replay) send["replay"] = replay;
+        if (request.ReplayFrom is { } from) send["replayFrom"] = from;
+        if (request.Tempo is { } tempo) send["tempo"] = tempo;
+        if (request.Pass is { } pass) send["pass"] = pass;
+        var answer = ChangeAsync(send, ct, timeout + RecordAbortGrace);
+        await Task.WhenAny(answer, Task.Delay(timeout, ct));
+        // Out of time, or stopped: asked to stop, the job puts Bitwig back and answers. Harmless when none is running.
+        if (!answer.IsCompletedSuccessfully) await AbortRecordingAsync();
+        return Parse<BitwigRecorded>(await answer);
+    }
+
+    /// <summary>
+    /// Asks the record job to stop (recordabort; the Java extension 3.9), whatever project is in front. With its own project
+    /// in front, it then turns record off, stops Bitwig and puts everything back; with another, it has already answered
+    /// "abandoned" and left Bitwig as it was. Whether one was running; false when the link couldn't be asked.
+    /// </summary>
+    public async Task<bool> AbortRecordingAsync()
+    {
+        try
+        {
+            using var quick = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var answer = await RequestAsync(new() { ["cmd"] = "recordabort" }, quick.Token);
+            return answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("running", out var running) && running.ValueKind == JsonValueKind.True;
+        }
+        catch (Exception e) when (e is DawLinkException or OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A probe, for the live tests only (the Java extension 3.9): runs Bitwig's panel commands (toggle_arranger, then the
+    /// focus actions of the clip launcher and the arranger) twice each, <paramref name="gap"/> milliseconds apart, by a route
+    /// (null for the extension's default: see <see cref="RunActionAsync"/>), and says whether each panel showed before and
+    /// after each go. A panel that shows and hides with them means Bitwig carried them out for the link. It switches to the
+    /// Arrange layout first, and shows or hides each panel as it was afterwards.
+    /// </summary>
+    public async Task<BitwigProbed> ProbeAsync(string? via = null, double? gap = null, CancellationToken ct = default)
+    {
+        var request = new JsonObject { ["cmd"] = "probe" };
+        if (via is not null) request["via"] = via;
+        if (gap is not null) request["gap"] = gap;
+        // Six goes, each a gap apart, and the waits for the layout and for each panel put back.
+        return Parse<BitwigProbed>(await ChangeAsync(request, ct, ChangeTimeout + TimeSpan.FromMilliseconds(6 * (gap ?? 1500))));
+    }
+
     async Task<BitwigInserted> InsertOnAsync(int track, bool atStart, JsonObject request, CancellationToken ct)
     {
         request["cmd"] = "insert";
@@ -609,7 +801,6 @@ public sealed class BitwigLink : IDisposable
         _ => throw new ArgumentException($"Bitwig can't insert {format} plugins by ID.", nameof(format)),
     };
 
-    sealed record NewTrack(int Index, string Name);
     sealed record AddedClip(int Slot);
 
     /// <summary>

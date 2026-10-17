@@ -1049,9 +1049,10 @@ public class ViewModelTests : IDisposable
         var user = Path.Combine(_root, "Bitwig Studio");
         var found = false;
         var answers = true;
-        Task<string> Check() => answers
-            ? Task.FromResult("Connected to Bitwig Studio 6.1.2, with “Night Drive” open.")
-            : Task.FromException<string>(new DawLinkException("Bitwig isn't answering."));
+        var ready = true;
+        Task<(string, bool)> Check() => answers
+            ? Task.FromResult(("Connected to Bitwig Studio 6.1.2, with “Night Drive” open.", ready))
+            : Task.FromException<(string, bool)>(new DawLinkException("Bitwig isn't answering."));
         var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.Bitwig(user), Check, found: () => found);
 
         Assert.Equal("Bitwig Studio: not found on this computer, so it was skipped.", await link.SetUpAsync());
@@ -1063,6 +1064,10 @@ public class ViewModelTests : IDisposable
         Assert.Equal("Installed the script. Connected to Bitwig Studio 6.1.2, with “Night Drive” open.", link.Result);
         Assert.Equal(ScriptState.Installed, DawScripts.Bitwig(user).State);
         Assert.StartsWith("Installed in ", link.Status);
+
+        // It answers, but says something's still to set up (the extension's MIDI ports, say).
+        ready = false;
+        Assert.Equal("Bitwig Studio: answering, but there's still something to set up. What's left is below.", await link.SetUpAsync());
 
         answers = false;
         Assert.Equal("Bitwig Studio: the script is in place, but Bitwig Studio isn't answering yet. What's left is below.",
@@ -1076,7 +1081,7 @@ public class ViewModelTests : IDisposable
         var user = Path.Combine(_root, "Bitwig Studio");
         var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.2");
         var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built),
-                                      () => Task.FromResult(""), found: () => true);
+                                      () => Task.FromResult(("", true)), found: () => true);
 
         await link.RefreshAsync();
         Assert.Equal("Not installed. Install puts in extension 3.2.", link.Status);
@@ -1114,7 +1119,7 @@ public class ViewModelTests : IDisposable
         var old = Path.Combine(user, "Controller Scripts", "Music Organiser");
         var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.4");
         var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built),
-                                      () => Task.FromResult("Connected to Bitwig Studio 6.1.3."), found: () => true);
+                                      () => Task.FromResult(("Connected to Bitwig Studio 6.1.3.", true)), found: () => true);
         Directory.CreateDirectory(old);
         File.WriteAllText(Path.Combine(old, "MusicOrganiser.control.js"), "// the script");
 
@@ -1406,6 +1411,77 @@ public class ViewModelTests : IDisposable
 
         midi.ClearPhrasesCommand.Execute(null);
         Assert.Equal(3, midi.Results.Count);
+    }
+
+    [Fact]
+    public async Task What_goes_with_this_plays_a_suggestion_on_top_looping_and_octaves_and_kinds_are_remembered()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        int[][] tune = [[69, 72, 76, 72], [65, 69, 72, 69], [67, 72, 76, 72], [67, 71, 74, 71]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Keys", Ppq = 96 };
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Keys Am.mid"), Core.Export.MidiWriter.Write(chords));
+        var lead = new Core.Parsers.MidiClip { Name = "Lead", Ppq = 96 };
+        // Saved two octaves low, an 8-bar tune (the 4 bars twice).
+        lead.Track("Lead").AddRange(tune.Concat(tune).SelectMany((b, i) => b.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96, 96, k - 24, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Lead melody.mid"), Core.Export.MidiWriter.Write(lead));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        var played = new List<string>();
+        ((HeadlessUi)Ui.Current).Player = () => new Recorder(played);
+
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        midi.Selected = midi.Results.Single(r => r.Title.Contains("Keys"));
+        midi.FitToSelectedCommand.Execute(null);
+        Assert.True(midi.IsPairing);
+        var melody = midi.Results.Single(r => r.Title.Contains("Lead"));
+        Assert.Equal(0, melody.Semitones);
+        Assert.Equal(2, melody.Octaves);   // up above the chords, where a melody sits
+        Assert.NotNull(melody.Fit!.Together);
+        Assert.Equal(8 * bar, melody.PairLength);   // 4 bars of chords twice under 8 bars of tune
+        Assert.Equal(8 * bar, melody.PairPartner!.End);
+        Assert.StartsWith("With Keys", melody.PairText);
+
+        // Its play button plays it on top of the chords; the card's Play button plays it alone.
+        midi.Selected = melody;
+        await melody.PlayCommand.ExecuteAsync(null);
+        Assert.EndsWith(":together", played[^1]);
+        Assert.True(melody.IsPlayingTogether);
+        await midi.PlaySelectedAloneCommand.ExecuteAsync(null);
+        Assert.False(played[^1].EndsWith(":together"));
+        Assert.True(melody.IsPlayingAlone);
+
+        // Looping is remembered.
+        midi.Loop = true;
+        Assert.Equal("1", _db.GetSetting(MidiBrowserViewModel.LoopKey));
+        Assert.Equal([0L, 4 * bar], MidiBrowserViewModel.Repeat([new Core.Parsers.NoteEvent(0, 96, 60, 100)], 4 * bar, 8 * bar).Select(n => n.Start));
+
+        // An octave you pick sticks, for every copy, after the app starts again too.
+        await melody.OctaveDownCommand.ExecuteAsync(null);
+        Assert.Equal(1, melody.Octaves);
+        Assert.True(melody.IsYourOctave);
+        Assert.Equal(melody.Entry.Phrase.Lowest + 12 + 0, melody.Channel.Lowest);
+        using (var again = new Core.Midi.MidiIndex(midi.Index.FilePath))
+            Assert.Equal(1, again.All().Single(p => p.Hash == melody.Entry.Phrase.Hash).YourOctave);
+
+        // The kind, in one click on the card.
+        await midi.SetRoleCommand.ExecuteAsync(Core.Midi.MidiRoles.Arp);
+        Assert.True(melody.RoleOptions.Single(o => o.Role == Core.Midi.MidiRoles.Arp).IsCurrent);
+        Assert.False(melody.RoleOptions.Single(o => o.Role == Core.Midi.MidiRoles.Melody).IsCurrent);
+
+        // Shuffle: a random order until the search changes.
+        midi.ClearFitCommand.Execute(null);
+        Assert.False(midi.IsPairing);
+        midi.SelectedRole = midi.RoleChips[0];
+        await midi.ShuffleCommand.ExecuteAsync(null);
+        Assert.True(midi.IsShuffled);
+        Assert.StartsWith("Shuffled", midi.ResultText);
+        midi.Search = "lead";
+        Assert.False(midi.IsShuffled);
     }
 
     [Fact]
