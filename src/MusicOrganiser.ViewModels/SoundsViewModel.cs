@@ -55,6 +55,11 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     [ObservableProperty] TypeCount? _selectedType;
     [ObservableProperty] int _loopFilter;   // 0 all, 1 one-shots, 2 loops
     [ObservableProperty] string _keyFilter = "Any key";
+    public const string AnyYear = "Any year";
+    /// <summary>Only sounds used in a project last saved in this year ("2019"), to see what you used when.</summary>
+    [ObservableProperty] string _yearFilter = AnyYear;
+    /// <summary>"Any year", then each year a project using one of your sounds was saved in, newest first.</summary>
+    [ObservableProperty] IReadOnlyList<string> _yearChoices = [AnyYear];
     [ObservableProperty] bool _compatibleKeys;
     [ObservableProperty] string _bpmFrom = "";
     [ObservableProperty] string _bpmTo = "";
@@ -148,9 +153,79 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _colourBy = db.GetSetting(GalaxyColourKey) is { } c && ColourChoices.Contains(c) ? c : "Type";
         _weights = LikedWeights.FromJson(db.GetSetting(LikedWeightsKey));
         _clock = Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), FollowPlayback);
-        Reload();
-        if (SampleFolders.Count > 0) _ = ScanAsync();
-        else if (IsGalaxy) _ = MapGalaxyIfNeeded();
+        _ = StartAsync();
+    }
+
+    /// <summary>The first load, in the background (it held the window up while the app opened), then a scan for new sounds.</summary>
+    async Task StartAsync()
+    {
+        await ReloadAsync();
+        WatchSampleFolders();
+        if (SampleFolders.Count > 0) await ScanAsync();
+        else if (IsGalaxy) await MapGalaxyIfNeeded();
+    }
+
+    /// <summary>Rediscover fills itself the first time it's opened, so it never greets you empty.</summary>
+    partial void OnTabIndexChanged(int value)
+    {
+        if (value == RediscoverTab && Rediscover.Suggestions.Count == 0 && !Rediscover.IsBusy && Org.Sounds.Count > 0)
+            Rediscover.ShuffleCommand.Execute(null);
+    }
+
+    public const int RediscoverTab = 1;
+
+    FolderWatch? _sampleWatch;
+    readonly HashSet<string> _changedSounds = new(StringComparer.OrdinalIgnoreCase);
+    bool _sampleFoldersOverflowed;
+
+    /// <summary>
+    /// How long the sample folders must be quiet before new sounds are listened to: a pack being unzipped or copied in
+    /// arrives as thousands of changes, and the sounds are taken in together once it's done.
+    /// </summary>
+    public static TimeSpan SampleWatchQuiet { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// While the app is open, the sample folders are watched: sounds added, changed or deleted there are taken in a
+    /// moment later, on their own, without walking 357,000 files again. Called again when Settings changes the folders.
+    /// </summary>
+    public void WatchSampleFolders()
+    {
+        _sampleWatch?.Dispose();
+        _sampleWatch = new FolderWatch(SampleFolders, AudioFile.CanRead, SampleFilesChanged, SampleWatchQuiet);
+    }
+
+    public void StopWatching() => _sampleWatch?.Dispose();
+
+    void SampleFilesChanged(FolderWatch.Changes changes)
+    {
+        _changedSounds.UnionWith(changes.Files);
+        _sampleFoldersOverflowed |= changes.Overflowed.Count > 0;
+        if (!IsBusy) _ = TakeInChangedSoundsAsync();   // otherwise once the job running now is done (see RunAsync)
+    }
+
+    /// <summary>Takes in what the sample folders' watcher saw change, or walks the folders when too much changed to name.</summary>
+    internal async Task TakeInChangedSoundsAsync()
+    {
+        if (_sampleFoldersOverflowed)
+        {
+            _sampleFoldersOverflowed = false;
+            _changedSounds.Clear();
+            await ScanAsync();
+            return;
+        }
+        if (_changedSounds.Count == 0) return;
+        var paths = _changedSounds.ToList();
+        _changedSounds.Clear();
+        var folders = SampleFolders;
+        var count = 0;
+        await RunAsync("Taking in new sounds", (p, ct) =>
+        {
+            count = Org.Update(paths, folders, p, ct);
+            if (_db.SampleIndexCount() > 0) _db.UpdateSampleIndex(paths);   // what Fix searches
+        },
+                       () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"{count:N0} new, changed or removed sounds"), always: false);
+        AppLog.Info("Watch", $"Sample folders: {count} sounds changed ({paths.Count} changes seen)");
+        if (count > 0) await MapGalaxyIfNeeded();
     }
 
     IReadOnlyList<string> SampleFolders => _db.GetList(Scanner.SampleFoldersKey);
@@ -166,10 +241,17 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// </summary>
     public async Task ReloadAsync()
     {
+        var version = ++_reloadVersion;
         var items = Org.Sounds;
-        try { Show(await UiWork.Run(() => LoadAll(items))); }
+        try
+        {
+            var loaded = await UiWork.Run(() => LoadAll(items));
+            if (version == _reloadVersion) Show(loaded);   // else a newer reload is on its way
+        }
         catch (Exception e) { Message = $"Couldn't reload the sounds: {e.Message}"; }
     }
+
+    int _reloadVersion;
 
     bool _showing;
 
@@ -204,6 +286,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _showing = true;   // the list is worked out once, just below
         try { SelectedType = TypeCounts.FirstOrDefault(t => t.Type == type) ?? TypeCounts[0]; }
         finally { _showing = false; }
+        UpdateYears();
         UpdateList();
         BuildStars();
         UpdateSummary();
@@ -240,7 +323,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             items[i].LikedShare = top > 0 ? liked[i] / top : 0;
         }
         UpdateSummary();
-        if (OnlyUnused) Refresh();
+        UpdateYears();
+        if (OnlyUnused || YearFilter != AnyYear) Refresh();
         else if (SortBy == MostLiked) ApplySort();
     }
 
@@ -299,6 +383,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         var type = SelectedType is { Type: var t } && t != "All sounds" ? t : null;
         var loops = LoopFilter;
         var unused = OnlyUnused;
+        int? year = int.TryParse(YearFilter, out var y) ? y : null;
         var favourites = OnlyFavourites;
         var tag = TagFilter;
         var key = KeyFilter != "Any key" ? MusicTheory.ParseKey(KeyFilter) : null;
@@ -313,6 +398,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             if (loops == 1 && s.IsLoop) return false;
             if (loops == 2 && !s.IsLoop) return false;
             if (unused && s.UsedIn > 0) return false;
+            if (year is { } yr && Array.BinarySearch(s.UsedInYears, yr) < 0) return false;
             if (favourites && !s.Favourite) return false;
             if (tag.Length > 0 && !s.Tags.Any(x => x.Equals(tag, StringComparison.OrdinalIgnoreCase))) return false;
             if (key is { } k)
@@ -506,6 +592,21 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     partial void OnBpmFromChanged(string value) => Refresh();
     partial void OnBpmToChanged(string value) => Refresh();
     partial void OnOnlyUnusedChanged(bool value) => Refresh();
+    partial void OnYearFilterChanged(string value)
+    {
+        if (value is null) YearFilter = AnyYear;   // the list of years was replaced under the box
+        else Refresh();
+    }
+
+    /// <summary>The years to choose from, from what your projects used; the chosen one stays if it's still there.</summary>
+    void UpdateYears()
+    {
+        var years = Items.SelectMany(s => s.UsedInYears).Distinct().OrderDescending().Select(y => y.ToString()).ToList();
+        if (years.SequenceEqual(YearChoices.Skip(1))) return;
+        var keep = YearFilter;
+        YearChoices = [AnyYear, .. years];
+        YearFilter = YearChoices.Contains(keep) ? keep : AnyYear;
+    }
     partial void OnOnlyFavouritesChanged(bool value) => Refresh();
     partial void OnTagFilterChanged(string value) => Refresh();
 
@@ -548,6 +649,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         CompatibleKeys = false;
         BpmFrom = BpmTo = "";
         OnlyUnused = OnlyFavourites = false;
+        YearFilter = AnyYear;
         TagFilter = "";
         Message = "";
         ApplySort();
@@ -759,6 +861,36 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if ((s ?? Selected) is { } x) Shell.Reveal(x.Path);
     }
 
+    /// <summary>
+    /// Puts the sound (or the selected one) into the project open in Bitwig, in a Sampler on a new track named after
+    /// it. Bitwig needs the Music Organiser extension with "Let the app make changes" on.
+    /// </summary>
+    [RelayCommand]
+    async Task ToBitwig(Sound? s)
+    {
+        if ((s ?? Selected) is not { } sound) return;
+        var card = Activities.Start($"Putting {sound.Name} into Bitwig", "On a Sampler, on a new track");
+        try
+        {
+            using var link = await BitwigLink.ConnectAsync();
+            var sent = await BitwigSend.SoundAsync(link, sound.Path, sound.Name);
+            if (sent.Problem is { } problem)
+            {
+                card.Fail($"{sound.Name} didn't go in cleanly", problem + ".");
+                Message = $"{problem}.";
+                return;
+            }
+            card.Finish($"{sound.Name} is in Bitwig", "On a Sampler, on a new track");
+            Record([sound], SoundEvent.Send);
+        }
+        catch (DawLinkException e) { card.Fail("Couldn't put it into Bitwig", e.Message); Message = e.Message; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            card.Fail("Couldn't put it into Bitwig", e.Message);
+            Message = $"Sending to Bitwig failed: {e.Message}";
+        }
+    }
+
     [RelayCommand]
     void Select(Sound? s)
     {
@@ -881,6 +1013,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             IsBusy = false;
             BusyPercent = 0;
             if (always || !ReferenceEquals(Items, Org.Sounds)) await ReloadAsync();
+            if (_changedSounds.Count > 0 || _sampleFoldersOverflowed) _ = TakeInChangedSoundsAsync();   // seen while this ran
         }
     }
 
@@ -1034,19 +1167,50 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     [ObservableProperty] IReadOnlyList<Suggestion> _suggestions = [];
     [ObservableProperty] IReadOnlyList<FolderUse> _folders = [];
     [ObservableProperty] string _intro = "";
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(ShuffleText))] bool _isBusy;
+    [ObservableProperty] string _emptyTitle = "Find sounds you've forgotten";
+    [ObservableProperty] string _emptyText = "Pick a type and how adventurous to be, then press Shuffle.";
+
+    public string ShuffleText => IsBusy ? "Shuffling…" : "Shuffle";
 
     [RelayCommand]
     async Task Shuffle()
     {
         var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, 30, Adventure, 0, IncludeRarelyUsed ? 1 : 0);
-        var suggesting = Task.Run(() => Core.Sounds.Rediscover.Suggest(parent.Org, o));
-        var folders = Task.Run(() => Core.Sounds.Rediscover.Folders(parent.Org).Take(40).ToList());
-        Suggestions = await suggesting;
-        Folders = await folders;
-        var used = parent.Org.Sounds.Count(s => s.UsedIn > 0);
-        Intro = used == 0
-            ? "None of your sounds show up in scanned projects yet, so these are a varied pick. Star favourites or scan your projects to teach it your taste."
-            : $"Learned from the {used:N0} sounds your projects use, plus your favourites and plays.";
+        var org = parent.Org;
+        IsBusy = true;
+        Intro = $"Looking through {org.Sounds.Count:N0} sounds…";
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            // The folders are quick: they show while the sounds are still being picked.
+            var suggesting = Task.Run(() => Core.Sounds.Rediscover.Suggest(org, o));
+            Folders = await Task.Run(() => Core.Sounds.Rediscover.Folders(org).Take(40).ToList());
+            Suggestions = await suggesting;
+            if (Suggestions.Count == 0)
+            {
+                EmptyTitle = "Nothing to suggest";
+                EmptyText = await Task.Run(() => Core.Sounds.Rediscover.WhyNothing(org, o));
+                Intro = "";
+            }
+            else
+            {
+                var used = org.Sounds.Count(s => s.UsedIn > 0);
+                Intro = used == 0
+                    ? "None of your sounds show up in scanned projects yet, so these are a varied pick. Star favourites or scan your projects to teach it your taste."
+                    : $"Learned from the {used:N0} sounds your projects use, plus your favourites and plays.";
+            }
+            AppLog.Info("Rediscover", $"{Suggestions.Count} suggestions from {org.Sounds.Count:N0} sounds in {clock.Elapsed.TotalSeconds:0.00} s");
+        }
+        catch (Exception e)
+        {
+            Suggestions = [];
+            EmptyTitle = "Couldn't pick sounds";
+            EmptyText = e.Message;
+            Intro = "";
+            AppLog.Info("Rediscover", $"Failed: {e}");
+        }
+        finally { IsBusy = false; }
     }
 }
 

@@ -45,11 +45,9 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     /// <summary>The song's working periods, newest first, each one's last save ready to open (the Open button's drop-down).</summary>
     public IReadOnlyList<RunChoice> RunChoices { get; }
     public bool HasRunChoices => RunChoices.Count > 1;
-    /// <summary>Whether the Open button's arrow has anything to offer: another app to open in, or older versions.</summary>
-    public bool HasOpenChoices => IsFlStudio || HasRunChoices;
-    public string OpenChoicesTip => HasRunChoices
-        ? $"Other ways to open it, and its {RunChoices.Count} versions: saves more than {SongVersions.RunGapMonths} months apart"
-        : "Other ways to open it";
+    public string OlderSavesTip => HasRunChoices
+        ? $"Open an older save: its {RunChoices.Count} versions (saves more than {SongVersions.RunGapMonths} months apart), or any save"
+        : "Open one of the older saves";
     /// <summary>"First made 2 Feb 2019 · saved 3 Aug 2024", or "Saved 3 Aug 2024" when it's all one day.</summary>
     public string DatesText => Item.Made.Date == Item.Modified.Date
         ? $"Saved {Item.Modified:d MMM yyyy}"
@@ -61,6 +59,27 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public string PluginHeader => $"Plugins ({Plugins.Count}{(Item.MissingPlugins > 0 ? $", {Item.MissingPlugins} missing" : "")})";
     public string SampleHeader => $"Samples ({Samples.Count}{(Item.MissingSamples > 0 ? $", {Item.MissingSamples} missing" : "")})";
 
+    /// <summary>Overview's line of counts ("12 plugins · 3 missing"), each opening its own tab.</summary>
+    public string PluginsCountText => CountOf(Plugins.Count, "plugin");
+    public string MissingPluginsText => Item.MissingPlugins > 0 ? $"{Item.MissingPlugins} missing" : "";
+    public string SamplesCountText => CountOf(Samples.Count, "sample");
+    public string MissingSamplesText => Item.MissingSamples > 0 ? $"{Item.MissingSamples} missing" : "";
+    public string SavesCountText => CountOf(Item.SaveCount, "save");
+    public string TracksCountText => CountOf(Tracks.Count, IsFlStudio ? "channel" : "track");
+    static string CountOf(int n, string thing) => n == 0 ? $"No {thing}s" : n == 1 ? $"1 {thing}" : $"{n:N0} {thing}s";
+
+    /// <summary>The line above the name: tempo and when it was made and saved.</summary>
+    public string HeaderFacts => string.Join(" · ", new[] { Item.TempoText.Length > 0 ? $"{Item.TempoText} BPM" : "", DatesText }.Where(t => t.Length > 0));
+
+    /// <summary>How much of Overview's height the arrangement keeps when Fix's list sits under it (the divider between them).</summary>
+    public const string ArrangementShareKey = "project_arrangement_share";
+    public double ArrangementShare
+    {
+        get => double.TryParse(_db.GetSetting(ArrangementShareKey), System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out var v) ? Math.Clamp(v, 0.15, 0.9) : 0.55;
+        set => _db.SetSetting(ArrangementShareKey, Math.Clamp(value, 0.15, 0.9).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     [ObservableProperty] string _message = "";
 
     public ProjectDetailViewModel(LibraryDb db, ProjectItem item, MainViewModel main)
@@ -70,6 +89,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         Item = item;
         Detail = db.Project(item.Id);
         var installed = db.InstalledNames();
+        _canSwapSerum = Detail is not null && ProjectFixer.CanSwapSerum(Detail, installed);
         Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p, installed)).ToList() ?? [];
         VisiblePlugins = Plugins;
         Samples = Detail?.Samples.Select(s => new SampleRow(db, s, item, this)).ToList() ?? [];
@@ -104,7 +124,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         {
             var players = await Task.Run(() => MidiChannel.Players(reader.ExtractChannels(Item.Path)));
             if (players.Count == 0) return;
-            foreach (var p in Plugins) p.Silent = p.IsInstrument && !players.Contains(p.Name);
+            foreach (var p in Plugins) p.Silent = p.IsInstrument && p.Installed && !players.Contains(p.Name);   // a missing one stays in sight
             SilentCount = Plugins.Count(p => p.Silent);
             ApplyPluginFilter();
         }
@@ -184,8 +204,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public bool IsFlStudio => Item.Daw == "FL Studio";
 
     /// <summary>
-    /// The big button (and Enter or a double-click in the list): open the project in its DAW, except FL Studio projects,
-    /// which go to Bitwig, since that's where Solomon takes them. Opening one in FL Studio is in the ⋯ menu.
+    /// The main Open button (and Enter or a double-click in the list): open the project in its DAW, except FL Studio projects,
+    /// which go to Bitwig, since that's where Solomon takes them. Open in FL Studio sits beside it.
     /// </summary>
     [RelayCommand]
     Task OpenMain()
@@ -197,8 +217,12 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
 
     public string OpenMainText => IsFlStudio ? "Open in Bitwig" : $"Open in {Item.Daw}";
     public string OpenMainTip => IsFlStudio
-        ? "Convert this FL Studio project into a Bitwig project and open it (Enter does the same in the list). Open in FL Studio is in the ⋯ menu."
+        ? "Convert this FL Studio project into a Bitwig project and open it (Enter does the same in the list)"
         : "Open the newest save in its DAW (Enter does the same in the list)";
+
+    /// <summary>Converts one of the song's older saves into a Bitwig project and opens it.</summary>
+    [RelayCommand]
+    Task OpenSaveInBitwig(ProjectSummary? save) => save is null ? Task.CompletedTask : ConvertForBitwig(save, save.Name);
 
     /// <summary>
     /// Converts an FL Studio project into a native Bitwig project and opens it in Bitwig. The first time,
@@ -206,6 +230,12 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     /// </summary>
     [RelayCommand]
     Task OpenInBitwig() => ConvertForBitwig(Item.Summary, Item.Name);
+
+    /// <summary>
+    /// The names of the Bitwig copies this app has opened since Bitwig was last seen closed. Bitwig can have several
+    /// projects open but only says which one is in front, and opening one it has open just brings that copy forward.
+    /// </summary>
+    static readonly HashSet<string> OpenedInBitwig = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Converts one save (the newest, or the last of an older run) and opens it in Bitwig.</summary>
     internal async Task ConvertForBitwig(ProjectSummary save, string name)
@@ -236,9 +266,19 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             var path = save.Path;
             var untilNextNote = _db.GetSetting(StepsUntilNextNoteKey) == "1";
             var upgrade = _db.GetSetting(UpgradeSynthsKey) == "1";
-            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade));
+            // A new convert saved over a copy Bitwig has open would look unchanged there, so it gets a fresh name.
+            var bitwig = _main.Live.State(DawState.Bitwig);
+            if (bitwig is { Running: false }) OpenedInBitwig.Clear();
+            var saveAs = Exporter.BitwigName(path, n => OpenedInBitwig.Contains(n) ||
+                                                        bitwig is { Answering: true } && bitwig.Project.Trim().Equals(n, StringComparison.OrdinalIgnoreCase));
+            var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade, saveAs));
             OpenWithBitwig(_db, file);
-            Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig." +
+            OpenedInBitwig.Add(saveAs);
+            var renamed = saveAs != Exporter.BitwigName(path, _ => false)
+                ? " It has a new name because Bitwig may still have an earlier convert open, and would show that one instead. " +
+                  "Close the old one without saving."
+                : "";
+            Message = $"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig.{renamed}" +
                       (leftOut.Count == 0 ? "" : $" Not carried over: {string.Join("; ", leftOut.Take(4))}" +
                                                  $"{(leftOut.Count > 4 ? $"; and {leftOut.Count - 4} more, listed in the notes saved next to it" : "")}.");
             card.Finish($"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig",
@@ -429,6 +469,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         _main.RefreshAll();
     }
 }
+
 
 public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p, IReadOnlySet<string> installed) : ObservableObject
 {

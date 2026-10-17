@@ -39,6 +39,25 @@ public partial class ProjectsView : UserControl
         _watched = Vm;
         if (_watched is not null) _watched.PropertyChanged += OnVmChanged;
         FillRowMenu();
+        if (Vm is { } vm) ShowPanelShare(vm.PanelShare);
+    }
+
+    ColumnDefinition ListColumn => Page.ColumnDefinitions[0];
+    ColumnDefinition PanelColumn => Page.ColumnDefinitions[2];
+
+    // The divider between the list and the song's panel: kept as a share of the width, so it suits any window size.
+    void ShowPanelShare(double share)
+    {
+        ListColumn.Width = new GridLength(1 - share, GridUnitType.Star);
+        PanelColumn.Width = new GridLength(share, GridUnitType.Star);
+    }
+
+    void OnSplitterMoved(object? sender, global::Avalonia.Input.VectorEventArgs e)
+    {
+        var (list, panel) = (ListColumn.ActualWidth, PanelColumn.ActualWidth);
+        if (Vm is not { } vm || list + panel <= 0) return;
+        vm.PanelShare = panel / (list + panel);
+        ShowPanelShare(vm.PanelShare);
     }
 
     void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

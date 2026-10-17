@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -36,6 +37,8 @@ public sealed class Sound
     public int UsedIn { get; set; }
     /// <summary>How many of <see cref="UsedIn"/> were saved in the last year.</summary>
     public int UsedInRecently { get; set; }
+    /// <summary>The years the projects using it were last saved in, earliest first.</summary>
+    public int[] UsedInYears { get; set; } = [];
     /// <summary>Its Most liked score (see <see cref="LikedWeights"/>), and that as a share of the most liked sound's, for its bar.</summary>
     public double Liked { get; set; }
     public double LikedShare { get; set; }
@@ -93,14 +96,28 @@ public sealed class SoundLibrary : IDisposable
             kind TEXT NOT NULL, at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS ix_sound_events ON sound_events(kind, at);
-        CREATE TABLE IF NOT EXISTS sound_map (
-            sound_id INTEGER PRIMARY KEY REFERENCES sounds(id) ON DELETE CASCADE,
-            x REAL NOT NULL, y REAL NOT NULL
+        CREATE TABLE IF NOT EXISTS sound_maps (
+            space TEXT NOT NULL,
+            sound_id INTEGER NOT NULL REFERENCES sounds(id) ON DELETE CASCADE,
+            x REAL NOT NULL, y REAL NOT NULL,
+            PRIMARY KEY (space, sound_id)
         );
+        """;
+
+    // The galaxy kept one map before each kind of placing had its own: it moves across under the kind it was made from.
+    const string MoveOldMap = """
+        INSERT OR IGNORE INTO sound_maps
+            SELECT COALESCE((SELECT value FROM settings WHERE key = 'galaxy_space'), 'features'), sound_id, x, y FROM sound_map;
+        DROP TABLE sound_map;
         """;
 
     readonly SqliteConnection _conn;
     readonly object _lock = new();
+    // Reads get connections of their own (the database is in WAL mode, so they never wait for a write): a page reading
+    // the library on the window's thread no longer stalls behind a scan's long write or a 357,000-row read.
+    readonly ConcurrentBag<SqliteConnection> _readers = [];
+    string? _readString;
+    volatile bool _disposed;
 
     public string FilePath { get; }
 
@@ -113,14 +130,22 @@ public sealed class SoundLibrary : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         _conn = new SqliteConnection($"Data Source={path}");
         _conn.Open();
+        _readString = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString();
         Exec(Schema);
+        if (Query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sound_map'", r => (string)r["name"]).Any())
+            Exec(MoveOldMap);
     }
 
     // Under the lock, so a query still running on a background task (say, Settings looking for the DAW scripts) finishes
     // first rather than having the connection closed under it.
     public void Dispose()
     {
-        lock (_lock) _conn.Dispose();
+        lock (_lock)
+        {
+            _disposed = true;
+            _conn.Dispose();
+            while (_readers.TryTake(out var r)) r.Dispose();
+        }
     }
 
     // ---- plumbing ----------------------------------------------------------------
@@ -134,9 +159,11 @@ public sealed class SoundLibrary : IDisposable
         }
     }
 
-    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args)
+    SqliteCommand Cmd(string sql, params (string Name, object? Value)[] args) => Cmd(_conn, sql, args);
+
+    static SqliteCommand Cmd(SqliteConnection conn, string sql, params (string Name, object? Value)[] args)
     {
-        var cmd = _conn.CreateCommand();
+        var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         foreach (var (n, v) in args) cmd.Parameters.AddWithValue(n, v ?? DBNull.Value);
         return cmd;
@@ -144,14 +171,34 @@ public sealed class SoundLibrary : IDisposable
 
     List<T> Query<T>(string sql, Func<SqliteDataReader, T> map, params (string, object?)[] args)
     {
-        lock (_lock)
+        // Inside a write on this thread: its own connection, which sees the rows it hasn't committed yet.
+        if (Monitor.IsEntered(_lock) || _readString is null)
+            lock (_lock) return Read(_conn, sql, map, args);
+        var reader = Reader();
+        try { return Read(reader, sql, map, args); }
+        finally
         {
-            using var cmd = Cmd(sql, args);
-            using var r = cmd.ExecuteReader();
-            var list = new List<T>();
-            while (r.Read()) list.Add(map(r));
-            return list;
+            if (_disposed) reader.Dispose();
+            else _readers.Add(reader);
         }
+    }
+
+    static List<T> Read<T>(SqliteConnection conn, string sql, Func<SqliteDataReader, T> map, (string, object?)[] args)
+    {
+        using var cmd = Cmd(conn, sql, args);
+        using var r = cmd.ExecuteReader();
+        var list = new List<T>();
+        while (r.Read()) list.Add(map(r));
+        return list;
+    }
+
+    SqliteConnection Reader()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_readers.TryTake(out var reader)) return reader;
+        reader = new SqliteConnection(_readString);
+        reader.Open();
+        return reader;
     }
 
     static string? StrOrNull(SqliteDataReader r, string col) => r[col] as string;
@@ -208,6 +255,29 @@ public sealed class SoundLibrary : IDisposable
     public void SetClap(long id, float[] v) => Exec("UPDATE sounds SET clap = $c WHERE id = $id", ("$c", ToBlob(v)), ("$id", id));
 
     /// <summary>Forgets samples that are no longer in your sample folders.</summary>
+    /// <summary>The size and modified time stored for one file, or null when it isn't in the library.</summary>
+    public (long Mtime, long Size)? KnownFile(string path) =>
+        Query("SELECT mtime, size FROM sounds WHERE path = $p", r => (Long(r, "mtime"), Long(r, "size")), ("$p", path))
+            .Select(t => ((long, long)?)t).FirstOrDefault();
+
+    /// <summary>Forgets these files (deleted or moved away); returns how many were in the library.</summary>
+    public int Remove(IEnumerable<string> paths)
+    {
+        var removed = 0;
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var path in paths)
+            {
+                using var cmd = Cmd("DELETE FROM sounds WHERE path = $p", ("$p", path));
+                cmd.Transaction = tx;
+                removed += cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        return removed;
+    }
+
     public int RemoveMissing(IReadOnlySet<string> present, Func<string, bool>? keep = null)
     {
         var gone = Query("SELECT id, path FROM sounds", r => ((long)r["id"], (string)r["path"]))
@@ -311,27 +381,32 @@ public sealed class SoundLibrary : IDisposable
         }
     }
 
-    /// <summary>Where each sound sits on the galaxy map (see <see cref="GalaxyMap"/>).</summary>
-    public Dictionary<long, StarPoint> Map() =>
-        Query("SELECT sound_id, x, y FROM sound_map", r => ((long)r["sound_id"], new StarPoint((float)(double)r["x"], (float)(double)r["y"])))
+    /// <summary>
+    /// Where each sound sits on the galaxy map (see <see cref="GalaxyMap"/>) when placed by <paramref name="space"/>
+    /// (see <see cref="SoundOrganiser.GalaxySpace"/>). Each kind of placing keeps its own map, so switching back to
+    /// one is instant.
+    /// </summary>
+    public Dictionary<long, StarPoint> Map(string space) =>
+        Query("SELECT sound_id, x, y FROM sound_maps WHERE space = $s",
+              r => ((long)r["sound_id"], new StarPoint((float)(double)r["x"], (float)(double)r["y"])), ("$s", space))
             .ToDictionary(t => t.Item1, t => t.Item2);
 
-    /// <summary>Saves galaxy positions; <paramref name="replace"/> throws the old map away first (a fresh layout).</summary>
-    public void SaveMap(IReadOnlyDictionary<long, StarPoint> points, bool replace)
+    /// <summary>Saves galaxy positions for one kind of placing; <paramref name="replace"/> throws its old map away first (a fresh layout).</summary>
+    public void SaveMap(string space, IReadOnlyDictionary<long, StarPoint> points, bool replace)
     {
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
             if (replace)
             {
-                using var clear = Cmd("DELETE FROM sound_map");
+                using var clear = Cmd("DELETE FROM sound_maps WHERE space = $s", ("$s", space));
                 clear.Transaction = tx;
                 clear.ExecuteNonQuery();
             }
             foreach (var (id, p) in points)
             {
-                using var cmd = Cmd("INSERT OR REPLACE INTO sound_map SELECT $id, $x, $y WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $id)",
-                                    ("$id", id), ("$x", (double)p.X), ("$y", (double)p.Y));
+                using var cmd = Cmd("INSERT OR REPLACE INTO sound_maps SELECT $s, $id, $x, $y WHERE EXISTS (SELECT 1 FROM sounds WHERE id = $id)",
+                                    ("$s", space), ("$id", id), ("$x", (double)p.X), ("$y", (double)p.Y));
                 cmd.Transaction = tx;
                 cmd.ExecuteNonQuery();
             }

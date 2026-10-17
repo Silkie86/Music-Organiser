@@ -406,6 +406,13 @@ public class LearningTests
         Assert.Equal(5, picks.Count);
         Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
         Assert.All(picks, p => Assert.Equal("Kick", p.Sound.Type));
+        // When there's nothing to suggest, the page says why.
+        Assert.Empty(Rediscover.Suggest(org, new Rediscover.Options(Type: "Ride")));
+        Assert.StartsWith("No sounds are sorted as Ride", Rediscover.WhyNothing(org, new Rediscover.Options(Type: "Ride")));
+        org.ApplyUsage(org.Sounds.Select(s => (s.Path, 1)).ToList());
+        Assert.Empty(Rediscover.Suggest(org, new Rediscover.Options(Type: "Kick")));
+        Assert.Contains("Include", Rediscover.WhyNothing(org, new Rediscover.Options(Type: "Kick")));
+        org.ApplyUsage([(Path.Combine(samples, "Pack A", "Kicks", "Kick 00.wav"), 3), ("Kick 01.wav", 2), ("Kick 02.wav", 1)]);
 
         // Kits: each pad gets its type, locks hold, the export is written.
         var slots = KitBuilder.DefaultDrumKit().Take(4).ToList();
@@ -519,6 +526,47 @@ public class LearningTests
     }
 }
 
+public class GalaxySavedMapTests
+{
+    [Fact]
+    public void Each_kind_of_placing_keeps_its_own_map_and_an_old_single_map_moves_across()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-maps-").FullName;
+        var path = Path.Combine(root, "sounds.db");
+        long a, b;
+        using (var lib = new SoundLibrary(path))
+        {
+            lib.Save(new[] { "/lib/A.wav", "/lib/B.wav" }.Select(p => new SoundLibrary.Analysed(p, 1, 1,
+                new SoundAnalysis { Features = [1, 0, 0] }, null, null, "Kick")));
+            var ids = lib.All().ToDictionary(s => s.Name, s => s.Id);
+            (a, b) = (ids["A"], ids["B"]);
+            lib.SaveMap("clap", new Dictionary<long, StarPoint> { [a] = new(0.1f, 0.2f), [b] = new(0.3f, 0.4f) }, replace: true);
+            lib.SaveMap("features", new Dictionary<long, StarPoint> { [a] = new(0.9f, 0.8f) }, replace: true);
+            // A fresh layout of one kind leaves the other's alone.
+            lib.SaveMap("features", new Dictionary<long, StarPoint> { [b] = new(0.5f, 0.5f) }, replace: true);
+            Assert.Equal(new StarPoint(0.1f, 0.2f), lib.Map("clap")[a]);
+            Assert.Equal([b], lib.Map("features").Keys);
+            Assert.Empty(lib.Map("clap+features"));
+
+            // A library from before: one map, made by the kind the old setting names.
+            lib.SetSetting("galaxy_space", "clap+features");
+        }
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"CREATE TABLE sound_map (sound_id INTEGER PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL); INSERT INTO sound_map VALUES ({a}, 0.25, 0.75);";
+            cmd.ExecuteNonQuery();
+        }
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        using (var lib = new SoundLibrary(path))
+        {
+            Assert.Equal(new StarPoint(0.25f, 0.75f), lib.Map("clap+features")[a]);
+            Assert.Equal(2, lib.Map("clap").Count);
+        }
+    }
+}
+
 public class GalaxyMapTests
 {
     // Three families of 20 sounds (kicks, hats, pads), each a noisy copy of its own fingerprint.
@@ -575,5 +623,53 @@ public class GalaxyMapTests
         var (hx, hy) = (hats.Average(k => k.Value.X), hats.Average(k => k.Value.Y));
         var p = placed[100];
         Assert.True(Math.Abs(p.X - kx) + Math.Abs(p.Y - ky) < Math.Abs(p.X - hx) + Math.Abs(p.Y - hy));
+    }
+}
+
+public class SoundUsageTests
+{
+    [Fact]
+    public void A_file_name_many_packs_share_gets_no_credit_from_projects_that_store_only_the_name()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-usage-").FullName;
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        var paths = new[] { "/lib/Pack A/01.wav", "/lib/Pack B/01.wav", "/lib/Pack C/Snare Tight.wav" };
+        lib.Save(paths.Select(p => new SoundLibrary.Analysed(p, 1, 1,
+            new SoundAnalysis { Seconds = 0.5, Features = new float[40] }, null, null, "Kick")));
+        using var org = new SoundOrganiser(lib);
+
+        // A Bitwig project's collected copies are listed by name only.
+        org.ApplyUsage([("01.wav", 40), ("Snare Tight.wav", 2), ("/lib/Pack B/01.wav", 3)]);
+
+        int Used(string path) => org.Sounds.Single(s => s.Path == path).UsedIn;
+        Assert.Equal(0, Used("/lib/Pack A/01.wav"));   // which "01.wav" those 40 projects used can't be told
+        Assert.Equal(3, Used("/lib/Pack B/01.wav"));   // a full path still counts
+        Assert.Equal(2, Used("/lib/Pack C/Snare Tight.wav"));   // a name only one sound has still counts
+    }
+}
+
+public class RediscoverScaleTests
+{
+    [Fact]
+    public void Shuffle_picks_from_a_library_of_a_hundred_thousand_sounds_in_a_moment()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-rediscover-").FullName;
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        var rng = new Random(7);
+        lib.Save(Enumerable.Range(0, 100_000).Select(i => new SoundLibrary.Analysed($"/lib/Pack {i / 500}/Kick {i}.wav", 1, 1,
+            new SoundAnalysis { Seconds = 0.5, Features = Enumerable.Range(0, 40).Select(_ => (float)rng.NextDouble()).ToArray() },
+            null, null, "Kick")));
+        using var org = new SoundOrganiser(lib);
+        org.ApplyUsage(Enumerable.Range(0, 300).Select(i => ($"/lib/Pack {i / 500}/Kick {i}.wav", 2)).ToList());
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var picks = Rediscover.Suggest(org, new Rediscover.Options(Count: 30, Seed: 1));
+        var folders = Rediscover.Folders(org);
+        clock.Stop();
+
+        Assert.Equal(30, picks.Count);
+        Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
+        Assert.Equal(200, folders.Count);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"Took {clock.Elapsed.TotalSeconds:0.0} s");
     }
 }

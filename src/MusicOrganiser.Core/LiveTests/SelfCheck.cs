@@ -177,7 +177,8 @@ public static class SelfCheck
         var loadMs = watch.Elapsed.TotalMilliseconds;
         ct.ThrowIfCancellationRequested();
         watch.Restart();
-        var map = sounds.Map();
+        // Each galaxy "Placed by" keeps its own saved map: time the fullest one.
+        var map = new[] { "clap+features", "clap", "features" }.Select(sounds.Map).FirstOrDefault(m => m.Count > 0) ?? new();
         var mapMs = watch.Elapsed.TotalMilliseconds;
         watch.Restart();
         // A search as the search box makes one: every sound's name against a word.

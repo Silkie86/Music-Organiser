@@ -52,6 +52,12 @@ public class LibraryTests : IDisposable
         Assert.Equal(found.Order(StringComparer.OrdinalIgnoreCase), found);
         Assert.Subset(found.ToHashSet(), expected.ToHashSet());
         Assert.DoesNotContain(found, f => f.Contains("auto-backups") || f.Contains("(autosave)"));
+        // The size and modified time come with the folder listing, the same as asking for each file.
+        Assert.All(Scanner.FindProjectStamps([_root]), f =>
+        {
+            var fi = new FileInfo(f.Path);
+            Assert.Equal((fi.Length, new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds()), (f.Size, f.Mtime));
+        });
 
         new Scanner(_db).ScanProjects();
         var paths = _db.Projects().Select(p => p.Path).ToHashSet();
@@ -171,6 +177,8 @@ public class LibraryTests : IDisposable
     [InlineData("a_2_3", "a_2", 3)]
     [InlineData("130", "130", 1)]
     [InlineData("_5", "_5", 1)]
+    [InlineData("civil war_5 (fixed)", "civil war", 5)]   // Fix's copy sits with the save it was made from
+    [InlineData("Didums (Fixed 2)", "Didums", 1)]
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
 
@@ -330,9 +338,10 @@ public class LibraryTests : IDisposable
         var fl = _db.Project(_db.Projects().First(x => x.Daw == "FL Studio").Id)!;
         var missing = fl.Samples.Single(s => !s.Found);
         var matches = MatchFinder.ForSample(_db, missing.Path);
-        Assert.Equal(("Same file name", 1.0), (matches[0].Reason, matches[0].Score));
+        // The project looked in a "Drums" folder too, which counts in their favour.
+        Assert.Equal(("Same file name, in matching folders", 1.0), (matches[0].Reason, matches[0].Score));
         Assert.EndsWith("Kick 01.wav", matches[0].Candidate);
-        Assert.Contains(matches, m => m.Candidate.EndsWith("Kick 02.wav") && m.Reason == "Similar name");
+        Assert.Contains(matches, m => m.Candidate.EndsWith("Kick 02.wav") && m.Reason == "Similar name, in matching folders");
         Assert.DoesNotContain(matches, m => m.Candidate.EndsWith("Hat.wav"));
         Assert.Contains("Kick%2001.wav", MatchFinder.SampleSearchUrl(missing.Path));
     }
@@ -357,5 +366,24 @@ public class LibraryTests : IDisposable
         Assert.True(File.Exists(Path.Combine(midi.Folder, "01 Lead (Serum).mid")));
         var presets = Exporter.Presets(Readers.FlStudio, flp, outRoot);
         Assert.Contains("Serum - Lead.fxp", presets.Files);
+    }
+
+    [Fact]
+    public void The_same_plugins_and_sample_files_again_change_nothing()
+    {
+        _db.ReplaceInstalledPlugins(["Serum", "Vital"]);
+        _db.ReplaceSampleIndex(["/s/Kick.wav", "/s/Snare.wav"]);
+        var before = (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision);
+
+        _db.ReplaceInstalledPlugins(["Vital", "Serum"]);
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Kick.wav"]);
+        Assert.Equal(before, (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision));
+
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Hat.wav"]);
+        Assert.Equal(before.SampleIndexRevision + 1, _db.SampleIndexRevision);
+        Assert.Equal(["/s/Hat.wav", "/s/Snare.wav"], _db.SampleIndex().Select(s => s.Path).Order());
+        _db.ReplaceInstalledPlugins(["Vital"]);
+        Assert.Equal(before.PluginsRevision + 1, _db.PluginsRevision);
+        Assert.Equal(["Vital"], _db.InstalledNames());
     }
 }

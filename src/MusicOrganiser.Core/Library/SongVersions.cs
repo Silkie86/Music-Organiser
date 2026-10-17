@@ -30,9 +30,17 @@ public static partial class SongVersions
     [GeneratedRegex(@"^(.+?)_(\d{1,4})$")]
     private static partial Regex Numbered();
 
-    /// <summary>"Didums_70" → ("Didums", 70); "Didums" → ("Didums", 1).</summary>
+    /// <summary>Fix's copies: "Didums_70 (fixed)", "Didums_70 (fixed 2)".</summary>
+    [GeneratedRegex(@"\s*\(fixed(\s+\d+)?\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex FixedTail();
+
+    /// <summary>
+    /// "Didums_70" → ("Didums", 70); "Didums" → ("Didums", 1). A fixed copy counts as the save it was made from:
+    /// "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves.
+    /// </summary>
     public static (string Song, int Number) Split(string name)
     {
+        name = FixedTail().Replace(name, "");
         var m = Numbered().Match(name);
         return m.Success && m.Groups[1].Value.Trim().Length > 0
             ? (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Value))
@@ -113,6 +121,7 @@ public static partial class SongVersions
                 var ordered = g.OrderBy(p => p.FileMissing)
                                .ThenByDescending(p => Split(p.Name).Number)
                                .ThenByDescending(p => p.Modified)
+                               .ThenByDescending(p => FixedTail().IsMatch(p.Name))   // saved the same second: the fix came after
                                .ToList();
                 return new SongGroup(Split(ordered[0].Name).Song, ordered[0], ordered.Skip(1).ToList());
             })

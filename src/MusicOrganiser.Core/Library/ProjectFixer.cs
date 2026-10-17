@@ -1,4 +1,5 @@
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 
 namespace MusicOrganiser.Core.Library;
 
@@ -14,21 +15,29 @@ public enum FixAction
 }
 
 /// <summary>
-/// One line of Fix's preview. <paramref name="Use"/> is the file or plugin it would use instead. Only samples are ever
-/// written into the fixed copy; plugin swaps are listed for you to make in the DAW, since a newer version may not take
-/// the old one's settings.
+/// One line of Fix's preview. <paramref name="Use"/> is the file or plugin it would use instead. Samples are written
+/// into the fixed copy, and Serum swapped for Serum 2 (<see cref="IsSwap"/>), whose sound the app can translate; other
+/// plugin swaps are listed for you to make in the DAW, since a newer version may not take the old one's settings.
 /// </summary>
 public sealed record FixLine(bool IsSample, string Missing, FixAction Action, string? Use, string Note)
 {
+    /// <summary>A plugin the fixed copy swaps for <see cref="Use"/>, with its sound translated (Serum for Serum 2).</summary>
+    public bool IsSwap { get; init; }
+    /// <summary>The other files it could use instead of <see cref="Use"/> (Use first), best first.</summary>
+    public IReadOnlyList<string> Choices { get; init; } = Use is null ? [] : [Use];
     /// <summary>The file name or plugin name, for the line's title.</summary>
     public string Name => IsSample ? Missing.Split('\\', '/')[^1] : Missing;
-    /// <summary>Whether the fixed copy can use <see cref="Use"/>: only a sample, and only when there's one.</summary>
-    public bool CanWrite => IsSample && Use is not null && Action != FixAction.StillMissing;
+    /// <summary>Whether the fixed copy can use <see cref="Use"/>: a sample, when there's one, or a plugin swap.</summary>
+    public bool CanWrite => IsSwap || IsSample && Use is not null && Action != FixAction.StillMissing;
 }
+
+/// <summary>What <see cref="ProjectFixer.Write"/> did: where the fixed copy went, how many samples it relinked and
+/// plugins it swapped, and anything to tell you about the swaps.</summary>
+public sealed record FixResult(string Path, int Relinked, int Swapped, IReadOnlyList<string> Notes);
 
 /// <summary>
 /// Fix: repairs what it can of a project's missing samples into a new file next to the original
-/// ("Didums_77 (fixed).flp"). The original is never changed.
+/// ("Didums_77 (fixed).flp"), and can swap Serum for Serum 2 in it. The original is never changed.
 /// </summary>
 public static class ProjectFixer
 {
@@ -48,21 +57,50 @@ public static class ProjectFixer
             lines.Add(indexed ? ForSample(db, s.Path) : new FixLine(true, s.Path, FixAction.StillMissing, null, why));
 
         var installed = db.InstalledNames();
-        foreach (var p in project.Plugins.Where(p => !p.Installed))
+        var swap = SerumSwap(project, installed);
+        if (swap is not null) lines.Add(swap);
+        foreach (var p in project.Plugins.Where(p => !p.Installed && !(swap is not null && IsSerum1(p.Name))))
             lines.Add(ForPlugin(db, p.Name, installed));
         return lines;
     }
 
+    /// <summary>Whether Fix can swap this project's Serum for Serum 2: an FL Studio or Bitwig project with Serum in it, and Serum 2 installed.</summary>
+    public static bool CanSwapSerum(ProjectDetail project, IReadOnlySet<string> installed) => SerumSwap(project, installed) is not null;
+
+    static FixLine? SerumSwap(ProjectDetail project, IReadOnlySet<string> installed)
+    {
+        if (!CanWrite(project.Summary.Path) || !installed.Any(IsSerum2) || project.Plugins.FirstOrDefault(p => IsSerum1(p.Name)) is not { } serum)
+            return null;
+        // Serum 1 missing: the swap is the fix, so it's ticked. Installed: it's yours to choose.
+        return new FixLine(false, serum.Name, serum.Installed ? FixAction.Suggestion : FixAction.Relink, "Serum 2",
+            "Tick it to swap in Serum 2 with Serum's sound translated. Some settings only come across roughly; "
+            + "automation of Serum's knobs is left out.") { IsSwap = true };
+    }
+
+    /// <summary>The original Serum (not Serum 2 or Serum FX), by any of the names DAWs give it.</summary>
+    static bool IsSerum1(string name) => IsSerumSynth(name) && !name.Contains('2');
+
+    /// <summary>Serum 2, as "Serum 2" or "Serum2".</summary>
+    static bool IsSerum2(string name) => IsSerumSynth(name) && name.Contains('2');
+
+    static bool IsSerumSynth(string name) =>
+        PluginCatalog.Family(name) == "serum" && !name.Contains("FX", StringComparison.OrdinalIgnoreCase);
+
     static FixLine ForSample(LibraryDb db, string path)
     {
-        var matches = MatchFinder.ForSample(db, path, 6).Where(m => File.Exists(m.Candidate)).ToList();
+        var matches = MatchFinder.ForSample(db, path, 8).Where(m => File.Exists(m.Candidate)).ToList();
+        var choices = matches.Select(m => m.Candidate).ToList();
         var same = matches.Where(m => m.Score >= 1).ToList();
         if (same.Count > 0)
-            return new FixLine(true, path, FixAction.Relink, same[0].Candidate,
-                same.Count == 1 ? "Found with the same name" : $"Found with the same name ({same.Count} copies; using the first)");
+            return new FixLine(true, path, FixAction.Relink, same[0].Candidate, same.Count == 1
+                ? "Found with the same name"
+                : same[0].Folders > 0
+                    ? $"Found with the same name: {same.Count} copies, using the one in the most similar folders"
+                    : $"Found with the same name: {same.Count} copies, using the first") { Choices = choices };
         if (matches.FirstOrDefault() is { } best)
-            return new FixLine(true, path, FixAction.Suggestion, best.Candidate,
-                $"Not found, but this one has a similar name ({best.Score:P0}). Tick it to use it.");
+            return new FixLine(true, path, FixAction.Suggestion, best.Candidate, best.Folders > 0
+                ? $"Not found, but this one has a similar name ({best.Score:P0}) in matching folders. Tick it to use it."
+                : $"Not found, but this one has a similar name ({best.Score:P0}). Tick it to use it.") { Choices = choices };
         return new FixLine(true, path, FixAction.StillMissing, null, "Not found in your sample folders.");
     }
 
@@ -91,24 +129,47 @@ public static class ProjectFixer
     }
 
     /// <summary>
-    /// Writes the fixed copy with the given samples relinked (missing path → file to use) and checks it reads back.
-    /// Returns where it went and how many references changed. The original file is only read.
+    /// Writes the fixed copy with the given samples relinked (missing path → file to use) and Serum swapped for
+    /// Serum 2 if that's ticked, and checks it reads back. The original file is only read.
     /// </summary>
-    public static (string Path, int Changed) Write(string projectPath, IEnumerable<FixLine> use)
+    /// <param name="serumAudio">Finds Serum's wavetables for the swap; Serum's own folders unless given.</param>
+    public static FixResult Write(string projectPath, IEnumerable<FixLine> use, Func<string, Serum1To2.AudioInfo?>? serumAudio = null)
     {
+        var lines = use.Where(l => l.CanWrite).ToList();
         var relink = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var line in use.Where(l => l.CanWrite)) relink[line.Missing] = line.Use!;
-        if (relink.Count == 0) throw new InvalidOperationException("There's nothing to relink.");
+        foreach (var line in lines.Where(l => l.IsSample)) relink[line.Missing] = line.Use!;
+        var swap = lines.Any(l => l.IsSwap);
+        if (relink.Count == 0 && !swap) throw new InvalidOperationException("There's nothing to relink.");
 
-        var raw = File.ReadAllBytes(projectPath);
-        var (data, changed) = Path.GetExtension(projectPath).ToLowerInvariant() switch
+        var data = File.ReadAllBytes(projectPath);
+        var changed = 0;
+        var kind = Path.GetExtension(projectPath).ToLowerInvariant();
+        if (relink.Count > 0)
         {
-            ".flp" => FlStudioReader.RelinkSamples(raw, projectPath, relink),
-            ".bwproject" => BitwigReader.RelinkSamples(raw, projectPath, relink)
-                            ?? throw new InvalidDataException("This Bitwig project couldn't be read fully enough to write a fixed copy."),
-            _ => throw new NotSupportedException("Fix can only write FL Studio and Bitwig projects so far."),
-        };
-        if (changed == 0) throw new InvalidDataException("None of the missing samples could be found inside the project file.");
+            (data, changed) = kind switch
+            {
+                ".flp" => FlStudioReader.RelinkSamples(data, projectPath, relink),
+                ".bwproject" => BitwigReader.RelinkSamples(data, projectPath, relink)
+                                ?? throw new InvalidDataException("This Bitwig project couldn't be read fully enough to write a fixed copy."),
+                _ => throw new NotSupportedException("Fix can only write FL Studio and Bitwig projects so far."),
+            };
+            if (changed == 0) throw new InvalidDataException("None of the missing samples could be found inside the project file.");
+        }
+        var swapped = 0;
+        IReadOnlyList<string> notes = [];
+        if (swap)
+        {
+            serumAudio ??= Serum1To2.XferAudio();
+            var result = kind switch
+            {
+                ".flp" => FlStudioReader.SwapSerum(data, Serum2Path(), serumAudio),
+                ".bwproject" => BitwigReader.SwapSerum(data, Serum2Path(), serumAudio)
+                                ?? throw new InvalidDataException("This Bitwig project couldn't be read fully enough to write a fixed copy."),
+                _ => throw new NotSupportedException("Fix can only swap Serum for Serum 2 in FL Studio and Bitwig projects."),
+            };
+            if (result.Swapped == 0) throw new InvalidDataException(result.Notes.FirstOrDefault() ?? "No Serum was found inside the project file.");
+            (data, swapped, notes) = (result.Data, result.Swapped, kind == ".flp" ? [.. result.Notes, .. FlAutomationNote(projectPath)] : result.Notes);
+        }
 
         var target = FixedPath(projectPath);
         using (var f = new FileStream(target, FileMode.CreateNew)) f.Write(data);
@@ -122,6 +183,34 @@ public static class ProjectFixer
             File.Delete(target);
             throw;
         }
-        return (target, changed);
+        return new FixResult(target, changed, swapped, notes);
+    }
+
+    /// <summary>
+    /// FL's automation of a plugin names its setting by number, and Serum 2's numbers are other knobs, so automation
+    /// of Serum's knobs would move the wrong ones. It's left for you to redo, with a note.
+    /// </summary>
+    static IEnumerable<string> FlAutomationNote(string projectPath)
+    {
+        FlSong song;
+        try { song = Readers.FlStudio.ReadSong(projectPath); }
+        catch (InvalidDataException) { yield break; }
+        var serum = song.Channels.Where(c => c.Instrument is { } i && IsSerum1(i.Name)).Select(c => c.Index).ToHashSet();
+        var clips = song.Automation.Count(a => a.Control == FlControl.PluginParameter && serum.Contains(a.Channel));
+        if (clips > 0)
+            yield return $"{clips} automation clip{(clips == 1 ? "" : "s")} of Serum's knobs now move other knobs of Serum 2: redo or delete them.";
+    }
+
+    /// <summary>Where Serum 2's VST3 is: the usual place, else wherever it is in the VST3 folder.</summary>
+    static string Serum2Path()
+    {
+        const string usual = @"C:\Program Files\Common Files\VST3\Serum2.vst3\Contents\x86_64-win\Serum2.vst3";
+        if (!OperatingSystem.IsWindows() || File.Exists(usual)) return usual;
+        var vst3 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles), "VST3");
+        try
+        {
+            return Directory.Exists(vst3) ? Directory.EnumerateFiles(vst3, "Serum2.vst3", SearchOption.AllDirectories).FirstOrDefault() ?? usual : usual;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return usual; }
     }
 }

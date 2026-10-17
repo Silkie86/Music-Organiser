@@ -49,16 +49,19 @@ public sealed partial class LibraryDb
             }
             tx.Commit();
         }
+        PluginsChanged();
     }
 
     /// <summary>
     /// Replaces one plugin's stored line, e.g. once its parameters have been read. A line without parameters (why
     /// the plugin couldn't be loaded) never replaces one that has them, read meanwhile by another try.
     /// </summary>
-    public void SaveScannedPlugin(ScannedPlugin p) =>
-        Exec("UPDATE scanned_plugins SET json = $j WHERE path = $p AND id = $i" +
+    public void SaveScannedPlugin(ScannedPlugin p)
+    {
+        if (Exec("UPDATE scanned_plugins SET json = $j WHERE path = $p AND id = $i" +
              (p.Params is null ? " AND CASE WHEN json_valid(json) THEN coalesce(json_type(json, '$.params'), '') != 'array' ELSE 1 END" : ""),
-             ("$j", p.Json), ("$p", p.Path), ("$i", p.Id));
+             ("$j", p.Json), ("$p", p.Path), ("$i", p.Id)) > 0) PluginsChanged();
+    }
 
     // Still to read: no parameters yet, and no note that the scanner couldn't load it.
     const string ParametersToRead = """
@@ -99,6 +102,7 @@ public sealed partial class LibraryDb
                 }
             tx.Commit();
         }
+        PluginsChanged();
     }
 
     /// <summary>The names of every plugin found inside the plugin files (each one in a Waves shell, say).</summary>

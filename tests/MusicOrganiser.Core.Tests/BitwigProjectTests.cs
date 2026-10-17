@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 using static MusicOrganiser.Core.Parsers.BitwigFormat;
 
 namespace MusicOrganiser.Core.Tests;
@@ -148,6 +149,36 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void A_swapped_Serum_gets_its_sound_translated_for_Serum_2()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var channels = song.Channels.ToList();
+        var serum1 = channels[1].Instrument! with { State = new PresetBlob("Serum", "Serum", ".fxp", Fxp.WrapChunk(SerumTests.Serum1(), "Serum")) };
+        channels[1] = channels[1] with { Instrument = serum1 };
+        var result = BitwigProject.FromFl(song with { Channels = channels }, Fixtures.BitwigTemplate(), Snare, upgrade: true, serumAudio: _ => null);
+        var doc = Decode(result.Bytes);
+
+        // Serum 2 gets a VST3 preset whose component state is the translated sound.
+        var track = doc.Root!.Obj(0x4dd)!.List(0x4de).Single(t => t.Str(0x15b) == "Serum");
+        var serum2 = Def(Chain(track).Last());
+        Assert.EndsWith(".vstpreset", serum2.Str(0xbe5));
+        using var zip = doc.OpenZip()!;
+        using var file = new MemoryStream();
+        using (var entry = zip.GetEntry($"plugin-states/{serum2.Str(0xbe5)}")!.Open()) entry.CopyTo(file);
+        var preset = file.ToArray();
+        Assert.Equal("VST3" + serum2[0xce4], System.Text.Encoding.ASCII.GetString(preset, 0, 4) + System.Text.Encoding.ASCII.GetString(preset, 8, 32));
+        var listAt = (int)BitConverter.ToInt64(preset, 40);   // the component state, then an empty controller state
+        var sound = Serum2State.Read(preset.AsSpan(48, listAt - 48))!;
+        Assert.Equal(1.0, sound.Settings["Global0"]!["plainParams"]!["kParamS1Compatibility"]!.GetValue<double>());
+        Assert.Equal(0.4809 * 0.4809, sound.Settings["Oscillator0"]!["plainParams"]!["kParamVolume"]!.GetValue<double>(), 4);
+
+        Assert.Contains(result.Notes, n => n.StartsWith("Serum: Serum swapped for Serum 2, with its sound translated") &&
+                                           n.Contains("\"Serum (Serum)\""));
+        // The original is still saved beside the project.
+        Assert.Equal(serum1.State!.Data, Assert.Single(result.Upgraded!).Sound.Data);
+    }
+
+    [Fact]
     public void ConvertingWithTheSwapSavesTheOldSoundsNextToTheProject()
     {
         var dir = Fixtures.TempDir();
@@ -160,6 +191,28 @@ public class BitwigProjectTests
         // Without it, Serum stays Serum and nothing extra is saved.
         var (plain, _) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Plain"), Fixtures.BitwigTemplate());
         Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(plain)!, BitwigProject.UpgradedFolder)));
+    }
+
+    [Fact]
+    public void ANewConvertGetsAFreshNameWhileBitwigMayHaveTheOldOneOpen()
+    {
+        // Bitwig only brings a project it has open forward, so a convert saved over it would look unchanged.
+        Assert.Equal("civil_18", Exporter.BitwigName("civil_18.flp", _ => false));
+        Assert.Equal("civil_18 (2)", Exporter.BitwigName("civil_18.flp", n => n == "civil_18"));
+        Assert.Equal("civil_18 (3)", Exporter.BitwigName("civil_18.flp", n => n is "civil_18" or "civil_18 (2)"));
+        // Only the names it may have open count: a later number that's closed is used again.
+        Assert.Equal("civil_18", Exporter.BitwigName("civil_18.flp", n => n == "civil_18 (2)"));
+
+        var dir = Fixtures.TempDir();
+        var project = Fixtures.FlStudio25Automation(dir);
+        var name = Path.GetFileNameWithoutExtension(project);
+        var exports = Path.Combine(dir, "Exports");
+        var (first, _) = Exporter.BitwigFromFl(project, exports, Fixtures.BitwigTemplate());
+        var (second, _) = Exporter.BitwigFromFl(project, exports, Fixtures.BitwigTemplate(), saveAs: $"{name} (2)");
+        // Each in its own folder named like it, the layout Bitwig opens without asking, next to the first.
+        Assert.Equal(Path.Combine(exports, name, "Bitwig", $"{name} (2)", $"{name} (2).bwproject"), second);
+        Assert.True(File.Exists(first));
+        Assert.Equal(Path.GetDirectoryName(Path.GetDirectoryName(first)), Path.GetDirectoryName(Path.GetDirectoryName(second)));
     }
 
     [Fact]

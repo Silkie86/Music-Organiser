@@ -33,6 +33,91 @@ public class ResponsivenessTests
     }
 
     [Fact]
+    public async Task Background_jobs_together_leave_cores_free_and_run_below_normal_priority()
+    {
+        var running = 0;
+        var most = 0;
+        var priorities = new System.Collections.Concurrent.ConcurrentBag<ThreadPriority>();
+        void Job() => Parallel.ForEach(Enumerable.Range(0, 64), Parallelism.Options(), _ => Parallelism.Background(() =>
+        {
+            var now = Interlocked.Increment(ref running);
+            InterlockedMax(ref most, now);
+            priorities.Add(Thread.CurrentThread.Priority);
+            Parallelism.Background(() => Thread.Sleep(5));   // work started from background work doesn't wait on itself
+            Interlocked.Decrement(ref running);
+        }));
+        await Task.WhenAll(Task.Run(Job), Task.Run(Job));   // say a scan and Deep listen at once
+
+        Assert.InRange(most, 1, Parallelism.Workers);
+        Assert.True(Parallelism.Workers <= Math.Max(1, Environment.ProcessorCount - 2));
+        Assert.All(priorities, p => Assert.Equal(ThreadPriority.BelowNormal, p));
+
+        static void InterlockedMax(ref int target, int value)
+        {
+            for (var seen = target; value > seen; seen = target)
+                if (Interlocked.CompareExchange(ref target, value, seen) == seen) return;
+        }
+    }
+
+    [Fact]
+    public void Gentle_uses_half_the_processor_and_Fast_everything_only_while_the_app_is_in_the_background()
+    {
+        try
+        {
+            Parallelism.Mode = Parallelism.Pace.Gentle;
+            Assert.Equal(Math.Max(1, Parallelism.Cores / 2), Parallelism.Workers);
+            Parallelism.Mode = Parallelism.Pace.Balanced;
+            Assert.Equal(Math.Max(1, Parallelism.Cores - 2), Parallelism.Workers);
+            Parallelism.Mode = Parallelism.Pace.Fast;
+            Assert.Equal(Math.Max(1, Parallelism.Cores - 2), Parallelism.Workers);
+            Parallelism.AppInBackground = true;
+            Assert.Equal(Parallelism.Cores, Parallelism.Workers);
+            Assert.Equal(Parallelism.Pace.Fast, Parallelism.ParsePace("Fast"));
+            Assert.Equal(Parallelism.Pace.Gentle, Parallelism.ParsePace(null));
+        }
+        finally
+        {
+            Parallelism.AppInBackground = false;
+            Parallelism.Mode = Parallelism.Pace.Gentle;
+        }
+    }
+
+    [Fact]
+    public async Task Reading_the_library_never_waits_for_a_long_write()
+    {
+        var dir = Fixtures.TempDir();
+        Fixtures.FlStudioProject(dir);
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.AddRoot(dir);
+        new Scanner(db).ScanProjects();
+
+        // A write holding the database (a scan saving a batch, a big index going in) for a long time.
+        var writeLock = typeof(LibraryDb).GetField("_lock", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(db)!;
+        using var held = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var writer = Task.Run(() =>
+        {
+            lock (writeLock)
+            {
+                held.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+            }
+        });
+        held.Wait();
+        try
+        {
+            var read = Task.Run(() => (db.Projects().Count, db.GetSetting("anything")));
+            Assert.Same(read, await Task.WhenAny(read, Task.Delay(2000)));
+            Assert.Equal((1, (string?)null), await read);
+        }
+        finally
+        {
+            release.Set();
+            await writer;
+        }
+    }
+
+    [Fact]
     public void A_big_sample_index_goes_in_whole_across_batches()
     {
         var dir = Fixtures.TempDir();
