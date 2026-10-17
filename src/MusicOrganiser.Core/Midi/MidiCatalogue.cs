@@ -100,12 +100,17 @@ public sealed class MidiCatalogue
 {
     public IReadOnlyList<MidiEntry> Entries { get; }
     public int PhraseCount { get; }
+    readonly Dictionary<string, MidiEntry> _byHash;
+
+    /// <summary>The part with these notes in this catalogue: entries are new objects on every reload, so the page holds
+    /// on to its picks by their notes and finds them again here.</summary>
+    public MidiEntry? Find(string hash) => _byHash.GetValueOrDefault(hash);
 
     public MidiCatalogue(IReadOnlyList<StoredPhrase> phrases, IReadOnlyDictionary<string, sbyte[]>? meanings = null)
     {
         PhraseCount = phrases.Count;
         // Phrases come newest file first, so the first of each set of notes is the newest copy.
-        var byHash = new Dictionary<string, MidiEntry>(phrases.Count);
+        var byHash = _byHash = new Dictionary<string, MidiEntry>(phrases.Count);
         var entries = new List<MidiEntry>();
         foreach (var p in phrases)
         {

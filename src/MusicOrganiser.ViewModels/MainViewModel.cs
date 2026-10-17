@@ -51,6 +51,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] string _scanStatus = "";
     [ObservableProperty] double _scanPercent;
     Activity? _scanCard;
+    readonly bool _midiPage;
 
     /// <param name="watch">How the DAWs are reached: their usual links unless given (tests use stand-ins).</param>
     /// <param name="pluginScanner">The plugin scanner: mo-scan where the build put it unless given (tests use a stand-in).</param>
@@ -58,8 +59,9 @@ public sealed partial class MainViewModel : ObservableObject
     /// Where Settings finds MO Probe's reports and puts the live tests' reports: the app's data folder unless given (tests
     /// use a folder of their own).
     /// </param>
+    /// <param name="midiPage">Shows the MIDI page: the old WPF app has no view for it, so it leaves it out (and its reading).</param>
     public MainViewModel(LibraryDb db, SoundOrganiser sounds, DawWatch? watch = null, PluginScanner? pluginScanner = null,
-                         string? dataFolder = null)
+                         string? dataFolder = null, bool midiPage = true)
     {
         _db = db;
         Parallelism.Mode = Parallelism.ParsePace(db.GetSetting(SettingsViewModel.PerformanceKey));
@@ -85,6 +87,8 @@ public sealed partial class MainViewModel : ObservableObject
             new("Plugins", "", Plugins),
             new("Settings", "", Settings),
         ];
+        _midiPage = midiPage;
+        if (!midiPage) Nav = Nav.Where(n => n.Page != Midi).ToList();
         _selectedNav = StartPage();
         if (_selectedNav.Page == Midi || _selectedNav.Page == Playground) Midi.Opened();
         if (_selectedNav.Page == Playground) Playground.Opened();
@@ -127,7 +131,7 @@ public sealed partial class MainViewModel : ObservableObject
             var (read, gone) = await Task.Run(() => _scanner.Update(changes.Files));
             if (read + gone == 0) return;
             await RefreshAllAsync();
-            _ = Midi.AfterScanAsync();   // a saved song's MIDI is read again too
+            if (_midiPage) _ = Midi.AfterScanAsync();   // a saved song's MIDI is read again too
             var name = Path.GetFileNameWithoutExtension(changes.Files.First());
             Activities.Done(read + gone == 1 ? $"Updated {name}" : $"Updated {read + gone} projects",
                             gone == 0 ? "Saved in their folders, so the app read them again"
@@ -439,7 +443,7 @@ public sealed partial class MainViewModel : ObservableObject
                 added > 0 ? $"{added} new project file{(added == 1 ? "" : "s")} · {Projects.Items.Count} songs in all" : $"{Projects.Items.Count} songs, nothing new");
         }
         // The MIDI browser reads new and changed projects' MIDI on its own, at the lowest priority.
-        _ = Midi.AfterScanAsync();
+        if (_midiPage) _ = Midi.AfterScanAsync();
         await RunQueuedScanAsync();
     }
 }
