@@ -60,8 +60,15 @@ public sealed class Serum1State
             var raw = new byte[Size + 1];
             var n = 0;
             while (n < raw.Length && z.Read(raw, n, raw.Length - n) is > 0 and var got) n += got;
-            if (n == PresetSize) return new Serum1State(raw[..Size]) { IsPreset = true };
-            return n == Size ? new Serum1State(raw[..Size]) : null;
+            if (n == Size) return new Serum1State(raw[..Size]);
+            // Presets from later Serum 1 versions carry more after the first part (21,524 to 33,872 bytes seen in
+            // Serum's own presets); what's past it isn't read, so it reads as empty.
+            if (n >= PresetSize && n < Size)
+            {
+                Array.Clear(raw, PresetSize, raw.Length - PresetSize);
+                return new Serum1State(raw[..Size]) { IsPreset = true };
+            }
+            return null;
         }
         catch (InvalidDataException) { return null; }
     }

@@ -215,8 +215,9 @@ public static class Serum1To2
             Knob(vol + 12, wt, "WTOsc", n, "kParamInitialPhase", 8, x => 360 * x, 180);
             Knob(uniWTPos, wt, "WTOsc", n, "kParamUnisonWTPos", 10, x => Bi(x, 100), 0);
             if (K(vol + 10) > 0.001) Rough.Add($"oscillator {(char)('A' + n)}'s wavetable position");
-            // Serum 1 has 23 warp modes; which of Serum 2's names each one is saved as isn't known yet.
-            if (Choice(K(warpMenu), 23) is > 0 and < 23) Rough.Add($"oscillator {(char)('A' + n)}'s warp mode");
+            var warp = Choice(K(warpMenu), WarpModes.Length);
+            if (warp < WarpModes.Length) Put(wt, "kParamWarpMenu", WarpModes[warp], WarpModes[0]);
+            if (warp is >= 1 and <= 3 or 12) Rough.Add($"oscillator {(char)('A' + n)}'s warp mode");
 
             if (table.Length > 0)
             {
@@ -256,11 +257,23 @@ public static class Serum1To2
             if (K(214) > 0 && !s1.NoiseFlagsAsChecked) Rough.Add("whether the noise plays once or loops");
         }
 
+        /// <summary>
+        /// Serum 1's 23 warp modes, in its order, by the names Serum 2 saves them under (read from Serum 2 itself). The
+        /// FM, AM and RM modes take the other oscillator. Which of Serum 2's three sync modes each of Serum 1's is, and
+        /// that Mirror is kDLM, are guesses, so those are listed as rough.
+        /// </summary>
+        static readonly string[] WarpModes =
+        [
+            "kNoWarp", "kHardSync", "kSoftSync", "kSofterSync", "kBendPos", "kBendNeg", "kBendPosNeg", "kPWM",
+            "kASYMPos", "kASYMNeg", "kASYMPosNeg", "kFlip", "kDLM", "kRemap_1", "kRemap_2", "kRemap_3", "kRemap_4",
+            "kQuantize", "kFM_OSC", "kAM_OSC", "kRM_OSC", "kFM_NOISE", "kFM_SUB",
+        ];
+
         static readonly string[] SubShapes = ["kSine", "kRoundRect", "kTriangle", "kSaw", "kSquare", "kPulse"];
 
         /// <summary>Unison stacking, in the same order in both Serums (off, 12 ×1 to ×3, 12+7 ×1 to ×3, centre −12, −24).</summary>
         static readonly string[] UnisonStacks =
-            ["off", "kOctave1", "kOctave2", "kOctave3", "kOctaveFifth1", "kOctaveFifth2", "kOctaveFifth3", "kCenter12", "kCenter24"];
+            ["kNoUnisonStack", "kOctave1", "kOctave2", "kOctave3", "kOctaveFifth1", "kOctaveFifth2", "kOctaveFifth3", "kCenter12", "kCenter24"];
 
         void Sub()
         {

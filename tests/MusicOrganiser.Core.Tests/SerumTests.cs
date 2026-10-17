@@ -142,6 +142,39 @@ public class SerumTests
     }
 
     [Fact]
+    public void A_preset_from_a_later_Serum_1_is_read_up_to_where_the_older_ones_end()
+    {
+        // Later versions save more after the first 20,704 bytes (21,524 seen); that part isn't read.
+        var raw = new byte[21_524];
+        BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(13_408 + 4 * 1), 0.25f);
+        raw[^1] = 0xff;
+        var packed = new MemoryStream();
+        using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
+
+        var s = Serum1State.Read(packed.ToArray())!;
+
+        Assert.True(s.IsPreset);
+        Assert.Equal(0.25f, s.Knob(1));
+        Assert.Empty(s.ModSlots);
+    }
+
+    [Theory]
+    [InlineData(0f, null)]                  // off, Serum 2's default
+    [InlineData(4 / 23f, "kBendPos")]
+    [InlineData(18 / 23f, "kFM_OSC")]       // FM from the other oscillator
+    [InlineData(1f, null)]                  // past the last mode, which Serum 1 shows blank
+    public void A_Serum_1_warp_mode_is_saved_under_Serum_2s_name_for_it(float knob, string? expected)
+    {
+        var raw = new byte[Serum1State.Size];
+        BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(13_408 + 4 * 168), knob);
+        var packed = new MemoryStream();
+        using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
+
+        var wt = Serum1To2.Translate(Serum1State.Read(packed.ToArray())!).State.Settings["Oscillator0"]!["WTOsc0"]!["plainParams"];
+        Assert.Equal(expected, (wt as JsonObject)?["kParamWarpMenu"]?.GetValue<string>());
+    }
+
+    [Fact]
     public void Something_that_isnt_a_Serum_1_state_isnt_read_as_one()
     {
         Assert.Null(Serum1State.Read("not serum"u8));
