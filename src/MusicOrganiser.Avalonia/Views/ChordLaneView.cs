@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
@@ -30,12 +31,28 @@ public sealed class ChordLaneView : Control
 
     ChordCell? _hover;
 
+    // Listened to only while on screen: the page's chord list outlives this view, and would keep every old copy alive.
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == ItemsProperty && change.NewValue is System.Collections.Specialized.INotifyCollectionChanged n)
-            n.CollectionChanged += (_, _) => InvalidateVisual();
+        if (change.Property != ItemsProperty || VisualRoot is null) return;
+        if (change.OldValue is INotifyCollectionChanged old) old.CollectionChanged -= OnItemsChanged;
+        if (change.NewValue is INotifyCollectionChanged n) n.CollectionChanged += OnItemsChanged;
     }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        if (Items is INotifyCollectionChanged n) n.CollectionChanged += OnItemsChanged;
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        if (Items is INotifyCollectionChanged n) n.CollectionChanged -= OnItemsChanged;
+    }
+
+    void OnItemsChanged(object? sender, NotifyCollectionChangedEventArgs e) => InvalidateVisual();
 
     IBrush Res(string key, IBrush fallback) => this.TryFindResource(key, ActualThemeVariant, out var v) && v is IBrush b ? b : fallback;
 

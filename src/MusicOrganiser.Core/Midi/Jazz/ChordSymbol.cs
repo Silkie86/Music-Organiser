@@ -38,7 +38,7 @@ public readonly record struct ChordSymbol(int Root, int Mask, int Bass, ChordFam
         {
             var g = 0;
             foreach (var i in new[] { 3, 4, 5, 9, 10, 11 })
-                if (ChordSpeller.Role(Intervals, Family, i) is ToneRole.Third or ToneRole.Seventh) g |= 1 << Mod(Root + i);
+                if (Has(i) && ChordSpeller.Role(Intervals, Family, i) is ToneRole.Third or ToneRole.Seventh) g |= 1 << Mod(Root + i);
             return g;
         }
     }

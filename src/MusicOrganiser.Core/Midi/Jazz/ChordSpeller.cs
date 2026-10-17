@@ -256,7 +256,8 @@ public static class ChordSpeller
     /// </summary>
     public static int? IntervalsOf(string quality)
     {
-        var q = quality.Replace(" ", "").Replace("(", "").Replace(")", "").Replace(",", "")
+        // Brackets and commas stay in, so "7(9)" and "69" don't run together into one big number; they're skipped below.
+        var q = quality.Replace(" ", "")
                        .Replace("♭", "b").Replace("♯", "#").Replace("Δ", "maj").Replace("^", "maj");
         int iv = 1 | 1 << 4 | 1 << 7;   // a major triad unless told otherwise
         void Set(params int[] i) { foreach (var x in i) iv |= 1 << x; }
@@ -279,9 +280,10 @@ public static class ChordSpeller
         }
         int Number()
         {
-            var start = i0;
-            while (i0 < q.Length && char.IsDigit(q[i0])) i0++;
-            return start == i0 ? 0 : int.Parse(q[start..i0]);
+            // Only chord numbers: 11 and 13 are the two-digit ones, so "69" is a 6 then a 9, not sixty-nine.
+            if (Take("11")) return 11;
+            if (Take("13")) return 13;
+            return i0 < q.Length && char.IsDigit(q[i0]) ? q[i0++] - '0' : 0;
         }
 
         var minor = false;
@@ -313,6 +315,7 @@ public static class ChordSpeller
             minor = true;
             Clear(4);
             Set(3);
+            _ = Take("(");   // "Cm(maj7)"
             if (Take("maj") || Take("M"))
             {
                 var n = Number();
@@ -341,7 +344,8 @@ public static class ChordSpeller
         // Then any of: 6/9, sus, sus2, sus4, add9, alt, b9, #9, #11, b13, b5, #5, 11, 13, omit3.
         while (i0 < q.Length)
         {
-            if (Take("/9") || Take("/9")) Set(2);
+            if (Take("(") || Take(")") || Take(",")) { }
+            else if (Take("/9")) Set(2);
             else if (Take("sus2")) { Clear(3, 4); Set(2); }
             else if (Take("sus4") || Take("sus")) { Clear(3, 4); Set(5); }
             else if (Take("add")) { var a = AddInterval(); if (a < 0) return null; Set(a); }

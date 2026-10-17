@@ -1032,6 +1032,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         }
     }
 
+    /// <summary>Every part, if they've been read already; null before that, and asking never starts the reading.</summary>
+    public MidiCatalogue? LoadedCatalogue => _catalogue;
+
     /// <summary>Every part, read from the index the first time it's wanted (by this page or a song's MIDI tab).</summary>
     public async Task<MidiCatalogue?> CatalogueAsync()
     {

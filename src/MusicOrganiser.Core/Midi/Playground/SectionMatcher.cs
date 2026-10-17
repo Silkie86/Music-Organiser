@@ -84,12 +84,14 @@ public sealed class SectionHarmony
     /// <summary>Just the bars from <paramref name="from"/> to <paramref name="to"/> (ticks), as if they were the whole section.</summary>
     public SectionHarmony Slice(long from, long to)
     {
-        from = Math.Clamp(from, 0, Length);
-        to = Math.Clamp(to, from + 1, Length);
+        // A loop set before the section got shorter can start past its end: fall back to the last bar's worth.
+        from = Math.Clamp(from, 0, Math.Max(0, Length - 1));
+        to = Math.Clamp(to, from + 1, Math.Max(from + 1, Length));
         return new SectionHarmony
         {
-            Notes = Notes.Where(n => n.Start >= from && n.Start < to)
-                         .Select(n => n with { Start = n.Start - from, Length = Math.Min(n.Length, to - n.Start) }).ToList(),
+            // Notes that start before the window but still sound in it (a pushed chord, a tie) are kept, cut at its edges.
+            Notes = Notes.Where(n => n.Start < to && n.Start + n.Length > from)
+                         .Select(n => n with { Start = Math.Max(n.Start, from) - from, Length = Math.Min(n.Start + n.Length, to) - Math.Max(n.Start, from) }).ToList(),
             Lane = Lane.Where(c => c.End > from && c.Start < to)
                        .Select(c => new TimedChord(Math.Max(c.Start, from) - from, Math.Min(c.End, to) - Math.Max(c.Start, from), c.Chord)).ToList(),
             Length = to - from, Key = Key, KeyTyped = KeyTyped, ChordsTyped = ChordsTyped, Style = Style, Songs = Songs, Hashes = Hashes,
