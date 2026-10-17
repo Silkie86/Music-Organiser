@@ -24,6 +24,22 @@ public sealed class PlaygroundLayer
     public string SourceHash { get; set; } = "";
     /// <summary>For a part the playground wrote from the chords ("chords:Gospel:Held", "bass:Walking"): written again when the chords change.</summary>
     public string Written { get; set; } = "";
+    /// <summary>
+    /// For a written part with a groove copied onto it: the source part's notes (packed like <see cref="Data"/>), so the
+    /// groove is put on again when the chords change and the part is rewritten.
+    /// </summary>
+    public string GrooveData { get; set; } = "";
+    public GrooveDepth GrooveDepth { get; set; }
+    public double GrooveAmount { get; set; } = 1;
+    /// <summary>Where the copied groove came from, to show ("Keys · Gospel stab").</summary>
+    public string GrooveFrom { get; set; } = "";
+
+    [JsonIgnore]
+    public IReadOnlyList<NoteEvent> GrooveNotes
+    {
+        get => GrooveData.Length == 0 ? [] : MidiIndex.DecodeNotes(Convert.FromBase64String(GrooveData));
+        set => GrooveData = value.Count == 0 ? "" : Convert.ToBase64String(MidiIndex.EncodeNotes(value.OrderBy(n => n.Start).ThenBy(n => n.Key).ToList()));
+    }
 
     [JsonIgnore]
     public IReadOnlyList<NoteEvent> Notes
@@ -42,6 +58,8 @@ public sealed class PlaygroundSection
     public int Bars { get; set; } = 4;
     /// <summary>The chords typed as a chart ("Dm9 G13 | Cmaj9 | %"), or "" to hear them from the parts.</summary>
     public string Chart { get; set; } = "";
+    /// <summary>What the section is for (a verse, a build, a drop): suggestions are ranked on how well their energy suits it.</summary>
+    public SectionFeel Feel { get; set; }
     public List<PlaygroundLayer> Layers { get; set; } = [];
 
     [JsonIgnore]

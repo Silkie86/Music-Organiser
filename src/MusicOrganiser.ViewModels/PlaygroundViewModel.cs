@@ -110,8 +110,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         foreach (var s in Sections) s.Refresh();
         Bars = Section.Bars;
         ChartText = Section.Chart;
+        FeelPick = Section.Feel.ToString();
         _showing = was;
         HarmonyChanged();
+        RefreshGrooveSources();
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(Length));
     }
@@ -132,6 +134,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         OnPropertyChanged(nameof(ChordsTyped));
         foreach (var row in Layers) row.GuideChanged();
         RefreshIdeas();
+        RefreshEnergy();
     }
 
     // ---- saving and undo ----
@@ -152,6 +155,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         try { _store.SaveCurrent(_session); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save the idea: {e.Message}"; }
         if (harmony) HarmonyChanged();
+        else RefreshEnergy();
         OnPropertyChanged(nameof(IsEmpty));
         if (_playing) _ = PlayAsync(keepPlace: true);
     }
@@ -413,6 +417,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var row = new LayerRow(this, layer);
         Layers.Add(row);
         SelectedLayer = row;
+        RefreshGrooveSources();
         return layer;
     }
 
@@ -435,13 +440,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (Section.Layers.Count == 0 && Section.Chart.Length == 0) Section.Bars = Math.Clamp(bars, 1, 16);
         else if (bars > Section.Bars) Section.Bars = Math.Min(16, bars);
         var looped = SectionMatcher.Loop(notes, Math.Max(1, bars) * (long)Bar, Section.Length);
-        AddLayer(name, entry.Role, looped, entry.Phrase.Source.Path, entry.Phrase.Hash);
+        // Chord parts come in turned into their smoothest inversions, sitting with the chords already here.
+        var smoothed = SmoothIncoming && entry.Role == MidiRoles.Chords ? Inversions.Smooth(looped, ChordCentre(null)) : looped;
+        var turned = !smoothed.SequenceEqual(looped);
+        AddLayer(name, entry.Role, smoothed, entry.Phrase.Source.Path, entry.Phrase.Hash);
         _showing = true;
         Bars = Section.Bars;
         _showing = false;
         foreach (var row in Layers) row.LengthChanged();
         Changed();
-        Message = $"Added {name} from {entry.SourceName}. Parts from {entry.SourceName} won't be suggested for this section now.";
+        Message = $"Added {name} from {entry.SourceName}{(turned ? ", its chords turned into smooth inversions" : "")}. Parts from {entry.SourceName} won't be suggested for this section now.";
     }
 
     internal void RemoveLayer(LayerRow row)
@@ -451,6 +459,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var i = Layers.IndexOf(row);
         Layers.Remove(row);
         if (SelectedLayer == row) SelectedLayer = Layers.Count == 0 ? null : Layers[Math.Clamp(i, 0, Layers.Count - 1)];
+        RefreshGrooveSources();
         Changed();
     }
 
@@ -476,7 +485,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     /// <summary>Notes changed by hand on the piano roll: the part is no longer rewritten from the chords.</summary>
     internal void SetNotes(LayerRow row, IReadOnlyList<NoteEvent> notes) =>
-        EditLayer(row, l => { l.Notes = notes; l.Written = ""; });
+        EditLayer(row, l => { l.Notes = notes; l.Written = ""; l.GrooveData = ""; });
 
     internal void MoveLayer(LayerRow row, int semitones) =>
         EditLayer(row, l => l.Notes = l.Notes.Select(n => n with { Key = Math.Clamp(n.Key + semitones, 0, 127) }).ToList());
@@ -570,8 +579,199 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _harmony = null;
         var lane = LaneForWriting();
         foreach (var l in Section.Layers.Where(l => l.Written.Length > 0))
-            l.Notes = lane.Count == 0 ? [] : Written(l.Written, lane, Section.Length);
+            l.Notes = lane.Count == 0 ? [] : WithGroove(l, Written(l.Written, lane, Section.Length), lane, Section.Length);
         foreach (var row in Layers) row.Changed();
+    }
+
+
+    /// <summary>A written part with the groove copied onto it put on again (after the chords changed and it was rewritten).</summary>
+    static IReadOnlyList<NoteEvent> WithGroove(PlaygroundLayer layer, IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length) =>
+        layer.GrooveData.Length == 0 ? notes : Groove.Copy(notes, layer.GrooveNotes, layer.GrooveDepth, length, lane, layer.GrooveAmount);
+
+    // ---- copying a groove ----
+
+    /// <summary>
+    /// How much of the other part's groove to copy, one slider (Solomon, 2026-10-17: "make how much to copy a slider"):
+    /// 1–4 its feel at 25%–100% (swing, push and pull, accents), 5 its rhythm too (your chords struck on its hits),
+    /// 6 its whole playing (block chords played the way it plays its chords).
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(GrooveAmountText))] double _grooveAmount = 4;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(GrooveSourceText), nameof(CanCopyGroove))] LayerRow? _grooveSource;
+    /// <summary>A part from the suggestions to take the groove from, instead of one of the section's own.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(GrooveSourceText), nameof(CanCopyGroove))] PlaygroundMatchRow? _grooveMatch;
+    [ObservableProperty] bool _isGroovePlaying;
+    [ObservableProperty] bool _smoothIncoming = true;
+
+    public ObservableCollection<LayerRow> GrooveSources { get; } = [];
+
+    (GrooveDepth Depth, double Amount) GrooveChoice => GrooveAmount switch
+    {
+        >= 5.5 => (GrooveDepth.Playing, 1),
+        >= 4.5 => (GrooveDepth.Rhythm, 1),
+        _ => (GrooveDepth.Feel, Math.Clamp(Math.Round(GrooveAmount) / 4, 0.25, 1)),
+    };
+
+    public string GrooveAmountText => GrooveChoice switch
+    {
+        (GrooveDepth.Playing, _) => "Its whole playing: your chords played the way it plays its chords, with its rhythm, voicing moves and touch.",
+        (GrooveDepth.Rhythm, _) => "Its rhythm too: your chords, as they're voiced, struck when it strikes, as long and as hard.",
+        (_, var a) => $"Its feel, {a * 100:0}%: your notes stay put but swing, push, pull and accent like it{(a < 1 ? ", part of the way" : "")}.",
+    };
+
+    IReadOnlyList<NoteEvent>? GrooveNotesSource => GrooveMatch?.Match.Notes ?? GrooveSource?.Layer.Notes;
+    string GrooveSourceName => GrooveMatch?.Title ?? GrooveSource?.Name ?? "";
+
+    public string GrooveSourceText => GrooveNotesSource is { } src
+        ? $"{GrooveSourceName}: {(Groove.Of(src) is { } g ? g.Describe() : "too few notes to hear a groove")}"
+        : "Pick the part to copy from.";
+
+    public bool CanCopyGroove => GrooveNotesSource is { Count: > 2 } && SelectedLayer is not null;
+
+    partial void OnSelectedLayerChanged(LayerRow? value)
+    {
+        RefreshGrooveSources();
+        OnPropertyChanged(nameof(CanCopyGroove));
+        OnPropertyChanged(nameof(GrooveTargetText));
+        OnPropertyChanged(nameof(IsChordLayer));
+    }
+
+    public string GrooveTargetText => SelectedLayer is { } s ? $"Onto {s.Name}" : "Pick a part on the left to put the groove on.";
+    public bool IsChordLayer => SelectedLayer?.Role == MidiRoles.Chords;
+
+    void RefreshGrooveSources()
+    {
+        var keep = GrooveSource?.Layer;
+        GrooveSources.Clear();
+        foreach (var row in Layers.Where(r => r != SelectedLayer)) GrooveSources.Add(row);
+        GrooveSource = GrooveSources.FirstOrDefault(r => r.Layer == keep) ?? GrooveSources.FirstOrDefault(r => r.Role == MidiRoles.Drums)
+                       ?? GrooveSources.FirstOrDefault();
+    }
+
+    partial void OnGrooveSourceChanged(LayerRow? value)
+    {
+        if (value is not null) GrooveMatch = null;
+    }
+
+    /// <summary>The picked part with the groove on it, as it would be.</summary>
+    IReadOnlyList<NoteEvent>? Grooved(LayerRow row)
+    {
+        if (GrooveNotesSource is not { Count: > 2 } src) return null;
+        var (depth, amount) = GrooveChoice;
+        var l = row.Layer;
+        // A written part is grooved from its plain writing, so copying again replaces the groove instead of piling on.
+        var lane = row.IsWritten ? LaneForWriting() : row.Role == MidiRoles.Chords ? ChordLane.Detect(l.Notes, Section.Length) : Harmony.Lane;
+        var plain = row.IsWritten && lane.Count > 0 ? Written(l.Written, lane, Section.Length) : l.Notes;
+        if (depth == GrooveDepth.Playing && lane.Count == 0) lane = Harmony.Lane;
+        return Groove.Copy(plain, src, depth, Section.Length, lane, amount);
+    }
+
+    [RelayCommand]
+    void CopyGroove()
+    {
+        if (SelectedLayer is not { } row || Grooved(row) is not { } notes) return;
+        if (notes.Count == 0)
+        {
+            Message = "That gave no notes: the part to copy from needs chords for its whole playing to come across. Try less on the slider.";
+            return;
+        }
+        var (depth, amount) = GrooveChoice;
+        var from = GrooveSourceName;
+        var src = GrooveNotesSource!;
+        EditLayer(row, l =>
+        {
+            l.Notes = notes;
+            if (l.Written.Length > 0)
+            {
+                // Remembered, so it's put on again when the chords change.
+                l.GrooveNotes = src;
+                l.GrooveDepth = depth;
+                l.GrooveAmount = amount;
+            }
+            l.GrooveFrom = from;
+        });
+        StopPlaying();
+        Message = $"{row.Name} now has {(depth == GrooveDepth.Playing ? "the whole playing" : depth == GrooveDepth.Rhythm ? "the rhythm and feel" : "the feel")} of {from}. Undo takes it back.";
+    }
+
+    /// <summary>The section with the picked part grooved, to hear before keeping it.</summary>
+    [RelayCommand]
+    async Task PreviewGroove()
+    {
+        if (IsGroovePlaying) { StopPlaying(); return; }
+        if (SelectedLayer is not { } row || Grooved(row) is not { } notes) return;
+        StopPlaying();
+        var channels = PlaygroundSession.Audible(Section).Where(l => l != row.Layer).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
+        channels.Add(Channel(row.Name, row.Layer.Program, notes));
+        await PlayAsync(instead: channels);
+        IsGroovePlaying = _playing;
+    }
+
+    /// <summary>A suggestion's groove, to copy onto the picked part (from the Groove button on a suggestion).</summary>
+    internal void TakeGrooveFrom(PlaygroundMatchRow row)
+    {
+        GrooveSource = null;
+        GrooveMatch = row;
+        RightTab = GrooveTab;
+        Message = $"Copying from {row.Title}. Pick how much on the Groove tab, then Copy the groove.";
+    }
+
+    /// <summary>The tab showing on the right: Suggest, Write, Groove, Reharm, Song.</summary>
+    [ObservableProperty] int _rightTab;
+    const int GrooveTab = 2;
+
+    // ---- smooth inversions ----
+
+    /// <summary>Where chord parts already in the section sit, so a new one is turned to sit with them.</summary>
+    double? ChordCentre(PlaygroundLayer? except)
+    {
+        var others = Section.Layers.Where(l => l != except && l.Role == MidiRoles.Chords && !l.Muted).SelectMany(l => l.Notes).ToList();
+        return others.Count == 0 ? null : others.Average(n => n.Key);
+    }
+
+    [RelayCommand]
+    void SmoothInversions()
+    {
+        if (SelectedLayer is not { } row) return;
+        var smooth = Inversions.Smooth(row.Layer.Notes, ChordCentre(row.Layer));
+        if (smooth.SequenceEqual(row.Layer.Notes))
+        {
+            Message = $"{row.Name}'s chords already move as smoothly as they can.";
+            return;
+        }
+        EditLayer(row, l => { l.Notes = smooth; l.Written = ""; });
+        Message = $"{row.Name}'s chords are turned into the inversions that move least. Undo takes it back.";
+    }
+
+    // ---- energy ----
+
+    public static IReadOnlyList<string> FeelChoices { get; } = ["Any", "Verse", "Build", "Drop", "Breakdown"];
+    [ObservableProperty] string _feelPick = "Any";
+    [ObservableProperty] double[] _energyCurve = [];
+    [ObservableProperty] double[]? _energyTarget;
+    [ObservableProperty] string _energyText = "";
+
+    partial void OnFeelPickChanged(string value)
+    {
+        if (_showing) return;
+        var feel = Enum.TryParse<SectionFeel>(value, out var f) ? f : SectionFeel.Any;
+        if (feel == Section.Feel) return;
+        Remember();
+        Section.Feel = feel;
+        Changed(harmony: false);
+        if (Matches.Count > 0) _ = FindMatchesAsync();
+    }
+
+    /// <summary>The section's tension curve, bar by bar, and the one its feel asks for.</summary>
+    void RefreshEnergy()
+    {
+        var h = Harmony;
+        var bars = Section.Bars;
+        EnergyCurve = h.Notes.Count == 0 && Section.Layers.All(l => l.Role != MidiRoles.Drums)
+            ? []
+            : Energy.Curve(PlaygroundSession.Audible(Section).SelectMany(l => l.Notes).ToList(), Section.Length, "", h.Key);
+        EnergyTarget = Section.Feel == SectionFeel.Any ? null : Energy.Target(Section.Feel, bars);
+        EnergyText = EnergyCurve.Length == 0 ? "" :
+            Section.Feel == SectionFeel.Any ? "Energy, bar by bar" : $"Energy, bar by bar · dashed: a {Energy.Name(Section.Feel)}";
     }
 
     // ---- reharmonisation and next-chord ideas ----
@@ -656,7 +856,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var harmony = MatchHarmony;
             var role = SuggestRole.Role;
             var text = SuggestSearch.Trim();
-            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, text, 60, cts.Token));
+            var feel = Section.Feel;
+            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, text, 60, cts.Token, feel));
             if (cts.IsCancellationRequested) return;
             Matches.Clear();
             foreach (var m in found) Matches.Add(new PlaygroundMatchRow(this, m));
@@ -889,6 +1090,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Position = -1;
         foreach (var m in Matches) m.IsPlaying = false;
         foreach (var r in Ideas) r.IsPlaying = false;
+        IsGroovePlaying = false;
     }
 
     partial void OnPlayArrangementChanged(bool value)
@@ -919,7 +1121,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (written.Count == 0)
             channels.Add(Channel("Chords", 4, Voicer.Voice(row.Idea.Lane, VoicingStyle.Close, CompRhythm.Held, Section.Length)));
         else
-            foreach (var l in written.Where(l => !l.Muted)) channels.Add(Channel(l.Name, l.Program, Written(l.Written, row.Idea.Lane, Section.Length)));
+            foreach (var l in written.Where(l => !l.Muted))
+                channels.Add(Channel(l.Name, l.Program, WithGroove(l, Written(l.Written, row.Idea.Lane, Section.Length), row.Idea.Lane, Section.Length)));
         await PlayAsync(instead: channels);
         row.IsPlaying = _playing;
     }
@@ -1064,7 +1267,7 @@ public sealed partial class LayerRow : ObservableObject
     public bool IsWritten => Layer.Written.Length > 0;
     public string From => Layer.SourcePath.Length > 0 ? Path.GetFileNameWithoutExtension(Layer.SourcePath)
         : IsWritten ? "Written from the chords" : "Your own";
-    public string Details => $"{RoleLabel} · {From}";
+    public string Details => $"{RoleLabel} · {From}{(Layer.GrooveFrom.Length > 0 ? $" · groove of {Layer.GrooveFrom}" : "")}";
     public bool Muted => Layer.Muted;
     public bool Solo => Layer.Solo;
 
@@ -1162,6 +1365,8 @@ public sealed partial class PlaygroundMatchRow(PlaygroundViewModel owner, Playgr
     [ObservableProperty] bool _isPlaying;
     [RelayCommand] void Add() => owner.AddMatch(this);
     [RelayCommand] Task Preview() => owner.PreviewMatch(this);
+    /// <summary>Copy its groove (up to its whole playing) onto the part picked in the section.</summary>
+    [RelayCommand] void TakeGroove() => owner.TakeGrooveFrom(this);
 }
 
 /// <summary>A reharmonisation idea, to hear and keep.</summary>
