@@ -406,6 +406,8 @@ public class FlStudio9Tests
 
         var song = Readers.FlStudio.ReadSong(_path);
         Assert.Equal(Chunk, song.Channels.Single(c => c.Name == "Cell").Instrument!.State!.Data[60..]);
+        // The program it had selected, which FL selects again after loading the chunk.
+        Assert.Equal(42, cell.Program);
     }
 
     [Fact]

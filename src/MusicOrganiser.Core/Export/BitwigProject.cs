@@ -149,7 +149,7 @@ public static class BitwigProject
             var state = "";
             if (p.State is { } s)
             {
-                var (data, extension) = !vst3 && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data), ".fxb") : (s.Data, s.Extension);
+                var (data, extension) = !vst3 && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data, s.Program), ".fxb") : (s.Data, s.Extension);
                 state = $"{Guid.NewGuid()}{extension}";
                 states.Add((state, data));
             }

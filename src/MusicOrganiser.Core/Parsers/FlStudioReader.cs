@@ -382,13 +382,15 @@ public sealed partial class FlStudioReader : IProjectReader
             ? BinaryPrimitives.ReadInt32LittleEndian(cc)
             : 0;
         var chunk = state;
-        if (Vst2Header(state) is var (start, len))
+        var selected = 0;
+        if (Vst2Header(state) is var (start, len, current))
         {
+            selected = current;
             if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state, start) is var (values, program))
-                return new PresetBlob(name, plugin, ".fxp", Fxp.WrapParams(values, program.Length > 0 ? program : plugin, id));
+                return new PresetBlob(name, plugin, ".fxp", Fxp.WrapParams(values, program.Length > 0 ? program : plugin, id)) { Program = selected };
             if (start + (long)len <= state.Length) chunk = state.AsSpan(start, (int)len).ToArray();
         }
-        return new PresetBlob(name, plugin, ".fxp", Fxp.WrapChunk(chunk, plugin, id));
+        return new PresetBlob(name, plugin, ".fxp", Fxp.WrapChunk(chunk, plugin, id)) { Program = selected };
     }
 
     /// <summary>
@@ -396,18 +398,21 @@ public sealed partial class FlStudioReader : IProjectReader
     /// Newer FL (seen in FL 21 and 25): i32 -9, u8 flags (0x08 = the plugin saves a chunk), i32 -2,
     /// u32 chunk length, u32 0, u32 program, so 21 bytes. FL 9 (wrapper version 6) has no -2 or 0:
     /// i32 -9, u8 flags, u32 chunk length, u32 program, so 13 bytes, and reading it as the newer one
-    /// kept only a few bytes of a big chunk, so the plugin came up at its default sound.
+    /// kept only a few bytes of a big chunk, so the plugin came up at its default sound. Program is the plugin's
+    /// program that was selected, which FL selects again after giving the plugin its chunk.
     /// </summary>
-    static (int Start, uint Length)? Vst2Header(byte[] state)
+    static (int Start, uint Length, int Program)? Vst2Header(byte[] state)
     {
         if (state.Length < 13 || BinaryPrimitives.ReadInt32LittleEndian(state) != -9) return null;
         if (BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(5)) == -2)
-            return state.Length >= 21 ? (21, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9))) : null;
-        return (13, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(5)));
+            return state.Length >= 21
+                ? (21, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9)), Math.Max(0, BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(17))))
+                : null;
+        return (13, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(5)), Math.Max(0, BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(9))));
     }
 
     /// <summary>A VST2 that saves its sound as a chunk but gave FL an empty one, so FL kept none of it.</summary>
-    static bool SavedNothing(byte[] state) => Vst2Header(state) is (_, 0) && (state[4] & 0x08) != 0;
+    static bool SavedNothing(byte[] state) => Vst2Header(state) is (_, 0, _) && (state[4] & 0x08) != 0;
 
     /// <summary>
     /// Plugins that don't save a chunk (Predator, older FabFilter) have their parameters after
@@ -915,11 +920,12 @@ public sealed partial class FlStudioReader : IProjectReader
 public static class Fxp
 {
     /// <summary>
-    /// The same settings as a one-program .fxb bank, the form Bitwig writes (and reads back) in
-    /// DAWproject files: an 'FPCh' chunk becomes an 'FBCh' bank chunk; an 'FxCk' parameter
-    /// program goes inside an 'FxBk' bank. Anything else comes back unchanged.
+    /// The same settings as a .fxb bank, the form Bitwig writes (and reads back) in DAWproject
+    /// files: an 'FPCh' chunk becomes an 'FBCh' bank chunk, with <paramref name="program"/> as the
+    /// plugin's selected program; an 'FxCk' parameter program goes inside a one-program 'FxBk' bank.
+    /// Anything else comes back unchanged.
     /// </summary>
-    public static byte[] ToBank(byte[] fxp)
+    public static byte[] ToBank(byte[] fxp, int program = 0)
     {
         const int ProgramHeader = 60;   // CcnK, size, magic, version, id, plugin version, count, name[28]
         if (fxp.Length < ProgramHeader - 4 || !fxp.AsSpan(0, 4).SequenceEqual("CcnK"u8)) return fxp;
@@ -937,8 +943,12 @@ public static class Fxp
         ms.Write(isChunk ? "FBCh"u8 : "FxBk"u8);
         I32(2);                       // format version
         ms.Write(fxp.AsSpan(16, 8));  // plugin id and version, as the program had them
-        I32(1);                       // number of programs
-        I32(0);                       // current program
+        // A chunk bank names the program the plugin had selected: Bitwig selects it again after loading the chunk, as
+        // FL does, and KORG's M1 plays that program, so 0 brought it up on its first program, not the song's. A
+        // parameter bank holds only this one program.
+        if (!isChunk) program = 0;
+        I32(program + 1);             // number of programs
+        I32(program);                 // current program
         ms.Write(new byte[124]);
         if (isChunk) I32(body.Length);
         ms.Write(body);

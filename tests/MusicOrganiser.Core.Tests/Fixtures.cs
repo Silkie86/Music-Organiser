@@ -266,13 +266,14 @@ public static class Fixtures
     }
 
     /// <summary>FL's VST2 state: a 21-byte header in front of the plugin's own chunk.</summary>
-    public static byte[] FlVst2State(byte[] chunk)
+    public static byte[] FlVst2State(byte[] chunk, uint program = 0)
     {
         var b = new byte[21 + chunk.Length];
         BinaryPrimitives.WriteInt32LittleEndian(b, -9);
         b[4] = 0x0d;
         BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(5), -2);
         BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(9), (uint)chunk.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(17), program);
         chunk.CopyTo(b, 21);
         return b;
     }
