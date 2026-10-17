@@ -30,6 +30,9 @@ public static class DawProject
     /// <summary>What's said of a channel whose FL volume envelope is switched on.</summary>
     internal const string EnvelopeLeftOut = "its volume envelope (ADSR) isn't carried over yet, so it plays without one";
 
+    /// <summary>What's said of a channel that the FL playlist never plays, carried as a track with no clips.</summary>
+    internal const string PlaysNothing = "the FL Studio playlist never plays it, so its track is here with its sound but no clips";
+
     /// <summary>What's said of a channel switched off in FL's Channel Rack, whose <paramref name="tracks"/> tracks are muted.</summary>
     internal static string SwitchedOff(int tracks) =>
         $"switched off in FL Studio's Channel Rack, so {(tracks > 1 ? "its tracks are" : "its track is")} muted";
@@ -127,7 +130,7 @@ public static class DawProject
             if (p.State is { } s)
             {
                 // VST2 settings go in as a bank (.fxb), as Bitwig's own DAWproject files have them.
-                var (data, extension) = p.Format == "VST2" && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data), ".fxb") : (s.Data, s.Extension);
+                var (data, extension) = p.Format == "VST2" && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data, s.Program), ".fxb") : (s.Data, s.Extension);
                 path = $"plugins/{Guid.NewGuid()}{extension}";
                 files.Add((path, data));
             }
@@ -184,10 +187,9 @@ public static class DawProject
         var masterId = (string)masterChannel.Attribute("id")!;
 
         // Inserts that channels feed or that hold effects, as effect tracks into the master.
-        // Channels that play notes or are automated, with a plugin or sample to make the sound.
-        var automated = song.Automation.Where(a => a.Control != FlControl.OnOff).Select(a => a.Channel).ToHashSet();
-        // An audio clip channel with no notes isn't a Sampler, automated or not.
-        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index) && c.AudioClips.Count == 0) &&
+        // Every channel with a plugin or sample to make the sound, as in FL's Channel Rack, even one the playlist
+        // never plays. An audio clip channel with no notes isn't a Sampler.
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || c.AudioClips.Count == 0) &&
                                                (c.Instrument is not null || c.Sample.Length > 0)).ToList();
         var used = playing.Select(c => c.Insert).Where(i => i > 0).ToHashSet();
         var insertChannels = new Dictionary<int, string>();
@@ -242,6 +244,7 @@ public static class DawProject
             if (OnMutedTracks(c.Name, c.Clips.Where(x => x.OnMutedTrack).Select(x => x.Track), song.MutedTracks, trackMuted) is { } onMuted)
                 notes.Add(onMuted);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
+            if (c.Clips.Count == 0) notes.Add($"{c.Name}: {PlaysNothing}");
             if (c.VolumeEnvelope is not null) notes.Add($"{c.Name}: {EnvelopeLeftOut}");
 
             var trackLanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("track", (string)track.Attribute("id")!));

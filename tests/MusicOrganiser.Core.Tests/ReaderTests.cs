@@ -406,6 +406,8 @@ public class FlStudio9Tests
 
         var song = Readers.FlStudio.ReadSong(_path);
         Assert.Equal(Chunk, song.Channels.Single(c => c.Name == "Cell").Instrument!.State!.Data[60..]);
+        // The program it had selected, which FL selects again after loading the chunk.
+        Assert.Equal(42, cell.Program);
     }
 
     [Fact]
@@ -459,6 +461,31 @@ public class FlStudio9Tests
         Assert.Equal("LegacyCell", (string?)plugin.Attribute("deviceName"));
         Assert.Null(plugin.Element("State"));
         Assert.Contains("Cell: left out LegacyCell's sound (FL Studio saved none in this file, so it opens at its default)", daw.Notes);
+    }
+
+    [Fact]
+    public void ASoundTheNewestSaveLostIsTakenFromAnOlderSaveOfTheSong()
+    {
+        // funk step_8 (FL 9) still has LegacyCell's sound; funk step_9, saved again in FL 25, lost it.
+        var dir = Fixtures.TempDir();
+        Fixtures.FlStudio9Project(dir, Chunk);
+        var path = Fixtures.FlStudio25NothingSaved(dir);
+
+        var (song, taken) = LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(path), path);
+        var cell = song.Channels.Single().Instrument!;
+        Assert.False(cell.NothingSaved);
+        Assert.Equal(Chunk, cell.State!.Data[60..]);
+        Assert.Equal(42, cell.State.Program);
+        Assert.Equal("Cell: LegacyCell's sound, from funk step_8", Assert.Single(taken));
+
+        var (file, leftOut) = Exporter.BitwigFromFl(path, Path.Combine(dir, "out"), Fixtures.BitwigTemplate());
+        Assert.DoesNotContain(leftOut, n => n.Contains("LegacyCell"));
+        Assert.Contains("  Cell: LegacyCell's sound, from funk step_8",
+                        File.ReadAllLines(Path.Combine(Path.GetDirectoryName(file)!, "funk step_9 - not carried over.txt")));
+
+        // A save with no older one keeps what it has.
+        var alone = Fixtures.FlStudio25NothingSaved(Fixtures.TempDir());
+        Assert.Empty(LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(alone), alone).Taken);
     }
 }
 

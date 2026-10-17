@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO.Compression;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Parsers;
@@ -191,6 +192,47 @@ public class BitwigProjectTests
         var clip = Clips(doc.Root!.Obj(0x4dd)!.List(0x4de).Single()).Single();
         Assert.Equal((0.0, 6.0, 0.0), (clip.Num(0x2af)!.Value, clip.Num(0x26)!.Value, clip.Num(0x10f8) ?? 0));
         Assert.Equal([(0.0, 0.0), (2.0, 1.0)], Notes(clip).Select(n => (n.Num(0x2af)!.Value, n.Num(0x10f8) ?? 0)));
+    }
+
+    [Fact]
+    public void AVst2KeepsTheProgramItHadSelectedSoBitwigSelectsItAgain()
+    {
+        // Solomon's M1 in funk step had program 50 selected; with program 0 in the bank, Bitwig brought it up on its first one.
+        var state = new PresetBlob("M1", "M1", ".fxp", Fxp.WrapChunk([1, 2, 3], "M1", 0x4b4c4d31)) { Program = 50 };
+        var m1 = new FlChannel(0, "M1", new FlPlugin("M1", "KORG", "VST2", "1263291697", state), "", 0, [new NoteEvent(0, 96, 60, 100)]);
+        var doc = Decode(BitwigProject.FromFl(new FlSong("", 96, 120, [m1], [], []), Fixtures.BitwigTemplate(), Snare).Bytes);
+        using var zip = doc.OpenZip()!;
+        using var ms = new MemoryStream();
+        using (var s = zip.Entries.Single().Open()) s.CopyTo(ms);
+        var bank = ms.ToArray();
+        Assert.Equal(("FBCh", 51, 50), (System.Text.Encoding.ASCII.GetString(bank, 8, 4),
+                                        BinaryPrimitives.ReadInt32BigEndian(bank.AsSpan(24)), BinaryPrimitives.ReadInt32BigEndian(bank.AsSpan(28))));
+        Assert.Equal([1, 2, 3], bank[160..]);
+        // A bank of parameters holds just the one program, so it's the selected one.
+        var parameters = Fxp.ToBank(Fxp.WrapParams([0.25f, 1f], "arp", 0x32647250), 50);
+        Assert.Equal((1, 0), (BinaryPrimitives.ReadInt32BigEndian(parameters.AsSpan(24)), BinaryPrimitives.ReadInt32BigEndian(parameters.AsSpan(28))));
+    }
+
+    [Fact]
+    public void ChannelsThePlaylistNeverPlaysComeAcrossWithTheirSoundButNoClips()
+    {
+        // As in Solomon's funk step: a second M1 and a sample the playlist never plays, and a channel with nothing to make a sound.
+        var notes = new NoteEvent[] { new(0, 96, 60, 100) };
+        var m1 = new FlPlugin("M1", "KORG", "VST2", "1263359281", null);
+        var song = new FlSong("", 96, 120,
+        [
+            new FlChannel(0, "M1", m1, "", 0, notes) { Clips = [new FlClip("A", 0, 384, notes)] },
+            new FlChannel(1, "M1 #2", m1, "", 0, []),
+            new FlChannel(2, "Synth ld 87", null, @"C:\Samples\Synth ld 87.wav", 0, []),
+            new FlChannel(3, "Layer", null, "", 0, []),
+        ], [], []);
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), Snare);
+        var tracks = Decode(result.Bytes).Root!.Obj(0x4dd)!.List(0x4de);
+        Assert.Equal(["M1", "M1 #2", "Synth ld 87"], tracks.Select(t => t.Str(0x15b)));
+        Assert.Equal([1, 0, 0], tracks.Select(t => Clips(t).Count()));
+        Assert.Contains("M1 #2: the FL Studio playlist never plays it, so its track is here with its sound but no clips", result.Notes);
+        Assert.Contains("Synth ld 87: the FL Studio playlist never plays it, so its track is here with its sound but no clips", result.Notes);
+        Assert.DoesNotContain(result.Notes, n => n.StartsWith("M1:") && n.Contains("never plays") || n.StartsWith("Layer"));
     }
 
     [Fact]

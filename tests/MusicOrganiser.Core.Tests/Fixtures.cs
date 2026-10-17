@@ -266,13 +266,14 @@ public static class Fixtures
     }
 
     /// <summary>FL's VST2 state: a 21-byte header in front of the plugin's own chunk.</summary>
-    public static byte[] FlVst2State(byte[] chunk)
+    public static byte[] FlVst2State(byte[] chunk, uint program = 0)
     {
         var b = new byte[21 + chunk.Length];
         BinaryPrimitives.WriteInt32LittleEndian(b, -9);
         b[4] = 0x0d;
         BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(5), -2);
         BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(9), (uint)chunk.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(17), program);
         chunk.CopyTo(b, 21);
         return b;
     }
@@ -350,15 +351,19 @@ public static class Fixtures
     /// its channel events: steps 0, 5 (volume 52) and 7 (shifted 24). The playlist (FL 9's 32-byte items, row 999 - n
     /// for pattern n) plays pattern 1 from beat 8, one bar long.
     /// </summary>
-    public static string FlStudio9Steps(string dir)
+    public static string FlStudio9Steps(string dir, bool pattern4AtStart = false)
     {
-        var item = new byte[32];
-        BinaryPrimitives.WriteUInt32LittleEndian(item, 768);
-        BinaryPrimitives.WriteUInt16LittleEndian(item.AsSpan(6), 0x6000);
-        BinaryPrimitives.WriteUInt32LittleEndian(item.AsSpan(8), 384);
-        BinaryPrimitives.WriteUInt16LittleEndian(item.AsSpan(12), 998);
-        BinaryPrimitives.WriteSingleLittleEndian(item.AsSpan(24), -1);
-        BinaryPrimitives.WriteSingleLittleEndian(item.AsSpan(28), -1);
+        // Pattern 1 (row 998) at beat 8; with pattern4AtStart, pattern 4 (row 995) at the start too.
+        var item = new byte[pattern4AtStart ? 64 : 32];
+        for (var off = 0; off < item.Length; off += 32)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(item.AsSpan(off), off == 0 ? 768u : 0);
+            BinaryPrimitives.WriteUInt16LittleEndian(item.AsSpan(off + 6), 0x6000);
+            BinaryPrimitives.WriteUInt32LittleEndian(item.AsSpan(off + 8), 384);
+            BinaryPrimitives.WriteUInt16LittleEndian(item.AsSpan(off + 12), (ushort)(off == 0 ? 998 : 995));
+            BinaryPrimitives.WriteSingleLittleEndian(item.AsSpan(off + 24), -1);
+            BinaryPrimitives.WriteSingleLittleEndian(item.AsSpan(off + 28), -1);
+        }
         var b = new FlpBuilder()
             .Ascii(199, "9.0.0").Byte(11, 36).Dword(156, 140_000)
             .Word(64, 0).Byte(21, 0).Ascii(192, "Kick").Ascii(196, @"C:\Samples\Kick.wav")
