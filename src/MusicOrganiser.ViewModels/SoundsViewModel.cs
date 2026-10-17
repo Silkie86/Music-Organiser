@@ -861,6 +861,36 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if ((s ?? Selected) is { } x) Shell.Reveal(x.Path);
     }
 
+    /// <summary>
+    /// Puts the sound (or the selected one) into the project open in Bitwig, in a Sampler on a new track named after
+    /// it. Bitwig needs the Music Organiser extension with "Let the app make changes" on.
+    /// </summary>
+    [RelayCommand]
+    async Task ToBitwig(Sound? s)
+    {
+        if ((s ?? Selected) is not { } sound) return;
+        var card = Activities.Start($"Putting {sound.Name} into Bitwig", "On a Sampler, on a new track");
+        try
+        {
+            using var link = await BitwigLink.ConnectAsync();
+            var sent = await BitwigSend.SoundAsync(link, sound.Path, sound.Name);
+            if (sent.Problem is { } problem)
+            {
+                card.Fail($"{sound.Name} didn't go in cleanly", problem + ".");
+                Message = $"{problem}.";
+                return;
+            }
+            card.Finish($"{sound.Name} is in Bitwig", "On a Sampler, on a new track");
+            Record([sound], SoundEvent.Send);
+        }
+        catch (DawLinkException e) { card.Fail("Couldn't put it into Bitwig", e.Message); Message = e.Message; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            card.Fail("Couldn't put it into Bitwig", e.Message);
+            Message = $"Sending to Bitwig failed: {e.Message}";
+        }
+    }
+
     [RelayCommand]
     void Select(Sound? s)
     {

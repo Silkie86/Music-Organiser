@@ -916,6 +916,28 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_sound_goes_into_Bitwig_on_a_Sampler_on_a_track_of_its_own()
+    {
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        if (bitwig is null) return;
+        var port = BitwigLink.Port;
+        BitwigLink.Port = bitwig.Port;
+        try
+        {
+            var file = Path.Combine(_root, "Snare Tight.wav");
+            File.WriteAllBytes(file, [0]);
+            var lab = Main().Sounds;
+            lab.Selected = new Sound { Path = file };
+            await lab.ToBitwigCommand.ExecuteAsync(null);
+
+            using var link = await BitwigLink.ConnectAsync();
+            var track = (await link.ProjectAsync()).Tracks.Single(t => t.Name == "Snare Tight");
+            Assert.Contains("Sampler", track.Devices.Single().Name);
+        }
+        finally { BitwigLink.Port = port; }
+    }
+
+    [Fact]
     public async Task AScanGoesBeforeReadingParametersWhichCarriesOnAfter()
     {
         var (asked, go) = (Directory.CreateDirectory(Path.Combine(_root, "asked")).FullName, Path.Combine(_root, "go"));
