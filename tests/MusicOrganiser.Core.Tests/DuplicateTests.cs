@@ -136,6 +136,51 @@ public class DuplicateTests
         Assert.DoesNotContain(after, g => g.Members.Any(m => m.Sound.Name is "Snare 2 edit" or "Kick 0"));
     }
 
+    [Fact]
+    public void A_compressed_copy_joins_one_sound_and_copies_of_another_member_can_go_too()
+    {
+        // Code review 2026-10-17: two round robins each close to the same MP3 were joined into one "same sound",
+        // and copies of a member other than the one to keep could never be hidden.
+        var root = Fixtures.SoundsDir();
+        var d = Path.Combine(root, "Samples");
+        Directory.CreateDirectory(d);
+        Synth.Write(Path.Combine(d, "Kick R1.wav"), Synth.Kick(1));
+        Synth.Write(Path.Combine(d, "Kick R4.wav"), Synth.Kick(4));
+        // A compressed copy: a made-up .opus "decoder" (Linux has none) hands back a WAV kept outside the folder.
+        var wav = Path.Combine(root, "kick-for-opus.wav");
+        Synth.Write(wav, Synth.Kick(1));
+        AudioFile.Register(".opus", (_, secs) => AudioFile.Read(wav, secs));
+        File.Copy(wav, Path.Combine(d, "Kick.opus"));
+        Synth.Write(Path.Combine(d, "Snare.wav"), Synth.Snare(2));
+        Synth.Write(Path.Combine(d, "Snare copy.wav"), Synth.Snare(2));
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        using var org = new SoundOrganiser(lib);
+        org.Scan([d]);
+        long Id(string name) => org.Everything.Single(s => System.IO.Path.GetFileName(s.Path) == name).Id;
+        SoundMatch M(string x, string y, double apart) => new(Id(x), Id(y), CopyKind.Converted, 1, 0, apart, 0.1);
+        lib.SaveMatches([
+            M("Kick R1.wav", "Kick.opus", 0.8), M("Kick.opus", "Kick R4.wav", 0.9),   // each within the MP3 allowance
+            M("Snare.wav", "Snare copy.wav", 0),                                    // the same sound
+            M("Kick R1.wav", "Snare.wav", 2.5),                                     // only very similar: one group
+        ]);
+
+        var g = DuplicateFinder.Groups(org).Single();
+        DuplicateMember Of(string name) => g.Members.Single(m => System.IO.Path.GetFileName(m.Sound.Path) == name);
+        Assert.NotEqual(Of("Kick R1.wav").SameSet, Of("Kick R4.wav").SameSet);
+        Assert.Equal(Of("Kick R1.wav").SameSet, Of("Kick.opus").SameSet);
+        Assert.Equal(Of("Snare.wav").SameSet, Of("Snare copy.wav").SameSet);
+        Assert.False(Of("Kick R4.wav").Same);
+        // In each set of the same sound, exactly one copy can go, whichever set holds the one to keep.
+        foreach (var set in new[] { new[] { "Kick R1.wav", "Kick.opus" }, new[] { "Snare.wav", "Snare copy.wav" } })
+            Assert.Equal(1, set.Count(n => Of(n).Same && !Of(n).Keep));
+
+        // A file that can't be found (its drive unplugged) isn't marked as looked at: it's read again next time.
+        var gone = Id("Kick R4.wav");
+        File.Delete(Path.Combine(d, "Kick R4.wav"));
+        DuplicateFinder.Update(org);
+        Assert.Equal([gone], lib.SoundsToPrint().Select(t => t.Id));
+    }
+
     static float[] Shorter(float[] x, double factor = 0.7, int sr = 44100)
     {
         var y = (float[])x.Clone();

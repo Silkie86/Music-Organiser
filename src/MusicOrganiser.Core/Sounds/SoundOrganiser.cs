@@ -63,6 +63,17 @@ public sealed class SoundOrganiser : IDisposable
         ApplyUsage(_lastUsage);
     }
 
+    /// <summary>
+    /// Hides sounds from (or shows them in) the lists after <see cref="SoundLibrary.Hide"/> or Unhide, without reading
+    /// the whole library again: with 357,000 sounds a full <see cref="Reload"/> holds things up for seconds.
+    /// </summary>
+    public void SetHidden(IEnumerable<long> ids, bool hidden)
+    {
+        foreach (var id in ids)
+            if (_byId.TryGetValue(id, out var s)) s.Hidden = hidden;
+        _visible = _sounds.Any(s => s.Hidden) ? _sounds.Where(s => !s.Hidden).ToList() : _sounds;
+    }
+
     /// <summary>Chroma (the last 12 features) says which notes are present; it matters less than timbre for "sounds like".</summary>
     static float[] ChromaDownweight(int dim)
     {
@@ -396,7 +407,7 @@ public sealed class SoundOrganiser : IDisposable
     {
         if (TypeModel is not { } model) return [];
         return _sounds.AsParallel().WithDegreeOfParallelism(Parallelism.Workers)
-            .Where(s => s.UserType is null && s.NameType is not null && RawVector(s, model.Space) is not null)
+            .Where(s => !s.Hidden && s.UserType is null && s.NameType is not null && RawVector(s, model.Space) is not null)
             .Select(s => (Sound: s, Top: model.Predict(RawVector(s, model.Space)!) is [var top, ..] ? top : default))
             .Where(t => t.Top.Label is not null && t.Top.Label != t.Sound.NameType && t.Top.P >= 0.7)
             .Select(t => (t.Sound, t.Top.Label, Math.Round(t.Top.P, 2)))
@@ -478,9 +489,10 @@ public sealed class SoundOrganiser : IDisposable
     {
         if (_clapIndex is null || Clap is not { } clap || string.IsNullOrWhiteSpace(text)) return [];
         var q = clap.EmbedText(text);
-        return _clapIndex.Nearest(q, max, normaliseQuery: false)
+        // Asks for enough extra to make up for hidden copies, which are dropped after.
+        return _clapIndex.Nearest(q, max + (_sounds.Count - _visible.Count), normaliseQuery: false)
             .Where(h => _byId.TryGetValue(h.Id, out var x) && !x.Hidden)
-            .Select(h => new SimilarSound(_byId[h.Id], Math.Round(h.Score, 3))).ToList();
+            .Select(h => new SimilarSound(_byId[h.Id], Math.Round(h.Score, 3))).Take(max).ToList();
     }
 
     /// <summary>Notes (and the chords they make) in a sound, with the Basic Pitch model.</summary>

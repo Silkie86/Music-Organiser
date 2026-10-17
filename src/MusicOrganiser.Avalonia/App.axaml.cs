@@ -24,6 +24,7 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             Dispatcher.UIThread.UnhandledException += OnUnhandled;
+            Core.Parallelism.FavourThisThread();
             Ui.Current = new AvaloniaUi();
             if (OperatingSystem.IsWindows()) Audio.WindowsDecoders.Register();
             _db = new LibraryDb(LibraryDb.DefaultPath);
