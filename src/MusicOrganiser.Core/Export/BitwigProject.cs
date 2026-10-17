@@ -367,14 +367,16 @@ public static class BitwigProject
     /// off), with no settings yet. The older one's settings can't be handed to it as they are: Serum 2 refuses Serum's
     /// as its own state and then won't load at all (seen on Solomon's PC). So the old sound is translated where the
     /// app can (<see cref="Translate"/>), and also saved beside the project, since Serum 2's browser opens Serum's
-    /// presets. Null when it isn't an older version, or has no sound to save.
+    /// presets. Null when it isn't an older version (a project's Kontakt 8 stays, beside a template's Kontakt 7), or has
+    /// no sound to save.
     /// </summary>
     static FlPlugin? Upgrade(FlPlugin p, Template t)
     {
         var newer = Def(t.Vst3Device)!;
         var name = newer.Str(0x9a);
         if (p.Native || p.State is null || name.Length == 0 || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
-            PluginCatalog.Family(p.Name) != PluginCatalog.Family(name) || newer[0xce4] is not string classId || classId.Length != 32)
+            PluginCatalog.Family(p.Name) != PluginCatalog.Family(name) || PluginCatalog.VersionOf(name) <= PluginCatalog.VersionOf(p.Name) ||
+            newer[0xce4] is not string classId || classId.Length != 32)
             return null;
         var path = newer.Obj(0xc5a)?[0xc5b] is List<object?> { Count: > 0 } location && newer.Obj(0xc5a)!.Resolve(location[0]) is { } file
             ? file.Str(0x3b) : "";

@@ -171,6 +171,15 @@ public class LibraryTests : IDisposable
             ["Ozone 11", "Ozone 12", "Ozone 12 Imager", "Battery 4", "Mini V3", "Mini V4", "Toraverb2", "M12-Filter"]));
 
     [Theory]
+    [InlineData("Serum", "0.0")]
+    [InlineData("Serum 2", "2.0")]
+    [InlineData("Kontakt 8", "8.0")]
+    [InlineData("Mini V4", "4.0")]
+    [InlineData("Ozone 11.1 (x64)", "11.1")]
+    public void ReadsAPluginsVersionFromItsName(string name, string version) =>
+        Assert.Equal(Version.Parse(version), PluginCatalog.VersionOf(name));
+
+    [Theory]
     [InlineData("Didums_70", "Didums", 70)]
     [InlineData("Didums", "Didums", 1)]
     [InlineData("Beauty bitch (orch)_9", "Beauty bitch (orch)", 9)]

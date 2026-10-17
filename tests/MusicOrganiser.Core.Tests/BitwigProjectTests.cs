@@ -146,6 +146,13 @@ public class BitwigProjectTests
                                            n.Contains("\"Serum (Serum)\""));
         var (channel, sound) = Assert.Single(result.Upgraded!);
         Assert.Equal(("Serum", serum1.State!.Data), (channel, sound.Data));
+
+        // A newer version than the template's is left as it is, not swapped for the older one.
+        var channels = song.Channels.ToList();
+        channels[1] = channels[1] with { Instrument = serum1 with { Name = "Serum 3" } };
+        var newer = BitwigProject.FromFl(song with { Channels = channels }, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        Assert.Empty(newer.Upgraded!);
+        Assert.Equal("Serum 3", Def(Chain(Decode(newer.Bytes).Root!.Obj(0x4dd)!.List(0x4de).Single(t => t.Str(0x15b) == "Serum")).Last()).Str(0x9a));
     }
 
     [Fact]
