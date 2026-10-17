@@ -21,6 +21,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class BitwigReader : IProjectReader
 {
     public string Daw => "Bitwig Studio";
+    public int Version => 2;   // 2: Bitwig 6.1 Sampler analysis (value type 0x18) decoded, collected samples counted once
     public IReadOnlyList<string> Extensions { get; } = [".bwproject"];
 
     // Classes.

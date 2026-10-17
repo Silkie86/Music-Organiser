@@ -85,6 +85,11 @@ public interface IProjectReader
 {
     string Daw { get; }
     IReadOnlyList<string> Extensions { get; }
+    /// <summary>
+    /// Goes up by one whenever the reader learns to read its projects better, so a scan reads that DAW's projects again
+    /// even though their files haven't changed.
+    /// </summary>
+    int Version => 1;
     ProjectInfo Read(string path);
     IReadOnlyList<MidiClip> ExtractMidi(string path) => Array.Empty<MidiClip>();
     /// <summary>Each channel or track's notes across the song, with what plays them.</summary>

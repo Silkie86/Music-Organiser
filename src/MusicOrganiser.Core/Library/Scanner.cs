@@ -90,6 +90,8 @@ public sealed class Scanner(LibraryDb db)
         progress?.Report(new("Finding projects", 0, 0, ""));
         var files = FindProjects(roots, ct);
         var known = db.KnownFiles();
+        // DAWs whose reader has got better since the library last read their projects: read those again.
+        var reread = Readers.All.Where(r => db.GetSetting(ReaderVersionKey(r)) != r.Version.ToString()).Select(r => r.Daw).ToHashSet();
         var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
             .Where(f =>
             {
@@ -97,7 +99,8 @@ public sealed class Scanner(LibraryDb db)
                 {
                     var fi = new FileInfo(f);
                     var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                    return full || !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length;
+                    return full || reread.Contains(Readers.For(f)!.Daw) ||
+                           !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length;
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
             }).ToList();
@@ -127,9 +130,12 @@ public sealed class Scanner(LibraryDb db)
             }
         }
         db.UpsertMany(batch);
+        foreach (var r in Readers.All) db.SetSetting(ReaderVersionKey(r), r.Version.ToString());
         db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
         progress?.Report(new("Done", files.Count, files.Count, ""));
     }
+
+    static string ReaderVersionKey(IProjectReader r) => $"reader_version:{r.Daw}";
 
     /// <summary>Refresh the list of plugins installed on this PC.</summary>
     public int ScanInstalledPlugins()

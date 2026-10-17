@@ -16,6 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
+    public int Version => 2;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
