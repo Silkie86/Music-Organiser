@@ -46,9 +46,19 @@ public sealed class PianoRollEditor : Control
     /// <summary>Runs with new loop points dragged along the bar numbers, or null when they're cleared.</summary>
     public static readonly StyledProperty<ICommand?> SectionCommandProperty = AvaloniaProperty.Register<PianoRollEditor, ICommand?>(nameof(SectionCommand));
 
+    /// <summary>
+    /// When set, says which notes (placed at their time on the roll) fight the harmony, in place of the plain semitone
+    /// rule: the MIDI playground judges them against its chord lane, so a major 7th over the root or a b9 on a dominant
+    /// isn't marked as a mistake.
+    /// </summary>
+    public static readonly StyledProperty<Func<NoteEvent, bool>?> ClashTestProperty =
+        AvaloniaProperty.Register<PianoRollEditor, Func<NoteEvent, bool>?>(nameof(ClashTest));
+
     static PianoRollEditor() =>
         AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty,
-                                       PartStartProperty, PartEndProperty, SectionProperty);
+                                       PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty);
+
+    public Func<NoteEvent, bool>? ClashTest { get => GetValue(ClashTestProperty); set => SetValue(ClashTestProperty, value); }
 
     public IReadOnlyList<NoteEvent>? Notes { get => GetValue(NotesProperty); set => SetValue(NotesProperty, value); }
     public IReadOnlyList<NoteEvent>? Guide { get => GetValue(GuideProperty); set => SetValue(GuideProperty, value); }
@@ -395,7 +405,7 @@ public sealed class PianoRollEditor : Control
             {
                 var n = notes[i];
                 if (from + n.Start >= To) continue;
-                var rubs = Rubs(n, from, guide);
+                var rubs = ClashTest is { } test ? test(n with { Start = from + n.Start }) : Rubs(n, from, guide);
                 var picked = _working is not null && i == _index;
                 Note(dc, rubs ? clash : accent, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high);
             }

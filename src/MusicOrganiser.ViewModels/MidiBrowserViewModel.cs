@@ -459,6 +459,18 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     bool CanSend() => !IsSending;
 
+    /// <summary>
+    /// The part picked, as it plays here (moved, in its octave, with your edits), into the section being built in the
+    /// MIDI playground (Solomon, 2026-10-17: building parts together "like lego").
+    /// </summary>
+    [RelayCommand]
+    void SendToPlayground()
+    {
+        if (Selected is not { } row) return;
+        _main.Playground.AddFromLibrary(row.Entry, row.BarNotes, row.Title);
+        Message = $"{row.Title} is in the playground, in section {_main.Playground.SectionName}.";
+    }
+
     // ---- the octave of what it's fitted to ----
 
     /// <summary>
@@ -1019,6 +1031,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             return (null, $"Couldn't read {name}: {e.Message}");
         }
     }
+
+    /// <summary>Every part, if they've been read already; null before that, and asking never starts the reading.</summary>
+    public MidiCatalogue? LoadedCatalogue => _catalogue;
 
     /// <summary>Every part, read from the index the first time it's wanted (by this page or a song's MIDI tab).</summary>
     public async Task<MidiCatalogue?> CatalogueAsync()

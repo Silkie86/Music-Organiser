@@ -15,6 +15,7 @@ using Xunit;
 namespace MusicOrganiser.Core.Tests;
 
 /// <summary>The screens' logic runs without any UI framework, which is what lets WPF and Avalonia share it.</summary>
+[Collection("Global UI")]
 public class ViewModelTests : IDisposable
 {
     readonly string _root = Fixtures.TempDir();
