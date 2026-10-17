@@ -90,7 +90,22 @@ public sealed class GalaxyCanvas : Control
         Cursor = new Cursor(StandardCursorType.Cross);
         _frame = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Render, (_, _) => Animate());
         _sweepTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(15), DispatcherPriority.Input, (_, _) => NextSweep());
+    }
+
+    // GalaxyGpu.Changed is static: held only while on screen, or every Sound Lab page ever shown (and its star
+    // buffers) would stay in memory.
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
         GalaxyGpu.Changed += InvalidateVisual;
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        GalaxyGpu.Changed -= InvalidateVisual;
+        _frame.Stop();
+        _sweepTimer.Stop();
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)

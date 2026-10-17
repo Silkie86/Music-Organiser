@@ -127,7 +127,12 @@ public sealed partial class FlStudioReader
     {
         var dt = 8 + BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(4));
         var start = dt + 8;
-        var dataEnd = Math.Min(raw.Length, start + BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(dt + 4)));
+        // As the reader does: an old save with junk where "FLdt" and its length belong has its events run to the end
+        // of the file, and its junk is copied as it was (FL opened it like that).
+        var named = Encoding.ASCII.GetString(raw, dt, 4) == "FLdt";
+        var dataEnd = named
+            ? (int)Math.Clamp((long)start + BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(dt + 4)), start, raw.Length)
+            : raw.Length;
 
         var body = new MemoryStream(dataEnd - start + 256);
         var pos = start;   // events sit back to back, so each one's id byte starts where the last one's data ended
@@ -154,7 +159,8 @@ public sealed partial class FlStudioReader
         var file = new MemoryStream(raw.Length + (int)body.Length - (dataEnd - start));
         file.Write(raw, 0, dt + 4);
         Span<byte> len = stackalloc byte[4];
-        BinaryPrimitives.WriteInt32LittleEndian(len, (int)body.Length);
+        if (named) BinaryPrimitives.WriteInt32LittleEndian(len, (int)body.Length);
+        else raw.AsSpan(dt + 4, 4).CopyTo(len);
         file.Write(len);
         body.WriteTo(file);
         file.Write(raw, dataEnd, raw.Length - dataEnd);   // whatever FL keeps after the chunk, as it was

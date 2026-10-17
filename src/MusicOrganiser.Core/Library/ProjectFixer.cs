@@ -39,8 +39,11 @@ public sealed record FixResult(string Path, int Relinked, int Swapped, IReadOnly
 /// Fix: repairs what it can of a project's missing samples into a new file next to the original
 /// ("Didums_77 (fixed).flp"), and can swap Serum for Serum 2 in it. The original is never changed.
 /// </summary>
-public static class ProjectFixer
+public static partial class ProjectFixer
 {
+    [System.Text.RegularExpressions.GeneratedRegex(@"(\s*\(fixed(\s+\d+)?\))+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex FixedSuffix();
+
     /// <summary>Whether Fix can write this kind of project (FL Studio and Bitwig so far).</summary>
     public static bool CanWrite(string path) =>
         Path.GetExtension(path).ToLowerInvariant() is ".flp" or ".bwproject";
@@ -115,11 +118,14 @@ public static class ProjectFixer
         return new FixLine(false, name, FixAction.StillMissing, null, "Not installed on this computer.");
     }
 
-    /// <summary>Where the fixed copy goes: next to the original, "Name (fixed).ext", or "(fixed 2)" and on if that's taken.</summary>
+    /// <summary>
+    /// Where the fixed copy goes: next to the original, "Name (fixed).ext", or "(fixed 2)" and on if that's taken. Fixing
+    /// a fixed copy again makes the next "(fixed N)" of the same name, not "Name (fixed) (fixed)".
+    /// </summary>
     public static string FixedPath(string path)
     {
         var dir = Path.GetDirectoryName(path) ?? ".";
-        var name = Path.GetFileNameWithoutExtension(path);
+        var name = FixedSuffix().Replace(Path.GetFileNameWithoutExtension(path), "");
         var ext = Path.GetExtension(path);
         for (var n = 1; ; n++)
         {
@@ -143,17 +149,19 @@ public static class ProjectFixer
 
         var data = File.ReadAllBytes(projectPath);
         var changed = 0;
+        IReadOnlyList<string> cantWrite = [];
         var kind = Path.GetExtension(projectPath).ToLowerInvariant();
         if (relink.Count > 0)
         {
-            (data, changed) = kind switch
+            (data, changed, cantWrite) = kind switch
             {
                 ".flp" => FlStudioReader.RelinkSamples(data, projectPath, relink),
-                ".bwproject" => BitwigReader.RelinkSamples(data, projectPath, relink)
-                                ?? throw new InvalidDataException("This Bitwig project couldn't be read fully enough to write a fixed copy."),
+                ".bwproject" => BitwigReader.RelinkSamples(data, projectPath, relink) is { } b ? (b.Data, b.Changed, (IReadOnlyList<string>)[])
+                                : throw new InvalidDataException("This Bitwig project couldn't be read fully enough to write a fixed copy."),
                 _ => throw new NotSupportedException("Fix can only write FL Studio and Bitwig projects so far."),
             };
-            if (changed == 0) throw new InvalidDataException("None of the missing samples could be found inside the project file.");
+            if (changed == 0 && cantWrite.Count > 0 && !swap) throw new InvalidDataException(CantWriteNote(cantWrite));
+            if (changed == 0 && cantWrite.Count == 0) throw new InvalidDataException("None of the missing samples could be found inside the project file.");
         }
         var swapped = 0;
         IReadOnlyList<string> notes = [];
@@ -170,6 +178,7 @@ public static class ProjectFixer
             if (result.Swapped == 0) throw new InvalidDataException(result.Notes.FirstOrDefault() ?? "No Serum was found inside the project file.");
             (data, swapped, notes) = (result.Data, result.Swapped, kind == ".flp" ? [.. result.Notes, .. FlAutomationNote(projectPath)] : result.Notes);
         }
+        if (cantWrite.Count > 0) notes = [CantWriteNote(cantWrite), .. notes];
 
         var target = FixedPath(projectPath);
         using (var f = new FileStream(target, FileMode.CreateNew)) f.Write(data);
@@ -185,6 +194,10 @@ public static class ProjectFixer
         }
         return new FixResult(target, changed, swapped, notes);
     }
+
+    static string CantWriteNote(IReadOnlyList<string> files) =>
+        $"This project is from an FL Studio older than 11.5, which can't store the path of {string.Join(", ", files.Select(f => $"\"{Path.GetFileName(f)}\""))}: " +
+        "its folder or name has letters that FL version doesn't know, so it was left missing. Rename it, or copy it to a folder with a plain name, then fix again.";
 
     /// <summary>
     /// FL's automation of a plugin names its setting by number, and Serum 2's numbers are other knobs, so automation

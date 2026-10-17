@@ -64,6 +64,8 @@ public class FixTests : IDisposable
 
         // A second fix doesn't overwrite the first.
         Assert.Equal(Path.Combine(dir, "Night Drive (fixed 2).flp"), ProjectFixer.FixedPath(path));
+        // Fixing the fixed copy again makes the next copy of the same song, not "Night Drive (fixed) (fixed)".
+        Assert.Equal(Path.Combine(dir, "Night Drive (fixed 2).flp"), ProjectFixer.FixedPath(fixedPath));
     }
 
     [Fact]

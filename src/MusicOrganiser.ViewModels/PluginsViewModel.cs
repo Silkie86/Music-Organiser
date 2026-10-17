@@ -73,14 +73,14 @@ public sealed partial class PluginsViewModel : ObservableObject
 
     void Show(Loaded loaded)
     {
-        var selected = Selected?.Name;
+        var selected = Selected;
         Items = loaded.Items;
         View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
         View.Filter = o => o is PluginUsage p && Matches(p);
         var missing = Items.Count(p => !p.Installed);
         Summary = $"{Items.Count} plugins used" + (missing > 0 ? $", {missing} not installed on this PC" : "");
         BuildNeeded(loaded);
-        Selected = selected is null ? null : Items.FirstOrDefault(p => p.Name == selected);
+        Selected = selected is null ? null : Items.FirstOrDefault(p => p.Name == selected.Name && p.Own == selected.Own);
 
         if (!_main.PluginScanner.Available)
             ScannerNote = "IDs, versions and parameters come from the plugin scanner, which isn't built on this computer yet. " +
@@ -161,7 +161,7 @@ public sealed partial class PluginsViewModel : ObservableObject
         }
         else
         {
-            Projects = _db.ProjectsWithPlugin(p.Name);
+            Projects = _db.ProjectsWithPlugin(p.Name, p.Own);
             ProjectsTitle = Projects.Count == 1 ? "Used in 1 project" : $"Used in {Projects.Count} projects";
             SelectedDetails = string.Join(" · ", new[]
             {
@@ -211,7 +211,7 @@ public sealed partial class PluginsViewModel : ObservableObject
     void ShowProjects(PluginUsage? p)
     {
         if ((p ?? Selected) is { } plugin)
-            _main.Projects.ShowOnly(_db.ProjectsUsingPlugin(plugin.Name), $"Projects using {plugin.Name}");
+            _main.Projects.ShowOnly(_db.ProjectsUsingPlugin(plugin.Name, plugin.Own), $"Projects using {plugin.Name}");
     }
 
     internal IReadOnlyList<string> SimilarTo(string name) =>

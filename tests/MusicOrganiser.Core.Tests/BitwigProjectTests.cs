@@ -147,6 +147,13 @@ public class BitwigProjectTests
                                            n.Contains("\"Serum (Serum)\""));
         var (channel, sound) = Assert.Single(result.Upgraded!);
         Assert.Equal(("Serum", serum1.State!.Data), (channel, sound.Data));
+
+        // A newer version than the template's is left as it is, not swapped for the older one.
+        var channels = song.Channels.ToList();
+        channels[1] = channels[1] with { Instrument = serum1 with { Name = "Serum 3" } };
+        var newer = BitwigProject.FromFl(song with { Channels = channels }, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        Assert.Empty(newer.Upgraded!);
+        Assert.Equal("Serum 3", Def(Chain(Decode(newer.Bytes).Root!.Obj(0x4dd)!.List(0x4de).Single(t => t.Str(0x15b) == "Serum")).Last()).Str(0x9a));
     }
 
     [Fact]
@@ -188,6 +195,13 @@ public class BitwigProjectTests
         var saved = Assert.Single(Directory.GetFiles(Path.Combine(Path.GetDirectoryName(file)!, BitwigProject.UpgradedFolder)));
         Assert.Equal("Serum (Serum).fxp", Path.GetFileName(saved));
         Assert.Equal("CcnK", System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(saved), 0, 4));
+
+        // Two channels with the same name each keep their sound.
+        var song = Readers.FlStudio.ReadSong(project);
+        var twice = song with { Channels = [.. song.Channels, song.Channels[1] with { Index = song.Channels.Max(c => c.Index) + 1 }] };
+        var result = BitwigProject.FromFl(twice, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        Assert.Equal(["Serum", "Serum (2)"], result.Upgraded!.Select(u => u.Channel));
+        Assert.Contains(result.Notes, n => n.Contains("\"Serum (2) (Serum)\""));
 
         // Without it, Serum stays Serum and nothing extra is saved.
         var (plain, _) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Plain"), Fixtures.BitwigTemplate());

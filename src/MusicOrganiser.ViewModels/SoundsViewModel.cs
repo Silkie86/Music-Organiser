@@ -199,7 +199,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     public void StopWatching() => _sampleWatch?.Dispose();
 
-    void SampleFilesChanged(FolderWatch.Changes changes)
+    internal void SampleFilesChanged(FolderWatch.Changes changes)
     {
         _changedSounds.UnionWith(changes.Files);
         _sampleFoldersOverflowed |= changes.Overflowed.Count > 0;
@@ -209,6 +209,9 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>Takes in what the sample folders' watcher saw change, or walks the folders when too much changed to name.</summary>
     internal async Task TakeInChangedSoundsAsync()
     {
+        // A job started meanwhile (RunAsync awaits a reload before calling this): leave the changes queued for it to
+        // take in when it's done, as RunAsync and ScanAsync wouldn't run now.
+        if (IsBusy) return;
         if (_sampleFoldersOverflowed)
         {
             _sampleFoldersOverflowed = false;
@@ -311,16 +314,18 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         }
         var since = DateTime.Now.AddYears(-1);
         var weights = _weights;
-        var (changed, liked) = await Task.Run(() =>
+        var (changed, years, liked) = await Task.Run(() =>
         {
-            var before = items.Select(s => (s.UsedIn, s.UsedInRecently)).ToArray();
+            var before = items.Select(s => (s.UsedIn, s.UsedInRecently, s.UsedInYears)).ToArray();
             Org.ApplyUsage(_db.SampleUsageByAge(since));
-            var changed = items.Where((s, i) => (s.UsedIn, s.UsedInRecently) != before[i]).Any();
-            return (changed, changed ? items.Select(weights.Score).ToArray() : []);
+            var changed = items.Where((s, i) => (s.UsedIn, s.UsedInRecently) != (before[i].UsedIn, before[i].UsedInRecently)).Any();
+            // A project re-saved in a new year changes only the years its sounds are used in, which the year filter goes by.
+            var years = changed || items.Where((s, i) => !s.UsedInYears.AsSpan().SequenceEqual(before[i].UsedInYears)).Any();
+            return (changed, years, changed ? items.Select(weights.Score).ToArray() : []);
         });
-        if (!changed || !ReferenceEquals(items, Items)) return;
+        if (!years || !ReferenceEquals(items, Items)) return;
         var top = liked.Length == 0 ? 0 : liked.Max();
-        for (var i = 0; i < items.Count; i++)
+        for (var i = 0; i < liked.Length; i++)
         {
             items[i].Liked = liked[i];
             items[i].LikedShare = top > 0 ? liked[i] / top : 0;
@@ -732,6 +737,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     void Start(Sound s, double from, bool count = true)
     {
+        _previews?.Cancel();   // a preview still opening mustn't start over this one
         _player.Play(s.Path, from);
         _preview = count ? null : s.Path;
         if (count) Count(s);
@@ -819,15 +825,15 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     /// <summary>
-    /// A double-click: plays or stops the sound. With Autoplay on, the first click already started it,
-    /// so it keeps playing and now counts as a play.
+    /// A double-click: the first click already started the sound as a preview (<see cref="PlayClicked"/>, Autoplay or
+    /// not), so it keeps playing and now counts as a play. A sound that isn't playing starts (and counts).
     /// </summary>
     [RelayCommand]
     void Audition()
     {
-        if (!AutoPlay || Selected is not { } s) Play(null);
-        else if (_player.Playing != s.Path) Play(s);
-        else if (_preview == s.Path) { Count(s); _preview = null; }
+        if (Selected is not { } s) return;
+        if (_preview == s.Path && IsPreviewing(s)) { Count(s); _preview = null; }
+        else if (!IsPreviewing(s)) Play(s);
     }
 
     /// <summary>A click on the waveform: jump there if it's playing, otherwise play from there.</summary>

@@ -138,13 +138,14 @@ public sealed partial class ProjectItem : ObservableObject
         }
     }
 
-    partial void OnStatusChanged(string value) => Save();
-    partial void OnRatingChanged(int value) => Save();
-    partial void OnFavouriteChanged(bool value) => Save();
-    partial void OnMusicalKeyChanged(string value) => Save();
-    partial void OnNotesChanged(string value) => Save();
+    partial void OnStatusChanged(string value) => Save(OrganisationField.Status);
+    partial void OnRatingChanged(int value) => Save(OrganisationField.Rating);
+    partial void OnFavouriteChanged(bool value) => Save(OrganisationField.Favourite);
+    partial void OnMusicalKeyChanged(string value) => Save(OrganisationField.Key);
+    partial void OnNotesChanged(string value) => Save(OrganisationField.Notes);
 
-    void Save()
+    /// <summary>Saves your fields; the one that changed goes to the song's older saves too, and only that one.</summary>
+    void Save(OrganisationField changed)
     {
         if (_loading) return;
         _p.Status = Status;
@@ -152,14 +153,14 @@ public sealed partial class ProjectItem : ObservableObject
         _p.Favourite = Favourite;
         _p.MusicalKey = MusicalKey ?? "";
         _p.Notes = Notes ?? "";
-        _db.SaveOrganisation(_p, OlderSaves.Select(o => o.Id));
+        _db.SaveOrganisation(_p, OlderSaves.Select(o => o.Id), changed);
         foreach (var o in OlderSaves)
         {
-            o.Status = _p.Status;
-            o.Rating = _p.Rating;
-            o.Favourite = _p.Favourite;
-            o.MusicalKey = _p.MusicalKey;
-            o.Notes = _p.Notes;
+            if (changed == OrganisationField.Status) o.Status = _p.Status;
+            if (changed == OrganisationField.Rating) o.Rating = _p.Rating;
+            if (changed == OrganisationField.Favourite) o.Favourite = _p.Favourite;
+            if (changed == OrganisationField.Key) o.MusicalKey = _p.MusicalKey;
+            if (changed == OrganisationField.Notes) o.Notes = _p.Notes;
         }
     }
 

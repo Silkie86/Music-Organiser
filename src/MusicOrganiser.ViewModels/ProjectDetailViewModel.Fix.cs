@@ -13,6 +13,8 @@ public sealed partial class ProjectDetailViewModel
 {
     /// <summary>Setting that remembers a fixed copy still waiting for "did it load correctly?", by the original's path.</summary>
     public static string FixCheckKey(string projectPath) => $"fix_check:{projectPath}";
+    /// <summary>Set once the waiting fixed copy has been opened, so Keep and Delete still show after the page reloads.</summary>
+    public static string FixOpenedKey(string projectPath) => $"fix_opened:{projectPath}";
 
     /// <summary>Whether this project has something missing, or a Serum to swap for Serum 2, and is a kind Fix can write.</summary>
     public bool CanFix => (Item.HasMissing || _canSwapSerum) && !Item.FileMissing && ProjectFixer.CanWrite(Item.Path);
@@ -58,6 +60,7 @@ public sealed partial class ProjectDetailViewModel
             {
                 _pendingFrom = from;
                 PendingFix = pending;
+                PendingFixOpened = _db.GetSetting(FixOpenedKey(from)) == pending;
                 return;
             }
     }
@@ -135,7 +138,10 @@ public sealed partial class ProjectDetailViewModel
                 result.Notes.Count > 0 ? string.Join(" ", result.Notes) : null,
                 "Open it to check it loads.",
             }.OfType<string>());
-            card.Finish($"Saved {System.IO.Path.GetFileName(file)}", done, "Open it", OpenFixed);
+            // The page reloads just below and this song gets a new panel: the card's button opens the copy from whichever
+            // panel shows it then, so its Keep and Delete buttons appear.
+            card.Finish($"Saved {System.IO.Path.GetFileName(file)}", done, "Open it",
+                () => (_main.Projects.Detail is { } now && now.PendingFix == file ? now : this).OpenFixed());
             // List it straight away as the song's newest save, so it can be found again after leaving the page.
             await Task.Run(() => _db.Upsert(Scanner.Analyse(file)));
             await _main.Projects.ReloadAsync();
@@ -174,6 +180,7 @@ public sealed partial class ProjectDetailViewModel
             return;
         }
         PendingFixOpened = true;
+        if (_pendingFrom is { } from) _db.SetSetting(FixOpenedKey(from), file);
         Activities.Done($"Opening {System.IO.Path.GetFileNameWithoutExtension(file)}", $"Sent to {Item.Daw}. Then say here whether it loaded correctly.");
     }
 
@@ -210,6 +217,7 @@ public sealed partial class ProjectDetailViewModel
     void ForgetFix()
     {
         _db.SetSetting(FixCheckKey(_pendingFrom ?? Item.Path), "");
+        _db.SetSetting(FixOpenedKey(_pendingFrom ?? Item.Path), "");
         _pendingFrom = null;
         PendingFix = null;
         PendingFixOpened = false;

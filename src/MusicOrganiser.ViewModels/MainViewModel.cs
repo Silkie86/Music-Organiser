@@ -132,7 +132,10 @@ public sealed partial class MainViewModel : ObservableObject
             if (read + gone == 0) return;
             await RefreshAllAsync();
             if (_midiPage) _ = Midi.AfterScanAsync();   // a saved song's MIDI is read again too
-            var name = Path.GetFileNameWithoutExtension(changes.Files.First());
+            // Named after a file the scan reads: not a DAW's backup copy saved beside it (Bitwig's auto-backups).
+            var roots = _db.Roots();
+            var name = Path.GetFileNameWithoutExtension(changes.Files.FirstOrDefault(f => Scanner.IsProjectFile(f) && !Scanner.IsIgnored(f, roots))
+                                                        ?? changes.Files.First());
             Activities.Done(read + gone == 1 ? $"Updated {name}" : $"Updated {read + gone} projects",
                             gone == 0 ? "Saved in their folders, so the app read them again"
                                       : $"{(read > 0 ? $"{read} saved, " : "")}{gone} moved or deleted");
