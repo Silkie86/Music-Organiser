@@ -8,6 +8,14 @@ namespace MusicOrganiser.Core.Tests;
 public class ArrangementTests
 {
     [Fact]
+    public void AnFl9SongsPatternsEachGetATrackInPatternOrderAsFl25GivesThem()
+    {
+        // FL 9 keeps a playlist row per pattern; FL 25 opens funk step_8 with each pattern played on a track of its own.
+        var playlist = ArrangementReader.Read(Fixtures.FlStudio9Steps(Fixtures.TempDir(), pattern4AtStart: true))[0];
+        Assert.Equal([("Track 1", 8.0), ("Track 2", 0.0)], playlist.Lanes.Select(l => (l.Name, l.Clips.Single().Start)));
+    }
+
+    [Fact]
     public void FlProjectsShowTheirPlaylistAndTheTracksTheyBecomeInBitwig()
     {
         var views = ArrangementReader.Read(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
