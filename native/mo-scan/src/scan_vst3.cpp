@@ -228,6 +228,24 @@ void scanClass(Json& j, IPluginFactory* factory, const TUID cid, const Options& 
         if (compCp && ctrlCp) { compCp->connect(ctrlCp); ctrlCp->connect(compCp); }
     }
 
+    if (!opt.load.empty())
+    {
+        // The state is handed to the component, then to the controller, as a DAW does when it opens a project.
+        MemoryStream given;
+        std::string error;
+        if (!readLoad(opt, given.data, error)) j.str("loadError", error);
+        else
+        {
+            j.integer("loaded", static_cast<int64_t>(given.data.size()))
+                .integer("loadResult", comp->setState(&given));
+            if (ctrl)
+            {
+                given.seek(0, IBStream::kIBSeekSet, nullptr);
+                j.integer("controllerLoadResult", ctrl->setComponentState(&given));
+            }
+        }
+    }
+
     MemoryStream state;
     bool haveState = comp->getState(&state) == kResultOk;
     if (ctrl)
@@ -238,9 +256,13 @@ void scanClass(Json& j, IPluginFactory* factory, const TUID cid, const Options& 
     }
     else if (opt.params) j.str("paramsError", "no edit controller");
 
-    if (opt.state)
+    if (opt.state || !opt.load.empty())
     {
         if (haveState) j.str("state", base64(state.data));
+    }
+    // Serum 2 crashed in its controller's getState here, so the controller's state is only read when asked.
+    if (opt.state)
+    {
         MemoryStream ctrlState;
         if (ctrl && ctrl->getState(&ctrlState) == kResultOk) j.str("controllerState", base64(ctrlState.data));
     }
