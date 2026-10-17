@@ -81,6 +81,21 @@ public sealed class SectionHarmony
         };
     }
 
+    /// <summary>Just the bars from <paramref name="from"/> to <paramref name="to"/> (ticks), as if they were the whole section.</summary>
+    public SectionHarmony Slice(long from, long to)
+    {
+        from = Math.Clamp(from, 0, Length);
+        to = Math.Clamp(to, from + 1, Length);
+        return new SectionHarmony
+        {
+            Notes = Notes.Where(n => n.Start >= from && n.Start < to)
+                         .Select(n => n with { Start = n.Start - from, Length = Math.Min(n.Length, to - n.Start) }).ToList(),
+            Lane = Lane.Where(c => c.End > from && c.Start < to)
+                       .Select(c => new TimedChord(Math.Max(c.Start, from) - from, Math.Min(c.End, to) - Math.Max(c.Start, from), c.Chord)).ToList(),
+            Length = to - from, Key = Key, KeyTyped = KeyTyped, ChordsTyped = ChordsTyped, Style = Style, Songs = Songs, Hashes = Hashes,
+        };
+    }
+
     /// <summary>Where a lane's dominants resolve most (V7 → I), when they say clearly: a jazz lane's home.</summary>
     static (int Tonic, bool Minor)? HomeOf(IReadOnlyList<TimedChord> lane)
     {

@@ -653,7 +653,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
                 MatchStatus = "Your MIDI hasn't been read yet: open the MIDI page once to read it.";
                 return;
             }
-            var harmony = Harmony;
+            var harmony = MatchHarmony;
             var role = SuggestRole.Role;
             var text = SuggestSearch.Trim();
             var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, text, 60, cts.Token));
@@ -663,7 +663,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var left = harmony.Songs.Count == 0 ? "" : $" Left out: {string.Join(", ", harmony.Songs.Select(s => Path.GetFileName(s)))}, already in this section.";
             MatchStatus = found.Count == 0 ? "Nothing found. Try another kind of part, or fewer words."
                 : (harmony.IsEmpty ? $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()}, newest first: add a part or chords to rank them by fit."
-                                   : $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} that fit, best first, moved into the section's key.") + left;
+                                   : $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} that fit {(Loop is null ? "the section" : LoopText.ToLowerInvariant())}, best first, moved into its key.") + left;
         }
         catch (OperationCanceledException) { }
         finally
@@ -732,6 +732,26 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         }
     }
 
+    // ---- loop points ----
+
+    /// <summary>Loop points dragged along the piano roll's bar numbers: playing goes round them, and suggestions fit just them.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasLoop), nameof(LoopText))] RollRange? _loop;
+    public bool HasLoop => Loop is not null;
+    public string LoopText => Loop is { } r ? $"Bars {r.Start / Bar + 1}–{(r.End + Bar - 1) / Bar}" : "";
+
+    [RelayCommand]
+    void SetLoop(RollRange? range)
+    {
+        Loop = range is { } r && r.End > r.Start ? new RollRange(Math.Clamp(r.Start, 0, Length), Math.Clamp(r.End, 1, Length)) : null;
+        if (_playing) _ = PlayAsync();
+    }
+
+    [RelayCommand]
+    void ClearLoop() => SetLoop(null);
+
+    /// <summary>The harmony suggestions are fitted to: the loop's bars when there are loop points, else the section.</summary>
+    SectionHarmony MatchHarmony => Loop is { } r ? Harmony.Slice(r.Start, r.End) : Harmony;
+
     // ---- listening ----
 
     [ObservableProperty] bool _isPlaying;
@@ -757,8 +777,13 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     async Task PlayAsync(bool keepPlace = false, IReadOnlyList<MidiChannel>? instead = null)
     {
         var request = ++_request;
-        var channels = instead ?? ChannelsToPlay(out _playLength);
-        if (instead is not null) _playLength = Section.Length;
+        List<MidiChannel> channels;
+        if (instead is null) channels = ChannelsToPlay(out _playLength);
+        else
+        {
+            _playLength = Section.Length;
+            channels = Looped(instead.ToList(), ref _playLength);
+        }
         if (channels.Count == 0 || channels.All(c => c.Notes.Count == 0))
         {
             StopPlaying();
@@ -815,7 +840,21 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             return tracks.Select(t => Channel(t.Name, t.Program, t.Notes)).ToList();
         }
         length = Section.Length;
-        return PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
+        var channels = PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
+        return Looped(channels, ref length);
+    }
+
+    /// <summary>Just the loop's bars, from its start, when there are loop points.</summary>
+    List<MidiChannel> Looped(List<MidiChannel> channels, ref long length)
+    {
+        if (Loop is not { } r) return channels;
+        length = r.End - r.Start;
+        var end = r.End;
+        return channels.Select(c => c with
+        {
+            Notes = c.Notes.Where(n => n.Start >= r.Start && n.Start < end)
+                           .Select(n => n with { Start = n.Start - r.Start, Length = Math.Min(n.Length, end - n.Start) }).ToList(),
+        }).ToList();
     }
 
     static MidiChannel Channel(string name, int? program, IReadOnlyList<NoteEvent> notes) =>
@@ -837,7 +876,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             return;
         }
         var ticks = MidiRender.SecondsToTicks(seconds, Ppq, _playTempo);
-        Position = PlayArrangement ? -1 : ticks % Math.Max(1, Section.Length);
+        Position = PlayArrangement ? -1 : ticks % Math.Max(1, _playLength) + (Loop?.Start ?? 0);
     }
 
     public void StopPlaying()
