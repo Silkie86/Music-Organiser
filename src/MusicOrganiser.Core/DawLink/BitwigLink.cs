@@ -298,10 +298,15 @@ public sealed record BitwigRecordRequest(string TrackId, int Slot, double At, do
 /// <param name="After">What Bitwig showed at the end.</param>
 /// <param name="Diff">What changed in the tracks and launcher slots since the job started, by track ID; null when it couldn't look.</param>
 /// <param name="Ms">How long the job took.</param>
+/// <param name="Trace">
+/// From extension 3.11, a line for each time the job looked (every 25 ms) and each command it sent, with Bitwig's play
+/// position and what played ("1234 look @16.042 playing slot notes 1"), for working out what Bitwig did; null before.
+/// </param>
 public sealed record BitwigRecorded(string Decided, string TrackId, string? Track, int Slot, double At, double Length, double Bar, bool Record,
                                     bool Arm, BitwigRecordTempo Tempo, IReadOnlyList<string> Refused, BitwigPlayed? Played, BitwigRecordSeen Seen,
                                     bool? LauncherClipDeleted, BitwigPlayed? Replay, BitwigRecordAfter After, BitwigRecordDiff? Diff, double Ms,
-                                    string? Pass = null, string? AbortWhy = null, string? Error = null, int Heard = 0);
+                                    string? Pass = null, string? AbortWhy = null, string? Error = null, int Heard = 0,
+                                    IReadOnlyList<string>? Trace = null);
 
 /// <summary>The project's tempo, and the one the job recorded at (BPM).</summary>
 public sealed record BitwigRecordTempo(double Project, double Used);

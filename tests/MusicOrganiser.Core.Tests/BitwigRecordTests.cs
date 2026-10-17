@@ -408,6 +408,37 @@ public class BitwigRecordTests
                         "what went in may run a moment past bars 5 to 6.", cut.Detail);
         Assert.EndsWith(" Bitwig didn't stop the track at the clip's end, so the link stopped there.", cut.Lines[0]);
 
+        // Only the clip's first bar played, and that went in (Solomon's second run): noted, not passed.
+        void FirstBar(JsonObject a)
+        {
+            foreach (var part in new[] { a["played"]!, a["replay"]! })
+            {
+                part["heard"] = 3;
+                var notes = part["notes"]!.AsArray();
+                while (notes.Count > 3) notes.RemoveAt(notes.Count - 1);
+            }
+            a["heard"] = 3;
+            a["replay"]!["inPass"] = 3;
+        }
+        var firstBar = RecordVerdict(Answer(FirstBar), RecordGo.Record, "Rec 143012", clipNotes: 6);
+        Assert.Equal(LiveOutcome.Noted, firstBar.Outcome);
+        Assert.StartsWith("Bitwig recorded the clip into its arranger on “Rec 143012” at bars 5 to 6: playing the arranger back, the link heard 3 notes " +
+                          "there, with the launcher clip not playing. That's only part of the clip, which has 6 notes: Bitwig played only 3 of them, so " +
+                          "only those went in. The link can't see an arranger clip itself:", firstBar.Detail);
+        // It all played, but only some went in.
+        var halfIn = RecordVerdict(Answer(a => a["replay"]!["inPass"] = 4), RecordGo.Record, "Rec 143012", clipNotes: 6);
+        Assert.Equal(LiveOutcome.Noted, halfIn.Outcome);
+        Assert.Contains(" That's only part of the clip, which has 6 notes: Bitwig played them all, but only 4 went in.", halfIn.Detail);
+        // Without the clip's count, nothing is checked against it.
+        Assert.Equal(LiveOutcome.Passed, RecordVerdict(Answer(FirstBar), RecordGo.Record, "Rec 143012").Outcome);
+        Assert.Equal(LiveOutcome.Passed, RecordVerdict(Answer(), RecordGo.Record, "Rec 143012", clipNotes: 6).Outcome);
+
+        // Extension 3.11's trace comes through with the answer, and into the report's data.
+        var traced = Answer(a => a["trace"] = new JsonArray("0 recordOn @16.000", "25 launch @16.000"));
+        Assert.Equal(["0 recordOn @16.000", "25 launch @16.000"], traced.Trace);
+        Assert.Equal("25 launch @16.000", (string?)RecordVerdict(traced, RecordGo.Record, "Rec 143012").Data!["trace"]![1]);
+        Assert.Null(Answer().Trace);
+
         // The fast go deleted the launcher clip, and then the earlier recording went silent: noted, as Bitwig may record alias clips.
         var earlier = new Dictionary<RecordGo, BitwigRecorded> { [RecordGo.Record] = Answer() };
         var alias = RecordVerdict(Answer(a =>

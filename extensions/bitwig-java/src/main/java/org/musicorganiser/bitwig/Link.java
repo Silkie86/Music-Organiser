@@ -165,6 +165,8 @@ final class Link {
      * (see watch), in milliseconds: Bitwig shows the track stopping a moment late.
      */
     static final long LATE_STOP = 150;
+    /** The most lines a record answer's trace keeps (a line a look, 25 ms apart, and one for each command it sends). */
+    static final int MAX_TRACE = 1200;
     /** The tempos Bitwig takes, in BPM: the record job asks for none outside them. */
     static final double MIN_TEMPO = 20;
     static final double MAX_TEMPO = 666;
@@ -2915,6 +2917,12 @@ final class Link {
         Double stopSentAt;
         /** When the job first saw Bitwig past the clip's end, in clock time, else null. */
         Long endPassed;
+        /**
+         * What the job saw at each look and each command it sent, for working out what Bitwig did, a line each: ms since the
+         * job started, what, Bitwig's play position ("@16.042"), then "playing", "slot" (the slot playing), "queued" (the
+         * slot queued to play) and "notes 2" (notes the track plays) when they are so ("1234 look @16.042 playing slot notes 1").
+         */
+        final List<String> trace = new ArrayList<>();
         Boolean launcherClipDeleted;
         boolean replayLauncherPlayed;
         String error;
@@ -2981,6 +2989,7 @@ final class Link {
                 }
                 transport.isArrangerRecordEnabled().set(true);
                 recordOn = true;
+                trace("recordOn");
                 waitUntil(() -> transport.isArrangerRecordEnabled().get(), CHANGE_WAIT, on -> {
                     if (!on) refused.add("arranger record");
                     if (!on) end("refused");
@@ -3016,6 +3025,7 @@ final class Link {
             deadline = now + START_WAIT + ms(length + 2 * bar);
             trackSlots[indexOf(trackId)][scene].launch();
             startAsked = now;
+            trace("launch");
             later(this::watch);
         }
 
@@ -3038,6 +3048,7 @@ final class Link {
                 return;
             }
             int t = indexOf(trackId);
+            trace("look");
             long now = clock.millis();
             boolean playing = transport.isPlaying().get();
             if (play.started == null) {
@@ -3064,6 +3075,7 @@ final class Link {
                     // On the next bar line, the clip's end, as the launch quantize is a bar.
                     trackItems[t].stop();
                     stopSentAt = position;
+                    trace("stopTrack");
                 }
                 if (stopSentAt != null && position >= at + length - 1e-9) {
                     if (!slot.isPlaying().get() && !slot.isPlaybackQueued().get()) {
@@ -3089,6 +3101,7 @@ final class Link {
         /** Ends the clip's playing (see record): record off, Bitwig stopped if it plays (or may be about to), the track back to the arrangement. */
         void end(String why) {
             if (play != null) play.ended = why;
+            trace("end " + why);
             if (recordOn) transport.isArrangerRecordEnabled().set(false);
             stopPlaying();
             int t = indexOf(trackId);
@@ -3171,6 +3184,7 @@ final class Link {
                 // Again, as Bitwig once didn't take it after a recording: a track still on its launcher doesn't play the arranger.
                 trackItems[indexOf(trackId)].returnToArrangement();
                 transport.play();
+                trace("replay");
                 startAsked = now;
                 later(this::watchReplay);
             });
@@ -3183,6 +3197,7 @@ final class Link {
                 return;
             }
             int t = indexOf(trackId);
+            trace("replayLook");
             long now = clock.millis();
             boolean playing = transport.isPlaying().get();
             if (replayed.started == null) {
@@ -3347,6 +3362,16 @@ final class Link {
             return (long) Math.ceil(beats * 60000 / tempoUsed);
         }
 
+        /** Adds a line to the trace (see trace), while there's room. */
+        void trace(String what) {
+            if (trace.size() >= MAX_TRACE) return;
+            int t = indexOf(trackId);
+            int notes = t >= 0 ? trackItems[t].playingNotes().get().length : 0;
+            trace.add((clock.millis() - began) + " " + what + String.format(Locale.ROOT, " @%.3f", transport.playPosition().get())
+                      + (transport.isPlaying().get() ? " playing" : "") + (t >= 0 && trackSlots[t][scene].isPlaying().get() ? " slot" : "")
+                      + (t >= 0 && trackSlots[t][scene].isPlaybackQueued().get() ? " queued" : "") + (notes > 0 ? " notes " + notes : ""));
+        }
+
         /** What the job decided, from what it saw (see record), unless it already knows (`given`). */
         String decide(String given) {
             if (given != null) return given;
@@ -3417,6 +3442,7 @@ final class Link {
             m.put("after", after);
             m.put("diff", front && tracksBefore != null ? diff() : null);
             m.put("ms", clock.millis() - began);
+            m.put("trace", trace);
             finish.ok(m);
         }
 

@@ -14,6 +14,7 @@ import static org.musicorganiser.bitwig.Messages.listAt;
 import static org.musicorganiser.bitwig.Messages.obj;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -250,6 +251,25 @@ class RecordTest {
         // Two seconds to record the two bars and eleven to replay bars 5 to 16 at 240 BPM: half what they'd take at 120.
         double ms = ((Number) fast.get("ms")).doubleValue();
         assertTrue(ms > 12000 && ms < 15000, "took " + ms + " ms");
+    }
+
+    @Test
+    @DisplayName("keeps a trace of what it saw at each look and each command it sent, in order")
+    void keepsATrace() {
+        studio();
+        Map<String, Object> result = result(record(1, "rec", BAR_5));
+        List<?> trace = (List<?>) result.get("trace");
+        List<String> whats = new ArrayList<>();
+        String stop = null;
+        for (Object line : trace) {
+            String[] words = ((String) line).split(" ");
+            String what = words[1].equals("end") ? "end " + words[2] : words[1];
+            if (whats.isEmpty() || !whats.get(whats.size() - 1).equals(what)) whats.add(what);
+            if (what.equals("stopTrack")) stop = (String) line;
+        }
+        assertEquals(List.of("recordOn", "launch", "look", "stopTrack", "look", "end done", "replay", "replayLook"), whats);
+        // "<ms> stopTrack @<position> playing slot ...": the track was stopped in the clip's last bar, as it played.
+        assertMatches("^\\d+ stopTrack @20\\.\\d{3} playing slot.*", stop);
     }
 
     @Test
