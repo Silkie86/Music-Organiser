@@ -364,6 +364,24 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void AScanReadsADawsProjectsAgainWhenItsReaderHasGotBetter()
+    {
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        Assert.Equal("2", _db.GetSetting("reader_version:FL Studio"));
+        Directory.CreateDirectory(Path.Combine(_root, "bounce"));
+        File.WriteAllBytes(Path.Combine(_root, "bounce", "Kick 01.wav"), [0]);
+
+        scanner.ScanProjects();   // the project hasn't changed, so it isn't read again
+        Assert.Equal(1, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
+
+        _db.SetSetting("reader_version:FL Studio", "1");   // as a library last read with the older FL reader
+        scanner.ScanProjects();
+        Assert.Equal(0, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
+        Assert.Equal("2", _db.GetSetting("reader_version:FL Studio"));
+    }
+
+    [Fact]
     public void MarksDeletedProjectsAsMissing()
     {
         var scanner = new Scanner(_db);
