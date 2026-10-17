@@ -210,20 +210,25 @@ public static class Serum1To2
 
             // The wavetable's own settings sit in its WTOsc part.
             Knob(vol + 8, wt, "WTOsc", n, "kParamWarp", 0, x => x, 0);
-            Knob(vol + 10, wt, "WTOsc", n, "kParamTablePos", 6, x => 1 + 255 * x, 1);
+            // Serum 2 saves the position as a frame number from 1, and Serum 1's knob sweeps the whole table, so the
+            // frame count is needed (Serum's tables are 2048-sample frames); without the file it's a guess.
+            var path = table.Replace('\\', '/');
+            var audio = table.Length > 0 ? findAudio?.Invoke(path.TrimStart('/')) : null;
+            var frames = audio is { } found ? Math.Max(1, found.Frames / 2048) : 256;
+            Knob(vol + 10, wt, "WTOsc", n, "kParamTablePos", 6, x => 1 + (frames - 1) * x, 1);
             Knob(vol + 11, wt, "WTOsc", n, "kParamRandomPhase", 9, Pct);
             Knob(vol + 12, wt, "WTOsc", n, "kParamInitialPhase", 8, x => 360 * x, 180);
             Knob(uniWTPos, wt, "WTOsc", n, "kParamUnisonWTPos", 10, x => Bi(x, 100), 0);
-            if (K(vol + 10) > 0.001) Rough.Add($"oscillator {(char)('A' + n)}'s wavetable position");
-            // Serum 1 has 23 warp modes; which of Serum 2's names each one is saved as isn't known yet.
-            if (Choice(K(warpMenu), 23) is > 0 and < 23) Rough.Add($"oscillator {(char)('A' + n)}'s warp mode");
+            if (audio is null && K(vol + 10) > 0.001) Rough.Add($"oscillator {(char)('A' + n)}'s wavetable position");
+            var warp = Choice(K(warpMenu), WarpModes.Length);
+            if (warp < WarpModes.Length) Put(wt, "kParamWarpMenu", WarpModes[warp], WarpModes[0]);
+            if (warp is 2 or 3 or 12) Rough.Add($"oscillator {(char)('A' + n)}'s warp mode");
 
             if (table.Length > 0)
             {
                 // A table of the user's own starts with '/'; its waves are inside Serum 1's state, not in a file.
-                var path = table.Replace('\\', '/');
                 wt["relativePathToWT"] = path;
-                if (findAudio?.Invoke(path.TrimStart('/')) is { } a) Audio(wt, a);
+                if (audio is { } a) Audio(wt, a);
                 if (path.StartsWith('/')) Rough.Add($"oscillator {(char)('A' + n)}'s own wavetable ({path.TrimStart('/')})");
             }
         }
@@ -256,11 +261,24 @@ public static class Serum1To2
             if (K(214) > 0 && !s1.NoiseFlagsAsChecked) Rough.Add("whether the noise plays once or loops");
         }
 
+        /// <summary>
+        /// Serum 1's 23 warp modes, in its order, by the names Serum 2 saves them under (read from Serum 2 itself). The
+        /// FM, AM and RM modes take the other oscillator. Serum 2 saves all three of Serum 1's sync modes (Sync, Sync 1/2
+        /// Win., Sync Window) as kSync, even when given its other sync names, so the two windowed ones may sound
+        /// different; that Mirror is kDLM is a guess (Serum 2 has no kMirror). Those are listed as rough.
+        /// </summary>
+        static readonly string[] WarpModes =
+        [
+            "kNoWarp", "kSync", "kSync", "kSync", "kBendPos", "kBendNeg", "kBendPosNeg", "kPWM",
+            "kASYMPos", "kASYMNeg", "kASYMPosNeg", "kFlip", "kDLM", "kRemap_1", "kRemap_2", "kRemap_3", "kRemap_4",
+            "kQuantize", "kFM_OSC", "kAM_OSC", "kRM_OSC", "kFM_NOISE", "kFM_SUB",
+        ];
+
         static readonly string[] SubShapes = ["kSine", "kRoundRect", "kTriangle", "kSaw", "kSquare", "kPulse"];
 
         /// <summary>Unison stacking, in the same order in both Serums (off, 12 ×1 to ×3, 12+7 ×1 to ×3, centre −12, −24).</summary>
         static readonly string[] UnisonStacks =
-            ["off", "kOctave1", "kOctave2", "kOctave3", "kOctaveFifth1", "kOctaveFifth2", "kOctaveFifth3", "kCenter12", "kCenter24"];
+            ["kNoUnisonStack", "kOctave1", "kOctave2", "kOctave3", "kOctaveFifth1", "kOctaveFifth2", "kOctaveFifth3", "kCenter12", "kCenter24"];
 
         void Sub()
         {
@@ -410,8 +428,13 @@ public static class Serum1To2
                     Set(p, "kParamBW", 0.75 + 7.5 * K(126));
                     Set(p, "kParamBeatSync", On(K(127)));
                     Set(p, "kParamLink", On(K(128)));
-                    Set(p, "kParamTimeL", K(129));
-                    Set(p, "kParamTimeR", K(130));
+                    // A synced time is saved some other way: Serum 2 turned every one sent like this into 0.501.
+                    if (K(127) > 0) Rough.Add("the delay's synced time");
+                    else
+                    {
+                        Set(p, "kParamTimeL", K(129));
+                        Set(p, "kParamTimeR", K(130));
+                    }
                     Set(p, "kParamMode", Choice(K(131), 2));
                     Set(p, "kParamFeedback", Pct(K(132)));
                     Set(p, "kParamOffsetL", 0.5 + K(133));
