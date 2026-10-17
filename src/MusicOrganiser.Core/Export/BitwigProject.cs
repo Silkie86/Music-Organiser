@@ -183,11 +183,11 @@ public static class BitwigProject
             return made;
         }
 
-        // What automation clips move on a channel; its on/off is carried by muting what it plays while it's off.
-        var automated = song.Automation.Where(a => a.Control != FlControl.OnOff).Select(a => a.Channel).ToHashSet();
-        // Audio clip channels play their clips on audio tracks; one automated, with no notes, needs no instrument track too.
+        // Audio clip channels play their clips on audio tracks; one with no notes needs no instrument track too.
         var audio = song.Channels.Where(c => c.AudioClips.Count > 0 && c.Sample.Length > 0).ToHashSet();
-        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index) && !audio.Contains(c)) &&
+        // Every other channel with a plugin or sample gets an instrument track, as in FL's Channel Rack, even
+        // one the playlist never plays, so its sound comes over.
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || !audio.Contains(c)) &&
                                                (c.Instrument is not null || c.Sample.Length > 0)).ToHashSet();
         var inserts = song.Inserts.ToDictionary(i => i.Index);
         var shared = song.Channels.Where(c => (playing.Contains(c) || audio.Contains(c) && t.AudioTrack is not null) && c.Insert > 0)
@@ -310,6 +310,7 @@ public static class BitwigProject
         {
             var own = new List<BwObject>();
             if (playing.Contains(c)) own.Add(InstrumentTrack(c));
+            if (playing.Contains(c) && c.Clips.Count == 0 && !audio.Contains(c)) notes.Add($"{c.Name}: {DawProject.PlaysNothing}");
             if (c.AudioClips.Count > 0 && c.Sample.Length == 0)
                 notes.Add($"{c.Name}: its audio clips are left out (FL Studio didn't save which sample they play)");
             else if (audio.Contains(c) && t.AudioTrack is null)
