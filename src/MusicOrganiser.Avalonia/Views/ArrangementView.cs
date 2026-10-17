@@ -61,6 +61,8 @@ public sealed class ArrangementView : Control
         _zoom = 0;
         _left = _top = 0;
         _shown = DateTime.UtcNow;
+        _songBeats = Math.Max(Arrangement?.BeatsPerBar ?? 4, (Arrangement?.Length ?? 0) * 1.02);
+        _contentHeight = Arrangement?.Lanes.Sum(LaneHeight) ?? 0;
         Animate();
         LoadWaveforms(Arrangement);
     }
@@ -111,10 +113,12 @@ public sealed class ArrangementView : Control
     // ---- Geometry ----------------------------------------------------------
 
     double Width0 => Math.Max(1, Bounds.Width - HeaderWidth - 8);
-    double SongBeats => Math.Max(Arrangement?.BeatsPerBar ?? 4, (Arrangement?.Length ?? 0) * 1.02);
+    // Worked out once per arrangement: Arrangement.Length goes through every clip, and X() asks for it for every note.
+    double _songBeats = 4, _contentHeight;
+    double SongBeats => _songBeats;
     double FitZoom => Width0 / SongBeats;
     double Zoom => _zoom > 0 ? _zoom : FitZoom;
-    double ContentHeight => Arrangement?.Lanes.Sum(LaneHeight) ?? 0;
+    double ContentHeight => _contentHeight;
 
     double X(double beat) => HeaderWidth + (beat - _left) * Zoom;
     double Beat(double x) => _left + (x - HeaderWidth) / Zoom;
