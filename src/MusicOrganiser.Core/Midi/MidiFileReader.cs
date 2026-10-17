@@ -70,13 +70,13 @@ public static class MidiFileReader
         var held = new Dictionary<(int, int), Queue<(long Start, int Velocity)>>();
         long tick = 0;
         var i = 0;
-        byte status = 0;
+        byte status = 0, running = 0;
         while (i < s.Length)
         {
             tick += Vlq(s, ref i);
             if (i >= s.Length) break;
             var b = s[i];
-            if (b >= 0x80) { status = b; i++; }
+            if (b >= 0x80) { status = b; i++; if (b < 0xF0) running = b; }
             else if (status < 0x80) break;   // data with no status to run on: the track is damaged from here
             if (status == 0xFF)
             {
@@ -93,14 +93,16 @@ public static class MidiFileReader
                 }
                 else if (type == 0x2F) break;
                 i += len;
-                status = 0;   // meta and sysex events cancel running status
+                // The spec says meta and sysex events cancel running status, but plenty of files (karaoke files with
+                // their lyrics, for one) carry on with it after them: going on with the last notes' status reads those.
+                status = running;
                 continue;
             }
             if (status is 0xF0 or 0xF7)
             {
                 var len = (int)Vlq(s, ref i);
                 i += Math.Max(0, len);
-                status = 0;
+                status = running;
                 continue;
             }
             var kind = status & 0xF0;

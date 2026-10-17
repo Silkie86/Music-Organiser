@@ -287,10 +287,23 @@ public static partial class PhraseAnalyser
         return roles;
     }
 
-    /// <summary>The General MIDI drum notes; a part using kick, snare and hats from these is a drum pattern.</summary>
-    static bool LooksLikeGmDrums(IReadOnlyCollection<int> keys) =>
-        keys.All(k => k is >= 35 and <= 81) &&
-        keys.Any(k => k is 35 or 36) && keys.Any(k => k is 38 or 39 or 40) && keys.Any(k => k is 42 or 44 or 46);
+    /// <summary>
+    /// The General MIDI drum notes, played like drums: a part using kick, snare and hats from these is a drum pattern.
+    /// Those notes are also C2 to Bb2, where plenty of basslines and low chords sit (C minor: C, Eb, G, Bb), so the notes
+    /// alone aren't enough: drums keep the hats going, hit with the kick and snare or in between them, where a bassline
+    /// only passes through Bb now and then and chords stack three notes or more.
+    /// </summary>
+    static bool LooksLikeGmDrums(IReadOnlyCollection<int> keys, IReadOnlyList<NoteEvent> notes, Shape s)
+    {
+        if (!keys.All(k => k is >= 35 and <= 81) ||
+            !keys.Any(k => k is 35 or 36) || !keys.Any(k => k is 38 or 39 or 40) || !keys.Any(k => k is 42 or 44 or 46))
+            return false;
+        if (s.ChordShare >= 0.35) return false;
+        var onsets = notes.GroupBy(n => n.Start).ToList();
+        var together = onsets.Count(g => g.Select(n => n.Key).Distinct().Count() >= 2) / (double)onsets.Count;
+        var hats = notes.Count(n => n.Key is 42 or 44 or 46) / (double)notes.Count;
+        return hats >= 0.25 && together >= 0.15 || hats >= 0.4;
+    }
 
     /// <param name="notes">At <see cref="Ppq"/>, as <see cref="Normalise"/> gives them.</param>
     /// <param name="hints">Names that may say what the part is: its track, pattern, file and folders.</param>
@@ -395,7 +408,10 @@ public static partial class PhraseAnalyser
             named.Remove(MidiRoles.Bass);
             named.Add(MidiRoles.Drums);
         }
-        if (LooksLikeGmDrums(keys)) return (MidiRoles.Drums, "Uses the General MIDI kick, snare and hat notes");
+        // A name that says a tuned part (and not drums) wins over the drum notes test.
+        var namedTuned = !named.Contains(MidiRoles.Drums) &&
+                         named.Overlaps([MidiRoles.Bass, MidiRoles.Chords, MidiRoles.Melody, MidiRoles.Arp]);
+        if (!namedTuned && LooksLikeGmDrums(keys, notes, s)) return (MidiRoles.Drums, "Uses the General MIDI kick, snare and hat notes, played like drums");
 
         var (fromNotes, why) = FromNotes(s);
         if (named.Count == 0) return (fromNotes, why);

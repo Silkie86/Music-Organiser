@@ -24,7 +24,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     public const string OlderSavesKey = "midi_older_saves";
 
     /// <summary>Raised when the analysis changes, so every file is read again once.</summary>
-    public const int Version = 3;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes
+    public const int Version = 4;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes; 4: low basslines and chords no longer taken for GM drums (2026-10-17)
 
     /// <summary>At most this many files are read at once: a quarter of the cores, and never more than 3.</summary>
     public static int Workers => Math.Clamp(Environment.ProcessorCount / 4, 1, 3);
@@ -45,16 +45,12 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         foreach (var p in projects)
             wanted[p.Path] = new MidiSource(p.Path, MidiSource.Project, p.Daw, p.Mtime, p.Size, p.Tempo);
         var folders = library.GetList(FoldersKey).Where(Directory.Exists).ToList();
-        foreach (var f in Parallelism.FindFiles(folders, MidiFileReader.IsMidiPath, (name, _) => name.StartsWith('.'), ct: ct))
+        // Sizes and times come with the folder listing: no extra look at each of tens of thousands of files.
+        foreach (var f in Parallelism.FindFileStamps(folders, MidiFileReader.IsMidiPath, (name, _) => name.StartsWith('.'), ct: ct))
         {
-            try
-            {
-                var fi = new FileInfo(f);
-                // Too short to hold a single note (an empty or never-finished download): nothing to read, and not a failure.
-                if (fi.Length < MinMidiBytes) continue;
-                wanted[f] = new MidiSource(f, MidiSource.File, "MIDI", new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds(), fi.Length, null);
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            // Too short to hold a single note (an empty or never-finished download): nothing to read, and not a failure.
+            if (f.Size < MinMidiBytes) continue;
+            wanted[f.Path] = new MidiSource(f.Path, MidiSource.File, "MIDI", f.Mtime, f.Size, null);
         }
 
         var known = index.Sources();

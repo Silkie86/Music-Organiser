@@ -1618,6 +1618,57 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Edits_picks_and_what_plays_outlast_the_list_being_read_again()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        int[][] tune = [[69, 72, 76, 72], [65, 69, 72, 69], [67, 72, 76, 72], [67, 71, 74, 71]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        void Write(string file, string name, IEnumerable<Core.Parsers.NoteEvent> notes)
+        {
+            var clip = new Core.Parsers.MidiClip { Name = name, Ppq = 96 };
+            clip.Track(name).AddRange(notes);
+            File.WriteAllBytes(Path.Combine(pack, file), Core.Export.MidiWriter.Write(clip));
+        }
+        Write("Keys Am.mid", "Piano", aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        Write("Lead melody.mid", "Lead", tune.SelectMany((b, i) => b.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96, 96, k, 100))));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        var played = new List<string>();
+        var player = new Recorder(played);
+        ((HeadlessUi)Ui.Current).Player = () => player;
+
+        var main = Main();
+        var midi = main.Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        midi.Selected = midi.Results.Single(r => r.Title.Contains("Keys"));
+        midi.FitToSelectedCommand.Execute(null);
+        var melody = midi.Results.Single(r => r.Title.Contains("Lead"));
+        midi.Selected = melody;
+        await melody.EditCommand.ExecuteAsync(melody.BarNotes.Select((n, i) => i == 0 ? n with { Key = n.Key + 1 } : n).ToList());
+        await midi.PlaySelectedTogetherCommand.ExecuteAsync(null);
+
+        // A new file turns up (or a DAW saves): the list is read again, and nothing you were doing is lost.
+        Write("Lead 2.mid", "Lead", tune.SelectMany((b, i) => b.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96, 96, k - 12, 100))));
+        await midi.IndexAsync();
+        var again = midi.Results.Single(r => r.Title == melody.Title);
+        Assert.NotSame(melody, again);
+        Assert.Same(again, midi.Selected);
+        Assert.True(again.IsEdited);
+        Assert.True(again.CanUndoEdit);
+        Assert.True(again.IsPlayingTogether);
+        Assert.False(melody.IsPlaying);
+
+        // "More like this" still leaves out the part itself after a reload.
+        midi.MoreLikeSelectedCommand.Execute(null);
+        Write("Lead 3.mid", "Lead", tune.SelectMany((b, i) => b.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96, 48, k, 100))));
+        await midi.IndexAsync();
+        Assert.True(midi.IsLiking);
+        Assert.DoesNotContain(midi.Results, r => r.Title == melody.Title);
+    }
+
+    [Fact]
     public async Task A_songs_midi_tab_lists_parts_that_fit_it_already_moved_and_not_its_own()
     {
         const int bar = 4 * 96;
@@ -1633,9 +1684,15 @@ public class ViewModelTests : IDisposable
         _db.Upsert(Core.Library.Scanner.Analyse(project));
         _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
 
+        var played = new List<string>();
+        var player = new Recorder(played);
+        ((HeadlessUi)Ui.Current).Player = () => player;
         var main = Main();
-        await main.Midi.IndexAsync();
+        // Opened before any MIDI has been read: it says so, and works it out when opened again after.
         var tab = new SongMidiViewModel(main.Midi, main, project, "Chords Song");
+        await tab.LoadAsync();
+        Assert.StartsWith("No MIDI has been read yet", tab.Status);
+        await main.Midi.IndexAsync();
         await tab.LoadAsync();
 
         var row = Assert.Single(tab.Rows);   // the song's own chords are left out
@@ -1644,6 +1701,18 @@ public class ViewModelTests : IDisposable
         Assert.Equal(1, tab.GoodCount);
         Assert.Equal("1 good fit", tab.CountText);
         Assert.Contains("Am", tab.Status);
+
+        // The MIDI page's tempo, mutes and loop points are for its own list: the tab plays with the song, all of it.
+        await row.PlayCommand.ExecuteAsync(null);
+        var ownTempo = player.LastSamples;
+        main.Midi.Left();
+        main.Midi.TempoValue = 60;
+        main.Midi.SetSectionCommand.Execute(new RollRange(0, bar));
+        main.Midi.Loop = false;   // looping is everywhere's (setting loop points turned it on)
+        Assert.Equal(new RollRange(0, row.PairLength), row.Region);
+        await row.PlayCommand.ExecuteAsync(null);
+        Assert.Equal(ownTempo, player.LastSamples);
+        main.Midi.Left();
 
         tab.Kind = SongMidiViewModel.Kinds.First(k => k.Role == Core.Midi.MidiRoles.Melody);
         await Task.Yield();

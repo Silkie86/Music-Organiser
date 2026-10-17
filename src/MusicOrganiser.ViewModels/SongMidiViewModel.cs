@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MusicOrganiser.Core;
 using MusicOrganiser.Core.Midi;
 
 namespace MusicOrganiser.ViewModels;
@@ -27,6 +28,7 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
 
     HarmonyTarget? _target;
     Task? _loading;
+    bool _loaded;
     int _request;
 
     [ObservableProperty] IReadOnlyList<MidiRow> _rows = [];
@@ -45,8 +47,13 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     public bool IsEmpty => !IsLoading && Rows.Count == 0;
     partial void OnRowsChanged(IReadOnlyList<MidiRow> value) => OnPropertyChanged(nameof(IsEmpty));
 
-    /// <summary>Works it out, the first time the tab is opened.</summary>
-    public Task LoadAsync() => _loading ??= RunLoadAsync();
+    /// <summary>Works it out, the first time the tab is opened; tried again next time when it couldn't be (no MIDI read
+    /// yet, or something went wrong).</summary>
+    public Task LoadAsync()
+    {
+        if (_loading is { IsCompleted: true } && !_loaded) _loading = null;
+        return _loading ??= RunLoadAsync();
+    }
 
     async Task RunLoadAsync()
     {
@@ -58,6 +65,7 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
             if (target is null)
             {
                 Status = why;
+                _loaded = true;   // the song says nothing to fit to: no use reading it again each time
                 return;
             }
             _target = target;
@@ -76,6 +84,12 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
                 target.Chords.Count > 0 ? target.ChordText() : "",
             }.Where(s => s.Length > 0));
             await ShowAsync();
+            _loaded = true;
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            AppLog.Info("MIDI", $"MIDI that fits {path}: {e}");
+            Status = $"Couldn't work out what fits: {e.Message}";
         }
         finally { IsLoading = false; }
     }
