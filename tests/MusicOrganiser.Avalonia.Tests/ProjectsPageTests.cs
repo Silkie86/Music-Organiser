@@ -182,4 +182,28 @@ public sealed class ProjectsPageTests : IDisposable
         Assert.True(toolbar.Bounds.Height > Labelled("Open in Bitwig").Bounds.Height * 1.5, "The toolbar didn't wrap");
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void The_search_box_shows_an_X_that_clears_it_whenever_there_is_something_to_clear()
+    {
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = main.Projects;
+        var window = new Window { Content = new ProjectsView { DataContext = page }, Width = 1400, Height = 900 };
+        window.Show();
+        Settle();
+        var search = window.GetVisualDescendants().OfType<TextBox>().Single(t => t.Name == "Search");
+        Button Clear() => search.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "ClearSearch");
+        Assert.False(Clear().IsVisible);
+
+        // Typed, then the focus moved on to the list: the X is still there.
+        page.SearchText = "serum";
+        window.GetVisualDescendants().OfType<DataGrid>().First().Focus();
+        Settle();
+        Assert.False(search.IsFocused);
+        Assert.True(Clear().IsVisible);
+        Clear().RaiseEvent(new global::Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Settle();
+        Assert.Equal("", page.SearchText);
+        Assert.False(Clear().IsVisible);
+    }
 }
