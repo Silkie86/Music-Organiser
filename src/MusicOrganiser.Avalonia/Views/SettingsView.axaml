@@ -72,7 +72,7 @@
                                 <TextBlock Classes="cardIntro" Text="How the app looks. Changes show straight away." />
 
                                 <TextBlock Text="THEME" Classes="filterLabel" />
-                                <ListBox Classes="themes" ItemsSource="{x:Static vm:AppearanceViewModel.Themes}" SelectedItem="{Binding Theme}">
+                                <ListBox Classes="themes" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Themes}" SelectedItem="{Binding Theme}">
                                     <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
                                     <ListBox.ItemTemplate>
                                         <DataTemplate x:DataType="vm:AppTheme">
@@ -110,7 +110,7 @@
                                 </ListBox>
 
                                 <TextBlock Text="ACCENT COLOUR" Classes="filterLabel" Margin="0,12,0,0" />
-                                <ListBox Classes="chips" ItemsSource="{x:Static vm:AppearanceViewModel.Accents}" SelectedItem="{Binding Accent}">
+                                <ListBox Classes="chips" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Accents}" SelectedItem="{Binding Accent}">
                                     <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
                                     <ListBox.ItemTemplate>
                                         <DataTemplate x:DataType="vm:AccentChoice">
@@ -130,7 +130,7 @@
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="SIZE" Classes="filterLabel" />
-                                        <ListBox Classes="chips" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}">
+                                        <ListBox Classes="chips" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}">
                                             <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
                                             <ListBox.ItemTemplate>
                                                 <DataTemplate x:DataType="x:Int32">
