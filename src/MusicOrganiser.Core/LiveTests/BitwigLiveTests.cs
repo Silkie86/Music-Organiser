@@ -1314,11 +1314,19 @@ public static class BitwigLiveTests
     public static LiveVerdict KnobVerdict(KnobCheck check)
     {
         var breaks = new List<string>();
+        var untold = new List<string>();
         foreach (var knob in check.Lines.GroupBy(l => l.Knob))
         {
             foreach (var way in knob.GroupBy(l => l.Way))
             {
                 var turns = way.ToList();
+                // Bitwig followed the probe (it showed each value) but didn't say the numbers: a gap in what the app can
+                // read back, not a knob that doesn't move.
+                if (way.Key == KnobWay.ToDaw && turns.Any(l => l.Untold) && turns.All(l => l.Untold || l.Matched))
+                {
+                    untold.Add(turns[0].Name);
+                    continue;
+                }
                 var got = turns.Select(l => l.Got is { } g ? Math.Round(g, 4) : (double?)null).Distinct().ToList();
                 if (turns.Count > 1 && got.Count == 1)
                     breaks.Add(way.Key == KnobWay.ToProbe
@@ -1333,12 +1341,20 @@ public static class BitwigLiveTests
             ["probe"] = check.Probe, ["summary"] = check.Summary, ["matched"] = check.Matched, ["checks"] = check.Lines.Count,
             ["stopped"] = check.Stopped, ["notes"] = Strings(check.Notes),
         };
-        var lines = breaks.Concat(check.Notes).Select(l => "- " + l).ToList();
+        if (untold.Count > 0) data["untold"] = Strings(untold);
+        var unread = untold.Count == 0 ? "" :
+            $"Bitwig follows {Checks.List(untold, quote: false)} when the probe turns {(untold.Count == 1 ? "it" : "them")} (it shows each new value), " +
+            $"but didn't tell the app {(untold.Count == 1 ? "its value" : "their values")} as a number, so the app can't read " +
+            $"{(untold.Count == 1 ? "it" : "them")} back. The app reads a knob's number from Bitwig's remote controls when it's on the page Bitwig shows.";
+        var lines = breaks.Concat(unread.Length > 0 ? [unread] : []).Concat(check.Notes).Select(l => "- " + l).ToList();
         if (check.Stopped is { } why) return LiveVerdict.Fail($"The knob check stopped part way: {why}", data) with { Lines = lines };
         if (check.Lines.Count == 0) return LiveVerdict.Fail(check.Summary, data) with { Lines = lines };
         if (breaks.Count > 0)
             return LiveVerdict.Fail($"MO Probe's knobs don't all come through Bitwig as BitwigSend needs them: {Checks.Count(breaks.Count, "problem")}. " +
                                     check.Summary, data) with { Lines = lines };
+        if (untold.Count > 0)
+            return LiveVerdict.Note($"Every knob moved both ways, and each stepped knob landed on its step, but Bitwig didn't tell the app the value " +
+                                    $"of {Checks.Count(untold.Count, "knob")} when the probe turned {(untold.Count == 1 ? "it" : "them")}. " + check.Summary, data) with { Lines = lines };
         return LiveVerdict.Pass("Every knob moved both ways, and each stepped knob landed on its step. " + check.Summary, data) with { Lines = lines };
     }
 
@@ -1350,8 +1366,9 @@ public static class BitwigLiveTests
     public static LiveVerdict KnobMapping(KnobCheck check, string format)
     {
         static string Turn(KnobCheckLine l) =>
-            (l.Way == KnobWay.ToProbe ? $"{Share(l.Sent)} → {Shown(l, l.Got)}" : $"{AtProbe(l.Knob, l.Sent)} → {Shown(l, l.Got)}") +
-            (l.Matched ? "" : " ✗");
+            l.Untold ? $"{AtProbe(l.Knob, l.Sent)} → shown, no number"
+            : (l.Way == KnobWay.ToProbe ? $"{Share(l.Sent)} → {Shown(l, l.Got)}" : $"{AtProbe(l.Knob, l.Sent)} → {Shown(l, l.Got)}") +
+              (l.Matched ? "" : " ✗");
         var table = new List<string>
         {
             "| Knob | Bitwig → probe (0 to 1 sent → value the probe got) | Probe → Bitwig (value set → Bitwig's 0 to 1) |",
@@ -1367,12 +1384,14 @@ public static class BitwigLiveTests
         {
             ["knob"] = l.Knob, ["name"] = l.Name, ["way"] = l.Way == KnobWay.ToProbe ? "bitwig-to-probe" : "probe-to-bitwig", ["sent"] = l.Sent,
             ["expected"] = l.Expected, ["got"] = l.Got, ["display"] = l.Display, ["matched"] = l.Matched, ["ms"] = Math.Round(l.Took.TotalMilliseconds),
-            ["note"] = l.Note,
+            ["note"] = l.Note, ["untold"] = l.Untold,
         }).ToArray());
         var detail = check.Matched == check.Lines.Count
             ? $"How Bitwig maps MO Probe's knobs ({format}): it spreads 0 to 1 evenly over each knob's range, both ways, in all {check.Lines.Count} turns."
             : $"How Bitwig maps MO Probe's knobs ({format}): {check.Matched} of {check.Lines.Count} turns landed where an even spread over each " +
               "knob's range puts them (✗ marks the others).";
+        if (check.Lines.Count(l => l.Untold) is > 0 and var untold)
+            detail += $" Bitwig showed {untold} of the probe's turns without telling the app their 0 to 1 values (“shown, no number”).";
         if (check.Stopped is not null) detail += " The check stopped part way, so these are only the turns it made.";
         return LiveVerdict.Note(detail, data) with { Lines = table };
     }

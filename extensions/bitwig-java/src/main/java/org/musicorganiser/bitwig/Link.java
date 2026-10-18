@@ -410,7 +410,10 @@ final class Link {
             cursorDevice.hasDrumPads().markInterested();
             cursorDevice.addDirectParameterIdObserver(ids -> parameterIds(ids));
             cursorDevice.addDirectParameterNameObserver(256, (id, name) -> params.names.put(String.valueOf(id), str(name)));
-            cursorDevice.addDirectParameterNormalizedValueObserver((id, value) -> params.values.put(String.valueOf(id), value));
+            cursorDevice.addDirectParameterNormalizedValueObserver((id, value) -> {
+                params.values.put(String.valueOf(id), value);
+                params.told.merge(String.valueOf(id), 1, Integer::sum);
+            });
             displayObserver = cursorDevice.addDirectParameterValueDisplayObserver(64, (id, text) -> {
                 params.displays.put(String.valueOf(id), str(text));
             });
@@ -773,6 +776,8 @@ final class Link {
         params.names.keySet().retainAll(kept);
         params.values.keySet().retainAll(kept);
         params.displays.keySet().retainAll(kept);
+        params.told.keySet().retainAll(kept);
+        params.answered.keySet().retainAll(kept);
     }
 
     // ---- Talking to the app ----
@@ -1198,21 +1203,30 @@ final class Link {
     private Map<String, Object> describeSelectedDevice() {
         // Which remote control (if any) is each parameter: Bitwig's API tells steps, origins and automation only
         // for those, and doesn't say which parameter a control is, so a control is matched to the one parameter
-        // with its name and value.
+        // with its name and value. A plugin's control is the one parameter with its name, whatever the value: Bitwig
+        // may not have told the link the parameter's new value, which its control has. (A Bitwig device's control
+        // may be a device's inside it, of the same name.)
         Map<String, Parameter> controlOf = new HashMap<>();
         Map<Parameter, String> paramOf = new HashMap<>();
+        boolean plugin = cursorDevice.exists().get() && cursorDevice.isPlugin().get();
         if (controls != null) {
             for (Parameter control : controls) {
                 if (!control.exists().get()) continue;
-                String match = null;
-                int found = 0;
+                String match = null, named = null;
+                int found = 0, names = 0;
                 for (String id : params.ids) {
                     if (!str(control.name().get()).equals(params.names.get(id))) continue;
+                    named = id;
+                    names++;
                     Double value = params.values.get(id);
                     double v = control.get();
                     if (value == null || !(Math.abs(value - v) < 1e-4 || (value.isNaN() && Double.isNaN(v)))) continue;
                     match = id;
                     found++;
+                }
+                if (names == 1 && plugin) {
+                    match = named;
+                    found = 1;
                 }
                 if (found == 1 && !controlOf.containsKey(match)) {
                     controlOf.put(match, control);
@@ -1226,9 +1240,14 @@ final class Link {
             Map<String, Object> p = new LinkedHashMap<>();
             p.put("id", id);
             p.put("name", params.names.getOrDefault(id, ""));
-            p.put("value", params.values.get(id));   // NaN (not readable) becomes null in JSON
-            p.put("display", params.displays.get(id));
             Parameter control = controlOf.get(id);
+            Double value = params.values.get(id);
+            String display = params.displays.get(id);
+            boolean stale = staleValue(id, value, display, control);
+            // NaN (not readable) becomes null in JSON. A control's value is Bitwig's own; the parameter's may be out of date.
+            p.put("value", control != null ? (Object) control.get() : stale ? null : value);
+            p.put("display", display);
+            if (stale && control == null) p.put("stale", true);
             if (control != null) addDetails(p, control);
             list.add(p);
         }
@@ -1257,6 +1276,23 @@ final class Link {
             m.put("controls", shown);
         }
         return m;
+    }
+
+    /**
+     * Whether the value Bitwig last told the link for a parameter is out of date: its text has changed since an answer
+     * gave it, and Bitwig hasn't told the value since (the 20:37 live run on 2026-10-18: Bitwig 6.1.5 showed the new text
+     * of a plugin's knob, turned by the plugin or by the link, but never told its new value). It stays so until Bitwig
+     * tells it again. A remote control has Bitwig's own value, which says whether the parameter's is behind.
+     */
+    private boolean staleValue(String id, Double value, String display, Parameter control) {
+        int told = params.told.getOrDefault(id, 0);
+        Answered before = params.answered.get(id);
+        boolean stale;
+        if (control != null) stale = value != null && !value.isNaN() && Math.abs(value - control.get()) >= 1e-4;
+        else stale = before != null && before.told() == told
+                     && (before.stale() || display != null && before.display() != null && !display.equals(before.display()));
+        params.answered.put(id, new Answered(told, display != null || before == null ? display : before.display(), stale));
+        return stale;
     }
 
     /** A parameter's steps (-1 when it's continuous), their names, its origin and whether it's automated. */
@@ -3918,5 +3954,11 @@ final class Link {
         final Map<String, String> names = new HashMap<>();
         final Map<String, Double> values = new HashMap<>();
         final Map<String, String> displays = new HashMap<>();
+        /** How many times Bitwig has told each parameter's value. */
+        final Map<String, Integer> told = new HashMap<>();
+        /** What the last answer gave of each parameter (see `staleValue`). */
+        final Map<String, Answered> answered = new HashMap<>();
     }
+
+    record Answered(int told, String display, boolean stale) {}
 }

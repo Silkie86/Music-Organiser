@@ -1251,6 +1251,11 @@ final class FakeBitwig {
          * beat 24.2 (where the go before stopped) for at least 50 ms after starting a clip at beat 16.
          */
         long positionLag;
+        /**
+         * Whether Bitwig doesn't tell the link a plugin's parameter's new value once it has listed the device's parameters,
+         * though their texts and the remote controls follow: Bitwig 6.1.5 with MO Probe, turned by the probe or by the link.
+         */
+        boolean pluginValuesUntold;
         /** Bitwig's "Write automation when recording Arranger clips": arranger automation write shows on while record is. */
         boolean automationWhileRecording;
         /** Whether new tracks get IDs ("new-1", "new-2"...), as Bitwig's do. */
@@ -2049,11 +2054,23 @@ final class FakeBitwig {
             for (Knob k : params)
                 if (k.id.equals(id)) knob = k;
             if (knob == null || knob.locked) return;
-            Knob turned = knob;
+            double to = value.doubleValue() / (resolution.doubleValue() - 1);
+            turn(knob, to, knob.display == null ? null : Math.round(to * 100) + "%");
+        }
+
+        /** The plugin turns one of its knobs itself, to a value from 0 to 1 that it shows as `display`. */
+        void turnByPlugin(String id, double value, String display) {
+            for (Knob k : params)
+                if (k.id.equals(id)) turn(k, value, display);
+        }
+
+        private void turn(Knob knob, double value, String display) {
             later(20, () -> {
-                turned.value = value.doubleValue() / (resolution.doubleValue() - 1);
-                if (turned.display != null) turned.display = Math.round(turned.value * 100) + "%";
-                valueObserver.directParameterNormalizedValueChanged(id, turned.value);
+                knob.value = value;
+                knob.display = display;
+                if (!(model.pluginValuesUntold && spec != null && spec.plugin))
+                    valueObserver.directParameterNormalizedValueChanged(knob.id, value);
+                if (page != null) page.refresh();
             });
         }
     }
@@ -2076,9 +2093,17 @@ final class FakeBitwig {
             return controls.get(index);
         }
 
+        private List<Knob> shown = List.of();
+
         void show(String name, List<Knob> knobs) {
             title.v = name;
+            shown = knobs;
             for (int i = 0; i < controls.size(); i++) controls.get(i).show(i < knobs.size() ? knobs.get(i) : null);
+        }
+
+        /** The controls follow their knobs, as Bitwig's do. */
+        void refresh() {
+            show((String) title.v, shown);
         }
     }
 
