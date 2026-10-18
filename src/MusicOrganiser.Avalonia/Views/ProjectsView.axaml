@@ -18,12 +18,20 @@
             <StackPanel DockPanel.Dock="Right" Margin="18,0,0,0" VerticalAlignment="Center">
                 <TextBlock Text="{Binding CountText}" FontSize="13" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
             </StackPanel>
-            <TextBox x:Name="Search" Classes="clearButton bigSearch" VerticalAlignment="Center"
+            <TextBox x:Name="Search" Classes="bigSearch" VerticalAlignment="Center"
                      PlaceholderText="{x:Static views:Keys.SearchProjects}" Text="{Binding SearchText}"
                      ToolTip.Tip="Several words find projects matching all of them, e.g. &quot;serum dark 2019&quot;. Down arrow goes to the list, Esc clears.">
                 <TextBox.InnerLeftContent>
                     <Path Data="M11,4 A7,7 0 1 1 10.99,4 Z M20,20 L16.5,16.5" Classes="navIcon" Margin="16,0,4,0" />
                 </TextBox.InnerLeftContent>
+                <!-- The X shows whenever there's a search to clear, not only while the box has the focus. -->
+                <TextBox.InnerRightContent>
+                    <Button x:Name="ClearSearch" Click="OnClearSearch" Background="Transparent" BorderThickness="0" Padding="10,6" Margin="0,0,4,0"
+                            VerticalAlignment="Center" Cursor="Hand" ToolTip.Tip="Clear the search (Esc)"
+                            IsVisible="{Binding SearchText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                        <Path Data="M1,1 L11,11 M11,1 L1,11" Classes="navIcon" Width="12" Height="12" />
+                    </Button>
+                </TextBox.InnerRightContent>
             </TextBox>
         </DockPanel>
 

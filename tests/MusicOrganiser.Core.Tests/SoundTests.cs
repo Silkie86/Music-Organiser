@@ -671,5 +671,33 @@ public class RediscoverScaleTests
         Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
         Assert.Equal(200, folders.Count);
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"Took {clock.Elapsed.TotalSeconds:0.0} s");
+
+        // The longest list on offer is still quick.
+        clock.Restart();
+        Assert.Equal(250, Rediscover.Suggest(org, new Rediscover.Options(Count: 250, Seed: 1)).Count);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"250 took {clock.Elapsed.TotalSeconds:0.0} s");
+    }
+}
+
+public class VectorIndexTests
+{
+    [Fact]
+    public void Nearest_finds_the_same_closest_vectors_as_comparing_every_one_by_hand()
+    {
+        var rng = new Random(3);
+        var vectors = Enumerable.Range(1, 20_000).ToDictionary(i => (long)i,
+            _ => Enumerable.Range(0, 37).Select(_ => (float)(rng.NextDouble() - 0.5)).ToArray());
+        var index = VectorIndex.Build(vectors, standardise: false);
+        var query = index.Get(42)!;
+
+        var expected = index.Units.Select(kv => (kv.Key, VectorIndex.Dot(query, kv.Value)))
+                            .OrderByDescending(t => t.Item2).Take(25).Select(t => t.Key).ToList();
+        var found = index.Nearest(query, 25);
+        Assert.Equal(expected, found.Select(f => f.Id));
+        Assert.Equal(42, found[0].Id);
+        Assert.Equal(1.0, found[0].Score, 4);
+        Assert.Equal(found.Select(f => f.Score).OrderByDescending(x => x), found.Select(f => f.Score));
+        Assert.Equal(3, index.Nearest(query, 3).Count);
+        Assert.Empty(index.Nearest(query, 0));
     }
 }

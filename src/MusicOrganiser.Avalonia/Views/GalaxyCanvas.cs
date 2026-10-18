@@ -39,6 +39,8 @@ public sealed class GalaxyCanvas : Control
         AvaloniaProperty.Register<GalaxyCanvas, IReadOnlyList<Sound>?>(nameof(Constellation));
     public static readonly StyledProperty<Sound?> SelectedProperty =
         AvaloniaProperty.Register<GalaxyCanvas, Sound?>(nameof(Selected), defaultBindingMode: global::Avalonia.Data.BindingMode.TwoWay);
+    /// <summary>How long each swept sound plays before the next one takes over, so each is heard (Settings › Sounds).</summary>
+    public static readonly StyledProperty<int> SweepMsProperty = AvaloniaProperty.Register<GalaxyCanvas, int>(nameof(SweepMs), 90);
     public static readonly StyledProperty<ICommand?> SweepCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(SweepCommand));
     public static readonly StyledProperty<ICommand?> PickCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(PickCommand));
     public static readonly StyledProperty<ICommand?> SweepEndedCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(SweepEndedCommand));
@@ -90,7 +92,22 @@ public sealed class GalaxyCanvas : Control
         Cursor = new Cursor(StandardCursorType.Cross);
         _frame = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Render, (_, _) => Animate());
         _sweepTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(15), DispatcherPriority.Input, (_, _) => NextSweep());
+    }
+
+    // GalaxyGpu.Changed is static: held only while on screen, or every Sound Lab page ever shown (and its star
+    // buffers) would stay in memory.
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
         GalaxyGpu.Changed += InvalidateVisual;
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        GalaxyGpu.Changed -= InvalidateVisual;
+        _frame.Stop();
+        _sweepTimer.Stop();
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -394,10 +411,13 @@ public sealed class GalaxyCanvas : Control
         InvalidateVisual();
     }
 
-    /// <summary>How long each swept sound plays before the next one takes over, so each is heard.</summary>
-    static readonly TimeSpan SweepGap = TimeSpan.FromMilliseconds(110);
-    /// <summary>How many passed stars wait their turn; past that the oldest are dropped, so the sound keeps up with the mouse.</summary>
-    const int SweepBacklog = 2;
+    public int SweepMs { get => GetValue(SweepMsProperty); set => SetValue(SweepMsProperty, value); }
+    TimeSpan SweepGap => TimeSpan.FromMilliseconds(SweepMs);
+    /// <summary>
+    /// How many passed stars wait their turn; past that the oldest are dropped, so the sound keeps up with the mouse.
+    /// One: what plays next is always the star the mouse reached last (two let it trail a star behind).
+    /// </summary>
+    const int SweepBacklog = 1;
 
     /// <summary>
     /// A star the sweep reached: plays now if the last one has had its moment, otherwise waits its turn. Without the

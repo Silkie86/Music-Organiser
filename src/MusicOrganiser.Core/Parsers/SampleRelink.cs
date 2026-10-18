@@ -9,15 +9,23 @@ public sealed partial class FlStudioReader
     /// A copy of an FL Studio project with sample paths pointed somewhere else. <paramref name="relink"/> maps a sample
     /// path, as the app lists it (with %FLStudioUserData% worked out), to the file to use instead. Only those sample
     /// events change; every other byte is copied as it was, and the FLdt chunk's length follows the new paths.
+    /// <c>CantWrite</c> lists the files an FL Studio older than 11.5 can't be pointed to: it keeps paths as one byte a
+    /// letter, so a letter outside Western European ones (Ł, ş, ア) would become "?". Those samples are left as they were.
     /// </summary>
-    public static (byte[] Data, int Changed) RelinkSamples(byte[] raw, string projectPath, IReadOnlyDictionary<string, string> relink)
+    public static (byte[] Data, int Changed, IReadOnlyList<string> CantWrite) RelinkSamples(byte[] raw, string projectPath,
+                                                                                            IReadOnlyDictionary<string, string> relink)
     {
         var stream = ReadEvents(raw);
         var changes = new Dictionary<int, byte[]>();
+        var cantWrite = new List<string>();
         foreach (var e in stream.Events)
             if (e.Id == EvSamplePath && New(stream.Text(e.Payload.Span)) is { } to)
-                changes[e.Index] = stream.Utf16 ? Encoding.Unicode.GetBytes(to + "\0") : Encoding.Latin1.GetBytes(to + "\0");
-        return (Rewrite(raw, stream, changes), changes.Count);
+            {
+                if (stream.Utf16) changes[e.Index] = Encoding.Unicode.GetBytes(to + "\0");
+                else if (to.All(c => c <= '\u00ff')) changes[e.Index] = Encoding.Latin1.GetBytes(to + "\0");
+                else if (!cantWrite.Contains(to)) cantWrite.Add(to);
+            }
+        return (Rewrite(raw, stream, changes), changes.Count, cantWrite);
 
         string? New(string sample) =>
             relink.TryGetValue(sample, out var to) || relink.TryGetValue(ResolveSamplePath(sample, projectPath), out to) ? to : null;
