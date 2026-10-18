@@ -57,7 +57,9 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
             if (_running) return;
             _running = true;
         }
-        ThreadPool.QueueUserWorkItem(_ => Work());
+        // Its own thread, ahead of background work: on the shared thread pool a sample scan's work queued in front, so
+        // sweeping the galaxy during a scan played sounds late, or not at all for a while.
+        new Thread(Work) { IsBackground = true, Priority = ThreadPriority.AboveNormal, Name = "Preview" }.Start();
     }
 
     void Work()

@@ -128,6 +128,12 @@ public partial class ProjectsView : UserControl
 
     ProjectsViewModel? Vm => DataContext as ProjectsViewModel;
 
+    void OnClearSearch(object? sender, RoutedEventArgs e)
+    {
+        Search.Text = "";
+        Search.Focus();
+    }
+
     bool HasRows => Vm?.View.GetEnumerator().MoveNext() == true;
 
     void OnDoubleTapped(object? sender, TappedEventArgs e)

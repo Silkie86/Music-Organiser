@@ -182,4 +182,58 @@ public sealed class ProjectsPageTests : IDisposable
         Assert.True(toolbar.Bounds.Height > Labelled("Open in Bitwig").Bounds.Height * 1.5, "The toolbar didn't wrap");
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void The_search_box_shows_an_X_that_clears_it_whenever_there_is_something_to_clear()
+    {
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = main.Projects;
+        var window = new Window { Content = new ProjectsView { DataContext = page }, Width = 1400, Height = 900 };
+        window.Show();
+        Settle();
+        var search = window.GetVisualDescendants().OfType<TextBox>().Single(t => t.Name == "Search");
+        Button Clear() => search.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "ClearSearch");
+        Assert.False(Clear().IsVisible);
+
+        // Typed, then the focus moved on to the list: the X is still there.
+        page.SearchText = "serum";
+        window.GetVisualDescendants().OfType<DataGrid>().First().Focus();
+        Settle();
+        Assert.False(search.IsFocused);
+        Assert.True(Clear().IsVisible);
+        Clear().RaiseEvent(new global::Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Settle();
+        Assert.Equal("", page.SearchText);
+        Assert.False(Clear().IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void The_plugins_side_panel_lists_songs_and_its_DAW_chips_keep_to_one_DAW()
+    {
+        void Save(string file, string daw)
+        {
+            var info = new ProjectInfo { Daw = daw };
+            info.Plugins.Add(new PluginRef("Serum", "Xfer Records", PluginKind.Instrument, "VST3"));
+            var path = Path.Combine(_root, file);
+            File.WriteAllBytes(path, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(path, 1, 100, info, null, [], []));
+        }
+        foreach (var n in new[] { "", "_2", "_3" }) Save($"Teka{n}.flp", "FL Studio");
+        Save("Heel_4.bwproject", "Bitwig Studio");
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = main.Plugins;
+        var window = new Window { Content = new PluginsView { DataContext = page }, Width = 1600, Height = 900 };
+        window.Show();
+        page.Selected = page.Items.Single(u => u.Name == "Serum");
+        Settle();
+
+        var songs = window.GetVisualDescendants().OfType<ListBox>().Single(l => l.Name == "PluginSongs");
+        Assert.Equal(["Heel", "Teka"], songs.Items.Cast<SongUse>().Select(s => s.Song).Order());
+        var chips = window.GetVisualDescendants().OfType<ListBox>().Single(l => l.Name == "ProjectDawChips");
+        Assert.True(chips.IsVisible);
+        chips.SelectedItem = "Bitwig Studio";
+        Settle();
+        Assert.Equal(["Heel"], songs.Items.Cast<SongUse>().Select(s => s.Song));
+        Assert.Equal("Used in 1 song in Bitwig Studio", page.ProjectsTitle);
+    }
 }

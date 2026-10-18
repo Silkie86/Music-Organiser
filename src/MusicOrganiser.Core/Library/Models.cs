@@ -80,6 +80,13 @@ public sealed record PluginUsage(string Name, string Vendor, string Format, int 
 }
 
 /// <summary>A project that uses a plugin, for the Plugins page's side panel.</summary>
-public sealed record PluginProject(long Id, string Name, string Daw, DateTime Saved);
+public sealed record PluginProject(long Id, string Name, string Daw, DateTime Saved, string Folder = "");
+
+/// <summary>A song in a list of saves (see <see cref="SongVersions.Songs"/>): its newest listed save and how many are listed.</summary>
+public sealed record SongUse(string Song, PluginProject Latest, int Saves)
+{
+    /// <summary>"21 saves", or nothing for one.</summary>
+    public string SavesText => Saves > 1 ? $"{Saves} saves" : "";
+}
 
 public sealed record SampleUsage(string Path, int Projects, bool Found);

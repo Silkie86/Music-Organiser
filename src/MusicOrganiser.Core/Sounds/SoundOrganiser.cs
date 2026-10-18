@@ -300,13 +300,15 @@ public sealed class SoundOrganiser : IDisposable
     }
 
     /// <summary>
-    /// "Deep listening": runs CLAP over every sound that doesn't have an embedding yet.
-    /// Slower (a fraction of a second per sound), resumable, and unlocks search by description.
+    /// "Deep listening": runs CLAP over every sound that doesn't have an embedding yet, or only over <paramref name="only"/>'s
+    /// ones (the sounds a scan just found). Slower (a fraction of a second per sound), resumable, and unlocks search by description.
     /// </summary>
-    public int DeepListen(IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
+    public int DeepListen(IProgress<SoundProgress>? progress = null, CancellationToken ct = default, IEnumerable<long>? only = null)
     {
         var clap = Clap ?? throw new InvalidOperationException("The sound-understanding model isn't installed yet");
-        var missing = _sounds.Where(s => s.Analysis is not null && (_clapIndex is null || !_clapIndex.Contains(s.Id))).ToList();
+        var which = only is null ? _sounds : only.Select(Get).OfType<Sound>();
+        var missing = which.Where(s => s.Analysis is not null && (_clapIndex is null || !_clapIndex.Contains(s.Id))).ToList();
+        if (missing.Count == 0) return 0;
         var done = 0;
         // Every core reads and prepares audio; the model runs several sounds at once (see ClapModel).
         Parallel.ForEach(missing, Parallelism.Options(ct), s =>
@@ -660,9 +662,46 @@ public sealed class VectorIndex
         return s;
     }
 
+    KeyValuePair<long, float[]>[]? _entries;
+
+    /// <summary>
+    /// The <paramref name="max"/> closest vectors, closest first. Every vector is compared (no approximation), but in
+    /// parallel, several numbers at a time, keeping only the best few as it goes: with 450,000 CLAP vectors, sorting
+    /// them all took about half a second, and picking a sound waited on it.
+    /// </summary>
     public IReadOnlyList<(long Id, double Score)> Nearest(float[] query, int max, bool normaliseQuery = true)
     {
         var q = normaliseQuery ? Unit((float[])query.Clone()) : query;
-        return _unit.Select(kv => (kv.Key, Dot(q, kv.Value))).OrderByDescending(t => t.Item2).Take(max).ToList();
+        if (max <= 0 || _unit.Count == 0) return [];
+        var entries = _entries ??= [.. _unit];
+        const int Chunk = 4096;
+        var chunks = (entries.Length + Chunk - 1) / Chunk;
+        var best = new List<(long Id, float Score)>[chunks];
+        Parallel.For(0, chunks, new ParallelOptions { MaxDegreeOfParallelism = Parallelism.Workers }, c =>
+        {
+            var heap = new PriorityQueue<(long Id, float Score), float>(max + 1);
+            for (int i = c * Chunk, end = Math.Min(entries.Length, i + Chunk); i < end; i++)
+            {
+                var score = FastDot(q, entries[i].Value);
+                if (heap.Count < max) heap.Enqueue((entries[i].Key, score), score);
+                else if (score > heap.Peek().Score) heap.EnqueueDequeue((entries[i].Key, score), score);
+            }
+            best[c] = [.. heap.UnorderedItems.Select(x => x.Element)];
+        });
+        return best.SelectMany(b => b).OrderByDescending(t => t.Score).ThenBy(t => t.Id).Take(max)
+                   .Select(t => (t.Id, (double)t.Score)).ToList();
+    }
+
+    static float FastDot(float[] a, float[] b)
+    {
+        var n = Math.Min(a.Length, b.Length);
+        var i = 0;
+        var sum = System.Numerics.Vector<float>.Zero;
+        var width = System.Numerics.Vector<float>.Count;
+        for (; i <= n - width; i += width)
+            sum += new System.Numerics.Vector<float>(a, i) * new System.Numerics.Vector<float>(b, i);
+        var s = System.Numerics.Vector.Sum(sum);
+        for (; i < n; i++) s += a[i] * b[i];
+        return s;
     }
 }

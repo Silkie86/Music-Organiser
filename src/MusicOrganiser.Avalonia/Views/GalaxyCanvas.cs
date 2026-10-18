@@ -410,9 +410,12 @@ public sealed class GalaxyCanvas : Control
     }
 
     /// <summary>How long each swept sound plays before the next one takes over, so each is heard.</summary>
-    static readonly TimeSpan SweepGap = TimeSpan.FromMilliseconds(110);
-    /// <summary>How many passed stars wait their turn; past that the oldest are dropped, so the sound keeps up with the mouse.</summary>
-    const int SweepBacklog = 2;
+    static readonly TimeSpan SweepGap = TimeSpan.FromMilliseconds(90);
+    /// <summary>
+    /// How many passed stars wait their turn; past that the oldest are dropped, so the sound keeps up with the mouse.
+    /// One: what plays next is always the star the mouse reached last (two let it trail a star behind).
+    /// </summary>
+    const int SweepBacklog = 1;
 
     /// <summary>
     /// A star the sweep reached: plays now if the last one has had its moment, otherwise waits its turn. Without the

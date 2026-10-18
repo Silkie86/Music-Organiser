@@ -45,20 +45,27 @@ public static class Rediscover
         });
 
         // Pick with maximal marginal relevance for variety.
+        // Each candidate's likeness to its closest pick so far is kept up to date as picks are made, rather than
+        // compared with every pick each round: 250 picks that way took minutes.
         var picked = new List<(Sound S, double Score, float[] V)>();
         var pool = scored.OrderByDescending(t => t.Score).Take(Math.Max(o.Count * 20, 200)).Select(t => (t.S, t.Score, V: V(t.S)!)).ToList();
-        while (picked.Count < o.Count && pool.Count > 0)
+        var redundancy = new double[pool.Count];
+        var taken = new bool[pool.Count];
+        while (picked.Count < o.Count && picked.Count < pool.Count)
         {
-            var best = 0;
+            var best = -1;
             var bestVal = double.MinValue;
             for (var i = 0; i < pool.Count; i++)
             {
-                var redundancy = picked.Count == 0 ? 0 : picked.Max(p => VectorIndex.Dot(p.V, pool[i].V));
-                var val = 0.75 * pool[i].Score - 0.25 * redundancy;
+                if (taken[i]) continue;
+                var val = 0.75 * pool[i].Score - 0.25 * (picked.Count == 0 ? 0 : redundancy[i]);
                 if (val > bestVal) { bestVal = val; best = i; }
             }
+            taken[best] = true;
             picked.Add(pool[best]);
-            pool.RemoveAt(best);
+            var v = pool[best].V;
+            for (var i = 0; i < pool.Count; i++)
+                if (!taken[i]) redundancy[i] = picked.Count == 1 ? VectorIndex.Dot(v, pool[i].V) : Math.Max(redundancy[i], VectorIndex.Dot(v, pool[i].V));
         }
 
         return picked.Select(p => new Suggestion(p.S, Reason(index, p.S, p.V, taste), Math.Round(p.Score, 3))).ToList();
