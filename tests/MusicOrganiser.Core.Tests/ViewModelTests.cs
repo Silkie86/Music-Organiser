@@ -1618,6 +1618,55 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task The_mini_playground_changes_a_part_in_a_click_and_loops_some_bars_of_it_on_its_own()
+    {
+        const int bar = 4 * 96;
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var lead = new Core.Parsers.MidiClip { Name = "Lead", Ppq = 96 };
+        int[][] tune = [[69, 72, 76, 72], [65, 69, 72, 69]];
+        lead.Track("Lead").AddRange(tune.SelectMany((b, i) => b.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96 + 5, 90, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Lead melody.mid"), Core.Export.MidiWriter.Write(lead));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        var played = new List<string>();
+        var player = new Recorder(played);
+        ((HeadlessUi)Ui.Current).Player = () => player;
+
+        var midi = Main().Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        var row = midi.Selected = midi.Results.Single();
+        Assert.Equal(2 * bar, row.LoopLength);
+
+        await row.ToolCommand.ExecuteAsync("up");
+        Assert.Equal(70, row.BarNotes[0].Key);
+        await row.ToolCommand.ExecuteAsync("quantise");
+        Assert.All(row.BarNotes, n => Assert.Equal(0, n.Start % 24));
+        await row.ToolCommand.ExecuteAsync("twice");
+        Assert.Equal(4 * bar, row.LoopLength);
+        Assert.Equal(16, row.BarNotes.Count);
+        Assert.Equal(16, row.FileClip().Tracks.Single().Value.Count);   // dragged out as it is now
+        await row.ToolCommand.ExecuteAsync("half");
+        await row.ToolCommand.ExecuteAsync("half");
+        Assert.Equal(bar, row.LoopLength);
+        Assert.Equal(4, row.BarNotes.Count);
+        // Undo goes back a step at a time, length and all.
+        await row.UndoEditCommand.ExecuteAsync(null);
+        Assert.Equal(2 * bar, row.LoopLength);
+        await row.ResetEditsCommand.ExecuteAsync(null);
+        Assert.Equal(69, row.BarNotes[0].Key);
+
+        // Loop points with nothing fitted: just those bars play, round and round.
+        midi.Loop = false;
+        Assert.False(midi.CanFindForSection);
+        midi.SetSectionCommand.Execute(new RollRange(bar, 2 * bar));
+        await midi.PlaySelectedAloneCommand.ExecuteAsync(null);
+        var oneBar = Core.Sounds.MidiRender.TicksToSeconds(bar, 96, midi.TempoValue) * Core.Sounds.MidiRender.Rate;
+        Assert.Equal(0, player.LastSamples % (int)Math.Round(oneBar));
+        Assert.True(row.IsPlayingAlone);
+    }
+
+    [Fact]
     public async Task Edits_picks_and_what_plays_outlast_the_list_being_read_again()
     {
         const int bar = 4 * 96;
