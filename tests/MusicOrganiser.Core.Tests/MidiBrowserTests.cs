@@ -133,6 +133,21 @@ public class MidiBrowserTests
     }
 
     [Fact]
+    public void A_track_named_after_a_drum_sound_is_drums_wherever_its_notes_sit()
+    {
+        // A tambourine on a sampler or drum grid, played low: the notes alone look like a bassline.
+        var low = Line(Beat / 2, 36, 36, 38, 36, 36, 36, 38, 36);
+        Assert.Equal(MidiRoles.Bass, PhraseAnalyser.Analyse(low).Role);
+        Assert.Equal(MidiRoles.Drums, PhraseAnalyser.Analyse(low, "Tamb Selector Grid Tamb Selector Grid 79").Role);
+        Assert.Equal(MidiRoles.Drums, PhraseAnalyser.Analyse(low, "Chh Selector Grid").Role);
+        Assert.Equal(MidiRoles.Drums, PhraseAnalyser.Analyse(Line(Beat / 4, 60, 62, 60, 64, 60, 62, 60, 64), "Congas").Role);
+        // A style word isn't a drum sound: a tune in a "Beats" folder stays a tune.
+        Assert.Equal(MidiRoles.Melody, PhraseAnalyser.Analyse(Line(Beat, 69, 72, 71, 67, 69, 64, 65, 67, 69, 72, 74, 72), "Loop 01 Beats").Role);
+        // A drum word and a tuned one: the notes decide, as before.
+        Assert.Equal(MidiRoles.Bass, PhraseAnalyser.Analyse(low, "Kick bass").Role);
+    }
+
+    [Fact]
     public void Names_say_what_a_part_is_unless_the_notes_plainly_disagree()
     {
         var line = Line(Beat, 60, 62, 64, 65, 67, 65, 64, 62);

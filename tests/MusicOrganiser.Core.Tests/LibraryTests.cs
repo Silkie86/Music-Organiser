@@ -205,6 +205,22 @@ public class LibraryTests : IDisposable
         Assert.Equal(["Didums_2", "Didums"], didums.Older.Select(o => o.Name));
     }
 
+    [Fact]
+    public void Bitwig_saves_each_in_a_folder_of_its_own_name_are_one_song()
+    {
+        ProjectSummary P(string name, string folder) =>
+            new() { Name = name, Path = $@"{folder}\{name}.bwproject", Daw = "Bitwig Studio", Folder = folder, Modified = new DateTime(2020, 1, 1) };
+        const string projects = @"K:\Bitwig Studio\Projects";
+        var groups = SongVersions.Group([P("bored_57", $@"{projects}\bored_57"), P("bored_58", $@"{projects}\bored_58"),
+                                         P("bored", $@"{projects}\bored"), P("bored_59", $@"{projects}\bored"),
+                                         P("MO Live Test 1", $@"{projects}\MO Live Test 1"), P("bored_2", $@"{projects}\Old\bored stuff")]);
+        Assert.Equal(3, groups.Count);
+        var bored = groups.Single(g => g.Latest.Name == "bored_59");
+        Assert.Equal(["bored_58", "bored_57", "bored"], bored.Older.Select(o => o.Name));
+        // A folder named otherwise is a song of its own.
+        Assert.Contains(groups, g => g.Latest.Name == "bored_2");
+    }
+
     static ProjectSummary Save(string name, DateTime saved, int notes = 100, int bars = 32, int tracks = 6, string[]? plugins = null,
                                DateTime? created = null) =>
         new()
