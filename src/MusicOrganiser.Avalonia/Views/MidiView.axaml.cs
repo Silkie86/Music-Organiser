@@ -36,13 +36,16 @@ public partial class MidiView : UserControl
 
     void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(MidiBrowserViewModel.IsPairing)) Widen();
+        if (e.PropertyName is nameof(MidiBrowserViewModel.IsPairing) or nameof(MidiBrowserViewModel.HasSelection)) Widen();
     }
 
-    /// <summary>While fitting, the card takes two thirds of the page, to show and play a suggestion with what it's fitted to.</summary>
+    /// <summary>
+    /// A part picked: the card takes two thirds of the page, for the piano roll to edit it on and to play a suggestion with
+    /// what it's fitted to (Solomon, 2026-10-18: "the card on the right could take up 2/3 of the screen").
+    /// </summary>
     void Widen()
     {
-        var wide = Vm?.IsPairing == true;
+        var wide = Vm is { HasSelection: true } or { IsPairing: true };
         Body.ColumnDefinitions[1].Width = wide ? new GridLength(2, GridUnitType.Star) : new GridLength(370);
     }
 

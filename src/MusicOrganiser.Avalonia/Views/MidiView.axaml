@@ -304,11 +304,10 @@
                         <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding From}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                     </StackPanel>
-                    <views:NoteRoll Height="130" Channel="{Binding Channel}" Position="{Binding Position}" Spans="{Binding Spans}"
-                                    SeekCommand="{Binding SeekCommand}" IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}" />
-                    <!-- Fitting: a piano roll with what it's fitted to grey behind and this part on top, to edit and play together. -->
-                    <StackPanel Spacing="6" IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}">
-                        <DockPanel>
+                    <!-- The mini playground: a piano roll to edit the part on, with simple changes a click away. Fitting, what
+                         it's fitted to plays grey behind it, to edit and play together. -->
+                    <StackPanel Spacing="6">
+                        <DockPanel IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
                                 <ComboBox ItemsSource="{x:Static vm:MidiBrowserViewModel.SoundChoices}" SelectedItem="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).WithSound}"
                                           FontSize="12" MinWidth="150" ToolTip.Tip="The sound it plays with" />
@@ -331,13 +330,13 @@
                                                ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Alt to place without snapping. Click the bar numbers to play from there; drag along them to set loop points." />
                         <!-- Loop points: what's looping, parts for just those bars, or how to set them. -->
                         <WrapPanel>
-                            <TextBlock Text="Drag along the bar numbers to loop some bars and find parts for just those bars." Classes="small"
+                            <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SectionHint}" Classes="small"
                                        VerticalAlignment="Center" Margin="0,0,10,6" IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasSection}" />
                             <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SectionText}" FontWeight="SemiBold" Classes="small"
                                        VerticalAlignment="Center" Margin="0,0,10,6" IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasSection}" />
                             <Button Content="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).FindForSectionText}" Classes="accent" Padding="10,3" FontSize="12" Margin="0,0,6,6"
                                     Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).FindForSectionCommand}"
-                                    IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasSection}"
+                                    IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).CanFindForSection}"
                                     ToolTip.Tip="Rank every part by how well it fits just these bars. Each one you pick plays in them." />
                             <Button Content="All bars" Padding="10,3" FontSize="12" Margin="0,0,6,6"
                                     Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).WholeFitCommand}"
@@ -348,7 +347,7 @@
                                     IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).HasSection}"
                                     ToolTip.Tip="Loop all of it again (a right-click on the bar numbers does this too)" />
                         </WrapPanel>
-                        <DockPanel>
+                        <DockPanel IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
                                 <ComboBox ItemsSource="{x:Static vm:MidiBrowserViewModel.SoundChoices}" SelectedItem="{Binding Sound}"
                                           FontSize="12" MinWidth="150" ToolTip.Tip="The sound this kind of part plays with" />
@@ -372,6 +371,22 @@
                             </StackPanel>
                             <TextBlock Text="{Binding TogetherText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" VerticalAlignment="Center" />
                         </DockPanel>
+                        <!-- One-click changes, each undone like any edit. The file it came from is never changed. -->
+                        <WrapPanel>
+                            <TextBlock Text="Change it:" Classes="small" VerticalAlignment="Center" Margin="0,0,8,6" />
+                            <Button Content="▼ Semitone" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="down"
+                                    ToolTip.Tip="Every note down a semitone" />
+                            <Button Content="▲ Semitone" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="up"
+                                    ToolTip.Tip="Every note up a semitone" />
+                            <Button Content="Quantise" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="quantise"
+                                    ToolTip.Tip="Every note onto the nearest 16th, for a tight, on-the-grid feel" />
+                            <Button Content="Play it twice" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="twice"
+                                    ToolTip.Tip="The part again straight after itself: twice as long, to change the second time round" />
+                            <Button Content="First half" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="half"
+                                    ToolTip.Tip="Just its first half: for a part that plays the same idea twice" />
+                            <Button Content="Reverse" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="reverse"
+                                    ToolTip.Tip="Back to front: the last note first" />
+                        </WrapPanel>
                     </StackPanel>
                     <!-- Listening: on its own or together, looping, at a tempo to try it at. -->
                     <WrapPanel>
