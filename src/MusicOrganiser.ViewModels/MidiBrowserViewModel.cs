@@ -67,6 +67,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _loop = db.GetSetting(LoopKey) == "1";
         GmSounds.ChosenFile = db.GetSetting(SoundFontKey) is { Length: > 0 } chosen ? chosen : null;
         _hasGoodSounds = GmSounds.IsInstalled;
+        LoadOptions(db);
     }
 
     // ---- sounds ----
@@ -722,6 +723,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
                                   From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, _sectionTarget ?? Fit, Like, Leave: _fitPath,
                                   Words: words, Within: PhrasesOf, NameWeight: (float)NameWeight, Notes: NotesOf, Shuffle: _shuffle);
+        query = query with { Limit = ListLimit };
         // A new search stops the one before: scoring every part against a harmony is the heavy part, and only the
         // newest is shown.
         _searchCts?.Cancel();
@@ -1821,7 +1823,7 @@ public sealed partial class MidiRow : ObservableObject
         {
             "up" => (MidiTools.Transpose(notes, 1), length),
             "down" => (MidiTools.Transpose(notes, -1), length),
-            "quantise" => (MidiTools.Quantise(notes), length),
+            "quantise" => (MidiTools.Quantise(notes, _owner.QuantiseGrid), length),
             "twice" => (MidiTools.Repeat(notes, length), 2 * length),
             "half" => (MidiTools.FirstHalf(notes, length), Math.Max(Bar, length / 2 / Bar * Bar)),
             "reverse" => (MidiTools.Reverse(notes, length), length),
@@ -1853,7 +1855,7 @@ public sealed partial class MidiRow : ObservableObject
             long a = LoopLength, b = PartnerLength;
             if (a == b) return a;
             var both = a / Gcd(a, b) * b;
-            return both <= 32 * Bar ? both : Math.Max(a, b);
+            return both <= _owner.LongestLoopBars * Bar ? both : Math.Max(a, b);
         }
     }
 
