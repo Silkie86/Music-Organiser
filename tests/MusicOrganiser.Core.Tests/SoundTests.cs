@@ -648,12 +648,21 @@ public class SoundUsageTests
     }
 }
 
-public class RediscoverScaleTests
+public class RediscoverScaleTests : IDisposable
 {
+    // About 270 MB of database: left behind, a day of test runs fills the disk.
+    readonly string _root = Directory.CreateTempSubdirectory("mo-rediscover-").FullName;
+
+    public void Dispose()
+    {
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        try { Directory.Delete(_root, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+    }
+
     [Fact]
     public void Shuffle_picks_from_a_library_of_a_hundred_thousand_sounds_in_a_moment()
     {
-        var root = Directory.CreateTempSubdirectory("mo-rediscover-").FullName;
+        var root = _root;
         using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
         var rng = new Random(7);
         lib.Save(Enumerable.Range(0, 100_000).Select(i => new SoundLibrary.Analysed($"/lib/Pack {i / 500}/Kick {i}.wav", 1, 1,
