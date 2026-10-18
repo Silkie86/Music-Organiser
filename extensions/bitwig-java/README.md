@@ -159,6 +159,9 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   each whether its panel showed before and after each go (`visible`), whether the route `ran` it, and whether
   the link put the panel back as it was (`restored`). A panel that shows and hides with them means Bitwig
   carried them out for the link.
+- From 3.12, `record` goes by the clock until Bitwig's play position first moves. As it starts, Bitwig can still
+  say where the go before stopped (the third live run: 24.2 for a clip at bar 5), which had the link stop the
+  track as the clip launched, so the take got only a bar of it, or one note.
 - From 3.11, `record`'s answer has a `trace`: a line for each look (every 25 ms) and each command it sent, with
   Bitwig's play position and whether it played, the slot played or was queued, and how many notes the track
   played ("1234 look @16.042 playing slot notes 1"). It's there to work out runs like Solomon's second, where

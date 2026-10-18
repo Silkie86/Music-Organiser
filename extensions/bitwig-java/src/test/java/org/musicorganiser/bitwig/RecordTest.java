@@ -273,6 +273,22 @@ class RecordTest {
     }
 
     @Test
+    @DisplayName("records the whole clip when Bitwig's play position still says where the go before stopped as it starts")
+    void waitsForThePositionToMove() {
+        // The third live run: playing the clip without recording at bar 5 ended at beat 24.2, and recording it there next,
+        // Bitwig still said 24.2 as it started, so the link stopped the track at once and only the first note went in.
+        studio(m -> m.positionLag = 150);
+        assertEquals("heard", result(record(1, "rec", BAR_5, "record", false)).get("decided"));
+        bitwig.calls.clear();
+        Map<String, Object> result = result(record(2, "rec", BAR_5));
+        double stopSent = (Double) at(result, "seen", "stopSentAt");
+        assertTrue(stopSent >= 20 && stopSent < 21, "the track was stopped in the clip's last bar, at " + stopSent + ": " + Json.write(result.get("trace")));
+        assertEquals(KEYS, keys(result, "played", "notes"));
+        assertEquals(List.of(new Recorded(spec("Rec"), BAR_5, BAR_5 + LENGTH, CLIP, BAR_5)), bitwig.state.recorded);
+        assertEquals("recorded", result.get("decided"));
+    }
+
+    @Test
     @DisplayName("turns record off and stops just past the clip's end when Bitwig ignores stopping the track, then returns it to the arrangement for the replay")
     void endsWhenTheTrackDoesntStop() {
         studio(m -> m.trackStopIgnored = true);
