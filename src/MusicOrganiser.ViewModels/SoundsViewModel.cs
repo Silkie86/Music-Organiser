@@ -276,7 +276,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         Items = loaded.Items;
         foreach (var s in Items) _shuffle.TryAdd(s.Id, Random.Shared.Next());
-        var top = loaded.Liked.Length == 0 ? 0 : loaded.Liked.Max();
+        var top = _topLiked = loaded.Liked.Length == 0 ? 0 : loaded.Liked.Max();
         for (var i = 0; i < Items.Count; i++)
         {
             Items[i].Liked = loaded.Liked[i];
@@ -321,7 +321,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             return (changed, years, changed ? items.Select(weights.Score).ToArray() : []);
         });
         if (!years || !ReferenceEquals(items, Items)) return;
-        var top = liked.Length == 0 ? 0 : liked.Max();
+        var top = liked.Length == 0 ? _topLiked : _topLiked = liked.Max();
         for (var i = 0; i < liked.Length; i++)
         {
             items[i].Liked = liked[i];
@@ -531,8 +531,22 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void Score()
     {
         foreach (var s in Items) s.Liked = _weights.Score(s);
-        var top = Items.Count == 0 ? 0 : Items.Max(s => s.Liked);
+        var top = _topLiked = Items.Count == 0 ? 0 : Items.Max(s => s.Liked);
         foreach (var s in Items) s.LikedShare = top > 0 ? s.Liked / top : 0;
+    }
+
+    double _topLiked;
+
+    /// <summary>
+    /// Scores again only the sounds just played, dragged or starred. Every sound's share only changes when one of
+    /// them becomes, or stops being, the most liked; scoring all 450,000 on every double-click held the window up.
+    /// </summary>
+    void Rescore(IReadOnlyCollection<Sound> changed)
+    {
+        var wasTop = _topLiked > 0 && changed.Any(s => s.Liked >= _topLiked);
+        foreach (var s in changed) s.Liked = _weights.Score(s);
+        if (wasTop || changed.Any(s => s.Liked > _topLiked)) { Score(); return; }
+        foreach (var s in changed) s.LikedShare = _topLiked > 0 ? s.Liked / _topLiked : 0;
     }
 
     /// <summary>Settings changed how Most liked weighs things.</summary>
@@ -554,8 +568,10 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         var history = Org.Library.History();
         if (history.Count == 0) return [];
-        var byId = items.ToDictionary(s => s.Id);
-        return history.Where(h => byId.ContainsKey(h.Id)).Select(h => new HistoryItem(byId[h.Id], h.At)).ToList();
+        // Looked up one by one: a lookup of all 450,000 sounds made for a list of a few hundred held up every play.
+        var byId = ReferenceEquals(items, Org.Sounds) ? null : items.ToDictionary(s => s.Id);
+        return history.Select(h => (h, Sound: byId is null ? Org.Get(h.Id) : byId.GetValueOrDefault(h.Id)))
+                      .Where(t => t.Sound is not null).Select(t => new HistoryItem(t.Sound!, t.h.At)).ToList();
     }
 
     partial void OnHistorySelectedChanged(HistoryItem? value)
@@ -571,7 +587,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Org.Library.Record(list.Select(s => s.Id), kind);
         foreach (var s in list)
             s.Activity = kind == SoundEvent.Drag ? s.Activity with { Drags = s.Activity.Drags + 1 } : s.Activity with { Sends = s.Activity.Sends + 1 };
-        Score();
+        Rescore(list);
     }
 
     partial void OnSearchTextChanged(string value)
@@ -702,12 +718,31 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Notes = [];
         NoteChords = [];
         NotesMessage = "";
-        Similar = value is null ? [] : Org.Similar(value, 12);
+        FindSimilar(value);
         SelectedTypeLabel = value?.Type ?? "";
         KeyDetail = value?.Analysis is { KeyTonic: { } t } a
             ? $"{MusicTheory.NoteNames[t]} {(a.KeyMinor ? "minor" : "major")} · Camelot {MusicTheory.Camelot(t, a.KeyMinor)} · {a.KeySource}" +
               (a.KeySource == "detected" ? $" ({a.KeyConfidence:P0} sure)" : "")
             : "";
+    }
+
+    int _similarFor;
+
+    /// <summary>
+    /// The picked sound's sound-alikes, found off the window's thread: comparing it with 450,000 others took about half
+    /// a second, so arrowing through the list or clicking stars kept stopping. Only the newest pick's are shown.
+    /// </summary>
+    async void FindSimilar(Sound? s)
+    {
+        var version = ++_similarFor;
+        Similar = [];
+        if (s is null) return;
+        try
+        {
+            var found = await UiWork.Run(() => Org.Similar(s, 12));
+            if (version == _similarFor) Similar = found;
+        }
+        catch (Exception e) { AppLog.Info("Sounds", $"Couldn't find sounds like {s.Name}: {e.Message}"); }
     }
 
     partial void OnSelectedTypeLabelChanged(string value)
@@ -749,7 +784,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Org.Library.MarkPlayed(s.Id);
         s.Plays++;
         s.Activity = s.Activity with { Plays = s.Activity.Plays + 1 };
-        Score();
+        Rescore([s]);
         if (IsHistory) return;   // the History list doesn't jump about under the pointer while you play from it
         LoadHistory();
     }
@@ -911,7 +946,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if (Selected is not { } s) return;
         s.Favourite = !s.Favourite;
         Org.Library.SetFavourite(s.Id, s.Favourite);
-        Score();
+        Rescore([s]);
         OnPropertyChanged(nameof(Selected));
         Refresh();
     }
