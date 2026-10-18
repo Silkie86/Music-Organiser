@@ -50,7 +50,12 @@ public sealed record BitwigSelection(string Track, BitwigDevice? Device, IReadOn
 /// <param name="Id">The ID Bitwig keeps the parameter under, e.g. "CONTENTS/PID3e8" for a plugin's parameter 1000.</param>
 /// <param name="Value">0 to 1, or null when Bitwig can't read it.</param>
 /// <param name="Display">The value as Bitwig shows it ("-6.0 dB"), or null if it didn't say in time.</param>
-public sealed record BitwigParam(string Id, string Name, double? Value, string? Display);
+/// <param name="Stale">
+/// Bitwig shows a new value (its text has changed) but hasn't told the link the number since, so <paramref name="Value"/>
+/// is null (the Java extension from 3.13). Bitwig 6.1.5 did that with a plugin's knobs that aren't on its remote controls
+/// page, whether the plugin or the link turned them.
+/// </param>
+public sealed record BitwigParam(string Id, string Name, double? Value, string? Display, bool Stale = false);
 
 public sealed record BitwigAction(string Id, string Name, string Category, string Menu);
 

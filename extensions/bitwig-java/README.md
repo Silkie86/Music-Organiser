@@ -159,6 +159,10 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   each whether its panel showed before and after each go (`visible`), whether the route `ran` it, and whether
   the link put the panel back as it was (`restored`). A panel that shows and hides with them means Bitwig
   carried them out for the link.
+- From 3.13, `device` gives a parameter on the remote controls page Bitwig shows its control's value, and gives
+  `"value": null, "stale": true` for one whose text has changed since Bitwig last told the link its value. In
+  the 2026-10-18 live run, Bitwig 6.1.5 showed each new value of MO Probe's knobs (CLAP and VST3), turned by
+  the probe or by the link, but never told the link the numbers, so it went on giving the old ones.
 - From 3.12, `record` goes by the clock until Bitwig's play position first moves. As it starts, Bitwig can still
   say where the go before stopped (the third live run: 24.2 for a clip at bar 5), which had the link stop the
   track as the clip launched, so the take got only a bar of it, or one note.

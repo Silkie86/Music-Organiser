@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using MusicOrganiser.Core.DawLink;
 
 namespace MusicOrganiser.Core.Tests;
@@ -28,6 +29,17 @@ public class BitwigLinkTests
         using var bitwig = ScriptServer.Start(raw: true);
         if (bitwig is null) return;
         await TalkTo(bitwig.Port);
+    }
+
+    [Fact]
+    public void ReadsAValueBitwigHasntTold()
+    {
+        // The Java extension 3.13: Bitwig shows a new value, but hasn't told the link its number.
+        var param = JsonSerializer.Deserialize<BitwigParam>("""{"id":"CONTENTS/PID3ea","name":"MO Gain","value":null,"display":"-60.0 dB","stale":true}""",
+                                                            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(new BitwigParam("CONTENTS/PID3ea", "MO Gain", null, "-60.0 dB", Stale: true), param);
+        Assert.False(JsonSerializer.Deserialize<BitwigParam>("""{"id":"a","name":"Gain","value":0.5,"display":"0 dB"}""",
+                                                             new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Stale);
     }
 
     static async Task TalkTo(int port)
