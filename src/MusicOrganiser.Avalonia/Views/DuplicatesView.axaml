@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.DuplicatesView"
              x:DataType="vm:DuplicatesViewModel">
     <UserControl.Styles>
@@ -157,7 +158,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:DuplicateMemberItem">
                                             <Border Classes="copy" Classes.keep="{Binding IsKeep}" Classes.hidden="{Binding IsHidden}">
-                                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="12">
+                                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12">
                                                     <Button Classes="playCopy" Content="▶" ToolTip.Tip="Play / stop"
                                                             Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).PlayCommand}"
                                                             CommandParameter="{Binding}" />
@@ -166,11 +167,16 @@
                                                         <TextBlock Text="{Binding Folder}" Classes="muted" FontSize="11.5" TextWrapping="NoWrap"
                                                                    TextTrimming="{x:Static TextTrimming.PrefixCharacterEllipsis}" ToolTip.Tip="{Binding Folder}" />
                                                     </StackPanel>
-                                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                                    <!-- The waveform saved when the sound was scanned: nothing is read or worked out to draw it, and
+                                                         only the groups on screen are drawn. Shows a sound that starts with silence. -->
+                                                    <Border Grid.Column="2" Width="150" Height="30" VerticalAlignment="Center" ToolTip.Tip="The sound's waveform, start to end">
+                                                        <views:MiniWave Peaks="{Binding Sound.Analysis.Waveform}" Fill="{StaticResource AccentBrush}" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Right">
                                                         <TextBlock Text="{Binding Facts}" FontSize="12" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" />
                                                         <TextBlock Text="{Binding Why}" FontSize="11.5" HorizontalAlignment="Right" Foreground="{StaticResource FaintBrush}" />
                                                     </StackPanel>
-                                                    <StackPanel Grid.Column="3" VerticalAlignment="Center" Width="92">
+                                                    <StackPanel Grid.Column="4" VerticalAlignment="Center" Width="92">
                                                         <Border Classes="pill badge" Classes.keep="{Binding IsKeep}" Classes.hiddenBadge="{Binding IsHidden}" Classes.exact="{Binding IsExact}"
                                                                 Classes.converted="{Binding IsConverted}" Classes.similar="{Binding IsSimilar}">
                                                             <TextBlock Text="{Binding Badge}" Classes="pillText" HorizontalAlignment="Center" />
@@ -178,7 +184,7 @@
                                                         <TextBlock Text="{Binding UsedText}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"
                                                                    Foreground="{StaticResource MutedBrush}" IsVisible="{Binding UsedText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                                                     </StackPanel>
-                                                    <Panel Grid.Column="4" Width="96" VerticalAlignment="Center">
+                                                    <Panel Grid.Column="5" Width="96" VerticalAlignment="Center">
                                                         <Button Content="Keep this" Padding="10,3" HorizontalAlignment="Stretch" IsVisible="{Binding CanKeep}"
                                                                 ToolTip.Tip="Keep this copy instead, so the others are the extra ones"
                                                                 Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).KeepThisCommand}"
@@ -188,7 +194,7 @@
                                                                 Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).UnhideCommand}"
                                                                 CommandParameter="{Binding}" />
                                                     </Panel>
-                                                    <Button Grid.Column="5" Content="Folder" Padding="10,3" VerticalAlignment="Center" ToolTip.Tip="Open the folder this file is in"
+                                                    <Button Grid.Column="6" Content="Folder" Padding="10,3" VerticalAlignment="Center" ToolTip.Tip="Open the folder this file is in"
                                                             Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).RevealCommand}"
                                                             CommandParameter="{Binding}" />
                                                 </Grid>
