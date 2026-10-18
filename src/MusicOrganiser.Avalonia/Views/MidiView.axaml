@@ -215,13 +215,13 @@
                     <ProgressBar Height="4" MinHeight="4" Margin="0,6,0,0" Maximum="100" Value="{Binding MeaningPercent}" />
                 </StackPanel>
             </Border>
-            <!-- How much names count against the model's ears; right is the model only. -->
+            <!-- How much names count against what the model reads in the notes; right is the notes only. -->
             <StackPanel Orientation="Horizontal" Spacing="10" IsVisible="{Binding MeaningInstalled}"
-                        ToolTip.Tip="When you describe what you want: how much words in a part's track name, file, folder and kind count, against how it sounds to the MIDI model. All the way right uses the model only.">
+                        ToolTip.Tip="When you describe what you want: how much words in a part's track name, file, folder and kind count, against how its notes play to the MIDI model. All the way right uses the notes only.">
                 <TextBlock Text="Names" Classes="small" VerticalAlignment="Center" />
                 <Slider Width="180" Minimum="0" Maximum="3" TickFrequency="0.5" IsSnapToTickEnabled="True" IsDirectionReversed="True"
                         VerticalAlignment="Center" Margin="0,-10" Value="{Binding NameWeight}" />
-                <TextBlock Text="Sound" Classes="small" VerticalAlignment="Center" />
+                <TextBlock Text="Notes" Classes="small" VerticalAlignment="Center" />
                 <TextBlock Text="{Binding NameWeightText}" Classes="small" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsHearing}">
