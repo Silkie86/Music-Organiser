@@ -41,435 +41,558 @@
             <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
         </Style>
+        <Style Selector="TabControl.settingsTabs TabItem">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Padding" Value="12,0" />
+        </Style>
         <Style Selector="TextBlock.live.ok">
             <Setter Property="Foreground" Value="{StaticResource OkBrush}" />
         </Style>
     </UserControl.Styles>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,0,16,16">
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top">
             <TextBlock Text="Settings" Classes="pageTitle" />
-            <TextBlock Text="Where your projects, samples and plugins live, and how projects open."
-                       Classes="pageSubtitle" Margin="0,2,0,20" />
-
-            <!-- Appearance: changes show at once, all over the app. -->
-            <Border Classes="card settingsCard" DataContext="{Binding Appearance}" x:DataType="vm:AppearanceViewModel">
-                <StackPanel Spacing="4">
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Back to normal" Command="{Binding ResetCommand}" VerticalAlignment="Top" />
-                        <TextBlock Text="Appearance" Classes="sectionHeader" />
-                    </DockPanel>
-                    <TextBlock Classes="cardIntro" Text="How the app looks. Changes show straight away." />
-
-                    <TextBlock Text="THEME" Classes="filterLabel" />
-                    <ListBox Classes="themes" ItemsSource="{x:Static vm:AppearanceViewModel.Themes}" SelectedItem="{Binding Theme}">
-                        <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="vm:AppTheme">
-                                <StackPanel Width="176" Spacing="8">
-                                    <!-- A tiny window in the theme's colours: rail, a card, a selected row and its accent. -->
-                                    <Border Height="96" CornerRadius="{Binding PreviewRadius, Converter={StaticResource Radius}}" ClipToBounds="True" BorderThickness="1"
-                                            Background="{Binding Background, Converter={StaticResource HexBrush}}"
-                                            BorderBrush="{Binding Stroke, Converter={StaticResource HexBrush}}">
-                                        <Grid ColumnDefinitions="22,*">
-                                            <Border Background="{Binding Sidebar, Converter={StaticResource HexBrush}}">
-                                                <Border Width="10" Height="10" CornerRadius="3" VerticalAlignment="Top" Margin="0,8,0,0"
-                                                        Background="{Binding Accent, Converter={StaticResource HexBrush}}" />
-                                            </Border>
-                                            <StackPanel Grid.Column="1" Margin="10,10,10,0" Spacing="6">
-                                                <Border Height="6" Width="70" CornerRadius="3" HorizontalAlignment="Left"
-                                                        Background="{Binding Text, Converter={StaticResource HexBrush}}" />
-                                                <Border Height="22" CornerRadius="5" Background="{Binding Hover, Converter={StaticResource HexBrush}}">
-                                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="6,0" VerticalAlignment="Center">
-                                                        <Border Width="3" Height="12" CornerRadius="1.5" Background="#F2994A" />
-                                                        <Border Width="60" Height="5" CornerRadius="2.5" Background="{Binding Text, Converter={StaticResource HexBrush}}" />
-                                                    </StackPanel>
-                                                </Border>
-                                                <Border Height="5" Width="90" CornerRadius="2.5" HorizontalAlignment="Left"
-                                                        Background="{Binding Muted, Converter={StaticResource HexBrush}}" />
-                                                <Border Height="14" Width="64" CornerRadius="7" HorizontalAlignment="Right"
-                                                        Background="{Binding Accent, Converter={StaticResource HexBrush}}" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
-                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14" />
-                                    <TextBlock Text="{Binding Description}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-
-                    <TextBlock Text="ACCENT COLOUR" Classes="filterLabel" Margin="0,12,0,0" />
-                    <ListBox Classes="chips" ItemsSource="{x:Static vm:AppearanceViewModel.Accents}" SelectedItem="{Binding Accent}">
-                        <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="vm:AccentChoice">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Ellipse Width="12" Height="12" Fill="{Binding Colour, Converter={StaticResource HexBrush}}"
-                                             Stroke="{StaticResource MutedBrush}" StrokeThickness="{Binding Colour, Converter={StaticResource HexStroke}}" />
-                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-
-                    <Grid ColumnDefinitions="Auto,32,Auto,32,Auto" Margin="0,12,0,0">
-                        <StackPanel>
-                            <TextBlock Text="FONT" Classes="filterLabel" />
-                            <ComboBox ItemsSource="{x:Static vm:AppearanceViewModel.Fonts}" SelectedItem="{Binding Font}" MinWidth="200" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Text="SIZE" Classes="filterLabel" />
-                            <ListBox Classes="chips" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}">
-                                <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="x:Int32">
-                                        <TextBlock Text="{Binding StringFormat='{}{0}%'}" />
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </StackPanel>
-                        <StackPanel Grid.Column="4">
-                            <TextBlock Text="LESS MOTION" Classes="filterLabel" />
-                            <ToggleSwitch IsChecked="{Binding LessMotion}" OnContent="On" OffContent="Off"
-                                          ToolTip.Tip="No sliding, fading or popping. Spinners and progress still show." />
-                        </StackPanel>
-                    </Grid>
-                </StackPanel>
-            </Border>
-
-            <!-- Most liked: what puts a sound at the top of Sounds › Most liked. -->
-            <Border Classes="card settingsCard" DataContext="{Binding Liked}" x:DataType="vm:LikedSettingsViewModel">
-                <StackPanel Spacing="4">
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Reset to defaults" Command="{Binding ResetCommand}" VerticalAlignment="Top" />
-                        <TextBlock Text="Most liked sounds" Classes="sectionHeader" />
-                    </DockPanel>
-                    <TextBlock Classes="cardIntro" TextWrapping="Wrap"
-                               Text="How much each thing counts when the Sounds page is ordered by Most liked. Each sound's liked bar shows what it's made of." />
-                    <Grid ColumnDefinitions="220,*,64" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,6,0,0">
-                        <Grid.Styles>
-                            <Style Selector="TextBlock.sliderLabel"><Setter Property="VerticalAlignment" Value="Center" /></Style>
-                            <Style Selector="TextBlock.sliderValue">
-                                <Setter Property="VerticalAlignment" Value="Center" />
-                                <Setter Property="HorizontalAlignment" Value="Right" />
-                                <Setter Property="FontFamily" Value="{DynamicResource NumberFont}" />
-                            </Style>
-                            <Style Selector="Slider"><Setter Property="Margin" Value="12,0" /></Style>
-                        </Grid.Styles>
-                        <TextBlock Grid.Row="0" Classes="sliderLabel" Text="Each project that uses it" />
-                        <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Project}" />
-                        <TextBlock Grid.Row="0" Grid.Column="2" Classes="sliderValue" Text="{Binding Project, StringFormat='{}{0:0} pts'}" />
-                        <TextBlock Grid.Row="1" Classes="sliderLabel" Text="Each drag out of the app" />
-                        <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Drag}" />
-                        <TextBlock Grid.Row="1" Grid.Column="2" Classes="sliderValue" Text="{Binding Drag, StringFormat='{}{0:0} pts'}" />
-                        <TextBlock Grid.Row="2" Classes="sliderLabel" Text="Each send into a DAW" />
-                        <Slider Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Send}" />
-                        <TextBlock Grid.Row="2" Grid.Column="2" Classes="sliderValue" Text="{Binding Send, StringFormat='{}{0:0} pts'}" />
-                        <TextBlock Grid.Row="3" Classes="sliderLabel" Text="Each play on purpose" />
-                        <Slider Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Play}" />
-                        <TextBlock Grid.Row="3" Grid.Column="2" Classes="sliderValue" Text="{Binding Play, StringFormat='{}{0:0} pts'}" />
-                        <TextBlock Grid.Row="4" Classes="sliderLabel" Text="Being a favourite" />
-                        <Slider Grid.Row="4" Grid.Column="1" Minimum="0" Maximum="50" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Favourite}" />
-                        <TextBlock Grid.Row="4" Grid.Column="2" Classes="sliderValue" Text="{Binding Favourite, StringFormat='{}{0:0} pts'}" />
-                        <TextBlock Grid.Row="5" Classes="sliderLabel" Text="Older than a year counts" />
-                        <Slider Grid.Row="5" Grid.Column="1" Minimum="0" Maximum="100" TickFrequency="5" IsSnapToTickEnabled="True" Value="{Binding OlderPercent}" />
-                        <TextBlock Grid.Row="5" Grid.Column="2" Classes="sliderValue" Text="{Binding OlderPercent, StringFormat='{}{0:0}%'}" />
-                    </Grid>
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="Project folders" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro"
-                               Text="Folders to search for Bitwig (.bwproject), FL Studio (.flp) and Studio One (.song) projects. Subfolders are included. DAW autosave and backup folders are skipped, and so are the demo songs, tutorials and templates that came with the DAW (folders named Cool stuff, Demo songs, Product demos, Templates or Tutorial)." />
-                    <ListBox ItemsSource="{Binding ProjectFolders}" SelectedItem="{Binding SelectedProjectFolder}" Classes="folders" />
-                    <WrapPanel Classes="buttons" Margin="0,10,0,0">
-                        <Button Content="Add folder" Classes="accent" Command="{Binding AddProjectFolderCommand}" />
-                        <Button Content="Remove" Command="{Binding RemoveProjectFolderCommand}" />
-                    </WrapPanel>
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="Sample folders" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro"
-                               Text="Your sample libraries (Splice, packs, recordings). These are indexed so missing samples can be matched by name, and they're what the Sound Lab browses." />
-                    <ListBox ItemsSource="{Binding SampleFolders}" SelectedItem="{Binding SelectedSampleFolder}" Classes="folders" />
-                    <WrapPanel Classes="buttons" Margin="0,10,0,0">
-                        <Button Content="Add folder" Command="{Binding AddSampleFolderCommand}" />
-                        <Button Content="Remove" Command="{Binding RemoveSampleFolderCommand}" />
-                        <Button Content="Re-index samples" Command="{Binding IndexSamplesCommand}" Margin="0,0,12,0" />
-                        <TextBlock Text="{Binding SampleIndexText}" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
-                    </WrapPanel>
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="Plugin folders" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro"
-                               Text="Where your VST3, CLAP, VST2 and (on a Mac) Audio Unit plugins are installed. Used to tell which plugins in a project are missing on this computer, and to recognise plugin names inside Bitwig projects." />
-                    <ListBox ItemsSource="{Binding PluginFolders}" SelectedItem="{Binding SelectedPluginFolder}" Classes="folders" />
-                    <WrapPanel Classes="buttons" Margin="0,10,0,0">
-                        <Button Content="Add folder" Command="{Binding AddPluginFolderCommand}" />
-                        <Button Content="Remove" Command="{Binding RemovePluginFolderCommand}" />
-                    </WrapPanel>
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="Opening projects" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro"
-                               Text="By default projects open in whatever program your computer uses for that file type. Pick a program here to override it, e.g. if you have more than one version installed." />
-                    <ItemsControl ItemsSource="{Binding Daws}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:DawSetting">
-                                <Grid Margin="0,0,0,10" ColumnDefinitions="180,*,Auto,Auto">
-                                    <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
-                                        <Ellipse Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center"
-                                                 Fill="{Binding Daw, Converter={StaticResource DawBrush}}" />
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
-                                            <TextBlock Text="{Binding Extensions}" FontSize="12" Foreground="{StaticResource FaintBrush}" />
-                                        </StackPanel>
-                                    </StackPanel>
-                                    <TextBox Grid.Column="1" Text="{Binding ExePath, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Default program" />
-                                    <Button Grid.Column="2" Content="Choose…" Command="{Binding ChooseCommand}" Margin="6,0,0,0" />
-                                    <Button Grid.Column="3" Content="Reset" Background="Transparent" Command="{Binding ClearCommand}" Margin="6,0,0,0" />
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="Performance" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro" TextWrapping="Wrap"
-                               Text="How hard scans, Deep listen and finding duplicates may push your computer. Gentle keeps the app smooth while they run; Fast finishes sooner." />
-                    <ComboBox ItemsSource="{x:Static vm:SettingsViewModel.PerformanceChoices}" SelectedItem="{Binding Performance}"
-                              HorizontalAlignment="Left" MinWidth="240" />
-                    <TextBlock Text="{Binding PerformanceTip}" Classes="muted" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="When the app opens" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro" Text="The page you land on each time you start Music Organiser." />
-                    <ComboBox ItemsSource="{x:Static vm:SettingsViewModel.StartPageChoices}" SelectedItem="{Binding StartPage}"
-                              HorizontalAlignment="Left" MinWidth="240" />
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="Exports" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro" Text="Where MIDI, presets and kits are saved. Each project gets its own folder inside." />
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Choose…" Command="{Binding ChooseExportFolderCommand}" Margin="6,0,0,0" />
-                        <TextBox Text="{Binding ExportFolder, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Documents/Music Organiser Exports" />
-                    </DockPanel>
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="FL Studio to Bitwig" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro"
-                               Text="Open in Bitwig builds each converted song from a template: a project saved in Bitwig with a Sampler track, a VST3 synth with a Note Transpose before it and a clip of notes, a VST2 synth, and an audio track with an audio clip on it (not in a group) for FL Studio's audio clips. Its tracks are copied and filled in, and its own tracks are left out. The app keeps its own copy of the template, so it always knows where it is. To change it, use Edit in Bitwig and save." />
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Replace…" Command="{Binding ChooseBitwigTemplateCommand}" Margin="6,0,0,0"
-                                ToolTip.Tip="Copy another Bitwig project in as the template" />
-                        <Button DockPanel.Dock="Right" Content="Show file" Command="{Binding ShowBitwigTemplateCommand}" Margin="6,0,0,0" />
-                        <Button DockPanel.Dock="Right" Content="Edit in Bitwig" Command="{Binding EditBitwigTemplateCommand}" Margin="6,0,0,0"
-                                ToolTip.Tip="Open the app's copy of the template in Bitwig, to change it and save" />
-                        <TextBox Text="{Binding BitwigTemplate, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Asked for the first time you convert" />
-                    </DockPanel>
-                    <TextBlock Text="{Binding BitwigTemplateNote}" Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
-                               IsVisible="{Binding BitwigTemplateNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                    <CheckBox Content="Steps play until the next note or the end of the clip" IsChecked="{Binding StepsUntilNextNote}" Margin="0,12,0,0" />
-                    <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
-                               Text="Notes from FL's step sequencer have no length. Plugin tracks always play them until the next note on the same key or the end of the clip. On a Sampler they also stop where the sample ends, unless this is ticked." />
-                    <CheckBox Content="Swap Serum for Serum 2 (try-out)" IsChecked="{Binding UpgradeSynths}" Margin="0,12,0,0" />
-                    <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
-                               Text="Swaps an older version of your template's synth for the template's own. Serum sounds are translated for Serum 2 (the project's notes say what came across only roughly); other synths open with their default sound. Each old sound is also saved as a preset in a 'Sounds from older plugins' folder next to the converted project, to load in the new synth's preset browser. Your FL projects are never changed." />
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="DAW links" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro"
-                               Text="Small scripts the app installs in Bitwig and FL Studio, so it can ask them what they show for the open project. The Check with Bitwig and Check with FL Studio buttons on a project then compare that with what the app read from its file." />
-                    <Button Content="Set up both" Classes="accent" Command="{Binding SetUpBothCommand}" Margin="0,0,0,8"
-                            ToolTip.Tip="Installs the script for each DAW on this computer, makes FL Studio's MIDI port the way chosen below, then checks each link" />
-                    <TextBlock Text="{Binding SetUpResult}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,14"
-                               IsVisible="{Binding SetUpResult, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                    <ItemsControl ItemsSource="{Binding Links}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:DawLinkSetting">
-                                <StackPanel Margin="0,0,0,14">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Ellipse Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center"
-                                                 Fill="{Binding Daw, Converter={StaticResource DawBrush}}" />
-                                        <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
-                                    </StackPanel>
-                                    <TextBlock Text="{Binding Status}" Margin="18,4,0,0" TextWrapping="Wrap" />
-                                    <TextBlock Text="{Binding Live}" Classes="live" Classes.ok="{Binding IsAnswering}" Margin="18,2,0,0"
-                                               TextWrapping="Wrap" FontSize="12.5"
-                                               IsVisible="{Binding Live, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                    <TextBlock Text="{Binding Steps}" Margin="18,4,0,0" TextWrapping="Wrap" FontSize="12.5"
-                                               Foreground="{StaticResource MutedBrush}" />
-                                    <!-- Only FL Studio's row has a MIDI port to choose and only Bitwig's has live tests: those parts
-                                         take the row's MidiPort or LiveTests as theirs, so the other rows have nothing to bind. -->
-                                    <StackPanel Margin="18,10,0,0" IsVisible="{Binding CanChoosePort}">
-                                      <StackPanel DataContext="{Binding MidiPort}" x:DataType="vm:FlPortSetting">
-                                        <TextBlock Text="The MIDI port for the script" FontSize="12.5" Margin="0,0,0,6" />
-                                        <RadioButton Margin="0,0,0,4"
-                                                     IsChecked="{Binding Choice, Converter={StaticResource IndexToBool}, ConverterParameter=0}">
-                                            <TextBlock TextWrapping="Wrap" FontSize="12.5"
-                                                       Text="loopMIDI: a free app you install, then make the port in. Works on any Windows." />
-                                        </RadioButton>
-                                        <RadioButton IsChecked="{Binding Choice, Converter={StaticResource IndexToBool}, ConverterParameter=1}">
-                                            <TextBlock TextWrapping="Wrap" FontSize="12.5"
-                                                       Text="Windows' own MIDI system: Install makes the port, with nothing else to install. Needs Windows 11 25H2 or later, fully updated." />
-                                        </RadioButton>
-                                        <TextBlock Text="{Binding Note}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
-                                                   IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                      </StackPanel>
-                                    </StackPanel>
-                                    <WrapPanel Classes="buttons" Margin="18,10,0,0">
-                                        <Button Content="Install" Command="{Binding InstallCommand}" />
-                                        <Panel IsVisible="{Binding ShowGetLoopMidi}">
-                                            <Button Content="Get loopMIDI" DataContext="{Binding MidiPort}" x:DataType="vm:FlPortSetting"
-                                                    Command="{Binding GetLoopMidiCommand}" ToolTip.Tip="Opens loopMIDI's page in your browser, to download it" />
-                                        </Panel>
-                                        <Button Content="Choose folder…" Command="{Binding ChooseFolderCommand}" IsVisible="{Binding CanChooseFolder}"
-                                                ToolTip.Tip="{Binding ChooseFolderTip}" />
-                                        <Button Content="Check connection" Command="{Binding CheckCommand}" />
-                                    </WrapPanel>
-                                    <TextBlock Text="{Binding Result}" Margin="18,6,0,0" TextWrapping="Wrap" FontSize="12.5"
-                                               IsVisible="{Binding Result, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                    <StackPanel Margin="18,14,0,0" IsVisible="{Binding HasLiveTests}">
-                                        <TextBlock Text="Live tests" FontSize="12.5" Margin="0,0,0,4" />
-                                        <TextBlock TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}"
-                                                   Text="Tries out what the app does with Bitwig, in the Bitwig open now, and writes a report. It only reads, unless Bitwig lets the app make changes and the open project's name starts with “MO Live Test”: then it adds a few tracks to that project and saves it, so your own projects are never touched." />
-                                      <StackPanel DataContext="{Binding LiveTests}" x:DataType="vm:LiveTestsViewModel">
-                                        <WrapPanel Classes="buttons" Margin="0,10,0,0">
-                                            <Button Content="Run live tests" Command="{Binding RunCommand}"
-                                                    ToolTip.Tip="Runs the live tests while Bitwig is answering. They take about a minute, a few more with MO Probe installed." />
-                                            <Button Content="Stop" Command="{Binding StopCommand}" IsVisible="{Binding Running}"
-                                                    ToolTip.Tip="Stops after the test running now, which puts back anything it was in the middle of. The report is still written." />
-                                            <Button Content="Open report" Command="{Binding OpenReportCommand}"
-                                                    ToolTip.Tip="Opens the newest run's report. The reports are kept in reports/live in the app's data folder." />
-                                        </WrapPanel>
-                                        <TextBlock Text="{Binding ProgressLine}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
-                                                   Foreground="{StaticResource MutedBrush}"
-                                                   IsVisible="{Binding ProgressLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                        <TextBlock Text="{Binding Summary}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
-                                                   IsVisible="{Binding Summary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                      </StackPanel>
-                                    </StackPanel>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard" DataContext="{Binding Probe}">
-                <StackPanel x:DataType="vm:ProbeReportsViewModel">
-                    <TextBlock Text="MO Probe" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro"
-                               Text="A test plugin for learning how each DAW saves things. Put it on a track and use it: it reports what the DAW tells it, and Format Lab finds its knobs and saved settings in the project file." />
-                    <TextBlock Text="Running now" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <TextBlock Text="{Binding RunningNote}" Classes="muted" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8"
-                               IsVisible="{Binding RunningNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                    <ItemsControl ItemsSource="{Binding Running}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:RunningProbeRow">
-                                <StackPanel Margin="0,0,0,12">
-                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" ToolTip.Tip="{Binding Tip}" />
-                                    <TextBlock Text="{Binding Details}" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}" />
-                                    <TextBlock Text="{Binding Knobs}" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" />
-                                    <WrapPanel Classes="buttons" Margin="0,8,0,0">
-                                        <Button Content="Beep" Padding="9,3" FontSize="12" Command="{Binding BeepCommand}"
-                                                ToolTip.Tip="Plays a short tone on its track, so you can hear which one it's on" />
-                                        <Button Content="Ping" Padding="9,3" FontSize="12" Command="{Binding PingCommand}"
-                                                ToolTip.Tip="Checks that it answers the app, and how quickly" />
-                                        <Button Content="Check knobs through Bitwig" Padding="9,3" FontSize="12" Command="{Binding CheckKnobsCommand}"
-                                                IsVisible="{Binding CanCheckKnobs}"
-                                                ToolTip.Tip="Turns each knob through Bitwig and reads what the probe got, then the other way round, and puts them back as they were. It takes about half a minute." />
-                                        <Button Content="Stop the check" Padding="9,3" FontSize="12" Command="{Binding StopCheckCommand}"
-                                                IsVisible="{Binding Checking}" ToolTip.Tip="Stops the check, and puts the knobs back as they were" />
-                                    </WrapPanel>
-                                    <TextBlock Text="{Binding Reply}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,0"
-                                               IsVisible="{Binding Reply, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                    <TextBlock Text="{Binding CheckResult}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,0"
-                                               IsVisible="{Binding CheckResult, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,8" />
-                    <ItemsControl ItemsSource="{Binding Reports}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:ProbeReportRow">
-                                <DockPanel Margin="0,0,0,8">
-                                    <Button DockPanel.Dock="Right" Content="Show" Padding="9,3" FontSize="12" VerticalAlignment="Center"
-                                            Command="{Binding RevealCommand}" ToolTip.Tip="Shows the report file" />
-                                    <StackPanel Margin="0,0,8,0">
-                                        <TextBlock>
-                                            <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
-                                            <Run Text="{Binding When, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
-                                        </TextBlock>
-                                        <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}" />
-                                    </StackPanel>
-                                </DockPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <WrapPanel Classes="buttons" Margin="0,6,0,0">
-                        <Button Content="Refresh" Command="{Binding RefreshCommand}" />
-                        <Button Content="Open reports folder" Command="{Binding OpenFolderCommand}" />
-                    </WrapPanel>
-                </StackPanel>
-            </Border>
-
-            <!-- Sound output: where the app's sounds play. Hidden where the app can't choose (the WPF app). -->
-            <Border Classes="card settingsCard" DataContext="{Binding SoundOutput}" IsVisible="{Binding IsAvailable}">
-                <StackPanel x:DataType="vm:SoundOutputSetting" Spacing="8">
-                    <TextBlock Text="Sound output" Classes="sectionHeader" />
-                    <TextBlock Classes="cardIntro" Margin="0"
-                               Text="Where the app plays sounds. Choose your audio interface to hear them through it, or keep the computer's default output and the app follows it when it changes." />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding Selected}" MinWidth="340" MaxWidth="560"
-                                  ToolTip.Tip="Sounds move here at once, even one that's playing" />
-                        <Button Content="Look again" Command="{Binding RefreshCommand}"
-                                ToolTip.Tip="Lists the outputs again, after plugging something in or switching it on" />
-                        <ProgressBar IsIndeterminate="True" Width="60" VerticalAlignment="Center" IsVisible="{Binding Busy}" />
-                    </StackPanel>
-                    <TextBlock Text="{Binding Note}" Classes="live" TextWrapping="Wrap" FontSize="12.5"
-                               IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                </StackPanel>
-            </Border>
-
-            <Border Classes="card settingsCard">
-                <StackPanel>
-                    <TextBlock Text="Your library" Classes="sectionHeader" />
-                    <TextBlock Classes="muted" FontSize="12.5">
-                        <Run Text="Your tags, ratings and notes are stored on this computer in" />
-                        <Run Text="{Binding LibraryLocation, Mode=OneWay}" Foreground="{StaticResource TextBrush}" />
-                        <Run Text=". Nothing is uploaded; online search only opens your browser when you ask it to." />
-                    </TextBlock>
-                </StackPanel>
-            </Border>
         </StackPanel>
-    </ScrollViewer>
+        <!-- One tab per part of the app (Solomon's 18 Oct ask), with the testing tools on their own Developer tab. -->
+        <TabControl x:Name="Tabs" Classes="settingsTabs" Margin="0,8,0,0">
+            <TabItem Header="General">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="How the app looks and behaves everywhere." />
+                        <!-- Appearance: changes show at once, all over the app. -->
+                        <Border Classes="card settingsCard" DataContext="{Binding Appearance}" x:DataType="vm:AppearanceViewModel">
+                            <StackPanel Spacing="4">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Back to normal" Command="{Binding ResetCommand}" VerticalAlignment="Top" />
+                                    <TextBlock Text="Appearance" Classes="sectionHeader" />
+                                </DockPanel>
+                                <TextBlock Classes="cardIntro" Text="How the app looks. Changes show straight away." />
+
+                                <TextBlock Text="THEME" Classes="filterLabel" />
+                                <ListBox Classes="themes" ItemsSource="{x:Static vm:AppearanceViewModel.Themes}" SelectedItem="{Binding Theme}">
+                                    <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:AppTheme">
+                                            <StackPanel Width="176" Spacing="8">
+                                                <!-- A tiny window in the theme's colours: rail, a card, a selected row and its accent. -->
+                                                <Border Height="96" CornerRadius="{Binding PreviewRadius, Converter={StaticResource Radius}}" ClipToBounds="True" BorderThickness="1"
+                                                        Background="{Binding Background, Converter={StaticResource HexBrush}}"
+                                                        BorderBrush="{Binding Stroke, Converter={StaticResource HexBrush}}">
+                                                    <Grid ColumnDefinitions="22,*">
+                                                        <Border Background="{Binding Sidebar, Converter={StaticResource HexBrush}}">
+                                                            <Border Width="10" Height="10" CornerRadius="3" VerticalAlignment="Top" Margin="0,8,0,0"
+                                                                    Background="{Binding Accent, Converter={StaticResource HexBrush}}" />
+                                                        </Border>
+                                                        <StackPanel Grid.Column="1" Margin="10,10,10,0" Spacing="6">
+                                                            <Border Height="6" Width="70" CornerRadius="3" HorizontalAlignment="Left"
+                                                                    Background="{Binding Text, Converter={StaticResource HexBrush}}" />
+                                                            <Border Height="22" CornerRadius="5" Background="{Binding Hover, Converter={StaticResource HexBrush}}">
+                                                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="6,0" VerticalAlignment="Center">
+                                                                    <Border Width="3" Height="12" CornerRadius="1.5" Background="#F2994A" />
+                                                                    <Border Width="60" Height="5" CornerRadius="2.5" Background="{Binding Text, Converter={StaticResource HexBrush}}" />
+                                                                </StackPanel>
+                                                            </Border>
+                                                            <Border Height="5" Width="90" CornerRadius="2.5" HorizontalAlignment="Left"
+                                                                    Background="{Binding Muted, Converter={StaticResource HexBrush}}" />
+                                                            <Border Height="14" Width="64" CornerRadius="7" HorizontalAlignment="Right"
+                                                                    Background="{Binding Accent, Converter={StaticResource HexBrush}}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14" />
+                                                <TextBlock Text="{Binding Description}" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <TextBlock Text="ACCENT COLOUR" Classes="filterLabel" Margin="0,12,0,0" />
+                                <ListBox Classes="chips" ItemsSource="{x:Static vm:AppearanceViewModel.Accents}" SelectedItem="{Binding Accent}">
+                                    <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:AccentChoice">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Ellipse Width="12" Height="12" Fill="{Binding Colour, Converter={StaticResource HexBrush}}"
+                                                         Stroke="{StaticResource MutedBrush}" StrokeThickness="{Binding Colour, Converter={StaticResource HexStroke}}" />
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Grid ColumnDefinitions="Auto,32,Auto,32,Auto" Margin="0,12,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="FONT" Classes="filterLabel" />
+                                        <ComboBox ItemsSource="{x:Static vm:AppearanceViewModel.Fonts}" SelectedItem="{Binding Font}" MinWidth="200" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="SIZE" Classes="filterLabel" />
+                                        <ListBox Classes="chips" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}">
+                                            <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate x:DataType="x:Int32">
+                                                    <TextBlock Text="{Binding StringFormat='{}{0}%'}" />
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="LESS MOTION" Classes="filterLabel" />
+                                        <ToggleSwitch IsChecked="{Binding LessMotion}" OnContent="On" OffContent="Off"
+                                                      ToolTip.Tip="No sliding, fading or popping. Spinners and progress still show." />
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="When the app opens" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro" Text="The page you land on each time you start Music Organiser." />
+                                <ComboBox ItemsSource="{x:Static vm:SettingsViewModel.StartPageChoices}" SelectedItem="{Binding StartPage}"
+                                          HorizontalAlignment="Left" MinWidth="240" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Performance" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro" TextWrapping="Wrap"
+                                           Text="How hard scans, Deep listen and finding duplicates may push your computer. Gentle keeps the app smooth while they run; Fast finishes sooner." />
+                                <ComboBox ItemsSource="{x:Static vm:SettingsViewModel.PerformanceChoices}" SelectedItem="{Binding Performance}"
+                                          HorizontalAlignment="Left" MinWidth="240" />
+                                <TextBlock Text="{Binding PerformanceTip}" Classes="muted" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Sound output: where the app's sounds play. Hidden where the app can't choose (the WPF app). -->
+                        <Border Classes="card settingsCard" DataContext="{Binding SoundOutput}" IsVisible="{Binding IsAvailable}">
+                            <StackPanel x:DataType="vm:SoundOutputSetting" Spacing="8">
+                                <TextBlock Text="Sound output" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro" Margin="0"
+                                           Text="Where the app plays sounds. Choose your audio interface to hear them through it, or keep the computer's default output and the app follows it when it changes." />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding Selected}" MinWidth="340" MaxWidth="560"
+                                              ToolTip.Tip="Sounds move here at once, even one that's playing" />
+                                    <Button Content="Look again" Command="{Binding RefreshCommand}"
+                                            ToolTip.Tip="Lists the outputs again, after plugging something in or switching it on" />
+                                    <ProgressBar IsIndeterminate="True" Width="60" VerticalAlignment="Center" IsVisible="{Binding Busy}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding Note}" Classes="live" TextWrapping="Wrap" FontSize="12.5"
+                                           IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Exports" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro" Text="Where MIDI, presets and kits are saved. Each project gets its own folder inside." />
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Choose…" Command="{Binding ChooseExportFolderCommand}" Margin="6,0,0,0" />
+                                    <TextBox Text="{Binding ExportFolder, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Documents/Music Organiser Exports" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Your library" Classes="sectionHeader" />
+                                <TextBlock Classes="muted" FontSize="12.5">
+                                    <Run Text="Your tags, ratings and notes are stored on this computer in" />
+                                    <Run Text="{Binding LibraryLocation, Mode=OneWay}" Foreground="{StaticResource TextBrush}" />
+                                    <Run Text=". Nothing is uploaded; online search only opens your browser when you ask it to." />
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Projects">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="Where your projects are, how they open, and how FL Studio songs become Bitwig ones." />
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Project folders" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="Folders to search for Bitwig (.bwproject), FL Studio (.flp) and Studio One (.song) projects. Subfolders are included. DAW autosave and backup folders are skipped, and so are the demo songs, tutorials and templates that came with the DAW (folders named Cool stuff, Demo songs, Product demos, Templates or Tutorial)." />
+                                <ListBox ItemsSource="{Binding ProjectFolders}" SelectedItem="{Binding SelectedProjectFolder}" Classes="folders" />
+                                <WrapPanel Classes="buttons" Margin="0,10,0,0">
+                                    <Button Content="Add folder" Classes="accent" Command="{Binding AddProjectFolderCommand}" />
+                                    <Button Content="Remove" Command="{Binding RemoveProjectFolderCommand}" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Opening projects" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="By default projects open in whatever program your computer uses for that file type. Pick a program here to override it, e.g. if you have more than one version installed." />
+                                <ItemsControl ItemsSource="{Binding Daws}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DawSetting">
+                                            <Grid Margin="0,0,0,10" ColumnDefinitions="180,*,Auto,Auto">
+                                                <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                                                    <Ellipse Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center"
+                                                             Fill="{Binding Daw, Converter={StaticResource DawBrush}}" />
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding Extensions}" FontSize="12" Foreground="{StaticResource FaintBrush}" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                                <TextBox Grid.Column="1" Text="{Binding ExePath, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Default program" />
+                                                <Button Grid.Column="2" Content="Choose…" Command="{Binding ChooseCommand}" Margin="6,0,0,0" />
+                                                <Button Grid.Column="3" Content="Reset" Background="Transparent" Command="{Binding ClearCommand}" Margin="6,0,0,0" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Versions of a song" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro" Text="A song's saves are grouped into versions (original, rework, re-save) by how far apart they were saved. The Open button's drop-down lists one save per version." />
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:SettingsViewModel.RunGapChoices}" SelectedItem="{Binding RunGapMonths}" MinWidth="130"
+                                              ToolTip.Tip="Saves closer together than this count as one version">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} months'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="A new version starts after a gap of" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="FL Studio to Bitwig" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="Open in Bitwig builds each converted song from a template: a project saved in Bitwig with a Sampler track, a VST3 synth with a Note Transpose before it and a clip of notes, a VST2 synth, and an audio track with an audio clip on it (not in a group) for FL Studio's audio clips. Its tracks are copied and filled in, and its own tracks are left out. The app keeps its own copy of the template, so it always knows where it is. To change it, use Edit in Bitwig and save." />
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Replace…" Command="{Binding ChooseBitwigTemplateCommand}" Margin="6,0,0,0"
+                                            ToolTip.Tip="Copy another Bitwig project in as the template" />
+                                    <Button DockPanel.Dock="Right" Content="Show file" Command="{Binding ShowBitwigTemplateCommand}" Margin="6,0,0,0" />
+                                    <Button DockPanel.Dock="Right" Content="Edit in Bitwig" Command="{Binding EditBitwigTemplateCommand}" Margin="6,0,0,0"
+                                            ToolTip.Tip="Open the app's copy of the template in Bitwig, to change it and save" />
+                                    <TextBox Text="{Binding BitwigTemplate, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Asked for the first time you convert" />
+                                </DockPanel>
+                                <TextBlock Text="{Binding BitwigTemplateNote}" Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                                           IsVisible="{Binding BitwigTemplateNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                <CheckBox Content="Steps play until the next note or the end of the clip" IsChecked="{Binding StepsUntilNextNote}" Margin="0,12,0,0" />
+                                <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                                           Text="Notes from FL's step sequencer have no length. Plugin tracks always play them until the next note on the same key or the end of the clip. On a Sampler they also stop where the sample ends, unless this is ticked." />
+                                <CheckBox Content="Swap Serum for Serum 2 (try-out)" IsChecked="{Binding UpgradeSynths}" Margin="0,12,0,0" />
+                                <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
+                                           Text="Swaps an older version of your template's synth for the template's own. Serum sounds are translated for Serum 2 (the project's notes say what came across only roughly); other synths open with their default sound. Each old sound is also saved as a preset in a 'Sounds from older plugins' folder next to the converted project, to load in the new synth's preset browser. Your FL projects are never changed." />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Sounds">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="Your sample folders and the Sound Lab." />
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Sample folders" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="Your sample libraries (Splice, packs, recordings). These are indexed so missing samples can be matched by name, and they're what the Sound Lab browses." />
+                                <ListBox ItemsSource="{Binding SampleFolders}" SelectedItem="{Binding SelectedSampleFolder}" Classes="folders" />
+                                <WrapPanel Classes="buttons" Margin="0,10,0,0">
+                                    <Button Content="Add folder" Command="{Binding AddSampleFolderCommand}" />
+                                    <Button Content="Remove" Command="{Binding RemoveSampleFolderCommand}" />
+                                    <Button Content="Re-index samples" Command="{Binding IndexSamplesCommand}" Margin="0,0,12,0" />
+                                    <TextBlock Text="{Binding SampleIndexText}" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Sound Lab" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro" Text="How many sounds the Sound Lab shows, and how the galaxy plays them." />
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:RediscoverViewModel.HowManyChoices}" SelectedItem="{Binding SoundLab.Rediscover.HowMany}" MinWidth="130"
+                                              ToolTip.Tip="The Show box on Rediscover changes this too">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} sounds'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="Sounds Rediscover picks each time" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:SoundsViewModel.SimilarCountChoices}" SelectedItem="{Binding SoundLab.SimilarCount}" MinWidth="130"
+                                              ToolTip.Tip="The closest sounds to the one you picked">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} sounds'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="Sounds shown under Sounds like this" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:SoundsViewModel.SweepChoices}" SelectedItem="{Binding SoundLab.SweepMs}" MinWidth="130"
+                                              ToolTip.Tip="Shorter keeps up with a fast sweep; longer lets you hear more of each">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} ms'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="How long each star plays as the mouse sweeps the galaxy" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                                <CheckBox Content="Deep listen to new sounds as they arrive" IsChecked="{Binding SoundLab.ListenToNew}"
+                                          ToolTip.Tip="Needs the sound-understanding model (Sound Lab › Teach). Sounds it has already heard are skipped." />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Most liked: what puts a sound at the top of Sounds › Most liked. -->
+                        <Border Classes="card settingsCard" DataContext="{Binding Liked}" x:DataType="vm:LikedSettingsViewModel">
+                            <StackPanel Spacing="4">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Reset to defaults" Command="{Binding ResetCommand}" VerticalAlignment="Top" />
+                                    <TextBlock Text="Most liked sounds" Classes="sectionHeader" />
+                                </DockPanel>
+                                <TextBlock Classes="cardIntro" TextWrapping="Wrap"
+                                           Text="How much each thing counts when the Sounds page is ordered by Most liked. Each sound's liked bar shows what it's made of." />
+                                <Grid ColumnDefinitions="220,*,64" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" Margin="0,6,0,0">
+                                    <Grid.Styles>
+                                        <Style Selector="TextBlock.sliderLabel"><Setter Property="VerticalAlignment" Value="Center" /></Style>
+                                        <Style Selector="TextBlock.sliderValue">
+                                            <Setter Property="VerticalAlignment" Value="Center" />
+                                            <Setter Property="HorizontalAlignment" Value="Right" />
+                                            <Setter Property="FontFamily" Value="{DynamicResource NumberFont}" />
+                                        </Style>
+                                        <Style Selector="Slider"><Setter Property="Margin" Value="12,0" /></Style>
+                                    </Grid.Styles>
+                                    <TextBlock Grid.Row="0" Classes="sliderLabel" Text="Each project that uses it" />
+                                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Project}" />
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Classes="sliderValue" Text="{Binding Project, StringFormat='{}{0:0} pts'}" />
+                                    <TextBlock Grid.Row="1" Classes="sliderLabel" Text="Each drag out of the app" />
+                                    <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Drag}" />
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Classes="sliderValue" Text="{Binding Drag, StringFormat='{}{0:0} pts'}" />
+                                    <TextBlock Grid.Row="2" Classes="sliderLabel" Text="Each send into a DAW" />
+                                    <Slider Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Send}" />
+                                    <TextBlock Grid.Row="2" Grid.Column="2" Classes="sliderValue" Text="{Binding Send, StringFormat='{}{0:0} pts'}" />
+                                    <TextBlock Grid.Row="3" Classes="sliderLabel" Text="Each play on purpose" />
+                                    <Slider Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="20" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Play}" />
+                                    <TextBlock Grid.Row="3" Grid.Column="2" Classes="sliderValue" Text="{Binding Play, StringFormat='{}{0:0} pts'}" />
+                                    <TextBlock Grid.Row="4" Classes="sliderLabel" Text="Being a favourite" />
+                                    <Slider Grid.Row="4" Grid.Column="1" Minimum="0" Maximum="50" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding Favourite}" />
+                                    <TextBlock Grid.Row="4" Grid.Column="2" Classes="sliderValue" Text="{Binding Favourite, StringFormat='{}{0:0} pts'}" />
+                                    <TextBlock Grid.Row="5" Classes="sliderLabel" Text="Older than a year counts" />
+                                    <Slider Grid.Row="5" Grid.Column="1" Minimum="0" Maximum="100" TickFrequency="5" IsSnapToTickEnabled="True" Value="{Binding OlderPercent}" />
+                                    <TextBlock Grid.Row="5" Grid.Column="2" Classes="sliderValue" Text="{Binding OlderPercent, StringFormat='{}{0:0}%'}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Plugins">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="Where your plugins are installed." />
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Plugin folders" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="Where your VST3, CLAP, VST2 and (on a Mac) Audio Unit plugins are installed. Used to tell which plugins in a project are missing on this computer, and to recognise plugin names inside Bitwig projects." />
+                                <ListBox ItemsSource="{Binding PluginFolders}" SelectedItem="{Binding SelectedPluginFolder}" Classes="folders" />
+                                <WrapPanel Classes="buttons" Margin="0,10,0,0">
+                                    <Button Content="Add folder" Command="{Binding AddPluginFolderCommand}" />
+                                    <Button Content="Remove" Command="{Binding RemovePluginFolderCommand}" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Plugins page" Classes="sectionHeader" />
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PluginsViewModel.NeededCountChoices}" SelectedItem="{Binding PluginsPage.NeededCount}" MinWidth="130"
+                                              ToolTip.Tip="The missing plugins that would open the most projects">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} cards'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="Missing plugins in the Install these cards" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="DAW links">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="The scripts that let the app talk to Bitwig and FL Studio." />
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="DAW links" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="Small scripts the app installs in Bitwig and FL Studio, so it can ask them what they show for the open project. The Check with Bitwig and Check with FL Studio buttons on a project then compare that with what the app read from its file." />
+                                <Button Content="Set up both" Classes="accent" Command="{Binding SetUpBothCommand}" Margin="0,0,0,8"
+                                        ToolTip.Tip="Installs the script for each DAW on this computer, makes FL Studio's MIDI port the way chosen below, then checks each link" />
+                                <TextBlock Text="{Binding SetUpResult}" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,14"
+                                           IsVisible="{Binding SetUpResult, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                <ItemsControl ItemsSource="{Binding Links}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DawLinkSetting">
+                                            <StackPanel Margin="0,0,0,14">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Ellipse Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center"
+                                                             Fill="{Binding Daw, Converter={StaticResource DawBrush}}" />
+                                                    <TextBlock Text="{Binding Daw}" FontWeight="SemiBold" />
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Status}" Margin="18,4,0,0" TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding Live}" Classes="live" Classes.ok="{Binding IsAnswering}" Margin="18,2,0,0"
+                                                           TextWrapping="Wrap" FontSize="12.5"
+                                                           IsVisible="{Binding Live, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                                <TextBlock Text="{Binding Steps}" Margin="18,4,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                           Foreground="{StaticResource MutedBrush}" />
+                                                <!-- Only FL Studio's row has a MIDI port to choose and only Bitwig's has live tests: those parts
+                                                     take the row's MidiPort or LiveTests as theirs, so the other rows have nothing to bind. -->
+                                                <StackPanel Margin="18,10,0,0" IsVisible="{Binding CanChoosePort}">
+                                                  <StackPanel DataContext="{Binding MidiPort}" x:DataType="vm:FlPortSetting">
+                                                    <TextBlock Text="The MIDI port for the script" FontSize="12.5" Margin="0,0,0,6" />
+                                                    <RadioButton Margin="0,0,0,4"
+                                                                 IsChecked="{Binding Choice, Converter={StaticResource IndexToBool}, ConverterParameter=0}">
+                                                        <TextBlock TextWrapping="Wrap" FontSize="12.5"
+                                                                   Text="loopMIDI: a free app you install, then make the port in. Works on any Windows." />
+                                                    </RadioButton>
+                                                    <RadioButton IsChecked="{Binding Choice, Converter={StaticResource IndexToBool}, ConverterParameter=1}">
+                                                        <TextBlock TextWrapping="Wrap" FontSize="12.5"
+                                                                   Text="Windows' own MIDI system: Install makes the port, with nothing else to install. Needs Windows 11 25H2 or later, fully updated." />
+                                                    </RadioButton>
+                                                    <TextBlock Text="{Binding Note}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                               IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                                  </StackPanel>
+                                                </StackPanel>
+                                                <WrapPanel Classes="buttons" Margin="18,10,0,0">
+                                                    <Button Content="Install" Command="{Binding InstallCommand}" />
+                                                    <Panel IsVisible="{Binding ShowGetLoopMidi}">
+                                                        <Button Content="Get loopMIDI" DataContext="{Binding MidiPort}" x:DataType="vm:FlPortSetting"
+                                                                Command="{Binding GetLoopMidiCommand}" ToolTip.Tip="Opens loopMIDI's page in your browser, to download it" />
+                                                    </Panel>
+                                                    <Button Content="Choose folder…" Command="{Binding ChooseFolderCommand}" IsVisible="{Binding CanChooseFolder}"
+                                                            ToolTip.Tip="{Binding ChooseFolderTip}" />
+                                                    <Button Content="Check connection" Command="{Binding CheckCommand}" />
+                                                </WrapPanel>
+                                                <TextBlock Text="{Binding Result}" Margin="18,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                                           IsVisible="{Binding Result, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Developer">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="Tools for testing the app with your DAWs: live tests, MO Probe and the app's own files." />
+                        <Border Classes="card settingsCard" DataContext="{Binding LiveTests}">
+                            <StackPanel x:DataType="vm:LiveTestsViewModel">
+                                <TextBlock Text="Live tests with Bitwig" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="Tries out what the app does with Bitwig, in the Bitwig open now, and writes a report. It only reads, unless Bitwig lets the app make changes and the open project's name starts with “MO Live Test”: then it adds a few tracks to that project and saves it, so your own projects are never touched. Bitwig's DAW link (DAW links tab) has to be answering." />
+                                <WrapPanel Classes="buttons">
+                                    <Button Content="Run live tests" Command="{Binding RunCommand}"
+                                            ToolTip.Tip="Runs the live tests while Bitwig is answering. They take about a minute, a few more with MO Probe installed." />
+                                    <Button Content="Stop" Command="{Binding StopCommand}" IsVisible="{Binding Running}"
+                                            ToolTip.Tip="Stops after the test running now, which puts back anything it was in the middle of. The report is still written." />
+                                    <Button Content="Open report" Command="{Binding OpenReportCommand}"
+                                            ToolTip.Tip="Opens the newest run's report. The reports are kept in reports/live in the app's data folder." />
+                                </WrapPanel>
+                                <TextBlock Text="{Binding ProgressLine}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           IsVisible="{Binding ProgressLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                <TextBlock Text="{Binding Summary}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                           IsVisible="{Binding Summary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard" DataContext="{Binding Probe}">
+                            <StackPanel x:DataType="vm:ProbeReportsViewModel">
+                                <TextBlock Text="MO Probe" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="A test plugin for learning how each DAW saves things. Put it on a track and use it: it reports what the DAW tells it, and Format Lab finds its knobs and saved settings in the project file." />
+                                <TextBlock Text="Running now" FontWeight="SemiBold" Margin="0,0,0,6" />
+                                <TextBlock Text="{Binding RunningNote}" Classes="muted" TextWrapping="Wrap" FontSize="12.5" Margin="0,0,0,8"
+                                           IsVisible="{Binding RunningNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                <ItemsControl ItemsSource="{Binding Running}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:RunningProbeRow">
+                                            <StackPanel Margin="0,0,0,12">
+                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" ToolTip.Tip="{Binding Tip}" />
+                                                <TextBlock Text="{Binding Details}" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}" />
+                                                <TextBlock Text="{Binding Knobs}" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0" />
+                                                <WrapPanel Classes="buttons" Margin="0,8,0,0">
+                                                    <Button Content="Beep" Padding="9,3" FontSize="12" Command="{Binding BeepCommand}"
+                                                            ToolTip.Tip="Plays a short tone on its track, so you can hear which one it's on" />
+                                                    <Button Content="Ping" Padding="9,3" FontSize="12" Command="{Binding PingCommand}"
+                                                            ToolTip.Tip="Checks that it answers the app, and how quickly" />
+                                                    <Button Content="Check knobs through Bitwig" Padding="9,3" FontSize="12" Command="{Binding CheckKnobsCommand}"
+                                                            IsVisible="{Binding CanCheckKnobs}"
+                                                            ToolTip.Tip="Turns each knob through Bitwig and reads what the probe got, then the other way round, and puts them back as they were. It takes about half a minute." />
+                                                    <Button Content="Stop the check" Padding="9,3" FontSize="12" Command="{Binding StopCheckCommand}"
+                                                            IsVisible="{Binding Checking}" ToolTip.Tip="Stops the check, and puts the knobs back as they were" />
+                                                </WrapPanel>
+                                                <TextBlock Text="{Binding Reply}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,0"
+                                                           IsVisible="{Binding Reply, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                                <TextBlock Text="{Binding CheckResult}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,0"
+                                                           IsVisible="{Binding CheckResult, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="12.5" Margin="0,6,0,8" />
+                                <ItemsControl ItemsSource="{Binding Reports}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ProbeReportRow">
+                                            <DockPanel Margin="0,0,0,8">
+                                                <Button DockPanel.Dock="Right" Content="Show" Padding="9,3" FontSize="12" VerticalAlignment="Center"
+                                                        Command="{Binding RevealCommand}" ToolTip.Tip="Shows the report file" />
+                                                <StackPanel Margin="0,0,8,0">
+                                                    <TextBlock>
+                                                        <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
+                                                        <Run Text="{Binding When, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource MutedBrush}" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <WrapPanel Classes="buttons" Margin="0,6,0,0">
+                                    <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+                                    <Button Content="Open reports folder" Command="{Binding OpenFolderCommand}" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="The app's data folder" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="Where the app keeps its database, its copy of the Bitwig template, and the reports from live tests and MO Probe." />
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Open folder" Command="{Binding OpenDataFolderCommand}" Margin="6,0,0,0" />
+                                    <TextBox Text="{Binding DataFolder, Mode=OneWay}" IsReadOnly="True" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
 </UserControl>

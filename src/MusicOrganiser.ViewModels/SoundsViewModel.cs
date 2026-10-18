@@ -140,6 +140,22 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     partial void OnAutoPlayChanged(bool value) => _db.SetSetting(AutoPlayKey, value ? "1" : "0");
 
+    public const string SimilarCountKey = "similar_count", SweepKey = "galaxy_sweep_ms";
+    public static IReadOnlyList<int> SimilarCountChoices { get; } = [6, 12, 24, 48];
+    public static IReadOnlyList<int> SweepChoices { get; } = [60, 90, 150, 250];
+    /// <summary>How many sounds "Sounds like this" shows (Settings › Sounds).</summary>
+    [ObservableProperty] int _similarCount;
+    /// <summary>How long each star plays when the mouse sweeps across the galaxy, in milliseconds (Settings › Sounds).</summary>
+    [ObservableProperty] int _sweepMs;
+
+    partial void OnSimilarCountChanged(int value)
+    {
+        _db.SetSetting(SimilarCountKey, value.ToString());
+        FindSimilar(Selected);
+    }
+
+    partial void OnSweepMsChanged(int value) => _db.SetSetting(SweepKey, value.ToString());
+
     public const string ListenToNewKey = "deep_listen_new";
     /// <summary>
     /// With the sound-understanding model downloaded, CLAP listens to the sounds a scan or the folder watcher finds as
@@ -158,6 +174,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Kit = new KitViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
         _listenToNew = db.GetSetting(ListenToNewKey) != "0";
+        _similarCount = int.TryParse(db.GetSetting(SimilarCountKey), out var similar) && similar > 0 ? similar : 12;
+        _sweepMs = int.TryParse(db.GetSetting(SweepKey), out var sweep) && sweep > 0 ? sweep : 90;
         _viewMode = db.GetSetting(ViewKey) is List or Galaxy ? db.GetSetting(ViewKey)! : Tiles;
         _placedBy = db.GetSetting(GalaxyBasisKey) is { } basis && PlacedByChoices.Contains(basis) ? basis : SoundOrganiser.Both;
         _colourBy = db.GetSetting(GalaxyColourKey) is { } c && ColourChoices.Contains(c) ? c : "Type";
@@ -766,7 +784,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if (s is null) return;
         try
         {
-            var found = await UiWork.Run(() => Org.Similar(s, 12));
+            var count = SimilarCount;
+            var found = await UiWork.Run(() => Org.Similar(s, count));
             if (version == _similarFor) Similar = found;
         }
         catch (Exception e) { AppLog.Info("Sounds", $"Couldn't find sounds like {s.Name}: {e.Message}"); }
@@ -1239,8 +1258,9 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     [ObservableProperty] string _type = "Any type";
     [ObservableProperty] double _adventure = 0.3;
     [ObservableProperty] bool _includeRarelyUsed;
-    /// <summary>How many sounds a shuffle picks.</summary>
-    [ObservableProperty] int _howMany = 60;
+    /// <summary>How many sounds a shuffle picks: the last number picked here or in Settings › Sounds.</summary>
+    [ObservableProperty] int _howMany = int.TryParse(parent.Db.GetSetting(HowManyKey), out var n) && HowManyChoices.Contains(n) ? n : 60;
+    public const string HowManyKey = "rediscover_count";
     public static IReadOnlyList<int> HowManyChoices { get; } = [30, 60, 120, 250];
     [ObservableProperty] IReadOnlyList<Suggestion> _suggestions = [];
     [ObservableProperty] IReadOnlyList<FolderUse> _folders = [];
@@ -1300,7 +1320,11 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     partial void OnTypeChanged(string value) => ShuffleSoon();
     partial void OnAdventureChanged(double value) => ShuffleSoon();
     partial void OnIncludeRarelyUsedChanged(bool value) => ShuffleSoon();
-    partial void OnHowManyChanged(int value) => ShuffleSoon();
+    partial void OnHowManyChanged(int value)
+    {
+        parent.Db.SetSetting(HowManyKey, value.ToString());
+        ShuffleSoon();
+    }
 
     async void ShuffleSoon()
     {

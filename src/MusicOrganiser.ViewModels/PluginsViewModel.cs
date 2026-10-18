@@ -20,8 +20,11 @@ public sealed partial class PluginsViewModel : ObservableObject
     public const string All = "All", Missing = "Missing", Installed_ = "Installed", Instruments = "Instruments", Effects = "Effects";
     /// <summary>The chips over the list, like the ones on Projects and Sounds.</summary>
     public static IReadOnlyList<string> FilterChoices { get; } = [All, Missing, Installed_, Instruments, Effects, "VST2", "VST3", "CLAP", "Native"];
-    /// <summary>How many missing plugins the "install these" cards show.</summary>
-    public const int TopNeeded = 6;
+    /// <summary>How many missing plugins the "install these" cards show (Settings › Plugins).</summary>
+    [ObservableProperty] int _neededCount;
+    public const string NeededCountKey = "plugins_needed_cards";
+    public const int DefaultNeededCount = 6;
+    public static IReadOnlyList<int> NeededCountChoices { get; } = [3, 6, 9, 12];
 
     [ObservableProperty] IReadOnlyList<PluginUsage> _items = [];
     [ObservableProperty] IItemsView? _view;
@@ -69,6 +72,7 @@ public sealed partial class PluginsViewModel : ObservableObject
     {
         _db = db;
         _main = main;
+        _neededCount = int.TryParse(db.GetSetting(NeededCountKey), out var n) && n > 0 ? n : DefaultNeededCount;
         Reload();
     }
 
@@ -140,7 +144,7 @@ public sealed partial class PluginsViewModel : ObservableObject
         var installedNames = loaded.InstalledNames;
         var top = Items.Where(p => !p.Installed)
             .OrderByDescending(p => p.Unlocks).ThenByDescending(p => p.Projects).ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-            .Take(TopNeeded)
+            .Take(NeededCount)
             .Select(p => new NeededPlugin(p, this, PluginCatalog.OtherVersionInstalled(p.Name, installedNames)))
             .ToList();
         Needed = top;
@@ -157,6 +161,12 @@ public sealed partial class PluginsViewModel : ObservableObject
         NeededSummary = $"{missingBy.Count} of your projects are missing a plugin. " +
                         (opened > 0 ? $"Install {(top.Count == 1 ? "this one" : $"these {top.Count}")} and {opened} of them open with nothing missing."
                                     : "Each also misses other plugins, so these are the ones the most projects use.");
+    }
+
+    partial void OnNeededCountChanged(int value)
+    {
+        _db.SetSetting(NeededCountKey, value.ToString());
+        Reload();
     }
 
     partial void OnSearchTextChanged(string value) => View?.Refresh();
