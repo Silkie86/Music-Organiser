@@ -2356,11 +2356,11 @@ sealed class LiveFiles
         var clip = new MidiClip { Name = "Live Clip", Ppq = 96 };
         clip.Track("Live Clip").AddRange(Notes);
         var mid = Path.Combine(folder, "Live Clip.mid");
-        Keep(mid, MidiWriter.Write(clip, 120));
+        Keep(mid, MidiWriter.Write(clip));
         var rec = new MidiClip { Name = "Rec Clip", Ppq = 96 };
         rec.Track("Rec Clip").AddRange(RecordNotes);
         var recMid = Path.Combine(folder, "Rec Clip.mid");
-        Keep(recMid, MidiWriter.Write(rec, 120));
+        Keep(recMid, MidiWriter.Write(rec));
 
         return new LiveFiles
         {

@@ -669,12 +669,12 @@ public class MidiWriterTests
 
         Assert.Equal("MThd", Encoding.ASCII.GetString(bytes, 0, 4));
         Assert.Equal(1, bytes[9]);                 // format 1
-        Assert.Equal(2, bytes[11]);                // tempo track + 1 instrument track
+        Assert.Equal(2, bytes[11]);                // the clip's name + 1 instrument track
         Assert.Equal(96, bytes[13]);               // PPQ
         var tracks = Encoding.Latin1.GetString(bytes).Split("MTrk").Length - 1;
         Assert.Equal(2, tracks);
-        // Tempo 120 bpm = 500000 µs per quarter.
-        Assert.Contains("\xFF\x51\x03\x07\xA1\x20", Encoding.Latin1.GetString(bytes));
+        // No tempo, though one was given, so a DAW doesn't ask to take it for the project.
+        Assert.DoesNotContain("\xFF\x51", Encoding.Latin1.GetString(bytes));
         // At tick 96 the first note's off must come before the second note's on.
         var s = Encoding.Latin1.GetString(bytes);
         Assert.True(s.IndexOf("\x80\x3C\x00", StringComparison.Ordinal) < s.LastIndexOf("\x90\x3C\x64", StringComparison.Ordinal));
