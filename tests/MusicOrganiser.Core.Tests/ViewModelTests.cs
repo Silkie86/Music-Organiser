@@ -45,6 +45,65 @@ public class ViewModelTests : IDisposable
         new(_db, _sounds, watch, pluginScanner, Path.Combine(_root, "data"));
 
     [Fact]
+    public void A_new_save_keeps_the_songs_rating_and_clearing_it_sticks()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        ProjectItem Song() => Main().Projects.Items.Single(i => i.Name == "Didums");
+        Save("Didums_1", 1);
+        var first = Song();
+        first.Rating = 4;
+        first.Status = "Mixing";
+        first.Favourite = true;
+        first.Notes = "needs vocals";
+
+        Save("Didums_2", 2);
+        var song = Song();
+        Assert.Equal("Didums_2", song.FileName);
+        Assert.Equal((4, "Mixing", true, "needs vocals"), (song.Rating, song.Status, song.Favourite, song.Notes));
+
+        song.Rating = 0;
+        song.Favourite = false;
+        song = Song();
+        Assert.Equal((0, false), (song.Rating, song.Favourite));
+        Assert.All(_db.Projects(), p => Assert.Equal(0, p.Rating));
+    }
+
+    [Fact]
+    public void Changing_one_field_of_a_song_leaves_its_older_saves_other_fields_alone()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        Save("Didums_1", 1);
+        Save("Didums_2", 2);
+        // The older save has notes and a key of its own (set before the newer save had any).
+        var older = _db.Projects().Single(p => p.Name == "Didums_1");
+        older.Notes = "the first take had the vocal";
+        older.MusicalKey = "Am";
+        _db.SaveOrganisation(older);
+        var newer = _db.Projects().Single(p => p.Name == "Didums_2");
+        newer.Notes = "the vocal is gone";
+        newer.MusicalKey = "Cm";
+        _db.SaveOrganisation(newer);
+
+        var song = Main().Projects.Items.Single(i => i.Name == "Didums");
+        song.Rating = 3;
+
+        older = _db.Projects().Single(p => p.Name == "Didums_1");
+        Assert.Equal((3, "the first take had the vocal", "Am"), (older.Rating, older.Notes, older.MusicalKey));
+    }
+
+    [Fact]
     public void A_song_sits_under_the_year_it_was_first_made_and_shows_its_rework()
     {
         ProjectSummary Save(string name, DateTime saved, int notes, string[] plugins) => new()
@@ -60,28 +119,30 @@ public class ViewModelTests : IDisposable
         Assert.EndsWith($"2 saves · reworked {newest.Modified.Year}", item.DetailsLine);
 
         var detail = new ProjectDetailViewModel(_db, item, Main());
-        Assert.True(detail.HasOpenChoices);
+        Assert.True(detail.HasRunChoices);
         Assert.Equal([$"{newest.Modified.Year} rework (newest) · Didums_77 · {newest.Modified:d MMM yyyy}", "2019 original · Didums_12 · 2 Feb 2019"],
                      detail.RunChoices.Select(r => r.Header));
         Assert.StartsWith("First made 2 Feb 2019 · saved ", detail.DatesText);
 
-        // Overview's glance: the newest save first, then the older ones by date.
-        Assert.Equal(["Didums_77", "Didums_12"], detail.GlanceSaves.Select(s => s.Name));
-        Assert.True(detail.GlanceSaves[0].Newest);
-        Assert.Equal("2 Feb 2019", detail.GlanceSaves[1].WhenText);
-        Assert.Equal("None used", detail.GlanceSamples);
+        // Overview's line of counts.
+        Assert.Equal("2 saves", detail.SavesCountText);
+        Assert.Equal("No samples", detail.SamplesCountText);
+        Assert.Equal("", detail.MissingSamplesText);
     }
 
     [Fact]
     public async Task A_fixed_copy_is_listed_with_its_song_and_still_asks_whether_it_loaded_after_leaving_it()
     {
-        var lib = Path.Combine(_root, "Lib", "Drums");
+        // The sample library sits outside the projects' folder: a kick inside it would count as found (SampleLocator).
+        var libRoot = Fixtures.TempDir();
+        var lib = Path.Combine(libRoot, "Drums");
         Directory.CreateDirectory(lib);
         File.WriteAllBytes(Path.Combine(lib, "Kick 01.wav"), [0]);
-        _db.SetList(Scanner.SampleFoldersKey, [Path.Combine(_root, "Lib")]);
+        _db.SetList(Scanner.SampleFoldersKey, [libRoot]);
         new Scanner(_db).ScanSampleFolders();
         ScanFixtures();
-        var projects = Main().Projects;
+        var main = Main();
+        var projects = main.Projects;
         projects.Reload();
         projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
         var detail = projects.Detail!;
@@ -98,6 +159,15 @@ public class ViewModelTests : IDisposable
         Assert.Same(song, projects.Selected);
         Assert.True(projects.Detail!.HasPendingFix);
 
+        // The finished card's "Open it" opens it from the panel showing now, which then asks whether it loaded,
+        // and still does after leaving the song and coming back.
+        _db.SetSetting(ProjectDetailViewModel.DawExeKey("FL Studio"), "/bin/true");
+        main.Activities.Items.First(a => a.Title.StartsWith("Saved Night Drive (fixed)")).RunActionCommand.Execute(null);
+        Assert.True(projects.Detail.PendingFixOpened);
+        projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
+        projects.Selected = song;
+        Assert.True(projects.Detail!.PendingFixOpened);
+
         // Leave it and come back: the question is still there until it's answered.
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
@@ -106,6 +176,27 @@ public class ViewModelTests : IDisposable
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.False(projects.Detail!.HasPendingFix);
+    }
+
+    [Fact]
+    public async Task Another_project_being_saved_leaves_the_open_songs_panel_as_it_was()
+    {
+        ScanFixtures();
+        var projects = Main().Projects;
+        projects.Reload();
+        projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
+        var panel = projects.Detail!;
+        await panel.PlanFixCommand.ExecuteAsync(null);
+        Assert.NotEmpty(panel.FixRows);
+
+        // Another song saved in its DAW: the watcher reads it and the list reloads.
+        var other = projects.Items.First(i => i.Daw != "FL Studio");
+        File.SetLastWriteTime(other.Path, DateTime.Now.AddMinutes(1));
+        _db.Upsert(Scanner.Analyse(other.Path));
+        await projects.ReloadAsync();
+
+        Assert.Same(panel, projects.Detail);
+        Assert.NotEmpty(panel.FixRows);
     }
 
     [Fact]
@@ -202,6 +293,89 @@ public class ViewModelTests : IDisposable
     {
         var main = Main();
         Assert.Same(main.Settings, main.SelectedNav.Page);
+    }
+
+    [Fact]
+    public async Task A_scan_that_finds_nothing_new_leaves_the_pages_as_they_are()
+    {
+        _db.AddRoot(_root);
+        var main = Main();
+        await main.ScanAsync(false, plugins: false);
+        var row = main.Projects.Items.First(i => i.Name == "Night Drive");
+        var plugins = main.Plugins.Items;
+
+        await main.ScanAsync(false, plugins: false);
+        Assert.Same(row, main.Projects.Items.First(i => i.Name == "Night Drive"));
+        Assert.Same(plugins, main.Plugins.Items);
+
+        // A changed project is read again, and the pages with it.
+        File.SetLastWriteTime(Path.Combine(_root, "Night Drive.flp"), DateTime.Now.AddMinutes(5));
+        await main.ScanAsync(false, plugins: false);
+        Assert.NotSame(row, main.Projects.Items.First(i => i.Name == "Night Drive"));
+        Assert.NotSame(plugins, main.Plugins.Items);
+    }
+
+    [Fact]
+    public async Task Projects_and_sounds_saved_while_the_app_is_open_are_taken_in_without_a_scan()
+    {
+        var quiet = (MainViewModel.ProjectWatchQuiet, SoundsViewModel.SampleWatchQuiet);
+        MainViewModel.ProjectWatchQuiet = SoundsViewModel.SampleWatchQuiet = TimeSpan.FromMilliseconds(200);
+        try
+        {
+            var songs = Directory.CreateDirectory(Path.Combine(_root, "Songs")).FullName;
+            var lib = Directory.CreateDirectory(Path.Combine(_root, "Lib")).FullName;
+            _db.AddRoot(songs);
+            _db.SetList(Scanner.SampleFoldersKey, [lib]);
+            var main = Main();
+            await main.ScanAsync(false, plugins: false);
+            await Until(() => !main.Sounds.IsBusy);
+            Assert.Empty(main.Projects.Items);
+
+            // A song saved in a DAW, and a sound bounced into the sample folder (one in a hidden folder is left out).
+            Fixtures.FlStudioProject(songs, "Fresh Idea");
+            Synth.Write(Path.Combine(lib, "Bounce 01.wav"), Synth.Kick(1));
+            Directory.CreateDirectory(Path.Combine(lib, ".cache"));
+            Synth.Write(Path.Combine(lib, ".cache", "Temp.wav"), Synth.Kick(2));
+            await Until(() => main.Projects.Items.Any(i => i.Name == "Fresh Idea") && main.Sounds.Org.Sounds.Count == 1);
+            Assert.EndsWith("Bounce 01.wav", main.Sounds.Org.Sounds[0].Path);
+
+            // Bitwig saving a song and its auto-backup copy at once: the card names the song, not the backup.
+            var cards = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            main.Activities.Items.CollectionChanged += (_, e) => { foreach (MusicOrganiser.ViewModels.Activity a in e.NewItems ?? Array.Empty<MusicOrganiser.ViewModels.Activity>()) cards.Enqueue(a.Title); };
+            Fixtures.FlStudioProject(Directory.CreateDirectory(Path.Combine(songs, "auto-backups")).FullName, "Another");
+            Fixtures.FlStudioProject(songs, "Zed");
+            await Until(() => cards.Any(t => t.StartsWith("Updated ")));
+            Assert.Equal("Updated Zed", cards.First(t => t.StartsWith("Updated ")));
+
+            // Deleted: the song stays listed, marked missing; the sound is forgotten.
+            File.Delete(Path.Combine(songs, "Fresh Idea.flp"));
+            File.Delete(Path.Combine(lib, "Bounce 01.wav"));
+            await Until(() => main.Projects.Items.Single(i => i.Name == "Fresh Idea").FileMissing && main.Sounds.Org.Sounds.Count == 0);
+            main.Shutdown();
+        }
+        finally { (MainViewModel.ProjectWatchQuiet, SoundsViewModel.SampleWatchQuiet) = quiet; }
+    }
+
+    [Fact]
+    public async Task Sounds_seen_changing_while_another_job_starts_are_taken_in_once_it_ends()
+    {
+        var lib = Directory.CreateDirectory(Path.Combine(_root, "Lib")).FullName;
+        _db.SetList(Scanner.SampleFoldersKey, [lib]);
+        var main = Main();
+        var sounds = main.Sounds;
+        // The page's own first scan, of the empty folder, is done before the sound turns up.
+        await Until(() => main.Activities.Items.Any(a => a.Title.Contains("ample folders")) && !sounds.IsBusy);
+        var bounce = Path.Combine(lib, "Bounce 01.wav");
+        Synth.Write(bounce, Synth.Kick(1));
+
+        // The watcher reports a sound while a job is running, then a take-in starts before that job has let go.
+        sounds.IsBusy = true;
+        sounds.SampleFilesChanged(new([bounce], []));
+        await sounds.TakeInChangedSoundsAsync();
+        Assert.Empty(sounds.Org.Sounds);
+        sounds.IsBusy = false;
+        await sounds.TakeInChangedSoundsAsync();
+        Assert.EndsWith("Bounce 01.wav", Assert.Single(sounds.Org.Sounds).Path);
     }
 
     [Fact]
@@ -555,6 +729,85 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Sounds_can_be_filtered_by_the_year_a_project_using_them_was_saved()
+    {
+        _soundDb.Save(new[] { "/samples/Kick A.wav", "/samples/Snare B.wav", "/samples/Hat C.wav" }.Select(p =>
+            new SoundLibrary.Analysed(p, 1, 1, new SoundAnalysis { Features = [1, 0, 0] }, null, null, null)));
+        _sounds.Reload();
+        void Project(string name, int year, params string[] samples)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            var saved = new DateTimeOffset(new DateTime(year, 6, 1, 12, 0, 0, DateTimeKind.Local)).ToUnixTimeSeconds();
+            _db.Upsert(new LibraryDb.IndexedFile(file, 1, saved, new ProjectInfo { Daw = "FL Studio" }, null,
+                samples.Select(p => (p, true)).ToList(), []));
+        }
+        Project("Old one", 2019, "/samples/Kick A.wav");
+        Project("New one", 2024, "/samples/Snare B.wav", "/samples/Kick A.wav");
+
+        var lab = Main().Sounds;
+        Assert.Equal([SoundsViewModel.AnyYear, "2024", "2019"], lab.YearChoices);
+        lab.YearFilter = "2019";
+        Assert.Equal(["Kick A"], lab.Shown.Select(s => s.Name));
+        lab.YearFilter = "2024";
+        Assert.Equal(["Kick A", "Snare B"], lab.Shown.Select(s => s.Name).Order());
+        lab.ClearFiltersCommand.Execute(null);
+        Assert.Equal(3, lab.Shown.Count);
+    }
+
+    [Fact]
+    public async Task Rediscover_shows_as_many_as_asked_and_picks_again_when_the_slider_moves()
+    {
+        var rng = new Random(5);
+        _soundDb.Save(Enumerable.Range(0, 200).Select(i => new SoundLibrary.Analysed($"/samples/Kick {i}.wav", 1, 1,
+            new SoundAnalysis { Seconds = 0.5, Features = Enumerable.Range(0, 12).Select(_ => (float)rng.NextDouble()).ToArray() }, null, null, "Kick")));
+        _sounds.Reload();
+        var delay = RediscoverViewModel.ShuffleDelay;
+        RediscoverViewModel.ShuffleDelay = TimeSpan.Zero;
+        try
+        {
+            var page = Main().Sounds.Rediscover;
+            await page.ShuffleCommand.ExecuteAsync(null);
+            Assert.Equal(60, page.Suggestions.Count);
+
+            page.HowMany = 30;
+            await Until(() => page.Suggestions.Count == 30 && !page.IsBusy);
+            var before = page.Suggestions;
+            page.Adventure = 1;
+            await Until(() => !ReferenceEquals(before, page.Suggestions) && !page.IsBusy);
+            Assert.Equal(30, page.Suggestions.Count);
+        }
+        finally { RediscoverViewModel.ShuffleDelay = delay; }
+    }
+
+    [Fact]
+    public async Task A_project_re_saved_in_another_year_moves_its_sounds_to_that_year_after_a_scan()
+    {
+        _soundDb.Save(new[] { "/samples/Kick A.wav", "/samples/Snare B.wav" }.Select(p =>
+            new SoundLibrary.Analysed(p, 1, 1, new SoundAnalysis { Features = [1, 0, 0] }, null, null, null)));
+        _sounds.Reload();
+        var file = Path.Combine(_root, "Old one.flp");
+        File.WriteAllBytes(file, [0]);
+        void Save(int year) => _db.Upsert(new LibraryDb.IndexedFile(file, 1,
+            new DateTimeOffset(new DateTime(year, 6, 1, 12, 0, 0, DateTimeKind.Local)).ToUnixTimeSeconds(),
+            new ProjectInfo { Daw = "FL Studio" }, null, [("/samples/Kick A.wav", true)], []));
+        Save(2019);
+        var other = Path.Combine(_root, "Other.flp");
+        File.WriteAllBytes(other, [0]);
+        _db.Upsert(new LibraryDb.IndexedFile(other, 1, new DateTimeOffset(new DateTime(2019, 3, 1, 12, 0, 0, DateTimeKind.Local)).ToUnixTimeSeconds(),
+            new ProjectInfo { Daw = "FL Studio" }, null, [("/samples/Snare B.wav", true)], []));
+        var lab = Main().Sounds;
+        lab.YearFilter = "2019";
+        Assert.Equal(["Kick A", "Snare B"], lab.Shown.Select(s => s.Name).Order());
+
+        // Same sounds, same number of projects: only the year changed.
+        Save(2021);
+        await lab.RefreshUsageAsync();
+        Assert.Equal(["Snare B"], lab.Shown.Select(s => s.Name));
+        Assert.Contains("2021", lab.YearChoices);
+    }
+
+    [Fact]
     public void The_galaxy_places_sounds_plays_what_you_sweep_and_turns_the_trail_into_a_kit()
     {
         var played = new List<string>();
@@ -618,6 +871,42 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void A_DAWs_own_device_is_its_own_row_and_a_plugin_shows_as_its_usual_kind()
+    {
+        void Song(string name, string daw, params PluginRef[] plugins)
+        {
+            var info = new ProjectInfo { Daw = daw };
+            info.Plugins.AddRange(plugins);
+            var file = Path.Combine(_root, name);
+            File.WriteAllBytes(file, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(file, 1, 100, info, null, [], []));
+        }
+        var kontakt = new PluginRef("Kontakt 5", "Native Instruments", PluginKind.Instrument, "VST2");
+        Song("A.bwproject", "Bitwig Studio", new PluginRef("Arpeggiator", "Bitwig", PluginKind.NoteEffect, "Native"), kontakt);
+        Song("B.song", "Studio One", new PluginRef("Arpeggiator", "PreSonus", PluginKind.NoteEffect, "Native"), kontakt);
+        Song("C.flp", "FL Studio", kontakt with { Kind = PluginKind.Effect });
+        _db.ReplaceInstalledPlugins(["Something Else"]);
+
+        var usage = _db.PluginUsage();
+        Assert.Equal(["Bitwig Studio", "Studio One"], usage.Where(u => u.Name == "Arpeggiator").Select(u => u.Daws).Order());
+        Assert.All(usage.Where(u => u.Name == "Arpeggiator"), u => Assert.True(u.Installed));
+        var k = Assert.Single(usage, u => u.Name == "Kontakt 5");
+        Assert.Equal((3, PluginKind.Instrument), (k.Projects, k.Kind));
+
+        // Picking Studio One's Arpeggiator lists only Studio One's projects, and stays picked when the page reloads.
+        var page = Main().Plugins;
+        page.Selected = page.Items.Single(u => u.Name == "Arpeggiator" && u.Daws == "Studio One");
+        Assert.Equal(["B"], page.Projects.Select(p => p.Song));
+        Assert.Equal("Used in 1 song", page.ProjectsTitle);
+        Assert.Single(_db.ProjectsUsingPlugin("Arpeggiator", page.Selected.Own));
+        page.Reload();
+        Assert.Equal("Studio One", page.Selected?.Daws);
+        // A plugin's row still lists all its projects.
+        page.Selected = page.Items.Single(u => u.Name == "Kontakt 5");
+        Assert.Equal(3, page.Projects.Count);
+    }
+
+    [Fact]
     public void The_plugins_page_puts_first_what_would_open_the_most_projects()
     {
         void Song(string name, params string[] plugins)
@@ -652,8 +941,66 @@ public class ViewModelTests : IDisposable
         page.Filter = PluginsViewModel.Installed_;
         Assert.Equal(["Serum"], page.View!.Cast<PluginUsage>().Select(p => p.Name));
         page.Needed[0].PickCommand.Execute(null);
-        Assert.Equal("Used in 3 projects", page.ProjectsTitle);
-        Assert.Equal(["A", "B", "C"], page.Projects.Select(p => p.Name).Order());
+        Assert.Equal("Used in 3 songs", page.ProjectsTitle);
+        Assert.Equal(["A", "B", "C"], page.Projects.Select(p => p.Song).Order());
+    }
+
+    [Fact]
+    public void A_plugins_side_panel_shows_each_songs_newest_save_and_can_keep_to_one_DAW()
+    {
+        void Save(string file, string daw, int day, params string[] plugins)
+        {
+            var info = new ProjectInfo { Daw = daw };
+            info.Plugins.AddRange(plugins.Select(n => new PluginRef(n, "Xfer Records", PluginKind.Instrument, "VST3")));
+            var path = Path.Combine(_root, file);
+            File.WriteAllBytes(path, [0]);
+            var mtime = new DateTimeOffset(2026, 4, day, 12, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+            _db.Upsert(new LibraryDb.IndexedFile(path, 100, mtime, info, null, [], []));
+        }
+        for (var i = 1; i <= 5; i++) Save(i == 1 ? "Teka.flp" : $"Teka_{i}.flp", "FL Studio", i, "Serum");
+        Save("Teka_6.flp", "FL Studio", 6, "Serum 2");   // the newest save swapped it out
+        Save("Heel_3.bwproject", "Bitwig Studio", 10, "Serum");
+        Save("Heel_4.bwproject", "Bitwig Studio", 11, "Serum");
+        Save("Garage.song", "Studio One", 2, "Serum");
+
+        var main = Main();
+        var page = main.Plugins;
+        page.Selected = page.Items.Single(u => u.Name == "Serum");
+        Assert.Equal("Used in 3 songs", page.ProjectsTitle);
+        Assert.Equal([("Heel", "Heel_4", 2), ("Teka", "Teka_5", 5), ("Garage", "Garage", 1)],
+                     page.Projects.Select(p => (p.Song, p.Latest.Name, p.Saves)));
+        Assert.Equal("8 saves in all. Each song shows its newest save that uses it.", page.ProjectsNote);
+        Assert.Equal([ProjectsViewModel.Any, "Bitwig Studio", "FL Studio", "Studio One"], page.ProjectDaws);
+        Assert.True(page.HasProjectDaws);
+
+        page.EverySave = true;
+        Assert.Equal(8, page.Projects.Count);
+        Assert.Equal("Heel_4", page.Projects[0].Song);
+        page.EverySave = false;
+
+        // One DAW: the list, its title and Show in Projects keep to it.
+        page.ProjectsDaw = "FL Studio";
+        Assert.Equal(["Teka"], page.Projects.Select(p => p.Song));
+        Assert.Equal("Used in 1 song in FL Studio", page.ProjectsTitle);
+        page.ShowProjectsCommand.Execute(null);
+        Assert.Equal("Projects using Serum in FL Studio", main.Projects.IdFilterLabel);
+        Assert.Equal(["Teka"], main.Projects.View!.Cast<ProjectItem>().Select(i => i.Name));
+
+        // Another plugin without FL Studio saves goes back to every DAW.
+        Save("Solo.bwproject", "Bitwig Studio", 12, "Pigments");
+        page.Reload();
+        page.Selected = page.Items.Single(u => u.Name == "Pigments");
+        Assert.Equal(ProjectsViewModel.Any, page.ProjectsDaw);
+        Assert.False(page.HasProjectDaws);
+        Assert.Equal(["Solo"], page.Projects.Select(p => p.Song));
+    }
+
+    [Fact]
+    public void Deep_listening_to_new_sounds_is_on_until_turned_off_and_stays_off()
+    {
+        Assert.True(new MainViewModel(_db, _sounds).Sounds.ListenToNew);
+        new MainViewModel(_db, _sounds).Sounds.ListenToNew = false;
+        Assert.False(new MainViewModel(_db, _sounds).Sounds.ListenToNew);
     }
 
     [Fact]
@@ -670,6 +1017,9 @@ public class ViewModelTests : IDisposable
         Assert.Empty(played);   // arrowing onto it: Autoplay is off by default
         lab.PlayClicked();      // a click always plays, Autoplay or not
         Assert.Equal(["kick.wav"], played);
+        lab.AuditionCommand.Execute(null);   // and a double-click keeps it going as a play, Autoplay or not
+        Assert.Equal(["kick.wav"], played);
+        Assert.Equal(1, kick.Plays);
         player.Stop();
         played.Clear();
 
@@ -776,6 +1126,28 @@ public class ViewModelTests : IDisposable
             await kit.SendToBitwigCommand.ExecuteAsync(null);
             Assert.Equal("Kit #42 is on the Drum Machine selected in Bitwig: Percussion on C#1. The pads for Kick (C1), Snare (D1), " +
                          "Clap (D#1), Closed hat (F#1) already had sounds, so they were left alone.", kit.Status);
+        }
+        finally { BitwigLink.Port = port; }
+    }
+
+    [Fact]
+    public async Task A_sound_goes_into_Bitwig_on_a_Sampler_on_a_track_of_its_own()
+    {
+        using var bitwig = BitwigLinkTests.ScriptServer.Start(raw: false);
+        if (bitwig is null) return;
+        var port = BitwigLink.Port;
+        BitwigLink.Port = bitwig.Port;
+        try
+        {
+            var file = Path.Combine(_root, "Snare Tight.wav");
+            File.WriteAllBytes(file, [0]);
+            var lab = Main().Sounds;
+            lab.Selected = new Sound { Path = file };
+            await lab.ToBitwigCommand.ExecuteAsync(null);
+
+            using var link = await BitwigLink.ConnectAsync();
+            var track = (await link.ProjectAsync()).Tracks.Single(t => t.Name == "Snare Tight");
+            Assert.Contains("Sampler", track.Devices.Single().Name);
         }
         finally { BitwigLink.Port = port; }
     }

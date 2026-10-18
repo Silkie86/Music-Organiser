@@ -52,6 +52,12 @@ public class LibraryTests : IDisposable
         Assert.Equal(found.Order(StringComparer.OrdinalIgnoreCase), found);
         Assert.Subset(found.ToHashSet(), expected.ToHashSet());
         Assert.DoesNotContain(found, f => f.Contains("auto-backups") || f.Contains("(autosave)"));
+        // The size and modified time come with the folder listing, the same as asking for each file.
+        Assert.All(Scanner.FindProjectStamps([_root]), f =>
+        {
+            var fi = new FileInfo(f.Path);
+            Assert.Equal((fi.Length, new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds()), (f.Size, f.Mtime));
+        });
 
         new Scanner(_db).ScanProjects();
         var paths = _db.Projects().Select(p => p.Path).ToHashSet();
@@ -165,6 +171,15 @@ public class LibraryTests : IDisposable
             ["Ozone 11", "Ozone 12", "Ozone 12 Imager", "Battery 4", "Mini V3", "Mini V4", "Toraverb2", "M12-Filter"]));
 
     [Theory]
+    [InlineData("Serum", "0.0")]
+    [InlineData("Serum 2", "2.0")]
+    [InlineData("Kontakt 8", "8.0")]
+    [InlineData("Mini V4", "4.0")]
+    [InlineData("Ozone 11.1 (x64)", "11.1")]
+    public void ReadsAPluginsVersionFromItsName(string name, string version) =>
+        Assert.Equal(Version.Parse(version), PluginCatalog.VersionOf(name));
+
+    [Theory]
     [InlineData("Didums_70", "Didums", 70)]
     [InlineData("Didums", "Didums", 1)]
     [InlineData("Beauty bitch (orch)_9", "Beauty bitch (orch)", 9)]
@@ -173,6 +188,7 @@ public class LibraryTests : IDisposable
     [InlineData("_5", "_5", 1)]
     [InlineData("civil war_5 (fixed)", "civil war", 5)]   // Fix's copy sits with the save it was made from
     [InlineData("Didums (Fixed 2)", "Didums", 1)]
+    [InlineData("Didums_70 (fixed) (fixed)", "Didums", 70)]   // a fixed copy fixed again by an older build
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
 
@@ -360,5 +376,24 @@ public class LibraryTests : IDisposable
         Assert.True(File.Exists(Path.Combine(midi.Folder, "01 Lead (Serum).mid")));
         var presets = Exporter.Presets(Readers.FlStudio, flp, outRoot);
         Assert.Contains("Serum - Lead.fxp", presets.Files);
+    }
+
+    [Fact]
+    public void The_same_plugins_and_sample_files_again_change_nothing()
+    {
+        _db.ReplaceInstalledPlugins(["Serum", "Vital"]);
+        _db.ReplaceSampleIndex(["/s/Kick.wav", "/s/Snare.wav"]);
+        var before = (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision);
+
+        _db.ReplaceInstalledPlugins(["Vital", "Serum"]);
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Kick.wav"]);
+        Assert.Equal(before, (_db.ProjectsRevision, _db.PluginsRevision, _db.SampleIndexRevision));
+
+        _db.ReplaceSampleIndex(["/s/Snare.wav", "/s/Hat.wav"]);
+        Assert.Equal(before.SampleIndexRevision + 1, _db.SampleIndexRevision);
+        Assert.Equal(["/s/Hat.wav", "/s/Snare.wav"], _db.SampleIndex().Select(s => s.Path).Order());
+        _db.ReplaceInstalledPlugins(["Vital"]);
+        Assert.Equal(before.PluginsRevision + 1, _db.PluginsRevision);
+        Assert.Equal(["Vital"], _db.InstalledNames());
     }
 }

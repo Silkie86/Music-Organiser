@@ -65,13 +65,16 @@ public sealed class GalaxyCanvas : Control
 
     Point? _press;
     // Left held: sweeping (each star the pointer reaches plays). Middle or right held: dragging the view about.
-    bool _sweeping, _swept, _panning, _miniDrag;
+    bool _sweeping, _swept, _panning, _miniDrag, _gliding;
     Point _last;
     GalaxyStar? _hover;
     Dictionary<long, GalaxyStar> _byId = [];
     readonly List<(GalaxyStar Star, DateTime Start)> _pulses = [];
     DateTime? _intro;
-    readonly DispatcherTimer _frame;
+    readonly DispatcherTimer _frame, _sweepTimer;
+    // Stars the sweep has passed and not played yet, oldest first, and when the last one started.
+    readonly List<GalaxyStar> _sweepQueue = [];
+    DateTime _sweptAt;
     readonly Dictionary<uint, (IBrush Core, IBrush Glow, IBrush Dim)> _brushes = [];
     static readonly Typeface Body = new("avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans");
     static readonly Typeface Bold = new("avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans", FontStyle.Normal, FontWeight.SemiBold);
@@ -86,7 +89,23 @@ public sealed class GalaxyCanvas : Control
         ClipToBounds = true;
         Cursor = new Cursor(StandardCursorType.Cross);
         _frame = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Render, (_, _) => Animate());
+        _sweepTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(15), DispatcherPriority.Input, (_, _) => NextSweep());
+    }
+
+    // GalaxyGpu.Changed is static: held only while on screen, or every Sound Lab page ever shown (and its star
+    // buffers) would stay in memory.
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
         GalaxyGpu.Changed += InvalidateVisual;
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        GalaxyGpu.Changed -= InvalidateVisual;
+        _frame.Stop();
+        _sweepTimer.Stop();
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -210,7 +229,7 @@ public sealed class GalaxyCanvas : Control
     double Fitted => Math.Min(_w, Math.Max(40, _h - TopRoom - BottomRoom));
     double Scale => Fitted * _zoom;
     double MidY => (_h + TopRoom - BottomRoom) / 2;
-    Point ToScreen(double x, double y) => new((x - _cx) * Scale + _w / 2, (y - _cy) * Scale + MidY);
+    internal Point ToScreen(double x, double y) => new((x - _cx) * Scale + _w / 2, (y - _cy) * Scale + MidY);
     (double X, double Y) ToMap(Point p) => ((p.X - _w / 2) / Scale + _cx, (p.Y - MidY) / Scale + _cy);
 
     bool OnScreen(GalaxyStar s, double margin)
@@ -272,6 +291,7 @@ public sealed class GalaxyCanvas : Control
             _cy += (_ty - _cy) * k;
         }
         var done = Math.Abs(Math.Log(_tz / _zoom)) < 0.002 && Math.Abs(_tx - _cx) * Scale < 0.3 && Math.Abs(_ty - _cy) * Scale < 0.3;
+        _gliding = !done;
         if (done)
         {
             _zoom = _tz;
@@ -328,6 +348,7 @@ public sealed class GalaxyCanvas : Control
         }
         // Held down, the left button sweeps: the star under it plays now, and each one it reaches after that.
         _sweeping = true;
+        _sweepQueue.Clear();
         e.Pointer.Capture(this);
         if (HitTest(_last) is { } star)
         {
@@ -361,7 +382,20 @@ public sealed class GalaxyCanvas : Control
             return;
         }
         if (_sweeping && _press is { } start && Distance(p, start) > 4) _swept = true;
-        var label = _sweeping ? -1 : LabelAt(p) ?? -1;
+        if (_sweeping)
+        {
+            // Every star along the way since the last move, not just where the mouse landed: a quick sweep moves
+            // many pixels between two moves, and the stars in between are the ones you meant to hear.
+            var from = _last;
+            _last = p;
+            var passed = HitPath(from, p, _hover);
+            if (passed.Count == 0) return;
+            _hover = passed[^1];
+            foreach (var star in passed) QueueSweep(star);
+            InvalidateVisual();
+            return;
+        }
+        var label = LabelAt(p) ?? -1;
         if (label != _hoverLabel)
         {
             _hoverLabel = label;
@@ -370,14 +404,48 @@ public sealed class GalaxyCanvas : Control
         }
         var hit = label >= 0 ? null : HitTest(p);
         if (hit == _hover) return;
-        _hover = hit;
         // Only while the left button is held does a star play; hovering just shows its card.
-        if (hit is not null && _sweeping) Sweep(hit);
+        _hover = hit;
         InvalidateVisual();
+    }
+
+    /// <summary>How long each swept sound plays before the next one takes over, so each is heard.</summary>
+    static readonly TimeSpan SweepGap = TimeSpan.FromMilliseconds(90);
+    /// <summary>
+    /// How many passed stars wait their turn; past that the oldest are dropped, so the sound keeps up with the mouse.
+    /// One: what plays next is always the star the mouse reached last (two let it trail a star behind).
+    /// </summary>
+    const int SweepBacklog = 1;
+
+    /// <summary>
+    /// A star the sweep reached: plays now if the last one has had its moment, otherwise waits its turn. Without the
+    /// wait, a sweep across a crowded part changes star every move and each preview is cut off before it's heard.
+    /// </summary>
+    void QueueSweep(GalaxyStar star)
+    {
+        if (_sweepQueue.Count > 0 && _sweepQueue[^1] == star) return;
+        if (_sweepQueue.Count == 0 && DateTime.UtcNow - _sweptAt >= SweepGap)
+        {
+            Sweep(star);
+            return;
+        }
+        _sweepQueue.Add(star);
+        if (_sweepQueue.Count > SweepBacklog) _sweepQueue.RemoveAt(0);
+        _sweepTimer.Start();
+    }
+
+    internal void NextSweep()
+    {
+        if (_sweepQueue.Count == 0 || !_sweeping) { _sweepQueue.Clear(); _sweepTimer.Stop(); return; }
+        if (DateTime.UtcNow - _sweptAt < SweepGap) return;
+        var star = _sweepQueue[0];
+        _sweepQueue.RemoveAt(0);
+        Sweep(star);
     }
 
     void Sweep(GalaxyStar star)
     {
+        _sweptAt = DateTime.UtcNow;
         if (SweepCommand?.CanExecute(star.Sound) == true) SweepCommand.Execute(star.Sound);
         Pulse(star);
     }
@@ -389,6 +457,7 @@ public sealed class GalaxyCanvas : Control
         var pressed = _press is not null;
         _press = null;
         _panning = _miniDrag = _sweeping = false;
+        _sweepQueue.Clear();
         e.Pointer.Capture(null);
         if (moved) InvalidateVisual();   // paint the view properly where the drag ended
         Cursor = new Cursor(_hoverLabel >= 0 ? StandardCursorType.Hand : StandardCursorType.Cross);
@@ -411,6 +480,7 @@ public sealed class GalaxyCanvas : Control
         if (_sweeping && _swept && SweepEndedCommand?.CanExecute(null) == true) SweepEndedCommand.Execute(null);
         _press = null;
         _panning = _miniDrag = _sweeping = false;
+        _sweepQueue.Clear();
     }
 
     protected override void OnPointerExited(PointerEventArgs e)
@@ -471,6 +541,24 @@ public sealed class GalaxyCanvas : Control
             if (d < bestD) { bestD = d; best = s; }
         }
         return best;
+    }
+
+    /// <summary>
+    /// The stars the pointer passed going from <paramref name="a"/> to <paramref name="b"/>, in the order it reached
+    /// them, leaving out <paramref name="last"/> (the one it was already on): a hit test every few pixels of the way.
+    /// </summary>
+    List<GalaxyStar> HitPath(Point a, Point b, GalaxyStar? last)
+    {
+        var passed = new List<GalaxyStar>();
+        var steps = Math.Clamp((int)Math.Ceiling(Distance(a, b) / 6), 1, 200);
+        for (var i = 1; i <= steps; i++)
+        {
+            var t = (double)i / steps;
+            if (HitTest(new Point(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t)) is not { } star || star == last) continue;
+            passed.Add(star);
+            last = star;
+        }
+        return passed;
     }
 
     int? LabelAt(Point p)
@@ -758,14 +846,14 @@ public sealed class GalaxyCanvas : Control
         room = Math.Clamp(Math.Sqrt(w * h / Math.Max(inView, 1)) * 0.22, 1.6, 9);
 
         // The painted sky, repainted only when the view or the stars change.
-        // On the graphics card when there is one: the whole sky is redrawn every frame, it's that quick.
+        // On the graphics card when there is one: redrawn when the view changes, and slid along while you drag a big one.
         if (GalaxyGpu.Available != false && intro >= 1)
         {
             var area = Math.Max(w * h, 1);
             var gain = (float)Math.Clamp(1.7 / Math.Max(1, inView * 9.0 / area), 0.35, 1.7);
             ctx.Custom(new GalaxyGpu.Op(new Rect(0, 0, w, h), new GalaxyGpu.Frame(
                 _xs, _ys, _rgb, _weight, _cellStart, _cellItems, Grid, view, Scale, w / 2 - _cx * Scale, MidY - _cy * Scale,
-                (int)Math.Ceiling(w), (int)Math.Ceiling(h), painted, glow, gain)));
+                (int)Math.Ceiling(w), (int)Math.Ceiling(h), painted, glow, gain, _panning || _miniDrag || _gliding)));
         }
         else
         {

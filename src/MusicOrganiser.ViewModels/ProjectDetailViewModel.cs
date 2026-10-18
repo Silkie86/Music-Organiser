@@ -45,11 +45,9 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     /// <summary>The song's working periods, newest first, each one's last save ready to open (the Open button's drop-down).</summary>
     public IReadOnlyList<RunChoice> RunChoices { get; }
     public bool HasRunChoices => RunChoices.Count > 1;
-    /// <summary>Whether the Open button's arrow has anything to offer: another app to open in, or older versions.</summary>
-    public bool HasOpenChoices => IsFlStudio || HasRunChoices;
-    public string OpenChoicesTip => HasRunChoices
-        ? $"Other ways to open it, and its {RunChoices.Count} versions: saves more than {SongVersions.RunGapMonths} months apart"
-        : "Other ways to open it";
+    public string OlderSavesTip => HasRunChoices
+        ? $"Open an older save: its {RunChoices.Count} versions (saves more than {SongVersions.RunGapMonths} months apart), or any save"
+        : "Open one of the older saves";
     /// <summary>"First made 2 Feb 2019 · saved 3 Aug 2024", or "Saved 3 Aug 2024" when it's all one day.</summary>
     public string DatesText => Item.Made.Date == Item.Modified.Date
         ? $"Saved {Item.Modified:d MMM yyyy}"
@@ -61,19 +59,26 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public string PluginHeader => $"Plugins ({Plugins.Count}{(Item.MissingPlugins > 0 ? $", {Item.MissingPlugins} missing" : "")})";
     public string SampleHeader => $"Samples ({Samples.Count}{(Item.MissingSamples > 0 ? $", {Item.MissingSamples} missing" : "")})";
 
-    /// <summary>Overview's glance at the plugins: missing ones first and synths that never play last, as many as fit a few lines of chips.</summary>
-    public IReadOnlyList<PluginRow> GlancePlugins => Plugins.OrderBy(p => p.Installed).ThenBy(p => p.Silent).Take(GlanceChipCount).ToList();
-    public string GlancePluginsMore => Plugins.Count > GlanceChipCount ? $"+{Plugins.Count - GlanceChipCount} more" : "";
-    public string GlancePluginsLabel => Item.MissingPlugins > 0 ? $"PLUGINS · {Plugins.Count}, {Item.MissingPlugins} MISSING" : $"PLUGINS · {Plugins.Count}";
-    public const int GlanceChipCount = 12;
-    /// <summary>"23 found, 2 missing", or "None used" for a song made only of synths.</summary>
-    public string GlanceSamples => Samples.Count == 0 ? "None used"
-        : Item.MissingSamples == 0 ? $"All {Samples.Count} found"
-        : $"{Samples.Count - Item.MissingSamples} found, {Item.MissingSamples} missing";
-    /// <summary>This save and the few before it, newest first.</summary>
-    public IReadOnlyList<SaveGlance> GlanceSaves =>
-        Item.OlderSaves.OrderByDescending(s => s.Modified).Take(3).Select(s => new SaveGlance(s.Name, s.Modified, false))
-            .Prepend(new SaveGlance(Item.FileName, Item.Modified, true)).ToList();
+    /// <summary>Overview's line of counts ("12 plugins · 3 missing"), each opening its own tab.</summary>
+    public string PluginsCountText => CountOf(Plugins.Count, "plugin");
+    public string MissingPluginsText => Item.MissingPlugins > 0 ? $"{Item.MissingPlugins} missing" : "";
+    public string SamplesCountText => CountOf(Samples.Count, "sample");
+    public string MissingSamplesText => Item.MissingSamples > 0 ? $"{Item.MissingSamples} missing" : "";
+    public string SavesCountText => CountOf(Item.SaveCount, "save");
+    public string TracksCountText => CountOf(Tracks.Count, IsFlStudio ? "channel" : "track");
+    static string CountOf(int n, string thing) => n == 0 ? $"No {thing}s" : n == 1 ? $"1 {thing}" : $"{n:N0} {thing}s";
+
+    /// <summary>The line above the name: tempo and when it was made and saved.</summary>
+    public string HeaderFacts => string.Join(" · ", new[] { Item.TempoText.Length > 0 ? $"{Item.TempoText} BPM" : "", DatesText }.Where(t => t.Length > 0));
+
+    /// <summary>How much of Overview's height the arrangement keeps when Fix's list sits under it (the divider between them).</summary>
+    public const string ArrangementShareKey = "project_arrangement_share";
+    public double ArrangementShare
+    {
+        get => double.TryParse(_db.GetSetting(ArrangementShareKey), System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out var v) ? Math.Clamp(v, 0.15, 0.9) : 0.55;
+        set => _db.SetSetting(ArrangementShareKey, Math.Clamp(value, 0.15, 0.9).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+    }
 
     [ObservableProperty] string _message = "";
 
@@ -84,6 +89,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         Item = item;
         Detail = db.Project(item.Id);
         var installed = db.InstalledNames();
+        _canSwapSerum = Detail is not null && ProjectFixer.CanSwapSerum(Detail, installed);
         Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p, installed)).ToList() ?? [];
         VisiblePlugins = Plugins;
         Samples = Detail?.Samples.Select(s => new SampleRow(db, s, item, this)).ToList() ?? [];
@@ -131,7 +137,6 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     {
         VisiblePlugins = ShowSilent ? Plugins : Plugins.Where(p => !p.Silent).ToList();
         OnPropertyChanged(nameof(SilentToggleText));
-        OnPropertyChanged(nameof(GlancePlugins));
     }
 
     [RelayCommand]
@@ -199,8 +204,8 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public bool IsFlStudio => Item.Daw == "FL Studio";
 
     /// <summary>
-    /// The big button (and Enter or a double-click in the list): open the project in its DAW, except FL Studio projects,
-    /// which go to Bitwig, since that's where Solomon takes them. Opening one in FL Studio is in the ⋯ menu.
+    /// The main Open button (and Enter or a double-click in the list): open the project in its DAW, except FL Studio projects,
+    /// which go to Bitwig, since that's where Solomon takes them. Open in FL Studio sits beside it.
     /// </summary>
     [RelayCommand]
     Task OpenMain()
@@ -212,8 +217,12 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
 
     public string OpenMainText => IsFlStudio ? "Open in Bitwig" : $"Open in {Item.Daw}";
     public string OpenMainTip => IsFlStudio
-        ? "Convert this FL Studio project into a Bitwig project and open it (Enter does the same in the list). Open in FL Studio is in the ⋯ menu."
+        ? "Convert this FL Studio project into a Bitwig project and open it (Enter does the same in the list)"
         : "Open the newest save in its DAW (Enter does the same in the list)";
+
+    /// <summary>Converts one of the song's older saves into a Bitwig project and opens it.</summary>
+    [RelayCommand]
+    Task OpenSaveInBitwig(ProjectSummary? save) => save is null ? Task.CompletedTask : ConvertForBitwig(save, save.Name);
 
     /// <summary>
     /// Converts an FL Studio project into a native Bitwig project and opens it in Bitwig. The first time,
@@ -461,11 +470,6 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     }
 }
 
-/// <summary>One save in Overview's glance; the newest is the one the Open button opens.</summary>
-public sealed record SaveGlance(string Name, DateTime When, bool Newest)
-{
-    public string WhenText => When.ToString("d MMM yyyy");
-}
 
 public sealed partial class PluginRow(LibraryDb db, ProjectPlugin p, IReadOnlySet<string> installed) : ObservableObject
 {

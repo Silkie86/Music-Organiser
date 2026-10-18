@@ -60,6 +60,19 @@ public sealed partial class LibraryDb : IDisposable
 
     public string FilePath { get; }
 
+    long _projectsRevision, _pluginsRevision, _sampleIndexRevision;
+    /// <summary>
+    /// Goes up whenever a scan changes the projects (added, re-read, gone, a plugin's installed answer). The pages compare
+    /// it after a scan and skip reading everything again when nothing changed, which is most scans.
+    /// </summary>
+    public long ProjectsRevision => Interlocked.Read(ref _projectsRevision);
+    /// <summary>Goes up when the installed plugins or what the plugin scanner found in them change.</summary>
+    public long PluginsRevision => Interlocked.Read(ref _pluginsRevision);
+    /// <summary>Goes up when the files in your sample folders change.</summary>
+    public long SampleIndexRevision => Interlocked.Read(ref _sampleIndexRevision);
+    void ProjectsChanged() => Interlocked.Increment(ref _projectsRevision);
+    void PluginsChanged() => Interlocked.Increment(ref _pluginsRevision);
+
     public static string DefaultPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "library.db");
 
@@ -219,6 +232,7 @@ public sealed partial class LibraryDb : IDisposable
             foreach (var f in files) Upsert(tx, f, installed);
             tx.Commit();
         }
+        ProjectsChanged();
     }
 
     void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed)
@@ -373,12 +387,27 @@ public sealed partial class LibraryDb : IDisposable
         {
             if (present.Contains(path) || !roots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase))) continue;
             if (ignored?.Invoke(path) == true) RemoveProject(id);
-            else Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id));
+            else if (Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
         }
     }
 
-    public void RemoveProject(long id) => Exec("DELETE FROM projects WHERE id = $id", ("$id", id));
-    public void RemoveProject(string path) => Exec("DELETE FROM projects WHERE path = $p", ("$p", path));
+    /// <summary>A project file that has gone (deleted, or moved out of your folders): it stays listed, marked missing.</summary>
+    public bool MarkFileMissing(string path)
+    {
+        if (Exec("UPDATE projects SET file_missing = 1 WHERE path = $p AND file_missing = 0", ("$p", path)) == 0) return false;
+        ProjectsChanged();
+        return true;
+    }
+
+    public void RemoveProject(long id)
+    {
+        if (Exec("DELETE FROM projects WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
+    }
+
+    public void RemoveProject(string path)
+    {
+        if (Exec("DELETE FROM projects WHERE path = $p", ("$p", path)) > 0) ProjectsChanged();
+    }
 
     // ---- installed plugins & sample index ----------------------------------------------
 
@@ -390,11 +419,17 @@ public sealed partial class LibraryDb : IDisposable
 
     public void ReplaceInstalledPlugins(IEnumerable<string> names)
     {
+        var list = names.ToList();
+        var now = Query("SELECT name, name_key FROM installed_plugins", r => (Name: (string)r["name"], Key: (string)r["name_key"])).ToList();
+        // The same list as last time (most scans): nothing to write, and every project's plugins keep their answers.
+        var keys = new Dictionary<string, string>();
+        foreach (var n in list) keys.TryAdd(NameKey(n), n);
+        if (now.Count == keys.Count && now.All(r => keys.TryGetValue(r.Key, out var n) && n == r.Name)) return;
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
             using (var del = Cmd("DELETE FROM installed_plugins")) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var n in names)
+            foreach (var n in list)
             {
                 using var cmd = Cmd("INSERT OR IGNORE INTO installed_plugins VALUES ($n, $k)", ("$n", n), ("$k", NameKey(n)));
                 cmd.Transaction = tx;
@@ -402,6 +437,7 @@ public sealed partial class LibraryDb : IDisposable
             }
             tx.Commit();
         }
+        PluginsChanged();
         RefreshInstalledFlags();
     }
 
@@ -422,6 +458,7 @@ public sealed partial class LibraryDb : IDisposable
                           .ToList();
         InBatches(changed, "UPDATE plugins SET installed = $i WHERE rowid = $r", ["$i", "$r"],
                   (row, p) => { p[0].Value = row.Now ? 1 : 0; p[1].Value = row.RowId; });
+        if (changed.Count > 0) ProjectsChanged();
     }
 
     /// <summary>
@@ -430,13 +467,35 @@ public sealed partial class LibraryDb : IDisposable
     /// </summary>
     public void ReplaceSampleIndex(IEnumerable<string> files)
     {
-        Exec("DELETE FROM sample_index");
-        InBatches(files, "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
+        // Only the difference is written: most scans find the same files, and rewriting 350,000 rows each time kept the
+        // disk and the database busy for nothing.
+        var now = Query("SELECT path FROM sample_index", r => (string)r["path"]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var found = files.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var gone = now.Where(f => !found.Contains(f)).ToList();
+        var added = found.Where(f => !now.Contains(f)).ToList();
+        InBatches(gone, "DELETE FROM sample_index WHERE path = $p", ["$p"], (f, p) => p[0].Value = f);
+        InBatches(added, "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
         {
             p[0].Value = f;
             p[1].Value = Path.GetFileName(f);
             p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
         });
+        if (gone.Count + added.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
+    }
+
+    /// <summary>The sample index brought up to date for files the sample folders' watcher saw change: there now, or gone.</summary>
+    public void UpdateSampleIndex(IEnumerable<string> paths)
+    {
+        var list = paths.Where(TextScan.IsAudioPath).ToList();
+        var gone = list.Where(f => !File.Exists(f)).ToList();
+        InBatches(gone, "DELETE FROM sample_index WHERE path = $p", ["$p"], (f, p) => p[0].Value = f);
+        InBatches(list.Except(gone), "INSERT OR IGNORE INTO sample_index VALUES ($p, $n, $k)", ["$p", "$n", "$k"], (f, p) =>
+        {
+            p[0].Value = f;
+            p[1].Value = Path.GetFileName(f);
+            p[2].Value = NameKey(Path.GetFileNameWithoutExtension(f));
+        });
+        if (list.Count > 0) Interlocked.Increment(ref _sampleIndexRevision);
     }
 
     /// <summary>Runs one statement for each item, a few thousand to a transaction, letting go of the database between them.</summary>
@@ -544,9 +603,39 @@ public sealed partial class LibraryDb : IDisposable
         };
     }
 
-    public void SaveOrganisation(ProjectSummary p) => Exec("""
-        UPDATE projects SET status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n WHERE id = $id
-        """, ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", p.Id));
+    public void SaveOrganisation(ProjectSummary p) => SaveOrganisation(p, []);
+
+    /// <summary>Your fields for a song, as <see cref="SaveOrganisation(ProjectSummary, IEnumerable{long}, OrganisationField)"/> with all of them.</summary>
+    public void SaveOrganisation(ProjectSummary p, IEnumerable<long> otherSaves) => SaveOrganisation(p, otherSaves, OrganisationField.All);
+
+    /// <summary>
+    /// Your fields for a song: written to its newest save, and those in <paramref name="fields"/> to each of its other
+    /// saves too, so they stay the song's. Only the field you changed goes to the other saves, so changing a rating
+    /// leaves an older save's own notes and key alone.
+    /// </summary>
+    public void SaveOrganisation(ProjectSummary p, IEnumerable<long> otherSaves, OrganisationField fields)
+    {
+        var sets = new List<string>();
+        if (fields.HasFlag(OrganisationField.Status)) sets.Add("status = $s");
+        if (fields.HasFlag(OrganisationField.Rating)) sets.Add("rating = $r");
+        if (fields.HasFlag(OrganisationField.Favourite)) sets.Add("favourite = $f");
+        if (fields.HasFlag(OrganisationField.Key)) sets.Add("musical_key = $k");
+        if (fields.HasFlag(OrganisationField.Notes)) sets.Add("notes = $n");
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            foreach (var id in otherSaves.Prepend(p.Id).Distinct())
+            {
+                var set = id == p.Id ? "status = $s, rating = $r, favourite = $f, musical_key = $k, notes = $n" : string.Join(", ", sets);
+                if (set.Length == 0) continue;
+                using var cmd = Cmd($"UPDATE projects SET {set} WHERE id = $id",
+                    ("$s", p.Status), ("$r", p.Rating), ("$f", p.Favourite ? 1 : 0), ("$k", p.MusicalKey), ("$n", p.Notes), ("$id", id));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
 
     public void SetTags(long id, IEnumerable<string> tags)
     {
@@ -571,16 +660,25 @@ public sealed partial class LibraryDb : IDisposable
     public IReadOnlyList<(string Tag, int Count)> AllTags() =>
         Query("SELECT tag, COUNT(*) AS n FROM tags GROUP BY tag ORDER BY n DESC, tag", r => ((string)r["tag"], (int)(long)r["n"]));
 
+    /// <summary>
+    /// Each plugin across the projects. A DAW's own device is one row per DAW (Bitwig's Arpeggiator isn't Studio
+    /// One's); a plugin is shown as the kind most of its projects have it as.
+    /// </summary>
     public IReadOnlyList<PluginUsage> PluginUsage() => Query("""
         WITH live AS (
-            SELECT pl.*, p.mtime AS saved, p.daw AS daw FROM plugins pl JOIN projects p ON p.id = pl.project_id WHERE p.file_missing = 0),
-        missing AS (SELECT project_id, COUNT(DISTINCT name_key) AS n FROM live WHERE installed = 0 GROUP BY project_id)
+            SELECT pl.*, p.mtime AS saved, p.daw AS daw, CASE WHEN pl.format = 'Native' THEN p.daw ELSE '' END AS own
+            FROM plugins pl JOIN projects p ON p.id = pl.project_id WHERE p.file_missing = 0),
+        missing AS (SELECT project_id, COUNT(DISTINCT name_key) AS n FROM live WHERE installed = 0 GROUP BY project_id),
+        kinds AS (
+            SELECT name_key, own, kind, ROW_NUMBER() OVER (PARTITION BY name_key, own ORDER BY COUNT(*) DESC, kind) AS r
+            FROM live GROUP BY name_key, own, kind)
         SELECT MIN(l.name) AS name, MAX(l.vendor) AS vendor, MAX(l.format) AS format,
                COUNT(DISTINCT l.project_id) AS n, group_concat(DISTINCT l.daw) AS daws, MIN(l.installed) AS installed,
                COUNT(DISTINCT CASE WHEN l.installed = 0 AND m.n = 1 THEN l.project_id END) AS unlocks,
-               MAX(l.saved) AS last, MAX(l.kind) AS kind
+               MAX(l.saved) AS last, MIN(k.kind) AS kind
         FROM live l LEFT JOIN missing m ON m.project_id = l.project_id
-        GROUP BY l.name_key ORDER BY n DESC, name
+        JOIN kinds k ON k.name_key = l.name_key AND k.own = l.own AND k.r = 1
+        GROUP BY l.name_key, l.own ORDER BY n DESC, name
         """, r => new PluginUsage(Str(r, "name"), Str(r, "vendor"), Str(r, "format"), (int)Long(r, "n"), Str(r, "daws").Replace(",", ", "), Long(r, "installed") == 1,
                                   (int)Long(r, "unlocks"), Long(r, "last") is > 0 and var t ? DateTimeOffset.FromUnixTimeSeconds(t).LocalDateTime : null,
                                   (PluginKind)Long(r, "kind")));
@@ -593,12 +691,24 @@ public sealed partial class LibraryDb : IDisposable
             """, r => ((long)r["project_id"], Str(r, "name_key")))
             .GroupBy(t => t.Item1).ToDictionary(g => g.Key, g => g.Select(t => t.Item2).ToHashSet());
 
-    /// <summary>The projects using a plugin, most recently saved first.</summary>
-    public IReadOnlyList<PluginProject> ProjectsWithPlugin(string name) => Query("""
-        SELECT DISTINCT p.id, p.name, p.daw, p.mtime FROM plugins pl JOIN projects p ON p.id = pl.project_id
-        WHERE pl.name_key = $k AND p.file_missing = 0 ORDER BY p.mtime DESC
-        """, r => new PluginProject((long)r["id"], Str(r, "name"), Str(r, "daw"), DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime),
-        ("$k", NameKey(name)));
+    /// <summary>
+    /// The projects using a plugin, most recently saved first. With <paramref name="own"/> (see <see cref="MusicOrganiser.Core.Library.PluginUsage.Own"/>)
+    /// only that row's ones: a DAW's own device in that DAW's projects, or "" for the plugin rather than a device.
+    /// </summary>
+    public IReadOnlyList<PluginProject> ProjectsWithPlugin(string name, string? own = null) => Query($"""
+        SELECT DISTINCT p.id, p.name, p.daw, p.mtime, p.folder FROM plugins pl JOIN projects p ON p.id = pl.project_id
+        WHERE pl.name_key = $k AND p.file_missing = 0 {OwnFilter(own)} ORDER BY p.mtime DESC
+        """, r => new PluginProject((long)r["id"], Str(r, "name"), Str(r, "daw"), DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime,
+                                     Str(r, "folder")),
+        ("$k", NameKey(name)), ("$own", own ?? ""));
+
+    /// <summary>The part of a query on <c>plugins pl JOIN projects p</c> that keeps one Plugins page row's uses.</summary>
+    static string OwnFilter(string? own) => own switch
+    {
+        null => "",
+        "" => "AND pl.format <> 'Native'",
+        _ => "AND pl.format = 'Native' AND p.daw = $own",
+    };
 
     public IReadOnlyList<SampleUsage> SampleUsage() => Query("""
         SELECT s.path, COUNT(DISTINCT s.project_id) AS n, MIN(s.found) AS found
@@ -607,18 +717,33 @@ public sealed partial class LibraryDb : IDisposable
         GROUP BY s.path COLLATE NOCASE ORDER BY found, n DESC, s.path LIMIT 20000
         """, r => new SampleUsage(Str(r, "path"), (int)Long(r, "n"), Long(r, "found") == 1));
 
-    /// <summary>Each sample's projects, and how many of them were saved since <paramref name="recentSince"/>.</summary>
-    public IReadOnlyList<(string Path, int Projects, int Recent)> SampleUsageByAge(DateTime recentSince) => Query("""
-        SELECT s.path, COUNT(DISTINCT s.project_id) AS n, COUNT(DISTINCT CASE WHEN p.mtime >= $c THEN s.project_id END) AS recent
+    /// <summary>
+    /// Each sample's projects, how many of them were saved since <paramref name="recentSince"/>, and the years those
+    /// projects were last saved in.
+    /// </summary>
+    public IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> SampleUsageByAge(DateTime recentSince) => Query("""
+        SELECT s.path, COUNT(DISTINCT s.project_id) AS n, COUNT(DISTINCT CASE WHEN p.mtime >= $c THEN s.project_id END) AS recent,
+               GROUP_CONCAT(DISTINCT strftime('%Y', p.mtime, 'unixepoch', 'localtime')) AS years
         FROM samples s JOIN projects p ON p.id = s.project_id
         WHERE p.file_missing = 0
         GROUP BY s.path COLLATE NOCASE
-        """, r => (Str(r, "path"), (int)Long(r, "n"), (int)Long(r, "recent")), ("$c", new DateTimeOffset(recentSince).ToUnixTimeSeconds()));
+        """, r => (Str(r, "path"), (int)Long(r, "n"), (int)Long(r, "recent"),
+                   Str(r, "years").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).Order().ToArray()),
+        ("$c", new DateTimeOffset(recentSince).ToUnixTimeSeconds()));
 
     /// <summary>Projects using a plugin (by name) or a sample (by path).</summary>
-    public IReadOnlyList<long> ProjectsUsingPlugin(string name) =>
-        Query("SELECT DISTINCT project_id FROM plugins WHERE name_key = $k", r => (long)r["project_id"], ("$k", NameKey(name)));
+    public IReadOnlyList<long> ProjectsUsingPlugin(string name, string? own = null) =>
+        Query($"SELECT DISTINCT pl.project_id FROM plugins pl JOIN projects p ON p.id = pl.project_id WHERE pl.name_key = $k {OwnFilter(own)}",
+              r => (long)r["project_id"], ("$k", NameKey(name)), ("$own", own ?? ""));
 
     public IReadOnlyList<long> ProjectsUsingSample(string path) =>
         Query("SELECT DISTINCT project_id FROM samples WHERE path = $p COLLATE NOCASE", r => (long)r["project_id"], ("$p", path));
+}
+
+/// <summary>Your fields on a song (see <see cref="LibraryDb.SaveOrganisation(ProjectSummary, IEnumerable{long}, OrganisationField)"/>).</summary>
+[Flags]
+public enum OrganisationField
+{
+    Status = 1, Rating = 2, Favourite = 4, Key = 8, Notes = 16,
+    All = Status | Rating | Favourite | Key | Notes,
 }

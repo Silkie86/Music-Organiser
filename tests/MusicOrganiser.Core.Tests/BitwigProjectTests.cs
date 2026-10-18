@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 using static MusicOrganiser.Core.Parsers.BitwigFormat;
 
 namespace MusicOrganiser.Core.Tests;
@@ -145,6 +146,43 @@ public class BitwigProjectTests
                                            n.Contains("\"Serum (Serum)\""));
         var (channel, sound) = Assert.Single(result.Upgraded!);
         Assert.Equal(("Serum", serum1.State!.Data), (channel, sound.Data));
+
+        // A newer version than the template's is left as it is, not swapped for the older one.
+        var channels = song.Channels.ToList();
+        channels[1] = channels[1] with { Instrument = serum1 with { Name = "Serum 3" } };
+        var newer = BitwigProject.FromFl(song with { Channels = channels }, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        Assert.Empty(newer.Upgraded!);
+        Assert.Equal("Serum 3", Def(Chain(Decode(newer.Bytes).Root!.Obj(0x4dd)!.List(0x4de).Single(t => t.Str(0x15b) == "Serum")).Last()).Str(0x9a));
+    }
+
+    [Fact]
+    public void A_swapped_Serum_gets_its_sound_translated_for_Serum_2()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var channels = song.Channels.ToList();
+        var serum1 = channels[1].Instrument! with { State = new PresetBlob("Serum", "Serum", ".fxp", Fxp.WrapChunk(SerumTests.Serum1(), "Serum")) };
+        channels[1] = channels[1] with { Instrument = serum1 };
+        var result = BitwigProject.FromFl(song with { Channels = channels }, Fixtures.BitwigTemplate(), Snare, upgrade: true, serumAudio: _ => null);
+        var doc = Decode(result.Bytes);
+
+        // Serum 2 gets a VST3 preset whose component state is the translated sound.
+        var track = doc.Root!.Obj(0x4dd)!.List(0x4de).Single(t => t.Str(0x15b) == "Serum");
+        var serum2 = Def(Chain(track).Last());
+        Assert.EndsWith(".vstpreset", serum2.Str(0xbe5));
+        using var zip = doc.OpenZip()!;
+        using var file = new MemoryStream();
+        using (var entry = zip.GetEntry($"plugin-states/{serum2.Str(0xbe5)}")!.Open()) entry.CopyTo(file);
+        var preset = file.ToArray();
+        Assert.Equal("VST3" + serum2[0xce4], System.Text.Encoding.ASCII.GetString(preset, 0, 4) + System.Text.Encoding.ASCII.GetString(preset, 8, 32));
+        var listAt = (int)BitConverter.ToInt64(preset, 40);   // the component state, then an empty controller state
+        var sound = Serum2State.Read(preset.AsSpan(48, listAt - 48))!;
+        Assert.Equal(1.0, sound.Settings["Global0"]!["plainParams"]!["kParamS1Compatibility"]!.GetValue<double>());
+        Assert.Equal(0.4809 * 0.4809, sound.Settings["Oscillator0"]!["plainParams"]!["kParamVolume"]!.GetValue<double>(), 4);
+
+        Assert.Contains(result.Notes, n => n.StartsWith("Serum: Serum swapped for Serum 2, with its sound translated") &&
+                                           n.Contains("\"Serum (Serum)\""));
+        // The original is still saved beside the project.
+        Assert.Equal(serum1.State!.Data, Assert.Single(result.Upgraded!).Sound.Data);
     }
 
     [Fact]
@@ -156,6 +194,13 @@ public class BitwigProjectTests
         var saved = Assert.Single(Directory.GetFiles(Path.Combine(Path.GetDirectoryName(file)!, BitwigProject.UpgradedFolder)));
         Assert.Equal("Serum (Serum).fxp", Path.GetFileName(saved));
         Assert.Equal("CcnK", System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(saved), 0, 4));
+
+        // Two channels with the same name each keep their sound.
+        var song = Readers.FlStudio.ReadSong(project);
+        var twice = song with { Channels = [.. song.Channels, song.Channels[1] with { Index = song.Channels.Max(c => c.Index) + 1 }] };
+        var result = BitwigProject.FromFl(twice, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        Assert.Equal(["Serum", "Serum (2)"], result.Upgraded!.Select(u => u.Channel));
+        Assert.Contains(result.Notes, n => n.Contains("\"Serum (2) (Serum)\""));
 
         // Without it, Serum stays Serum and nothing extra is saved.
         var (plain, _) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Plain"), Fixtures.BitwigTemplate());

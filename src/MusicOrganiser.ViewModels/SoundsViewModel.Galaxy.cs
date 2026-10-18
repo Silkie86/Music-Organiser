@@ -61,6 +61,7 @@ public sealed partial class SoundsViewModel
     {
         _db.SetSetting(GalaxyBasisKey, value);
         _galaxyFailed = false;
+        _map = null;   // each kind of placing has its own map: the stars move to this one's
         BuildStars();
         _ = MapGalaxyIfNeeded();
     }
@@ -74,25 +75,34 @@ public sealed partial class SoundsViewModel
     }
 
     bool _galaxyFailed;
-    // The saved map, kept in memory: reading 300,000 positions back on every filter change would be slow.
+    // The saved map for the current kind of placing, kept in memory: reading 300,000 positions back on every filter
+    // change would be slow.
     Dictionary<long, StarPoint>? _map;
 
     /// <summary>Works the map out (or adds new sounds to it) when it's behind the library, in the background.</summary>
-    async Task MapGalaxyIfNeeded()
+    async Task MapGalaxyIfNeeded(bool fresh = false)
     {
-        if (_galaxyFailed || IsBusy || !Org.GalaxyOutOfDate(PlacedBy)) return;
+        if (_galaxyFailed || IsBusy) return;
+        var placedBy = PlacedBy;
+        // Reading 300,000 saved positions to check takes a moment: never on the window's thread.
+        if (!fresh && !await UiWork.Run(() => Org.GalaxyOutOfDate(placedBy))) return;
+        if (IsBusy || placedBy != PlacedBy) return;
         var failed = true;
-        await RunAsync("Mapping your sound galaxy", (p, ct) => { _map = Org.UpdateGalaxy(PlacedBy, p, ct); failed = false; },
+        await RunAsync("Mapping your sound galaxy", (p, ct) =>
+                       {
+                           var map = Org.UpdateGalaxy(placedBy, p, ct, fresh);
+                           if (placedBy == PlacedBy) _map = map;
+                           failed = false;
+                       },
                        () => ("Sound galaxy mapped", $"{Org.Sounds.Count:N0} sounds placed by how they sound"));
         _galaxyFailed = failed;
     }
 
     [RelayCommand]
-    async Task Remap()
+    Task Remap()
     {
         _galaxyFailed = false;
-        Org.Library.SetSetting(SoundOrganiser.GalaxySpaceKey, null);   // forces a fresh layout
-        await MapGalaxyIfNeeded();
+        return MapGalaxyIfNeeded(fresh: true);
     }
 
     int _starsVersion;
@@ -113,7 +123,7 @@ public sealed partial class SoundsViewModel
         {
             var built = await UiWork.Run(() =>
             {
-                var map = known ?? Org.Library.Map();
+                var map = known ?? Org.Library.Map(Org.GalaxySpace(placedBy));
                 var newest = colourBy != "Age" || items.Count == 0 ? []
                     : items.OrderBy(s => s.Added).Select((s, i) => (s.Id, i)).ToDictionary(t => t.Id, t => t.i);
                 var stars = new List<GalaxyStar>(map.Count);

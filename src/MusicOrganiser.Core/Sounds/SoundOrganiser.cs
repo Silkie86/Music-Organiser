@@ -48,19 +48,27 @@ public sealed class SoundOrganiser : IDisposable
     public SoundClassifier? TypeModel => SoundClassifier.FromJson(Library.GetSetting(TypeModelKey));
 
     /// <summary>True once CLAP embeddings exist for most of the library.</summary>
-    public bool HasDeepListening => _clapIndex is { Count: > 0 } c && c.Count >= _sounds.Count(s => s.Analysis is not null) * 0.9;
+    /// <remarks>
+    /// Worked out when the sounds are read in, not each time it's asked: it was asked once per sound while picking
+    /// (Rediscover, kits), and counting 357,000 sounds each time made Shuffle run for ever.
+    /// </remarks>
+    public bool HasDeepListening { get; private set; }
 
     public void Reload()
     {
-        _sounds = Library.All();
-        _byId = _sounds.ToDictionary(s => s.Id);
+        // Everything is built first and swapped in together, so a search running meanwhile (Rediscover during Deep
+        // listen) sees either the old library or the new one, not half of each.
+        var sounds = Library.All();
+        var byId = sounds.ToDictionary(s => s.Id);
         var hidden = Library.HiddenIds();
-        foreach (var s in _sounds) s.Hidden = hidden.Contains(s.Id);
-        _visible = hidden.Count == 0 ? _sounds : _sounds.Where(s => !s.Hidden).ToList();
-        _features = VectorIndex.Build(Library.Vectors("features"), standardise: true, ChromaDownweight);
+        foreach (var s in sounds) s.Hidden = hidden.Contains(s.Id);
+        var visible = hidden.Count == 0 ? sounds : sounds.Where(s => !s.Hidden).ToList();
+        var features = VectorIndex.Build(Library.Vectors("features"), standardise: true, ChromaDownweight);
         var clap = Library.Vectors("clap");
-        _clapIndex = clap.Count > 0 ? VectorIndex.Build(clap, standardise: false) : null;
-        ApplyUsage(_lastUsage);
+        var clapIndex = clap.Count > 0 ? VectorIndex.Build(clap, standardise: false) : null;
+        var deep = clapIndex is { Count: > 0 } c && c.Count >= sounds.Count(s => s.Analysis is not null) * 0.9;
+        ApplyUsage(sounds, _lastUsage);
+        (_sounds, _byId, _visible, _features, _clapIndex, HasDeepListening) = (sounds, byId, visible, features, clapIndex, deep);
     }
 
     /// <summary>
@@ -122,37 +130,57 @@ public sealed class SoundOrganiser : IDisposable
 
     // ---- usage from your projects -------------------------------------------------------
 
-    IReadOnlyList<(string Path, int Projects, int Recent)> _lastUsage = [];
+    IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> _lastUsage = [];
 
     public void ApplyUsage(IReadOnlyList<(string Path, int Projects)> usage) =>
-        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Projects)).ToList());
+        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Projects, Array.Empty<int>())).ToList());
+
+    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage) =>
+        ApplyUsage(usage.Select(u => (u.Path, u.Projects, u.Recent, Array.Empty<int>())).ToList());
 
     /// <summary>
-    /// Counts how many of your projects use each sound, and how many of those were saved in the last year. Projects
+    /// Counts how many of your projects use each sound, how many of those were saved in the last year, and the years
+    /// they were saved in (for the "Used in" filter). Projects
     /// store samples by full path, relative path or just a file name (Bitwig collects copies), so a full-path match is
-    /// used when there is one, otherwise the file name.
+    /// used when there is one, otherwise the file name, but only a name no other sound in the library has: thousands
+    /// of packs have a "01.wav", and each one was credited with every project using any of them.
     /// </summary>
-    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent)> usage)
+    public void ApplyUsage(IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> usage) => ApplyUsage(_sounds, usage);
+
+    void ApplyUsage(List<Sound> sounds, IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> usage)
     {
         _lastUsage = usage;
-        var byPath = new Dictionary<string, (int All, int Recent)>(StringComparer.OrdinalIgnoreCase);
-        var byName = new Dictionary<string, (int All, int Recent)>(StringComparer.OrdinalIgnoreCase);
-        static (int, int) Add((int All, int Recent) a, int n, int r) => (a.All + n, a.Recent + r);
-        foreach (var (p, n, r) in usage)
+        var byPath = new Dictionary<string, (int All, int Recent, int[] Years)>(StringComparer.OrdinalIgnoreCase);
+        var byName = new Dictionary<string, (int All, int Recent, int[] Years)>(StringComparer.OrdinalIgnoreCase);
+        static (int, int, int[]) Add((int All, int Recent, int[]? Years) a, int n, int r, int[] y) =>
+            (a.All + n, a.Recent + r, a.Years is not { Length: > 0 } had ? y : y.Length == 0 ? had : had.Union(y).Order().ToArray());
+        foreach (var (p, n, r, y) in usage)
         {
-            byPath[p] = Add(byPath.GetValueOrDefault(p), n, r);
+            byPath[p] = Add(byPath.GetValueOrDefault(p), n, r, y);
             var name = p.Split('\\', '/')[^1];
-            byName[name] = Add(byName.GetValueOrDefault(name), n, r);
+            byName[name] = Add(byName.GetValueOrDefault(name), n, r, y);
         }
-        foreach (var s in _sounds)
-            (s.UsedIn, s.UsedInRecently) = byPath.TryGetValue(s.Path, out var u) ? u : byName.GetValueOrDefault(System.IO.Path.GetFileName(s.Path));
+        var shared = sounds.GroupBy(s => System.IO.Path.GetFileName(s.Path), StringComparer.OrdinalIgnoreCase)
+                           .Where(g => g.Skip(1).Any()).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in sounds)
+        {
+            var name = System.IO.Path.GetFileName(s.Path);
+            var (all, recent, years) = byPath.TryGetValue(s.Path, out var u) ? u
+                : shared.Contains(name) ? default : byName.GetValueOrDefault(name);
+            (s.UsedIn, s.UsedInRecently, s.UsedInYears) = (all, recent, years ?? []);
+        }
     }
 
     // ---- scanning ----------------------------------------------------------------------
 
     public static List<string> FindAudio(IEnumerable<string> folders, CancellationToken ct = default,
                                          ConcurrentBag<string>? unreadable = null) =>
-        Parallelism.FindFiles(folders,
+        FindAudioStamps(folders, ct, unreadable).Select(f => f.Path).ToList();
+
+    /// <summary>The sounds in these folders, with the size and modified time the folder listing gave.</summary>
+    public static List<Parallelism.FoundFile> FindAudioStamps(IEnumerable<string> folders, CancellationToken ct = default,
+                                                              ConcurrentBag<string>? unreadable = null) =>
+        Parallelism.FindFileStamps(folders,
             f => AudioFile.CanRead(f) && !System.IO.Path.GetFileName(f).StartsWith("._"),
             (name, _) => name.StartsWith('.') || name.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase), ct: ct,
             unreadable: unreadable);
@@ -162,20 +190,13 @@ public sealed class SoundOrganiser : IDisposable
     {
         progress?.Report(new("Finding sounds", 0, 0));
         var unreadable = new ConcurrentBag<string>();
-        var files = FindAudio(folders, ct, unreadable);
+        var found = FindAudioStamps(folders, ct, unreadable);
+        var files = found.Select(f => f.Path).ToList();
         var known = Library.KnownFiles();
-        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).WithCancellation(ct)
-            .Select(f =>
-            {
-                try
-                {
-                    var fi = new FileInfo(f);
-                    var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                    return !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length ? (f, fi.Length, mtime) : default;
-                }
-                catch (IOException) { return default; }
-            })
-            .Where(t => t.f is not null).Select(t => (Path: t.f, Size: t.Length, Mtime: t.mtime)).ToList();
+        // The folder listing already says each file's size and modified time, so 357,000 unchanged sounds cost no
+        // extra trips to the disk.
+        var todo = found.Where(f => !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
+                        .Select(f => (f.Path, f.Size, f.Mtime)).ToList();
 
         var done = 0;
         var pending = new ConcurrentQueue<SoundLibrary.Analysed>();
@@ -224,20 +245,79 @@ public sealed class SoundOrganiser : IDisposable
     }
 
     /// <summary>
-    /// "Deep listening": runs CLAP over every sound that doesn't have an embedding yet.
-    /// Slower (a fraction of a second per sound), resumable, and unlocks search by description.
+    /// Brings the library up to date with sound files the folder watcher saw change (<see cref="MusicOrganiser.Core.Library.FolderWatch"/>):
+    /// new or changed ones are listened to, gone ones forgotten, and nothing else in the folders is looked at. Returns
+    /// how many changed.
     /// </summary>
-    public int DeepListen(IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
+    public int Update(IEnumerable<string> paths, IReadOnlyList<string> folders, IProgress<SoundProgress>? progress = null,
+                      CancellationToken ct = default)
+    {
+        static string Dir(string d) => System.IO.Path.EndsInDirectorySeparator(d) ? d : d + System.IO.Path.DirectorySeparatorChar;
+        var roots = folders.Select(Dir).ToList();
+        bool Listed(string path)
+        {
+            // As the scan finds them: under a sample folder, not in a hidden or __MACOSX folder, not a "._" shadow.
+            if (roots.FirstOrDefault(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase)) is not { } root) return false;
+            var parts = path[root.Length..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length > 0 && !parts[^1].StartsWith("._") && AudioFile.CanRead(path) &&
+                   !parts[..^1].Any(d => d.StartsWith('.') || d.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase));
+        }
+        var todo = new List<(string Path, long Size, long Mtime)>();
+        var gone = new List<string>();
+        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase).Where(Listed))
+        {
+            try
+            {
+                var fi = new FileInfo(path);
+                if (!fi.Exists) { gone.Add(path); continue; }
+                var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+                if (Library.KnownFile(path) is { } k && k.Mtime == mtime && k.Size == fi.Length) continue;
+                todo.Add((path, fi.Length, mtime));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // still being copied: the next change gets it
+        }
+        var results = new ConcurrentBag<SoundLibrary.Analysed>();
+        var done = 0;
+        Parallel.ForEach(todo, Parallelism.Options(ct), t =>
+        {
+            try
+            {
+                var analysis = Parallelism.Background(() => SoundAnalyzer.Analyse(t.Path));
+                results.Add(new(t.Path, t.Size, t.Mtime, analysis, null, null, SoundTypes.FromPath(t.Path)));
+            }
+            catch (Exception e)
+            {
+                results.Add(new(t.Path, t.Size, t.Mtime, null, $"{e.GetType().Name}: {e.Message}", null, SoundTypes.FromPath(t.Path)));
+            }
+            progress?.Report(new("Listening to new sounds", Interlocked.Increment(ref done), todo.Count));
+        });
+        Library.Save(results);
+        var removed = Library.Remove(gone);
+        if (results.Count + removed == 0) return 0;
+        Reload();
+        UpdateTypes(progress);
+        return results.Count + removed;
+    }
+
+    /// <summary>
+    /// "Deep listening": runs CLAP over every sound that doesn't have an embedding yet, or only over <paramref name="only"/>'s
+    /// ones (the sounds a scan just found). Slower (a fraction of a second per sound), resumable, and unlocks search by description.
+    /// </summary>
+    public int DeepListen(IProgress<SoundProgress>? progress = null, CancellationToken ct = default, IEnumerable<long>? only = null)
     {
         var clap = Clap ?? throw new InvalidOperationException("The sound-understanding model isn't installed yet");
-        var missing = _sounds.Where(s => s.Analysis is not null && (_clapIndex is null || !_clapIndex.Contains(s.Id))).ToList();
+        var which = only is null ? _sounds : only.Select(Get).OfType<Sound>();
+        var missing = which.Where(s => s.Analysis is not null && (_clapIndex is null || !_clapIndex.Contains(s.Id))).ToList();
+        if (missing.Count == 0) return 0;
         var done = 0;
         // Every core reads and prepares audio; the model runs several sounds at once (see ClapModel).
         Parallel.ForEach(missing, Parallelism.Options(ct), s =>
         {
             try
             {
-                Parallelism.Background(() => Library.SetClap(s.Id, clap.EmbedAudio(AudioFile.Read(s.Path, 30))));
+                // Not all in one slot: EmbedAudio takes them only while it works, not while it waits for the model.
+                var audio = Parallelism.Background(() => AudioFile.Read(s.Path, 30));
+                Library.SetClap(s.Id, clap.EmbedAudio(audio));
             }
             catch (Exception) { }   // unreadable now; it'll be retried next time
             var n = Interlocked.Increment(ref done);
@@ -249,8 +329,6 @@ public sealed class SoundOrganiser : IDisposable
     }
 
     // ---- the sound galaxy ---------------------------------------------------------------------
-
-    public const string GalaxySpaceKey = "galaxy_space";
 
     /// <summary>What can place the galaxy's stars: CLAP and the measurements together, CLAP alone, or the measurements alone.</summary>
     public const string Both = "Both", ClapOnly = "CLAP", OwnOnly = "Own measurements";
@@ -291,37 +369,37 @@ public sealed class SoundOrganiser : IDisposable
         });
     }
 
-    /// <summary>True when the saved map is missing, made from the other kind of fingerprint, or lacks some sounds.</summary>
+    /// <summary>True when the saved map for this kind of placing is missing or lacks some sounds.</summary>
     public bool GalaxyOutOfDate(string wanted)
     {
         if (_features is not { Count: > 0 } f) return false;
-        if (Library.GetSetting(GalaxySpaceKey) != GalaxySpace(wanted)) return true;
-        var map = Library.Map();
+        var map = Library.Map(GalaxySpace(wanted));
         return f.Units.Keys.Any(id => !map.ContainsKey(id));
     }
 
     /// <summary>
-    /// Brings the galaxy up to date and returns it. It's laid out afresh when there's no map yet, the fingerprints
-    /// changed kind (deep listening finished) or more than a fifth of the sounds are new; otherwise the new sounds are
-    /// placed beside their sound-alikes, so the stars you know stay where they were.
+    /// Brings the galaxy up to date and returns it. Each kind of placing (<see cref="GalaxySpace"/>) keeps a map of its
+    /// own, so switching between them only works one out the first time. It's laid out afresh when that kind has no map
+    /// yet, <paramref name="fresh"/> asks for it, or more than a fifth of the sounds are new; otherwise the new sounds
+    /// are placed beside their sound-alikes, so the stars you know stay where they were.
     /// </summary>
-    public Dictionary<long, StarPoint> UpdateGalaxy(string wanted, IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
+    public Dictionary<long, StarPoint> UpdateGalaxy(string wanted, IProgress<SoundProgress>? progress = null, CancellationToken ct = default,
+                                                    bool fresh = false)
     {
         var space = GalaxySpace(wanted);
         var (ids, vector) = GalaxyVectors(space);
-        var map = Library.Map();
+        var map = Library.Map(space);
         var newIds = ids.Where(id => !map.ContainsKey(id)).ToArray();
-        if (map.Count == 0 || Library.GetSetting(GalaxySpaceKey) != space || newIds.Length > ids.Count / 5)
+        if (fresh || map.Count == 0 || newIds.Length > ids.Count / 5)
         {
             map = GalaxyMap.Layout(ids, vector, progress, ct);
-            Library.SaveMap(map, replace: true);
-            Library.SetSetting(GalaxySpaceKey, space);
+            Library.SaveMap(space, map, replace: true);
         }
         else if (newIds.Length > 0)
         {
             var mapped = ids.Where(map.ContainsKey).ToArray();
             var added = GalaxyMap.PlaceNew(newIds, mapped, vector, map);
-            Library.SaveMap(added, replace: false);
+            Library.SaveMap(space, added, replace: false);
             foreach (var (id, p) in added) map[id] = p;
         }
         return map;
@@ -584,9 +662,46 @@ public sealed class VectorIndex
         return s;
     }
 
+    KeyValuePair<long, float[]>[]? _entries;
+
+    /// <summary>
+    /// The <paramref name="max"/> closest vectors, closest first. Every vector is compared (no approximation), but in
+    /// parallel, several numbers at a time, keeping only the best few as it goes: with 450,000 CLAP vectors, sorting
+    /// them all took about half a second, and picking a sound waited on it.
+    /// </summary>
     public IReadOnlyList<(long Id, double Score)> Nearest(float[] query, int max, bool normaliseQuery = true)
     {
         var q = normaliseQuery ? Unit((float[])query.Clone()) : query;
-        return _unit.Select(kv => (kv.Key, Dot(q, kv.Value))).OrderByDescending(t => t.Item2).Take(max).ToList();
+        if (max <= 0 || _unit.Count == 0) return [];
+        var entries = _entries ??= [.. _unit];
+        const int Chunk = 4096;
+        var chunks = (entries.Length + Chunk - 1) / Chunk;
+        var best = new List<(long Id, float Score)>[chunks];
+        Parallel.For(0, chunks, new ParallelOptions { MaxDegreeOfParallelism = Parallelism.Workers }, c =>
+        {
+            var heap = new PriorityQueue<(long Id, float Score), float>(max + 1);
+            for (int i = c * Chunk, end = Math.Min(entries.Length, i + Chunk); i < end; i++)
+            {
+                var score = FastDot(q, entries[i].Value);
+                if (heap.Count < max) heap.Enqueue((entries[i].Key, score), score);
+                else if (score > heap.Peek().Score) heap.EnqueueDequeue((entries[i].Key, score), score);
+            }
+            best[c] = [.. heap.UnorderedItems.Select(x => x.Element)];
+        });
+        return best.SelectMany(b => b).OrderByDescending(t => t.Score).ThenBy(t => t.Id).Take(max)
+                   .Select(t => (t.Id, (double)t.Score)).ToList();
+    }
+
+    static float FastDot(float[] a, float[] b)
+    {
+        var n = Math.Min(a.Length, b.Length);
+        var i = 0;
+        var sum = System.Numerics.Vector<float>.Zero;
+        var width = System.Numerics.Vector<float>.Count;
+        for (; i <= n - width; i += width)
+            sum += new System.Numerics.Vector<float>(a, i) * new System.Numerics.Vector<float>(b, i);
+        var s = System.Numerics.Vector.Sum(sum);
+        for (; i < n; i++) s += a[i] * b[i];
+        return s;
     }
 }

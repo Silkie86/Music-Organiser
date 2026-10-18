@@ -249,6 +249,17 @@
 
             <Border Classes="card settingsCard">
                 <StackPanel>
+                    <TextBlock Text="Performance" Classes="sectionHeader" />
+                    <TextBlock Classes="cardIntro" TextWrapping="Wrap"
+                               Text="How hard scans, Deep listen and finding duplicates may push your computer. Gentle keeps the app smooth while they run; Fast finishes sooner." />
+                    <ComboBox ItemsSource="{x:Static vm:SettingsViewModel.PerformanceChoices}" SelectedItem="{Binding Performance}"
+                              HorizontalAlignment="Left" MinWidth="240" />
+                    <TextBlock Text="{Binding PerformanceTip}" Classes="muted" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Classes="card settingsCard">
+                <StackPanel>
                     <TextBlock Text="When the app opens" Classes="sectionHeader" />
                     <TextBlock Classes="cardIntro" Text="The page you land on each time you start Music Organiser." />
                     <ComboBox ItemsSource="{x:Static vm:SettingsViewModel.StartPageChoices}" SelectedItem="{Binding StartPage}"
@@ -287,7 +298,7 @@
                                Text="Notes from FL's step sequencer have no length. Plugin tracks always play them until the next note on the same key or the end of the clip. On a Sampler they also stop where the sample ends, unless this is ticked." />
                     <CheckBox Content="Swap Serum for Serum 2 (try-out)" IsChecked="{Binding UpgradeSynths}" Margin="0,12,0,0" />
                     <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap" Margin="0,4,0,0"
-                               Text="Swaps an older version of your template's synth for the template's own. It opens with its default sound: each old sound is saved as a preset in a 'Sounds from older plugins' folder next to the converted project, to load in the new synth's preset browser. Your FL projects are never changed." />
+                               Text="Swaps an older version of your template's synth for the template's own. Serum sounds are translated for Serum 2 (the project's notes say what came across only roughly); other synths open with their default sound. Each old sound is also saved as a preset in a 'Sounds from older plugins' folder next to the converted project, to load in the new synth's preset browser. Your FL projects are never changed." />
                 </StackPanel>
             </Border>
 
