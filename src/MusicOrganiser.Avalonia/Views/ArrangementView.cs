@@ -62,6 +62,7 @@ public sealed class ArrangementView : Control
         if (change.Property != ArrangementProperty) return;
         _zoom = 0;
         _left = _top = 0;
+        _fitAll = false;
         _shown = DateTime.UtcNow;
         var length = Arrangement?.Length ?? 0;
         _songBeats = Math.Max(Math.Max(1, Arrangement?.BeatsPerBar ?? 4), double.IsFinite(length) ? length * 1.02 : 0);
@@ -125,7 +126,10 @@ public sealed class ArrangementView : Control
     double SongBeats => _songBeats;
     double FitZoom => Width0 / SongBeats;
     double Zoom => _zoom > 0 ? _zoom : FitZoom;
-    double ContentHeight => _contentHeight;
+    /// <summary>After a double-click every lane is squeezed to fit the height, so the whole project is on screen.</summary>
+    bool _fitAll;
+    double LaneScale => _fitAll && _contentHeight > 0 ? Math.Min(1, (Bounds.Height - RulerHeight) / _contentHeight) : 1;
+    double ContentHeight => _contentHeight * LaneScale;
 
     double X(double beat) => HeaderWidth + (beat - _left) * Zoom;
     double Beat(double x) => _left + (x - HeaderWidth) / Zoom;
@@ -165,8 +169,10 @@ public sealed class ArrangementView : Control
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
         if (e.ClickCount == 2)
         {
+            // The whole song across and every track down; a second double-click goes back to full-height tracks.
+            _fitAll = !(_fitAll && _zoom == 0);
             _zoom = 0;
-            _left = 0;
+            _left = _top = 0;
             InvalidateVisual();
             return;
         }
@@ -272,7 +278,7 @@ public sealed class ArrangementView : Control
         for (var i = 0; i < a.Lanes.Count; i++)
         {
             var lane = a.Lanes[i];
-            var lh = LaneHeight(lane);
+            var lh = LaneHeight(lane) * LaneScale;
             if (y + lh >= RulerHeight && y <= h)
             {
                 // Each on-screen lane fades in a little after the one above it. The stagger is
@@ -385,7 +391,8 @@ public sealed class ArrangementView : Control
 
         // The name, with a strip of the lane's colour like a DAW's track header.
         var indent = 10 + lane.Depth * 12;
-        dc.DrawRectangle(new SolidColorBrush(colour), null, new RoundedRect(new Rect(indent - 6, y + 6, 3, lh - 13), 1.5));
+        var inset = Math.Min(6, lh * 0.15);
+        dc.DrawRectangle(new SolidColorBrush(colour), null, new RoundedRect(new Rect(indent - 6, y + inset, 3, Math.Max(1, lh - 2 * inset - 1)), 1.5));
         var nameSize = lane.Kind == LaneKind.Automation ? 11 : 12;
         var name = Fit(lane.Name, nameSize, lane.Muted ? muted : text, hx - indent - 10, lane.Kind == LaneKind.Group ? FontWeight.Bold : FontWeight.SemiBold);
         if (lane.Detail.Length > 0 && lh >= 40)
@@ -395,7 +402,7 @@ public sealed class ArrangementView : Control
             dc.DrawText(name, new Point(indent, top));
             dc.DrawText(detail, new Point(indent, top + name.Height));
         }
-        else dc.DrawText(name, new Point(indent, y + (lh - name.Height) / 2));
+        else if (lh >= 14) dc.DrawText(name, new Point(indent, y + (lh - name.Height) / 2));   // squeezed lanes are too thin for names
 
         string? tip = null;
         using (dc.PushClip(new Rect(hx, Math.Max(y, RulerHeight), w - hx, lh)))
@@ -412,7 +419,8 @@ public sealed class ArrangementView : Control
                 var x0 = X(clip.Start);
                 var x1 = X(clip.End);
                 if (x1 < hx || x0 > w) continue;
-                var r = new Rect(x0 + 0.5, y + 3, Math.Max(2, x1 - x0 - 1), lh - 7);
+                var pad = Math.Min(3, lh * 0.1);
+                var r = new Rect(x0 + 0.5, y + pad, Math.Max(2, x1 - x0 - 1), Math.Max(1, lh - 2 * pad - 1));
                 var c = ColourOf(lane, clip);
                 using (dc.PushOpacity(clip.Muted ? 0.35 : 1))
                     DrawClip(dc, a, lane, clip, r, c, lo, hi, text);
