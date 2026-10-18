@@ -245,6 +245,15 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void A_shorter_gap_from_Settings_splits_saves_into_more_versions()
+    {
+        ProjectSummary[] saves = [Save("Didums", new(2019, 1, 10)), Save("Didums_12", new(2019, 2, 20)), Save("Didums_13", new(2019, 4, 30))];
+        Assert.Single(SongVersions.Runs(saves, gapMonths: 3));
+        Assert.Equal(2, SongVersions.Runs(saves, gapMonths: 2).Count);   // Feb 20 to Apr 30 is over two months
+        Assert.Equal(3, SongVersions.Runs(saves, gapMonths: 1).Count);
+    }
+
+    [Fact]
     public void ResavingInANewerDawIsNotARework()
     {
         var original = Save("Didums_12", new(2019, 2, 2), plugins: ["Serum", "Fruity Reverb 2"]);

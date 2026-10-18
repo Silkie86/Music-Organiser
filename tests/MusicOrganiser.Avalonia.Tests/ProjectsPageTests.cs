@@ -236,4 +236,30 @@ public sealed class ProjectsPageTests : IDisposable
         Assert.Equal(["Heel"], songs.Items.Cast<SongUse>().Select(s => s.Song));
         Assert.Equal("Used in 1 song in Bitwig Studio", page.ProjectsTitle);
     }
+
+    [AvaloniaFact]
+    public void Settings_are_in_tabs_and_their_numbers_reach_the_pages()
+    {
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var window = new Window { Content = new SettingsView { DataContext = main.Settings }, Width = 1400, Height = 900 };
+        window.Show();
+        Settle();
+        var tabs = window.GetVisualDescendants().OfType<TabControl>().Single(t => t.Name == "Tabs");
+        Assert.Equal(["General", "Projects", "Sounds", "Plugins", "DAW links", "Developer"],
+                     tabs.Items.Cast<TabItem>().Select(t => (string)t.Header!));
+        tabs.SelectedIndex = 5;
+        Settle();
+        var headers = window.GetVisualDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("sectionHeader") && t.IsEffectivelyVisible)
+                            .Select(t => t.Text).ToList();
+        Assert.Contains("Live tests with Bitwig", headers);
+        Assert.Contains("MO Probe", headers);
+
+        // Each number is stored, and the page uses it.
+        main.Settings.SoundLab.Rediscover.HowMany = 250;
+        main.Settings.SoundLab.SimilarCount = 24;
+        main.Settings.PluginsPage.NeededCount = 9;
+        var again = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        Assert.Equal((250, 24, 9), (again.Sounds.Rediscover.HowMany, again.Sounds.SimilarCount, again.Plugins.NeededCount));
+        Assert.Equal(SongVersions.DefaultRunGapMonths, again.Settings.RunGapMonths);
+    }
 }

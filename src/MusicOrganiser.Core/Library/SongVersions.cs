@@ -48,7 +48,9 @@ public static partial class SongVersions
     }
 
     /// <summary>A gap this long between two saves (Solomon's pick: 3 months) starts a new run.</summary>
-    public const int RunGapMonths = 3;
+    public const int DefaultRunGapMonths = 3;
+    /// <summary>The gap the app uses: Settings › Projects can change it.</summary>
+    public static int RunGapMonths { get; set; } = DefaultRunGapMonths;
 
     /// <summary>
     /// When the song was first made: its oldest save, or the date its file records (FL Studio keeps it through
@@ -64,13 +66,14 @@ public static partial class SongVersions
     /// The saves split into working periods, oldest first: a gap of <see cref="RunGapMonths"/> months or more
     /// between two saves starts a new one. Moved files are left out, since they can't be opened.
     /// </summary>
-    public static IReadOnlyList<SaveRun> Runs(IEnumerable<ProjectSummary> saves)
+    public static IReadOnlyList<SaveRun> Runs(IEnumerable<ProjectSummary> saves, int? gapMonths = null)
     {
+        var gap = gapMonths ?? RunGapMonths;
         var ordered = saves.Where(s => !s.FileMissing).OrderBy(s => s.Modified).ThenBy(s => Split(s.Name).Number).ToList();
         var runs = new List<List<ProjectSummary>>();
         foreach (var save in ordered)
         {
-            if (runs.Count == 0 || save.Modified >= runs[^1][^1].Modified.AddMonths(RunGapMonths)) runs.Add([]);
+            if (runs.Count == 0 || save.Modified >= runs[^1][^1].Modified.AddMonths(gap)) runs.Add([]);
             runs[^1].Add(save);
         }
         var original = runs.Count > 0 ? runs[0][^1] : null;

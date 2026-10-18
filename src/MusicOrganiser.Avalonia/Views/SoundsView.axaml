@@ -346,7 +346,7 @@
                                         <views:GalaxyCanvas x:Name="Galaxy" Stars="{Binding Stars}" Regions="{Binding Regions}" Trail="{Binding Trail}"
                                                             Constellation="{Binding Constellation}" Selected="{Binding Selected}"
                                                             SweepCommand="{Binding SweepCommand}" SweepEndedCommand="{Binding EndSweepCommand}"
-                                                            PickCommand="{Binding PickStarCommand}" />
+                                                            PickCommand="{Binding PickStarCommand}" SweepMs="{Binding SweepMs}" />
                                         <!-- What placed the stars, and how many show. -->
                                         <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10" Padding="10,6,12,7" IsHitTestVisible="False"
                                                 CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource SurfaceBrush}" Opacity="0.88">
