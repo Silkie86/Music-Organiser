@@ -144,6 +144,8 @@ public sealed class PlaygroundStore(string folder)
 {
     public string Folder { get; } = folder;
     string CurrentFile => Path.Combine(Folder, "current.json");
+    /// <summary>Whether there's an idea being worked on yet (none the first time, or after the folder was cleared).</summary>
+    public bool HasCurrent => File.Exists(CurrentFile);
     string IdeasFolder => Path.Combine(Folder, "ideas");
 
     public PlaygroundSession LoadCurrent()

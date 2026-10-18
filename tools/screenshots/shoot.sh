@@ -97,6 +97,8 @@ nav 5; shot 6-settings 2
 # The rest of Settings, a screen further down.
 xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1430 892; shot 7-settings-more
 xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool mousemove 1430 892; shot 8-settings-more
+# Settings › Playground tab.
+xdotool mousemove ${PLAYGROUND_TAB_X:-466} ${PLAYGROUND_TAB_Y:-86} click 1 mousemove 1430 892; shot 6p-settings-playground 1
 # The search box with text in it, showing its clear (X) button.
 nav 0; sleep 1; xdotool key ctrl+f; sleep 0.3; xdotool type --delay 40 "test 2026"; xdotool mousemove 1430 892; shot 9-projects-search
 xdotool key ctrl+a BackSpace

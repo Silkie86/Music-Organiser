@@ -437,6 +437,82 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
+            <TabItem Header="Playground">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="How the Playground suggests parts and starts new ideas." />
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Suggestions and parts" Classes="sectionHeader" />
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.SuggestCountChoices}" SelectedItem="{Binding PlaygroundPage.SuggestCount}" MinWidth="130"
+                                              ToolTip.Tip="More takes a little longer to rank; it always runs in the background">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} parts'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="Parts Suggest lists, best first" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.GrowBarsChoices}" SelectedItem="{Binding PlaygroundPage.GrowBars}" MinWidth="130"
+                                              ToolTip.Tip="A longer part is cut at this length">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} bars'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="Longest a part you bring in can make a section" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                                <CheckBox IsChecked="{Binding PlaygroundPage.SmoothIncoming}" Content="Turn chord parts you add into their smoothest inversions"
+                                          ToolTip.Tip="Same as the Smooth inversions tick on the Suggest tab" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="A new idea starts with" Classes="sectionHeader" />
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.NewTempoChoices}" SelectedItem="{Binding PlaygroundPage.NewTempo}" MinWidth="130"
+                                              ToolTip.Tip="The tempo of a new idea; change it on the page any time">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} BPM'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="Tempo" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.NewBarsChoices}" SelectedItem="{Binding PlaygroundPage.NewBars}" MinWidth="130"
+                                              ToolTip.Tip="How long section A is before anything is added">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} bars'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="Bars in its first section" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.StyleChoices}" SelectedItem="{Binding PlaygroundPage.NewStyle}" MinWidth="130"
+                                              ToolTip.Tip="Jazz and gospel hears 9ths, 11ths and 13ths as good notes; Classical writes strict four-part harmony" />
+                                    <TextBlock Text="Harmony" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Undo" Classes="sectionHeader" />
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.UndoStepsChoices}" SelectedItem="{Binding PlaygroundPage.UndoSteps}" MinWidth="130"
+                                              ToolTip.Tip="Each step keeps a copy of the idea while the app is open">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} changes'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="How far Undo can go back" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
             <TabItem Header="DAW links">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">

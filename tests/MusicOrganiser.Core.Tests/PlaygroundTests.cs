@@ -198,6 +198,31 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void Settings_options_are_kept_and_start_new_ideas()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Settings.PlaygroundPage;
+        p.NewTempo = 120;
+        p.NewBars = 8;
+        p.NewStyle = PlaygroundViewModel.Classical;
+        p.SuggestCount = 100;
+        p.SmoothIncoming = false;
+
+        // Read back by a fresh app, and the first idea there starts the new way.
+        var again = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data2")).Playground;
+        Assert.Equal(100, again.SuggestCount);
+        Assert.False(again.SmoothIncoming);
+        Assert.Equal(120, again.Tempo);
+        Assert.Equal(8, again.Bars);
+        Assert.True(again.IsClassical);
+    }
+
+    [Fact]
     public void Copying_a_groove_onto_written_chords_keeps_it_when_the_chords_change()
     {
         Ui.Current = new Headless();
