@@ -1,5 +1,7 @@
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 using Xunit;
 
 namespace MusicOrganiser.Core.Tests;
@@ -45,7 +47,7 @@ public class FixTests : IDisposable
         Assert.Equal((FixAction.Relink, "Kick 01.wav"), (kick.Action, kick.Name));
         Assert.Equal(Path.Combine(_lib, "Drums", "Kick 01.wav"), kick.Use);
 
-        var (fixedPath, changed) = ProjectFixer.Write(path, plan);
+        var (fixedPath, changed, _, _) = ProjectFixer.Write(path, plan);
         Assert.Equal(1, changed);
         Assert.Equal(Path.Combine(dir, "Night Drive (fixed).flp"), fixedPath);
         Assert.Equal(before, File.ReadAllBytes(path));
@@ -62,6 +64,8 @@ public class FixTests : IDisposable
 
         // A second fix doesn't overwrite the first.
         Assert.Equal(Path.Combine(dir, "Night Drive (fixed 2).flp"), ProjectFixer.FixedPath(path));
+        // Fixing the fixed copy again makes the next copy of the same song, not "Night Drive (fixed) (fixed)".
+        Assert.Equal(Path.Combine(dir, "Night Drive (fixed 2).flp"), ProjectFixer.FixedPath(fixedPath));
     }
 
     [Fact]
@@ -108,7 +112,7 @@ public class FixTests : IDisposable
         Assert.Equal(FixAction.Suggestion, snare.Action);
         Assert.EndsWith("Snare 808 v2.wav", snare.Use);
 
-        var (fixedPath, changed) = ProjectFixer.Write(path, [snare]);
+        var (fixedPath, changed, _, _) = ProjectFixer.Write(path, [snare]);
         Assert.Equal(1, changed);
         var samples = new BitwigReader().Read(fixedPath).Samples;
         Assert.Contains(snare.Use, samples);
@@ -116,7 +120,7 @@ public class FixTests : IDisposable
     }
 
     [Fact]
-    public void Plugins_are_listed_as_swaps_to_make_by_hand_never_written()
+    public void Plugins_other_than_Serum_are_listed_as_swaps_to_make_by_hand_never_written()
     {
         var dir = Path.Combine(_root, "Projects");
         Directory.CreateDirectory(dir);
@@ -124,13 +128,98 @@ public class FixTests : IDisposable
         _db.ReplaceInstalledPlugins(["Serum 2", "FabFilter Pro-Q 4"]);
 
         var plan = ProjectFixer.Plan(_db, Scan("FL Studio"));
+        // Serum is the one the app can swap itself, with its sound translated.
         var serum = plan.Single(l => l.Name == "Serum");
-        Assert.Equal((FixAction.Suggestion, "Serum 2"), (serum.Action, serum.Use));
+        Assert.Equal((FixAction.Relink, "Serum 2", true), (serum.Action, serum.Use, serum.IsSwap));
         var proq = plan.Single(l => l.Name == "Pro-Q 3");
         Assert.Equal((FixAction.Suggestion, "Pro-Q 3", "FabFilter Pro-Q 4"), (proq.Action, proq.Name, proq.Use));
         Assert.False(proq.CanWrite);
         Assert.Throws<InvalidOperationException>(() => ProjectFixer.Write(path, [proq]));
         Assert.False(File.Exists(Path.Combine(dir, "Night Drive (fixed).flp")));
+    }
+
+    [Theory]
+    [InlineData("VST2")]
+    [InlineData("VST3")]
+    public void A_Bitwig_projects_Serum_is_swapped_for_Serum_2_with_its_sound_translated(string format)
+    {
+        // A Bitwig project with Serum on the track whose cutoff is automated, made the way the FL Studio converter does.
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var channels = song.Channels.ToList();
+        var chunk = SerumTests.Serum1();
+        const string serum1Vst3 = "56535458667358736572756D00000000";
+        channels[1] = channels[1] with
+        {
+            Instrument = format == "VST2"
+                ? channels[1].Instrument! with
+                {
+                    DeviceId = "1483109208",   // 'XfsX'
+                    State = new PresetBlob("Serum", "Serum", ".fxp", Fxp.WrapChunk(chunk, "Serum", 0x58667358)),
+                }
+                : new FlPlugin("Serum", "Xfer Records", "VST3", serum1Vst3,
+                    new PresetBlob("Serum", "Serum", ".vstpreset", VstPreset.Build(serum1Vst3, chunk, [])),
+                    @"C:\Program Files\Common Files\VST3\Xfer\Serum.vst3\Contents\x86_64-win\Serum.vst3"),
+        };
+        var dir = Path.Combine(_root, "Projects", "Serum Song");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "Serum Song.bwproject");
+        File.WriteAllBytes(path, BitwigProject.FromFl(song with { Channels = channels }, Fixtures.BitwigTemplate()).Bytes);
+        var before = File.ReadAllBytes(path);
+        _db.ReplaceInstalledPlugins(["Serum 2"]);
+
+        // Serum isn't installed, so swapping in Serum 2 is the fix, and it's ticked.
+        var swap = ProjectFixer.Plan(_db, Scan("Bitwig Studio")).Single(l => l.IsSwap);
+        Assert.Equal(("Serum", "Serum 2", FixAction.Relink, true), (swap.Name, swap.Use, swap.Action, swap.CanWrite));
+
+        var result = ProjectFixer.Write(path, [swap], _ => null);
+        Assert.Equal((1, 0), (result.Swapped, result.Relinked));
+        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.Contains(result.Notes, n => n.StartsWith("Serum: Serum swapped for Serum 2, with its sound translated"));
+        // The converter carries the cutoff's automation for the VST2 only (the VST3's setting ids aren't known).
+        if (format == "VST2") Assert.Contains(result.Notes, n => n.StartsWith("1 automation lane of Serum's knobs left out"));
+
+        var plugins = new BitwigReader().Read(result.Path).Plugins.Select(p => p.Name).ToList();
+        Assert.Contains("Serum 2", plugins);
+        Assert.DoesNotContain("Serum", plugins);
+
+        // The device is Serum 2's VST3, and its settings are the translated sound.
+        var doc = BitwigFormat.Decode(File.ReadAllBytes(result.Path));
+        var serum2 = doc.Objects.Single(o => o.Str(0x9a) == "Serum 2");
+        Assert.Equal((0x728, 0x729, "56534558667350736572756D20320000"), (serum2.Class, serum2.Parent!.Class, serum2.Str(0xce4)));
+        Assert.DoesNotContain(doc.Objects, o => o.Class == 0x65 && o.Obj(0xec) == serum2.Parent);
+        using var zip = doc.OpenZip()!;
+        using var file = new MemoryStream();
+        using (var entry = zip.GetEntry($"plugin-states/{serum2.Str(0xbe5)}")!.Open()) entry.CopyTo(file);
+        var sound = Serum2State.Read(VstPreset.Component(file.ToArray()))!;
+        Assert.Equal(0.4809 * 0.4809, sound.Settings["Oscillator0"]!["plainParams"]!["kParamVolume"]!.GetValue<double>(), 4);
+    }
+
+    [Fact]
+    public void An_FL_projects_Serum_is_swapped_for_Serum_2_with_its_sound_translated()
+    {
+        var path = Fixtures.FlStudio25Project(Path.Combine(_root, "Projects"), serumChunk: SerumTests.Serum1());
+        var before = File.ReadAllBytes(path);
+        _db.ReplaceInstalledPlugins(["Serum2", "Arcade", "Predator 2"]);
+
+        var swap = ProjectFixer.Plan(_db, Scan("FL Studio")).Single(l => l.IsSwap);
+        Assert.Equal(("Serum", FixAction.Relink), (swap.Name, swap.Action));
+
+        var result = ProjectFixer.Write(path, [swap], _ => null);
+        Assert.Equal((1, 0), (result.Swapped, result.Relinked));
+        Assert.Equal(before, File.ReadAllBytes(path));
+        Assert.StartsWith("Lead: Serum swapped for Serum 2, with its sound translated", Assert.Single(result.Notes));
+
+        // The channel now holds Serum 2's VST3, as FL saves it, with the translated sound; the others are as they were.
+        var song = Readers.FlStudio.ReadSong(result.Path);
+        var lead = song.Channels.Single(c => c.Name == "Lead").Instrument!;
+        Assert.Equal(("Serum2", "VST3", "56534558667350736572756D20320000"), (lead.Name, lead.Format, lead.DeviceId));
+        var sound = Serum2State.Read(VstPreset.Component(lead.State!.Data))!;
+        Assert.Equal(0.4809 * 0.4809, sound.Settings["Oscillator0"]!["plainParams"]!["kParamVolume"]!.GetValue<double>(), 4);
+        var old = Readers.FlStudio.ReadSong(path);
+        Assert.Equal(old.Channels.Where(c => c.Name != "Lead").Select(c => c.Instrument?.State?.Data),
+                     song.Channels.Where(c => c.Name != "Lead").Select(c => c.Instrument?.State?.Data));
+        Assert.Equal(FlStudioReader.ReadEvents(before).Events.Select(e => e.Id),
+                     FlStudioReader.ReadEvents(File.ReadAllBytes(result.Path)).Events.Select(e => e.Id));
     }
 
     [Fact]

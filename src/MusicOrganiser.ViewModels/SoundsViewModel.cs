@@ -55,6 +55,11 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     [ObservableProperty] TypeCount? _selectedType;
     [ObservableProperty] int _loopFilter;   // 0 all, 1 one-shots, 2 loops
     [ObservableProperty] string _keyFilter = "Any key";
+    public const string AnyYear = "Any year";
+    /// <summary>Only sounds used in a project last saved in this year ("2019"), to see what you used when.</summary>
+    [ObservableProperty] string _yearFilter = AnyYear;
+    /// <summary>"Any year", then each year a project using one of your sounds was saved in, newest first.</summary>
+    [ObservableProperty] IReadOnlyList<string> _yearChoices = [AnyYear];
     [ObservableProperty] bool _compatibleKeys;
     [ObservableProperty] string _bpmFrom = "";
     [ObservableProperty] string _bpmTo = "";
@@ -135,6 +140,31 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     partial void OnAutoPlayChanged(bool value) => _db.SetSetting(AutoPlayKey, value ? "1" : "0");
 
+    public const string SimilarCountKey = "similar_count", SweepKey = "galaxy_sweep_ms";
+    public static IReadOnlyList<int> SimilarCountChoices { get; } = [6, 12, 24, 48];
+    public static IReadOnlyList<int> SweepChoices { get; } = [60, 90, 150, 250];
+    /// <summary>How many sounds "Sounds like this" shows (Settings › Sounds).</summary>
+    [ObservableProperty] int _similarCount;
+    /// <summary>How long each star plays when the mouse sweeps across the galaxy, in milliseconds (Settings › Sounds).</summary>
+    [ObservableProperty] int _sweepMs;
+
+    partial void OnSimilarCountChanged(int value)
+    {
+        _db.SetSetting(SimilarCountKey, value.ToString());
+        FindSimilar(Selected);
+    }
+
+    partial void OnSweepMsChanged(int value) => _db.SetSetting(SweepKey, value.ToString());
+
+    public const string ListenToNewKey = "deep_listen_new";
+    /// <summary>
+    /// With the sound-understanding model downloaded, CLAP listens to the sounds a scan or the folder watcher finds as
+    /// they arrive (Solomon's 18 Oct note). Sounds it has already heard aren't listened to again. On unless turned off.
+    /// </summary>
+    [ObservableProperty] bool _listenToNew;
+
+    partial void OnListenToNewChanged(bool value) => _db.SetSetting(ListenToNewKey, value ? "1" : "0");
+
     public SoundsViewModel(LibraryDb db, SoundOrganiser org, MainViewModel main)
     {
         _db = db;
@@ -143,6 +173,9 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
+        _listenToNew = db.GetSetting(ListenToNewKey) != "0";
+        _similarCount = int.TryParse(db.GetSetting(SimilarCountKey), out var similar) && similar > 0 ? similar : 12;
+        _sweepMs = int.TryParse(db.GetSetting(SweepKey), out var sweep) && sweep > 0 ? sweep : 90;
         _viewMode = db.GetSetting(ViewKey) is List or Galaxy ? db.GetSetting(ViewKey)! : Tiles;
         _placedBy = db.GetSetting(GalaxyBasisKey) is { } basis && PlacedByChoices.Contains(basis) ? basis : SoundOrganiser.Both;
         _colourBy = db.GetSetting(GalaxyColourKey) is { } c && ColourChoices.Contains(c) ? c : "Type";
@@ -191,7 +224,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     public void StopWatching() => _sampleWatch?.Dispose();
 
-    void SampleFilesChanged(FolderWatch.Changes changes)
+    internal void SampleFilesChanged(FolderWatch.Changes changes)
     {
         _changedSounds.UnionWith(changes.Files);
         _sampleFoldersOverflowed |= changes.Overflowed.Count > 0;
@@ -201,6 +234,9 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>Takes in what the sample folders' watcher saw change, or walks the folders when too much changed to name.</summary>
     internal async Task TakeInChangedSoundsAsync()
     {
+        // A job started meanwhile (RunAsync awaits a reload before calling this): leave the changes queued for it to
+        // take in when it's done, as RunAsync and ScanAsync wouldn't run now.
+        if (IsBusy) return;
         if (_sampleFoldersOverflowed)
         {
             _sampleFoldersOverflowed = false;
@@ -213,14 +249,31 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _changedSounds.Clear();
         var folders = SampleFolders;
         var count = 0;
+        List<long> arrived = [];
         await RunAsync("Taking in new sounds", (p, ct) =>
         {
             count = Org.Update(paths, folders, p, ct);
             if (_db.SampleIndexCount() > 0) _db.UpdateSampleIndex(paths);   // what Fix searches
+            var seen = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (count > 0) arrived = Org.Sounds.Where(s => seen.Contains(s.Path)).Select(s => s.Id).ToList();
         },
                        () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"{count:N0} new, changed or removed sounds"), always: false);
         AppLog.Info("Watch", $"Sample folders: {count} sounds changed ({paths.Count} changes seen)");
+        if (count > 0) await ListenToArrivals(arrived);
         if (count > 0) await MapGalaxyIfNeeded();
+    }
+
+    /// <summary>
+    /// <see cref="ListenToNew"/>: CLAP listens to the sounds that just arrived, skipping any it has heard, before the
+    /// galaxy places them.
+    /// </summary>
+    async Task ListenToArrivals(IReadOnlyCollection<long> arrived)
+    {
+        if (!ListenToNew || arrived.Count == 0 || !ClapModel.IsInstalled()) return;
+        var heard = 0;
+        await RunAsync("Deep listening to new sounds", (p, ct) => heard = Org.DeepListen(p, ct, arrived),
+                       () => ("Deep listened to new sounds", heard == 0 ? "It had heard them all already" : $"{heard:N0} new sounds"),
+                       always: false);
     }
 
     IReadOnlyList<string> SampleFolders => _db.GetList(Scanner.SampleFoldersKey);
@@ -268,7 +321,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         Items = loaded.Items;
         foreach (var s in Items) _shuffle.TryAdd(s.Id, Random.Shared.Next());
-        var top = loaded.Liked.Length == 0 ? 0 : loaded.Liked.Max();
+        var top = _topLiked = loaded.Liked.Length == 0 ? 0 : loaded.Liked.Max();
         for (var i = 0; i < Items.Count; i++)
         {
             Items[i].Liked = loaded.Liked[i];
@@ -281,6 +334,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _showing = true;   // the list is worked out once, just below
         try { SelectedType = TypeCounts.FirstOrDefault(t => t.Type == type) ?? TypeCounts[0]; }
         finally { _showing = false; }
+        UpdateYears();
         UpdateList();
         BuildStars();
         UpdateSummary();
@@ -302,22 +356,25 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         }
         var since = DateTime.Now.AddYears(-1);
         var weights = _weights;
-        var (changed, liked) = await Task.Run(() =>
+        var (changed, years, liked) = await Task.Run(() =>
         {
-            var before = items.Select(s => (s.UsedIn, s.UsedInRecently)).ToArray();
+            var before = items.Select(s => (s.UsedIn, s.UsedInRecently, s.UsedInYears)).ToArray();
             Org.ApplyUsage(_db.SampleUsageByAge(since));
-            var changed = items.Where((s, i) => (s.UsedIn, s.UsedInRecently) != before[i]).Any();
-            return (changed, changed ? items.Select(weights.Score).ToArray() : []);
+            var changed = items.Where((s, i) => (s.UsedIn, s.UsedInRecently) != (before[i].UsedIn, before[i].UsedInRecently)).Any();
+            // A project re-saved in a new year changes only the years its sounds are used in, which the year filter goes by.
+            var years = changed || items.Where((s, i) => !s.UsedInYears.AsSpan().SequenceEqual(before[i].UsedInYears)).Any();
+            return (changed, years, changed ? items.Select(weights.Score).ToArray() : []);
         });
-        if (!changed || !ReferenceEquals(items, Items)) return;
-        var top = liked.Length == 0 ? 0 : liked.Max();
-        for (var i = 0; i < items.Count; i++)
+        if (!years || !ReferenceEquals(items, Items)) return;
+        var top = liked.Length == 0 ? _topLiked : _topLiked = liked.Max();
+        for (var i = 0; i < liked.Length; i++)
         {
             items[i].Liked = liked[i];
             items[i].LikedShare = top > 0 ? liked[i] / top : 0;
         }
         UpdateSummary();
-        if (OnlyUnused) Refresh();
+        UpdateYears();
+        if (OnlyUnused || YearFilter != AnyYear) Refresh();
         else if (SortBy == MostLiked) ApplySort();
     }
 
@@ -376,6 +433,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         var type = SelectedType is { Type: var t } && t != "All sounds" ? t : null;
         var loops = LoopFilter;
         var unused = OnlyUnused;
+        int? year = int.TryParse(YearFilter, out var y) ? y : null;
         var favourites = OnlyFavourites;
         var tag = TagFilter;
         var key = KeyFilter != "Any key" ? MusicTheory.ParseKey(KeyFilter) : null;
@@ -390,6 +448,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             if (loops == 1 && s.IsLoop) return false;
             if (loops == 2 && !s.IsLoop) return false;
             if (unused && s.UsedIn > 0) return false;
+            if (year is { } yr && Array.BinarySearch(s.UsedInYears, yr) < 0) return false;
             if (favourites && !s.Favourite) return false;
             if (tag.Length > 0 && !s.Tags.Any(x => x.Equals(tag, StringComparison.OrdinalIgnoreCase))) return false;
             if (key is { } k)
@@ -517,8 +576,22 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void Score()
     {
         foreach (var s in Items) s.Liked = _weights.Score(s);
-        var top = Items.Count == 0 ? 0 : Items.Max(s => s.Liked);
+        var top = _topLiked = Items.Count == 0 ? 0 : Items.Max(s => s.Liked);
         foreach (var s in Items) s.LikedShare = top > 0 ? s.Liked / top : 0;
+    }
+
+    double _topLiked;
+
+    /// <summary>
+    /// Scores again only the sounds just played, dragged or starred. Every sound's share only changes when one of
+    /// them becomes, or stops being, the most liked; scoring all 450,000 on every double-click held the window up.
+    /// </summary>
+    void Rescore(IReadOnlyCollection<Sound> changed)
+    {
+        var wasTop = _topLiked > 0 && changed.Any(s => s.Liked >= _topLiked);
+        foreach (var s in changed) s.Liked = _weights.Score(s);
+        if (wasTop || changed.Any(s => s.Liked > _topLiked)) { Score(); return; }
+        foreach (var s in changed) s.LikedShare = _topLiked > 0 ? s.Liked / _topLiked : 0;
     }
 
     /// <summary>Settings changed how Most liked weighs things.</summary>
@@ -540,8 +613,10 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         var history = Org.Library.History();
         if (history.Count == 0) return [];
-        var byId = items.ToDictionary(s => s.Id);
-        return history.Where(h => byId.ContainsKey(h.Id)).Select(h => new HistoryItem(byId[h.Id], h.At)).ToList();
+        // Looked up one by one: a lookup of all 450,000 sounds made for a list of a few hundred held up every play.
+        var byId = ReferenceEquals(items, Org.Sounds) ? null : items.ToDictionary(s => s.Id);
+        return history.Select(h => (h, Sound: byId is null ? Org.Get(h.Id) : byId.GetValueOrDefault(h.Id)))
+                      .Where(t => t.Sound is not null).Select(t => new HistoryItem(t.Sound!, t.h.At)).ToList();
     }
 
     partial void OnHistorySelectedChanged(HistoryItem? value)
@@ -557,7 +632,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Org.Library.Record(list.Select(s => s.Id), kind);
         foreach (var s in list)
             s.Activity = kind == SoundEvent.Drag ? s.Activity with { Drags = s.Activity.Drags + 1 } : s.Activity with { Sends = s.Activity.Sends + 1 };
-        Score();
+        Rescore(list);
     }
 
     partial void OnSearchTextChanged(string value)
@@ -583,6 +658,21 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     partial void OnBpmFromChanged(string value) => Refresh();
     partial void OnBpmToChanged(string value) => Refresh();
     partial void OnOnlyUnusedChanged(bool value) => Refresh();
+    partial void OnYearFilterChanged(string value)
+    {
+        if (value is null) YearFilter = AnyYear;   // the list of years was replaced under the box
+        else Refresh();
+    }
+
+    /// <summary>The years to choose from, from what your projects used; the chosen one stays if it's still there.</summary>
+    void UpdateYears()
+    {
+        var years = Items.SelectMany(s => s.UsedInYears).Distinct().OrderDescending().Select(y => y.ToString()).ToList();
+        if (years.SequenceEqual(YearChoices.Skip(1))) return;
+        var keep = YearFilter;
+        YearChoices = [AnyYear, .. years];
+        YearFilter = YearChoices.Contains(keep) ? keep : AnyYear;
+    }
     partial void OnOnlyFavouritesChanged(bool value) => Refresh();
     partial void OnTagFilterChanged(string value) => Refresh();
 
@@ -625,6 +715,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         CompatibleKeys = false;
         BpmFrom = BpmTo = "";
         OnlyUnused = OnlyFavourites = false;
+        YearFilter = AnyYear;
         TagFilter = "";
         Message = "";
         ApplySort();
@@ -672,12 +763,32 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Notes = [];
         NoteChords = [];
         NotesMessage = "";
-        Similar = value is null ? [] : Org.Similar(value, 12);
+        FindSimilar(value);
         SelectedTypeLabel = value?.Type ?? "";
         KeyDetail = value?.Analysis is { KeyTonic: { } t } a
             ? $"{MusicTheory.NoteNames[t]} {(a.KeyMinor ? "minor" : "major")} · Camelot {MusicTheory.Camelot(t, a.KeyMinor)} · {a.KeySource}" +
               (a.KeySource == "detected" ? $" ({a.KeyConfidence:P0} sure)" : "")
             : "";
+    }
+
+    int _similarFor;
+
+    /// <summary>
+    /// The picked sound's sound-alikes, found off the window's thread: comparing it with 450,000 others took about half
+    /// a second, so arrowing through the list or clicking stars kept stopping. Only the newest pick's are shown.
+    /// </summary>
+    async void FindSimilar(Sound? s)
+    {
+        var version = ++_similarFor;
+        Similar = [];
+        if (s is null) return;
+        try
+        {
+            var count = SimilarCount;
+            var found = await UiWork.Run(() => Org.Similar(s, count));
+            if (version == _similarFor) Similar = found;
+        }
+        catch (Exception e) { AppLog.Info("Sounds", $"Couldn't find sounds like {s.Name}: {e.Message}"); }
     }
 
     partial void OnSelectedTypeLabelChanged(string value)
@@ -703,6 +814,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     void Start(Sound s, double from, bool count = true)
     {
+        _previews?.Cancel();   // a preview still opening mustn't start over this one
         _player.Play(s.Path, from);
         _preview = count ? null : s.Path;
         if (count) Count(s);
@@ -718,7 +830,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Org.Library.MarkPlayed(s.Id);
         s.Plays++;
         s.Activity = s.Activity with { Plays = s.Activity.Plays + 1 };
-        Score();
+        Rescore([s]);
         if (IsHistory) return;   // the History list doesn't jump about under the pointer while you play from it
         LoadHistory();
     }
@@ -790,15 +902,15 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     /// <summary>
-    /// A double-click: plays or stops the sound. With Autoplay on, the first click already started it,
-    /// so it keeps playing and now counts as a play.
+    /// A double-click: the first click already started the sound as a preview (<see cref="PlayClicked"/>, Autoplay or
+    /// not), so it keeps playing and now counts as a play. A sound that isn't playing starts (and counts).
     /// </summary>
     [RelayCommand]
     void Audition()
     {
-        if (!AutoPlay || Selected is not { } s) Play(null);
-        else if (_player.Playing != s.Path) Play(s);
-        else if (_preview == s.Path) { Count(s); _preview = null; }
+        if (Selected is not { } s) return;
+        if (_preview == s.Path && IsPreviewing(s)) { Count(s); _preview = null; }
+        else if (!IsPreviewing(s)) Play(s);
     }
 
     /// <summary>A click on the waveform: jump there if it's playing, otherwise play from there.</summary>
@@ -836,6 +948,36 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if ((s ?? Selected) is { } x) Shell.Reveal(x.Path);
     }
 
+    /// <summary>
+    /// Puts the sound (or the selected one) into the project open in Bitwig, in a Sampler on a new track named after
+    /// it. Bitwig needs the Music Organiser extension with "Let the app make changes" on.
+    /// </summary>
+    [RelayCommand]
+    async Task ToBitwig(Sound? s)
+    {
+        if ((s ?? Selected) is not { } sound) return;
+        var card = Activities.Start($"Putting {sound.Name} into Bitwig", "On a Sampler, on a new track");
+        try
+        {
+            using var link = await BitwigLink.ConnectAsync();
+            var sent = await BitwigSend.SoundAsync(link, sound.Path, sound.Name);
+            if (sent.Problem is { } problem)
+            {
+                card.Fail($"{sound.Name} didn't go in cleanly", problem + ".");
+                Message = $"{problem}.";
+                return;
+            }
+            card.Finish($"{sound.Name} is in Bitwig", "On a Sampler, on a new track");
+            Record([sound], SoundEvent.Send);
+        }
+        catch (DawLinkException e) { card.Fail("Couldn't put it into Bitwig", e.Message); Message = e.Message; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            card.Fail("Couldn't put it into Bitwig", e.Message);
+            Message = $"Sending to Bitwig failed: {e.Message}";
+        }
+    }
+
     [RelayCommand]
     void Select(Sound? s)
     {
@@ -850,7 +992,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if (Selected is not { } s) return;
         s.Favourite = !s.Favourite;
         Org.Library.SetFavourite(s.Id, s.Favourite);
-        Score();
+        Rescore([s]);
         OnPropertyChanged(nameof(Selected));
         Refresh();
     }
@@ -972,9 +1114,16 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             return;
         }
         var count = 0;
-        await RunAsync("Scanning sample folders", (p, ct) => count = Org.Scan(folders, p, ct),
+        List<long> arrived = [];
+        await RunAsync("Scanning sample folders", (p, ct) =>
+        {
+            var before = Org.Sounds.Select(s => s.Id).ToHashSet();
+            count = Org.Scan(folders, p, ct);
+            if (count > 0) arrived = Org.Sounds.Where(s => !before.Contains(s.Id)).Select(s => s.Id).ToList();
+        },
                        () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"Analysed {count:N0} new or changed sounds"), always: false);
         if (count > 0) Message = $"Analysed {count:N0} new or changed sounds.";
+        if (count > 0) await ListenToArrivals(arrived);
         if (count > 0 || IsGalaxy) await MapGalaxyIfNeeded();
     }
 
@@ -1109,6 +1258,10 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     [ObservableProperty] string _type = "Any type";
     [ObservableProperty] double _adventure = 0.3;
     [ObservableProperty] bool _includeRarelyUsed;
+    /// <summary>How many sounds a shuffle picks: the last number picked here or in Settings › Sounds.</summary>
+    [ObservableProperty] int _howMany = int.TryParse(parent.Db.GetSetting(HowManyKey), out var n) && HowManyChoices.Contains(n) ? n : 60;
+    public const string HowManyKey = "rediscover_count";
+    public static IReadOnlyList<int> HowManyChoices { get; } = [30, 60, 120, 250];
     [ObservableProperty] IReadOnlyList<Suggestion> _suggestions = [];
     [ObservableProperty] IReadOnlyList<FolderUse> _folders = [];
     [ObservableProperty] string _intro = "";
@@ -1121,7 +1274,8 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     [RelayCommand]
     async Task Shuffle()
     {
-        var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, 30, Adventure, 0, IncludeRarelyUsed ? 1 : 0);
+        _changes++;   // whatever was waiting to shuffle is covered by this one
+        var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, HowMany, Adventure, 0, IncludeRarelyUsed ? 1 : 0);
         var org = parent.Org;
         IsBusy = true;
         Intro = $"Looking through {org.Sounds.Count:N0} sounds…";
@@ -1156,6 +1310,29 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
             AppLog.Info("Rediscover", $"Failed: {e}");
         }
         finally { IsBusy = false; }
+    }
+
+    /// <summary>How long after the last change (a slider still moving) the list shuffles again.</summary>
+    public static TimeSpan ShuffleDelay { get; set; } = TimeSpan.FromMilliseconds(400);
+    int _changes;
+
+    // Once there's a list, changing what it's picked by picks it again, so the slider visibly does something.
+    partial void OnTypeChanged(string value) => ShuffleSoon();
+    partial void OnAdventureChanged(double value) => ShuffleSoon();
+    partial void OnIncludeRarelyUsedChanged(bool value) => ShuffleSoon();
+    partial void OnHowManyChanged(int value)
+    {
+        parent.Db.SetSetting(HowManyKey, value.ToString());
+        ShuffleSoon();
+    }
+
+    async void ShuffleSoon()
+    {
+        if (Suggestions.Count == 0 && !IsBusy) return;   // nothing picked yet: Shuffle starts it
+        var mine = ++_changes;
+        if (ShuffleDelay > TimeSpan.Zero) await Task.Delay(ShuffleDelay);
+        while (IsBusy && mine == _changes) await Task.Delay(50);
+        if (mine == _changes) await Shuffle();
     }
 }
 

@@ -46,7 +46,7 @@ public sealed class FolderWatch : IDisposable
                     NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
                     InternalBufferSize = 64 * 1024,   // the most Windows allows for a folder on another computer
                 };
-                w.Created += (_, e) => Touched(e.FullPath);
+                w.Created += (_, e) => Appeared(e.FullPath, folder);
                 w.Changed += (_, e) => Touched(e.FullPath);
                 w.Deleted += (_, e) => Gone(e.FullPath, folder);
                 w.Renamed += (_, e) => Renamed(e.OldFullPath, e.FullPath, folder);
@@ -70,12 +70,43 @@ public sealed class FolderWatch : IDisposable
         if (_wanted(path)) Add(path, null);
     }
 
+    /// <summary>The most files a folder moved in is listed by; past that the watched folder is walked instead.</summary>
+    const int MovedInLimit = 5000;
+
+    void Appeared(string path, string root)
+    {
+        if (!Directory.Exists(path))
+        {
+            Touched(path);
+            return;
+        }
+        // A folder moved in from outside arrives whole, as one "created": its files aren't named one by one, so list
+        // them (a folder made empty reports its files itself as they're added, and lists as nothing here).
+        try
+        {
+            var files = Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Where(_wanted).Take(MovedInLimit + 1).ToList();
+            if (files.Count > MovedInLimit) Add(null, root);
+            else foreach (var f in files) Add(f, null);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Add(null, root); }
+    }
+
     void Gone(string path, string root)
     {
         if (_wanted(path)) Add(path, null);
-        // A folder deleted: its files aren't named one by one (and it can't be told from a file any more, except by
-        // having no extension, as folders usually do).
-        else if (!Path.HasExtension(path)) Add(null, root);
+        // A folder deleted: its files aren't named one by one, and it can't be told from a file any more except by
+        // its name: no extension, or a "Vol.2" or "Drums. Dry" kind of dot rather than a short file type.
+        else if (LooksLikeFolder(path)) Add(null, root);
+    }
+
+    /// <summary>
+    /// Whether a path that's gone was more likely a folder than a file: a file type is a dot then a short run of letters
+    /// and digits starting with a letter (.wav, .mp3, .asd), so anything else after the last dot is part of a name.
+    /// </summary>
+    public static bool LooksLikeFolder(string path)
+    {
+        var ext = Path.GetExtension(path);
+        return ext.Length is < 2 or > 6 || !char.IsAsciiLetter(ext[1]) || !ext.Skip(1).All(char.IsAsciiLetterOrDigit);
     }
 
     void Renamed(string from, string to, string root)

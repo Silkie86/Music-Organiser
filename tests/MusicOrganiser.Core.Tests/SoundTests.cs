@@ -526,6 +526,47 @@ public class LearningTests
     }
 }
 
+public class GalaxySavedMapTests
+{
+    [Fact]
+    public void Each_kind_of_placing_keeps_its_own_map_and_an_old_single_map_moves_across()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-maps-").FullName;
+        var path = Path.Combine(root, "sounds.db");
+        long a, b;
+        using (var lib = new SoundLibrary(path))
+        {
+            lib.Save(new[] { "/lib/A.wav", "/lib/B.wav" }.Select(p => new SoundLibrary.Analysed(p, 1, 1,
+                new SoundAnalysis { Features = [1, 0, 0] }, null, null, "Kick")));
+            var ids = lib.All().ToDictionary(s => s.Name, s => s.Id);
+            (a, b) = (ids["A"], ids["B"]);
+            lib.SaveMap("clap", new Dictionary<long, StarPoint> { [a] = new(0.1f, 0.2f), [b] = new(0.3f, 0.4f) }, replace: true);
+            lib.SaveMap("features", new Dictionary<long, StarPoint> { [a] = new(0.9f, 0.8f) }, replace: true);
+            // A fresh layout of one kind leaves the other's alone.
+            lib.SaveMap("features", new Dictionary<long, StarPoint> { [b] = new(0.5f, 0.5f) }, replace: true);
+            Assert.Equal(new StarPoint(0.1f, 0.2f), lib.Map("clap")[a]);
+            Assert.Equal([b], lib.Map("features").Keys);
+            Assert.Empty(lib.Map("clap+features"));
+
+            // A library from before: one map, made by the kind the old setting names.
+            lib.SetSetting("galaxy_space", "clap+features");
+        }
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"CREATE TABLE sound_map (sound_id INTEGER PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL); INSERT INTO sound_map VALUES ({a}, 0.25, 0.75);";
+            cmd.ExecuteNonQuery();
+        }
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        using (var lib = new SoundLibrary(path))
+        {
+            Assert.Equal(new StarPoint(0.25f, 0.75f), lib.Map("clap+features")[a]);
+            Assert.Equal(2, lib.Map("clap").Count);
+        }
+    }
+}
+
 public class GalaxyMapTests
 {
     // Three families of 20 sounds (kicks, hats, pads), each a noisy copy of its own fingerprint.
@@ -585,6 +626,28 @@ public class GalaxyMapTests
     }
 }
 
+public class SoundUsageTests
+{
+    [Fact]
+    public void A_file_name_many_packs_share_gets_no_credit_from_projects_that_store_only_the_name()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-usage-").FullName;
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        var paths = new[] { "/lib/Pack A/01.wav", "/lib/Pack B/01.wav", "/lib/Pack C/Snare Tight.wav" };
+        lib.Save(paths.Select(p => new SoundLibrary.Analysed(p, 1, 1,
+            new SoundAnalysis { Seconds = 0.5, Features = new float[40] }, null, null, "Kick")));
+        using var org = new SoundOrganiser(lib);
+
+        // A Bitwig project's collected copies are listed by name only.
+        org.ApplyUsage([("01.wav", 40), ("Snare Tight.wav", 2), ("/lib/Pack B/01.wav", 3)]);
+
+        int Used(string path) => org.Sounds.Single(s => s.Path == path).UsedIn;
+        Assert.Equal(0, Used("/lib/Pack A/01.wav"));   // which "01.wav" those 40 projects used can't be told
+        Assert.Equal(3, Used("/lib/Pack B/01.wav"));   // a full path still counts
+        Assert.Equal(2, Used("/lib/Pack C/Snare Tight.wav"));   // a name only one sound has still counts
+    }
+}
+
 public class RediscoverScaleTests
 {
     [Fact]
@@ -608,5 +671,33 @@ public class RediscoverScaleTests
         Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
         Assert.Equal(200, folders.Count);
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"Took {clock.Elapsed.TotalSeconds:0.0} s");
+
+        // The longest list on offer is still quick.
+        clock.Restart();
+        Assert.Equal(250, Rediscover.Suggest(org, new Rediscover.Options(Count: 250, Seed: 1)).Count);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"250 took {clock.Elapsed.TotalSeconds:0.0} s");
+    }
+}
+
+public class VectorIndexTests
+{
+    [Fact]
+    public void Nearest_finds_the_same_closest_vectors_as_comparing_every_one_by_hand()
+    {
+        var rng = new Random(3);
+        var vectors = Enumerable.Range(1, 20_000).ToDictionary(i => (long)i,
+            _ => Enumerable.Range(0, 37).Select(_ => (float)(rng.NextDouble() - 0.5)).ToArray());
+        var index = VectorIndex.Build(vectors, standardise: false);
+        var query = index.Get(42)!;
+
+        var expected = index.Units.Select(kv => (kv.Key, VectorIndex.Dot(query, kv.Value)))
+                            .OrderByDescending(t => t.Item2).Take(25).Select(t => t.Key).ToList();
+        var found = index.Nearest(query, 25);
+        Assert.Equal(expected, found.Select(f => f.Id));
+        Assert.Equal(42, found[0].Id);
+        Assert.Equal(1.0, found[0].Score, 4);
+        Assert.Equal(found.Select(f => f.Score).OrderByDescending(x => x), found.Select(f => f.Score));
+        Assert.Equal(3, index.Nearest(query, 3).Count);
+        Assert.Empty(index.Nearest(query, 0));
     }
 }

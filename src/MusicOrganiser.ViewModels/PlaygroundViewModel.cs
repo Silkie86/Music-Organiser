@@ -36,7 +36,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _db = db;
         _main = main;
         _store = store ?? new PlaygroundStore(Path.Combine(main.DataFolder, "playground"));
-        _session = _store.LoadCurrent();
+        LoadOptions();
+        _session = _store.HasCurrent ? _store.LoadCurrent() : Fresh();
         RoleChips = new[] { MidiRoles.Chords, MidiRoles.Bass, MidiRoles.Melody, MidiRoles.Arp, MidiRoles.Drums }
             .Select(r => new RoleChip(MidiRoles.Plural(r), r)).ToList();
         _suggestRole = RoleChips[0];
@@ -137,13 +138,75 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         RefreshEnergy();
     }
 
+    // ---- options (Settings › Playground) ----
+
+    public const string SuggestCountKey = "playground_suggestions", GrowBarsKey = "playground_grow_bars", SmoothKey = "playground_smooth",
+                        NewTempoKey = "playground_new_tempo", NewBarsKey = "playground_new_bars", NewStyleKey = "playground_new_style",
+                        UndoStepsKey = "playground_undo_steps";
+    public const string JazzGospel = "Jazz and gospel", Classical = "Classical";
+    public static IReadOnlyList<int> SuggestCountChoices { get; } = [30, 60, 100, 200];
+    public static IReadOnlyList<int> GrowBarsChoices { get; } = [4, 8, 16, 32, 64];
+    public static IReadOnlyList<int> NewTempoChoices { get; } = [60, 70, 80, 85, 90, 95, 100, 110, 120, 130, 140, 160, 174];
+    public static IReadOnlyList<int> NewBarsChoices { get; } = [2, 4, 8, 16];
+    public static IReadOnlyList<string> StyleChoices { get; } = [JazzGospel, Classical];
+    public static IReadOnlyList<int> UndoStepsChoices { get; } = [30, 60, 120, 250];
+
+    /// <summary>How many parts Suggest lists, best first.</summary>
+    [ObservableProperty] int _suggestCount = 60;
+    /// <summary>The longest a part brought in can make the section (a longer part is cut there).</summary>
+    [ObservableProperty] int _growBars = 16;
+    /// <summary>What a new idea starts with: tempo, bars in its first section, and which ears judge its harmony.</summary>
+    [ObservableProperty] int _newTempo = 90;
+    [ObservableProperty] int _newBars = 4;
+    [ObservableProperty] string _newStyle = JazzGospel;
+    /// <summary>How many changes Undo can go back.</summary>
+    [ObservableProperty] int _undoSteps = 60;
+
+    bool _loadingOptions;
+
+    void LoadOptions()
+    {
+        _loadingOptions = true;
+        int Number(string key, IReadOnlyList<int> choices, int fallback) =>
+            int.TryParse(_db.GetSetting(key), out var n) && choices.Contains(n) ? n : fallback;
+        SuggestCount = Number(SuggestCountKey, SuggestCountChoices, 60);
+        GrowBars = Number(GrowBarsKey, GrowBarsChoices, 16);
+        NewTempo = Number(NewTempoKey, NewTempoChoices, 90);
+        NewBars = Number(NewBarsKey, NewBarsChoices, 4);
+        UndoSteps = Number(UndoStepsKey, UndoStepsChoices, 60);
+        NewStyle = _db.GetSetting(NewStyleKey) == Classical ? Classical : JazzGospel;
+        SmoothIncoming = _db.GetSetting(SmoothKey) != "0";
+        _loadingOptions = false;
+    }
+
+    void SaveOption(string key, string value)
+    {
+        if (!_loadingOptions) _db.SetSetting(key, value);
+    }
+
+    partial void OnSuggestCountChanged(int value) => SaveOption(SuggestCountKey, value.ToString());
+    partial void OnGrowBarsChanged(int value) => SaveOption(GrowBarsKey, value.ToString());
+    partial void OnNewTempoChanged(int value) => SaveOption(NewTempoKey, value.ToString());
+    partial void OnNewBarsChanged(int value) => SaveOption(NewBarsKey, value.ToString());
+    partial void OnNewStyleChanged(string value) => SaveOption(NewStyleKey, value);
+    partial void OnUndoStepsChanged(int value) => SaveOption(UndoStepsKey, value.ToString());
+    partial void OnSmoothIncomingChanged(bool value) => SaveOption(SmoothKey, value ? "1" : "0");
+
+    /// <summary>A new, empty idea, started the way Settings › Playground says.</summary>
+    PlaygroundSession Fresh() => new()
+    {
+        Tempo = NewTempo,
+        Style = NewStyle == Classical ? HarmonyStyle.Classical : HarmonyStyle.JazzGospel,
+        Sections = [new PlaygroundSection { Bars = NewBars }],
+    };
+
     // ---- saving and undo ----
 
     /// <summary>Called before every change: remembers the idea as it was, for Undo.</summary>
     void Remember()
     {
         _undo.Add(_session.ToJson());
-        if (_undo.Count > 60) _undo.RemoveAt(0);
+        while (_undo.Count > UndoSteps) _undo.RemoveAt(0);
         _redo.Clear();
         CanUndo = true;
         CanRedo = false;
@@ -200,7 +263,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             return;
         Remember();
         StopPlaying();
-        _session = new PlaygroundSession();
+        _session = Fresh();
         Show();
         Changed(harmony: false);
     }
@@ -454,8 +517,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var name = title ?? (entry.Title.Length > 0 ? entry.Title : entry.SourceName);
         // A part longer than the section grows it (up to 16 bars), so nothing is cut off.
         var bars = PhraseAnalyser.BarsOf(notes);
-        if (Section.Layers.Count == 0 && Section.Chart.Length == 0) Section.Bars = Math.Clamp(bars, 1, 16);
-        else if (bars > Section.Bars) Section.Bars = Math.Min(16, bars);
+        if (Section.Layers.Count == 0 && Section.Chart.Length == 0) Section.Bars = Math.Clamp(bars, 1, GrowBars);
+        else if (bars > Section.Bars) Section.Bars = Math.Max(Section.Bars, Math.Min(GrowBars, bars));
         var looped = SectionMatcher.Loop(notes, Math.Max(1, bars) * (long)Bar, Section.Length);
         // Chord parts come in turned into their smoothest inversions, sitting with the chords already here.
         var smoothed = SmoothIncoming && entry.Role == MidiRoles.Chords ? Inversions.Smooth(looped, ChordCentre(null)) : looped;
@@ -896,7 +959,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var role = SuggestRole.Role;
             var text = SuggestSearch.Trim();
             var feel = Section.Feel;
-            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, text, 60, cts.Token, feel));
+            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, text, SuggestCount, cts.Token, feel));
             if (cts.IsCancellationRequested) return;
             Matches.Clear();
             foreach (var m in found) Matches.Add(new PlaygroundMatchRow(this, m));

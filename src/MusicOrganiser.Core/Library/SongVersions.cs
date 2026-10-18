@@ -31,7 +31,7 @@ public static partial class SongVersions
     private static partial Regex Numbered();
 
     /// <summary>Fix's copies: "Didums_70 (fixed)", "Didums_70 (fixed 2)".</summary>
-    [GeneratedRegex(@"\s*\(fixed(\s+\d+)?\)$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(\s*\(fixed(\s+\d+)?\))+$", RegexOptions.IgnoreCase)]
     private static partial Regex FixedTail();
 
     /// <summary>
@@ -48,7 +48,9 @@ public static partial class SongVersions
     }
 
     /// <summary>A gap this long between two saves (Solomon's pick: 3 months) starts a new run.</summary>
-    public const int RunGapMonths = 3;
+    public const int DefaultRunGapMonths = 3;
+    /// <summary>The gap the app uses: Settings › Projects can change it.</summary>
+    public static int RunGapMonths { get; set; } = DefaultRunGapMonths;
 
     /// <summary>
     /// When the song was first made: its oldest save, or the date its file records (FL Studio keeps it through
@@ -64,13 +66,14 @@ public static partial class SongVersions
     /// The saves split into working periods, oldest first: a gap of <see cref="RunGapMonths"/> months or more
     /// between two saves starts a new one. Moved files are left out, since they can't be opened.
     /// </summary>
-    public static IReadOnlyList<SaveRun> Runs(IEnumerable<ProjectSummary> saves)
+    public static IReadOnlyList<SaveRun> Runs(IEnumerable<ProjectSummary> saves, int? gapMonths = null)
     {
+        var gap = gapMonths ?? RunGapMonths;
         var ordered = saves.Where(s => !s.FileMissing).OrderBy(s => s.Modified).ThenBy(s => Split(s.Name).Number).ToList();
         var runs = new List<List<ProjectSummary>>();
         foreach (var save in ordered)
         {
-            if (runs.Count == 0 || save.Modified >= runs[^1][^1].Modified.AddMonths(RunGapMonths)) runs.Add([]);
+            if (runs.Count == 0 || save.Modified >= runs[^1][^1].Modified.AddMonths(gap)) runs.Add([]);
             runs[^1].Add(save);
         }
         var original = runs.Count > 0 ? runs[0][^1] : null;
@@ -140,5 +143,19 @@ public static partial class SongVersions
                                .ToList();
                 return new SongGroup(Split(ordered[0].Name).Song, ordered[0], ordered.Skip(1).ToList());
             })
+            .ToList();
+
+    /// <summary>
+    /// Saves grouped into songs the way <see cref="Group"/> does, newest song first. Each keeps its highest-numbered save
+    /// in the list (ties go to the most recent), so a plugin's song shows the last save that still used it.
+    /// </summary>
+    public static IReadOnlyList<SongUse> Songs(IEnumerable<PluginProject> saves) =>
+        saves.GroupBy(p => Key(p.Folder, p.Daw, p.Name))
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(p => Split(p.Name).Number).ThenByDescending(p => p.Saved).First();
+                return new SongUse(Split(latest.Name).Song, latest, g.Count());
+            })
+            .OrderByDescending(s => s.Latest.Saved).ThenBy(s => s.Song, StringComparer.OrdinalIgnoreCase)
             .ToList();
 }

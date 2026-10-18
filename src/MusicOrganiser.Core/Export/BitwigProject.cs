@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 using MusicOrganiser.Core.Sounds;
 using static MusicOrganiser.Core.Parsers.BitwigFormat;
 
@@ -31,7 +32,10 @@ public static class BitwigProject
     public sealed record SampleFile(long Bytes, byte[] Md5, int Rate, int Channels, double Seconds);
 
     /// <param name="Notes">What couldn't come across.</param>
-    /// <param name="Upgraded">The synths swapped for newer versions: each channel's name and the older synth's own settings.</param>
+    /// <param name="Upgraded">
+    /// The synths swapped for newer versions: the name to save each under (its channel's, numbered when channels share
+    /// one) and the older synth's own settings.
+    /// </param>
     public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<(string Channel, PresetBlob Sound)>? Upgraded = null);
 
     const string SamplerId = "468bc14b-b2e7-45a1-9666-e83117fe404e";
@@ -94,12 +98,16 @@ public static class BitwigProject
     /// clip, as on a plugin track. Otherwise they also end when their sample does.
     /// </param>
     /// <param name="upgrade">
-    /// An older version of the template's VST3 synth (Serum for the template's Serum 2) is swapped for the template's,
-    /// with the old one's settings handed to it. Whether the newer version takes them is up to the plugin.
+    /// An older version of the template's VST3 synth (Serum for the template's Serum 2) is swapped for the template's.
+    /// Serum 1's sounds are translated for Serum 2 (<see cref="Serum1To2"/>); others open at the newer one's default.
+    /// </param>
+    /// <param name="serumAudio">
+    /// Finds Serum 1's wavetables for the translation; Serum's own folders (<see cref="Serum1To2.XferAudio"/>) unless given.
     /// </param>
     public static Result FromFl(FlSong song, byte[] template, Func<string, SampleFile?>? readSample = null, bool stepsUntilNextNote = false,
-                                bool upgrade = false)
+                                bool upgrade = false, Func<string, Serum1To2.AudioInfo?>? serumAudio = null)
     {
+        serumAudio ??= Serum1To2.XferAudio();
         readSample ??= ReadSample;
         var t = new Template(template);
         var notes = new List<string>();
@@ -207,15 +215,26 @@ public static class BitwigProject
             else
             {
                 var instrument = upgrade && Upgrade(c.Instrument, t) is { } newer ? newer : c.Instrument;
-                if (instrument != c.Instrument)
+                var swapped = instrument != c.Instrument;
+                if (swapped)
                 {
                     upgraded.Add(c.Index);
-                    sounds.Add((c.Name, c.Instrument.State!));
-                    notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, which opens with its default sound. To get the old sound back, " +
-                              $"load \"{c.Name} ({c.Instrument.Name})\" in {instrument.Name}'s preset browser, from the \"{UpgradedFolder}\" folder saved next to this project");
+                    // Channels often share a name ("Serum" twice): each gets its own file, numbered.
+                    var saveAs = c.Name;
+                    for (var n = 2; sounds.Any(s => s.Channel.Equals(saveAs, StringComparison.OrdinalIgnoreCase)); n++) saveAs = $"{c.Name} ({n})";
+                    sounds.Add((saveAs, c.Instrument.State!));
+                    var backup = $"The original is saved as \"{saveAs} ({c.Instrument.Name})\" in the \"{UpgradedFolder}\" folder next to this project, " +
+                                 $"to load in {instrument.Name}'s preset browser";
+                    if (Translate(c.Instrument, instrument, serumAudio) is var (state, rough))
+                    {
+                        instrument = instrument with { State = state };
+                        notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, with its sound translated" +
+                                  (rough.Count > 0 ? $" (only roughly: {Serum1To2.Describe(rough)})" : "") + $". {backup}");
+                    }
+                    else notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, which opens with its default sound. {backup}");
                 }
                 track = t.Copy(instrument.Format == "VST2" ? t.Vst2Track : t.Vst3Track);
-                if (Plugin(instrument, Instrument, skipped, fresh: instrument != c.Instrument) is { } plugin)
+                if (Plugin(instrument, Instrument, skipped, fresh: swapped) is { } plugin)
                 {
                     instruments[c.Index] = (plugin, instrument);
                     // FL plays a plugin's root key as C5, so a moved root key transposes it, as does the pitch knob.
@@ -351,20 +370,35 @@ public static class BitwigProject
 
     /// <summary>
     /// The template's VST3 synth in place of an older version of it (Serum 2 for Serum, by name with the version left
-    /// off), at its default sound. The older one's settings aren't handed to it: Serum 2 refuses Serum's as its own
-    /// state and then won't load at all (seen on Solomon's PC), but its browser opens Serum's presets, so the old
-    /// sound is saved as one beside the project instead. Null when it isn't an older version, or has no sound to save.
+    /// off), with no settings yet. The older one's settings can't be handed to it as they are: Serum 2 refuses Serum's
+    /// as its own state and then won't load at all (seen on Solomon's PC). So the old sound is translated where the
+    /// app can (<see cref="Translate"/>), and also saved beside the project, since Serum 2's browser opens Serum's
+    /// presets. Null when it isn't an older version (a project's Kontakt 8 stays, beside a template's Kontakt 7), or has
+    /// no sound to save.
     /// </summary>
     static FlPlugin? Upgrade(FlPlugin p, Template t)
     {
         var newer = Def(t.Vst3Device)!;
         var name = newer.Str(0x9a);
         if (p.Native || p.State is null || name.Length == 0 || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
-            PluginCatalog.Family(p.Name) != PluginCatalog.Family(name) || newer[0xce4] is not string classId || classId.Length != 32)
+            PluginCatalog.Family(p.Name) != PluginCatalog.Family(name) || PluginCatalog.VersionOf(name) <= PluginCatalog.VersionOf(p.Name) ||
+            newer[0xce4] is not string classId || classId.Length != 32)
             return null;
         var path = newer.Obj(0xc5a)?[0xc5b] is List<object?> { Count: > 0 } location && newer.Obj(0xc5a)!.Resolve(location[0]) is { } file
             ? file.Str(0x3b) : "";
         return new FlPlugin(name, newer.Str(0x9b), "VST3", classId, null, path);
+    }
+
+    /// <summary>
+    /// The older synth's sound for the newer one, when the app can translate it (Serum 1's for Serum 2, which won't
+    /// take Serum 1's as its own), as a VST3 preset; and what came across only roughly. Null otherwise.
+    /// </summary>
+    static (PresetBlob State, IReadOnlyList<string> Rough)? Translate(FlPlugin older, FlPlugin newer, Func<string, Serum1To2.AudioInfo?>? audio)
+    {
+        if (!newer.Name.Contains('2') || older.State is not { } state || Serum1State.Read(state.Data) is not { } serum1) return null;
+        var result = Serum1To2.Translate(serum1, audio);
+        // Bitwig hands Serum 2 the component state; its controller rebuilds its own from that.
+        return (new PresetBlob(state.Name, newer.Name, ".vstpreset", VstPreset.Build(newer.DeviceId, result.State.Write(), [])), result.Rough);
     }
 
     /// <summary>

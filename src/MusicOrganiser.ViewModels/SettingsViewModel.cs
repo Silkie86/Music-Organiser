@@ -94,6 +94,30 @@ public sealed partial class SettingsViewModel : ObservableObject
     public AppearanceViewModel Appearance { get; }
     /// <summary>How Sounds › Most liked weighs things.</summary>
     public LikedSettingsViewModel Liked { get; }
+    /// <summary>The Sounds and Plugins pages, whose numbers (how many to show, how long a star plays) Settings can change.</summary>
+    public SoundsViewModel SoundLab => _main.Sounds;
+    public PluginsViewModel PluginsPage => _main.Plugins;
+    /// <summary>The Playground, whose numbers (how many suggestions, how a new idea starts) Settings can change.</summary>
+    public PlaygroundViewModel PlaygroundPage => _main.Playground;
+    /// <summary>The live tests with Bitwig, on the Developer tab.</summary>
+    public LiveTestsViewModel LiveTests { get; }
+
+    public const string RunGapKey = "version_gap_months";
+    public static IReadOnlyList<int> RunGapChoices { get; } = [1, 2, 3, 6, 12];
+    /// <summary>Saves this many months apart count as separate versions of a song (the Open button's older versions).</summary>
+    [ObservableProperty] int _runGapMonths;
+
+    partial void OnRunGapMonthsChanged(int value)
+    {
+        SongVersions.RunGapMonths = value;
+        _db.SetSetting(RunGapKey, value.ToString());
+    }
+
+    /// <summary>The app's own folder: its database, logs and reports.</summary>
+    public string DataFolder => _main.DataFolder;
+
+    [RelayCommand]
+    void OpenDataFolder() => Shell.Open(_main.DataFolder);
 
     public SettingsViewModel(LibraryDb db, MainViewModel main, string? dataFolder = null)
     {
@@ -113,6 +137,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _stepsUntilNextNote = db.GetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey) == "1";
         _upgradeSynths = db.GetSetting(ProjectDetailViewModel.UpgradeSynthsKey) == "1";
         _performance = Parallelism.Mode.ToString();
+        _runGapMonths = SongVersions.RunGapMonths =
+            int.TryParse(db.GetSetting(RunGapKey), out var gap) && gap > 0 ? gap : SongVersions.DefaultRunGapMonths;
         _startPage = db.GetSetting(StartPageKey) is { } start ? start == "Samples" ? "Sound Lab" : start : "Projects";   // Samples is on the Sounds page now
         if (!StartPageChoices.Contains(_startPage)) _startPage = "Projects";
         UpdateSampleIndexText();
@@ -127,6 +153,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             var options = LiveTestOptions() with { ReportFolder = folder };
             return Task.Run(() => BitwigLiveTests.RunAsync(options, progress, ct));
         });
+        LiveTests = liveTests;
         var flPort = new FlPortSetting(db);
         SoundOutput = new SoundOutputSetting(db, Ui.Current.SoundOutputs);
         Links =

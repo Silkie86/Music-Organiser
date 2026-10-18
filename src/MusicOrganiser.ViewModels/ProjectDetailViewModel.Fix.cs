@@ -13,9 +13,13 @@ public sealed partial class ProjectDetailViewModel
 {
     /// <summary>Setting that remembers a fixed copy still waiting for "did it load correctly?", by the original's path.</summary>
     public static string FixCheckKey(string projectPath) => $"fix_check:{projectPath}";
+    /// <summary>Set once the waiting fixed copy has been opened, so Keep and Delete still show after the page reloads.</summary>
+    public static string FixOpenedKey(string projectPath) => $"fix_opened:{projectPath}";
 
-    /// <summary>Whether this project has something missing and is a kind Fix can write.</summary>
-    public bool CanFix => Item.HasMissing && !Item.FileMissing && ProjectFixer.CanWrite(Item.Path);
+    /// <summary>Whether this project has something missing, or a Serum to swap for Serum 2, and is a kind Fix can write.</summary>
+    public bool CanFix => (Item.HasMissing || _canSwapSerum) && !Item.FileMissing && ProjectFixer.CanWrite(Item.Path);
+
+    readonly bool _canSwapSerum;
 
     /// <summary>The preview's lines, while it's open.</summary>
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsFixOpen))] IReadOnlyList<FixRow> _fixRows = [];
@@ -23,7 +27,9 @@ public sealed partial class ProjectDetailViewModel
     [ObservableProperty] string _fixSummary = "";
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(FixButtonText))] bool _fixBusy;
     public string FixButtonText => FixBusy ? "Looking…" : "Fix…";
-    public string FixTip => $"{Item.MissingText} missing, so it will open with gaps. Fix finds what it can on your drives and saves a repaired copy next to the original.";
+    public string FixTip => Item.HasMissing
+        ? $"{Item.MissingText} missing, so it will open with gaps. Fix finds what it can on your drives and saves a repaired copy next to the original."
+        : "Fix can swap Serum for Serum 2 in a copy next to the original, with Serum's sound translated.";
     [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SaveFixedCommand))] int _fixTicked;
 
     public string FixedName => System.IO.Path.GetFileName(ProjectFixer.FixedPath(Item.Path));
@@ -37,7 +43,7 @@ public sealed partial class ProjectDetailViewModel
         ? $"Did {System.IO.Path.GetFileNameWithoutExtension(PendingFix)} load correctly in {Item.Daw}?"
         : $"{System.IO.Path.GetFileName(PendingFix)} is saved next to the original.";
     public string PendingFixDetail => PendingFixOpened
-        ? "Keep it if the samples play. If it didn't load right, delete it: the original was never changed."
+        ? "Keep it if it plays right. If it didn't load right, delete it: the original was never changed."
         : $"Open it in {Item.Daw} to check it, then say whether it loaded correctly.";
 
     /// <summary>The save the waiting fixed copy was made from (its setting is kept under that path).</summary>
@@ -54,6 +60,7 @@ public sealed partial class ProjectDetailViewModel
             {
                 _pendingFrom = from;
                 PendingFix = pending;
+                PendingFixOpened = _db.GetSetting(FixOpenedKey(from)) == pending;
                 return;
             }
     }
@@ -78,11 +85,12 @@ public sealed partial class ProjectDetailViewModel
             var rows = lines.Select(l => new FixRow(l, this)).ToList();
             FixRows = rows;
             CountTicked();
-            var relink = lines.Count(l => l.Action == FixAction.Relink);
-            var suggest = lines.Count(l => l.Action == FixAction.Suggestion);
+            var relink = lines.Count(l => l.Action == FixAction.Relink && !l.IsSwap);
+            var suggest = lines.Count(l => l.Action == FixAction.Suggestion && !l.IsSwap);
             var still = lines.Count(l => l.Action == FixAction.StillMissing);
             FixSummary = string.Join(" · ", new[]
             {
+                lines.Any(l => l.IsSwap) ? "Serum can be swapped for Serum 2" : null,
                 relink > 0 ? $"{relink} found" : null,
                 suggest > 0 ? $"{suggest} to choose" : null,
                 still > 0 ? $"{still} still missing" : null,
@@ -107,18 +115,33 @@ public sealed partial class ProjectDetailViewModel
         var use = FixRows.Where(r => r.CanTick && r.Ticked).Select(r => r.ToWrite).ToList();
         if (use.Count == 0) return;
         FixBusy = true;
-        var card = Activities.Start($"Fixing {Item.Name}", $"Relinking {SampleCount(use.Count)} in a copy");
+        var samples = use.Count(l => l.IsSample);
+        var doing = string.Join(" and ", new[]
+        {
+            samples > 0 ? $"relinking {SampleCount(samples)}" : null,
+            use.Any(l => l.IsSwap) ? "swapping Serum for Serum 2" : null,
+        }.OfType<string>());
+        var card = Activities.Start($"Fixing {Item.Name}", $"{char.ToUpper(doing[0])}{doing[1..]} in a copy");
         try
         {
             var path = Item.Path;
-            var (file, _) = await Task.Run(() => ProjectFixer.Write(path, use));
+            var result = await Task.Run(() => ProjectFixer.Write(path, use));
+            var file = result.Path;
             _db.SetSetting(FixCheckKey(path), file);
             _pendingFrom = path;
             PendingFix = file;
             PendingFixOpened = false;
             FixRows = [];
-            card.Finish($"Saved {System.IO.Path.GetFileName(file)}",
-                        $"Relinked {SampleCount(use.Count)}. Open it to check it loads.", "Open it", OpenFixed);
+            var done = string.Join(" ", new[]
+            {
+                result.Relinked > 0 ? $"Relinked {SampleCount(result.Relinked)}." : null,
+                result.Notes.Count > 0 ? string.Join(" ", result.Notes) : null,
+                "Open it to check it loads.",
+            }.OfType<string>());
+            // The page reloads just below and this song gets a new panel: the card's button opens the copy from whichever
+            // panel shows it then, so its Keep and Delete buttons appear.
+            card.Finish($"Saved {System.IO.Path.GetFileName(file)}", done, "Open it",
+                () => (_main.Projects.Detail is { } now && now.PendingFix == file ? now : this).OpenFixed());
             // List it straight away as the song's newest save, so it can be found again after leaving the page.
             await Task.Run(() => _db.Upsert(Scanner.Analyse(file)));
             await _main.Projects.ReloadAsync();
@@ -157,6 +180,7 @@ public sealed partial class ProjectDetailViewModel
             return;
         }
         PendingFixOpened = true;
+        if (_pendingFrom is { } from) _db.SetSetting(FixOpenedKey(from), file);
         Activities.Done($"Opening {System.IO.Path.GetFileNameWithoutExtension(file)}", $"Sent to {Item.Daw}. Then say here whether it loaded correctly.");
     }
 
@@ -193,6 +217,7 @@ public sealed partial class ProjectDetailViewModel
     void ForgetFix()
     {
         _db.SetSetting(FixCheckKey(_pendingFrom ?? Item.Path), "");
+        _db.SetSetting(FixOpenedKey(_pendingFrom ?? Item.Path), "");
         _pendingFrom = null;
         PendingFix = null;
         PendingFixOpened = false;
@@ -228,8 +253,8 @@ public sealed partial class FixRow : ObservableObject
     /// <summary>The line as it will be written, with the file you picked.</summary>
     public FixLine ToWrite => Line with { Use = Chosen };
     public string KindText => Line.IsSample ? "Sample" : "Plugin";
-    /// <summary>"Relink", "Choose", "Swap by hand" or "Still missing", for the line's badge.</summary>
-    public string ActionText => Line.Action switch
+    /// <summary>"Relink", "Choose", "Swap", "Swap by hand" or "Still missing", for the line's badge.</summary>
+    public string ActionText => Line.IsSwap ? "Swap" : Line.Action switch
     {
         FixAction.Relink => "Relink",
         FixAction.Suggestion when Line.IsSample => "Choose",

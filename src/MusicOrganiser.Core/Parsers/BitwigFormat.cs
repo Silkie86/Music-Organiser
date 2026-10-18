@@ -26,7 +26,8 @@ public static partial class BitwigFormat
 {
     public sealed class BwObject
     {
-        public required int Class { get; init; }
+        /// <summary>The object's kind. Settable for the few kinds laid out the same, such as a VST2 and a VST3 plugin device.</summary>
+        public required int Class { get; set; }
         public List<(int Id, object? Value)> Fields { get; } = new();
         /// <summary>Each field's type byte, in step with <see cref="Fields"/>, so the object can be written back.</summary>
         public List<byte> Types { get; } = new();

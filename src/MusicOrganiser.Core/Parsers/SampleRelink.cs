@@ -9,47 +9,23 @@ public sealed partial class FlStudioReader
     /// A copy of an FL Studio project with sample paths pointed somewhere else. <paramref name="relink"/> maps a sample
     /// path, as the app lists it (with %FLStudioUserData% worked out), to the file to use instead. Only those sample
     /// events change; every other byte is copied as it was, and the FLdt chunk's length follows the new paths.
+    /// <c>CantWrite</c> lists the files an FL Studio older than 11.5 can't be pointed to: it keeps paths as one byte a
+    /// letter, so a letter outside Western European ones (Ł, ş, ア) would become "?". Those samples are left as they were.
     /// </summary>
-    public static (byte[] Data, int Changed) RelinkSamples(byte[] raw, string projectPath, IReadOnlyDictionary<string, string> relink)
+    public static (byte[] Data, int Changed, IReadOnlyList<string> CantWrite) RelinkSamples(byte[] raw, string projectPath,
+                                                                                            IReadOnlyDictionary<string, string> relink)
     {
         var stream = ReadEvents(raw);
-        var dt = 8 + BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(4));
-        var start = dt + 8;
-        var dataEnd = Math.Min(raw.Length, start + BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(dt + 4)));
-
-        var body = new MemoryStream(dataEnd - start + 256);
-        var changed = 0;
-        var pos = start;   // events sit back to back, so each one's id byte starts where the last one's data ended
+        var changes = new Dictionary<int, byte[]>();
+        var cantWrite = new List<string>();
         foreach (var e in stream.Events)
-        {
-            var end = e.Offset + e.Payload.Length;
             if (e.Id == EvSamplePath && New(stream.Text(e.Payload.Span)) is { } to)
             {
-                body.WriteByte((byte)e.Id);
-                var text = stream.Utf16 ? Encoding.Unicode.GetBytes(to + "\0") : Encoding.Latin1.GetBytes(to + "\0");
-                for (var n = text.Length; ; )
-                {
-                    var b = (byte)(n & 0x7F);
-                    n >>= 7;
-                    body.WriteByte(n > 0 ? (byte)(b | 0x80) : b);
-                    if (n == 0) break;
-                }
-                body.Write(text);
-                changed++;
+                if (stream.Utf16) changes[e.Index] = Encoding.Unicode.GetBytes(to + "\0");
+                else if (to.All(c => c <= '\u00ff')) changes[e.Index] = Encoding.Latin1.GetBytes(to + "\0");
+                else if (!cantWrite.Contains(to)) cantWrite.Add(to);
             }
-            else body.Write(raw, pos, end - pos);
-            pos = end;
-        }
-        body.Write(raw, pos, dataEnd - pos);   // anything after the last whole event
-
-        var file = new MemoryStream(raw.Length + (int)body.Length - (dataEnd - start));
-        file.Write(raw, 0, dt + 4);
-        Span<byte> len = stackalloc byte[4];
-        BinaryPrimitives.WriteInt32LittleEndian(len, (int)body.Length);
-        file.Write(len);
-        body.WriteTo(file);
-        file.Write(raw, dataEnd, raw.Length - dataEnd);   // whatever FL keeps after the chunk, as it was
-        return (file.ToArray(), changed);
+        return (Rewrite(raw, stream, changes), changes.Count, cantWrite);
 
         string? New(string sample) =>
             relink.TryGetValue(sample, out var to) || relink.TryGetValue(ResolveSamplePath(sample, projectPath), out to) ? to : null;

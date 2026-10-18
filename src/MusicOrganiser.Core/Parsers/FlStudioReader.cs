@@ -781,13 +781,15 @@ public static class Fxp
         return ms.ToArray();
     }
 
-    /// <summary>The plugin's own chunk inside an 'FPCh' .fxp, or null when it isn't one.</summary>
+    /// <summary>The plugin's own chunk inside an 'FPCh' .fxp or an 'FBCh' .fxb (as Bitwig saves VST2 settings), or null when it isn't one.</summary>
     public static byte[]? Chunk(byte[] fxp)
     {
-        const int ProgramHeader = 60;
-        if (fxp.Length < ProgramHeader || !fxp.AsSpan(0, 4).SequenceEqual("CcnK"u8) || !fxp.AsSpan(8, 4).SequenceEqual("FPCh"u8)) return null;
-        var length = BinaryPrimitives.ReadInt32BigEndian(fxp.AsSpan(ProgramHeader - 4));
-        return length >= 0 && length <= fxp.Length - ProgramHeader ? fxp[ProgramHeader..(ProgramHeader + length)] : null;
+        const int ProgramHeader = 60, BankHeader = 160;   // a bank: CcnK, size, magic, version, id, plugin version, count, current, 124 spare
+        if (fxp.Length < ProgramHeader || !fxp.AsSpan(0, 4).SequenceEqual("CcnK"u8)) return null;
+        var header = fxp.AsSpan(8, 4).SequenceEqual("FPCh"u8) ? ProgramHeader : fxp.AsSpan(8, 4).SequenceEqual("FBCh"u8) ? BankHeader : 0;
+        if (header == 0 || fxp.Length < header) return null;
+        var length = BinaryPrimitives.ReadInt32BigEndian(fxp.AsSpan(header - 4));
+        return length >= 0 && length <= fxp.Length - header ? fxp[header..(header + length)] : null;
     }
 
     /// <summary>
@@ -869,6 +871,25 @@ public static class VstPreset
     /// </summary>
     public static byte[] Build(ReadOnlySpan<byte> classId, byte[] component, byte[] controller) =>
         Build(ClassIdString(classId), component, controller);
+
+    /// <summary>The component state ("Comp") inside a .vstpreset, or null when it isn't one.</summary>
+    public static byte[]? Component(byte[] preset)
+    {
+        const int HeaderSize = 4 + 4 + 32 + 8;
+        if (preset.Length < HeaderSize || !preset.AsSpan(0, 4).SequenceEqual("VST3"u8)) return null;
+        var list = BinaryPrimitives.ReadInt64LittleEndian(preset.AsSpan(40));
+        if (list < HeaderSize || list + 8 > preset.Length || !preset.AsSpan((int)list, 4).SequenceEqual("List"u8)) return null;
+        var count = BinaryPrimitives.ReadInt32LittleEndian(preset.AsSpan((int)list + 4));
+        for (var i = 0; i < count && list + 8 + 20 * (i + 1) <= preset.Length; i++)
+        {
+            var at = (int)list + 8 + 20 * i;
+            if (!preset.AsSpan(at, 4).SequenceEqual("Comp"u8)) continue;
+            var offset = BinaryPrimitives.ReadInt64LittleEndian(preset.AsSpan(at + 4));
+            var size = BinaryPrimitives.ReadInt64LittleEndian(preset.AsSpan(at + 12));
+            return offset >= HeaderSize && size >= 0 && offset + size <= list ? preset[(int)offset..(int)(offset + size)] : null;
+        }
+        return null;
+    }
 
     /// <param name="classId">The class id as a .vstpreset writes it (see <see cref="ClassIdString"/>).</param>
     public static byte[] Build(string classId, byte[] component, byte[] controller)

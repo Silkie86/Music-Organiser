@@ -171,6 +171,15 @@ public class LibraryTests : IDisposable
             ["Ozone 11", "Ozone 12", "Ozone 12 Imager", "Battery 4", "Mini V3", "Mini V4", "Toraverb2", "M12-Filter"]));
 
     [Theory]
+    [InlineData("Serum", "0.0")]
+    [InlineData("Serum 2", "2.0")]
+    [InlineData("Kontakt 8", "8.0")]
+    [InlineData("Mini V4", "4.0")]
+    [InlineData("Ozone 11.1 (x64)", "11.1")]
+    public void ReadsAPluginsVersionFromItsName(string name, string version) =>
+        Assert.Equal(Version.Parse(version), PluginCatalog.VersionOf(name));
+
+    [Theory]
     [InlineData("Didums_70", "Didums", 70)]
     [InlineData("Didums", "Didums", 1)]
     [InlineData("Beauty bitch (orch)_9", "Beauty bitch (orch)", 9)]
@@ -179,6 +188,7 @@ public class LibraryTests : IDisposable
     [InlineData("_5", "_5", 1)]
     [InlineData("civil war_5 (fixed)", "civil war", 5)]   // Fix's copy sits with the save it was made from
     [InlineData("Didums (Fixed 2)", "Didums", 1)]
+    [InlineData("Didums_70 (fixed) (fixed)", "Didums", 70)]   // a fixed copy fixed again by an older build
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
 
@@ -232,6 +242,15 @@ public class LibraryTests : IDisposable
         Assert.Equal([("2019 original", "Didums_13", 3), ("2024 rework", "Didums_77", 2)],
                      runs.Select(r => (r.Label, r.Last.Name, r.Saves)));
         Assert.Equal("Didums_77 · 3 Aug 2024 · 2 saves", runs[1].Details);
+    }
+
+    [Fact]
+    public void A_shorter_gap_from_Settings_splits_saves_into_more_versions()
+    {
+        ProjectSummary[] saves = [Save("Didums", new(2019, 1, 10)), Save("Didums_12", new(2019, 2, 20)), Save("Didums_13", new(2019, 4, 30))];
+        Assert.Single(SongVersions.Runs(saves, gapMonths: 3));
+        Assert.Equal(2, SongVersions.Runs(saves, gapMonths: 2).Count);   // Feb 20 to Apr 30 is over two months
+        Assert.Equal(3, SongVersions.Runs(saves, gapMonths: 1).Count);
     }
 
     [Fact]

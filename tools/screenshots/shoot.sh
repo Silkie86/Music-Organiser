@@ -101,7 +101,7 @@ xdotool mousemove 800 500; for _ in $(seq 8); do xdotool click 5; done; xdotool 
 nav 0; sleep 1; xdotool key ctrl+f; sleep 0.3; xdotool type --delay 40 "test 2026"; xdotool mousemove 1430 892; shot 9-projects-search
 xdotool key ctrl+a BackSpace
 # Settings › Appearance: each theme (tiles four to a row), photographed on Projects; Studio again after.
-theme() { local col=$(($1 % 4)) row=$(($1 / 4)); nav 5; sleep 1; xdotool mousemove $((240 + col * 210)) $((285 + row * 212)) click 1 mousemove 1430 892; }
+theme() { local col=$(($1 % 4)) row=$(($1 / 4)); nav 5; sleep 1; xdotool mousemove $((240 + col * 210)) $((365 + row * 212)) click 1 mousemove 1430 892; }
 shot 11-appearance 0.5
 for t in 1 2 3 4 5 6 7 8; do
   theme $t; sleep 0.5; [[ $t == 4 ]] && shot "11-appearance-light" 0.5
