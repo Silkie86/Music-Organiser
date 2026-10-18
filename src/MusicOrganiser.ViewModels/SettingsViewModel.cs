@@ -214,6 +214,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     bool CanSetUp() => !SettingUp;
 
     /// <summary>Shows whether each DAW answers right now, from the app's last look.</summary>
+    /// <summary>The MIDI page, whose options (how many parts, quantise, loops) Settings › MIDI changes.</summary>
+    public MidiBrowserViewModel MidiPage => _main.Midi;
+
     public void ShowLive(LiveDawsViewModel live)
     {
         foreach (var link in Links) link.ShowLive(live.State(link.Daw));

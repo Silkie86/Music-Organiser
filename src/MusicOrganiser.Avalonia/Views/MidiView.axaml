@@ -379,7 +379,7 @@
                             <Button Content="▲ Semitone" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="up"
                                     ToolTip.Tip="Every note up a semitone" />
                             <Button Content="Quantise" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="quantise"
-                                    ToolTip.Tip="Every note onto the nearest 16th, for a tight, on-the-grid feel" />
+                                    ToolTip.Tip="Every note onto the grid, for a tight feel: 16ths, or what Settings › MIDI says" />
                             <Button Content="Play it twice" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="twice"
                                     ToolTip.Tip="The part again straight after itself: twice as long, to change the second time round" />
                             <Button Content="First half" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="half"
