@@ -142,8 +142,10 @@
                                 <TextBlock Text="USED IN" Classes="filterLabel" Margin="2,16,0,6" />
                                 <ComboBox ItemsSource="{Binding YearChoices}" SelectedItem="{Binding YearFilter}" HorizontalAlignment="Stretch"
                                           ToolTip.Tip="Only sounds used in a project last saved in that year" />
-                                <CheckBox Content="Never used in a project" IsChecked="{Binding OnlyUnused}" Margin="0,12,0,0" />
-                                <CheckBox Content="Favourites" IsChecked="{Binding OnlyFavourites}" />
+                                <TextBlock Text="SHOW ONLY" Classes="filterLabel" Margin="2,16,0,6" />
+                                <CheckBox Content="Never used in a project" IsChecked="{Binding OnlyUnused}" />
+                                <CheckBox Content="Favourites" IsChecked="{Binding OnlyFavourites}"
+                                          ToolTip.Tip="The sounds you've starred (the ☆ button on a sound)" />
                                 <TextBlock Text="TAG" Classes="filterLabel" Margin="2,16,0,6" />
                                 <TextBox Classes="clearButton" PlaceholderText="any tag" Text="{Binding TagFilter}" />
                                 <Button Content="Clear filters" Command="{Binding ClearFiltersCommand}" Margin="0,14,0,0"
