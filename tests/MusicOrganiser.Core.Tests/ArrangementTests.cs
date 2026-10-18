@@ -43,6 +43,16 @@ public class ArrangementTests
     }
 
     [Fact]
+    public void EachPlacementOfAnFlAutomationClipDrawsTheWholeClip()
+    {
+        // The volume clip is in bar 2 and again in bar 4: both rise from 0 to 1, though the song holds 1 between them.
+        var playlist = ArrangementReader.Read(Fixtures.FlStudio25Automation(Fixtures.TempDir(), volumePlacedTwice: true))[0];
+        var volume = playlist.Lanes[1].Clips;
+        Assert.Equal([4.0, 12.0], volume.Select(c => c.Start));
+        Assert.All(volume, c => Assert.Equal((0.0, 1.0), (c.Points[0].Value, c.Points[^1].Value)));
+    }
+
+    [Fact]
     public void FlAudioClipsKnowWhichPartOfTheirSampleTheyPlayAndHowFast()
     {
         var dir = Fixtures.TempDir();
