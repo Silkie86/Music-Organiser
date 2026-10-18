@@ -1205,6 +1205,9 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     [ObservableProperty] string _type = "Any type";
     [ObservableProperty] double _adventure = 0.3;
     [ObservableProperty] bool _includeRarelyUsed;
+    /// <summary>How many sounds a shuffle picks.</summary>
+    [ObservableProperty] int _howMany = 60;
+    public static IReadOnlyList<int> HowManyChoices { get; } = [30, 60, 120, 250];
     [ObservableProperty] IReadOnlyList<Suggestion> _suggestions = [];
     [ObservableProperty] IReadOnlyList<FolderUse> _folders = [];
     [ObservableProperty] string _intro = "";
@@ -1217,7 +1220,8 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     [RelayCommand]
     async Task Shuffle()
     {
-        var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, 30, Adventure, 0, IncludeRarelyUsed ? 1 : 0);
+        _changes++;   // whatever was waiting to shuffle is covered by this one
+        var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, HowMany, Adventure, 0, IncludeRarelyUsed ? 1 : 0);
         var org = parent.Org;
         IsBusy = true;
         Intro = $"Looking through {org.Sounds.Count:N0} sounds…";
@@ -1252,6 +1256,25 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
             AppLog.Info("Rediscover", $"Failed: {e}");
         }
         finally { IsBusy = false; }
+    }
+
+    /// <summary>How long after the last change (a slider still moving) the list shuffles again.</summary>
+    public static TimeSpan ShuffleDelay { get; set; } = TimeSpan.FromMilliseconds(400);
+    int _changes;
+
+    // Once there's a list, changing what it's picked by picks it again, so the slider visibly does something.
+    partial void OnTypeChanged(string value) => ShuffleSoon();
+    partial void OnAdventureChanged(double value) => ShuffleSoon();
+    partial void OnIncludeRarelyUsedChanged(bool value) => ShuffleSoon();
+    partial void OnHowManyChanged(int value) => ShuffleSoon();
+
+    async void ShuffleSoon()
+    {
+        if (Suggestions.Count == 0 && !IsBusy) return;   // nothing picked yet: Shuffle starts it
+        var mine = ++_changes;
+        if (ShuffleDelay > TimeSpan.Zero) await Task.Delay(ShuffleDelay);
+        while (IsBusy && mine == _changes) await Task.Delay(50);
+        if (mine == _changes) await Shuffle();
     }
 }
 

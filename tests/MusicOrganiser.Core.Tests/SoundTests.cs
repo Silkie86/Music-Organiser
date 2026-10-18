@@ -671,6 +671,11 @@ public class RediscoverScaleTests
         Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
         Assert.Equal(200, folders.Count);
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"Took {clock.Elapsed.TotalSeconds:0.0} s");
+
+        // The longest list on offer is still quick.
+        clock.Restart();
+        Assert.Equal(250, Rediscover.Suggest(org, new Rediscover.Options(Count: 250, Seed: 1)).Count);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"250 took {clock.Elapsed.TotalSeconds:0.0} s");
     }
 }
 

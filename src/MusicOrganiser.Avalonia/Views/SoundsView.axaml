@@ -618,6 +618,9 @@
                                             ToolTip.Tip="How adventurous: left sticks close to what you already use, right goes further afield" />
                                     <TextBlock Text="Adventurous" VerticalAlignment="Center" Margin="0,0,12,0" />
                                     <CheckBox Content="Include sounds used once" IsChecked="{Binding IncludeRarelyUsed}" Margin="0,0,12,0" />
+                                    <TextBlock Text="Show" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <ComboBox ItemsSource="{x:Static vm:RediscoverViewModel.HowManyChoices}" SelectedItem="{Binding HowMany}" Width="80"
+                                              Margin="0,0,12,0" VerticalAlignment="Center" ToolTip.Tip="How many sounds each shuffle picks" />
                                     <Button Content="{Binding ShuffleText}" Classes="accent" Command="{Binding ShuffleCommand}" VerticalAlignment="Center" />
                                 </WrapPanel>
                                 <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="3" MinHeight="3" Margin="0,0,0,6" />

@@ -756,6 +756,31 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Rediscover_shows_as_many_as_asked_and_picks_again_when_the_slider_moves()
+    {
+        var rng = new Random(5);
+        _soundDb.Save(Enumerable.Range(0, 200).Select(i => new SoundLibrary.Analysed($"/samples/Kick {i}.wav", 1, 1,
+            new SoundAnalysis { Seconds = 0.5, Features = Enumerable.Range(0, 12).Select(_ => (float)rng.NextDouble()).ToArray() }, null, null, "Kick")));
+        _sounds.Reload();
+        var delay = RediscoverViewModel.ShuffleDelay;
+        RediscoverViewModel.ShuffleDelay = TimeSpan.Zero;
+        try
+        {
+            var page = Main().Sounds.Rediscover;
+            await page.ShuffleCommand.ExecuteAsync(null);
+            Assert.Equal(60, page.Suggestions.Count);
+
+            page.HowMany = 30;
+            await Until(() => page.Suggestions.Count == 30 && !page.IsBusy);
+            var before = page.Suggestions;
+            page.Adventure = 1;
+            await Until(() => !ReferenceEquals(before, page.Suggestions) && !page.IsBusy);
+            Assert.Equal(30, page.Suggestions.Count);
+        }
+        finally { RediscoverViewModel.ShuffleDelay = delay; }
+    }
+
+    [Fact]
     public async Task A_project_re_saved_in_another_year_moves_its_sounds_to_that_year_after_a_scan()
     {
         _soundDb.Save(new[] { "/samples/Kick A.wav", "/samples/Snare B.wav" }.Select(p =>
