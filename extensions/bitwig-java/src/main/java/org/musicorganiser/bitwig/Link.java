@@ -2800,7 +2800,8 @@ final class Link {
     /**
      * One time the record job plays the clip (or the arranger back): where from, when it asked and when Bitwig started, and the
      * notes it heard the track play, each with where. Where Bitwig is comes from its play position, or, when that doesn't move
-     * once Bitwig plays, from the clock and the tempo (`fromClock`).
+     * once Bitwig plays, from the clock and the tempo (`fromClock`). Until it first moves, it may still say where Bitwig last
+     * stopped, so the clock says where Bitwig is meanwhile.
      */
     private static final class Playing {
         final double from;
@@ -2808,6 +2809,7 @@ final class Link {
         Long started;
         double startPosition;
         boolean fromClock;
+        boolean moved;
         int heard;
         final List<Object> notes = new ArrayList<>();
         private Set<Integer> held = new HashSet<>();
@@ -2819,8 +2821,11 @@ final class Link {
         }
 
         double position(long now, double reported, double tempo) {
-            if (!fromClock && now - started >= 500 && Math.abs(reported - startPosition) < 1e-9) fromClock = true;
-            return fromClock ? from + (now - started) * tempo / 60000 : reported;
+            if (!moved && Math.abs(reported - startPosition) >= 1e-9) moved = true;
+            if (!fromClock && !moved && now - started >= 500) fromClock = true;
+            // The third live run: Bitwig still said 24.235, where the go before stopped, as it started a clip at 16, so the job
+            // stopped the track as the clip launched.
+            return fromClock || !moved ? from + (now - started) * tempo / 60000 : reported;
         }
 
         /** The track's notes now: each that wasn't playing a moment ago starts at `at`. */

@@ -180,6 +180,8 @@ final class FakeBitwig {
     private double playFrom;
     private long playSince;
     private double stoppedAt;
+    /** Where Bitwig was when it last stopped playing, which its play position still says for a moment after it starts (see Model.positionLag). */
+    private double lastStoppedAt;
     /** Where Bitwig was when arranger record went on as it played (null while it doesn't record). */
     private Double recordingFrom;
     /** Whether the master track is muted. */
@@ -358,7 +360,8 @@ final class FakeBitwig {
             });
         });
         playPosition = new Value(BeatTimeValue.class, 0.0);
-        playPosition.live = () -> model.positionStill && playingNow ? playFrom : position();
+        playPosition.live = () -> model.positionStill && playingNow ? playFrom
+                                  : playingNow && clock.now - playSince < model.positionLag ? lastStoppedAt : position();
         master = new Stand(MasterTrack.class) {
             Value mute() {
                 return masterMute;
@@ -826,6 +829,7 @@ final class FakeBitwig {
     /** Bitwig stops: what was recorded goes in the arranger, launcher clips stop, and the playhead goes back to the play start. */
     private void stopPlaying() {
         recorded(position());
+        lastStoppedAt = position();
         playingNow = false;
         stoppedAt = playStartAt;
         for (TrackSpec t : state.tracks) t.launched = null;
@@ -1242,6 +1246,11 @@ final class FakeBitwig {
         boolean notesHidden;
         /** Whether Bitwig's play position stays where it started while it plays (the link then goes by the clock). */
         boolean positionStill;
+        /**
+         * How long Bitwig's play position still says where it last stopped once it starts again, in ms: Bitwig 6.1.5 said
+         * beat 24.2 (where the go before stopped) for at least 50 ms after starting a clip at beat 16.
+         */
+        long positionLag;
         /** Bitwig's "Write automation when recording Arranger clips": arranger automation write shows on while record is. */
         boolean automationWhileRecording;
         /** Whether new tracks get IDs ("new-1", "new-2"...), as Bitwig's do. */
