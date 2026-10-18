@@ -60,7 +60,7 @@
                             IsVisible="{Binding Selected, Converter={x:Static ObjectConverters.IsNull}}">
                     <TextBlock Text="Pick a plugin" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" />
                     <TextBlock Classes="muted" TextAlignment="Center" MaxWidth="260" Margin="0,6,0,0" TextWrapping="Wrap"
-                               Text="Its projects show here, newest first. Click one to open it on the Projects page." />
+                               Text="The songs using it show here, newest first. Click one to open it on the Projects page." />
                 </StackPanel>
                 <DockPanel IsVisible="{Binding Selected, Converter={x:Static ObjectConverters.IsNotNull}}">
                     <StackPanel DockPanel.Dock="Top" Spacing="4" Margin="0,0,0,10">
@@ -85,20 +85,46 @@
                     </StackPanel>
                     <TabControl>
                         <TabItem Header="{Binding ProjectsTitle}">
-                            <ListBox Classes="projects" ItemsSource="{Binding Projects}" SelectedItem="{Binding PickedProject}" Background="Transparent"
-                                     Margin="-4,4,-4,0">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="lib:PluginProject">
-                                        <DockPanel>
-                                            <TextBlock DockPanel.Dock="Right" Text="{Binding Saved, StringFormat={}{0:d MMM yyyy}}" FontSize="11.5"
-                                                       FontFamily="{DynamicResource NumberFont}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="10,0,0,0" />
-                                            <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Margin="0,0,9,0" VerticalAlignment="Center"
-                                                     Fill="{Binding Daw, Converter={StaticResource DawBrush}}" ToolTip.Tip="{Binding Daw}" />
-                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
-                                        </DockPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                            <DockPanel>
+                                <!-- Which DAW's songs, and songs or every save: Solomon's 18 Oct notes. -->
+                                <ListBox DockPanel.Dock="Top" x:Name="ProjectDawChips" Classes="chips" ItemsSource="{Binding ProjectDaws}"
+                                         SelectedItem="{Binding ProjectsDaw}" IsVisible="{Binding HasProjectDaws}" Margin="0,8,0,0">
+                                    <ListBox.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                    </ListBox.ItemsPanel>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="x:String">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Ellipse Width="8" Height="8" VerticalAlignment="Center" Fill="{Binding Converter={StaticResource DawBrush}}"
+                                                         IsVisible="{Binding Converter={StaticResource NotAny}}" />
+                                                <TextBlock Text="{Binding Converter={StaticResource DawChipText}}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <DockPanel DockPanel.Dock="Top" Margin="0,8,0,0">
+                                    <CheckBox DockPanel.Dock="Right" Content="Every save" IsChecked="{Binding EverySave}" FontSize="12"
+                                              VerticalAlignment="Top" Margin="10,-4,0,0"
+                                              ToolTip.Tip="List every save that uses it, not just each song's newest" />
+                                    <TextBlock Text="{Binding ProjectsNote}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                                </DockPanel>
+                                <ListBox Classes="projects" x:Name="PluginSongs" ItemsSource="{Binding Projects}" SelectedItem="{Binding PickedProject}"
+                                         Background="Transparent" Margin="-4,4,-4,0">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="lib:SongUse">
+                                            <DockPanel ToolTip.Tip="{Binding Latest.Name}">
+                                                <TextBlock DockPanel.Dock="Right" Text="{Binding Latest.Saved, StringFormat={}{0:d MMM yyyy}}" FontSize="11.5"
+                                                           FontFamily="{DynamicResource NumberFont}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="10,0,0,0" />
+                                                <TextBlock DockPanel.Dock="Right" Text="{Binding SavesText}" FontSize="11.5" Foreground="{StaticResource FaintBrush}"
+                                                           VerticalAlignment="Center" Margin="10,0,0,0" />
+                                                <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Margin="0,0,9,0" VerticalAlignment="Center"
+                                                         Fill="{Binding Latest.Daw, Converter={StaticResource DawBrush}}" ToolTip.Tip="{Binding Latest.Daw}" />
+                                                <TextBlock Text="{Binding Song}" TextTrimming="CharacterEllipsis" />
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
                         </TabItem>
                         <TabItem Header="Installed copies">
                             <DockPanel Margin="0,6,0,0">

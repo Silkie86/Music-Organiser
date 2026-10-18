@@ -206,4 +206,34 @@ public sealed class ProjectsPageTests : IDisposable
         Assert.Equal("", page.SearchText);
         Assert.False(Clear().IsVisible);
     }
+
+    [AvaloniaFact]
+    public void The_plugins_side_panel_lists_songs_and_its_DAW_chips_keep_to_one_DAW()
+    {
+        void Save(string file, string daw)
+        {
+            var info = new ProjectInfo { Daw = daw };
+            info.Plugins.Add(new PluginRef("Serum", "Xfer Records", PluginKind.Instrument, "VST3"));
+            var path = Path.Combine(_root, file);
+            File.WriteAllBytes(path, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(path, 1, 100, info, null, [], []));
+        }
+        foreach (var n in new[] { "", "_2", "_3" }) Save($"Teka{n}.flp", "FL Studio");
+        Save("Heel_4.bwproject", "Bitwig Studio");
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = main.Plugins;
+        var window = new Window { Content = new PluginsView { DataContext = page }, Width = 1600, Height = 900 };
+        window.Show();
+        page.Selected = page.Items.Single(u => u.Name == "Serum");
+        Settle();
+
+        var songs = window.GetVisualDescendants().OfType<ListBox>().Single(l => l.Name == "PluginSongs");
+        Assert.Equal(["Heel", "Teka"], songs.Items.Cast<SongUse>().Select(s => s.Song).Order());
+        var chips = window.GetVisualDescendants().OfType<ListBox>().Single(l => l.Name == "ProjectDawChips");
+        Assert.True(chips.IsVisible);
+        chips.SelectedItem = "Bitwig Studio";
+        Settle();
+        Assert.Equal(["Heel"], songs.Items.Cast<SongUse>().Select(s => s.Song));
+        Assert.Equal("Used in 1 song in Bitwig Studio", page.ProjectsTitle);
+    }
 }

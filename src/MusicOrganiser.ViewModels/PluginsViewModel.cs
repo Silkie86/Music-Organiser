@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
@@ -36,10 +37,21 @@ public sealed partial class PluginsViewModel : ObservableObject
     public bool HasNeeded => Needed.Count > 0;
     public bool AllInstalled => Items.Count > 0 && Needed.Count == 0;
 
-    /// <summary>The projects using the picked plugin, newest first.</summary>
-    [ObservableProperty] IReadOnlyList<PluginProject> _projects = [];
+    /// <summary>
+    /// The songs using the picked plugin, newest first: one row per song with its newest save that uses it, or every save
+    /// with <see cref="EverySave"/>. Only <see cref="ProjectsDaw"/>'s, unless that's <see cref="ProjectsViewModel.Any"/>.
+    /// </summary>
+    [ObservableProperty] IReadOnlyList<SongUse> _projects = [];
     [ObservableProperty] string _projectsTitle = "";
-    [ObservableProperty] PluginProject? _pickedProject;
+    /// <summary>"1949 saves. Each song shows its newest save that uses it."</summary>
+    [ObservableProperty] string _projectsNote = "";
+    [ObservableProperty] SongUse? _pickedProject;
+    [ObservableProperty] bool _everySave;
+    /// <summary>The DAW chips over the side panel's list: Any, then each DAW the plugin was used in.</summary>
+    public ObservableCollection<string> ProjectDaws { get; } = new();
+    [ObservableProperty] string _projectsDaw = ProjectsViewModel.Any;
+    public bool HasProjectDaws => ProjectDaws.Count > 2;
+    IReadOnlyList<PluginProject> _saves = [];
     /// <summary>"VST3 · Instrument · Xfer Records · last used March 2024".</summary>
     [ObservableProperty] string _selectedDetails = "";
 
@@ -155,14 +167,12 @@ public sealed partial class PluginsViewModel : ObservableObject
     {
         if (Selected is not { } p)
         {
-            Projects = [];
-            ProjectsTitle = "";
+            _saves = [];
             SelectedDetails = "";
         }
         else
         {
-            Projects = _db.ProjectsWithPlugin(p.Name, p.Own);
-            ProjectsTitle = Projects.Count == 1 ? "Used in 1 project" : $"Used in {Projects.Count} projects";
+            _saves = _db.ProjectsWithPlugin(p.Name, p.Own);
             SelectedDetails = string.Join(" · ", new[]
             {
                 p.Format == "Native" && p.Daws.Contains("FL", StringComparison.OrdinalIgnoreCase) ? "FL Studio native" : p.Format,
@@ -171,14 +181,46 @@ public sealed partial class PluginsViewModel : ObservableObject
                 p.LastUsed is { } t ? $"last used {t:MMMM yyyy}" : "",
             }.Where(x => x.Length > 0));
         }
+        var daws = _saves.Select(x => x.Daw).Distinct().Order().ToList();
+        if (!ProjectDaws.Skip(1).SequenceEqual(daws))
+        {
+            ProjectDaws.Clear();
+            foreach (var d in daws.Prepend(ProjectsViewModel.Any)) ProjectDaws.Add(d);
+            OnPropertyChanged(nameof(HasProjectDaws));
+        }
+        if (ProjectsDaw != ProjectsViewModel.Any && !daws.Contains(ProjectsDaw)) ProjectsDaw = ProjectsViewModel.Any;   // shows them
+        else ShowSaves();
         LoadInstalled();
     }
 
+    partial void OnEverySaveChanged(bool value) => ShowSaves();
+    partial void OnProjectsDawChanged(string value)
+    {
+        if (value is null) ProjectsDaw = ProjectsViewModel.Any;   // the chips' ListBox clears it while they're refilled
+        else ShowSaves();
+    }
+
+    /// <summary>The side panel's list: the picked plugin's saves in the picked DAW, as songs or every save.</summary>
+    void ShowSaves()
+    {
+        var saves = ShownSaves();
+        var songs = SongVersions.Songs(saves);
+        Projects = EverySave ? saves.Select(x => new SongUse(x.Name, x, 1)).ToList() : songs;
+        var where = ProjectsDaw == ProjectsViewModel.Any ? "" : $" in {ProjectsDaw}";
+        ProjectsTitle = songs.Count == 1 ? $"Used in 1 song{where}" : $"Used in {songs.Count} songs{where}";
+        ProjectsNote = saves.Count == songs.Count ? ""
+            : EverySave ? $"Every one of its {saves.Count} saves, newest first."
+            : $"{saves.Count} saves in all. Each song shows its newest save that uses it.";
+    }
+
+    IReadOnlyList<PluginProject> ShownSaves() =>
+        ProjectsDaw == ProjectsViewModel.Any ? _saves : _saves.Where(x => x.Daw == ProjectsDaw).ToList();
+
     /// <summary>A click on a project in the side panel: opens it on the Projects page.</summary>
-    partial void OnPickedProjectChanged(PluginProject? value)
+    partial void OnPickedProjectChanged(SongUse? value)
     {
         if (value is null) return;
-        _main.Projects.Reveal(value.Id);
+        _main.Projects.Reveal(value.Latest.Id);
         PickedProject = null;
     }
 
@@ -210,7 +252,11 @@ public sealed partial class PluginsViewModel : ObservableObject
     [RelayCommand]
     void ShowProjects(PluginUsage? p)
     {
-        if ((p ?? Selected) is { } plugin)
+        if ((p ?? Selected) is not { } plugin) return;
+        // The side panel's DAW chip carries over when it's this plugin's panel.
+        if (plugin == Selected && ProjectsDaw != ProjectsViewModel.Any)
+            _main.Projects.ShowOnly(ShownSaves().Select(x => x.Id), $"Projects using {plugin.Name} in {ProjectsDaw}");
+        else
             _main.Projects.ShowOnly(_db.ProjectsUsingPlugin(plugin.Name, plugin.Own), $"Projects using {plugin.Name}");
     }
 

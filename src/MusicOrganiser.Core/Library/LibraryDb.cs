@@ -696,9 +696,10 @@ public sealed partial class LibraryDb : IDisposable
     /// only that row's ones: a DAW's own device in that DAW's projects, or "" for the plugin rather than a device.
     /// </summary>
     public IReadOnlyList<PluginProject> ProjectsWithPlugin(string name, string? own = null) => Query($"""
-        SELECT DISTINCT p.id, p.name, p.daw, p.mtime FROM plugins pl JOIN projects p ON p.id = pl.project_id
+        SELECT DISTINCT p.id, p.name, p.daw, p.mtime, p.folder FROM plugins pl JOIN projects p ON p.id = pl.project_id
         WHERE pl.name_key = $k AND p.file_missing = 0 {OwnFilter(own)} ORDER BY p.mtime DESC
-        """, r => new PluginProject((long)r["id"], Str(r, "name"), Str(r, "daw"), DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime),
+        """, r => new PluginProject((long)r["id"], Str(r, "name"), Str(r, "daw"), DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime,
+                                     Str(r, "folder")),
         ("$k", NameKey(name)), ("$own", own ?? ""));
 
     /// <summary>The part of a query on <c>plugins pl JOIN projects p</c> that keeps one Plugins page row's uses.</summary>

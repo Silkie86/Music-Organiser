@@ -896,8 +896,8 @@ public class ViewModelTests : IDisposable
         // Picking Studio One's Arpeggiator lists only Studio One's projects, and stays picked when the page reloads.
         var page = Main().Plugins;
         page.Selected = page.Items.Single(u => u.Name == "Arpeggiator" && u.Daws == "Studio One");
-        Assert.Equal(["B"], page.Projects.Select(p => p.Name));
-        Assert.Equal("Used in 1 project", page.ProjectsTitle);
+        Assert.Equal(["B"], page.Projects.Select(p => p.Song));
+        Assert.Equal("Used in 1 song", page.ProjectsTitle);
         Assert.Single(_db.ProjectsUsingPlugin("Arpeggiator", page.Selected.Own));
         page.Reload();
         Assert.Equal("Studio One", page.Selected?.Daws);
@@ -941,8 +941,58 @@ public class ViewModelTests : IDisposable
         page.Filter = PluginsViewModel.Installed_;
         Assert.Equal(["Serum"], page.View!.Cast<PluginUsage>().Select(p => p.Name));
         page.Needed[0].PickCommand.Execute(null);
-        Assert.Equal("Used in 3 projects", page.ProjectsTitle);
-        Assert.Equal(["A", "B", "C"], page.Projects.Select(p => p.Name).Order());
+        Assert.Equal("Used in 3 songs", page.ProjectsTitle);
+        Assert.Equal(["A", "B", "C"], page.Projects.Select(p => p.Song).Order());
+    }
+
+    [Fact]
+    public void A_plugins_side_panel_shows_each_songs_newest_save_and_can_keep_to_one_DAW()
+    {
+        void Save(string file, string daw, int day, params string[] plugins)
+        {
+            var info = new ProjectInfo { Daw = daw };
+            info.Plugins.AddRange(plugins.Select(n => new PluginRef(n, "Xfer Records", PluginKind.Instrument, "VST3")));
+            var path = Path.Combine(_root, file);
+            File.WriteAllBytes(path, [0]);
+            var mtime = new DateTimeOffset(2026, 4, day, 12, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+            _db.Upsert(new LibraryDb.IndexedFile(path, 100, mtime, info, null, [], []));
+        }
+        for (var i = 1; i <= 5; i++) Save(i == 1 ? "Teka.flp" : $"Teka_{i}.flp", "FL Studio", i, "Serum");
+        Save("Teka_6.flp", "FL Studio", 6, "Serum 2");   // the newest save swapped it out
+        Save("Heel_3.bwproject", "Bitwig Studio", 10, "Serum");
+        Save("Heel_4.bwproject", "Bitwig Studio", 11, "Serum");
+        Save("Garage.song", "Studio One", 2, "Serum");
+
+        var main = Main();
+        var page = main.Plugins;
+        page.Selected = page.Items.Single(u => u.Name == "Serum");
+        Assert.Equal("Used in 3 songs", page.ProjectsTitle);
+        Assert.Equal([("Heel", "Heel_4", 2), ("Teka", "Teka_5", 5), ("Garage", "Garage", 1)],
+                     page.Projects.Select(p => (p.Song, p.Latest.Name, p.Saves)));
+        Assert.Equal("8 saves in all. Each song shows its newest save that uses it.", page.ProjectsNote);
+        Assert.Equal([ProjectsViewModel.Any, "Bitwig Studio", "FL Studio", "Studio One"], page.ProjectDaws);
+        Assert.True(page.HasProjectDaws);
+
+        page.EverySave = true;
+        Assert.Equal(8, page.Projects.Count);
+        Assert.Equal("Heel_4", page.Projects[0].Song);
+        page.EverySave = false;
+
+        // One DAW: the list, its title and Show in Projects keep to it.
+        page.ProjectsDaw = "FL Studio";
+        Assert.Equal(["Teka"], page.Projects.Select(p => p.Song));
+        Assert.Equal("Used in 1 song in FL Studio", page.ProjectsTitle);
+        page.ShowProjectsCommand.Execute(null);
+        Assert.Equal("Projects using Serum in FL Studio", main.Projects.IdFilterLabel);
+        Assert.Equal(["Teka"], main.Projects.View!.Cast<ProjectItem>().Select(i => i.Name));
+
+        // Another plugin without FL Studio saves goes back to every DAW.
+        Save("Solo.bwproject", "Bitwig Studio", 12, "Pigments");
+        page.Reload();
+        page.Selected = page.Items.Single(u => u.Name == "Pigments");
+        Assert.Equal(ProjectsViewModel.Any, page.ProjectsDaw);
+        Assert.False(page.HasProjectDaws);
+        Assert.Equal(["Solo"], page.Projects.Select(p => p.Song));
     }
 
     [Fact]

@@ -126,4 +126,18 @@ public static partial class SongVersions
                 return new SongGroup(Split(ordered[0].Name).Song, ordered[0], ordered.Skip(1).ToList());
             })
             .ToList();
+
+    /// <summary>
+    /// Saves grouped into songs the way <see cref="Group"/> does, newest song first. Each keeps its highest-numbered save
+    /// in the list (ties go to the most recent), so a plugin's song shows the last save that still used it.
+    /// </summary>
+    public static IReadOnlyList<SongUse> Songs(IEnumerable<PluginProject> saves) =>
+        saves.GroupBy(p => Key(p.Folder, p.Daw, p.Name))
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(p => Split(p.Name).Number).ThenByDescending(p => p.Saved).First();
+                return new SongUse(Split(latest.Name).Song, latest, g.Count());
+            })
+            .OrderByDescending(s => s.Latest.Saved).ThenBy(s => s.Song, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 }
