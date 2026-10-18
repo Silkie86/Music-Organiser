@@ -44,9 +44,13 @@ public sealed class MidiEntry
     public bool IsInSong(string song) =>
         Array.IndexOf(_songs ??= [SongOf(Phrase.Source.Path), .. OtherSources?.Select(SongOf) ?? []], song) >= 0;
 
-    /// <summary>The song a file is a save of: its folder and its name without the save number.</summary>
-    public static string SongOf(string path) =>
-        Path.Combine(Path.GetDirectoryName(path) ?? "", SongVersions.Split(Path.GetFileNameWithoutExtension(path)).Song).ToLowerInvariant();
+    /// <summary>The song a file is a save of: its folder (a Bitwig project's own folder counts as the one it's in) and its
+    /// name without the save number.</summary>
+    public static string SongOf(string path)
+    {
+        var name = Path.GetFileNameWithoutExtension(path);
+        return Path.Combine(SongVersions.SongFolder(Path.GetDirectoryName(path) ?? "", name), SongVersions.Split(name).Song).ToLowerInvariant();
+    }
     public string Role => YourRole ?? Phrase.Role;
     public bool IsProject => Phrase.Source.Kind == MidiSource.Project;
     public string SourceName => Path.GetFileNameWithoutExtension(Phrase.Source.Path);

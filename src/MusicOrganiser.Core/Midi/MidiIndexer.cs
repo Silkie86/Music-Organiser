@@ -24,7 +24,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     public const string OlderSavesKey = "midi_older_saves";
 
     /// <summary>Raised when the analysis changes, so every file is read again once.</summary>
-    public const int Version = 4;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes; 4: low basslines and chords no longer taken for GM drums (2026-10-17)
+    public const int Version = 5;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes; 4: low basslines and chords no longer taken for GM drums (2026-10-17); 5: parts named after a drum sound ("Tamb") are drums (2026-10-18)
 
     /// <summary>At most this many files are read at once: a quarter of the cores, and never more than 3.</summary>
     public static int Workers => Math.Clamp(Environment.ProcessorCount / 4, 1, 3);
