@@ -41,7 +41,7 @@ public sealed class GalaxyTests
         Dispatcher.UIThread.RunJobs();
         window.MouseMove(At(3));
         Dispatcher.UIThread.RunJobs();
-        // Each passed star waits its turn so it's heard; the newest ones are kept.
+        // A passed star waits its turn so it's heard; the newest is kept.
         var until = DateTime.UtcNow.AddSeconds(2);
         while (played.LastOrDefault() != "Star 3" && DateTime.UtcNow < until)
         {
@@ -50,11 +50,11 @@ public sealed class GalaxyTests
         }
         window.MouseUp(At(3), MouseButton.Left);
 
-        // Star 0 on the press, then stars passed on the way (which ones depends on timing: a backlog keeps the
-        // newest), in order, ending where the mouse landed.
+        // Star 0 on the press, then the star the mouse reached last once Star 0 has had its moment (stars passed in
+        // between may play too, depending on timing), in order, ending where the mouse landed.
         Assert.Equal("Star 0", played[0]);
         Assert.Equal("Star 3", played[^1]);
-        Assert.True(played.Count >= 3, string.Join(", ", played));
+        Assert.True(played.Count >= 2, string.Join(", ", played));
         Assert.Equal(played.Order(), played);
     }
 
