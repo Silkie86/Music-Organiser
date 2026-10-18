@@ -140,6 +140,15 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     partial void OnAutoPlayChanged(bool value) => _db.SetSetting(AutoPlayKey, value ? "1" : "0");
 
+    public const string ListenToNewKey = "deep_listen_new";
+    /// <summary>
+    /// With the sound-understanding model downloaded, CLAP listens to the sounds a scan or the folder watcher finds as
+    /// they arrive (Solomon's 18 Oct note). Sounds it has already heard aren't listened to again. On unless turned off.
+    /// </summary>
+    [ObservableProperty] bool _listenToNew;
+
+    partial void OnListenToNewChanged(bool value) => _db.SetSetting(ListenToNewKey, value ? "1" : "0");
+
     public SoundsViewModel(LibraryDb db, SoundOrganiser org, MainViewModel main)
     {
         _db = db;
@@ -148,6 +157,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
+        _listenToNew = db.GetSetting(ListenToNewKey) != "0";
         _viewMode = db.GetSetting(ViewKey) is List or Galaxy ? db.GetSetting(ViewKey)! : Tiles;
         _placedBy = db.GetSetting(GalaxyBasisKey) is { } basis && PlacedByChoices.Contains(basis) ? basis : SoundOrganiser.Both;
         _colourBy = db.GetSetting(GalaxyColourKey) is { } c && ColourChoices.Contains(c) ? c : "Type";
@@ -221,14 +231,31 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _changedSounds.Clear();
         var folders = SampleFolders;
         var count = 0;
+        List<long> arrived = [];
         await RunAsync("Taking in new sounds", (p, ct) =>
         {
             count = Org.Update(paths, folders, p, ct);
             if (_db.SampleIndexCount() > 0) _db.UpdateSampleIndex(paths);   // what Fix searches
+            var seen = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (count > 0) arrived = Org.Sounds.Where(s => seen.Contains(s.Path)).Select(s => s.Id).ToList();
         },
                        () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"{count:N0} new, changed or removed sounds"), always: false);
         AppLog.Info("Watch", $"Sample folders: {count} sounds changed ({paths.Count} changes seen)");
+        if (count > 0) await ListenToArrivals(arrived);
         if (count > 0) await MapGalaxyIfNeeded();
+    }
+
+    /// <summary>
+    /// <see cref="ListenToNew"/>: CLAP listens to the sounds that just arrived, skipping any it has heard, before the
+    /// galaxy places them.
+    /// </summary>
+    async Task ListenToArrivals(IReadOnlyCollection<long> arrived)
+    {
+        if (!ListenToNew || arrived.Count == 0 || !ClapModel.IsInstalled()) return;
+        var heard = 0;
+        await RunAsync("Deep listening to new sounds", (p, ct) => heard = Org.DeepListen(p, ct, arrived),
+                       () => ("Deep listened to new sounds", heard == 0 ? "It had heard them all already" : $"{heard:N0} new sounds"),
+                       always: false);
     }
 
     IReadOnlyList<string> SampleFolders => _db.GetList(Scanner.SampleFoldersKey);
@@ -1068,9 +1095,16 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             return;
         }
         var count = 0;
-        await RunAsync("Scanning sample folders", (p, ct) => count = Org.Scan(folders, p, ct),
+        List<long> arrived = [];
+        await RunAsync("Scanning sample folders", (p, ct) =>
+        {
+            var before = Org.Sounds.Select(s => s.Id).ToHashSet();
+            count = Org.Scan(folders, p, ct);
+            if (count > 0) arrived = Org.Sounds.Where(s => !before.Contains(s.Id)).Select(s => s.Id).ToList();
+        },
                        () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"Analysed {count:N0} new or changed sounds"), always: false);
         if (count > 0) Message = $"Analysed {count:N0} new or changed sounds.";
+        if (count > 0) await ListenToArrivals(arrived);
         if (count > 0 || IsGalaxy) await MapGalaxyIfNeeded();
     }
 

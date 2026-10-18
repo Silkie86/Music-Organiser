@@ -867,6 +867,9 @@
                                             IsEnabled="{Binding CanStartDownload}" IsVisible="{Binding !ClapInstalled}" />
                                     <Button Content="Deep listen" Classes="accent" Command="{Binding DeepListenCommand}" IsVisible="{Binding ClapInstalled}" />
                                 </WrapPanel>
+                                <CheckBox Content="Deep listen to new sounds as they arrive" IsChecked="{Binding ListenToNew}" Margin="0,10,0,0"
+                                          IsVisible="{Binding ClapInstalled}"
+                                          ToolTip.Tip="After a scan, or when a new sound turns up in your sample folders, the model listens to it. Sounds it has already heard are skipped." />
                             </StackPanel>
                         </Border>
 

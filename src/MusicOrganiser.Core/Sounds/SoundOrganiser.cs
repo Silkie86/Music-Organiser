@@ -282,13 +282,15 @@ public sealed class SoundOrganiser : IDisposable
     }
 
     /// <summary>
-    /// "Deep listening": runs CLAP over every sound that doesn't have an embedding yet.
-    /// Slower (a fraction of a second per sound), resumable, and unlocks search by description.
+    /// "Deep listening": runs CLAP over every sound that doesn't have an embedding yet, or only over <paramref name="only"/>'s
+    /// ones (the sounds a scan just found). Slower (a fraction of a second per sound), resumable, and unlocks search by description.
     /// </summary>
-    public int DeepListen(IProgress<SoundProgress>? progress = null, CancellationToken ct = default)
+    public int DeepListen(IProgress<SoundProgress>? progress = null, CancellationToken ct = default, IEnumerable<long>? only = null)
     {
         var clap = Clap ?? throw new InvalidOperationException("The sound-understanding model isn't installed yet");
-        var missing = _sounds.Where(s => s.Analysis is not null && (_clapIndex is null || !_clapIndex.Contains(s.Id))).ToList();
+        var which = only is null ? _sounds : only.Select(Get).OfType<Sound>();
+        var missing = which.Where(s => s.Analysis is not null && (_clapIndex is null || !_clapIndex.Contains(s.Id))).ToList();
+        if (missing.Count == 0) return 0;
         var done = 0;
         // Every core reads and prepares audio; the model runs several sounds at once (see ClapModel).
         Parallel.ForEach(missing, Parallelism.Options(ct), s =>

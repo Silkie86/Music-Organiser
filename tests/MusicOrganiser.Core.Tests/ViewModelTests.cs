@@ -996,6 +996,14 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Deep_listening_to_new_sounds_is_on_until_turned_off_and_stays_off()
+    {
+        Assert.True(new MainViewModel(_db, _sounds).Sounds.ListenToNew);
+        new MainViewModel(_db, _sounds).Sounds.ListenToNew = false;
+        Assert.False(new MainViewModel(_db, _sounds).Sounds.ListenToNew);
+    }
+
+    [Fact]
     public void A_click_always_plays_and_Autoplay_plays_what_you_arrow_onto_but_not_what_the_list_selects_by_itself()
     {
         var played = new List<string>();
