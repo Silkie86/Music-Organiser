@@ -581,10 +581,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// </summary>
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(NameWeightText))] double _nameWeight = 1;
 
-    public string NameWeightText => NameWeight <= 0 ? "Sound only: names are ignored"
-        : NameWeight < 1 ? "Mostly sound, names help a little"
-        : NameWeight == 1 ? "Matching names first, then by sound"
-        : NameWeight < 3 ? "Names count more than sound" : "Names lead, sound sorts them";
+    public string NameWeightText => NameWeight <= 0 ? "Notes only: names are ignored"
+        : NameWeight < 1 ? "Mostly the notes, names help a little"
+        : NameWeight == 1 ? "Matching names first, then by how the notes play"
+        : NameWeight < 3 ? "Names count more than the notes" : "Names lead, the notes sort them";
 
     partial void OnNameWeightChanged(double value)
     {
