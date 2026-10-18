@@ -24,13 +24,14 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     public const string OlderSavesKey = "midi_older_saves";
 
     /// <summary>Raised when the analysis changes, so every file is read again once.</summary>
-    public const int Version = 3;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes
+    public const int Version = 5;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes; 4: low basslines and chords no longer taken for GM drums (2026-10-17); 5: parts named after a drum sound ("Tamb") are drums (2026-10-18)
     /// <summary>
-    /// .mid files have their own version on top: 4 keeps the General MIDI sound each part's channel is set to (2026-10-16),
-    /// and a file's only track's name (which the part leaves out, but may say "Keyscape"), so library files are read again
-    /// once while projects, which have no such things, aren't.
+    /// .mid files have their own changes on top, counted here: 1 keeps the General MIDI sound each part's channel is set
+    /// to and a file's only track's name (which the part leaves out, but may say "Keyscape"), 2026-10-16. Raising either
+    /// this or <see cref="Version"/> reads library files again; projects, which have no such things, only follow Version.
     /// </summary>
-    public const int FileVersion = 4;
+    public const int FileRevision = 1;
+    public const int FileVersion = Version + FileRevision;
 
     static int VersionFor(MidiSource s) => s.Kind == MidiSource.File ? FileVersion : Version;
 
@@ -53,16 +54,12 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         foreach (var p in projects)
             wanted[p.Path] = new MidiSource(p.Path, MidiSource.Project, p.Daw, p.Mtime, p.Size, p.Tempo);
         var folders = library.GetList(FoldersKey).Where(Directory.Exists).ToList();
-        foreach (var f in Parallelism.FindFiles(folders, MidiFileReader.IsMidiPath, (name, _) => name.StartsWith('.'), ct: ct))
+        // Sizes and times come with the folder listing: no extra look at each of tens of thousands of files.
+        foreach (var f in Parallelism.FindFileStamps(folders, MidiFileReader.IsMidiPath, (name, _) => name.StartsWith('.'), ct: ct))
         {
-            try
-            {
-                var fi = new FileInfo(f);
-                // Too short to hold a single note (an empty or never-finished download): nothing to read, and not a failure.
-                if (fi.Length < MinMidiBytes) continue;
-                wanted[f] = new MidiSource(f, MidiSource.File, "MIDI", new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds(), fi.Length, null);
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            // Too short to hold a single note (an empty or never-finished download): nothing to read, and not a failure.
+            if (f.Size < MinMidiBytes) continue;
+            wanted[f.Path] = new MidiSource(f.Path, MidiSource.File, "MIDI", f.Mtime, f.Size, null);
         }
 
         var known = index.Sources();

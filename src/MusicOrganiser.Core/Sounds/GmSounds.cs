@@ -18,9 +18,16 @@ public static class GmSounds
     /// <summary>The program number used for a drum kit (General MIDI's channel 10).</summary>
     public const int DrumKit = 128;
 
-    public static string DefaultFile =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create),
-                     "MusicOrganiser", "sounds", "GeneralUser-GS.sf2");
+    /// <summary>Where the downloaded SoundFont goes (tests point it elsewhere, so they don't hear whatever this machine has
+    /// downloaded; null: back to the usual place).</summary>
+    [System.Diagnostics.CodeAnalysis.AllowNull]
+    public static string DefaultFile
+    {
+        get => _defaultFile ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create),
+                                            "MusicOrganiser", "sounds", "GeneralUser-GS.sf2");
+        set => _defaultFile = value;
+    }
+    static string? _defaultFile;
 
     /// <summary>A SoundFont you picked instead (Settings), or null for the downloaded one.</summary>
     public static string? ChosenFile { get; set; }

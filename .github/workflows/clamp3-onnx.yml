@@ -39,7 +39,10 @@ jobs:
           pip install transformers==4.46.3 tokenizers onnx onnx_ir onnxruntime mido numpy
       - name: Export, check and quantise
         if: steps.existing.outputs.found == 'false'
-        run: python tools/clamp3/export_onnx.py --out out | tee export.log
+        # pipefail: a failed export or check fails this step, so nothing below publishes it.
+        run: |
+          set -o pipefail
+          python tools/clamp3/export_onnx.py --out out | tee export.log
       - name: Publish the release
         if: steps.existing.outputs.found == 'false'
         env:

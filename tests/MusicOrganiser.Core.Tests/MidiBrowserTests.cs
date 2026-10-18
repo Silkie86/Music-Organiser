@@ -66,6 +66,29 @@ public class MidiBrowserTests
     }
 
     [Fact]
+    public void Running_status_goes_on_after_a_lyric()
+    {
+        // Karaoke files put lyrics between the notes and carry on with running status after them.
+        byte[] track =
+        [
+            0x00, 0x90, 60, 80,          // C4 on
+            0x00, 0xFF, 0x05, 2, (byte)'L', (byte)'a',   // a lyric
+            0x60, 60, 0,                 // C4 off, running status
+            0x00, 62, 80,                // D4 on
+            0x00, 0xF0, 1, 0xF7,         // a sysex
+            0x60, 62, 0,                 // D4 off
+            0x00, 0xFF, 0x2F, 0x00,
+        ];
+        byte[] file =
+        [
+            .. "MThd"u8, 0, 0, 0, 6, 0, 0, 0, 1, 0, 96,
+            .. "MTrk"u8, 0, 0, 0, (byte)track.Length, .. track,
+        ];
+        var notes = MidiFileReader.Read(file, "Song").Single().Notes;
+        Assert.Equal([new NoteEvent(0, 96, 60, 80), new NoteEvent(96, 96, 62, 80)], notes);
+    }
+
+    [Fact]
     public void Not_a_midi_file_says_so() =>
         Assert.Throws<InvalidDataException>(() => MidiFileReader.Read("RIFF0000WAVE"u8, "x"));
 
@@ -87,6 +110,41 @@ public class MidiBrowserTests
             new NoteEvent(i * Beat / 2, Beat / 4, i % 4 == 2 ? 38 : 36, 110),
         }).ToList();
         Assert.Equal(MidiRoles.Drums, PhraseAnalyser.Analyse(beat).Role);
+        // Kick and snare on the beats, hats in between: nothing hit at once, still drums.
+        var offbeats = Enumerable.Range(0, 16).Select(i => new NoteEvent(i * Beat / 2, Beat / 4, i % 2 == 1 ? 42 : i % 4 == 2 ? 38 : 36, 100)).ToList();
+        Assert.Equal(MidiRoles.Drums, PhraseAnalyser.Analyse(offbeats).Role);
+    }
+
+    [Fact]
+    public void Low_basslines_and_chords_on_the_drum_notes_are_not_taken_for_drums()
+    {
+        // C minor around C2 is C, Eb, G and Bb: 36, 39, 43 and 46, the General MIDI kick, snare and hat notes.
+        Assert.Equal(MidiRoles.Bass, PhraseAnalyser.Analyse(Line(Beat / 2, 36, 39, 43, 46, 43, 39, 36, 36, 39, 43, 46, 48, 46, 43, 39, 36)).Role);
+        Assert.Equal(MidiRoles.Bass, PhraseAnalyser.Analyse(Line(Beat, 36, 36, 39, 39, 43, 43, 46, 46)).Role);
+        // In octaves.
+        var octaves = Line(Beat / 2, 36, 39, 43, 46, 43, 39, 36, 39).SelectMany(n => new[] { n, n with { Key = n.Key + 12 } }).ToList();
+        Assert.NotEqual(MidiRoles.Drums, PhraseAnalyser.Analyse(octaves).Role);
+        // Low Cm7 chords.
+        Assert.Equal(MidiRoles.Chords, PhraseAnalyser.Analyse(Chords([36, 39, 43, 46], [36, 39, 43, 46], [34, 38, 41, 46], [34, 38, 41, 46])).Role);
+        // Named as a bassline: a bassline, whatever its notes.
+        var hatty = Line(Beat / 2, 36, 46, 39, 46, 36, 46, 39, 46);
+        Assert.Equal(MidiRoles.Drums, PhraseAnalyser.Analyse(hatty).Role);
+        Assert.Equal(MidiRoles.Bass, PhraseAnalyser.Analyse(hatty, "Sub bass").Role);
+    }
+
+    [Fact]
+    public void A_track_named_after_a_drum_sound_is_drums_wherever_its_notes_sit()
+    {
+        // A tambourine on a sampler or drum grid, played low: the notes alone look like a bassline.
+        var low = Line(Beat / 2, 36, 36, 38, 36, 36, 36, 38, 36);
+        Assert.Equal(MidiRoles.Bass, PhraseAnalyser.Analyse(low).Role);
+        Assert.Equal(MidiRoles.Drums, PhraseAnalyser.Analyse(low, "Tamb Selector Grid Tamb Selector Grid 79").Role);
+        Assert.Equal(MidiRoles.Drums, PhraseAnalyser.Analyse(low, "Chh Selector Grid").Role);
+        Assert.Equal(MidiRoles.Drums, PhraseAnalyser.Analyse(Line(Beat / 4, 60, 62, 60, 64, 60, 62, 60, 64), "Congas").Role);
+        // A style word isn't a drum sound: a tune in a "Beats" folder stays a tune.
+        Assert.Equal(MidiRoles.Melody, PhraseAnalyser.Analyse(Line(Beat, 69, 72, 71, 67, 69, 64, 65, 67, 69, 72, 74, 72), "Loop 01 Beats").Role);
+        // A drum word and a tuned one: the notes decide, as before.
+        Assert.Equal(MidiRoles.Bass, PhraseAnalyser.Analyse(low, "Kick bass").Role);
     }
 
     [Fact]

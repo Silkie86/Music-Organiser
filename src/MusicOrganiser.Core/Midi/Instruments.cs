@@ -29,19 +29,27 @@ public static partial class Instruments
         Strings => "strings string orchestra", Brass => "brass horns", Woodwind => "woodwind wind", _ => family.ToLowerInvariant(),
     };
 
-    // Plugins and instruments whose name says what they play. Checked first, longest names first, on whole words.
+    // Plugins and instruments whose name says what they play. Checked first, on whole words (as Simple() writes them,
+    // so "VB-3" is "vb 3"). Names that also come before other instruments ("upright bass", "grand" anything) aren't here:
+    // the instrument words below name those.
     static readonly (string Words, string Family)[] Plugins =
     [
         ("addictive drums", Drums), ("superior drummer", Drums), ("ezdrummer", Drums), ("battery", Drums), ("stylus", Drums),
         ("drum machine", Drums), ("drum rack", Drums), ("fpc", Drums), ("geist", Drums), ("xo", Drums), ("analog rytm", Drums),
         ("tr 808", Drums), ("tr 909", Drums), ("909", Drums), ("bass drum", Drums), ("cow bell", Drums), ("kick", Drums), ("snare", Drums),
         ("keyscape", Piano), ("pianoteq", Piano), ("ravenscroft", Piano), ("noire", Piano), ("una corda", Piano), ("the giant", Piano),
-        ("scarbee", Piano), ("lounge lizard", Piano), ("mark i", Piano), ("fazioli", Piano), ("steinway", Piano), ("upright", Piano),
-        ("grand", Piano), ("rhodes", Piano), ("wurlitzer", Piano), ("wurli", Piano), ("clavinet", Piano), ("clav", Piano),
+        ("scarbee", Piano), ("lounge lizard", Piano), ("mark i", Piano), ("fazioli", Piano), ("steinway", Piano),
+        ("rhodes", Piano), ("wurlitzer", Piano), ("wurli", Piano), ("clavinet", Piano), ("clav", Piano),
         ("electric piano", Piano), ("e piano", Piano), ("epiano", Piano),
-        ("trilian", Bass), ("vb3", Organ), ("hammond", Organ), ("b3", Organ), ("farfisa", Organ),
-        ("spitfire", Strings), ("bbc so", Strings), ("albion", Strings),
+        ("trilian", Bass), ("vb 3", Organ), ("hammond", Organ), ("farfisa", Organ),
     ];
+
+    // Libraries mostly known for one family that hold others too ("Spitfire LABS Soft Piano"): only when no word says.
+    static readonly (string Words, string Family)[] Libraries = [("spitfire", Strings), ("bbc so", Strings), ("albion", Strings)];
+
+    // Styles of music whose names hold instrument words: a "Drum and Bass" folder isn't drums, nor "Future Bass" a bass.
+    static readonly string[] Styles =
+        ["drum and bass", "drum n bass", "drum bass", "drumnbass", "future bass", "bass house", "bass music", "piano house"];
 
     // Words in names that say what plays. Drum words come before "bass" so "bass drum" is drums; "808" is a bass in names.
     static readonly (string[] Words, string Family)[] Words =
@@ -74,15 +82,19 @@ public static partial class Instruments
         {
             if (string.IsNullOrWhiteSpace(raw)) continue;
             var text = " " + Simple(raw) + " ";
-            foreach (var (words, family) in Plugins)
-                if (text.Contains(" " + words + " ", StringComparison.Ordinal))
+            foreach (var style in StylesPadded)
+                if (text.Contains(style, StringComparison.Ordinal)) text = text.Replace(style, " ", StringComparison.Ordinal);
+            foreach (var (padded, words, family) in PluginsPadded)
+                if (text.Contains(padded, StringComparison.Ordinal))
                     return IsPluginName(words)
                         ? new(family, $"“{raw.Trim()}” is {Article(family)} {Noun(family)} plugin")
                         : new(family, $"The name “{raw.Trim()}” says {words}");
-            foreach (var (words, family) in Words)
-                foreach (var w in words)
-                    if (text.Contains(" " + w + " ", StringComparison.Ordinal))
-                        return new(family, $"The name “{raw.Trim()}” says {w}");
+            foreach (var (padded, w, family) in WordsPadded)
+                if (text.Contains(padded, StringComparison.Ordinal))
+                    return new(family, $"The name “{raw.Trim()}” says {w}");
+            foreach (var (padded, words, family) in LibrariesPadded)
+                if (text.Contains(padded, StringComparison.Ordinal))
+                    return new(family, $"“{raw.Trim()}” is mostly {Article(family)} {Noun(family)} library");
         }
         // Program 0 (Acoustic Grand Piano) is what most programs write when nobody chose a sound, so it says nothing.
         if (program is > 0 and < 128) return new(FamilyOf(program.Value), $"The file asks for General MIDI sound {program + 1}: {GeneralMidi[program.Value]}");
@@ -90,8 +102,17 @@ public static partial class Instruments
     }
 
     static bool IsPluginName(string words) =>
-        words is not ("bass drum" or "kick" or "snare" or "grand" or "upright" or "electric piano" or "e piano" or "epiano" or
-                      "rhodes" or "wurlitzer" or "wurli" or "clavinet" or "clav" or "hammond" or "b3" or "909" or "tr 808" or "tr 909" or "cow bell");
+        words is not ("bass drum" or "kick" or "snare" or "electric piano" or "e piano" or "epiano" or
+                      "rhodes" or "wurlitzer" or "wurli" or "clavinet" or "clav" or "hammond" or "909" or "tr 808" or "tr 909" or "cow bell");
+
+    // Each table's words with a space either side, made once: names are checked for every part on every catalogue load.
+    static readonly (string Padded, string Words, string Family)[] PluginsPadded = [.. Plugins.Select(x => (Spaced(x.Words), x.Words, x.Family))];
+    static readonly (string Padded, string Words, string Family)[] LibrariesPadded = [.. Libraries.Select(x => (Spaced(x.Words), x.Words, x.Family))];
+    static readonly (string Padded, string Word, string Family)[] WordsPadded =
+        [.. Words.SelectMany(x => x.Words.Select(w => (Spaced(w), w, x.Family)))];
+    static readonly string[] StylesPadded = [.. Styles.Select(Spaced)];
+
+    static string Spaced(string words) => " " + words + " ";
 
     static string Article(string family) => family is Organ or Fx ? "an" : "a";
 

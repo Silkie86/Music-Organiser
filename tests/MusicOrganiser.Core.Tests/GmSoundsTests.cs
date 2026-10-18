@@ -18,12 +18,23 @@ public class GmSoundsTests
     [Fact]
     public void Without_a_soundfont_parts_still_play_with_the_stand_in_sound()
     {
-        GmSounds.ChosenFile = Path.Combine(Path.GetTempPath(), "no such soundfont.sf2");
-        var keys = new MidiChannel("Keys", "", 96, [new NoteEvent(0, 96, 60, 100)]) { GmProgram = 4 };
-        var result = MidiRender.Render([keys], 120, "");
-        Assert.Contains(result.Audio, v => Math.Abs(v) > 0.01f);
-        Assert.Equal("a stand-in tone", result.Voices.Single());
-        GmSounds.ChosenFile = null;
+        // Both missing: the MIDI page sets the chosen one as tests running alongside open it, and this machine may have
+        // downloaded the usual one.
+        var missing = Path.Combine(Path.GetTempPath(), "no such soundfont.sf2");
+        GmSounds.ChosenFile = missing;
+        GmSounds.DefaultFile = missing;
+        try
+        {
+            var keys = new MidiChannel("Keys", "", 96, [new NoteEvent(0, 96, 60, 100)]) { GmProgram = 4 };
+            var result = MidiRender.Render([keys], 120, "");
+            Assert.Contains(result.Audio, v => Math.Abs(v) > 0.01f);
+            Assert.Equal("a stand-in tone", result.Voices.Single());
+        }
+        finally
+        {
+            GmSounds.ChosenFile = null;
+            GmSounds.DefaultFile = null;
+        }
     }
 
     [Fact]
@@ -41,6 +52,7 @@ public class GmSoundsTests
     {
         if (Environment.GetEnvironmentVariable("MO_SOUNDFONT") is not { Length: > 0 } sf2 || !File.Exists(sf2)) return;
         GmSounds.ChosenFile = sf2;
+        GmSounds.DefaultFile = sf2;   // the MIDI page may set the chosen one back meanwhile
         try
         {
             Assert.True(GmSounds.LooksLikeSoundFont(sf2));
@@ -54,6 +66,10 @@ public class GmSoundsTests
             Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"took {clock.Elapsed}");
             Console.WriteLine($"Rendered {result.Seconds:0.0} s in {clock.ElapsedMilliseconds} ms");
         }
-        finally { GmSounds.ChosenFile = null; }
+        finally
+        {
+            GmSounds.ChosenFile = null;
+            GmSounds.DefaultFile = null;
+        }
     }
 }

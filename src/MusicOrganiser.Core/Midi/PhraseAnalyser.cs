@@ -262,7 +262,13 @@ public static partial class PhraseAnalyser
         "kick", "kicks", "snare", "snares", "hat", "hats", "hihat", "hihats", "hh", "clap", "claps", "drum", "drums", "perc",
         "percs", "percussion", "cymbal", "cymbals", "shaker", "fpc", "909", "rim", "rimshot", "tom", "toms", "ride", "crash",
         "kit", "beat", "beats", "groove", "grooves", "break", "breaks", "tops", "snr", "kck", "battery",
+        // Percussion and drum shorthands (Solomon, 2026-10-18: "tamb" parts were called basslines).
+        "tamb", "tambo", "tambourine", "tambourines", "conga", "congas", "bongo", "bongos", "cowbell", "cowbells", "clave",
+        "claves", "guiro", "timbale", "timbales", "cabasa", "triangle", "shakers", "snap", "snaps", "chh", "ohh", "openhat",
+        "closedhat", "bd", "sd", "kickdrum", "snaredrum", "808kick", "drumloop",
     ];
+    /// <summary>The drum words that name a drum sound, not a style ("beat", "groove", "break" can be anything).</summary>
+    static readonly HashSet<string> SoundWords = DrumWords.Except(["kit", "beat", "beats", "groove", "grooves", "break", "breaks", "tops", "battery"]).ToHashSet();
     static readonly HashSet<string> BassWords = ["bass", "basses", "bassline", "basslines", "sub", "subs", "subbass", "reese", "808", "808s"];
     static readonly HashSet<string> ChordWords = ["chord", "chords", "prog", "progs", "progression", "progressions", "pad", "pads", "stab", "stabs", "harmony"];
     static readonly HashSet<string> MelodyWords = ["melody", "melodies", "melodic", "lead", "leads", "hook", "hooks", "topline", "toplines", "riff", "riffs", "line", "counter"];
@@ -287,10 +293,23 @@ public static partial class PhraseAnalyser
         return roles;
     }
 
-    /// <summary>The General MIDI drum notes; a part using kick, snare and hats from these is a drum pattern.</summary>
-    static bool LooksLikeGmDrums(IReadOnlyCollection<int> keys) =>
-        keys.All(k => k is >= 35 and <= 81) &&
-        keys.Any(k => k is 35 or 36) && keys.Any(k => k is 38 or 39 or 40) && keys.Any(k => k is 42 or 44 or 46);
+    /// <summary>
+    /// The General MIDI drum notes, played like drums: a part using kick, snare and hats from these is a drum pattern.
+    /// Those notes are also C2 to Bb2, where plenty of basslines and low chords sit (C minor: C, Eb, G, Bb), so the notes
+    /// alone aren't enough: drums keep the hats going, hit with the kick and snare or in between them, where a bassline
+    /// only passes through Bb now and then and chords stack three notes or more.
+    /// </summary>
+    static bool LooksLikeGmDrums(IReadOnlyCollection<int> keys, IReadOnlyList<NoteEvent> notes, Shape s)
+    {
+        if (!keys.All(k => k is >= 35 and <= 81) ||
+            !keys.Any(k => k is 35 or 36) || !keys.Any(k => k is 38 or 39 or 40) || !keys.Any(k => k is 42 or 44 or 46))
+            return false;
+        if (s.ChordShare >= 0.35) return false;
+        var onsets = notes.GroupBy(n => n.Start).ToList();
+        var together = onsets.Count(g => g.Select(n => n.Key).Distinct().Count() >= 2) / (double)onsets.Count;
+        var hats = notes.Count(n => n.Key is 42 or 44 or 46) / (double)notes.Count;
+        return hats >= 0.25 && together >= 0.15 || hats >= 0.4;
+    }
 
     /// <param name="notes">At <see cref="Ppq"/>, as <see cref="Normalise"/> gives them.</param>
     /// <param name="hints">Names that may say what the part is: its track, pattern, file and folders.</param>
@@ -395,12 +414,19 @@ public static partial class PhraseAnalyser
             named.Remove(MidiRoles.Bass);
             named.Add(MidiRoles.Drums);
         }
-        if (LooksLikeGmDrums(keys)) return (MidiRoles.Drums, "Uses the General MIDI kick, snare and hat notes");
+        // A name that says a tuned part (and not drums) wins over the drum notes test.
+        var namedTuned = !named.Contains(MidiRoles.Drums) &&
+                         named.Overlaps([MidiRoles.Bass, MidiRoles.Chords, MidiRoles.Melody, MidiRoles.Arp]);
+        if (!namedTuned && LooksLikeGmDrums(keys, notes, s)) return (MidiRoles.Drums, "Uses the General MIDI kick, snare and hat notes, played like drums");
 
         var (fromNotes, why) = FromNotes(s);
         if (named.Count == 0) return (fromNotes, why);
         if (named.Contains(fromNotes)) return (fromNotes, why + ", and its name agrees");
         if (named.Contains(MidiRoles.Drums) && s.Distinct <= 3 && s.ChordShare < 0.2) return (MidiRoles.Drums, "Named like a drum part");
+        // Named after a drum sound and nothing tuned ("Tamb", "Chh Selector Grid"): drums, whatever notes play it (a
+        // sampler or drum grid can sit anywhere on the keys), unless it plays far more notes than a kit has.
+        if (words.Overlaps(SoundWords) && !named.Overlaps([MidiRoles.Bass, MidiRoles.Chords, MidiRoles.Melody, MidiRoles.Arp]) && s.Distinct <= 12)
+            return (MidiRoles.Drums, "Named after a drum sound");
         // A name wins unless the notes plainly say otherwise.
         foreach (var role in new[] { MidiRoles.Chords, MidiRoles.Arp, MidiRoles.Bass, MidiRoles.Melody })
         {

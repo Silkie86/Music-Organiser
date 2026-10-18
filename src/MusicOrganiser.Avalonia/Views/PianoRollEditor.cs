@@ -451,7 +451,7 @@ public sealed class PianoRollEditor : Control
         {
             var notes = Current;
             var t = (hov.Tick - From) % Loop;
-            var i = hov.Tick < From ? -1 : notes.ToList().FindIndex(n => n.Key == hov.Key && n.Start <= t && n.Start + n.Length > t);
+            var i = hov.Tick < From || hov.Tick >= To ? -1 : notes.ToList().FindIndex(n => n.Key == hov.Key && n.Start <= t && n.Start + n.Length > t);
             if (i >= 0)
             {
                 Commit(notes.Where((_, j) => j != i).ToList());
