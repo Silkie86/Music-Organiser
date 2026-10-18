@@ -81,7 +81,7 @@ public sealed partial class MainViewModel : ObservableObject
             new("Settings", "", Settings),
         ];
         _midiPage = midiPage;
-        if (!midiPage) Nav = Nav.Where(n => n.Page != Midi).ToList();
+        if (!midiPage) Nav = Nav.Where(n => n.Page != Midi && n.Page != Playground).ToList();   // the playground needs the MIDI page, and has no WPF view either
         _selectedNav = StartPage();
         if (_selectedNav.Page == Midi || _selectedNav.Page == Playground) Midi.Opened();
         if (_selectedNav.Page == Playground) Playground.Opened();
