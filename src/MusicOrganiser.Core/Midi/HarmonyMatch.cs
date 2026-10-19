@@ -22,6 +22,12 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
     /// <summary>Where each kind of part sits in it: the middle of its notes (MIDI note numbers), by kind (<see cref="MidiRoles"/>).</summary>
     public IReadOnlyDictionary<string, double> Registers { get; init; } = new Dictionary<string, double>();
 
+    /// <summary>
+    /// A song's pitched parts, each where it plays, so a few can be picked to fit and play against (Solomon, 2026-10-19:
+    /// "i would like to be able to select a few then test the new midi along with the selected midi"). Empty for a part.
+    /// </summary>
+    public IReadOnlyList<MidiChannel> Parts { get; init; } = [];
+
     /// <summary>How long it lasts when that isn't its notes' bars: a stretch cut from a longer part (ticks).</summary>
     public long? Span { get; init; }
 
@@ -62,6 +68,7 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
         return new HarmonyTarget(name, Strongest(chroma), PhraseAnalyser.Progression(notes), key)
         {
             Notes = notes,
+            Parts = pitched,
             // Two basslines: the lower one is the bass.
             Registers = registers.ToDictionary(kv => kv.Key, kv => kv.Key == MidiRoles.Bass ? kv.Value.Min() : kv.Value.Average()),
         };

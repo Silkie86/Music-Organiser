@@ -95,6 +95,30 @@ public static class PhraseJoiner
     }
 
     /// <summary>
+    /// A Bitwig or Studio One song's instrument tracks with every note where it plays in the arranger, at
+    /// <see cref="PhraseAnalyser.Ppq"/>: what a song's MIDI is fitted against. Read clip by clip, each track's clips sat
+    /// end to end, launcher clips too, so the tracks didn't line up in time and a part could "fit" a stretch the song
+    /// never plays (Solomon, 2026-10-19: "it shows midi with 96 percent but doesnt fit"). Null when there's no arranger
+    /// to go by (FL Studio's channels already follow its playlist).
+    /// </summary>
+    public static IReadOnlyList<MidiChannel>? ArrangedChannels(string path)
+    {
+        if (Path.GetExtension(path).ToLowerInvariant() is not (".bwproject" or ".song")) return null;
+        var arrangement = ArrangementReader.Read(path).FirstOrDefault();
+        if (arrangement is null || arrangement.Notes.Any(n => n.Contains("clip launcher", StringComparison.Ordinal))) return null;
+        long Ticks(double beats) => (long)Math.Round(beats * PhraseAnalyser.Ppq);
+        var channels = arrangement.Lanes.Where(l => l.Kind == LaneKind.Instrument && !l.Muted)
+            .Select(l => new MidiChannel(l.Name, l.Detail, PhraseAnalyser.Ppq,
+                l.Clips.Where(c => !c.Muted)
+                       .SelectMany(c => c.Notes.Where(n => !n.Muted && n.Start < c.Length)
+                                         .Select(n => new NoteEvent(Ticks(c.Start + n.Start), Math.Max(1, Ticks(Math.Min(n.Length, c.Length - n.Start))), n.Key, n.Velocity)))
+                       .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList(),
+                Plugin: l.Detail))
+            .Where(c => c.Notes.Count > 0).ToList();
+        return channels.Count > 0 ? channels : null;
+    }
+
+    /// <summary>
     /// Each run of clips on a track that play back to back, as one phrase cut where the music breathes. A run needs two
     /// different clips: a clip played four times over is already listed as itself.
     /// </summary>

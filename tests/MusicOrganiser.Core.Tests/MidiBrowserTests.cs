@@ -552,6 +552,31 @@ public class MidiBrowserTests
     }
 
     [Fact]
+    public void A_bitwig_songs_parts_are_fitted_against_where_they_play_in_the_arranger()
+    {
+        // Read clip by clip, a track's clips sat end to end, launcher clips too, so tracks didn't line up in time
+        // (Solomon, 2026-10-19: "it shows midi with 96 percent but doesnt fit").
+        var dir = Fixtures.TempDir();
+        var flp = FlProjectWithPhrases(dir);
+        var song = Readers.FlStudio.ReadSong(flp);
+        var path = Path.Combine(dir, "Song", "Song.bwproject");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, Export.BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => null).Bytes);
+
+        var keys = Assert.Single(PhraseJoiner.ArrangedChannels(path)!);
+        Assert.Equal("Keys", keys.Name);
+        Assert.Equal(PhraseAnalyser.Ppq, keys.Ppq);
+        // Verse, Hook, Verse, Hook, a bar apart each chord: as FL's playlist plays them.
+        var fl = Readers.FlStudio.ExtractChannels(flp).Single(c => c.Name == "Keys");
+        Assert.Equal(PhraseAnalyser.Normalise(fl.Notes, fl.Ppq, keepPlace: true).Select(n => (n.Start, n.Key)), keys.Notes.Select(n => (n.Start, n.Key)));
+        Assert.Equal(15 * Bar, keys.Notes.Max(n => n.Start));
+
+        var target = HarmonyTarget.FromChannels("Song", PhraseJoiner.ArrangedChannels(path)!)!;
+        Assert.Equal("Keys", Assert.Single(target.Parts).Name);
+        Assert.Null(PhraseJoiner.ArrangedChannels(flp));   // FL Studio's channels follow its playlist already
+    }
+
+    [Fact]
     public void A_parts_notes_never_wait_behind_a_long_read_of_every_part()
     {
         // The window asks for a row's notes as it comes into view; a read of the whole list (after a song is read again)
@@ -689,6 +714,27 @@ public class MidiBrowserTests
             .Data(233, [.. Fixtures.PlaylistItem25(0, 20481, Four), .. Fixtures.PlaylistItem25(Four, 20482, Four),
                         .. Fixtures.PlaylistItem25(2 * Four, 20481, Four), .. Fixtures.PlaylistItem25(3 * Four, 20482, Four)]);
         var path = Path.Combine(dir, "Phrases.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>Am F C G on Keys, and a lead in C minor on Lead that clashes with it: a song with two parts to pick from.</summary>
+    internal static string FlProjectWithChordsAndLead(string dir)
+    {
+        var chords = AMinor.SelectMany((c, bar) => c.Select(k => Fixtures.Note((uint)(bar * Bar), 0, Bar, (ushort)k, 100)));
+        int[] lead = [75, 72, 75, 79, 80, 79, 75, 72];
+        var melody = lead.Select((k, i) => Fixtures.Note((uint)(i * 2 * Beat), 1, 2 * Beat, (ushort)k, 100));
+        var b = new Fixtures.FlpBuilder()
+            .Ascii(199, "21.2.3.4004")
+            .Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Keys")
+            .Data(213, Fixtures.WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Serum_x64.dll", "Xfer Records", [1, 2, 3, 4]))
+            .Word(64, 1).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Lead")
+            .Data(213, Fixtures.WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Serum_x64.dll", "Xfer Records", [1, 2, 3, 4]))
+            .Word(65, 1).Text(193, "Verse")
+            .Data(224, chords.Concat(melody).SelectMany(n => n).ToArray());
+        var path = Path.Combine(dir, "Two Parts.flp");
         File.WriteAllBytes(path, b.Build());
         return path;
     }
