@@ -346,6 +346,27 @@ public sealed class TimelineView : Control
                             if (rx > rect.X && rx < rect.Right) dc.FillRectangle(stroke, new Rect(rx, rect.Y + 14, 1, rect.Height - 14));
                         }
                         dc.DrawText(Text(clip.Name, 11, text, bold), new Point(rect.X + 5, rect.Y + 1));
+                        // How far each go round moved to fit the chords under it (or, set by hand, how far it's moved in all).
+                        for (var i = 0; i < clip.Repeats && i < clip.Fits.Count; i++)
+                        {
+                            var by = clip.Pinned ? clip.Shift(i) : clip.Fits[i];
+                            if (by == 0) continue;
+                            var label = Text(by > 0 ? $"+{by}" : $"{by}", 10, clip.Pinned ? text : accent, bold);
+                            dc.DrawText(label, new Point(Math.Max(rect.X, X(clip.RepeatAt(i))) + 3, rect.Bottom - label.Height - 1));
+                        }
+                        // Changed by hand: a corner mark (bottom right) says it won't move to fit.
+                        if (clip.Pinned && clip.Role is not (MidiRoles.Chords or MidiRoles.Drums) && rect.Width > 24)
+                        {
+                            var corner = new StreamGeometry();
+                            using (var gc = corner.Open())
+                            {
+                                gc.BeginFigure(new Point(rect.Right, rect.Bottom - 10), true);
+                                gc.LineTo(new Point(rect.Right, rect.Bottom));
+                                gc.LineTo(new Point(rect.Right - 10, rect.Bottom));
+                                gc.EndFigure(true);
+                            }
+                            dc.DrawGeometry(accent, null, corner);
+                        }
                         var notes = NotesOf(clip);
                         if (notes.Count > 0)
                         {

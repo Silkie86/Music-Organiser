@@ -26,6 +26,8 @@ public sealed class PlaygroundClip
     public long Offset { get; set; }
     /// <summary>Semitones it's moved by hand (the octave and semitone buttons).</summary>
     public int Transpose { get; set; }
+    /// <summary>How many times its chords are turned over by hand: up (bottom note up an octave) or down.</summary>
+    public int Inversion { get; set; }
     /// <summary>
     /// Changed by hand, so it stays as it is instead of moving to fit the chords, until Fit again (Solomon, 2026-10-19:
     /// "any manual change is an override").
@@ -65,6 +67,7 @@ public sealed class PlaygroundClip
     {
         var list = new List<NoteEvent>();
         if (Loop <= 0 || Length <= 0 || source.Count == 0) return list;
+        if (Inversion != 0) source = Inversions.Turn(source, Inversion);
         long from = Offset, to = Offset + Length;
         var first = from / Loop;
         for (var r = first; r * Loop < to; r++)
@@ -124,19 +127,42 @@ public static class ClipFit
     /// The move (−6 to +5 semitones) that sits <paramref name="notes"/> best on <paramref name="lane"/>: each note weighed
     /// by how long it sounds, valued by <see cref="ChordScales.Sit"/>. The smaller move wins a tie, and no chords means no move.
     /// </summary>
-    public static int Best(IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length, HarmonyStyle style)
+    /// <remarks>Each semitone moved costs a little (<paramref name="cost"/> of what a perfect fit scores), so a part only
+    /// moves when it sits clearly better, and stays put when it already fits.</remarks>
+    public static int Best(IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length, HarmonyStyle style, double cost = 0.03)
     {
         if (notes.Count == 0 || lane.Count == 0) return 0;
+        var weight = notes.Sum(n => (double)Math.Min(n.Length, ChordLane.Bar));
         int best = 0;
         var bestScore = double.MinValue;
         foreach (var s in new[] { 0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, -6 })
         {
-            double score = 0;
+            var score = -cost * Math.Abs(s) * weight;
             foreach (var n in notes)
                 if (ChordLane.At(lane, n.Start + 1, length) is { } chord)
                     score += Math.Min(n.Length, ChordLane.Bar) * ChordScales.Sit(chord, ChordSymbol.Mod(n.Key + s), style);
             if (score > bestScore + 1e-9) { best = s; bestScore = score; }
         }
         return best;
+    }
+
+    /// <summary>
+    /// How far each go round of <paramref name="clip"/> moves to fit <paramref name="lane"/> (the chords from the other
+    /// parts, across the whole timeline), judged on the notes of that go round that play.
+    /// </summary>
+    public static List<int> Repeats(PlaygroundClip clip, IReadOnlyList<TimedChord> lane, HarmonyStyle style)
+    {
+        var source = clip.Notes;
+        var fits = new List<int>();
+        for (var r = 0; r < clip.Repeats; r++)
+        {
+            var at = clip.RepeatAt(r);
+            var playing = source.Where(n => at + n.Start >= clip.Start && at + n.Start < clip.End)
+                                .Select(n => n with { Key = n.Key + clip.Transpose }).ToList();
+            var under = lane.Where(c => c.End > at && c.Start < at + clip.Loop)
+                            .Select(c => new TimedChord(Math.Max(c.Start, at) - at, Math.Min(c.End, at + clip.Loop) - Math.Max(c.Start, at), c.Chord)).ToList();
+            fits.Add(Best(playing, under, clip.Loop, style));
+        }
+        return fits;
     }
 }

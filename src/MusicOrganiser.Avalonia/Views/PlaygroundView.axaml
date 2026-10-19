@@ -201,6 +201,15 @@
                         <TextBlock Text="Semitone" Classes="label" Margin="0,0,4,6" />
                         <Button Content="−" Classes="tiny" Margin="0,0,2,6" Command="{Binding SelectedClip.DownCommand}" />
                         <Button Content="+" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.UpCommand}" />
+                        <TextBlock Text="Inversion" Classes="label" Margin="0,0,4,6" IsVisible="{Binding SelectedClip.IsChords}" />
+                        <Button Content="−" Classes="tiny" Margin="0,0,2,6" Command="{Binding SelectedClip.TurnDownCommand}" IsVisible="{Binding SelectedClip.IsChords}"
+                                ToolTip.Tip="Turn its chords down: each chord's top note down an octave" />
+                        <Button Content="+" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.TurnUpCommand}" IsVisible="{Binding SelectedClip.IsChords}"
+                                ToolTip.Tip="Turn its chords up: each chord's bottom note up an octave" />
+                        <Button Content="Fit again" Classes="tiny" Margin="0,0,6,6" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
+                                ToolTip.Tip="Changed by hand, so it stays as it is. Fit again lets it move to fit the chords under it again (its octave is kept)." />
+                        <TextBlock Text="{Binding SelectedClip.FitText}" Classes="label" Margin="0,0,12,6"
+                                   ToolTip.Tip="Shift to fit: a clip you move moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Fit again." />
                         <Button Content="Copy after it" Classes="tiny" Margin="0,0,4,6" Command="{Binding SelectedClip.DuplicateCommand}" />
                         <Button Content="Remove" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.RemoveCommand}" />
                         <Button Content="Smooth inversions" Classes="tiny" Margin="0,0,10,6" Command="{Binding SmoothInversionsCommand}" IsVisible="{Binding IsChordLayer}"

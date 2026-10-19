@@ -296,6 +296,55 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void A_moved_clip_shifts_to_fit_each_time_round_until_changed_by_hand()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | D");
+        // A one-bar C major arpeggio from the library, going round over both bars.
+        var arp = Line(Beat, 60, 64, 67, 72);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Arp.flp", "Arp", arp)]).Entries[0];
+        p.AddFromLibrary(entry, arp, "Arp");
+        var track = p.Layers[1];
+        var clip = track.Clips[0];
+        Assert.Equal(2L * Bar, clip.Length);
+        Assert.False(clip.Pinned);
+
+        // Slid (here: put back where it is): each time round moves to fit, the second up a tone onto D.
+        p.ChangeClipCommand.Execute(new ClipEdit(track.Layer, clip, 1, 0, 2L * Bar, 0));
+        Assert.Equal([0, 2], clip.Fits);
+        Assert.Equal([62, 66, 69, 74], track.Notes.Where(n => n.Start >= Bar).Select(n => n.Key));
+        Assert.Contains("+2", p.SelectedClip!.FitText);
+
+        // Moved by hand: pinned, and sliding it no longer moves it.
+        p.SelectedClip.UpCommand.Execute(null);
+        Assert.True(clip.Pinned);
+        Assert.True(p.SelectedClip.CanFitAgain);
+        p.ChangeClipCommand.Execute(new ClipEdit(track.Layer, clip, 1, Bar, Bar, 0));
+        Assert.Equal(61, track.Notes.First().Key);   // C up a semitone by hand, over D: left as it is
+
+        // Fit again: back to fitting (the semitone by hand goes, no octave was set).
+        p.SelectedClip.FitAgainCommand.Execute(null);
+        Assert.False(clip.Pinned);
+        Assert.Equal(0, clip.Transpose);
+        Assert.Equal(62, track.Notes.First().Key);
+
+        // Chords turned over by hand: the bottom note goes up an octave.
+        var keys = p.Layers[0];
+        p.SelectClipCommand.Execute(new ClipPick(keys.Layer, keys.Clips[0]));
+        var before = keys.Notes.Where(n => n.Start == 0).Select(n => n.Key).Order().ToList();
+        p.SelectedClip!.TurnUpCommand.Execute(null);
+        var after = keys.Notes.Where(n => n.Start == 0).Select(n => n.Key).Order().ToList();
+        Assert.NotEqual(before, after);
+        Assert.Equal(before.Select(k => k % 12).Order(), after.Select(k => k % 12).Order());
+    }
+
+    [Fact]
     public async Task Open_in_playground_from_a_song_starts_a_section_with_the_part()
     {
         Ui.Current = new Headless();
