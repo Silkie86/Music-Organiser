@@ -1884,6 +1884,14 @@ public sealed partial class MidiRow : ObservableObject
     [RelayCommand]
     Task Play() => _owner.Toggle(this);
 
+    /// <summary>With what it's fitted to (on a song's MIDI tab, the song), or stopped.</summary>
+    [RelayCommand]
+    Task PlayTogether() => _owner.Toggle(this, together: true);
+
+    /// <summary>On its own, or stopped.</summary>
+    [RelayCommand]
+    Task PlayAlone() => _owner.Toggle(this, together: false);
+
     [RelayCommand]
     Task Seek(double ticks) => _owner.Toggle(this, Math.Max(1, ticks));
 

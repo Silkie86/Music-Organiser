@@ -115,6 +115,35 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
         await midi.FitToProjectAsync(path, name);
     }
 
+    // ---- the quick view ----
+
+    /// <summary>
+    /// The part opened beside the list with a click: a slim mini playground to try it with the song, edit it and drag it
+    /// out, with the Playground for more (Solomon, 2026-10-19: "a slimmed down playground for quick testing").
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsOpen))] MidiRow? _open;
+    public bool IsOpen => Open is not null;
+
+    /// <summary>The MIDI page, for what the quick view shares with it (looping).</summary>
+    public MidiBrowserViewModel Midi => midi;
+
+    // While it's open, picking another part (a click, the arrow keys, another kind) opens that one.
+    partial void OnSelectedChanged(MidiRow? value)
+    {
+        if (Open is not null && value is not null) Open = value;
+    }
+
+    [RelayCommand]
+    void OpenPart(MidiRow? row)
+    {
+        if (row is null) return;
+        Selected = row;
+        Open = row;
+    }
+
+    [RelayCommand]
+    void Close() => Open = null;
+
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>
         midi.MakeDrag(items.Count > 0 ? items : Selected is { } s ? [s] : []);
 }
