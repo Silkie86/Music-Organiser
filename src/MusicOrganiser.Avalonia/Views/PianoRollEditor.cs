@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.ViewModels;
 
@@ -422,17 +423,8 @@ public sealed class PianoRollEditor : Control
     }
 
     /// <summary>A semitone (or a major seventh) from a guide note that sounds at the same time.</summary>
-    static bool Rubs(NoteEvent n, long from, IReadOnlyList<NoteEvent> guide)
-    {
-        long a = from + n.Start, b = a + n.Length;
-        foreach (var g in guide)
-        {
-            if (g.Start >= b || g.Start + g.Length <= a) continue;
-            var ic = ((n.Key - g.Key) % 12 + 12) % 12;
-            if (ic is 1 or 11) return true;
-        }
-        return false;
-    }
+    static bool Rubs(NoteEvent n, long from, IReadOnlyList<NoteEvent> guide) =>
+        HarmonyMatcher.Rubs(from + n.Start, n.Length, n.Key, guide);
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
