@@ -14,8 +14,10 @@ namespace MusicOrganiser.Avalonia.Views;
 /// <summary>
 /// The playground's timeline (Solomon, 2026-10-19: "it should work like a mini DAW"): labels along the top, bar numbers
 /// under them, then a row for each track with its clips drawn where they play, their notes inside and a faint line
-/// where each go round starts. Click a clip to pick it; drag across empty bars (or the bar numbers) to highlight them.
-/// The track names and buttons are drawn beside it by the page, row for row.
+/// where each go round starts. Click a clip to pick it and drag it to slide it along or onto another track (below
+/// the last track makes a new one); drag its right edge to play it round more times, its left edge to trim its start.
+/// Everything snaps to <see cref="Grid"/>, or to nothing while Alt is held. Drag across empty bars (or the bar numbers)
+/// to highlight them. The track names and buttons are drawn beside it by the page, row for row.
 /// </summary>
 public sealed class TimelineView : Control
 {
@@ -35,6 +37,12 @@ public sealed class TimelineView : Control
     public static readonly StyledProperty<ICommand?> SelectCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(SelectCommand));
     public static readonly StyledProperty<PlaygroundLabel?> SelectedLabelProperty = AvaloniaProperty.Register<TimelineView, PlaygroundLabel?>(nameof(SelectedLabel));
     public static readonly StyledProperty<ICommand?> LabelCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(LabelCommand));
+    /// <summary>Takes a <see cref="ClipEdit"/> when a clip has been slid, stretched or trimmed.</summary>
+    public static readonly StyledProperty<ICommand?> EditCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(EditCommand));
+    /// <summary>Takes the picked clip's <see cref="ClipPick"/> when Delete is pressed.</summary>
+    public static readonly StyledProperty<ICommand?> DeleteCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(DeleteCommand));
+    /// <summary>What clips snap to, in ticks: a bar, half a bar or a beat.</summary>
+    public static readonly StyledProperty<long> GridProperty = AvaloniaProperty.Register<TimelineView, long>(nameof(Grid), 4 * PhraseAnalyser.Ppq);
 
     static TimelineView()
     {
@@ -54,6 +62,11 @@ public sealed class TimelineView : Control
     public ICommand? SelectCommand { get => GetValue(SelectCommandProperty); set => SetValue(SelectCommandProperty, value); }
     public PlaygroundLabel? SelectedLabel { get => GetValue(SelectedLabelProperty); set => SetValue(SelectedLabelProperty, value); }
     public ICommand? LabelCommand { get => GetValue(LabelCommandProperty); set => SetValue(LabelCommandProperty, value); }
+    public ICommand? EditCommand { get => GetValue(EditCommandProperty); set => SetValue(EditCommandProperty, value); }
+    public ICommand? DeleteCommand { get => GetValue(DeleteCommandProperty); set => SetValue(DeleteCommandProperty, value); }
+    public long Grid { get => GetValue(GridProperty); set => SetValue(GridProperty, value); }
+
+    public TimelineView() => Focusable = true;
 
     const int Bar = 4 * PhraseAnalyser.Ppq;
 
@@ -69,6 +82,12 @@ public sealed class TimelineView : Control
     }
 
     int RowCount => Tracks?.Count ?? 0;
+
+    int RowOf(LayerRow track)
+    {
+        for (var i = 0; i < RowCount; i++) if (Tracks![i] == track) return i;
+        return -1;
+    }
 
     protected override Size MeasureOverride(Size availableSize) =>
         new(double.IsInfinity(availableSize.Width) ? 600 : availableSize.Width, Top + Math.Max(1, RowCount + 1) * RowHeight);
@@ -94,6 +113,38 @@ public sealed class TimelineView : Control
     double _pressX;
     RollRange? _dragging;
 
+    /// <summary>What a drag on a clip does: slide it, play it round more (its right edge) or trim its start (its left edge).</summary>
+    enum Grab { Move, Stretch, Trim }
+
+    /// <summary>A clip being dragged: where it was, and where it would go now.</summary>
+    sealed class ClipDrag
+    {
+        public required LayerRow Track;
+        public required PlaygroundClip Clip;
+        public required Grab Grab;
+        public required Point From;
+        public bool Moved;
+        public int Row, FromRow;
+        public long Start, Length, Offset;
+    }
+
+    ClipDrag? _clip;
+    const double Edge = 6;
+
+    Grab GrabAt(PlaygroundClip clip, double x)
+    {
+        double left = X(clip.Start), right = X(clip.End);
+        // A narrow clip keeps a middle to slide it by.
+        var edge = Math.Min(Edge, (right - left) / 4);
+        return x >= right - edge ? Grab.Stretch : x <= left + edge ? Grab.Trim : Grab.Move;
+    }
+
+    long SnapTo(long tick, KeyModifiers keys)
+    {
+        var grid = keys.HasFlag(KeyModifiers.Alt) ? 1 : Math.Max(1, Grid);
+        return (long)Math.Round(tick / (double)grid) * grid;
+    }
+
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
@@ -107,10 +158,16 @@ public sealed class TimelineView : Control
             e.Handled = true;
             return;
         }
+        Focus();
         if (ClipAt(p) is { } hit)
         {
             var pick = new ClipPick(hit.Track.Layer, hit.Clip);
             if (SelectCommand?.CanExecute(pick) == true) SelectCommand.Execute(pick);
+            _clip = new ClipDrag
+            {
+                Track = hit.Track, Clip = hit.Clip, Grab = GrabAt(hit.Clip, p.X), From = p, Row = RowOf(hit.Track), FromRow = RowOf(hit.Track),
+                Start = hit.Clip.Start, Length = hit.Clip.Length, Offset = hit.Clip.Offset,
+            };
             e.Handled = true;
             return;
         }
@@ -124,7 +181,22 @@ public sealed class TimelineView : Control
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (_dragFrom is not { } from) return;
+        var p = e.GetPosition(this);
+        if (_clip is { } d)
+        {
+            if (!d.Moved && Math.Abs(p.X - d.From.X) < 4 && Math.Abs(p.Y - d.From.Y) < 4) return;
+            d.Moved = true;
+            DragTo(d, p, e.KeyModifiers);
+            InvalidateVisual();
+            return;
+        }
+        if (_dragFrom is null)
+        {
+            // The pointer says what a drag would do: slide a clip, or stretch or trim it at its edges.
+            Cursor = ClipAt(p) is { } over ? new Cursor(GrabAt(over.Clip, p.X) == Grab.Move ? StandardCursorType.Hand : StandardCursorType.SizeWestEast) : Cursor.Default;
+            return;
+        }
+        var from = _dragFrom.Value;
         var x = e.GetPosition(this).X;
         if (Math.Abs(x - _pressX) < 4) return;
         var at = Math.Clamp(TickAt(x), 0, Length);
@@ -134,9 +206,44 @@ public sealed class TimelineView : Control
         InvalidateVisual();
     }
 
+    void DragTo(ClipDrag d, Point p, KeyModifiers keys)
+    {
+        var c = d.Clip;
+        var delta = TickAt(p.X) - TickAt(d.From.X);
+        var min = Math.Max(1, keys.HasFlag(KeyModifiers.Alt) ? PhraseAnalyser.Ppq / 4 : Grid);
+        switch (d.Grab)
+        {
+            case Grab.Move:
+                d.Start = Math.Max(0, SnapTo(c.Start + delta, keys));
+                // Onto the row under the pointer; below the last one makes a new track.
+                d.Row = Math.Clamp((int)Math.Floor((p.Y - Top) / RowHeight), 0, RowCount);
+                break;
+            case Grab.Stretch:
+                d.Length = Math.Max(min, SnapTo(c.End + delta, keys) - c.Start);
+                break;
+            case Grab.Trim:
+                d.Start = Math.Clamp(SnapTo(c.Start + delta, keys), 0, c.End - min);
+                d.Length = c.End - d.Start;
+                // Its notes stay where they were on the timeline: the go round starts further in (or further back).
+                d.Offset = ((c.Offset + d.Start - c.Start) % c.Loop + c.Loop) % c.Loop;
+                break;
+        }
+    }
+
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+        if (_clip is { } d)
+        {
+            _clip = null;
+            if (d.Moved && (d.Start != d.Clip.Start || d.Length != d.Clip.Length || d.Offset != d.Clip.Offset || d.Row != d.FromRow))
+            {
+                var edit = new ClipEdit(d.Track.Layer, d.Clip, d.Row, d.Start, d.Length, d.Offset);
+                if (EditCommand?.CanExecute(edit) == true) EditCommand.Execute(edit);
+            }
+            InvalidateVisual();
+            return;
+        }
         if (_dragFrom is null) return;
         _dragFrom = null;
         // A click on empty bars clears the highlight; a drag sets it.
@@ -146,9 +253,19 @@ public sealed class TimelineView : Control
         InvalidateVisual();
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Key is not (Key.Delete or Key.Back) || Selected is not { } clip || Tracks?.FirstOrDefault(t => t.Clips.Contains(clip)) is not { } track) return;
+        var pick = new ClipPick(track.Layer, clip);
+        if (DeleteCommand?.CanExecute(pick) == true) DeleteCommand.Execute(pick);
+        e.Handled = true;
+    }
+
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         base.OnPointerCaptureLost(e);
+        _clip = null;
         _dragFrom = null;
         _dragging = null;
         InvalidateVisual();
@@ -244,6 +361,15 @@ public sealed class TimelineView : Control
                     }
                 }
             }
+
+        // The clip being dragged, where it would land.
+        if (_clip is { Moved: true } g)
+        {
+            var rect = new Rect(X(g.Start) + 0.5, Top + g.Row * RowHeight + 3, Math.Max(3, X(g.Length) - 1), RowHeight - 6);
+            dc.DrawRectangle(soft, new Pen(accent, 2, new DashStyle([4, 3], 0)), new RoundedRect(rect, 5));
+            var where = $"Bar {g.Start / (double)Bar + 1:0.##}{(g.Grab == Grab.Move ? "" : $" · {g.Length / (double)Bar:0.##} bars")}{(g.Row >= rows ? " · new track" : "")}";
+            dc.DrawText(Text(where, 11, text, bold), new Point(rect.X + 5, rect.Y + 1));
+        }
 
         if (rows == 0)
             dc.DrawText(Text("Bring parts in from the right, or press To the playground on the MIDI page.", 12, muted), new Point(10, Top + 14));

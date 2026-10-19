@@ -114,8 +114,15 @@
                           ToolTip.Tip="The chords' own notes are the safe ones; a clash on a strong beat counts against a part" />
         </WrapPanel>
 
-        <!-- Labels and the highlight. -->
+        <!-- Labels, the grid and the highlight. -->
         <WrapPanel Grid.Row="3" Margin="0,2,0,0">
+            <TextBlock Text="Snap to" Classes="label" Margin="0,0,6,6" />
+            <ListBox Classes="chips" ItemsSource="{x:Static vm:PlaygroundViewModel.GridChoices}" SelectedItem="{Binding GridPick}" Margin="0,0,12,6"
+                     ToolTip.Tip="What clips snap to when you drag them. Hold Alt while dragging to place them freely.">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+            </ListBox>
             <Button Content="+ Label" Classes="tiny" Margin="0,0,10,6" Command="{Binding AddLabelCommand}"
                     ToolTip.Tip="Name some bars (Verse, Build, Drop…): over the highlight, or the bars after the last label. Suggestions for those bars suit its feel." />
             <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,16,6" IsVisible="{Binding HasSelectedLabel}">
@@ -138,10 +145,10 @@
             <!-- The timeline: chords heard, energy, tracks of clips, and the piano roll for the clip picked. -->
             <Grid RowDefinitions="Auto,Auto,Auto">
                 <StackPanel Spacing="2" Margin="0,0,0,6">
-                    <views:ChordLaneView Height="46" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="190" />
-                    <views:EnergyCurveView Height="36" Values="{Binding EnergyCurve}" Target="{Binding EnergyTarget}" Inset="190"
+                    <views:ChordLaneView Height="46" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210" />
+                    <views:EnergyCurveView Height="36" Values="{Binding EnergyCurve}" Target="{Binding EnergyTarget}" Inset="210"
                                            ToolTip.Tip="Energy, bar by bar: how busy, loud and high it plays, and how far its harmony pulls from the key. Dashed: what each label's feel asks for." />
-                    <DockPanel Margin="190,0,0,0">
+                    <DockPanel Margin="210,0,0,0">
                         <TextBlock DockPanel.Dock="Right" Text="{Binding EnergyText}" Classes="small" Margin="8,0,0,0" />
                         <TextBlock Text="{Binding ChordSummary}" Classes="small"
                                    ToolTip.Tip="Chords are heard, never typed: from the chord and bass parts where there are some, from everything playing where there aren't. Green: home. Red: pulling home. Faint: moving away." />
@@ -150,7 +157,7 @@
 
                 <!-- Track names beside their rows, then the clips. -->
                 <ScrollViewer Grid.Row="1" MaxHeight="330" HorizontalScrollBarVisibility="Disabled">
-                    <Grid ColumnDefinitions="190,*">
+                    <Grid ColumnDefinitions="210,*">
                         <StackPanel>
                             <Border Height="38" />
                             <ListBox Classes="tracks" ItemsSource="{Binding Layers}" SelectedItem="{Binding SelectedLayer}" Background="Transparent"
@@ -162,6 +169,7 @@
                                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
                                                     <ToggleButton Classes="tiny" Content="M" IsChecked="{Binding Muted, Mode=OneWay}" Command="{Binding MuteCommand}" ToolTip.Tip="Mute" />
                                                     <ToggleButton Classes="tiny" Content="S" IsChecked="{Binding Solo, Mode=OneWay}" Command="{Binding ToggleSoloCommand}" ToolTip.Tip="Solo: hear only the soloed parts" />
+                                                    <Button Classes="tiny" Content="✕" Command="{Binding RemoveCommand}" ToolTip.Tip="Take this track and its clips out (Undo brings it back)" />
                                                 </StackPanel>
                                                 <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip.Tip="{Binding Details}" />
                                             </DockPanel>
@@ -176,7 +184,8 @@
                                             Highlight="{Binding Loop}" HighlightCommand="{Binding SetLoopCommand}"
                                             Selected="{Binding SelectedClip.Clip}" SelectCommand="{Binding SelectClipCommand}"
                                             SelectedLabel="{Binding SelectedLabel}" LabelCommand="{Binding SelectLabelCommand}"
-                                            ToolTip.Tip="Click a clip to edit it below. Drag across empty bars (or the bar numbers) to highlight them; click a label to pick its bars." />
+                                            EditCommand="{Binding ChangeClipCommand}" DeleteCommand="{Binding DeleteClipCommand}" Grid="{Binding Grid}"
+                                            ToolTip.Tip="Click a clip to edit it below; drag it to slide it, or onto another track (below the last makes a new one). Drag its right edge to play it round more, its left edge to trim it. Hold Alt to drag off the grid. Drag across empty bars to highlight them; click a label to pick its bars. Delete takes the picked clip out." />
                     </Grid>
                 </ScrollViewer>
 

@@ -614,6 +614,65 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         SelectedClip = new ClipRow(this, track, clip);
     }
 
+    /// <summary>
+    /// A clip slid along or onto another track, played round more times (its right edge pulled out) or trimmed (its left
+    /// edge pulled in) on the timeline (Solomon, 2026-10-19). Below the last track makes a new track named after its kind.
+    /// </summary>
+    [RelayCommand]
+    void ChangeClip(ClipEdit? edit)
+    {
+        if (edit is null || Layers.FirstOrDefault(r => r.Layer == edit.Track) is not { } from || !edit.Track.Clips.Contains(edit.Clip)) return;
+        Remember();
+        var clip = edit.Clip;
+        clip.Start = Math.Max(0, edit.Start);
+        clip.Length = Math.Max(1, edit.Length);
+        clip.Offset = Math.Max(0, edit.Offset);
+        var to = from;
+        if (edit.Row != Layers.IndexOf(from))
+        {
+            from.Layer.Clips.Remove(clip);
+            from.Layer.Render();
+            if (edit.Row >= 0 && edit.Row < Layers.Count) to = Layers[edit.Row];
+            else
+            {
+                var role = clip.Role == MidiRoles.Other ? from.Role : clip.Role;
+                var layer = new PlaygroundLayer
+                {
+                    Name = UniqueName(KindName(role)), Role = role, Program = from.Layer.Program ?? GmSounds.DefaultFor(role),
+                    SourcePath = clip.SourcePath, SourceHash = clip.SourceHash,
+                };
+                Section.Layers.Add(layer);
+                Layers.Add(to = new LayerRow(this, layer));
+            }
+            to.Layer.Clips.Add(clip);
+            from.Changed();
+        }
+        Reach(clip.End);
+        to.Layer.Render();
+        to.Changed();
+        SelectedLayer = to;
+        SelectedClip = new ClipRow(this, to, clip);
+        RefreshGrooveSources();
+        Changed();
+    }
+
+    /// <summary>What a kind of part is called, one of them: Chords, Bassline, Melody, Arp, Drums.</summary>
+    static string KindName(string role) => MidiRoles.Plural(role) switch { "Melodies" => "Melody", "Basslines" => "Bassline", "Arps" => "Arp", var p => p };
+
+    [RelayCommand]
+    void DeleteClip(ClipPick? pick)
+    {
+        if (pick is null || Layers.FirstOrDefault(r => r.Layer == pick.Track) is not { } track) return;
+        RemoveClip(new ClipRow(this, track, pick.Clip));
+    }
+
+    // ---- the grid clips snap to ----
+
+    public static IReadOnlyList<string> GridChoices { get; } = ["Bar", "Half bar", "Beat"];
+    /// <summary>What clips snap to when dragged (hold Alt to drag freely).</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Grid))] string _gridPick = "Bar";
+    public long Grid => GridPick switch { "Beat" => Ppq, "Half bar" => Bar / 2, _ => Bar };
+
     [RelayCommand] void SelectClip(ClipPick? pick) => PickClip(pick is null ? null : Layers.FirstOrDefault(r => r.Layer == pick.Track), pick?.Clip);
 
     internal void EditClip(ClipRow row, Action<PlaygroundClip> change, bool harmony = true)
@@ -1841,6 +1900,12 @@ public sealed partial class LayerRow : ObservableObject
 
 /// <summary>A clip on a track, as the timeline hands it over when it's clicked.</summary>
 public sealed record ClipPick(PlaygroundLayer Track, PlaygroundClip Clip);
+
+/// <summary>
+/// A clip dragged on the timeline: onto track <paramref name="Row"/> (one past the last makes a new track), starting at
+/// <paramref name="Start"/>, playing for <paramref name="Length"/>, from <paramref name="Offset"/> into its go round.
+/// </summary>
+public sealed record ClipEdit(PlaygroundLayer Track, PlaygroundClip Clip, int Row, long Start, long Length, long Offset);
 
 /// <summary>
 /// The clip picked on the timeline, as the piano roll under it shows it: one go round of its notes as they first play,
