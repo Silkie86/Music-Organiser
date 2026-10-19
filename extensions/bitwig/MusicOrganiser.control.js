@@ -976,9 +976,19 @@ function onlyEffectsAfter(note) {
     if (count > PAD_DEVICES) return false;
     for (var d = 1; d < count; d++) {
         var after = padDevices[note].getItemAt(d);
-        if (after.exists().get() && str(after.deviceType().get()) !== "audio_to_audio") return false;
+        if (after.exists().get() && !audioEffect(str(after.deviceType().get()))) return false;
     }
     return true;
+}
+
+/**
+ * Whether Bitwig's word for a device's type is an audio effect's. Bitwig 6.1.5 says "instrument" and
+ * "note-effect" (the 2026-10-19 live run), so most likely "audio-effect"; "audio_to_audio", the word the link
+ * was first written for, still counts.
+ * @param {string} type
+ */
+function audioEffect(type) {
+    return type === "audio-effect" || type === "audio_to_audio";
 }
 
 /**

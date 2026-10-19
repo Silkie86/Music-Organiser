@@ -53,6 +53,16 @@ public sealed record PresetBlob(string Name, string Plugin, string Extension, by
     public int Program { get; init; }
 }
 
+/// <summary>Whether a project plays a sample it holds (see <see cref="ProjectInfo.Unplayed"/>).</summary>
+public enum SampleUse
+{
+    Plays = 0,
+    /// <summary>Its channel or track has no notes or clips.</summary>
+    NoNotes = 1,
+    /// <summary>It has notes or clips, but all of them are muted.</summary>
+    Muted = 2,
+}
+
 public sealed class ProjectInfo
 {
     public required string Daw { get; init; }
@@ -71,6 +81,11 @@ public sealed class ProjectInfo
     public List<string> Warnings { get; } = new();
     public bool CanExtractMidi { get; set; }
     public bool CanExtractPresets { get; set; }
+    /// <summary>
+    /// Samples in <see cref="Samples"/> that this save doesn't play, and why. Only readers that can tell fill it in
+    /// (FL Studio so far); a sample not listed plays, or its reader can't say.
+    /// </summary>
+    public Dictionary<string, SampleUse> Unplayed { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public ProjectInfo Dedupe()
     {

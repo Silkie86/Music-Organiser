@@ -100,6 +100,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>The Sounds and Plugins pages, whose numbers (how many to show, how long a star plays) Settings can change.</summary>
     public SoundsViewModel SoundLab => _main.Sounds;
     public PluginsViewModel PluginsPage => _main.Plugins;
+    public ProjectsViewModel ProjectsPage => _main.Projects;
     /// <summary>The live tests with Bitwig, on the Developer tab.</summary>
     public LiveTestsViewModel LiveTests { get; }
 
