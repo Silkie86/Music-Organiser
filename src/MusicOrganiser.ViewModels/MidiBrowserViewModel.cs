@@ -691,13 +691,23 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     async Task LoadAsync(bool thenIndex = false)
     {
         _loading = true;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var (poolThreads, poolWaiting) = (ThreadPool.ThreadCount, ThreadPool.PendingWorkItemCount);
+        TimeSpan started = TimeSpan.Zero, read = TimeSpan.Zero, sorted = TimeSpan.Zero;
         try
         {
-            // Counting a few hundred thousand parts happens off the window's thread too.
-            var (catalogue, counts, files) = await UiWork.Run(() =>
+            // Counting a few hundred thousand parts happens off the window's thread too, on a thread of its own: at
+            // startup the shared ones can all be busy, and Solomon's list once took 51 s to show (2026-10-19).
+            var (catalogue, counts, files) = await UiWork.RunOwnThread(() =>
             {
-                var c = new MidiCatalogue(_index.All(), _index.Embeddings(Clamp3Model.Version));
-                return (c, c.RoleCounts(), c.Entries.Select(e => e.Phrase.Source.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+                started = clock.Elapsed;
+                var all = _index.All();
+                var heard = _index.Embeddings(Clamp3Model.Version);
+                read = clock.Elapsed;
+                var c = new MidiCatalogue(all, heard);
+                var r = (c, c.RoleCounts(), c.Entries.Select(e => e.Phrase.Source.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+                sorted = clock.Elapsed;
+                return r;
             });
             _catalogue = catalogue;
             // The parts picked before the reload, found again in the new list (gone parts are let go).
@@ -722,7 +732,15 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
                 : $"{catalogue.Entries.Count:N0} MIDI parts from {files:N0} files" +
                   (IncludeOlderSaves ? "" : " · newest save of each song") +
                   (catalogue.PhraseCount > catalogue.Entries.Count ? $" · {catalogue.PhraseCount - catalogue.Entries.Count:N0} copies kept as one" : "");
+            var shown = clock.Elapsed;
             await RefreshAsync();
+            // Where the time went when it's slow, for Solomon's log: on his PC it varied from 3 s to 51 s.
+            if (clock.Elapsed.TotalSeconds >= MidiIndexer.SlowSeconds)
+                AppLog.Info("MIDI", $"Showing the list took {clock.Elapsed.TotalSeconds:0.0} s ({catalogue.Entries.Count:N0} parts): " +
+                                    $"waited {started.TotalSeconds:0.0} s to start, read them in {(read - started).TotalSeconds:0.0} s, " +
+                                    $"sorted in {(sorted - read).TotalSeconds:0.0} s, back on screen after {(shown - sorted).TotalSeconds:0.0} s, " +
+                                    $"searched in {(clock.Elapsed - shown).TotalSeconds:0.0} s; {poolThreads} shared threads with {poolWaiting} jobs " +
+                                    $"waiting when it began, the app paused {GC.GetTotalPauseDuration().TotalSeconds:0.0} s cleaning memory since it opened");
         }
         finally { _loading = false; }
         if (thenIndex) _ = IndexAsync();
@@ -748,7 +766,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var token = (_searchCts = new CancellationTokenSource()).Token;
         IReadOnlyList<MidiHit> hits;
         int matching;
-        try { (hits, matching) = await UiWork.Run(() => (catalogue.Search(query, out var n, token), n)); }
+        try { (hits, matching) = await UiWork.RunOwnThread(() => (catalogue.Search(query, out var n, token), n)); }
         catch (OperationCanceledException) { return; }
         if (request != _searchRequest) return;
         var keep = Selected?.Entry;
@@ -840,13 +858,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         {
             var token = _indexCts.Token;
             var result = await Task.Run(() => _indexer.Run(progress, token, retryFailed), token);
-            if (result.Read > 0 || result.Forgotten > 0 || _catalogue is null)
-            {
-                var loading = System.Diagnostics.Stopwatch.StartNew();
-                await LoadAsync();
-                if (loading.Elapsed.TotalSeconds >= MidiIndexer.SlowSeconds)
-                    AppLog.Info("MIDI", $"Showing the new list took {loading.Elapsed.TotalSeconds:0.0} s ({_catalogue?.Entries.Count ?? 0:N0} parts)");
-            }
+            if (result.Read > 0 || result.Forgotten > 0 || _catalogue is null) await LoadAsync();
             else Failures = await UiWork.Run(_index.Failures);
             _ = HearAsync();
             card.Finish(result.Read == 0 ? "MIDI up to date" : "MIDI read",
@@ -1819,12 +1831,11 @@ public sealed partial class MidiRow : ObservableObject
             var theirs = MidiBrowserViewModel.Cut(guide, range.Start, range.End);
             var where = LoopPoints is null ? "" : $"Looping {range.Describe()}: ";
             if (HarmonyMatcher.SitsWithin(mine, theirs, range.Length) is not { } sits) return where + "they hardly play at the same time.";
-            var rubs = mine.Count(n => theirs.Any(g => g.Start < n.Start + n.Length && g.Start + g.Length > n.Start &&
-                                                       (((n.Key - g.Key) % 12 + 12) % 12) is 1 or 11));
+            var rubs = mine.Count(n => HarmonyMatcher.Rubs(n.Start, n.Length, n.Key, theirs));
             // Two different checks: the score is per half bar (the harmony around a note), the red is note against note.
             return where + $"{Math.Round(sits * 100)}% of its notes fit the other part's harmony" +
-                   (rubs == 0 ? "." : rubs == 1 ? ". 1 note rubs a semitone against a note playing at the same moment (red)."
-                                                : $". {rubs} notes rub a semitone against a note playing at the same moment (red).");
+                   (rubs == 0 ? "." : rubs == 1 ? ". 1 note rubs a semitone against the chord playing with it (red)."
+                                                : $". {rubs} notes rub a semitone against the chord playing with them (red).");
         }
     }
 
