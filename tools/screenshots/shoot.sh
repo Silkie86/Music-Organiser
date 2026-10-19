@@ -75,10 +75,17 @@ if [[ -n ${SONG_FITS:-} ]]; then
   nav 2; sleep 10   # the MIDI page reads the MIDI first
   nav 0; sleep 1; xdotool mousemove 330 ${SONG_Y:-220} click 1; sleep 1
   xdotool mousemove ${TAB_X:-867} ${TAB_Y:-385} click 1 mousemove 1430 892; shot 2c-song-midi-fits 10
-  xdotool mousemove ${ROW_X:-700} ${ROW_Y:-500} click 1 mousemove 1430 892; shot 2d-song-quick-view 3
-  xdotool mousemove 1100 600; for _ in $(seq ${SCROLLS:-10}); do xdotool click 5; done; xdotool mousemove 1430 892; shot 2e-song-quick-view-end 1
-  xdotool mousemove ${LAYER_X:-982} ${LAYER_Y:-833} click 1 mousemove 1430 892; shot 2f-song-cut-down-playground 4
-  xdotool mousemove 1100 600; for _ in $(seq 10); do xdotool click 5; done; xdotool mousemove 1430 892; shot 2g-song-cut-down-playground-roll 1
+  xdotool mousemove ${ROW_X:-700} ${ROW_Y:-650} click 1 mousemove 1430 892; shot 2d-song-quick-view 3
+  xdotool mousemove 1100 600; for _ in $(seq ${SCROLLS:-6}); do xdotool click 5; done; xdotool mousemove 1430 892; shot 2e-song-quick-view-roll 1
+  exit 0
+fi
+# MIDI_FITS=1: only the MIDI page's "What goes with this?" with its small playground, then stop.
+if [[ -n ${MIDI_FITS:-} ]]; then
+  nav 2; sleep 10
+  xdotool mousemove ${M_ROW_X:-500} ${M_ROW_Y:-330} click 1 mousemove 1430 892; shot 5k-midi-picked 2
+  xdotool mousemove 1000 600; for _ in $(seq 15); do xdotool click 5; done; xdotool mousemove 1430 892; shot 5k2-midi-card-end 1
+  xdotool mousemove ${FIT_X:-652} ${FIT_Y:-840} click 1 mousemove 1430 892; shot 5l-midi-fitting 4
+  xdotool mousemove 1000 600; for _ in $(seq 15); do xdotool click 4; done; xdotool mousemove 1430 892; shot 5m-midi-small-playground 1
   exit 0
 fi
 # The search box has the keyboard when the app opens: typing straight away searches; Down goes into the list.

@@ -1683,6 +1683,48 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task What_goes_with_this_works_in_a_small_playground_as_long_as_the_longer_part()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        int[][] tune = [[69, 72, 76, 72], [65, 69, 72, 69], [67, 72, 76, 72], [67, 71, 74, 71]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Keys", Ppq = 96 };
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Keys Am.mid"), Core.Export.MidiWriter.Write(chords));
+        var lead = new Core.Parsers.MidiClip { Name = "Lead", Ppq = 96 };
+        lead.Track("Lead").AddRange(tune.Concat(tune).SelectMany((b, i) => b.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96, 96, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Lead melody.mid"), Core.Export.MidiWriter.Write(lead));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+
+        var main = Main();
+        var midi = main.Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        midi.Selected = midi.Results.Single(r => r.Title.Contains("Keys"));
+        Assert.Null(midi.Quick);   // not fitting: no small playground
+        midi.FitToSelectedCommand.Execute(null);
+        midi.Selected = midi.Results.Single(r => r.Title.Contains("Lead"));
+        for (var i = 0; i < 100 && midi.Quick?.Layers.Count != 2; i++) await Task.Delay(10);
+
+        // 4 bars of chords under an 8-bar tune: the sketch runs all 8 bars, the chords going round again to fill them.
+        var quick = midi.Quick!;
+        Assert.True(quick.IsQuick);
+        Assert.Equal(8, quick.Bars);
+        Assert.Contains("Lead", quick.Layers[1].Name);
+        var keys = quick.Layers[0].Layer.Notes;
+        Assert.Contains(keys, n => n.Start >= quick.Length / 2);
+        Assert.Single(main.Playground.Sections);   // the Playground's own idea is left alone
+
+        // The Playground's settings work on it: longer, and heard as classical.
+        quick.Bars = 12;
+        Assert.Equal(12, quick.Bars);
+        quick.IsClassical = true;
+        Assert.True(quick.CanUndo);
+    }
+
+    [Fact]
     public async Task What_goes_with_this_plays_a_suggestion_on_top_looping_and_octaves_and_kinds_are_remembered()
     {
         const int bar = 4 * 96;
@@ -2178,8 +2220,8 @@ public class ViewModelTests : IDisposable
         await tab.LoadAsync();
         tab.OpenPartCommand.Execute(tab.Rows.Single(r => r.Title == "Same Am"));
 
-        // Every part on: the song's keys and lead come in under the part.
-        await tab.WorkHereCommand.ExecuteAsync(null);
+        // Opening a part opens the small playground: every part on, the song's keys and lead come in under it.
+        for (var i = 0; i < 100 && tab.Quick?.Layers.Count != 3; i++) await Task.Delay(10);
         Assert.Contains(tab.Quick!.Layers, l => l.Name == "Lead");
         Assert.Contains(tab.Quick.Layers, l => l.Name == "Keys");
 
@@ -2190,8 +2232,11 @@ public class ViewModelTests : IDisposable
         for (var i = 0; i < 100 && tab.Rows.FirstOrDefault()?.With?.Parts.Count != 1; i++) await Task.Delay(10);
         Assert.NotNull(tab.Quick);   // a refit keeps the small playground
 
-        // Started again with the lead still off: it comes in muted.
-        await tab.WorkHereCommand.ExecuteAsync(null);
+        // The same part opened again after the refit keeps what's been done; started again with the lead still off, it comes in muted.
+        tab.Quick.Layers.Single(l => l.Name == "Keys").MuteCommand.Execute(null);
+        Assert.True(tab.Quick.Layers.Single(l => l.Name == "Keys").Muted);
+        await tab.StartAgainCommand.ExecuteAsync(null);
+        Assert.False(tab.Quick.Layers.Single(l => l.Name == "Keys").Muted);
         Assert.True(tab.Quick.Layers.Single(l => l.Name == "Lead").Muted);
         tab.AllSongPartsCommand.Execute(null);
         Assert.False(tab.Quick.Layers.Single(l => l.Name == "Lead").Muted);

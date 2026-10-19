@@ -122,6 +122,19 @@
                             <TextBlock Text="{Binding From}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                         </StackPanel>
                     </DockPanel>
+                    <!-- A cut-down Playground: this part layered with the song's own parts, to work on here. Fit to's chips
+                         mute and unmute the song's lanes. -->
+                    <views:PlaygroundMiniView DataContext="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).Quick}"
+                                              IsVisible="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).HasQuick}" />
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Start again" Padding="8,2" FontSize="12"
+                                Command="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).StartAgainCommand}"
+                                ToolTip.Tip="This part as it first came, with every one of the song's parts" />
+                        <Separator />
+                    </DockPanel>
+                    <!-- The part on its own: its piano roll, quick changes, listening and dragging out. -->
+                    <Expander HorizontalAlignment="Stretch" Header="This part on its own: piano roll, quick changes and dragging out">
+                    <StackPanel Spacing="10">
                     <StackPanel Orientation="Horizontal" Spacing="12" IsVisible="{Binding CanPlayTogether}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <Border Width="10" Height="10" CornerRadius="2" Background="{StaticResource MutedBrush}" Opacity="0.6" VerticalAlignment="Center" />
@@ -198,13 +211,8 @@
                                     ToolTip.Tip="Let the app pick the octave again" />
                         </StackPanel>
                     </WrapPanel>
-                    <!-- A cut-down Playground: this part layered with the song's own parts, to work on here. -->
-                    <StackPanel Spacing="8" DataContext="{Binding $parent[UserControl].DataContext}" x:DataType="vm:SongMidiViewModel">
-                        <Separator Margin="0,4" />
-                        <Button Content="{Binding QuickButtonText}" Command="{Binding WorkHereCommand}" HorizontalAlignment="Left"
-                                ToolTip.Tip="Lay this part over the song's own parts, each its own lane with mute and solo, and edit any of them here. Parts switched off in Fit to come in muted. Nothing changes on the Playground page until you press Open in Playground." />
-                        <views:PlaygroundMiniView DataContext="{Binding Quick}" IsVisible="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).HasQuick}" />
                     </StackPanel>
+                    </Expander>
                 </StackPanel>
                 </ScrollViewer>
             </Border>
