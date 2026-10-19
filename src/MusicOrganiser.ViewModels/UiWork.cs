@@ -10,4 +10,12 @@ public static class UiWork
     public static bool InBackground { get; set; } = true;
 
     public static Task<T> Run<T>(Func<T> work) => InBackground ? Task.Run(work) : Task.FromResult(work());
+
+    /// <summary>
+    /// The same on a thread of its own rather than the shared pool: for big one-off jobs (loading 50,000 MIDI parts) that
+    /// mustn't queue behind other background work holding the pool's threads while it waits its turn.
+    /// </summary>
+    public static Task<T> RunOwnThread<T>(Func<T> work) => InBackground
+        ? Task.Factory.StartNew(work, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)
+        : Task.FromResult(work());
 }
