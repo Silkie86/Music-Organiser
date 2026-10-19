@@ -142,7 +142,7 @@ public sealed partial class ProjectDetailViewModel
             // The page reloads just below and this song gets a new panel: the card's button opens the copy from whichever
             // panel shows it then, so its Keep and Delete buttons appear.
             card.Finish($"Saved {System.IO.Path.GetFileName(file)}", done, "Open it",
-                () => (_main.Projects.Detail is { } now && now.PendingFix == file ? now : this).OpenFixed());
+                () => _ = (_main.Projects.Detail is { } now && now.PendingFix == file ? now : this).OpenFixed());
             // Read it into the library now, so Keep can list it as the newest save straight away. Until then the Projects
             // list leaves it out (see LibraryDb.PendingFixes), so the song still opens the original.
             await Task.Run(() => _db.Upsert(Scanner.Analyse(file)));
@@ -167,7 +167,7 @@ public sealed partial class ProjectDetailViewModel
 
     /// <summary>Opens the fixed copy in the project's own DAW, then asks whether it loaded correctly.</summary>
     [RelayCommand]
-    void OpenFixed()
+    async Task OpenFixed()
     {
         if (PendingFix is not { } file) return;
         if (!File.Exists(file))
@@ -176,17 +176,13 @@ public sealed partial class ProjectDetailViewModel
             Activities.Failed("The fixed copy isn't there any more", "It was moved or deleted outside the app.");
             return;
         }
-        try
-        {
-            if (_db.GetSetting(DawExeKey(Item.Daw)) is { Length: > 0 } exe && File.Exists(exe)) Shell.OpenWith(file, exe);
-            else Shell.Open(file);
-        }
+        try { await OpenIn(_db, Item.Daw, file); }
         catch (Exception e)
         {
             Activities.Failed($"Couldn't open it in {Item.Daw}", e.Message);
             return;
         }
-        FixOpened(file);
+        if (PendingFix == file) FixOpened(file);
         Activities.Done($"Opening {System.IO.Path.GetFileNameWithoutExtension(file)}", $"Sent to {Item.Daw}. Then say here whether it loaded correctly.");
     }
 
