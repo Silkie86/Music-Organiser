@@ -36,6 +36,7 @@ public sealed partial class BitwigReader
 
         var notes = new List<string>();
         var swapped = new HashSet<BwObject>();
+        var originals = new List<(string, byte[])>();
         var tracks = TrackNames(doc);
         foreach (var def in doc.Objects.Where(IsSerum1).ToList())
         {
@@ -50,6 +51,7 @@ public sealed partial class BitwigReader
                 continue;
             }
             var result = Serum1To2.Translate(serum1, audio);
+            originals.Add((track, serum1.ToFxp(track)));
             var name = $"{Guid.NewGuid()}.vstpreset";
             states.Remove(entry);
             states[$"plugin-states/{name}"] = VstPreset.Build(Serum2Vst3, result.State.Write(), []);
@@ -92,7 +94,7 @@ public sealed partial class BitwigReader
                 using var s = z.CreateEntry(path, CompressionLevel.Optimal).Open();
                 s.Write(bytes);
             }
-        return new SerumSwap(Encode(doc, packed.ToArray()), swapped.Count, notes);
+        return new SerumSwap(Encode(doc, packed.ToArray()), swapped.Count, notes, originals);
     }
 
     static bool IsSerum1(BwObject o) => o.Class switch

@@ -207,6 +207,31 @@ public class FlLinkTests
     }
 
     [Fact]
+    public void NeverTakesTheBitwigLinksLoopbackPortForFlStudios()
+    {
+        // The Bitwig link's loopback port has Music Organiser in its name too, but it isn't FL Studio's: a Bitwig user with
+        // only that port has no port for FL Studio.
+        Assert.Equal("Music Organiser Bitwig", BitwigLink.LoopbackPort);
+        Assert.False(FlSetup.HasOurPort([BitwigLink.LoopbackPort]));
+        Assert.False(FlSetup.HasOurPort(["music organiser bitwig", "Digitakt II"]));
+        Assert.Equal(FlSetup.NoPort, FlSetup.WhyNotAnswering(true, [BitwigLink.LoopbackPort]));
+        Assert.Equal(FlSetup.NoWindowsPort, FlSetup.WhyNotAnswering(true, [BitwigLink.LoopbackPort], FlMidiPort.WindowsMidi));
+        Assert.True(FlSetup.HasOurPort([BitwigLink.LoopbackPort, "Music Organiser"]));
+
+        // With both, the app opens FL Studio's, whichever Windows lists first, in and out alike.
+        Assert.Equal(1, FlSetup.FindPort(["Music Organiser Bitwig", "Music Organiser"], FlSetup.PortName));
+        Assert.Equal(0, FlSetup.FindPort(["Music Organiser", "Music Organiser Bitwig"], FlSetup.PortName));
+        Assert.Equal(2, FlSetup.FindPort(["Digitakt II", "Music Organiser Bitwig", "MUSIC ORGANISER"], FlSetup.PortName));
+        // A name Windows added to still counts, the one called exactly that first.
+        Assert.Equal(1, FlSetup.FindPort(["Music Organiser Bitwig", "Music Organiser (A)"], FlSetup.PortName));
+        Assert.Equal(2, FlSetup.FindPort(["Music Organiser (A)", "Music Organiser Bitwig", "Music Organiser"], FlSetup.PortName));
+        Assert.Equal(-1, FlSetup.FindPort(["Music Organiser Bitwig", "Digitakt II"], FlSetup.PortName));
+        Assert.Equal(-1, FlSetup.FindPort([], FlSetup.PortName));
+        // The spare end of the pair Windows' MIDI system makes, which the app talks through when there's one.
+        Assert.Equal(1, FlSetup.FindPort(["Music Organiser", WindowsMidiPort.SpareEnd, "Music Organiser Bitwig"], WindowsMidiPort.SpareEnd));
+    }
+
+    [Fact]
     public void ComparesTheFileWithWhatFlStudioShows()
     {
         var live = new FlProject("Night Drive - FL Studio 2025", 124, false, false,

@@ -346,6 +346,15 @@
                                     </ComboBox>
                                     <TextBlock Text="How long each star plays as the mouse sweeps the galaxy" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
                                 </DockPanel>
+                                <DockPanel Margin="0,0,0,10">
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:SoundsViewModel.StepChoices}" SelectedItem="{Binding SoundLab.StepMs}" MinWidth="130"
+                                              ToolTip.Tip="The highlight waits on each sound this long, so what you see is what you hear">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} ms'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="How long each sound plays as a held arrow key steps through them" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
                                 <CheckBox Content="Deep listen to new sounds as they arrive" IsChecked="{Binding SoundLab.ListenToNew}"
                                           ToolTip.Tip="Needs the sound-understanding model (Sound Lab › Teach). Sounds it has already heard are skipped." />
                             </StackPanel>

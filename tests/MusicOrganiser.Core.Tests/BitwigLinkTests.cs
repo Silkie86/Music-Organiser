@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using MusicOrganiser.Core.DawLink;
 
 namespace MusicOrganiser.Core.Tests;
@@ -30,6 +31,17 @@ public class BitwigLinkTests
         await TalkTo(bitwig.Port);
     }
 
+    [Fact]
+    public void ReadsAValueBitwigHasntTold()
+    {
+        // The Java extension 3.13: Bitwig shows a new value, but hasn't told the link its number.
+        var param = JsonSerializer.Deserialize<BitwigParam>("""{"id":"CONTENTS/PID3ea","name":"MO Gain","value":null,"display":"-60.0 dB","stale":true}""",
+                                                            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(new BitwigParam("CONTENTS/PID3ea", "MO Gain", null, "-60.0 dB", Stale: true), param);
+        Assert.False(JsonSerializer.Deserialize<BitwigParam>("""{"id":"a","name":"Gain","value":0.5,"display":"0 dB"}""",
+                                                             new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Stale);
+    }
+
     static async Task TalkTo(int port)
     {
         using var link = await BitwigLink.ConnectAsync(port);
@@ -53,7 +65,12 @@ public class BitwigLinkTests
         Assert.Null(selected.Params[2].Value);   // Bitwig couldn't read it
 
         Assert.Equal("Save", (await link.ActionsAsync()).Single().Id);
-        await link.RunActionAsync("Save");
+        // The project in front as Save ran, and that the script ran it straight away.
+        Assert.Equal(new BitwigActionRun("Night Drive", "direct", true), await link.RunActionAsync("Save"));
+        Assert.Equal(new BitwigActionRun("Night Drive", "direct", true), await link.RunActionAsync("Save", "direct"));
+        // The script runs actions straight away only: the other routes are the Java extension's.
+        var refused = await Assert.ThrowsAsync<DawLinkException>(() => link.RunActionAsync("Save", "button"));
+        Assert.Equal("This needs the Java extension 3.7.", refused.Message);
         await link.SetParameterAsync("CONTENTS/PID3e8", 0.5);
         await link.InsertPluginAsync("VST2", "MoB2");
         await link.InsertVst2Async(1234);
@@ -70,6 +87,124 @@ public class BitwigLinkTests
         // Requests sent together each get their own answer.
         var answers = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => link.ProjectAsync()));
         Assert.All(answers, a => Assert.Equal(4, a.Tracks.Count));
+    }
+
+    [Fact]
+    public async Task RunsAnActionThroughALinkThatDoesntSayWhichProjectWasInFront()
+    {
+        // An extension before 3.7 answers an action with {}, and one that couldn't read the name leaves it out too: it ran the
+        // action straight away, the only way it has.
+        await using (var older = new FakeJavaBitwig(answers: new Dictionary<string, string> { ["action"] = "{}" }))
+        {
+            using var link = await BitwigLink.ConnectAsync(older.Port);
+            Assert.Equal(new BitwigActionRun(null, "direct", true), await link.RunActionAsync("Save"));
+            Assert.Equal("Save", (string?)older.Requests.Last()["action"]);
+            // Without a route, the request carries none, so an older link isn't sent a field it doesn't know.
+            Assert.False(older.Requests.Last().AsObject().ContainsKey("via"));
+        }
+        await using (var newer = new FakeJavaBitwig(answers: new Dictionary<string, string> { ["action"] = """{"project":"MO Live Test"}""" }))
+        {
+            using var link = await BitwigLink.ConnectAsync(newer.Port);
+            Assert.Equal(new BitwigActionRun("MO Live Test", "direct", true), await link.RunActionAsync("Save"));
+        }
+    }
+
+    [Fact]
+    public async Task RunsAnActionByTheRouteAsked()
+    {
+        // The extension 3.7 says the route, and whether it ran the action by it.
+        await using var java = new FakeJavaBitwig(answers: new Dictionary<string, string>
+        {
+            ["action"] = """{"project":"MO Live Test","via":"midi","ran":false}""",
+        });
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+        Assert.Equal(new BitwigActionRun("MO Live Test", "midi", false), await link.RunActionAsync("Save", "midi"));
+        Assert.Equal(("Save", "midi"), ((string?)java.Requests.Last()["action"], (string?)java.Requests.Last()["via"]));
+
+        // Arrange takes the same routes, and says whether each step ran.
+        java.Answer = request => (string)request["cmd"]! == "arrange"
+            ? """{"arranged":false,"appeared":false,"sameAsSource":false,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE","launcher":{"before":true,"after":true},"mark":{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true,"exact":true},"launcherFocus":0,"timeline":{"before":true,"after":true},"focus":0,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},"after":{"exists":false,"track":null},"pastedColor":null,"launcherClipsBefore":1,"launcherClipsAfter":1,"via":"button","ran":{"launcherFocus":false,"copy":false,"focus":null,"paste":null}}"""
+            : null;
+        var arranged = await link.ArrangeAsync(0, 0, 16, "button");
+        Assert.Equal("button", (string?)java.Requests.Last()["via"]);
+        Assert.Equal(("button", new BitwigArrangeRan(false, false, null, null)), (arranged.Via, arranged.Ran));
+        Assert.Null(arranged.Checks);
+    }
+
+    [Fact]
+    public async Task AsksForArrangesChecksAndReadsThem()
+    {
+        // The extension 3.8 checks a paste into an empty launcher slot and Bitwig's Duplicate when asked, after the clip
+        // didn't land in the arranger.
+        await using var java = new FakeJavaBitwig();
+        java.Answer = request => (string)request["cmd"]! == "arrange"
+            ? """{"arranged":false,"appeared":false,"sameAsSource":false,"copiedFromTimeline":false,"at":16,"layout":"ARRANGE","launcher":{"before":true,"after":true},"mark":{"before":"#3366CC","asked":"#416DD9","got":"#416DD9","took":true,"exact":true},"launcherFocus":1,"timeline":{"before":true,"after":true},"focus":1,"before":{"exists":false,"track":null},"beforePaste":{"exists":false,"track":null},"after":{"exists":false,"track":null},"pastedColor":null,"launcherClipsBefore":1,"launcherClipsAfter":1,"via":"flush","ran":{"launcherFocus":true,"copy":true,"focus":true,"paste":true},"checks":{"launcherPaste":{"slot":2,"selected":true,"focus":1,"ran":{"focus":true,"paste":true},"made":true,"colour":"#416DD9","sameAsMark":true,"removed":true},"duplicate":{"selected":true,"focus":1,"ran":{"focus":true,"duplicate":null},"launcher":0,"tracks":0,"removed":false},"error":"Bitwig has “My Song” open now."}}"""
+            : null;
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+
+        var arranged = await link.ArrangeAsync(0, 0, 16, checks: true);
+
+        var sent = java.Requests.Last().AsObject();
+        Assert.True((bool)sent["checks"]!);
+        Assert.False(sent.ContainsKey("via"));
+        Assert.Equal(new BitwigLauncherPasteCheck(2, true, 1, new(true, true), true, "#416DD9", true, true), arranged.Checks!.LauncherPaste);
+        Assert.Equal(new BitwigDuplicateCheck(true, 1, new(true, null), 0, 0, false), arranged.Checks.Duplicate);
+        Assert.Equal("Bitwig has “My Song” open now.", arranged.Checks.Error);
+
+        // Not asked, the request carries no checks.
+        await link.ArrangeAsync(0, 0, 16);
+        Assert.False(java.Requests.Last().AsObject().ContainsKey("checks"));
+    }
+
+    [Fact]
+    public async Task InsertsAFileAsATrackInTheProjectGiven()
+    {
+        await using var java = new FakeJavaBitwig(answers: new Dictionary<string, string>
+        {
+            ["filetrack"] = """{"added":1,"index":3,"name":"Live Clip","type":"Instrument","tracksBefore":4,"tracksAfter":5,"launcherClips":0,"selected":true,"arranger":{"exists":true,"track":"Live Clip"},"arrangerBefore":{"exists":false,"track":null},"at":16,"onTrack":{"before":1,"after":1}}""",
+        });
+        using var link = await BitwigLink.ConnectAsync(java.Port);
+        link.OnlyIn = "MO Live Test";
+
+        var placed = await link.FileTrackAsync(2, @"C:\Tests\Live Clip.mid", 16);
+
+        var sent = java.Requests.Last();
+        Assert.Equal(("filetrack", 2, @"C:\Tests\Live Clip.mid", 16.0, "MO Live Test"),
+                     ((string)sent["cmd"]!, (int)sent["track"]!, (string)sent["path"]!, (double)sent["at"]!, (string?)sent["onlyIn"]));
+        Assert.Equal(new BitwigFileTrack(1, 3, "Live Clip", "Instrument", 4, 5, 0, true, new(true, "Live Clip"), new(false, null), 16, new(1, 1)),
+                     placed);
+    }
+
+    [Fact]
+    public async Task ReadsWhetherTheLoopbackWorksFromTheHello()
+    {
+        await using (var java = new FakeJavaBitwig(FakeJavaBitwig.Hello("""{"extension":"3.7","loopback":true}""")))
+        {
+            using var link = await BitwigLink.ConnectAsync(java.Port);
+            Assert.True(link.Hello.Loopback);
+        }
+        // An older link doesn't say.
+        await using (var older = new FakeJavaBitwig())
+        {
+            using var link = await BitwigLink.ConnectAsync(older.Port);
+            Assert.Null(link.Hello.Loopback);
+        }
+    }
+
+    [Fact]
+    public void SaysToSetTheMidiPortsWhenTheLoopbackDoesntWork()
+    {
+        var hello = new BitwigHello(3, "Bitwig Studio", "6.1.3", 23, "WINDOWS", 19791, "MO Live Test", false, true, true, "java", "3.8", true,
+                                    Loopback: false);
+        var setUp = BitwigLink.LoopbackMissing(hello)!;
+        Assert.StartsWith("The extension's own MIDI hasn't come back to it through the MIDI port “Music Organiser Bitwig”, so its MIDI in and out " +
+                          "may not be set to that port yet (or the port isn't working), and Bitwig has only saved for the app once they were: ", setUp);
+        Assert.EndsWith("in Bitwig, Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it (never to FL Studio's port, " +
+                        "“Music Organiser”).", setUp);
+        Assert.Equal(OperatingSystem.IsWindows(), setUp.Contains("in loopMIDI"));
+        // It works, or the link doesn't say (the script, or an extension before 3.7).
+        Assert.Null(BitwigLink.LoopbackMissing(hello with { Loopback = true }));
+        Assert.Null(BitwigLink.LoopbackMissing(hello with { Loopback = null }));
     }
 
     [Fact]

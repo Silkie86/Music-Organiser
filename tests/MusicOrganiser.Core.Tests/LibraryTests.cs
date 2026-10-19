@@ -189,6 +189,42 @@ public class LibraryTests : IDisposable
     [InlineData("civil war_5 (fixed)", "civil war", 5)]   // Fix's copy sits with the save it was made from
     [InlineData("Didums (Fixed 2)", "Didums", 1)]
     [InlineData("Didums_70 (fixed) (fixed)", "Didums", 70)]   // a fixed copy fixed again by an older build
+    [InlineData("Proj_5[1]", "Proj_5[1]", 1)]
+    // Solomon's rule, every DAW: the same name with a number on the end, glued on or after a space or a dash.
+    [InlineData("Track 2", "Track", 2)]
+    [InlineData("track2", "track", 2)]
+    [InlineData("track nd 1", "track nd", 1)]
+    [InlineData("song-3", "song", 3)]
+    [InlineData("song - 3", "song", 3)]
+    [InlineData("analog full set nb 36", "analog full set nb", 36)]
+    [InlineData("MO Live Test 1", "MO Live Test", 1)]
+    [InlineData("Swu 10 year oct 2026", "Swu 10 year oct 2026", 1)]   // a year is part of the name
+    [InlineData("Untitled 3", "Untitled 3", 1)]   // a DAW's name for a new project: songs of their own
+    [InlineData("Untitled_2", "Untitled", 2)]     // but FL Studio's "Save new version" of it is a save
+    // The usual marks count too.
+    [InlineData("fleck athens FLP19", "fleck athens FLP", 19)]   // FLP is part of the name (Solomon, 19 Oct)
+    [InlineData("fleck athens FLP", "fleck athens FLP", 1)]
+    [InlineData("fleck athens flp_15", "fleck athens flp", 15)]
+    [InlineData("Night Drive v2", "Night Drive", 2)]
+    [InlineData("Night Drive_V3", "Night Drive", 3)]
+    [InlineData("Night Drive v2.1", "Night Drive", 2)]
+    [InlineData("Night DriveV4", "Night Drive", 4)]
+    [InlineData("Night Drive take 4", "Night Drive", 4)]
+    [InlineData("Night Drive - mix 2", "Night Drive", 2)]
+    [InlineData("Night Drive rev7", "Night Drive", 7)]
+    [InlineData("Night Drive final", "Night Drive", 1_000_000)]   // the last save, ahead of any number
+    [InlineData("Night Drive FINAL FINAL", "Night Drive", 1_000_000)]
+    [InlineData("Night Drive final2", "Night Drive", 1_000_002)]
+    [InlineData("Night Drive v2 final v3", "Night Drive", 1_000_003)]
+    [InlineData("Night Drive - Copy", "Night Drive", 1)]
+    [InlineData("Night Drive_12 - Copy (2)", "Night Drive", 12)]
+    [InlineData("Night Drive (2)", "Night Drive", 1)]
+    [InlineData("Night Drive wip", "Night Drive", 1)]
+    [InlineData("Night Drive 2024-03-01", "Night Drive", 1)]
+    [InlineData("Night Drive_20240301", "Night Drive", 1)]
+    [InlineData("Track final", "Track", 1_000_000)]
+    [InlineData("Untitled final", "Untitled final", 1)]
+    [InlineData("Swu oct 2026", "Swu oct 2026", 1)]
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
 
@@ -203,6 +239,72 @@ public class LibraryTests : IDisposable
         var didums = groups.Single(g => g.Song == "Didums" && g.Latest.Folder == @"C:\dub");
         Assert.Equal("Didums_10", didums.Latest.Name);
         Assert.Equal(["Didums_2", "Didums"], didums.Older.Select(o => o.Name));
+    }
+
+    [Fact]
+    public void Bitwig_saves_each_in_a_folder_of_its_own_name_are_one_song()
+    {
+        ProjectSummary P(string name, string folder) =>
+            new() { Name = name, Path = $@"{folder}\{name}.bwproject", Daw = "Bitwig Studio", Folder = folder, Modified = new DateTime(2020, 1, 1) };
+        const string projects = @"K:\Bitwig Studio\Projects";
+        var groups = SongVersions.Group([P("bored_57", $@"{projects}\bored_57"), P("bored_58", $@"{projects}\bored_58"),
+                                         P("bored", $@"{projects}\bored"), P("bored_59", $@"{projects}\bored"),
+                                         P("MO Live Test 1", $@"{projects}\MO Live Test 1"), P("bored_2", $@"{projects}\Old\bored stuff")]);
+        Assert.Equal(3, groups.Count);
+        var bored = groups.Single(g => g.Latest.Name == "bored_59");
+        Assert.Equal(["bored_58", "bored_57", "bored"], bored.Older.Select(o => o.Name));
+        // A folder named otherwise is a song of its own.
+        Assert.Contains(groups, g => g.Latest.Name == "bored_2");
+    }
+
+    [Fact]
+    public void Saves_numbered_FLP1_to_FLP20_join_the_unnumbered_FLP_save_as_one_song()
+    {
+        // Solomon's Bitwig "fleck athens FLP" and "fleck athens FLP1" … "FLP20" in one folder (19 Oct): one song, called
+        // "fleck athens FLP". A save in a folder of its own name counts as in the folder around it.
+        const string folder = @"K:\Bitwig Studio\Projects\fleck athens";
+        ProjectSummary P(string name, int day, string? own = null) =>
+            new() { Name = name, Path = $@"{own ?? folder}\{name}.bwproject", Daw = "Bitwig Studio", Folder = own ?? folder,
+                    Modified = new DateTime(2025, 3, 1).AddDays(day) };
+        var groups = SongVersions.Group([.. Enumerable.Range(1, 19).Select(n => P($"fleck athens FLP{n}", n)), P("fleck athens FLP", 0),
+                                         P("fleck athens FLP20", 20, $@"{folder}\fleck athens FLP20")]);
+        var song = Assert.Single(groups);
+        Assert.Equal("fleck athens FLP", song.Song);
+        Assert.Equal("fleck athens FLP20", song.Latest.Name);
+        Assert.Equal(20, song.Older.Count);
+        Assert.Equal("fleck athens FLP", song.Older[^1].Name);
+    }
+
+    [Fact]
+    public void Saves_named_alike_apart_from_their_number_are_one_song_only_in_the_same_folder()
+    {
+        // Solomon, 19 Oct 2026: "track1" and "track2" go together, "track nd 1" and "track 2" don't, and in another folder
+        // they're another song.
+        ProjectSummary P(string name, string folder, int day) =>
+            new() { Name = name, Path = $@"{folder}\{name}.flp", Daw = "FL Studio", Folder = folder, Modified = new DateTime(2025, 3, day) };
+        var groups = SongVersions.Group([P("track1", @"C:\beats", 1), P("track2", @"C:\beats", 2), P("track nd 1", @"C:\beats", 3),
+                                         P("track3", @"C:\other", 4)]);
+        Assert.Equal(3, groups.Count);
+        var track = groups.Single(g => g.Latest.Folder == @"C:\beats" && g.Song == "track");
+        Assert.Equal("track2", track.Latest.Name);
+        Assert.Equal(["track1"], track.Older.Select(o => o.Name));
+    }
+
+    [Fact]
+    public void Bitwig_saves_numbered_with_a_space_are_one_song()
+    {
+        // Solomon's "analog full set nb 26" … "nb 36", each in its own Bitwig project folder (F12 note, 19 Oct 2026).
+        ProjectSummary P(string name) => new()
+        {
+            Name = name, Path = $@"K:\Bitwig Studio\Projects\{name}\{name}.bwproject", Daw = "Bitwig Studio",
+            Folder = $@"K:\Bitwig Studio\Projects\{name}", Modified = new DateTime(2026, 10, 2),
+        };
+        var groups = SongVersions.Group([.. Enumerable.Range(26, 11).Select(n => P($"analog full set nb {n}")), P("Swu 10 year oct 2026"),
+                                         P("Untitled 1"), P("Untitled 2")]);
+        Assert.Equal(4, groups.Count);
+        var song = groups.Single(g => g.Song == "analog full set nb");
+        Assert.Equal("analog full set nb 36", song.Latest.Name);
+        Assert.Equal(10, song.Older.Count);
     }
 
     static ProjectSummary Save(string name, DateTime saved, int notes = 100, int bars = 32, int tracks = 6, string[]? plugins = null,
@@ -344,7 +446,8 @@ public class LibraryTests : IDisposable
     [Fact]
     public void FindsLocalMatchesForMissingSamples()
     {
-        var lib = Path.Combine(_root, "Sample Library");
+        // Outside the projects' folders: a sample in a project's folder tree counts as found.
+        var lib = Path.Combine(Fixtures.TempDir(), "Sample Library");
         Directory.CreateDirectory(Path.Combine(lib, "Drums"));
         File.WriteAllBytes(Path.Combine(lib, "Drums", "Kick 01.wav"), [0]);
         File.WriteAllBytes(Path.Combine(lib, "Drums", "Kick 02.wav"), [0]);
@@ -363,6 +466,40 @@ public class LibraryTests : IDisposable
         Assert.Contains(matches, m => m.Candidate.EndsWith("Kick 02.wav") && m.Reason == "Similar name, in matching folders");
         Assert.DoesNotContain(matches, m => m.Candidate.EndsWith("Hat.wav"));
         Assert.Contains("Kick%2001.wav", MatchFinder.SampleSearchUrl(missing.Path));
+    }
+
+    [Fact]
+    public void AScanFindsASampleAnywhereInTheProjectsFolderEvenOnePutBackSinceTheLastScan()
+    {
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        var fl = _db.Projects().Single(x => x.Daw == "FL Studio");
+        Assert.Equal(1, fl.MissingSamples);
+
+        // Solomon's rule: look in the project's folders, not just beside it (here Bitwig's bounce folder).
+        Directory.CreateDirectory(Path.Combine(_root, "bounce"));
+        File.WriteAllBytes(Path.Combine(_root, "bounce", "Kick 01.wav"), [0]);
+        scanner.ScanProjects(full: true);
+        Assert.True(_db.Project(fl.Id)!.Samples.Single(s => s.Path.EndsWith("Kick 01.wav")).Found);
+        Assert.Equal(0, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
+    }
+
+    [Fact]
+    public void AScanReadsADawsProjectsAgainWhenItsReaderHasGotBetter()
+    {
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        Assert.Equal("3", _db.GetSetting("reader_version:FL Studio"));
+        Directory.CreateDirectory(Path.Combine(_root, "bounce"));
+        File.WriteAllBytes(Path.Combine(_root, "bounce", "Kick 01.wav"), [0]);
+
+        scanner.ScanProjects();   // the project hasn't changed, so it isn't read again
+        Assert.Equal(1, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
+
+        _db.SetSetting("reader_version:FL Studio", "1");   // as a library last read with the older FL reader
+        scanner.ScanProjects();
+        Assert.Equal(0, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
+        Assert.Equal("3", _db.GetSetting("reader_version:FL Studio"));
     }
 
     [Fact]
@@ -404,5 +541,82 @@ public class LibraryTests : IDisposable
         _db.ReplaceInstalledPlugins(["Vital"]);
         Assert.Equal(before.PluginsRevision + 1, _db.PluginsRevision);
         Assert.Equal(["Vital"], _db.InstalledNames());
+    }
+}
+
+public class SampleLocatorTests
+{
+    const string Project = @"K:\Bitwig Studio\Projects\analog full set\analog full set nb 36.bwproject";
+
+    [Fact]
+    public void TriesTheSavedPathThenTheProjectsDriveThenFoldersThatMovedWithTheProject()
+    {
+        Assert.Equal([@"F:\Bitwig Studio\Projects\analog full set\recordings\Syntakt 2-1.wav",
+                      @"K:\Bitwig Studio\Projects\analog full set\recordings\Syntakt 2-1.wav"],
+            SampleLocator.Candidates(@"F:\Bitwig Studio\Projects\analog full set\recordings\Syntakt 2-1.wav", Project));
+        // Another project's folder, from when the projects were kept in Documents.
+        Assert.Equal([@"C:\Users\silki\Documents\Bitwig Studio\Projects\what you wanna do\samples\BDsub808_Long_C2.wav",
+                      @"K:\Users\silki\Documents\Bitwig Studio\Projects\what you wanna do\samples\BDsub808_Long_C2.wav",
+                      @"K:\Bitwig Studio\Projects\what you wanna do\samples\BDsub808_Long_C2.wav"],
+            SampleLocator.Candidates(@"C:\Users\silki\Documents\Bitwig Studio\Projects\what you wanna do\samples\BDsub808_Long_C2.wav", Project));
+        Assert.Equal([@"K:\Bitwig Studio\Projects\analog full set\recordings\BD 1-2.wav"],
+            SampleLocator.Candidates("recordings/BD 1-2.wav", Project));
+        Assert.Equal(["/Users/sol/Music/Bitwig Studio/Projects/song/recordings/a.wav", @"K:\Bitwig Studio\Projects\song\recordings\a.wav"],
+            SampleLocator.Candidates("/Users/sol/Music/Bitwig Studio/Projects/song/recordings/a.wav", Project));
+        Assert.Equal([@"F:\a.wav", @"K:\a.wav"], SampleLocator.Candidates(@"F:\a.wav", Project));
+    }
+
+    [Fact]
+    public void LooksInTheProjectsFoldersAndTheDawsContentFolders()
+    {
+        var drive = Path.Combine(Fixtures.TempDir(), "K");
+        var song = Path.Combine(drive, "Bitwig Studio", "Projects", "This Song");
+        var project = Path.Combine(song, "This Song.bwproject");
+        var content = Path.Combine(Fixtures.TempDir(), "installed-packages");
+        string Make(params string[] parts)
+        {
+            var file = Path.Combine(parts);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            File.WriteAllBytes(file, [0]);
+            return file;
+        }
+        Make(project);
+        var recording = Make(song, "recordings", "Syntakt 2-1.wav");
+        var bounce = Make(song, "bounce", "Kontakt 7-bounce-6.wav");
+        var other = Make(drive, "Bitwig Studio", "Projects", "Other Song", "samples", "BDsub808.wav");
+        var kick = Make(content, "Drums", "Kicks", "Kick 9.wav");
+        Make(content, "Other", "Snare.wav");
+        Make(content, "Projects", "Old Song", "recordings", "Audio 1-1.wav");
+        var locator = new SampleLocator(_ => [content]);
+
+        Assert.Equal(recording, locator.Locate(@"F:\Bitwig Studio\Projects\This Song\recordings\Syntakt 2-1.wav", project));
+        Assert.Equal(bounce, locator.Locate(@"F:\Old exports\Kontakt 7-bounce-6.wav", project));   // anywhere in the project's folder
+        Assert.Equal(other, locator.Locate(@"C:\Users\silki\Documents\Bitwig Studio\Projects\Other Song\samples\BDsub808.wav", project));
+        Assert.Equal(kick, locator.Locate(@"D:\Packs\Kicks\Kick 9.wav", project));   // the DAW's own sounds, in a folder of the same name
+        Assert.Null(locator.Locate(@"D:\Packs\Snares\Snare.wav", project));
+        Assert.Null(locator.Locate(@"E:\Old Song\recordings\Audio 1-1.wav", project));   // another project's recording isn't this one's
+        Assert.Null(locator.Locate(@"D:\Gone\Missing.wav", project));
+        Assert.True(locator.Found(@"%FLStudioFactoryData%\Data\Patches\Packs\Drums\Kick.wav", project));
+        Assert.False(locator.Found(@"D:\Gone\Missing.wav", project));
+
+        // A locator reads each folder once: a file added since is found by the next one (the next scan), and a file that
+        // has gone since isn't found.
+        var added = Make(song, "bounce", "New.wav");
+        Assert.Null(locator.Locate(@"D:\Gone\New.wav", project));
+        Assert.Equal(added, new SampleLocator(_ => []).Locate(@"D:\Gone\New.wav", project));
+        File.Delete(bounce);
+        Assert.Null(locator.Locate(@"F:\Old exports\Kontakt 7-bounce-6.wav", project));
+    }
+
+    [Fact]
+    public void FindsTheLibraryBesideABitwigProjectsFolder()
+    {
+        var bitwig = Path.Combine(Fixtures.TempDir(), "Bitwig Studio");
+        Directory.CreateDirectory(Path.Combine(bitwig, "Library", "Samples"));
+        var project = Path.Combine(bitwig, "Projects", "Song", "Song.bwproject");
+        Assert.Contains(Path.Combine(bitwig, "Library"), SampleLocator.DawContentFolders(project));
+        Assert.All(SampleLocator.DawContentFolders(project), f => Assert.True(Directory.Exists(f)));
+        Assert.All(SampleLocator.DawContentFolders("Song.flp"), f => Assert.True(Directory.Exists(f)));
+        Assert.Empty(SampleLocator.DawContentFolders("Song.als"));
     }
 }

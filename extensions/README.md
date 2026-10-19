@@ -32,6 +32,9 @@ to the app (`Extensions` in its folder), and installing copies them where the DA
   **Choose folder…** points it at (which is also where the app looks for Bitwig projects), and in the Extensions
   folder the extension last said Bitwig loaded it from (`loadedFrom` in its hello). Every copy is the same, so it
   doesn't matter which Bitwig loads. Then in Bitwig: Settings → Controllers → Add controller → Music Organiser → DAW link.
+  With the extension, also set that controller's MIDI in and MIDI out to the MIDI port **Music Organiser Bitwig**
+  (make it in loopMIDI on Windows), never to FL Studio's port, **Music Organiser**: Bitwig has only saved for the
+  app once they were set (see [Routes and the MIDI loopback](#routes-and-the-midi-loopback)).
 - **FL Studio**: `Settings\Hardware\Music Organiser` in FL Studio's user data folder (normally
   `Documents\Image-Line\FL Studio`). The app also finds user data folders elsewhere from where your FL
   projects are, and **Choose folder…** points it at one. FL Studio only runs a script for a MIDI input, and
@@ -54,7 +57,8 @@ to the app (`Extensions` in its folder), and installing copies them where the DA
   On a Mac or Linux the app can't reach FL Studio yet: it only talks MIDI on Windows so far.
 
 Settings says when an installed copy is older than the app's, and Install updates it. **Check connection**
-asks the DAW to answer. When FL Studio doesn't, the app says which part is missing, on Windows: FL Studio
+asks the DAW to answer (for Bitwig, it also says when the extension's own MIDI hasn't come back through its MIDI
+in and out, as while they aren't set, and *Set up both* doesn't call that set up). When FL Studio doesn't, the app says which part is missing, on Windows: FL Studio
 isn't open, there's no MIDI port called Music Organiser (and how to make one, the way chosen in Settings),
 or there is one but FL Studio isn't running the script for it (`Core/DawLink/FlSetup.cs`).
 
@@ -98,8 +102,9 @@ Two builds of the same link, which talk to the app the same way:
 - **`bitwig-java`**: a Java controller extension against Bitwig's controller API 23 (Bitwig 6.1 and later), built
   with Maven into `MusicOrganiser.bwextension`, which goes in `Extensions` in Bitwig's user folder. It's a port
   of the script, function by function, and adds what only an extension can do: Bitwig's newer API (link version
-  3 below) and reports it writes to files, with a self-check of every part of the API it uses (see
-  [its README](bitwig-java/README.md)).
+  3 below), reports it writes to files, with a self-check of every part of the API it uses, and (from 3.7) a MIDI
+  loopback to run Bitwig's commands as a hardware controller would (see [its README](bitwig-java/README.md) and
+  [Routes and the MIDI loopback](#routes-and-the-midi-loopback)).
 - **`bitwig`**: `MusicOrganiser.control.js`, plain ES5 against Bitwig's controller API 18: the fallback, kept as
   it was (link version 2, without the version 3 additions).
 
@@ -115,7 +120,7 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 
 | Command | Asks for | Result |
 |---|---|---|
-| `hello` | | `link` (this protocol's version: 3 from the extension, 2 from the script), `product`, `version`, `api`, `platform`, `port`, `project`, `modified`, `engine` (whether Bitwig's audio engine is on), `changes`, `onlyIn` (`true`: the link honours a request's `onlyIn`, [below](#only-in-one-project)). Version 3 adds `runtime` (`"java"`) and `extension` (its version), and from extension 3.4 `loadedFrom` (the file Bitwig loaded it from, when it can tell; 3.5 can tell in a folder with a space in its name, as Bitwig Studio's are). |
+| `hello` | | `link` (this protocol's version: 3 from the extension, 2 from the script), `product`, `version`, `api`, `platform`, `port`, `project`, `modified`, `engine` (whether Bitwig's audio engine is on), `changes`, `onlyIn` (`true`: the link honours a request's `onlyIn`, [below](#only-in-one-project)). Version 3 adds `runtime` (`"java"`) and `extension` (its version), and from extension 3.4 `loadedFrom` (the file Bitwig loaded it from, when it can tell; 3.5 can tell in a folder with a space in its name, as Bitwig Studio's are). From extension 3.7 `loopback`: whether the extension's own MIDI has come back to it through the loopback, so the routes through it work ([below](#routes-and-the-midi-loopback)). |
 | `project` | | `name`, `modified`, `tempo`, `timeSignature`, `playing`, `position`, `trackCount`, `tracks`: the first 128 tracks in Bitwig's flat list, each with `index`, `name`, `type`, `group`, `color`, `active`, `mute`, `solo`, `arm`, `volume`, `pan` (as shown, with `volumeValue` and `panValue` from 0 to 1), `deviceCount` and the first 16 `devices` (`name`, `preset`, `kind`, `plugin`, `enabled`). Version 3 adds each track's `id`, the ID Bitwig keeps it under, once Bitwig has said. |
 | `device` | | The selected device: `track`, `device` (or null), `drumPads` (whether it has a Drum Machine's pads) and every parameter as `id` (what Bitwig saves it under), `name`, `value` (0 to 1) and `display` ("-6.0 dB"). Waits up to 2 seconds for the display texts. Version 3 adds the device's remote controls on the page Bitwig shows (`page`, and `controls` with `index`, `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated` and `param`), and gives a parameter that is one of those controls the same `steps` (-1 for continuous), `stepNames`, `origin` and `automated`: see [below](#link-version-3). |
 | `actions` | | Every Bitwig action: `id`, `name`, `category`, `menu` |
@@ -126,14 +131,17 @@ Requests are `{"id": 1, "cmd": "...", ...}`. Answers are `{"id": 1, "ok": true, 
 | `clip` ✎ | `track`, `path` (a MIDI or audio file), `slot` (optional) | `slot`: where Bitwig made the clip, by default the first empty one in the first 8 scenes |
 | `pads` ✎ | `pads`, each with `note` (0 to 127), `path` and `name` (optional). Then `track` and `device` for a Drum Machine's place, or nothing for the selected device. | `filled`, `replaced` (those of the filled that went in place of an empty Sampler), `skipped` (pads that already had something on them, left alone) and `failed`, as notes, and `taken`: what's on each skipped pad (`note`, `name`, `devices`, `first` device's name, its `sample`). Each sample goes on a free pad as if dropped there, in a Sampler. A pad whose first device is a Sampler with no sample, still named as it came (a Drum Machine preset can put one on every pad), with nothing after it but audio effects (up to 3), is free too: the sample goes in that Sampler's place, keeping the effects after it. |
 | `transpose` ✎ | `track`, `device` (0 or 1), `semitones` | `device`, `value`, `display`. Sets a Sampler's Transpose (fractions allowed) or a Note Transpose's Coarse (whole semitones). |
-| `action` ✎ | `action` (an `id` from `actions`) | `{}` |
+| `action` ✎ | `action` (an `id` from `actions`), `via` (optional: the route to run it by; without one, `flush` from extension 3.8, as Bitwig 6.1.3 saved from there, and `direct` before; see [below](#routes-and-the-midi-loopback)) | `project`: the project Bitwig had in front just before the action ran, so the app can tell which one a Save went to with more than one open; `via`: the route; and `ran`: whether the link ran the action by it (a route through Bitwig's flush or the loopback that doesn't come back within a second doesn't, and the link then never runs it). From extension 3.7 and the script; older extensions answer `{}`, and the extension leaves `project` out if it can't read it. The script runs actions straight away only: it answers `via: "direct"` and `ran: true`, and refuses any other route with `This needs the Java extension 3.7.` |
 | `clicked` (3) | | The parameter last clicked in Bitwig: `exists` (false until one is), `name`, `value`, `display`, `steps`, `stepNames`, `origin`, `automated`, `locked` |
 | `recorder` ✎ (3) | `do`: `"start"`, `"stop"` or `"status"` (the default) | Bitwig's master recorder, once it has started or stopped: `active`, `duration` (milliseconds recorded) |
 | `selftest` (3) | | The self-check (see [the extension's README](bitwig-java/README.md#reports)), written to the reports folder, with `file` |
+| `arrange` ✎ (3) | `track`, `slot` (a launcher slot with a clip), `at` (optional: where in the arranger, in beats from the start; the play start by default), `via` (optional, from extension 3.7: the route for the copy, the paste and the focus actions, `flush` by default from 3.8 and `direct` before; [below](#routes-and-the-midi-loopback)), `checks` (optional, from 3.8: `true` to check, when its paste ran but put nothing in the arranger, whether a paste into an empty launcher slot and Bitwig's Duplicate work by the same route) | **An experiment**, from extension 3.6, which only the live tests send ([below](#clips-in-the-arranger-an-experiment)). Once its steps are through, whether it worked or not: `arranged` (both of the next two, with an `exact` mark), `appeared` (a clip showed up selected on the track after the paste, with the track's launcher clips as they were), `sameAsSource` (that clip has the launcher clip's marking colour, so it's a copy of that clip and not whatever was on Bitwig's clipboard before, unless Bitwig rounded the mark: see `exact`), `copiedFromTimeline` (the arranger timeline had the focus when the link copied, so it didn't paste), `at`, `layout` (before), `launcher` and `timeline` (`before` and `after`: whether the Arrange layout's clip launcher, and the arranger timeline, showed), `mark` (the fresh colour the link gave the launcher clip before it copied: the clip's colour `before`, the one `asked` for, the one it `got`, each `#RRGGBB`, whether it `took`, and whether it's `exact`: the very colour asked for, not one Bitwig rounded it to), `launcherFocus` and `focus` (how many times the link ran Bitwig's `focus_or_toggle_clip_launcher` and `focus_or_toggle_arranger`), `before`, `beforePaste` and `after` (the clip selected in the arranger: `exists`, and its `track`'s name), `pastedColor` (the colour of the clip selected in the arranger at the end, `#RRGGBB`, or null when none is), `launcherClipsBefore` and `launcherClipsAfter` (the track's clips in its first 8 launcher slots). From extension 3.7 also `via` (the route) and `ran`: for `launcherFocus`, `copy`, `focus` and `paste`, whether the link ran that step by the route (null for a step it didn't get to, and for `launcherFocus` when Bitwig has no such action). From 3.8, with `checks`, when its paste ran but put nothing in the arranger and Bitwig has `focus_or_toggle_clip_launcher`, also `checks`: `launcherPaste` and `duplicate`, each null when it couldn't run, and `error` when one stopped part way ([below](#clips-in-the-arranger-an-experiment)). |
+| `filetrack` ✎ (3) | `track`, `path` (a file), `at` (optional: where to move the play start first, in beats from the start) | **An experiment**, from extension 3.8, which only the live tests send ([below](#clips-in-the-arranger-an-experiment)): inserts the file after the track, as a new track, through the track's `afterTrackInsertionPoint`, and answers once Bitwig settles: `added` (how many tracks), the new track's `index`, `name`, `type`, `launcherClips` (its clips in the first 8 launcher slots) and whether it's `selected` (null and false when there's none), `tracksBefore`, `tracksAfter`, `arranger` and `arrangerBefore` (the clip selected in the arranger, as `arrange` gives it), `at` (where the play start was), and `onTrack` (the given track's launcher clips `before` and `after`). |
 
 ✎ needs changes turned on. (3) only in link version 3, the extension. `insert` with a track, `newtrack`,
-`clip`, `pads`, `transpose` and `recorder` wait for Bitwig to make the change (up to 5 seconds for each
-step), and run one at a time in the order sent. In the app this is `Core/DawLink/BitwigLink.cs`.
+`clip`, `pads`, `transpose`, `recorder`, `arrange` and `filetrack` wait for Bitwig to make the change (up to 5 seconds for
+each step), and run one at a time in the order sent; from extension 3.7 so does `action`, whose route may take up
+to a second to come back. In the app this is `Core/DawLink/BitwigLink.cs`.
 
 ### Only in one project
 
@@ -163,6 +171,160 @@ see [its README](bitwig-java/README.md#reports) for macOS and Linux): a line for
 regular hellos) in
 `<date>-link.jsonl`, and a self-check of each part of Bitwig's API it uses in `<time>-selfcheck.json`, written
 when Bitwig starts it and on `selftest`. A Bitwig problem in a real session can be read there afterwards.
+
+### Routes and the MIDI loopback
+
+Bitwig 6.1.3 ignored every command of its user interface the link ran (Save, copy, paste, bringing a panel to the
+front), whether it ran them as a request came in or in a task it scheduled, while it carried out every other
+change. The same Save works for controllers such as DrivenByMoss, which run it while Bitwig handles a press of a
+hardware button. So from 3.7 the extension can run Bitwig's Save, Copy and Paste actions and the two focus actions
+(`focus_or_toggle_arranger`, `focus_or_toggle_clip_launcher`), and from 3.8 Duplicate for `arrange`'s checks, by a route, which `action` and `arrange` take as
+`via`. The live tests then found that Bitwig 6.1.3 saves from its flush once the extension's MIDI in and out are
+set ([below](#routes-and-the-midi-loopback)), so from 3.8 that's the route the link takes when the request names
+none (and so the app's own commands take it):
+
+| Route | How the link runs the command |
+|---|---|
+| `direct` | Straight away, as the request comes in (as before 3.7, and the default before 3.8). |
+| `flush` | From Bitwig's next flush, which the link asks for (the default from 3.8). |
+| `midi` | When a SysEx message the link sent itself comes back through the loopback: `F0 7D 4D 4F 42`, three 7-bit bytes of the message's number, `F7` (`7D` is the ID for non-commercial use, so no maker's device takes it for its own). |
+| `buttonCode` | When a press of one of the link's own hardware buttons comes back through the loopback: the link sends a note on MIDI channel 16 (from note 110, one for each command), Bitwig presses the button, and the link runs the command. |
+| `button` | The same with another of the link's buttons (from note 100), which Bitwig runs the command for itself, as for a controller's button; the link only hears of the press. |
+
+The last three need the loopback. In loopMIDI, add a port called **Music Organiser Bitwig**, then in Bitwig,
+Settings > Controllers > Music Organiser, set both MIDI in and MIDI out to it. Never set them to **Music
+Organiser**: that's the FL Studio link's port, and FL Studio must never get the notes and messages the Bitwig link
+sends itself. The extension asks Bitwig for one MIDI in and one MIDI out, only for the loopback, and offers the
+Music Organiser Bitwig port for both, so Bitwig can fill them in when it finds the port (auto-detection).
+Bitwig 6.1.3 starts the extension with them unassigned, and the link answers. In the live runs without them
+(extensions 3.3 and 3.6, which have no ports, so only `direct`) Save did nothing; with them set (3.7 and 3.8) Save
+worked from the flush both times and straight away once in two. Nobody has tried the flush without them, so set
+them after installing 3.7 or later, whichever route the app uses: the steps Settings shows after *Install* ask for them, and *Check
+connection* says when the extension's own MIDI hasn't come back through them (the hello's `loopback` is false),
+as while they aren't set; the extension can't tell that from a port that doesn't hand its MIDI back. A Mac or
+Linux has no loopMIDI; a virtual MIDI port there (an IAC bus on a Mac) may do instead, which nobody has tried.
+
+A route other than `direct` has a second to come back (through Bitwig's flush, or the loopback). When it doesn't,
+the link drops it, so a message or press that turns up late never runs the command, and answers `ran: false`.
+Before it runs a command that came back, it checks `onlyIn` and *Let the app make changes* again
+([Only in one project](#only-in-one-project)). A press carries no number, so the link can't tell a late press from
+the next one of the same button; and for `button`, Bitwig has run the command before the link hears of the press,
+so the link can't hold that one back.
+
+The extension sends itself a message as Bitwig starts it, and again each time the app connects, and says in its
+hello (`loopback`) and its self-check (*command routes*) whether any of its own MIDI has come back, which is how
+the app and the live tests know the loopback works. Without the loopback's ports, `action` and `arrange` refuse
+the routes through it, saying so.
+
+### Clips in the arranger (an experiment)
+
+Bitwig's controller API (23) can put a clip in a launcher slot, but not on the arranger timeline: only launcher
+slots have insertion points. The app would like what it sends (*To Bitwig* from FL Studio, the Kit builder) to
+land in the arranger, so extension 3.6 tries the only other way, Bitwig's own editing, as a person would do it.
+`arrange` switches to the Arrange layout if another one shows, shows its clip launcher if it's hidden, selects
+the track and its launcher clip, gives the clip a fresh colour, gives the clip launcher the focus, copies the clip
+(`Application.copy`), moves the play start to `at`, brings the arranger timeline to the front and pastes
+(`Application.paste`), which puts the copy on the selected track. Each step waits for Bitwig to show it, and the
+request fails, saying which step, when Bitwig doesn't (all but the colour: see below).
+
+Paste puts down whatever is on Bitwig's clipboard, which every open project shares. When the copy didn't take,
+that's whatever was copied before: a clip you copied in your own song, or the last run's copy. To tell its own
+clip from that, the link marks the launcher clip with a fresh colour before it copies (`mark`): a new hue each
+time, a golden-ratio step round the colour wheel from the last one, and clearly unlike the clip's colour then.
+It waits for Bitwig to show the new colour (Bitwig may round it to one of its own, so any clear change counts)
+and keeps the colour the clip `got`, which the pasted clip's colour is compared with. The mark is `exact` when
+that's the colour asked for (within 2 of 255 in each of red, green and blue). A colour Bitwig rounded is one of
+its own, which other clips can have too (one you copied, or an earlier run's copy whose mark Bitwig rounded the
+same way), so the link can't be sure a pasted clip in it is the launcher clip's copy. When Bitwig doesn't change
+the clip's colour, the link carries on, with `took` false, but can't tell its clip from another. The launcher
+clip keeps its new colour: only the test project gets this.
+
+Bitwig copies and pastes in whichever of its panels has the focus, and the API can't say which one has it. The
+link brings a panel to the front with Bitwig's actions `focus_or_toggle_clip_launcher` (when Bitwig has one by
+that ID: nobody has seen Bitwig's list yet, so without it the link copies from whichever panel has the focus) and
+`focus_or_toggle_arranger`. Each hides its panel when that's in front already, so the link runs it a second time
+when it does. When `focus_or_toggle_arranger` hid the timeline, the timeline had the focus as the link copied
+(nothing in between moves it), so Bitwig copied from the timeline, not the launcher clip: the link doesn't paste,
+and says `copiedFromTimeline`.
+
+Nobody knows yet whether Bitwig goes along with copy and paste from an extension, so once the steps are through
+the answer always says what Bitwig showed. `appeared` is true when the clip selected in the arranger (Bitwig's
+arranger cursor clip, which follows a pasted clip) has moved to the track, where it wasn't just before the paste,
+and the track's launcher clips are as they were; more launcher clips after than before means Bitwig pasted into
+the launcher instead. `sameAsSource` is true when the mark took and the clip selected in the arranger has the
+colour the launcher clip got (`pastedColor`, within 2 of 255 in each of red, green and blue), and `arranged` when
+both are and the mark is `exact`. A clip that appeared in another colour is whatever Bitwig's clipboard held
+before. The API can't say where an arranger clip starts, so `at` is where it was meant to go, and only a look at
+Bitwig shows whether it's there. Copy replaces whatever was on Bitwig's clipboard (one for every project open),
+and nothing is undone when it doesn't work (the layout, the play start and the launcher clip's colour stay as
+the link left them), so only the live tests send it, in their own test project (*Changes › Clip to arranger*);
+the app's sends don't use it yet. In the app it's `BitwigLink.ArrangeAsync`.
+
+From 3.7, `arrange` can run its copy, its paste and the two focus actions by a route
+([above](#routes-and-the-midi-loopback)): `direct` works as before, with the API's copy and paste; any other
+route (`flush`, the default from 3.8) runs Bitwig's Copy and Paste actions, and the focus actions, by that route.
+`ran` says which of those steps ran. A step that didn't run doesn't stop the request: the link answers with what
+Bitwig shows, and doesn't paste when the copy didn't run, so it never puts down whatever was on Bitwig's
+clipboard before (nor do the checks below, which only follow a paste that ran).
+
+The 3.7 live run (on 6.1.3) put nothing in the arranger by any route, while Save worked from the flush. To tell
+which part fails, `arrange` from 3.8 takes `checks: true`: when its own paste ran but put nothing in the arranger
+(no clip appeared on the track, and the clip selected there is as it was and wasn't on the track already, where
+a new one would look just like it), and Bitwig has
+`focus_or_toggle_clip_launcher`, it then runs two checks by the same route, each starting as `arrange` does (it
+selects the track and a launcher slot, and gives the clip launcher the focus). They don't run otherwise, since
+their paste could then put down what Bitwig's clipboard held before, or a clip in the arranger that would hide
+what a later go put there. A check stops before its paste or Duplicate when Bitwig doesn't select its slot or the
+route doesn't run the focus action.
+
+- `launcherPaste`: a paste into the track's first empty launcher slot, which needs no arranger. When the mark
+  took and is `exact`, a clip there in the launcher clip's marking colour (`sameAsMark`) means the copy took, so
+  it's the arranger's part that fails, and one in another colour means the copy didn't take; nothing means the
+  paste didn't land in the launcher either (if it went anywhere else, the link doesn't see it, and it's left).
+  It says which `slot`, whether it got `selected`, the launcher's `focus` count, which steps `ran` (`focus`,
+  `paste`), whether a clip was `made`, its `colour`, and whether the link `removed` it again (it deletes it, so
+  the next go starts as this one did).
+- `duplicate`: Bitwig's Duplicate action on the launcher clip, which needs no clipboard. A new launcher clip
+  (`launcher`, how many more) means Bitwig's editing actions work in the launcher by this route, and the link
+  deletes it again (`removed`); a new track (`tracks`) means Duplicate went to the track, so the launcher didn't
+  have the focus, and that track is left in the test project. With neither, Duplicate changed nothing the link
+  can see.
+
+A check that stops part way (another project came to the front, say) puts why in `checks.error`, and `arrange`
+still answers with what it found.
+
+`filetrack` (3.8) tries a way round the clipboard altogether. Bitwig's API can't put a clip on the arranger, but
+a track can insert a file after itself (`afterTrackInsertionPoint().insertFile`), as when a file is dropped
+between tracks, and Bitwig may make a new track with the file's clip in the arranger, at the play start, as it
+does for a drop. The answer says whether a track came, and whether the clip went to its launcher instead or the
+clip selected in the arranger moved to it; only a look at Bitwig shows where it starts. The live tests try it
+with their MIDI file (*Changes › MIDI file as a track*).
+
+What the live runs found (6.1.3, 2026-10-15). Everything `arrange` does through the API works: the clip takes
+each mark colour, exactly as asked, and the play start moves to `at`. Bitwig's Copy, Paste and Duplicate don't
+act on what the API selected, though: they act on Bitwig's own selection, whatever was last clicked. In the two
+runs that started with nothing selected (3.7 at 18:52, 3.8), by every route, Copy, Paste and Duplicate changed
+nothing at all, in the arranger, the launcher or the track list (3.8 had just restarted Bitwig, so its clipboard
+was empty too). The 3.7 run at 22:19 started with Bitwig's selection on a track, and there Paste ran (from the
+flush, then on the link's MIDI) and put whole tracks in the track list, copies of “Send 185248” and “Devices
+221955”, just above the clip's track. The link, which reads tracks by their place in its track bank, then looked
+at a pasted track and took the clip for gone. `filetrack` made no track: Bitwig ignores a MIDI
+file inserted after a track, while the same file into a launcher slot works.
+
+So 3.9 stops copying and records instead. Bitwig's user guide describes recording launcher clips into the
+arranger: with arranger record on, launching a clip while Bitwig is stopped starts it from the play start, and
+what the clip plays goes into the arranger on its track. That needs no focus or selection, only API calls the
+extension already makes work. The `record` job ([the extension's README](bitwig-java/README.md#whats-new-in-link-version-3))
+sets Bitwig up first so only the clip records and nothing is heard (the master muted, every track disarmed, no
+metronome, pre-roll, loop, punch or overdub, touch automation, launch quantize one bar), reading each setting
+back and refusing when one doesn't take. Then it records, stops the track on the clip's last bar, turns record
+off, plays the arranger back to hear what went in, and puts every setting back as it was. It runs in real time,
+so it takes the clip's length and the replay's; a faster `tempo` shortens both. It finds tracks by their IDs,
+so a track going in above can't send a step to the wrong one (as the pasted tracks did), and `clip`,
+`filetrack` and `arrange`'s clean-up do the same from 3.9. It's still an experiment: the live tests try it
+(*Changes › Record into the arranger*, below), and the app's sends won't use it until a run shows it works.
+`probe` sees whether Bitwig carries out its panel commands for the link at all, which says whether a way that
+needs the focus in a panel could ever work. In the app they're `BitwigLink.RecordAsync` and `ProbeAsync`.
 
 ### Sending into Bitwig
 
@@ -265,12 +427,62 @@ What runs, in this order:
   script or the Java extension), the project listing, the selected device, the actions (Save among them),
   and 20 hellos one after another for the round trip time. With the Java extension also the tracks' `id`,
   the remote controls' `steps`, `stepNames`, `origin` and `automated` (Bitwig gives these only for remote
-  controls), `clicked`, and the extension's own `selftest`; with the script those are Skipped, saying they
-  need the extension.
+  controls), `clicked`, the extension's own `selftest`, and (from 3.7) the *MIDI loopback*: Passed when the
+  extension's own MIDI has come back to it (its hello's `loopback`), else Failed, saying how to set the loopback
+  up ([Routes and the MIDI loopback](#routes-and-the-midi-loopback)). With the script, or an extension too old,
+  those are Skipped, saying they need the extension.
 - **Changes**: a new track with a name and colour; the Sampler, Note Transpose and Drum Machine by ID; the
-  Sampler's and Note Transpose's pitch, read back; a sample into a Sampler; a MIDI clip; Drum Machine pads;
-  selecting a device, setting a parameter and reading it back (then setting it back); the master
-  recorder's status (Java only; it's never started); and, after Send, Save, then the unsaved changes clear.
+  Sampler's and Note Transpose's pitch, read back; a sample into a Sampler; a MIDI clip; that clip copied
+  into the arranger at bar 5 (Java extension 3.6 or later, and
+  [an experiment](#clips-in-the-arranger-an-experiment): Passed when the link sees a clip in the launcher
+  clip's marking colour appear selected in the arranger on the clip's track, though it can't see where the
+  clip starts, so it asks you to look at bar 5; Failed when a clip in another colour appeared there, as Bitwig
+  pasted what its clipboard held before, so the copy didn't take (that clip can be deleted); Noted when a clip
+  appeared but Bitwig wouldn't recolour the launcher clip, or when it has the launcher clip's colour but Bitwig
+  rounded that to one of its own (which other clips can have too), asking you to look and say which clip it is;
+  else Failed, saying what Bitwig did instead, or the step it didn't go along with, and asking you to look at
+  Bitwig's arranger and say what you see; from extension 3.7 it tries the copy, the paste and the focus actions
+  by each [route](#routes-and-the-midi-loopback) in turn, in Save's order (below), until one puts the clip there
+  or its paste puts anything down (a clip on the track, whichever it is, one in the launcher, or one on another
+  track), since another paste would land in the same place, where the clip the last one left selected hides
+  whether a new one appeared; the verdict is that route's, naming it, with a line for what each route did; from
+  3.8 the flush comes first (asked for by naming no route, as the app's own commands do), and each route whose
+  paste ran but put nothing in the arranger runs the [checks](#clips-in-the-arranger-an-experiment) (when Bitwig
+  has the clip launcher's focus action), with a line under its own for each: whether the copy took and a paste
+  works in the launcher, and whether Duplicate works there); the
+  MIDI file inserted after the Sample track as a track of its own, with the play start at bar 5 (extension 3.8,
+  another experiment: Passed when it made a new track with no launcher clip and the clip selected in the
+  arranger moved to it, asking you which bar the clip starts at and where the play start marker is (the 3.7 run
+  left the marker at bar 1, though the link read it back at bar 5); Failed when no track came or the clip went in
+  its launcher; else Noted, asking you to look); with extension 3.9, neither of those two (the 3.8 run showed
+  they can't work, and they're Skipped saying so), but recording into the arranger instead: a track of its own
+  (*Track to record on*, “Rec 143012”, with an empty Sampler, which makes no sound, and a two-bar clip of six
+  notes), then the clip played at bar 5 without recording (*Hear the clip*: Passed when the link heard its
+  notes; Noted when not, so the recording tests ask you to look), recorded at bar 5 (*Record into the
+  arranger*: Passed when the replay heard the clip there with the launcher clip not playing, asking you to look
+  too; Noted when the link hears no notes at all; Failed when the clip played but the replay heard nothing),
+  recorded at bar 9 with the track armed only when that recorded nothing (*Record armed*), and recorded at bar
+  13 at double the tempo once one of those went in (*Record fast*), with the launcher clip deleted first and the
+  replay from bar 5, which shows whether the earlier recordings still play without it (Noted when they don't,
+  as Bitwig may have recorded them as alias clips). Each is Failed whatever it heard when anything else changed
+  (a track added or gone, a launcher clip on another track), or Bitwig didn't end as it was (record or playing
+  still on, a setting not put back), and its lines list the notes the link heard and where. They play Bitwig
+  for a minute or so with its master muted, so keep your hands off Bitwig meanwhile. Then *Panel commands* runs
+  Bitwig's panel commands twice each from the flush and straight away, and says whether a panel showed or hid
+  with each (Passed when Bitwig carried them all out by a route, Failed when it carried out none); Drum Machine pads; selecting a device, setting a parameter and reading it back (then setting it back); the
+  master recorder's status (Java only; it's never started); and, after Send, Save, with Bitwig's window brought
+  to the front first (on Windows; the report says whether it got there, as `front`). Bitwig 6.1.3 ignored Save run
+  straight away from the link, so with extension 3.7 or later the run tries Save by each route in turn: `direct`, `flush`, `midi`,
+  `buttonCode`, then `button` (from 3.8, `flush` first, asked for by naming no route, then the rest in that
+  order; a Save that works that way says the app's own Save does too), each through the same checks as every change, until one clears the unsaved
+  changes or writes the project's file within 15 seconds. A route that didn't run (nothing came back within a
+  second) or that the link refused (no loopback ports) is noted, and the next tried at once. Passed names the
+  route that worked and says what the ones before it did, since that's how the app should save; Failed has a
+  line for each route, and says how to set the loopback up when the routes through it didn't run. With the
+  script or an older extension, only `direct` is tried, and the test says so. The report keeps the route that
+  worked (`via`), each go (`attempts`: its `via`, the `project` Bitwig said it had in front, whether it `ran`,
+  whether the changes `cleared`, whether the file was `written`, `tookMs`, and the link's `error` if it refused
+  it), and `projectAtSave`; a failure says whether that was the test project.
 - **MO Probe**, as a CLAP and then as a VST3, each on a new track: it waits for the probe's live status,
   pings it and labels it with the run's stamp (“MO Live Test 20261014T143012Z CLAP”, so its own report
   can be matched with the run's), checks its knobs both ways (Failed when a knob doesn't move, or a stepped
@@ -282,8 +494,11 @@ What runs, in this order:
   folder, read with the app's reader and compared with what Bitwig lists (as Check with Bitwig does).
 
 Each test ends Passed, Failed, Skipped (saying why) or Noted (a finding that isn't a pass or a fail, like
-the knob table). One failing never stops the run, and each has its own time limit (30 seconds; 2 minutes
-for the Drum Machine, which may mean reading Bitwig's presets for its ID, and 5 for a knob check).
+the knob table). One failing never stops the run, and each has its own time limit (30 seconds; 1 minute 45 for
+Save, which may wait 15 seconds for each of its five routes; 5 minutes for Clip to arranger, a minute for each
+route and its checks; 3 minutes for each go at recording, which the app stops itself (`recordabort`) when it
+runs past the time its play and replay should take; 2 minutes for the Drum Machine, which may mean reading Bitwig's presets for its ID; and
+5 minutes for a knob check).
 
 ### Only in a project made for them
 
@@ -301,10 +516,16 @@ made and any knob it couldn't set back.
 To make the test project, once: in Bitwig, make a new project and save it as “MO Live Test” (in Bitwig's
 Projects folder, or in one of the app's project folders), then turn on *Let the app make changes*
 (Settings → Controllers → Music Organiser). Each run adds about six tracks named with the time it started
-(“Devices 143012”, “Kit 143012”…) and saves. The link can't delete tracks, so clear them out by hand now
-and then, or save a fresh “MO Live Test 2” (Bitwig lists only the first 128 tracks to the app). The
-samples and the MIDI file a run sends in are in `files` next to the reports, the same every run, so the
-project goes on playing them.
+(“Devices 143012”, “Kit 143012”…) and saves; with extension 3.8 also a “Live Clip” track (*MIDI file as a
+track*, named after the file, so every run adds another), and a copy of the Sample track for each go of Clip to
+arranger whose Duplicate check went to the track. With the Java extension, a run also copies its MIDI clip into
+the arranger ([an experiment](#clips-in-the-arranger-an-experiment)): the copy replaces whatever you had
+copied in Bitwig, in any project, since Bitwig has one clipboard; and the test project is left in its Arrange
+layout, with its clip launcher showing, the play start at bar 5, the run's MIDI clip in the launcher in a new
+colour (a different one each run) and a pasted clip on the run's Sample track.
+The link can't delete tracks, so clear them out by hand now and then, or save a fresh “MO Live Test 2”
+(Bitwig lists only the first 128 tracks to the app). The samples and the MIDI file a run sends in are in
+`files` next to the reports, the same every run, so the project goes on playing them.
 
 ### Reports
 
@@ -342,6 +563,13 @@ Bitwig:
 - [ ] `clicked` follows clicks on any parameter, and creating the last clicked parameter adds nothing unwanted
       to Bitwig's menus.
 - [ ] The master recorder starts and stops from `recorder`, and `duration` is in milliseconds.
+- [ ] `arrange` (an experiment): Bitwig selects a launcher clip, copies it, shows and focuses the arranger
+      timeline and pastes the clip there at the play start when the extension asks (the live tests' *Changes ›
+      Clip to arranger*); whether its window has to be in front for that; whether the arranger cursor clip
+      follows the pasted clip, as the link expects; whether Bitwig has `focus_or_toggle_clip_launcher`, and
+      whether selecting a launcher slot from the API gives the launcher the focus without it; whether a launcher
+      clip's colour set from the API shows as asked (`exact`) or rounded to Bitwig's palette, and whether the
+      pasted clip keeps it, which `sameAsSource` relies on.
 - [ ] Parameter IDs from `device` look like `CONTENTS/PID3e8`, and `set` takes them back.
 - [ ] `insert` takes the scanner's VST3 class ID as Bitwig wants it, and a UUID for its own devices.
 - [ ] The words `type` and `kind` use (e.g. `Instrument`, `note_to_audio`).
@@ -349,6 +577,38 @@ Bitwig:
       finding the open project in the library).
 - [ ] `modified` clears when the project is saved, and stays clear after Save As (the app re-reads the
       file then).
+- [ ] One Save (`action`) saves the project Bitwig has in front, and by which route. On 6.1.3 Bitwig ignored
+      Save, copy and paste run straight away, from a request or a task the extension scheduled; the live tests'
+      *Changes › Save* now tries each route in turn and names the one that works, recording the project in
+      front as Save ran (`project` in the answer). The 3.7 run saved from the flush, which 3.8 makes the
+      default, and the 3.8 run saved with no route named (2026-10-15).
+- [x] Arrange's checks (3.8, Bitwig 6.1.3, 2026-10-15): by all five routes, a paste into an empty launcher slot
+      put nothing there and Duplicate changed nothing, while the clip took every mark colour and the play start
+      moved: Bitwig's Copy, Paste and Duplicate act on its own selection, not the one the API makes ([what the
+      runs found](#clips-in-the-arranger-an-experiment)).
+- [x] `filetrack` (3.8, 2026-10-15): a MIDI file inserted after a track made nothing, no track and no clip.
+- [ ] Recording into the arranger (3.9): whether Bitwig records a launched clip into the arranger when the
+      extension turns arranger record on, with the track unarmed (the guide says disarmed tracks avoid empty
+      clips, not that they record nothing) or only armed; whether the master's mute leaves the recording alone;
+      whether `playingNotes` says what a track with an empty Sampler plays, and what the arranger plays back;
+      whether stopping the track lands on the bar line; whether Bitwig's “Write automation when recording”
+      turns automation write on (the answer says `automationWriteSeenOn`); whether recordings at double the
+      tempo come out the same; and whether they still play once the launcher clip is deleted (they won't if
+      Bitwig records alias clips, Play menu › Record to Arranger as Alias Clips).
+- [ ] Whether Bitwig carries out `toggle_arranger` and the focus actions for the extension (*Panel commands*),
+      from the flush or straight away.
+- [x] The MIDI loopback's ports (Bitwig 6.1.3, 2026-10-15): Bitwig starts the extension, and the link answers,
+      with its MIDI in and out unassigned. Save has only worked for the link once they were set: from its flush
+      (twice) and straight away (once in two). Without them only straight away was tried (3.3 and 3.6), and it
+      didn't save; whether the flush saves without them is untried.
+- [ ] Whether Bitwig still starts the extension, and the link answers, with its MIDI in and out set to “Music
+      Organiser Bitwig” while that port isn't there (loopMIDI not running): Bitwig stops a controller whose device
+      goes away, so it may not. *Bitwig isn't answering* says to check the port, in case.
+- [ ] The rest of the MIDI loopback (extension 3.7): Bitwig fills the ports in with the loopMIDI port “Music
+      Organiser Bitwig” by itself; the extension's SysEx message comes back whole on its MIDI in (*Link › MIDI
+      loopback*); a note-on on channel 16 presses the extension's buttons; and Bitwig carries out Copy, Paste
+      and the focus actions run from its flush, on the SysEx message, or for a button press, and Save run on the
+      SysEx message or for a button press (which routes work, if any, decides how the app arranges).
 - [ ] Two connections at once (the app's look every 2 seconds, and a send or a check) work side by side.
 - [ ] A plugin's parameter names in Bitwig match FL Studio's for the same plugin (VST3 or CLAP in Bitwig,
       often VST2 in FL Studio), which is how knobs are copied.

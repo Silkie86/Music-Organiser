@@ -30,22 +30,95 @@ public static partial class SongVersions
     [GeneratedRegex(@"^(.+?)_(\d{1,4})$")]
     private static partial Regex Numbered();
 
+    /// <summary>"Song 12", "Song-12", "Song - 12" (up to three digits, so "Swu oct 2026" stays a name).</summary>
+    [GeneratedRegex(@"^(.+?)(?:\s*-\s*|\s+)(\d{1,3})$")]
+    private static partial Regex SpaceNumbered();
+
+    /// <summary>"track2", "FLP19": a number glued to the last word.</summary>
+    [GeneratedRegex(@"^(.*\p{L})(\d{1,3})$")]
+    private static partial Regex GluedOn();
+
+    /// <summary>
+    /// The names DAWs give a new project: "Untitled 3" and "Untitled 4" are different songs that were never named, not
+    /// saves of one, so a number after one of these is part of the name (FL Studio's "Untitled_2" is still a save).
+    /// </summary>
+    static readonly HashSet<string> DawDefaults = new(StringComparer.OrdinalIgnoreCase)
+        { "untitled", "untitled project", "untitled song", "new project", "new song" };
+
     /// <summary>Fix's copies: "Didums_70 (fixed)", "Didums_70 (fixed 2)".</summary>
     [GeneratedRegex(@"(\s*\(fixed(\s+\d+)?\))+$", RegexOptions.IgnoreCase)]
     private static partial Regex FixedTail();
 
     /// <summary>
+    /// A word that marks a save, then its number: "Song v2", "Song v2.1", "Song take 4", "Song mix_3", "Song rev 7". There has
+    /// to be a space, "_", "-" or "." before the word, so "Remix2" isn't read as a "mix". Not "FLP": in "fleck athens FLP19"
+    /// it's part of the song's name (Solomon, 19 Oct), and only the number is the save.
+    /// </summary>
+    [GeneratedRegex(@"^(.+?)[\s_.-]+(?:v|ver|version|take|tk|mix|rev|revision|draft|alt)\s*[.#_]?\s*(\d{1,4})(?:\.(\d{1,3}))?$", RegexOptions.IgnoreCase)]
+    private static partial Regex MarkedNumber();
+
+    /// <summary>The same words glued on with a capital: "SongV2", "SongTake4".</summary>
+    [GeneratedRegex(@"^(.*\p{Ll})(?:V|Ver|VER|Take|TAKE|Mix|MIX|Rev|REV)(\d{1,4})$")]
+    private static partial Regex GluedNumber();
+
+    /// <summary>"Song final", "Song FINAL FINAL", "Song final2", "Song final v3": the last save, ahead of any number.</summary>
+    [GeneratedRegex(@"^(.+?)[\s_.-]+final(?:[\s_.-]*final)*(?:[\s_.-]*v?(\d{1,3}))?$", RegexOptions.IgnoreCase)]
+    private static partial Regex Final();
+
+    /// <summary>
+    /// Copies and side saves that say nothing about order: Windows' "Song - Copy", "Song - Copy (2)" and "Song (2)",
+    /// "Song copy", "Song wip", "Song backup", and a date: "Song 2024-03-01", "Song_20240301".
+    /// </summary>
+    [GeneratedRegex(@"^(.+?)(?:\s*-\s*copy(?:\s*\(\d{1,3}\))?|\s+copy(?:\s*\d{1,3})?|\s*\(copy\)|\s*\(\d{1,2}\)|[\s_.-]+(?:wip|backup|bak|bkp)|[\s_.-]+(?:19|20)\d\d[-_.]?(?:0[1-9]|1[0-2])[-_.]?(?:0[1-9]|[12]\d|3[01]))$", RegexOptions.IgnoreCase)]
+    private static partial Regex SideSave();
+
+    /// <summary>A "final" save's number: above every numbered save, so it's the one the song opens.</summary>
+    const int FinalNumber = 1_000_000;
+
+    /// <summary>
     /// "Didums_70" → ("Didums", 70); "Didums" → ("Didums", 1). A fixed copy counts as the save it was made from:
-    /// "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves.
+    /// "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves. Solomon's rule for every DAW (2026-10-19):
+    /// the same name with a number on the end is a save of one song, whether the number is glued to the last word
+    /// ("track2"; "fleck athens FLP19" is a save of "fleck athens FLP"), after a space ("analog full set nb 36"), a dash
+    /// ("song-3") or "_". So "track1" and "track2" are one song, "track nd 1" and "track 2" aren't (<see cref="Key"/> also
+    /// needs the same folder). The
+    /// usual marks count too: "Song v2.1", "Song take 4", "Song final" (the last save), and copies, side saves and dates
+    /// such as "Song - Copy", "Song wip" and "Song 2024-03-01", which keep the number of what's left. A DAW's own name
+    /// for a new project is never cut down to: "Untitled 3" and "Untitled 4" are songs of their own.
     /// </summary>
     public static (string Song, int Number) Split(string name)
     {
         name = FixedTail().Replace(name, "");
+        int? number = null;
+        // Marks stack ("Song v2 final", "Song_3 - Copy"): take them off from the end, keeping the first number found.
+        for (var i = 0; i < 4 && Unmark(name) is { } cut; i++)
+        {
+            name = cut.Song;
+            number ??= cut.Number;
+        }
         var m = Numbered().Match(name);
-        return m.Success && m.Groups[1].Value.Trim().Length > 0
-            ? (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Value))
-            : (name, 1);
+        if (m.Success && m.Groups[1].Value.Trim().Length > 0) return (m.Groups[1].Value.TrimEnd(), number ?? int.Parse(m.Groups[2].Value));
+        var tail = SpaceNumbered().Match(name) is { Success: true } spaced ? spaced : GluedOn().Match(name);
+        if (tail.Success && IsSong(tail.Groups[1].Value)) return (tail.Groups[1].Value.Trim(), number ?? int.Parse(tail.Groups[2].Value));
+        return (name, number ?? 1);
     }
+
+    /// <summary>The name with one save mark taken off its end, and the number it gave (null when it gave none).</summary>
+    static (string Song, int? Number)? Unmark(string name)
+    {
+        if (Final().Match(name) is { Success: true } final && IsSong(final.Groups[1].Value))
+            return (final.Groups[1].Value.Trim(), FinalNumber + (final.Groups[2].Success ? int.Parse(final.Groups[2].Value) : 0));
+        if (MarkedNumber().Match(name) is { Success: true } marked && IsSong(marked.Groups[1].Value))
+            return (marked.Groups[1].Value.Trim(), int.Parse(marked.Groups[2].Value));   // "v2.1" is save 2: the date tells it from "v2"
+        if (GluedNumber().Match(name) is { Success: true } glued && IsSong(glued.Groups[1].Value))
+            return (glued.Groups[1].Value.Trim(), int.Parse(glued.Groups[2].Value));
+        if (SideSave().Match(name) is { Success: true } side && IsSong(side.Groups[1].Value))
+            return (side.Groups[1].Value.Trim(), null);
+        return null;
+    }
+
+    /// <summary>Whether what's left is a song's own name, not nothing or a DAW's "Untitled".</summary>
+    static bool IsSong(string rest) => rest.Trim() is { Length: > 0 } song && !DawDefaults.Contains(song);
 
     /// <summary>A gap this long between two saves (Solomon's pick: 3 months) starts a new run.</summary>
     public const int DefaultRunGapMonths = 3;
@@ -109,9 +182,24 @@ public static partial class SongVersions
         return n.ToLowerInvariant();
     }
 
-    /// <summary>Saves of the same song share a key: same folder, same DAW, same name before the number.</summary>
+    /// <summary>Saves of the same song share a key: same folder (see <see cref="SongFolder"/>), same DAW, same name before the number.</summary>
     public static string Key(string folder, string daw, string name) =>
-        $"{folder}\u001f{daw}\u001f{Split(name).Song}".ToLowerInvariant();
+        $"{SongFolder(folder, name)}\u001f{daw}\u001f{Split(name).Song}".ToLowerInvariant();
+
+    /// <summary>
+    /// The folder a song's saves sit in. Bitwig keeps each project in a folder named after it, so saving bored_58 as a new
+    /// project makes Projects\bored_58\bored_58.bwproject next to Projects\bored_57\bored_57.bwproject (Solomon,
+    /// 2026-10-18: "midi from multiple save versions of bitwig are listed as different"): a folder named like the song
+    /// counts as the folder it's in, so those saves are one song, and so are saves made into the same folder.
+    /// </summary>
+    public static string SongFolder(string folder, string name)
+    {
+        var trimmed = folder.TrimEnd('\\', '/');
+        var cut = trimmed.LastIndexOfAny(['\\', '/']);
+        if (cut < 0) return folder;
+        var own = trimmed[(cut + 1)..];
+        return string.Equals(Split(own).Song, Split(name).Song, StringComparison.OrdinalIgnoreCase) ? trimmed[..cut] : folder;
+    }
 
     /// <summary>
     /// One group per song. The latest save is the highest-numbered file that is still on disk

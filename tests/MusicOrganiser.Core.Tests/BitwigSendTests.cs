@@ -187,6 +187,17 @@ public class BitwigSendTests
     }
 
     [Fact]
+    public void AVst2GoesInWithTheProgramItHadSelected()
+    {
+        // As Open in Bitwig does (main's fix for the M1 in funk step, which came up on its first program): the bank names program 50.
+        var m1 = new PresetBlob("M1", "M1", ".fxp", Fxp.WrapChunk([1, 2, 3], "M1", 0x4b4c4d31)) { Program = 50 };
+        var files = new BitwigSend.Files("Song.flp", Fixtures.TempDir(), null, new Dictionary<string, BitwigPreset.Template>());
+        var bank = File.ReadAllBytes(Assert.Single(BitwigSend.PresetFiles(m1, files)));
+        Assert.Equal(("FBCh", 51, 50), (Encoding.ASCII.GetString(bank, 8, 4), BinaryPrimitives.ReadInt32BigEndian(bank.AsSpan(24)),
+                                        BinaryPrimitives.ReadInt32BigEndian(bank.AsSpan(28))));
+    }
+
+    [Fact]
     public void FindsBitwigDeviceIdsInItsFiles()
     {
         var dir = Fixtures.TempDir();

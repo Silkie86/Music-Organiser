@@ -8,7 +8,8 @@ namespace MusicOrganiser.Core.Plugins.Serum;
 /// The original Serum's saved state. Its VST2 chunk and its VST3 component state are the same thing: a zlib stream
 /// that unpacks to 172,736 bytes laid out the same way every time (FL Studio's wrapper puts a few bytes of its own
 /// in front). Inside are the knob values (0 to 1, in the plugin's parameter order), the modulation matrix, the
-/// wavetables themselves and their file names, and the preset's name, author and description.
+/// wavetables' file names, and the preset's name, author and description. Tables that aren't files follow in a
+/// second zlib stream (<see cref="OwnTable"/>).
 /// </summary>
 /// <remarks>
 /// Offsets were found in Serum 1.3 states from Solomon's projects (/mnt/project-files/music-organiser-notes/serum),
@@ -28,12 +29,21 @@ public sealed class Serum1State
     const int OscANameAt = 15_368, OscBNameAt = 15_880, NoiseNameAt = 16_392, NameLength = 256;
     const int PresetNameAt = 18_802, AuthorAt = 18_848, DescriptionAt = 18_896;
     const int SlotSize = 40, SlotsAt = 0, MoreSlotsAt = 20_704, SlotCount = 32, MoreSlotsEnd = MoreSlotsAt + 16 * SlotSize;
-    const int FxOrderAt = 15_324, FxCount = 10, NoiseFlagsAt = 18_768;
+    const int FxOrderAt = 15_324, FxCount = 10;
+    const int OwnTableBytesAt = 18_792, InterpolateAt = 18_800;
+    const int MonoAt = 19_544, NoiseOneShotAt = 19_564, NoisePitchTrackAt = 19_568, HallAt = 19_620;
 
     /// <summary>How many knob values the state holds, one per parameter Serum 1.3 shows a DAW (316, checked on Solomon's PC).</summary>
     public const int KnobCount = 316;
 
     readonly byte[] _raw;
+    float[]? _ownTables;
+
+    /// <summary>
+    /// Serum's own chunk as it saves it (the zlib streams and what follows), for writing the sound out as a Serum 1
+    /// preset (<see cref="ToFxp"/>).
+    /// </summary>
+    public byte[] Chunk { get; private init; } = [];
 
     /// <summary>Whether this came from a preset file, which has no wavetables (and from an older Serum 1, only modulation rows 1 to 16).</summary>
     public bool IsPreset { get; private init; }
@@ -54,24 +64,111 @@ public sealed class Serum1State
             for (var i = 0; i + 1 < Math.Min(data.Length, 64); i++)
                 if (data[i] == 0x78 && (data[i] << 8 | data[i + 1]) % 31 == 0) { start = i; break; }
         if (start < 0) return null;
+        // A preset file says how long its chunk is; anywhere else the chunk runs to the end.
+        var chunk = start == FxpChunkAt && BinaryPrimitives.ReadInt32BigEndian(data[56..]) is var size and > 0 && size <= data.Length - start
+            ? data.Slice(start, size)
+            : data[start..];
         try
         {
-            using var z = new ZLibStream(new MemoryStream(data[start..].ToArray()), CompressionMode.Decompress);
-            var raw = new byte[Size + 1];
-            var n = 0;
-            while (n < raw.Length && z.Read(raw, n, raw.Length - n) is > 0 and var got) n += got;
-            if (n == Size) return new Serum1State(raw[..Size]);
+            var raw = Unzip(chunk, Size + 1);
+            var n = raw.Length;
+            if (n == Size)
+            {
+                var whole = new Serum1State(raw) { Chunk = chunk.ToArray() };
+                whole._ownTables = whole.ReadOwnTables(chunk);
+                return whole;
+            }
             // Presets from later Serum 1 versions carry more after the first part (21,524 to 33,872 bytes seen in
             // Serum's own presets): modulation rows 17 to 32, where a whole state has them, then more that isn't
             // understood yet, so that reads as empty.
             if (n >= PresetSize && n < Size)
             {
-                Array.Clear(raw, MoreSlotsEnd, raw.Length - MoreSlotsEnd);
-                return new Serum1State(raw[..Size]) { IsPreset = true };
+                var padded = new byte[Size];
+                raw.AsSpan(0, Math.Min(n, MoreSlotsEnd)).CopyTo(padded);
+                return new Serum1State(padded) { IsPreset = true, Chunk = chunk.ToArray() };
             }
             return null;
         }
         catch (InvalidDataException) { return null; }
+    }
+
+    /// <summary>Unpacks a zlib stream, up to <paramref name="max"/> bytes.</summary>
+    static byte[] Unzip(ReadOnlySpan<byte> packed, int max)
+    {
+        using var z = new ZLibStream(new MemoryStream(packed.ToArray()), CompressionMode.Decompress);
+        var raw = new byte[max];
+        var n = 0;
+        while (n < raw.Length && z.Read(raw, n, raw.Length - n) is > 0 and var got) n += got;
+        return raw[..n];
+    }
+
+    /// <summary>
+    /// The waves of tables that aren't files (drawn, or imported into Serum), oscillator A's then B's. Serum saves
+    /// them as a second zlib stream after the first, and after that the first one's packed length; the state says
+    /// how many bytes of floats each oscillator has.
+    /// </summary>
+    float[]? ReadOwnTables(ReadOnlySpan<byte> chunk)
+    {
+        var bytes = OwnTableBytes(0) + OwnTableBytes(1);
+        if (bytes == 0 || chunk.Length < 8) return null;
+        var firstLength = BinaryPrimitives.ReadInt32LittleEndian(chunk[^4..]);
+        if (firstLength <= 0 || firstLength >= chunk.Length - 4) return null;
+        try
+        {
+            var raw = Unzip(chunk[firstLength..^4], bytes + 1);
+            if (raw.Length != bytes) return null;
+            var floats = new float[bytes / 4];
+            for (var i = 0; i < floats.Length; i++) floats[i] = BinaryPrimitives.ReadSingleLittleEndian(raw.AsSpan(4 * i));
+            return floats;
+        }
+        catch (InvalidDataException) { return null; }
+    }
+
+    int OwnTableBytes(int osc) =>
+        BinaryPrimitives.ReadInt32LittleEndian(_raw.AsSpan(OwnTableBytesAt + 4 * osc)) is var n and > 0 and <= 256 * 2048 * 4 && n % (2048 * 4) == 0 ? n : 0;
+
+    /// <summary>
+    /// An oscillator's own table (one that isn't a file), as 2048-sample frames one after another, or null when it plays
+    /// a file. Checked against Serum 2's own copy when it opened Solomon's "requiem serum 1".
+    /// </summary>
+    public float[]? OwnTable(int osc)
+    {
+        if (_ownTables is null || OwnTableBytes(osc) == 0) return null;
+        var from = osc == 0 ? 0 : OwnTableBytes(0) / 4;
+        return _ownTables[from..(from + OwnTableBytes(osc) / 4)];
+    }
+
+    /// <summary>Whether Serum smooths between an own table's frames (Serum 2's "interpolate after load").</summary>
+    public bool InterpolatesOwnTable(int osc) => _raw[InterpolateAt + osc] != 0;
+
+    // Settings Serum 1 doesn't show a DAW, kept as 0-to-1 values after the later knobs. Which is which was worked out
+    // from two sounds and what Serum 2 made of them, so the mono and hall ones (both on in one, off in the other) could
+    // be the other way round.
+    bool Hidden(int at) => BinaryPrimitives.ReadSingleLittleEndian(_raw.AsSpan(at)) > 0.5f;
+    public bool Mono => Hidden(MonoAt);
+    public bool HallReverb => Hidden(HallAt);
+    public bool NoisePitchTrack => Hidden(NoisePitchTrackAt);
+
+    /// <summary>
+    /// The sound as a Serum 1 preset file (.fxp), which Serum 2 can open from its browser exactly as Serum 1 played it.
+    /// </summary>
+    public byte[] ToFxp(string name)
+    {
+        var o = new MemoryStream();
+        void U32(int v) { Span<byte> b = stackalloc byte[4]; BinaryPrimitives.WriteInt32BigEndian(b, v); o.Write(b); }
+        o.Write("CcnK"u8);
+        U32(FxpChunkAt + Chunk.Length);   // Serum counts the whole file here, not the usual whole less 8
+        o.Write("FPCh"u8);
+        U32(1);
+        o.Write("XfsX"u8);
+        U32(1);
+        U32(1);
+        var label = new byte[28];
+        Encoding.Latin1.GetBytes(name.Length > 27 ? name[..27] : name).CopyTo(label, 0);
+        o.Write(label);
+        U32(Chunk.Length);
+        o.Write(Chunk);
+        return o.ToArray();
     }
 
     /// <summary>
@@ -140,14 +237,10 @@ public sealed class Serum1State
     }
 
     /// <summary>
-    /// Whether the noise oscillator plays its sample once rather than looping. Taken from the first of two switch
-    /// bytes after the LFO shapes; both were on in the one state checked, where Serum 2 also turned one-shot on, so
-    /// which byte is which isn't confirmed (<see cref="NoiseFlagsAsChecked"/>).
+    /// Whether the noise oscillator plays its sample once rather than looping: on in BA Organ Bass and off in "requiem
+    /// serum 1", as Serum 2 read them. (The two switch bytes at 18,768 taken for this before were on in both.)
     /// </summary>
-    public bool NoiseOneShot => _raw[NoiseFlagsAt] != 0;
-
-    /// <summary>Whether both of those switch bytes are as they were in the state that was checked.</summary>
-    public bool NoiseFlagsAsChecked => _raw[NoiseFlagsAt] == 1 && _raw[NoiseFlagsAt + 1] == 1;
+    public bool NoiseOneShot => Hidden(NoiseOneShotAt);
 
     string Text(int at, int max)
     {

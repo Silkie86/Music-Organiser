@@ -69,6 +69,19 @@ public static class Serum1To2
         };
     }
 
+    /// <summary>
+    /// Serum 2's user presets folder (Documents\Xfer\Serum 2 Presets\Presets\User), or null when Serum 2's presets
+    /// folder isn't on this computer.
+    /// </summary>
+    public static string? Serum2UserFolder(string? documents = null)
+    {
+        documents ??= Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var presets = Path.Combine(documents, "Xfer", "Serum 2 Presets");
+        if (!Directory.Exists(presets)) return null;
+        var user = Path.Combine(presets, "Presets", "User");
+        return Directory.Exists(user) || !Directory.Exists(Path.Combine(presets, "User")) ? user : Path.Combine(presets, "User");
+    }
+
     static (JsonObject Header, JsonObject Settings) Template()
     {
         using var s = typeof(Serum1To2).Assembly.GetManifestResourceStream("MusicOrganiser.Serum.Serum2FromSerum1.json")
@@ -195,6 +208,23 @@ public static class Serum1To2
             Knob(166, g, "Global", 0, "kParamBendRangeUp", 5, x => Steps(x, 24), 2);
             Knob(167, g, "Global", 0, "kParamBendRangeDn", 6, x => Steps(x, 24), -2);
             Knob(217, g, "Global", 0, "kParamModWheel", 8, Pct, 0);
+            // Serum 2 made "requiem serum 1", a mono sound, mono with 16 voices.
+            if (s1.Mono)
+            {
+                Put(g, "kParamMonoToggle", 1.0);
+                Put(g, "kParamPolyCount", 16.0);
+            }
+            Tags();
+        }
+
+        /// <summary>The browser's tags, as Serum 2 gives a Serum 1 sound: Wavetable, Embedded-Data for own tables, Mono or Poly.</summary>
+        void Tags()
+        {
+            var tags = new JsonArray("Wavetable");
+            if (s1.OwnTable(0) is not null && s1.OscATable.Length == 0 || s1.OwnTable(1) is not null && s1.OscBTable.Length == 0)
+                tags.Add("Embedded-Data");
+            tags.Add(s1.Mono ? "Mono" : "Poly");
+            Settings["tags"] = tags;
         }
 
         void Oscillator(int n, int vol, int enable, int pitchTrack, int warpMenu, int uniLR, int uniWarp, int uniWTPos, int uniStack, string table)
@@ -224,16 +254,23 @@ public static class Serum1To2
             // frame count is needed (Serum's tables are 2048-sample frames); without the file it's a guess.
             var path = table.Replace('\\', '/');
             var audio = table.Length > 0 ? findAudio?.Invoke(path.TrimStart('/')) : null;
-            var frames = audio is { } found ? Math.Max(1, found.Frames / 2048) : 256;
+            var own = table.Length == 0 ? s1.OwnTable(n) : null;
+            var frames = audio is { } found ? Math.Max(1, found.Frames / 2048) : own is { } waves0 ? Math.Max(1, waves0.Length / 2048) : 256;
             Knob(vol + 10, wt, "WTOsc", n, "kParamTablePos", 6, x => 1 + (frames - 1) * x, 1);
             Knob(vol + 11, wt, "WTOsc", n, "kParamRandomPhase", 9, Pct);
             Knob(vol + 12, wt, "WTOsc", n, "kParamInitialPhase", 8, x => 360 * x, 180);
             Knob(uniWTPos, wt, "WTOsc", n, "kParamUnisonWTPos", 10, x => Bi(x, 100), 0);
-            if (audio is null && K(vol + 10) > 0.001) Rough.Add($"oscillator {(char)('A' + n)}'s wavetable position");
+            if (audio is null && own is null && K(vol + 10) > 0.001) Rough.Add($"oscillator {(char)('A' + n)}'s wavetable position");
             var warp = Choice(K(warpMenu), WarpModes.Length);
             if (warp < WarpModes.Length) Put(wt, "kParamWarpMenu", WarpModes[warp], WarpModes[0]);
-            if (warp is 2 or 3 or 12) Rough.Add($"oscillator {(char)('A' + n)}'s warp mode");
+            if (warp is 2 or 3 or 12 or 21 or 22 or 23) Rough.Add($"oscillator {(char)('A' + n)}'s warp mode");
 
+            if (table.Length == 0 && s1.OwnTable(n) is { } waves)
+            {
+                // A table that isn't a file (drawn, or imported into Serum): Serum 2 keeps its waves in the sound.
+                wt["embeddedWTData"] = new JsonArray(waves.Select(w => (JsonNode)JsonValue.Create((double)w)).ToArray());
+                wt["interpolateAfterLoad"] = s1.InterpolatesOwnTable(n) ? 1L : 0L;
+            }
             if (table.Length > 0)
             {
                 // A table of the user's own starts with '/'; its waves are inside Serum 1's state, not in a file.
@@ -268,20 +305,23 @@ public static class Serum1To2
                 if (findAudio?.Invoke(path.TrimStart('/')) is { } a) Audio(noise, a);
             }
             Put(noise, "kParamOneShot", s1.NoiseOneShot ? 1 : 0, 0);
-            if (K(214) > 0 && !s1.NoiseFlagsAsChecked) Rough.Add("whether the noise plays once or loops");
+            Put(o, "kParamPitchTrack", s1.NoisePitchTrack ? 1 : 0, 0);
         }
 
         /// <summary>
-        /// Serum 1's 23 warp modes, in its order, by the names Serum 2 saves them under (read from Serum 2 itself). The
-        /// FM, AM and RM modes take the other oscillator. Serum 2 saves all three of Serum 1's sync modes (Sync, Sync 1/2
-        /// Win., Sync Window) as kSync, even when given its other sync names, so the two windowed ones may sound
-        /// different; that Mirror is kDLM is a guess (Serum 2 has no kMirror). Those are listed as rough.
+        /// Serum 1's warp modes, in its order, by the names Serum 2 saves them under (read from Serum 2 itself). The
+        /// FM, AM and RM modes take the other oscillator. Serum 1's FM (from the other oscillator) is phase
+        /// modulation, which Serum 2 calls kPD_OSC (it did so opening "requiem serum 1"); its FM from the noise and the
+        /// sub may be phase modulation too, so those are listed as rough, with the last mode, which Serum 1 doesn't
+        /// name. Serum 2 saves all three of Serum 1's sync modes (Sync, Sync 1/2 Win., Sync Window) as kSync, even when
+        /// given its other sync names, so the two windowed ones may sound different; that Mirror is kDLM is a guess
+        /// (Serum 2 has no kMirror). Those are listed as rough.
         /// </summary>
         static readonly string[] WarpModes =
         [
             "kNoWarp", "kSync", "kSync", "kSync", "kBendPos", "kBendNeg", "kBendPosNeg", "kPWM",
             "kASYMPos", "kASYMNeg", "kASYMPosNeg", "kFlip", "kDLM", "kRemap_1", "kRemap_2", "kRemap_3", "kRemap_4",
-            "kQuantize", "kFM_OSC", "kAM_OSC", "kRM_OSC", "kFM_NOISE", "kFM_SUB",
+            "kQuantize", "kPD_OSC", "kAM_OSC", "kRM_OSC", "kFM_NOISE", "kFM_SUB",
         ];
 
         static readonly string[] SubShapes = ["kSine", "kRoundRect", "kTriangle", "kSaw", "kSquare", "kPulse"];
@@ -366,6 +406,18 @@ public static class Serum1To2
                 Knob(67 + n, l, "LFO", 8 + n, "kParamBeatSync", 13, On);
             }
             if (s1.ModSlots.Any(m => m.Source is >= 5 and <= 12)) Rough.Add("the LFO shapes (kept at Serum 1's starting triangle)");
+            // LFO 5 to 8 came with a later Serum 1. The template (from an older sound) leaves their shapes empty, which
+            // would leave them still; when a row uses one it gets the starting triangle Serum 2 gave "requiem serum 1".
+            for (var n = 4; n < 8; n++)
+                if (s1.ModSlots.Any(m => m.Source == n + 5) && Module($"LFO{n}")["curveData"] is JsonObject { Count: 0 })
+                    Module($"LFO{n}")["curveData"] = new JsonObject
+                    {
+                        ["curveVals"] = new JsonArray(0.4999999701976776, 0.4999999701976776, 0.4999999701976776),
+                        ["loopbackPointNum"] = 481L,
+                        ["numPoints"] = 2L,
+                        ["xVals"] = new JsonArray(0.0, 0.5, 1.0),
+                        ["yVals"] = new JsonArray(1.0, 0.0, 1.0),
+                    };
         }
 
         void Macros()
@@ -400,6 +452,8 @@ public static class Serum1To2
                     Set(p, "kParamFreq", K(100));
                     Set(p, "kParamBW", 0.075 + 7.5 * K(101) * K(101));
                     Set(p, "kParamPrePost", Choice(K(102), 2));
+                    var mode = Choice(K(99), DistortionModes.Length - 1);
+                    if (mode > 0) Set(p, "kParamMode", DistortionModes[mode]);
                 }),
                 new(155, "FXFlanger", 1, p =>
                 {
@@ -454,18 +508,35 @@ public static class Serum1To2
                 {
                     Set(p, "kParamThresh", K(135));
                     Set(p, "kParamAttack", 0.1 + 999.9 * K(137) * K(137));
-                    Set(p, "kParamRelease", 0.1 + 999.9 * K(138) * K(138));
+                    Set(p, "kParamRelease", 0.1 + 999 * K(138) * K(138));
                     Set(p, "kParamMultiband", K(140) >= 0.5 ? 1 : 0);
                     Set(p, "kParamWet", Pct(K(269)));
+                    // As Serum 2 wrote them for "requiem serum 1": the gain as an amplitude (Serum 1's 4 dB came out as
+                    // 1.59, which is 1 + 30x²), and four settings that look like its own for any Serum 1 compressor.
+                    Set(p, "kParamMakeup", 1 + 30 * K(139) * K(139));
+                    Set(p, "kParamGain0", 4.6);
+                    Set(p, "kParamGain2", 4.6);
+                    Set(p, "kParamRatioBelow", 0.75);
+                    Set(p, "kParamCompensatedWetDry", 0);
                 }),
                 new(160, "FXReverb", 6, p =>
                 {
                     Set(p, "kParamWet", Pct(K(81)));
                     Set(p, "kParamSize", Pct(K(82)));
-                    // Serum 2 made Serum 1's decay of 0.12 into 28 (0.12^0.6); the curve is a guess beyond that.
-                    Set(p, "kParamFeedback", 100 * Math.Pow(K(83), 0.6));
                     Set(p, "kParamFreqB", Pct(K(86)));
                     Set(p, "kParamWidth", Pct(K(87)));
+                    if (s1.HallReverb)
+                    {
+                        // Hall, as Serum 2 read "requiem serum 1": Serum 1's third knob is the pre-delay (250x² ms),
+                        // the fourth the low cut and the fifth the damping.
+                        Set(p, "kParamType", "kHall");
+                        Set(p, "kParamDelay", 250 * K(83) * K(83));
+                        Set(p, "kParamFreq", Pct(K(84)));
+                        Set(p, "kParamFeedback", Pct(K(85)));
+                        return;
+                    }
+                    // Plate: Serum 2 made Serum 1's decay of 0.12 into 28 (0.12^0.6); the curve is a guess beyond that.
+                    Set(p, "kParamFeedback", 100 * Math.Pow(K(83), 0.6));
                     Set(p, "kParamDelay", 0);
                     Set(p, "kParamPreDelay", 0.0036);
                 }),
@@ -484,7 +555,7 @@ public static class Serum1To2
                 {
                     Set(p, "kParamWet", Pct(K(141)));
                     Set(p, "kParamType", FilterTypes[Choice(K(142), FilterTypes.Length - 1)]);
-                    Set(p, "kParamFreq", K(143));
+                    Set(p, "kParamFreq", FxFilterFreq(K(143)));
                     Set(p, "kParamReso", Pct(K(144)));
                     Set(p, "kParamDrive", Pct(K(145)));
                     Set(p, "kParamVar", Pct(K(146)));
@@ -495,11 +566,48 @@ public static class Serum1To2
             {
                 var p = new JsonObject();
                 fx.Fill(p);
+                // Modulation rows aim at an effect by its place in the rack.
+                foreach (var (knob, param, id, value) in FxKnobs(fx.Name))
+                    _targets[knob] = new(fx.Name, list.Count, param, id, value);
                 list.Add(new JsonObject { [fx.Name] = new JsonObject { ["plainParams"] = p }, ["type"] = (long)fx.Type });
                 if (fx.Name != "FXReverb") Rough.Add($"the {fx.Name[2..]} effect's settings");
             }
-            if (K(160) > 0) Rough.Add("the reverb's decay and spin");
+            if (K(160) > 0 && !s1.HallReverb) Rough.Add("the reverb's decay and spin");
         }
+
+        /// <summary>
+        /// The effect knobs modulation rows can be aimed at, with Serum 2's number for each (seen in its conversion of
+        /// "requiem serum 1": Wet is 1 in the distortion and the reverb, which is taken to hold for every effect).
+        /// </summary>
+        static IEnumerable<(int Knob, string Param, int Id, Func<double, double> Value)> FxKnobs(string fx) => fx switch
+        {
+            "FXHyperD" => [(147, "kParamWet", 1, Pct)],
+            "FXDistortion" => [(96, "kParamWet", 1, Pct), (97, "kParamDrive", 2, Pct)],
+            "FXFlanger" => [(103, "kParamWet", 1, Pct)],
+            "FXPhaser" => [(109, "kParamWet", 1, Pct)],
+            "FXChorus" => [(116, "kParamWet", 1, Pct)],
+            "FXDelay" => [(124, "kParamWet", 1, Pct)],
+            "FXComp" => [(269, "kParamWet", 1, Pct)],
+            "FXReverb" => [(81, "kParamWet", 1, Pct)],
+            "FXFilter" => [(141, "kParamWet", 1, Pct), (143, "kParamFreq", 3, FxFilterFreq), (144, "kParamReso", 4, Pct)],
+            _ => [],
+        };
+
+        /// <summary>
+        /// The effect filter's cutoff: Serum 2's reaches higher than Serum 1's 13 kHz, so the same pitch sits lower on its
+        /// knob (Serum 1's 0.842 came out as 0.788).
+        /// </summary>
+        static double FxFilterFreq(double x) => 0.93567 * x;
+
+        /// <summary>
+        /// Serum 1's 16 distortion modes, in its order. Serum 2 wrote HardClip as kHardClip; the rest are named the same
+        /// way, which isn't checked. Tube is Serum 2's starting mode, so it's left out.
+        /// </summary>
+        static readonly string[] DistortionModes =
+        [
+            "kTube", "kSoftClip", "kHardClip", "kDiode1", "kDiode2", "kLinFold", "kSinFold", "kZeroSquare", "kDownsample",
+            "kAsym", "kRectify", "kXShaper", "kXShaperAsym", "kSineShaper", "kStompBox", "kTapeSat",
+        ];
 
         static void Set(JsonObject p, string key, double value) => p[key] = value;
         static void Set(JsonObject p, string key, string value) => p[key] = value;

@@ -131,7 +131,7 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task A_fixed_copy_is_listed_with_its_song_and_still_asks_whether_it_loaded_after_leaving_it()
+    public async Task A_fixed_copy_waits_out_of_the_songs_saves_until_kept_and_still_asks_whether_it_loaded_after_leaving_it()
     {
         // The sample library sits outside the projects' folder: a kick inside it would count as found (SampleLocator).
         var libRoot = Fixtures.TempDir();
@@ -142,6 +142,7 @@ public class ViewModelTests : IDisposable
         new Scanner(_db).ScanSampleFolders();
         ScanFixtures();
         var main = Main();
+        await Until(() => !main.IsScanning);   // the scan the app starts with (the sample folder) reloads the list when it ends
         var projects = main.Projects;
         projects.Reload();
         projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
@@ -152,18 +153,22 @@ public class ViewModelTests : IDisposable
         Assert.Equal(@"FL Studio looked for: C:\Samples\Drums\Kick 01.wav", kick.LookedFor);
         await detail.SaveFixedCommand.ExecuteAsync(null);
 
-        // Listed straight away as the song's newest save, still picked, still asking.
-        var song = projects.Items.Single(i => i.Daw == "FL Studio");
-        Assert.Equal("Night Drive (fixed)", song.FileName);
-        Assert.Equal(["Night Drive"], song.OlderSaves.Select(o => o.Name));
+        // Until it's kept, the song still opens the original and Older saves leave the copy out; still picked, still asking.
+        var fl = projects.Items.Where(i => i.Daw == "FL Studio").ToList();
+        Assert.True(fl.Count == 1, "FL songs: " + string.Join("; ", fl.Select(i => $"{i.Path} (in {i.Folder})")));
+        var song = fl[0];
+        Assert.Equal("Night Drive", song.FileName);
+        Assert.Empty(song.OlderSaves);
         Assert.Same(song, projects.Selected);
         Assert.True(projects.Detail!.HasPendingFix);
 
         // The finished card's "Open it" opens it from the panel showing now, which then asks whether it loaded,
         // and still does after leaving the song and coming back.
-        _db.SetSetting(ProjectDetailViewModel.DawExeKey("FL Studio"), "/bin/true");
+        // A program that's there on each system and exits at once ("/bin/true" isn't there on macOS).
+        _db.SetSetting(ProjectDetailViewModel.DawExeKey("FL Studio"),
+                       OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, "where.exe") : "/usr/bin/true");
         main.Activities.Items.First(a => a.Title.StartsWith("Saved Night Drive (fixed)")).RunActionCommand.Execute(null);
-        Assert.True(projects.Detail.PendingFixOpened);
+        await Until(() => projects.Detail.PendingFixOpened);
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.True(projects.Detail!.PendingFixOpened);
@@ -172,7 +177,13 @@ public class ViewModelTests : IDisposable
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.True(projects.Detail!.HasPendingFix);
-        projects.Detail.KeepFixedCommand.Execute(null);
+        await projects.Detail.KeepFixedCommand.ExecuteAsync(null);
+
+        // Kept: now it's the song's newest save, the one Open uses, with the original under Older saves.
+        song = projects.Items.Single(i => i.Daw == "FL Studio");
+        Assert.Equal("Night Drive (fixed)", song.FileName);
+        Assert.Equal(["Night Drive"], song.OlderSaves.Select(o => o.Name));
+        Assert.Same(song, projects.Selected);
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.False(projects.Detail!.HasPendingFix);
@@ -943,6 +954,17 @@ public class ViewModelTests : IDisposable
         page.Needed[0].PickCommand.Execute(null);
         Assert.Equal("Used in 3 songs", page.ProjectsTitle);
         Assert.Equal(["A", "B", "C"], page.Projects.Select(p => p.Song).Order());
+
+        // Fewer cards come from what the page already read: a song added since only shows after a reload.
+        Song("F", "New Synth");
+        page.NeededCount = 1;
+        Assert.Equal(["Bass Master"], page.Needed.Select(n => n.Name));
+        Assert.Contains("this one and 2 of them open", page.NeededSummary);
+        Assert.Equal("1", _db.GetSetting(PluginsViewModel.NeededCountKey));
+        page.NeededCount = 6;
+        Assert.DoesNotContain(page.Needed, n => n.Name == "New Synth");
+        page.Reload();
+        Assert.Contains(page.Needed, n => n.Name == "New Synth");
     }
 
     [Fact]
@@ -1004,7 +1026,7 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public void A_click_always_plays_and_Autoplay_plays_what_you_arrow_onto_but_not_what_the_list_selects_by_itself()
+    public void A_click_plays_or_stops_and_Autoplay_plays_what_you_arrow_onto_but_not_what_the_list_selects_by_itself()
     {
         var played = new List<string>();
         var player = new Recorder(played);
@@ -1027,7 +1049,6 @@ public class ViewModelTests : IDisposable
         lab.Selected = snare;   // as when a sort or filter moves the selection
         Assert.Empty(played);
         lab.PlayPicked();       // arrowing onto it
-        lab.PlayClicked();      // clicking it while it plays doesn't restart it
         Assert.Equal(["snare.wav"], played);
         Assert.Equal(0, snare.Plays);   // a preview isn't a play Rediscover learns from...
 
@@ -1036,9 +1057,11 @@ public class ViewModelTests : IDisposable
         Assert.Equal(["snare.wav"], played);
         Assert.Equal(1, snare.Plays);
 
-        player.Stop();          // it finished; clicking the selected row plays it again
-        lab.PlayClicked();
+        lab.PlayClicked();      // clicking it while it plays stops it
+        Assert.Null(player.Playing);
+        lab.PlayClicked();      // and clicking it again plays it again
         Assert.Equal(["snare.wav", "snare.wav"], played);
+        Assert.Equal("snare.wav", player.Playing);
 
         Assert.True(new MainViewModel(_db, _sounds).Sounds.AutoPlay);
     }
@@ -1073,27 +1096,36 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public void A_held_arrow_key_plays_the_sounds_it_passes_a_little_each_and_the_last_in_full()
+    public void A_held_arrow_key_plays_every_sound_it_lands_on_and_waits_for_each_before_moving_on()
     {
         var played = new List<string>();
         ((HeadlessUi)Ui.Current).Player = () => new Recorder(played);
         var lab = new MainViewModel(_db, _sounds).Sounds;
         lab.AutoPlay = true;
+        Assert.Equal(250, lab.StepMs);   // until changed in Settings › Sounds
         var (kick, snare, hat) = (new Sound { Path = "kick.wav" }, new Sound { Path = "snare.wav" }, new Sound { Path = "hat.wav" });
 
-        // Key repeats come every 30 ms or so: the first sound plays at once, the ones passed straight after wait their turn...
+        // A press always moves; the key's repeats straight after (every 30 ms or so) don't, so the highlight stays on
+        // the sound that's playing...
+        Assert.True(lab.MayStep(held: false));
         lab.Selected = kick;
         lab.PlayPassing();
-        lab.Selected = snare;
-        lab.PlayPassing();
-        lab.Selected = hat;
-        lab.PlayPassing();
+        Assert.False(lab.MayStep(held: true));
+        Assert.False(lab.MayStep(held: true));
         Assert.Equal(["kick.wav"], played);
 
-        // ...and the sound the key is let go on plays.
-        lab.PlayPicked();
-        Assert.Equal(["kick.wav", "hat.wav"], played);
+        // ...and once it has played its share, the next one it lands on plays too: none is skipped.
+        lab.StepMs = 0;
+        Assert.True(lab.MayStep(held: true));
+        lab.Selected = snare;
+        lab.PlayPassing();
+        Assert.True(lab.MayStep(held: true));
+        lab.Selected = hat;
+        lab.PlayPassing();
+        Assert.Equal(["kick.wav", "snare.wav", "hat.wav"], played);
         Assert.Equal(0, hat.Plays);   // still only a preview
+        lab.StepMs = 600;
+        Assert.Equal(600, new MainViewModel(_db, _sounds).Sounds.StepMs);   // kept
     }
 
     [Fact]
@@ -1337,9 +1369,10 @@ public class ViewModelTests : IDisposable
         var user = Path.Combine(_root, "Bitwig Studio");
         var found = false;
         var answers = true;
-        Task<string> Check() => answers
-            ? Task.FromResult("Connected to Bitwig Studio 6.1.2, with “Night Drive” open.")
-            : Task.FromException<string>(new DawLinkException("Bitwig isn't answering."));
+        var ready = true;
+        Task<(string, bool)> Check() => answers
+            ? Task.FromResult(("Connected to Bitwig Studio 6.1.2, with “Night Drive” open.", ready))
+            : Task.FromException<(string, bool)>(new DawLinkException("Bitwig isn't answering."));
         var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.Bitwig(user), Check, found: () => found);
 
         Assert.Equal("Bitwig Studio: not found on this computer, so it was skipped.", await link.SetUpAsync());
@@ -1351,6 +1384,10 @@ public class ViewModelTests : IDisposable
         Assert.Equal("Installed the script. Connected to Bitwig Studio 6.1.2, with “Night Drive” open.", link.Result);
         Assert.Equal(ScriptState.Installed, DawScripts.Bitwig(user).State);
         Assert.StartsWith("Installed in ", link.Status);
+
+        // It answers, but says something's still to set up (the extension's MIDI ports, say).
+        ready = false;
+        Assert.Equal("Bitwig Studio: answering, but there's still something to set up. What's left is below.", await link.SetUpAsync());
 
         answers = false;
         Assert.Equal("Bitwig Studio: the script is in place, but Bitwig Studio isn't answering yet. What's left is below.",
@@ -1364,7 +1401,7 @@ public class ViewModelTests : IDisposable
         var user = Path.Combine(_root, "Bitwig Studio");
         var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.2");
         var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built),
-                                      () => Task.FromResult(""), found: () => true);
+                                      () => Task.FromResult(("", true)), found: () => true);
 
         await link.RefreshAsync();
         Assert.Equal("Not installed. Install puts in extension 3.2.", link.Status);
@@ -1402,7 +1439,7 @@ public class ViewModelTests : IDisposable
         var old = Path.Combine(user, "Controller Scripts", "Music Organiser");
         var built = DawScriptTests.Extension(Path.Combine(_root, "built", "MusicOrganiser.bwextension"), "3.4");
         var link = new DawLinkSetting("Bitwig Studio", () => "", () => DawScripts.BitwigExtension([user], built),
-                                      () => Task.FromResult("Connected to Bitwig Studio 6.1.3."), found: () => true);
+                                      () => Task.FromResult(("Connected to Bitwig Studio 6.1.3.", true)), found: () => true);
         Directory.CreateDirectory(old);
         File.WriteAllText(Path.Combine(old, "MusicOrganiser.control.js"), "// the script");
 
@@ -1436,6 +1473,21 @@ public class ViewModelTests : IDisposable
 
         Assert.StartsWith($"✓ Answering now: Bitwig Studio 6.1.3. Bitwig loads the extension from {extensions}.", main.Settings.Links[0].Live);
         Assert.Equal(extensions, _db.GetSetting(SettingsViewModel.BitwigLoadsFromKey));
+    }
+
+    [Fact]
+    public async Task SettingsDoesntSayBitwigLoadsTheExtensionFromACopyOfItsOwn()
+    {
+        // Bitwig ran the extension from a copy it made in a temp folder, which isn't where Install puts the next version.
+        var copy = System.Text.Json.JsonSerializer.Serialize(Path.Combine(_root, "Temp", "bitwig-extensions", "MusicOrganiser.bwextension"));
+        await using var bitwig = new FakeJavaBitwig($$"""{"link":3,"product":"Bitwig Studio","version":"6.1.3","api":23,"platform":"WINDOWS","port":19791,"project":"","modified":false,"engine":true,"changes":true,"runtime":"java","extension":"3.4","onlyIn":true,"loadedFrom":{{copy}}}""");
+        using var watch = new DawWatch(bitwig.Port, flOpen: () => false, bitwigOpen: () => true) { Retry = TimeSpan.Zero };
+        var main = Main(watch);
+        await PollUntil(main.Live, () => main.Live.Rows[0].Answering);
+
+        Assert.StartsWith("✓ Answering now: Bitwig Studio 6.1.3.", main.Settings.Links[0].Live);
+        Assert.DoesNotContain("loads the extension from", main.Settings.Links[0].Live);
+        Assert.Null(_db.GetSetting(SettingsViewModel.BitwigLoadsFromKey));
     }
 
     [Fact]
