@@ -142,6 +142,23 @@ public sealed class FileDrag
     static Window? MainWindow =>
         (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
 
+    /// <summary>
+    /// Drags <paramref name="items"/> out of the app as files from code, for a control that decides for itself when a
+    /// drag leaves it (the Playground's timeline, when a clip or a label is pulled out of it).
+    /// </summary>
+    public static async Task DragOut(Control el, PointerPressedEventArgs press, IFileDragSource source, IReadOnlyList<object> items)
+    {
+        try
+        {
+            if (source.MakeDrag(items) is { Files.Count: > 0 } payload) await Run(el, press, items, payload);
+        }
+        catch (Exception ex)
+        {
+            if ((TopLevel.GetTopLevel(el) as Window ?? MainWindow) is { } owner)
+                await new ConfirmWindow($"Couldn't prepare the files to drag: {ex.Message}", "Music Organiser", okOnly: true).ShowDialog(owner);
+        }
+    }
+
     static async Task Run(Control el, PointerPressedEventArgs press, IReadOnlyList<object> items, DragPayload payload)
     {
         if (TopLevel.GetTopLevel(el)?.StorageProvider is not { } storage) return;
