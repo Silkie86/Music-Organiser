@@ -76,12 +76,13 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
                 Status = "No MIDI has been read yet. Open the MIDI page to read your projects and MIDI folders.";
                 return;
             }
-            var good = await UiWork.Run(() => catalogue.Search(new MidiQuery(Fit: target, Limit: 500, Leave: path, Notes: midi.NotesOf), out _)
-                                                       .Count(h => h.Fit!.Score >= midi.GoodFitPercent / 100.0));
-            GoodCount = good;
-            CountText = good == 1 ? "1 good fit" : $"{good:N0} good fits";
-            Status = Describe(target);
-            await ShowAsync();
+            await CountAsync(catalogue, target);
+            // Parts picked on the chips while that was counted have been fitted to and described already.
+            if (_target == target)
+            {
+                Status = Describe(target);
+                await ShowAsync();
+            }
             _loaded = true;
         }
         catch (Exception e) when (e is not OperationCanceledException)
@@ -90,6 +91,16 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
             Status = $"Couldn't work out what fits: {e.Message}";
         }
         finally { IsLoading = false; }
+    }
+
+    /// <summary>The song panel's "N good fits", for the parts on.</summary>
+    async Task CountAsync(MidiCatalogue catalogue, HarmonyTarget target)
+    {
+        var good = await UiWork.RunOwnThread(() => catalogue.Search(new MidiQuery(Fit: target, Limit: 500, Leave: path, Notes: midi.NotesOf), out _)
+                                                            .Count(h => h.Fit!.Score >= midi.GoodFitPercent / 100.0));
+        if (_target != target) return;   // other parts picked meanwhile; their count follows
+        GoodCount = good;
+        CountText = good == 1 ? "1 good fit" : $"{good:N0} good fits";
     }
 
     static string Describe(HarmonyTarget target) => string.Join(" · ", new[]
@@ -103,10 +114,12 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
         var request = ++_request;
         if (_target is not { } target || await midi.CatalogueAsync() is not { } catalogue) return;
         var query = new MidiQuery(Role: Kind.Role == "All" ? null : Kind.Role, Fit: target, Limit: midi.SongTabLimit, Leave: path, Notes: midi.NotesOf);
-        var hits = await UiWork.Run(() => catalogue.Search(query, out _));
+        // On a thread of its own, so a busy shared pool right after startup can't keep the tab on its spinner.
+        var hits = await UiWork.RunOwnThread(() => catalogue.Search(query, out _));
         if (request != _request) return;
         Rows = hits.Select(h => new MidiRow(h, midi, target)).ToList();
         Selected = Rows.FirstOrDefault();
+        if (Selected is null) Open = null;   // a kind with nothing in it: the quick view mustn't keep showing a part from before
     }
 
     partial void OnKindChanged(RoleChip value) => _ = ShowAsync();
@@ -165,10 +178,15 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
         var on = SongParts.Where(p => p.IsOn).Select(p => p.Channel).ToList();
         if (on.Count == 0)
         {
+            // Nothing to fit to, so nothing listed or played with, rather than the last parts that were on.
+            _target = null;
+            ++_request;
+            Rows = [];
+            Open = null;
             Status = "Pick at least one of the song's parts to fit to.";
             return;
         }
-        var target = on.Count == SongParts.Count ? whole : await UiWork.Run(() => HarmonyTarget.FromChannels(name, on));
+        var target = on.Count == SongParts.Count ? whole : await UiWork.RunOwnThread(() => HarmonyTarget.FromChannels(name, on));
         if (request != _partsRequest) return;
         if (target is null)
         {
@@ -181,6 +199,7 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
         var open = Open?.Entry;
         await ShowAsync();
         if (open is not null && Rows.FirstOrDefault(r => MidiBrowserViewModel.Same(r.Entry, open)) is { } again) OpenPart(again);
+        if (await midi.CatalogueAsync() is { Entries.Count: > 0 } catalogue) await CountAsync(catalogue, target);
     }
 
     // ---- the quick view ----

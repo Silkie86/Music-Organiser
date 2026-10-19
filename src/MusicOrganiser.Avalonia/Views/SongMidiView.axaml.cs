@@ -8,7 +8,12 @@ namespace MusicOrganiser.Avalonia.Views;
 
 public partial class SongMidiView : UserControl
 {
-    public SongMidiView() => InitializeComponent();
+    public SongMidiView()
+    {
+        InitializeComponent();
+        // Esc closes the quick view wherever the click last was (its piano roll, a button), not only in the list.
+        AddHandler(KeyDownEvent, OnEscape);
+    }
 
     SongMidiViewModel? Vm => DataContext as SongMidiViewModel;
     SongMidiViewModel? _watched;
@@ -17,17 +22,31 @@ public partial class SongMidiView : UserControl
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+        Watch(Vm);
         _ = Vm?.LoadAsync();
+    }
+
+    /// <summary>Let go of the song's view model when hidden, so it doesn't keep this view alive.</summary>
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        Watch(null);
     }
 
     protected override void OnDataContextChanged(EventArgs e)
     {
         base.OnDataContextChanged(e);
+        if (!this.IsAttachedToVisualTree()) return;
+        Watch(Vm);
+        _ = Vm?.LoadAsync();
+    }
+
+    void Watch(SongMidiViewModel? vm)
+    {
         if (_watched is not null) _watched.PropertyChanged -= OnVmChanged;
-        _watched = Vm;
+        _watched = vm;
         if (_watched is not null) _watched.PropertyChanged += OnVmChanged;
         Widen();
-        if (this.IsAttachedToVisualTree()) _ = Vm?.LoadAsync();
     }
 
     void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -43,10 +62,14 @@ public partial class SongMidiView : UserControl
         Parts.Classes.Set("open", open);
     }
 
-    /// <summary>A click on a part (not on its play button) opens it in the quick view.</summary>
+    /// <summary>
+    /// A click on a part opens it in the quick view, but not on its play button or its little piano roll, where a click
+    /// plays from that spot.
+    /// </summary>
     void OnTapped(object? sender, TappedEventArgs e)
     {
-        if (e.Source is Visual v && v.FindAncestorOfType<ListBoxItem>(true) is { DataContext: MidiRow row } && v.FindAncestorOfType<Button>(true) is null)
+        if (e.Source is Visual v && v.FindAncestorOfType<ListBoxItem>(true) is { DataContext: MidiRow row } &&
+            v.FindAncestorOfType<Button>(true) is null && v.FindAncestorOfType<NoteRoll>(true) is null)
             Vm?.OpenPartCommand.Execute(row);
     }
 
@@ -58,21 +81,22 @@ public partial class SongMidiView : UserControl
 
     void OnKeyDown(object? sender, KeyEventArgs e)
     {
-        // Enter opens the part picked in the quick view, Esc closes it.
+        // Enter opens the part picked in the quick view.
         if (e.Key == Key.Enter && Vm?.Selected is { } picked)
         {
             Vm.OpenPartCommand.Execute(picked);
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.Escape && Vm is { IsOpen: true } vm)
-        {
-            vm.CloseCommand.Execute(null);
-            e.Handled = true;
-            return;
-        }
         if (e.Key != Key.Space || Vm?.Selected is not { } row) return;
         row.PlayCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    void OnEscape(object? sender, KeyEventArgs e)
+    {
+        if (e.Handled || e.Key != Key.Escape || Vm is not { IsOpen: true } vm) return;
+        vm.CloseCommand.Execute(null);
         e.Handled = true;
     }
 }
