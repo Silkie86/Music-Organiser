@@ -233,10 +233,21 @@
                         <TextBox DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
                                  Width="160" Margin="0,0,6,6" FontSize="12" ToolTip.Tip="The track's name: its name in your DAW" />
                     </WrapPanel>
+                    <WrapPanel>
+                        <TextBlock Text="Note names" Classes="label" Margin="0,0,6,4" />
+                        <ListBox Classes="chips" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteLabelChoices}" SelectedItem="{Binding NoteLabelPick}" Margin="0,0,0,4"
+                                 ToolTip.Tip="Write each note's name on it and on the keys (C4, F#3), or what it is over the chord heard there (3, ♭7, 9, 13): handy for jazz and gospel tensions">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                        </ListBox>
+                    </WrapPanel>
                     <views:PianoRollEditor Height="230" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}"
+                                           NoteLabels="{Binding NoteLabels}" DegreeOf="{Binding SelectedClip.DegreeOf}"
+                                           SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
                                            Period="{Binding SelectedClip.Loop}" Length="{Binding SelectedClip.Loop}" Position="{Binding SelectedClip.Position}"
                                            EditedCommand="{Binding SelectedClip.EditedCommand}" ClashTest="{Binding SelectedClip.Clashes}"
-                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note, drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked)." />
+                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note (it copies the length and velocity of the last note you clicked), drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Notes snap with the Grid, Relative and Objects switches above; hold Shift to place freely." />
                 </StackPanel>
             </Grid>
             <!-- Getting parts: suggestions, writing from the chords, reharmonising, and songs. -->

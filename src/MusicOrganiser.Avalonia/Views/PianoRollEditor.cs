@@ -15,10 +15,13 @@ namespace MusicOrganiser.Avalonia.Views;
 /// out in the background as a guide so i can see what fits and doesn't"). The <see cref="Guide"/> is drawn grey behind;
 /// the <see cref="Notes"/> on top can be edited: click an empty spot to add a note, drag a note to move it, drag its
 /// right end to make it longer or shorter, right-click or double-click it to take it away. Notes a semitone from a guide
-/// note sounding at the same time are drawn in red. Everything snaps to sixteenths; hold Alt to place freely.
+/// note sounding at the same time are drawn in red. Notes snap like Bitwig (Solomon, 2026-10-19): onto sixteenths
+/// (<see cref="SnapGrid"/>), in whole sixteenths keeping a push or a drag off the grid (<see cref="SnapRelative"/>), and to
+/// other notes' starts and ends (<see cref="SnapObjects"/>), the nearest winning; hold Shift to place freely. New notes take
+/// the length and velocity of the last note clicked, like FL Studio. <see cref="NoteLabels"/> writes names on the notes.
 /// The part repeats faintly when the guide is longer, and editing a repeat edits the part.
 /// Drag along the bar numbers to set loop points (Solomon, 2026-10-17: "there should be a way to set the loop points"):
-/// they snap to bars (Alt: beats), their ends can be dragged, and a right-click there clears them. A click plays from there.
+/// they snap to bars (Shift: beats), their ends can be dragged, and a right-click there clears them. A click plays from there.
 /// </summary>
 public sealed class PianoRollEditor : Control
 {
@@ -55,9 +58,24 @@ public sealed class PianoRollEditor : Control
     public static readonly StyledProperty<Func<NoteEvent, bool>?> ClashTestProperty =
         AvaloniaProperty.Register<PianoRollEditor, Func<NoteEvent, bool>?>(nameof(ClashTest));
 
+    public static readonly StyledProperty<bool> SnapGridProperty = AvaloniaProperty.Register<PianoRollEditor, bool>(nameof(SnapGrid), true);
+    public static readonly StyledProperty<bool> SnapRelativeProperty = AvaloniaProperty.Register<PianoRollEditor, bool>(nameof(SnapRelative), true);
+    public static readonly StyledProperty<bool> SnapObjectsProperty = AvaloniaProperty.Register<PianoRollEditor, bool>(nameof(SnapObjects), true);
+    public bool SnapGrid { get => GetValue(SnapGridProperty); set => SetValue(SnapGridProperty, value); }
+    public bool SnapRelative { get => GetValue(SnapRelativeProperty); set => SetValue(SnapRelativeProperty, value); }
+    public bool SnapObjects { get => GetValue(SnapObjectsProperty); set => SetValue(SnapObjectsProperty, value); }
+
+    /// <summary>What's written on the notes and the keys: nothing, note names (C4, F#3), or what each note is over the chord (<see cref="DegreeOf"/>).</summary>
+    public static readonly StyledProperty<NoteLabelKind> NoteLabelsProperty = AvaloniaProperty.Register<PianoRollEditor, NoteLabelKind>(nameof(NoteLabels));
+    /// <summary>What a note (placed at its time on the roll) is over the chord there (3, ♭7, 9), or null with no chord.</summary>
+    public static readonly StyledProperty<Func<NoteEvent, string?>?> DegreeOfProperty =
+        AvaloniaProperty.Register<PianoRollEditor, Func<NoteEvent, string?>?>(nameof(DegreeOf));
+    public NoteLabelKind NoteLabels { get => GetValue(NoteLabelsProperty); set => SetValue(NoteLabelsProperty, value); }
+    public Func<NoteEvent, string?>? DegreeOf { get => GetValue(DegreeOfProperty); set => SetValue(DegreeOfProperty, value); }
+
     static PianoRollEditor() =>
         AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty,
-                                       PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty);
+                                       PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty, NoteLabelsProperty, DegreeOfProperty);
 
     public Func<NoteEvent, bool>? ClashTest { get => GetValue(ClashTestProperty); set => SetValue(ClashTestProperty, value); }
 
@@ -96,7 +114,9 @@ public sealed class PianoRollEditor : Control
     long _grabTick, _grabFrom;
     int _grabKey;
     NoteEvent _grabbed;
-    long _lastLength = Ppq / 2;
+    // The last note clicked or stretched: new notes copy its length and velocity (one sixteenth before any).
+    long _lastLength = Sixteenth;
+    int _lastVelocity = 100;
     (long Tick, int Key)? _hover;
 
     IReadOnlyList<NoteEvent> Current => _working ?? Notes ?? [];
@@ -115,16 +135,76 @@ public sealed class PianoRollEditor : Control
         high += 2;
         // Two octaves at least, so there's room to move notes.
         if (high - low < 24) { var mid = (low + high) / 2; low = mid - 12; high = mid + 12; }
-        return (Math.Max(0, low), Math.Min(127, high));
+        low = Math.Max(0, low);
+        high = Math.Min(127, high);
+        // Zoomed in on the notes' height: fewer rows, from the top one scrolled to.
+        if (_rows > 0 && _rows < high - low + 1)
+        {
+            var top = Math.Clamp(_top, low + _rows - 1, high);
+            return (top - _rows + 1, top);
+        }
+        return (low, high);
+    }
+
+    // ---- zoom and pan (Solomon, 2026-10-19): Ctrl + scroll zooms in time, Ctrl + Shift + scroll the notes' height, plain
+    // scroll moves up and down the notes (when zoomed), Shift + scroll along the bars, the middle button drags it about,
+    // and a double-click on the bar numbers shows it all again.
+    long _viewFrom, _viewSpan;   // ticks shown (0: all)
+    int _top, _rows;             // keys shown (0 rows: all)
+    Point? _panFrom;
+    (long From, int Top) _panStart;
+
+    long ViewSpan => _viewSpan <= 0 || _viewSpan >= Shown ? Shown : _viewSpan;
+    long ViewFrom => Math.Clamp(_viewFrom, 0, Shown - ViewSpan);
+
+    void ShowAll()
+    {
+        _viewFrom = _viewSpan = 0;
+        _rows = 0;
+        InvalidateVisual();
+    }
+
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    {
+        base.OnPointerWheelChanged(e);
+        var p = e.GetPosition(this);
+        var dy = e.Delta.Y;
+        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        var (low, high) = Range();
+        if (ctrl && shift && dy != 0)
+        {
+            // Taller or shorter notes, round the key under the pointer.
+            var key = KeyAt(p.Y, low, high);
+            var rows = Math.Clamp((int)Math.Round((high - low + 1) * Math.Pow(0.8, dy)), 8, 128);
+            var share = (high - key) / (double)Math.Max(1, high - low);
+            _rows = rows;
+            _top = key + (int)Math.Round(share * (rows - 1));
+        }
+        else if (ctrl && dy != 0)
+        {
+            var at = TickAt(p.X, false);
+            var span = Math.Clamp((long)Math.Round(ViewSpan * Math.Pow(0.8, dy)), Beat, Shown);
+            var share = (at - ViewFrom) / (double)ViewSpan;
+            _viewSpan = span >= Shown ? 0 : span;
+            _viewFrom = at - (long)Math.Round(share * span);
+        }
+        else if (shift && dy != 0 || e.Delta.X != 0)
+            _viewFrom = ViewFrom + (long)Math.Round((e.Delta.X != 0 ? -e.Delta.X : -dy) * ViewSpan / 8);
+        else if (dy != 0 && _rows > 0)
+            _top = high + (int)Math.Round(dy * 3);
+        else return;   // all of it shows: the page scrolls instead
+        e.Handled = true;
+        InvalidateVisual();
     }
 
     double RowHeight(int low, int high) => (Bounds.Height - Ruler) / (high - low + 1);
-    double X(long tick) => Keys + (Bounds.Width - Keys) * tick / Shown;
+    double X(long tick) => Keys + (Bounds.Width - Keys) * (tick - ViewFrom) / ViewSpan;
     double Y(int key, int low, int high) => Ruler + (high - key) * RowHeight(low, high);
 
     long TickAt(double x, bool snap)
     {
-        var t = (long)Math.Round(Math.Clamp((x - Keys) / Math.Max(1, Bounds.Width - Keys), 0, 1) * Shown);
+        var t = ViewFrom + (long)Math.Round(Math.Clamp((x - Keys) / Math.Max(1, Bounds.Width - Keys), 0, 1) * ViewSpan);
         return snap ? t / Sixteenth * Sixteenth : t;
     }
 
@@ -161,7 +241,21 @@ public sealed class PianoRollEditor : Control
         Focus();
         var p = e.GetPosition(this);
         var point = e.GetCurrentPoint(this).Properties;
-        var snap = (e.KeyModifiers & KeyModifiers.Alt) == 0;
+        var snap = (e.KeyModifiers & KeyModifiers.Shift) == 0;
+        if (point.IsMiddleButtonPressed)
+        {
+            _panFrom = p;
+            _panStart = (ViewFrom, Range().High);
+            e.Pointer.Capture(this);
+            e.Handled = true;
+            return;
+        }
+        if (p.Y < Ruler && e.ClickCount == 2 && point.IsLeftButtonPressed)
+        {
+            ShowAll();
+            e.Handled = true;
+            return;
+        }
         if (p.Y < Ruler)
         {
             if (point.IsRightButtonPressed)
@@ -202,7 +296,7 @@ public sealed class PianoRollEditor : Control
             }
             var tick = (at - From) % Loop;
             _grabFrom = at - tick;
-            var note = new NoteEvent(tick, Math.Min(_lastLength, Loop - tick), KeyAt(p.Y, low, high), 100);
+            var note = new NoteEvent(tick, Math.Min(_lastLength, Loop - tick), KeyAt(p.Y, low, high), _lastVelocity);
             _working.Add(note);
             _index = _working.Count - 1;
             _drag = Drag.Resize;
@@ -214,6 +308,8 @@ public sealed class PianoRollEditor : Control
             _index = hit;
             _grabFrom = repeat;
             _grabbed = _working[hit];
+            _lastLength = _grabbed.Length;
+            _lastVelocity = _grabbed.Velocity;
             _drag = rightEnd ? Drag.Resize : Drag.Move;
             _grabTick = TickAt(p.X, false);
             _grabKey = KeyAt(p.Y, low, high);
@@ -227,7 +323,14 @@ public sealed class PianoRollEditor : Control
     {
         var p = e.GetPosition(this);
         var (low, high) = Range();
-        var snap = (e.KeyModifiers & KeyModifiers.Alt) == 0;
+        if (_panFrom is { } pan)
+        {
+            _viewFrom = _panStart.From - (long)Math.Round((p.X - pan.X) / Math.Max(1, Bounds.Width - Keys) * ViewSpan);
+            if (_rows > 0) _top = _panStart.Top + (int)Math.Round((p.Y - pan.Y) / RowHeight(low, high));
+            InvalidateVisual();
+            return;
+        }
+        var snap = (e.KeyModifiers & KeyModifiers.Shift) == 0;
         if (_edge != Edge.None)
         {
             if (_edge == Edge.New && Math.Abs(p.X - _pressX) < 4 && _draft is null) return;
@@ -259,8 +362,8 @@ public sealed class PianoRollEditor : Control
         var loop = Loop;
         if (_drag == Drag.Resize)
         {
-            var endTick = TickAt(p.X, false) - _grabFrom;
-            if (snap) endTick = (endTick + Sixteenth - 1) / Sixteenth * Sixteenth;
+            var raw = TickAt(p.X, false) - _grabFrom;
+            var endTick = snap ? SnapTick(raw, _grabbed.Start + _grabbed.Length, [0]) : raw;
             var length = Math.Max(snap ? Sixteenth : 4, endTick - _grabbed.Start);
             _working[_index] = _grabbed with { Length = Math.Min(length, loop - _grabbed.Start) };
         }
@@ -268,7 +371,8 @@ public sealed class PianoRollEditor : Control
         {
             var delta = TickAt(p.X, false) - _grabTick;
             var start = _grabbed.Start + delta;
-            if (snap) start = (long)Math.Round(start / (double)Sixteenth) * Sixteenth;
+            // Its start, or its end, can catch another note's.
+            if (snap) start = SnapTick(start, _grabbed.Start, [0, _grabbed.Length]);
             start = Math.Clamp(start, 0, Math.Max(0, loop - _grabbed.Length));
             var key = Math.Clamp(_grabbed.Key + KeyAt(p.Y, low, high) - _grabKey, 0, 127);
             _working[_index] = _grabbed with { Start = start, Key = key };
@@ -276,8 +380,43 @@ public sealed class PianoRollEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>
+    /// Where a note edge dragged from <paramref name="was"/> to <paramref name="raw"/> (the part's own ticks) lands: on a
+    /// sixteenth, the same distance off the grid as it was, or on another note's start or end close by, whichever is
+    /// nearest. <paramref name="along"/>: how far each edge that can catch is from the snapped one.
+    /// </summary>
+    long SnapTick(long raw, long was, long[] along)
+    {
+        long best = raw, bestBy = long.MaxValue;
+        void Try(long at)
+        {
+            var by = Math.Abs(at - raw);
+            if (by < bestBy) { best = at; bestBy = by; }
+        }
+        if (SnapGrid) Try((long)Math.Round(raw / (double)Sixteenth) * Sixteenth);
+        if (SnapRelative) Try(was + (long)Math.Round((raw - was) / (double)Sixteenth) * Sixteenth);
+        if (SnapObjects && _working is { } notes)
+        {
+            var near = Math.Max(1, (long)(8 * Shown / Math.Max(1, Bounds.Width - Keys)));
+            for (var i = 0; i < notes.Count; i++)
+            {
+                if (i == _index) continue;
+                foreach (var edge in new[] { notes[i].Start, notes[i].Start + notes[i].Length })
+                    foreach (var a in along)
+                        if (Math.Abs(edge - a - raw) <= near) Try(edge - a);
+            }
+        }
+        return best;
+    }
+
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
+        if (_panFrom is not null)
+        {
+            _panFrom = null;
+            e.Pointer.Capture(null);
+            return;
+        }
         if (_edge != Edge.None)
         {
             e.Pointer.Capture(null);
@@ -344,9 +483,10 @@ public sealed class PianoRollEditor : Control
         {
             var y = Y(k, low, high);
             if (Black[k % 12]) using (dc.PushOpacity(0.35)) dc.FillRectangle(Brushes.Black, new Rect(Keys, y, w - Keys, rowH));
-            if (k % 12 == 0)
+            if (k % 12 == 0) using (dc.PushOpacity(0.5)) dc.FillRectangle(stroke, new Rect(Keys, y + rowH - 1, w - Keys, 1));
+            // Note names on every key when there's room and they're asked for, else on the Cs.
+            if (k % 12 == 0 || NoteLabels != NoteLabelKind.Off && rowH >= 8)
             {
-                using (dc.PushOpacity(0.5)) dc.FillRectangle(stroke, new Rect(Keys, y + rowH - 1, w - Keys, 1));
                 if (rowH >= 7)
                 {
                     var label = new FormattedText(MidiChannel.KeyName(k), CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
@@ -359,14 +499,14 @@ public sealed class PianoRollEditor : Control
 
         // Beats and bars, and the bar numbers along the top.
         var shown = Shown;
-        var beatW = (w - Keys) * Ppq / shown;
+        var beatW = (w - Keys) * Ppq / ViewSpan;
         for (long t = 0; t <= shown; t += Ppq)
         {
             var x = X(t);
             var bar = t % (4 * Ppq) == 0;
             if (!bar && beatW < 8) continue;
             using (dc.PushOpacity(bar ? 0.7 : 0.25)) dc.FillRectangle(stroke, new Rect(x, Ruler, 1, h - Ruler));
-            if (bar && t < shown && (w - Keys) * 4 * Ppq / shown >= 22)
+            if (bar && t < shown && (w - Keys) * 4 * Ppq / ViewSpan >= 22)
                 dc.DrawText(new FormattedText($"{t / (4 * Ppq) + 1}", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, 10, muted),
                             new Point(x + 3, 2));
         }
@@ -408,7 +548,8 @@ public sealed class PianoRollEditor : Control
                 if (from + n.Start >= To) continue;
                 var rubs = ClashTest is { } test ? test(n with { Start = from + n.Start }) : Rubs(n, from, guide);
                 var picked = _working is not null && i == _index;
-                Note(dc, rubs ? clash : accent, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high);
+                Note(dc, rubs ? clash : accent, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high,
+                     LabelOf(n, from + n.Start));
             }
         }
 
@@ -423,14 +564,26 @@ public sealed class PianoRollEditor : Control
         }
     }
 
-    void Note(DrawingContext dc, IBrush fill, IPen? pen, long start, long length, int key, int low, int high)
+    void Note(DrawingContext dc, IBrush fill, IPen? pen, long start, long length, int key, int low, int high, string? label = null)
     {
         if (key < low || key > high) return;
         var x0 = X(start);
         var x1 = Math.Max(x0 + 2, X(start + length) - 1);
         var y = Y(key, low, high);
-        dc.DrawRectangle(fill, pen, new RoundedRect(new Rect(x0, y + 0.5, x1 - x0, Math.Max(1.5, RowHeight(low, high) - 1)), 2));
+        var rowH = RowHeight(low, high);
+        dc.DrawRectangle(fill, pen, new RoundedRect(new Rect(x0, y + 0.5, x1 - x0, Math.Max(1.5, rowH - 1)), 2));
+        // Its name (or what it is over the chord), when it fits.
+        if (label is null || rowH < 8) return;
+        var text = new FormattedText(label, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, Math.Min(10, rowH), Brushes.Black);
+        if (text.Width + 4 <= x1 - x0) using (dc.PushOpacity(0.8)) dc.DrawText(text, new Point(x0 + 2, y + (rowH - text.Height) / 2));
     }
+
+    string? LabelOf(NoteEvent n, long at) => NoteLabels switch
+    {
+        NoteLabelKind.Names => MidiChannel.KeyName(n.Key),
+        NoteLabelKind.Degrees => DegreeOf?.Invoke(n with { Start = at }) ?? MidiChannel.KeyName(n.Key),
+        _ => null,
+    };
 
     /// <summary>A semitone (or a major seventh) from a guide note that sounds at the same time.</summary>
     static bool Rubs(NoteEvent n, long from, IReadOnlyList<NoteEvent> guide) =>

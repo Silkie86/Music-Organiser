@@ -155,7 +155,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     public const string SuggestCountKey = "playground_suggestions", GrowBarsKey = "playground_grow_bars", SmoothKey = "playground_smooth",
                         NewTempoKey = "playground_new_tempo", NewBarsKey = "playground_new_bars", NewStyleKey = "playground_new_style",
                         UndoStepsKey = "playground_undo_steps", LoopKey = "playground_loop",
-                        SnapGridKey = "playground_snap_grid", SnapRelativeKey = "playground_snap_relative", SnapObjectsKey = "playground_snap_objects";
+                        SnapGridKey = "playground_snap_grid", SnapRelativeKey = "playground_snap_relative", SnapObjectsKey = "playground_snap_objects",
+                        NoteLabelsKey = "playground_note_labels";
     public const string JazzGospel = "Jazz and gospel", Classical = "Classical";
     public static IReadOnlyList<int> SuggestCountChoices { get; } = [30, 60, 100, 200];
     public static IReadOnlyList<int> GrowBarsChoices { get; } = [4, 8, 16, 32, 64];
@@ -193,6 +194,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         SnapGrid = _db.GetSetting(SnapGridKey) != "0";
         SnapRelative = _db.GetSetting(SnapRelativeKey) != "0";
         SnapObjects = _db.GetSetting(SnapObjectsKey) != "0";
+        NoteLabelPick = NoteLabelChoices.Contains(_db.GetSetting(NoteLabelsKey) ?? "") ? _db.GetSetting(NoteLabelsKey)! : "Off";
         _loadingOptions = false;
     }
 
@@ -912,6 +914,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// offset") moves it in whole grid steps keeping how far off the grid it was; Objects (Bitwig's "events") catches the
     /// edges of other clips, the highlight, labels and the play marker. With more than one on, the nearest wins.
     /// </summary>
+    /// <summary>The piano roll's "Note names" chip (Solomon, 2026-10-19): off, names, or what each note is over the chord.</summary>
+    public static IReadOnlyList<string> NoteLabelChoices { get; } = ["Off", "Names", "Over the chord"];
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(NoteLabels))] string _noteLabelPick = "Off";
+    public NoteLabelKind NoteLabels => NoteLabelPick switch { "Names" => NoteLabelKind.Names, "Over the chord" => NoteLabelKind.Degrees, _ => NoteLabelKind.Off };
+    partial void OnNoteLabelPickChanged(string value) => SaveOption(NoteLabelsKey, value);
+
     [ObservableProperty] bool _snapGrid = true;
     [ObservableProperty] bool _snapRelative = true;
     [ObservableProperty] bool _snapObjects = true;
@@ -2307,6 +2315,18 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         }
     }
 
+    /// <summary>What each note is over the chord heard under it (3, ♭7, 9), for the piano roll's note labels.</summary>
+    public Func<NoteEvent, string?> DegreeOf
+    {
+        get
+        {
+            var h = owner.Harmony;
+            var at = At;
+            if (clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => null;
+            return n => ChordLane.At(h.Lane, at + n.Start + 1, h.Length) is { } chord ? ChordScales.Degree(chord, n.Key % 12) : null;
+        }
+    }
+
     /// <summary>The playhead on the piano roll, while it's in the go round shown.</summary>
     [ObservableProperty] double _position = -1;
     internal void PlayheadAt(double tick) => Position = tick < 0 ? -1 : tick >= At && tick < At + clip.Loop ? tick - At : -1;
@@ -2325,6 +2345,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     {
         OnPropertyChanged(nameof(Guide));
         OnPropertyChanged(nameof(Clashes));
+        OnPropertyChanged(nameof(DegreeOf));
     }
 
     [RelayCommand] void Remove() => owner.RemoveClip(this);
@@ -2351,6 +2372,9 @@ public sealed class ChordCell(TimedChord chord, ChordFunction? function, long le
     public double Share => chord.Length / (double)Math.Max(1, length);
     public string Tip => $"{Name}{(Roman.Length > 0 ? $"  ({Roman})" : "")}{(Label.Length > 0 ? $": {Label}" : "")}";
 }
+
+/// <summary>What a piano roll writes on its notes and keys: nothing, note names, or what each note is over the chord.</summary>
+public enum NoteLabelKind { Off, Names, Degrees }
 
 /// <summary>A library part suggested for the section.</summary>
 public sealed partial class PlaygroundMatchRow(PlaygroundViewModel owner, PlaygroundMatch match) : ObservableObject
