@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using MusicOrganiser.Core.Sounds;
 using NAudio.Wave;
@@ -19,14 +20,81 @@ static class WindowsDecoders
     public static void Register()
     {
         foreach (var ext in Extensions)
-            AudioFile.Register(ext, (path, maxSeconds) => Decode(new MediaFoundationReader(path), maxSeconds));
+            AudioFile.Register(ext, (path, maxSeconds) => Decode(Reader(path), maxSeconds));
     }
 
     /// <summary>True for the extensions Media Foundation reads here (".mp3" and so on).</summary>
     public static bool Handles(string extension) => Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Opens one of those files to play as it goes, rather than decoding it all first.</summary>
-    public static WaveStream Open(string path) => new MtaOnly(new MediaFoundationReader(path));
+    public static WaveStream Open(string path) => new MtaOnly(Reader(path));
+
+    /// <summary>MF_E_UNSUPPORTED_BYTESTREAM_TYPE: "The byte stream type of the given URL is unsupported."</summary>
+    const int UnsupportedByteStream = unchecked((int)0xC00D36C4);
+
+    /// <summary>
+    /// A reader for the file. Media Foundation picks its decoder by the file's extension, so a file whose insides don't
+    /// match it is refused with 0xC00D36C4 (Solomon's 19 Oct note: "Pink - Nobody Knows (acapella).mp3"): a WAV or an
+    /// M4A saved as .mp3, or an MP3 Media Foundation's own reader won't take. Then the file's first bytes say what it
+    /// really is, and the matching reader opens it.
+    /// </summary>
+    static WaveStream Reader(string path)
+    {
+        try { return new MediaFoundationReader(path); }
+        catch (COMException e) when (e.HResult == UnsupportedByteStream)
+        {
+            return ByContent(path) ?? throw new IOException(
+                $"{e.Message.TrimEnd('.', ' ')} (0x{e.HResult:X8}), and it isn't a WAV, AIFF or MP3 inside either. It starts {Start(path)}.", e);
+        }
+    }
+
+    /// <summary>A reader chosen by what the file holds rather than its name, or null when nothing reads it.</summary>
+    static WaveStream? ByContent(string path)
+    {
+        var head = new byte[12];
+        using (var file = File.OpenRead(path)) file.ReadExactly(head, 0, (int)Math.Min(head.Length, file.Length));
+        bool At(int offset, string tag) => System.Text.Encoding.ASCII.GetString(head, offset, tag.Length) == tag;
+        if (At(0, "RIFF") && At(8, "WAVE")) return Pcm(new WaveFileReader(path));
+        if (At(0, "FORM") && (At(8, "AIFF") || At(8, "AIFC"))) return new AiffFileReader(path);
+        // An MP3 that Media Foundation's reader won't take: NAudio finds the frames itself (past any tags or junk) and
+        // Windows' MP3 codec decodes them.
+        try { return new Mp3FileReaderBase(path, format => new AcmMp3FrameDecompressor(format)); }
+        catch (Exception e) when (e is InvalidDataException or InvalidOperationException or IOException) { }
+        // Anything else Media Foundation knows (M4A, FLAC, OGG …), found by its contents rather than the name.
+        Stream? stream = null;
+        try { return new StreamMediaFoundationReader(stream = File.OpenRead(path)); }
+        catch (COMException)
+        {
+            stream?.Dispose();
+            return null;
+        }
+    }
+
+    /// <summary>The file's first bytes, for the message when nothing reads it: "with \"ftypM4A \"" or "with 00 00 01 BA".</summary>
+    static string Start(string path)
+    {
+        try
+        {
+            var head = new byte[8];
+            using (var file = File.OpenRead(path)) head = head[..file.Read(head, 0, head.Length)];
+            return head.All(b => b is >= 0x20 and < 0x7F)
+                ? $"with \"{System.Text.Encoding.ASCII.GetString(head)}\""
+                : "with " + Convert.ToHexString(head).Chunk(2).Select(c => new string(c)).Aggregate((a, b) => a + " " + b);
+        }
+        catch (IOException) { return "unreadable"; }
+    }
+
+    /// <summary>A WAV as PCM: compressed ones are converted by Windows' codecs.</summary>
+    static WaveStream Pcm(WaveFileReader reader)
+    {
+        if (reader.WaveFormat.Encoding is WaveFormatEncoding.Pcm or WaveFormatEncoding.IeeeFloat) return reader;
+        try { return WaveFormatConversionStream.CreatePcmStream(reader); }
+        catch
+        {
+            reader.Dispose();
+            throw;
+        }
+    }
 
     /// <summary>
     /// Media Foundation's reader is made by the first Read, in that thread's COM apartment, and can't be used from
@@ -53,17 +121,7 @@ static class WindowsDecoders
     }
 
     /// <summary>A WAV the Sound Lab can't read: compressed ones are converted to PCM by Windows' codecs.</summary>
-    public static AudioData ReadWav(string path, double maxSeconds)
-    {
-        var reader = new WaveFileReader(path);
-        if (reader.WaveFormat.Encoding is WaveFormatEncoding.Pcm or WaveFormatEncoding.IeeeFloat) return Decode(reader, maxSeconds);
-        try { return Decode(WaveFormatConversionStream.CreatePcmStream(reader), maxSeconds); }
-        catch
-        {
-            reader.Dispose();
-            throw;
-        }
-    }
+    public static AudioData ReadWav(string path, double maxSeconds) => Decode(Pcm(new WaveFileReader(path)), maxSeconds);
 
     static AudioData Decode(WaveStream stream, double maxSeconds)
     {

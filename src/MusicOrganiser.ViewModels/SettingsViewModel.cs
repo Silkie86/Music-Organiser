@@ -70,6 +70,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     public static IReadOnlyList<string> StartPageChoices { get; } =
         ["Projects", "Sound Lab", "Plugins", "Settings", LastPageChoice];
     [ObservableProperty] string _startPage;
+    public const string TabKey = "settings_tab";
+    /// <summary>The tab Settings opens on: the one last used (Solomon, 2026-10-19), by its name, so new tabs don't shift it.</summary>
+    [ObservableProperty] string _tab = "";
     [ObservableProperty] string _sampleIndexText = "";
     public string LibraryLocation => _db.FilePath;
 
@@ -141,6 +144,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             int.TryParse(db.GetSetting(RunGapKey), out var gap) && gap > 0 ? gap : SongVersions.DefaultRunGapMonths;
         _startPage = db.GetSetting(StartPageKey) is { } start ? start == "Samples" ? "Sound Lab" : start : "Projects";   // Samples is on the Sounds page now
         if (!StartPageChoices.Contains(_startPage)) _startPage = "Projects";
+        _tab = db.GetSetting(TabKey) ?? "";
         UpdateSampleIndexText();
         var watch = main.Live.Watch;
         Probe = new ProbeReportsViewModel(folder: dataFolder is null ? null : Path.Combine(dataFolder, "probe"),
@@ -422,6 +426,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     partial void OnStartPageChanged(string value) => _db.SetSetting(StartPageKey, value);
+
+    partial void OnTabChanged(string value) => _db.SetSetting(TabKey, value);
 
     partial void OnStepsUntilNextNoteChanged(bool value) =>
         _db.SetSetting(ProjectDetailViewModel.StepsUntilNextNoteKey, value ? "1" : "0");

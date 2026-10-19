@@ -46,21 +46,73 @@ public static partial class SongVersions
     private static partial Regex FixedTail();
 
     /// <summary>
+    /// A word that marks a save, then its number: "fleck athens FLP19", "Song v2", "Song v2.1", "Song take 4", "Song mix_3",
+    /// "Song rev 7". There has to be a space, "_", "-" or "." before the word, so "Remix2" and "Dev3" stay names.
+    /// </summary>
+    [GeneratedRegex(@"^(.+?)[\s_.-]+(?:v|ver|version|take|tk|mix|rev|revision|flp|draft|alt)\s*[.#_]?\s*(\d{1,4})(?:\.(\d{1,3}))?$", RegexOptions.IgnoreCase)]
+    private static partial Regex MarkedNumber();
+
+    /// <summary>The same words glued on with a capital: "fleckathensFLP19", "SongV2", "SongTake4".</summary>
+    [GeneratedRegex(@"^(.*\p{Ll})(?:V|Ver|VER|FLP|Flp|Take|TAKE|Mix|MIX|Rev|REV)(\d{1,4})$")]
+    private static partial Regex GluedNumber();
+
+    /// <summary>"Song final", "Song FINAL FINAL", "Song final2", "Song final v3": the last save, ahead of any number.</summary>
+    [GeneratedRegex(@"^(.+?)[\s_.-]+final(?:[\s_.-]*final)*(?:[\s_.-]*v?(\d{1,3}))?$", RegexOptions.IgnoreCase)]
+    private static partial Regex Final();
+
+    /// <summary>
+    /// Copies and side saves that say nothing about order: Windows' "Song - Copy", "Song - Copy (2)" and "Song (2)",
+    /// "Song copy", "Song wip", "Song backup", and a date: "Song 2024-03-01", "Song_20240301".
+    /// </summary>
+    [GeneratedRegex(@"^(.+?)(?:\s*-\s*copy(?:\s*\(\d{1,3}\))?|\s+copy(?:\s*\d{1,3})?|\s*\(copy\)|\s*\(\d{1,2}\)|[\s_.-]+(?:wip|backup|bak|bkp)|[\s_.-]+(?:19|20)\d\d[-_.]?(?:0[1-9]|1[0-2])[-_.]?(?:0[1-9]|[12]\d|3[01]))$", RegexOptions.IgnoreCase)]
+    private static partial Regex SideSave();
+
+    /// <summary>A "final" save's number: above every numbered save, so it's the one the song opens.</summary>
+    const int FinalNumber = 1_000_000;
+
+    /// <summary>
     /// "Didums_70" → ("Didums", 70); "Didums" → ("Didums", 1). A fixed copy counts as the save it was made from:
-    /// "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves. For Bitwig, a number after a space counts
-    /// too: "analog full set nb 36" → ("analog full set nb", 36), unless the name before it is a stand-in like "Untitled".
-    /// Other DAWs' "Kick 808" or "Track 2" are left as names (Solomon numbers those with FL Studio's "_2").
+    /// "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves. The ways people mark saves by hand count
+    /// in every DAW (Solomon, 2026-10-19: "understand the different ways people version projects"): "fleck athens FLP19"
+    /// → ("fleck athens", 19), "Song v2.1", "Song take 4", "Song final" (the last save), and copies, side saves and
+    /// dates such as "Song - Copy", "Song wip" and "Song 2024-03-01", which keep the number of what's left. For Bitwig, a
+    /// bare number after a space counts too: "analog full set nb 36" → ("analog full set nb", 36). A stand-in like
+    /// "Untitled" is never cut down to: "Untitled 3" and "Untitled v4" are songs of their own. Other DAWs' "Kick 808" or
+    /// "Track 2" are left as names (Solomon numbers those with FL Studio's "_2").
     /// </summary>
     public static (string Song, int Number) Split(string name, string? daw = null)
     {
         name = FixedTail().Replace(name, "");
+        int? number = null;
+        // Marks stack ("Song v2 final", "Song_3 - Copy"): take them off from the end, keeping the first number found.
+        for (var i = 0; i < 4 && Unmark(name) is { } cut; i++)
+        {
+            name = cut.Song;
+            number ??= cut.Number;
+        }
         var m = Numbered().Match(name);
-        if (m.Success && m.Groups[1].Value.Trim().Length > 0) return (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Value));
-        if (daw == "Bitwig Studio" && SpaceNumbered().Match(name) is { Success: true } spaced &&
-            spaced.Groups[1].Value.Trim() is { Length: > 0 } song && !StandIns.Contains(song))
-            return (song, int.Parse(spaced.Groups[2].Value));
-        return (name, 1);
+        if (m.Success && m.Groups[1].Value.Trim().Length > 0) return (m.Groups[1].Value.TrimEnd(), number ?? int.Parse(m.Groups[2].Value));
+        if (daw == "Bitwig Studio" && SpaceNumbered().Match(name) is { Success: true } spaced && IsSong(spaced.Groups[1].Value))
+            return (spaced.Groups[1].Value.Trim(), number ?? int.Parse(spaced.Groups[2].Value));
+        return (name, number ?? 1);
     }
+
+    /// <summary>The name with one save mark taken off its end, and the number it gave (null when it gave none).</summary>
+    static (string Song, int? Number)? Unmark(string name)
+    {
+        if (Final().Match(name) is { Success: true } final && IsSong(final.Groups[1].Value))
+            return (final.Groups[1].Value.Trim(), FinalNumber + (final.Groups[2].Success ? int.Parse(final.Groups[2].Value) : 0));
+        if (MarkedNumber().Match(name) is { Success: true } marked && IsSong(marked.Groups[1].Value))
+            return (marked.Groups[1].Value.Trim(), int.Parse(marked.Groups[2].Value));   // "v2.1" is save 2: the date tells it from "v2"
+        if (GluedNumber().Match(name) is { Success: true } glued && IsSong(glued.Groups[1].Value))
+            return (glued.Groups[1].Value.Trim(), int.Parse(glued.Groups[2].Value));
+        if (SideSave().Match(name) is { Success: true } side && IsSong(side.Groups[1].Value))
+            return (side.Groups[1].Value.Trim(), null);
+        return null;
+    }
+
+    /// <summary>Whether what's left is a song's own name, not nothing or a stand-in like "Untitled".</summary>
+    static bool IsSong(string rest) => rest.Trim() is { Length: > 0 } song && !StandIns.Contains(song);
 
     /// <summary>A gap this long between two saves (Solomon's pick: 3 months) starts a new run.</summary>
     public const int DefaultRunGapMonths = 3;
