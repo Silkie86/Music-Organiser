@@ -500,6 +500,11 @@ public sealed class PianoRollEditor : Control
         // Beats and bars, and the bar numbers along the top.
         var shown = Shown;
         var beatW = (w - Keys) * Ppq / ViewSpan;
+        // Zoomed in, sixteenths too, fainter (Solomon's design, point 15: the grid gets finer as you zoom).
+        if (beatW / 4 >= 12)
+            using (dc.PushOpacity(0.15))
+                for (var t = ViewFrom - ViewFrom % Sixteenth; t <= Math.Min(shown, ViewFrom + ViewSpan); t += Sixteenth)
+                    if (t % Ppq != 0) dc.FillRectangle(stroke, new Rect(X(t), Ruler, 1, h - Ruler));
         for (long t = 0; t <= shown; t += Ppq)
         {
             var x = X(t);
