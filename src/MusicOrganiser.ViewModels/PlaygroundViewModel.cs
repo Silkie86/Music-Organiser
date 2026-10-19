@@ -156,7 +156,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
                         NewTempoKey = "playground_new_tempo", NewBarsKey = "playground_new_bars", NewStyleKey = "playground_new_style",
                         UndoStepsKey = "playground_undo_steps", LoopKey = "playground_loop",
                         SnapGridKey = "playground_snap_grid", SnapRelativeKey = "playground_snap_relative", SnapObjectsKey = "playground_snap_objects",
-                        NoteLabelsKey = "playground_note_labels";
+                        NoteLabelsKey = "playground_note_labels",
+                        TrackHeightKey = "playground_track_height", ClipPanelHeightKey = "playground_clip_panel_height",
+                        SidePanelWidthKey = "playground_side_width", PianoFoldedKey = "playground_piano_folded";
     public const string JazzGospel = "Jazz and gospel", Classical = "Classical";
     public static IReadOnlyList<int> SuggestCountChoices { get; } = [30, 60, 100, 200];
     public static IReadOnlyList<int> GrowBarsChoices { get; } = [4, 8, 16, 32, 64];
@@ -195,6 +197,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         SnapRelative = _db.GetSetting(SnapRelativeKey) != "0";
         SnapObjects = _db.GetSetting(SnapObjectsKey) != "0";
         NoteLabelPick = NoteLabelChoices.Contains(_db.GetSetting(NoteLabelsKey) ?? "") ? _db.GetSetting(NoteLabelsKey)! : "Off";
+        double Size(string key, double fallback, double min, double max) =>
+            double.TryParse(_db.GetSetting(key), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= min && v <= max ? v : fallback;
+        TrackHeight = Size(TrackHeightKey, DefaultTrackHeight, MinTrackHeight, MaxTrackHeight);
+        ClipPanelHeight = Size(ClipPanelHeightKey, DefaultClipPanelHeight, MinClipPanelHeight, 2000);
+        SidePanelWidth = Size(SidePanelWidthKey, DefaultSidePanelWidth, MinSidePanelWidth, MaxSidePanelWidth);
+        PianoFolded = _db.GetSetting(PianoFoldedKey) == "1";
         _loadingOptions = false;
     }
 
@@ -215,6 +223,33 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         SaveOption(LoopKey, value ? "1" : "0");
         if (_playing) _ = PlayAsync(keepPlace: true);
     }
+
+    // ---- pane sizes (Solomon's design, point 18): dragged, remembered, a double-click on a divider puts it back ----
+
+    public const double DefaultTrackHeight = 46, MinTrackHeight = 30, MaxTrackHeight = 140,
+                        DefaultClipPanelHeight = 330, MinClipPanelHeight = 150,
+                        DefaultSidePanelWidth = 400, MinSidePanelWidth = 300, MaxSidePanelWidth = 720;
+
+    /// <summary>How tall each track is on the timeline (drag the line under a track's name).</summary>
+    [ObservableProperty] double _trackHeight = DefaultTrackHeight;
+    /// <summary>How tall the picked clip's panel and piano roll are, under the timeline (drag the divider between them).</summary>
+    [ObservableProperty] double _clipPanelHeight = DefaultClipPanelHeight;
+    /// <summary>How wide the side panel of suggestions is (drag its left edge).</summary>
+    [ObservableProperty] double _sidePanelWidth = DefaultSidePanelWidth;
+    /// <summary>The piano roll folded away, leaving the timeline the room.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(FoldText))] bool _pianoFolded;
+    public string FoldText => PianoFolded ? "▸ Show piano roll" : "▾ Fold piano roll";
+
+    static string Number(double v) => Math.Round(v).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    partial void OnTrackHeightChanged(double value)
+    {
+        SaveOption(TrackHeightKey, Number(value));
+        foreach (var row in Layers) row.HeightChanged();
+    }
+    partial void OnClipPanelHeightChanged(double value) => SaveOption(ClipPanelHeightKey, Number(value));
+    partial void OnSidePanelWidthChanged(double value) => SaveOption(SidePanelWidthKey, Number(value));
+    partial void OnPianoFoldedChanged(bool value) => SaveOption(PianoFoldedKey, value ? "1" : "0");
+    [RelayCommand] void FoldPiano() => PianoFolded = !PianoFolded;
 
     /// <summary>A new, empty idea, started the way Settings › Playground says.</summary>
     PlaygroundSession Fresh() => new()
@@ -2251,6 +2286,10 @@ public sealed partial class LayerRow : ObservableObject
     }
 
     public PlaygroundLayer Layer { get; }
+
+    /// <summary>How tall its row is: every track the same, as dragged.</summary>
+    public double Height => _owner.TrackHeight;
+    internal void HeightChanged() => OnPropertyChanged(nameof(Height));
 
     public string Name
     {
