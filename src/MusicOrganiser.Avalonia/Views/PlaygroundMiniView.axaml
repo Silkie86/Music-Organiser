@@ -1,0 +1,89 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
+             x:Class="MusicOrganiser.Avalonia.Views.PlaygroundMiniView"
+             x:DataType="vm:PlaygroundViewModel">
+    <!-- A cut-down Playground: the part you're trying layered with the song's own parts, each with mute and solo, the
+         chords, and a piano roll for the one picked. Open in Playground takes it to the Playground page. -->
+    <UserControl.Styles>
+        <Style Selector="TextBlock.small">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style Selector="Button.tiny, ToggleButton.tiny">
+            <Setter Property="Padding" Value="7,1" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="MinWidth" Value="26" />
+        </Style>
+        <Style Selector="ListBox.lanes > ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+    </UserControl.Styles>
+
+    <StackPanel Spacing="8">
+        <WrapPanel>
+            <Button Classes="accent" Margin="0,0,6,6" MinWidth="80" Command="{Binding PlayCommand}" ToolTip.Tip="Play them all together, round and round">
+                <Panel>
+                    <TextBlock Text="▶ Play" IsVisible="{Binding !IsPlaying}" />
+                    <TextBlock Text="■ Stop" IsVisible="{Binding IsPlaying}" />
+                </Panel>
+            </Button>
+            <Button Content="Undo" Margin="0,0,6,6" Command="{Binding UndoCommand}" IsEnabled="{Binding CanUndo}" ToolTip.Tip="Take back the last change" />
+            <Button Content="Open in Playground" Margin="0,0,6,6" Command="{Binding OpenInMainCommand}"
+                    ToolTip.Tip="Take these parts to the Playground page as a section, to keep working on them" />
+            <Border Classes="dragChip" Margin="0,0,6,6" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}" DataContext="section"
+                    ToolTip.Tip="Drag them all into your DAW: one MIDI file with a track for each part">
+                <TextBlock Text="Drag them all" />
+            </Border>
+        </WrapPanel>
+        <TextBlock Text="{Binding Message}" Classes="small" TextWrapping="Wrap" TextTrimming="None" IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+        <StackPanel Spacing="2">
+            <views:ChordLaneView Height="36" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="0" />
+            <TextBlock Text="{Binding ChordSummary}" Classes="small" />
+        </StackPanel>
+
+        <ListBox Classes="lanes" ItemsSource="{Binding Layers}" SelectedItem="{Binding SelectedLayer}" Background="Transparent"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" MaxHeight="260">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:LayerRow">
+                    <Grid ColumnDefinitions="170,*" Height="40">
+                        <DockPanel Margin="4,2,6,2">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
+                                <ToggleButton Classes="tiny" Content="M" IsChecked="{Binding Muted, Mode=OneWay}" Command="{Binding MuteCommand}" ToolTip.Tip="Mute" />
+                                <ToggleButton Classes="tiny" Content="S" IsChecked="{Binding Solo, Mode=OneWay}" Command="{Binding ToggleSoloCommand}" ToolTip.Tip="Solo: hear only the soloed parts" />
+                                <Button Classes="tiny" Content="✕" Command="{Binding RemoveCommand}" ToolTip.Tip="Take this part out (Undo brings it back)" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip.Tip="{Binding Details}" />
+                        </DockPanel>
+                        <views:NoteRoll Grid.Column="1" Channel="{Binding Channel}" SongEnd="{Binding Length}"
+                                        Position="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).Position}" />
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <StackPanel Spacing="6" IsVisible="{Binding HasSelectedLayer}">
+            <WrapPanel DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow">
+                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,6" />
+                <ComboBox ItemsSource="{x:Static vm:LayerRow.SoundChoices}" SelectedItem="{Binding Sound}" MinWidth="140" Margin="0,0,10,6" FontSize="12"
+                          ToolTip.Tip="The sound it plays with here (General MIDI)" />
+                <TextBlock Text="Octave" Classes="small" VerticalAlignment="Center" Margin="0,0,4,6" />
+                <Button Content="−" Classes="tiny" Margin="0,0,2,6" Command="{Binding OctaveDownCommand}" />
+                <Button Content="+" Classes="tiny" Margin="0,0,10,6" Command="{Binding OctaveUpCommand}" />
+                <Button Content="Smooth inversions" Classes="tiny" Margin="0,0,10,6"
+                        Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).SmoothInversionsCommand}"
+                        IsVisible="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).IsChordLayer}"
+                        ToolTip.Tip="Turn each chord over so the voices move as little as they can" />
+            </WrapPanel>
+            <views:PianoRollEditor Height="190" Notes="{Binding SelectedLayer.Notes}" Guide="{Binding SelectedLayer.Guide}"
+                                   Period="{Binding Length}" Length="{Binding Length}" Position="{Binding Position}"
+                                   Section="{Binding Loop}" SectionCommand="{Binding SetLoopCommand}"
+                                   EditedCommand="{Binding SelectedLayer.EditedCommand}" ClashTest="{Binding SelectedLayer.Clashes}"
+                                   ToolTip.Tip="The other parts are grey behind. Click to add a note, drag to move, drag its end to stretch, right-click to remove. Red notes fight the chords." />
+        </StackPanel>
+    </StackPanel>
+</UserControl>

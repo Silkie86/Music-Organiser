@@ -31,13 +31,14 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     PlaygroundSession _session;
     readonly List<string> _undo = [], _redo = [];
 
-    public PlaygroundViewModel(LibraryDb db, MainViewModel main, PlaygroundStore? store = null)
+    public PlaygroundViewModel(LibraryDb db, MainViewModel main, PlaygroundStore? store = null, bool quick = false)
     {
         _db = db;
         _main = main;
+        IsQuick = quick;
         _store = store ?? new PlaygroundStore(Path.Combine(main.DataFolder, "playground"));
         LoadOptions();
-        _session = _store.HasCurrent ? _store.LoadCurrent() : Fresh();
+        _session = !quick && _store.HasCurrent ? _store.LoadCurrent() : Fresh();
         RoleChips = new[] { MidiRoles.Chords, MidiRoles.Bass, MidiRoles.Melody, MidiRoles.Arp, MidiRoles.Drums }
             .Select(r => new RoleChip(MidiRoles.Plural(r), r)).ToList();
         _suggestRole = RoleChips[0];
@@ -1000,7 +1001,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     Task BringSong(ProjectItem? project) => project is null ? Task.CompletedTask : BringSongAsync(project.Path, project.Name);
 
-    async Task<bool> BringSongAsync(string path, string songName)
+    async Task<bool> BringSongAsync(string path, string songName, IReadOnlyCollection<string>? only = null)
     {
         if (Readers.For(path) is not { } reader) return false;
         SongChoicesOpen = false;
@@ -1015,6 +1016,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
                 var found = new List<(string Name, string Role, List<NoteEvent> Notes)>();
                 foreach (var c in reader.ExtractChannels(path))
                 {
+                    if (only is not null && !only.Contains(c.Name)) continue;   // just the song's parts picked
                     // Notes held into the first bar (a pushed chord, a tie) come in too, cut to start there.
                     var notes = MidiBrowserViewModel.Cut(PhraseAnalyser.Normalise(c.Notes, c.Ppq, keepPlace: true), from, from + length);
                     if (notes.Count == 0) continue;
@@ -1040,6 +1042,72 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             Message = $"Couldn't read {songName}: {e.Message}";
             return false;
         }
+    }
+
+    // ---- the cut-down playground on a song's "MIDI that fits" tab ----
+
+    /// <summary>
+    /// A small playground of its own beside a song's "MIDI that fits" list (Solomon, 2026-10-19: "work with these files
+    /// in a cut down playground"): the song's parts you pick and the part you're trying, layered, without touching the
+    /// idea on the Playground page until you press Open in Playground.
+    /// </summary>
+    public bool IsQuick { get; }
+
+    /// <summary>A cut-down playground of its own, kept apart from this one's idea.</summary>
+    public PlaygroundViewModel Quick() =>
+        new(_db, _main, new PlaygroundStore(Path.Combine(_main.DataFolder, "playground-quick")), quick: true);
+
+    /// <summary>Starts again with the song's bars where the part fits (only the song's parts named in <paramref name="parts"/>
+    /// when given) and the part on top.</summary>
+    public async Task LoadSongAsync(string path, string songName, MidiEntry? entry, IReadOnlyList<NoteEvent>? notes, string? title,
+                                    long at = 0, IReadOnlyCollection<string>? parts = null)
+    {
+        StopPlaying();
+        _undo.Clear();
+        _redo.Clear();
+        CanUndo = CanRedo = false;
+        var bars = notes is { Count: > 0 } ? Math.Clamp(PhraseAnalyser.BarsOf(notes), 1, GrowBars) : NewBars;
+        _session = Fresh();
+        _session.Name = $"{songName} sketch";
+        Section.Bars = bars;
+        Show();
+        FromBar = (int)(Math.Max(0, at) / Bar) + 1;
+        if (parts is not { Count: 0 }) await BringSongAsync(path, songName, parts);
+        if (entry is not null && notes is { Count: > 0 }) AddFromLibrary(entry, notes, title);
+        SelectedLayer = Layers.LastOrDefault();
+        Message = "";
+    }
+
+    /// <summary>The cut-down playground's section, taken to the Playground page to work up further.</summary>
+    [RelayCommand]
+    void OpenInMain()
+    {
+        if (Section.Layers.Count == 0) return;
+        StopPlaying();
+        var copy = PlaygroundSession.FromJson(_session.ToJson())!;
+        _main.Playground.TakeSection(copy.Sections[Math.Clamp(copy.Current, 0, copy.Sections.Count - 1)]);
+    }
+
+    /// <summary>A section from a cut-down playground: into the empty section, or as a new one, then the page is shown.</summary>
+    internal void TakeSection(PlaygroundSection section)
+    {
+        StopPlaying();
+        Remember();
+        if (Section.Layers.Count == 0 && !ChordsTyped)
+        {
+            section.Name = Section.Name;
+            _session.Sections[_session.Current] = section;
+        }
+        else
+        {
+            section.Name = NextSectionName();
+            _session.Sections.Add(section);
+            _session.Current = _session.Sections.Count - 1;
+        }
+        Show();
+        Changed(harmony: false);
+        Message = $"Section {section.Name} came from a song's MIDI that fits. Undo takes it back out.";
+        if (_main.Nav.FirstOrDefault(n => n.Page == this) is { } page) _main.SelectedNav = page;
     }
 
     /// <summary>

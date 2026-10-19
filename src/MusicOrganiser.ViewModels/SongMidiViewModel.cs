@@ -148,7 +148,26 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     }
 
     [RelayCommand]
-    void Close() => Open = null;
+    void Close()
+    {
+        Open = null;
+        Quick?.StopPlaying();
+    }
+
+    // ---- the cut-down playground in the quick view ----
+
+    /// <summary>The open part layered with the song's own parts, to work on here (a small Playground of its own).</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasQuick), nameof(QuickButtonText))] PlaygroundViewModel? _quick;
+    public bool HasQuick => Quick is not null;
+    public string QuickButtonText => Quick is null ? "Layer it with the song's parts" : "Start again with this part";
+
+    [RelayCommand]
+    async Task WorkHere()
+    {
+        if (Open is not { } row) return;
+        Quick ??= main.Playground.Quick();
+        await Quick.LoadSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0);
+    }
 
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>
         midi.MakeDrag(items.Count > 0 ? items : Selected is { } s ? [s] : []);
