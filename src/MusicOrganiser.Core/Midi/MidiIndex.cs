@@ -64,8 +64,11 @@ public sealed class MidiIndex : IDisposable
         CREATE TABLE IF NOT EXISTS your_octaves (hash TEXT PRIMARY KEY, octaves INTEGER NOT NULL);
         """;
 
-    readonly SqliteConnection _write, _read;
-    readonly object _writeLock = new(), _readLock = new();
+    readonly SqliteConnection _write, _read, _notes;
+    // A part's notes have a connection of their own: the window asks for them as rows come into view, and must never
+    // wait behind a long read of every part (Solomon's log, 2026-10-19: Projects froze for 5 s while the MIDI list was
+    // read again after a song was saved).
+    readonly object _writeLock = new(), _readLock = new(), _notesLock = new();
 
     public string FilePath { get; }
 
@@ -93,12 +96,15 @@ public sealed class MidiIndex : IDisposable
         }
         _read = new SqliteConnection($"Data Source={path}");
         _read.Open();
+        _notes = new SqliteConnection($"Data Source={path}");
+        _notes.Open();
     }
 
     public void Dispose()
     {
         lock (_writeLock) _write.Dispose();
         lock (_readLock) _read.Dispose();
+        lock (_notesLock) _notes.Dispose();
     }
 
     /// <summary>Every file read so far: when it was last changed, its size, and which version of the analysis read it.</summary>
@@ -247,9 +253,9 @@ public sealed class MidiIndex : IDisposable
     /// </summary>
     public IReadOnlyList<NoteEvent> Notes(long id, string? hash = null)
     {
-        lock (_readLock)
+        lock (_notesLock)
         {
-            using var cmd = _read.CreateCommand();
+            using var cmd = _notes.CreateCommand();
             cmd.CommandText = "SELECT data FROM phrases WHERE id = $id";
             cmd.Parameters.AddWithValue("$id", id);
             if (cmd.ExecuteScalar() is byte[] data) return DecodeNotes(data);

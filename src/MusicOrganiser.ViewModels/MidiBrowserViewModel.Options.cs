@@ -37,11 +37,13 @@ public sealed partial class MidiBrowserViewModel
     {
         int Read(string key, int fallback, IReadOnlyList<int> choices) =>
             int.TryParse(db.GetSetting(key), out var v) && choices.Contains(v) ? v : fallback;
+#pragma warning disable MVVMTK0034   // straight to the fields: loading isn't a change to save
         _listLimit = Read(ListLimitKey, _listLimit, ListLimitChoices);
         _songTabLimit = Read(SongTabLimitKey, _songTabLimit, SongTabLimitChoices);
         _goodFitPercent = Read(GoodFitKey, _goodFitPercent, GoodFitChoices);
         _quantiseTo = Read(QuantiseKey, _quantiseTo, QuantiseChoices);
         _longestLoopBars = Read(LongestLoopKey, _longestLoopBars, LongestLoopChoices);
+#pragma warning restore MVVMTK0034
     }
 
     partial void OnListLimitChanged(int value)
