@@ -36,6 +36,8 @@ public sealed partial class ProjectItem : ObservableObject
     }
 
     public ProjectSummary Summary => _p;
+    /// <summary>The song's key (see <see cref="SongGroup.Key"/>), for joining it to another or undoing your changes.</summary>
+    public string SongKey { get; init; } = "";
     public long Id => _p.Id;
     /// <summary>The song name; numbered saves (Song_2, Song_3 …) share one row named after the song.</summary>
     public string Name => _song ?? _p.Name;

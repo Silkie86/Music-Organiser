@@ -115,17 +115,16 @@ public sealed class GalaxyCanvas : Control
         base.OnPropertyChanged(change);
         if (change.Property == StarsProperty)
         {
-            var old = change.OldValue as IReadOnlyList<GalaxyStar>;
-            Index();
-            _byId = new Dictionary<long, GalaxyStar>(_all.Length);
-            foreach (var s in _all) _byId[s.Sound.Id] = s;
-            if (_hover is not null) _hover = _byId.GetValueOrDefault(_hover.Sound.Id);
-            // The first time the stars arrive they drift in from the middle.
-            if (old is not { Count: > 0 } && _all.Length > 0 && Appearance.Motion)
-            {
-                _intro = DateTime.UtcNow;
-                _frame.Start();
-            }
+            var first = _all.Length == 0;
+            var stars = Stars;
+            // A big library's stars are sorted in the background (420,000 of them hold the window up for a few tenths of
+            // a second), showing the old ones meanwhile; a few are sorted at once, so they're there straight away.
+            if (stars is { Count: > BackgroundIndexAt })
+                _ = Task.Run(() => Indexed.Of(stars)).ContinueWith(t =>
+                {
+                    if (t.IsCompletedSuccessfully && ReferenceEquals(Stars, stars)) Use(t.Result, first);
+                }, TaskScheduler.FromCurrentSynchronizationContext());
+            else Use(Indexed.Of(stars), first);
         }
         else if (change.Property == SelectedProperty && Selected is { } s && _byId.TryGetValue(s.Id, out var star) && !OnScreen(star, -30))
             FlyTo(star.X, star.Y, _tz);   // picked from somewhere else (the trail, the list): bring it into view
@@ -145,47 +144,79 @@ public sealed class GalaxyCanvas : Control
 
     static int Cell(double v) => Math.Clamp((int)Math.Floor(v * Grid), 0, Grid - 1);
 
-    /// <summary>Sorts the stars into grid squares, so finding the ones in view or under the mouse is quick.</summary>
-    void Index()
+    const int BackgroundIndexAt = 20_000;
+
+    /// <summary>
+    /// The stars sorted into grid squares, so finding the ones in view or under the mouse is quick, and what painting
+    /// needs in flat lists: where, what colour, how bright (liked stars brighter, filtered-out ones faint, and each with
+    /// a little twinkle of its own so a crowd reads as stars, not paint). Made on any thread.
+    /// </summary>
+    sealed record Indexed(GalaxyStar[] All, int[] CellStart, int[] CellShown, int[] CellItems, float[] Xs, float[] Ys, float[] Weight,
+                          float[] Rgb, Dictionary<long, GalaxyStar> ById)
     {
-        _all = Stars switch { null => [], GalaxyStar[] a => a, var list => list.ToArray() };
-        var n = _all.Length;
-        var cellOf = new int[n];
-        _cellStart = new int[Grid * Grid + 1];
-        _cellShown = new int[Grid * Grid];
-        for (var i = 0; i < n; i++)
+        public static Indexed Of(IReadOnlyList<GalaxyStar>? stars)
         {
-            var c = Cell(_all[i].Y) * Grid + Cell(_all[i].X);
-            cellOf[i] = c;
-            _cellStart[c + 1]++;
-            if (_all[i].Shown) _cellShown[c]++;
+            var all = stars switch { null => [], GalaxyStar[] a => a, var list => list.ToArray() };
+            var n = all.Length;
+            var cellOf = new int[n];
+            var cellStart = new int[Grid * Grid + 1];
+            var cellShown = new int[Grid * Grid];
+            for (var i = 0; i < n; i++)
+            {
+                var c = Cell(all[i].Y) * Grid + Cell(all[i].X);
+                cellOf[i] = c;
+                cellStart[c + 1]++;
+                if (all[i].Shown) cellShown[c]++;
+            }
+            for (var c = 0; c < Grid * Grid; c++) cellStart[c + 1] += cellStart[c];
+            var fill = (int[])cellStart.Clone();
+            var cellItems = new int[n];
+            for (var i = 0; i < n; i++) cellItems[fill[cellOf[i]]++] = i;
+            var xs = new float[n];
+            var ys = new float[n];
+            var weight = new float[n];
+            var rgb = new float[3 * n];
+            var byId = new Dictionary<long, GalaxyStar>(n);
+            for (var i = 0; i < n; i++)
+            {
+                var s = all[i];
+                xs[i] = s.X;
+                ys[i] = s.Y;
+                var twinkle = 0.6f + 0.4f * ((uint)(s.Sound.Id * 2654435761L) >> 24) / 255f;
+                weight[i] = (s.Shown ? 0.5f + 0.9f * MathF.Sqrt((float)s.Sound.LikedShare) : 0.05f) * twinkle;
+                rgb[3 * i] = ((s.Colour >> 16) & 255) / 255f;
+                rgb[3 * i + 1] = ((s.Colour >> 8) & 255) / 255f;
+                rgb[3 * i + 2] = (s.Colour & 255) / 255f;
+                byId[s.Sound.Id] = s;
+            }
+            return new Indexed(all, cellStart, cellShown, cellItems, xs, ys, weight, rgb, byId);
         }
-        for (var c = 0; c < Grid * Grid; c++) _cellStart[c + 1] += _cellStart[c];
-        var fill = (int[])_cellStart.Clone();
-        _cellItems = new int[n];
-        for (var i = 0; i < n; i++) _cellItems[fill[cellOf[i]]++] = i;
-        _packs = new string?[n];
-        // What painting needs, in flat lists: where, what colour, how bright (liked stars brighter, filtered-out ones
-        // faint, and each with a little twinkle of its own so a crowd reads as stars, not paint).
-        _xs = new float[n];
-        _ys = new float[n];
-        _weight = new float[n];
-        _rgb = new float[3 * n];
-        for (var i = 0; i < n; i++)
-        {
-            var s = _all[i];
-            _xs[i] = s.X;
-            _ys[i] = s.Y;
-            var twinkle = 0.6f + 0.4f * ((uint)(s.Sound.Id * 2654435761L) >> 24) / 255f;
-            _weight[i] = (s.Shown ? 0.5f + 0.9f * MathF.Sqrt((float)s.Sound.LikedShare) : 0.05f) * twinkle;
-            _rgb[3 * i] = ((s.Colour >> 16) & 255) / 255f;
-            _rgb[3 * i + 1] = ((s.Colour >> 8) & 255) / 255f;
-            _rgb[3 * i + 2] = (s.Colour & 255) / 255f;
-        }
+    }
+
+    void Use(Indexed x, bool first)
+    {
+        _all = x.All;
+        _cellStart = x.CellStart;
+        _cellShown = x.CellShown;
+        _cellItems = x.CellItems;
+        _xs = x.Xs;
+        _ys = x.Ys;
+        _weight = x.Weight;
+        _rgb = x.Rgb;
+        _byId = x.ById;
+        _packs = new string?[_all.Length];
         _version++;
         // Room to zoom until the stars of a 300,000-sound library sit well apart.
-        _maxZoom = Math.Max(60, Math.Sqrt(n) * 0.8);
+        _maxZoom = Math.Max(60, Math.Sqrt(_all.Length) * 0.8);
         _tz = Math.Min(_tz, _maxZoom);
+        if (_hover is not null) _hover = _byId.GetValueOrDefault(_hover.Sound.Id);
+        // The first time the stars arrive they drift in from the middle.
+        if (first && _all.Length > 0 && Appearance.Motion)
+        {
+            _intro = DateTime.UtcNow;
+            _frame.Start();
+        }
+        InvalidateVisual();
     }
 
     string Pack(int i) => _packs[i] ??= _all[i].Sound.Folder;

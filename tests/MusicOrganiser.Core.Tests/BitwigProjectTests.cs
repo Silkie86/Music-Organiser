@@ -209,6 +209,26 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void Converting_saves_Serum_1s_sounds_in_Serum_2s_browser_as_Fix_does()
+    {
+        var dir = Fixtures.TempDir();
+        var project = Fixtures.FlStudio25Project(Path.Combine(dir, "Projects"), withNotes: true, serumChunk: SerumTests.Serum1());
+        var serum2User = Path.Combine(dir, "Serum 2 Presets", "Presets", "User");
+        var (_, notes) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Exports"), Fixtures.BitwigTemplate(), upgrade: true, serum2User: serum2User);
+
+        // Under the FL song's name, where Serum 2's browser opens it exactly as Serum 1 played it.
+        var song = Path.GetFileNameWithoutExtension(project);
+        var fxp = File.ReadAllBytes(Path.Combine(serum2User, "From Serum 1", song, "Lead.fxp"));
+        Assert.Equal(Serum1State.Read(SerumTests.Serum1())!.Knobs, Serum1State.Read(fxp)!.Knobs);
+        Assert.Contains($"Serum's own sound is also saved in Serum 2's browser, under User › From Serum 1 › {song}: load it there for the exact Serum 1 sound.", notes);
+
+        // Without the swap, nothing goes there.
+        var plain = Path.Combine(dir, "Plain User");
+        Exporter.BitwigFromFl(project, Path.Combine(dir, "Plain"), Fixtures.BitwigTemplate(), serum2User: plain);
+        Assert.False(Directory.Exists(Path.Combine(plain, "From Serum 1")));
+    }
+
+    [Fact]
     public void ANewConvertGetsAFreshNameWhileBitwigMayHaveTheOldOneOpen()
     {
         // Bitwig only brings a project it has open forward, so a convert saved over it would look unchanged.

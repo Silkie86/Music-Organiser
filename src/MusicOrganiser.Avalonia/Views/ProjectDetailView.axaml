@@ -408,7 +408,7 @@
                             </StackPanel>
                         </Button>
                         <TextBlock Classes="countDot" Text="·" />
-                        <Button Classes="countLink" Tag="Saves" Click="OnSeeAll" IsEnabled="{Binding HasOlderSaves}" ToolTip.Tip="See every save on the Saves tab">
+                        <Button Classes="countLink" Tag="Saves" Click="OnSeeAll" ToolTip.Tip="See every save, and change which song they go under, on the Saves tab">
                             <TextBlock Classes="count" Text="{Binding SavesCountText}" />
                         </Button>
                         <TextBlock Classes="countDot" Text="·" />
@@ -589,10 +589,16 @@
                     </DockPanel>
             </TabItem>
 
-            <TabItem Header="Saves" IsVisible="{Binding HasOlderSaves}">
-                    <DockPanel>
-                        <TextBlock DockPanel.Dock="Top" Text="{Binding OlderSavesHeader}" Classes="sectionHeader" Margin="12,14,12,6" />
-                        <ItemsControl Classes="longList" Padding="12,0,12,20" ItemsSource="{Binding OlderSaves}">
+            <TabItem Header="Saves">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12,14,12,20" Spacing="6">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Reset" Classes="row" IsVisible="{Binding HasSongChanges}"
+                                    Command="{Binding ResetSongCommand}"
+                                    ToolTip.Tip="Undo your changes to this song: its saves go back to how the app grouped them from their names and folder" />
+                            <TextBlock Text="{Binding AllSavesHeader}" Classes="sectionHeader" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <ItemsControl ItemsSource="{Binding AllSaves}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="lib:ProjectSummary">
                                     <Border Classes="listRow" Padding="10,4">
@@ -604,6 +610,14 @@
                                                 <Button Content="Show" Classes="row"
                                                         Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).RevealSaveCommand}"
                                                         CommandParameter="{Binding}" />
+                                                <Button Content="Move…" Classes="row" ToolTip.Tip="Move this save to another song (pick it below)"
+                                                        IsVisible="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).HasOlderSaves}"
+                                                        Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).MoveSaveCommand}"
+                                                        CommandParameter="{Binding}" />
+                                                <Button Content="Own song" Classes="row" ToolTip.Tip="Take this save out of the song, into a song of its own"
+                                                        IsVisible="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).HasOlderSaves}"
+                                                        Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).SplitOffCommand}"
+                                                        CommandParameter="{Binding}" />
                                             </StackPanel>
                                             <TextBlock DockPanel.Dock="Right" Text="{Binding Modified, StringFormat='d MMM yyyy'}" Margin="8,0"
                                                        VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource FaintBrush}" />
@@ -614,7 +628,40 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </DockPanel>
+
+                        <DockPanel Margin="0,16,0,0">
+                            <Button DockPanel.Dock="Right" Content="Cancel" Classes="row" IsVisible="{Binding IsMovingSave}"
+                                    Command="{Binding CancelMoveCommand}" ToolTip.Tip="Put the whole song under another instead" />
+                            <TextBlock Text="{Binding MoveTitle}" Classes="sectionHeader" VerticalAlignment="Center" TextWrapping="Wrap" />
+                        </DockPanel>
+                        <TextBlock Classes="muted" TextWrapping="Wrap" FontSize="12"
+                                   Text="If the app grouped these wrong, pick the song they belong to. Songs in the same folder come first; type to find any other." />
+                        <TextBox Classes="clearButton" PlaceholderText="Find a song by name" Text="{Binding SongSearch}" />
+                        <ItemsControl ItemsSource="{Binding SongMatches}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ProjectItem">
+                                    <Border Classes="listRow" Padding="10,4">
+                                        <DockPanel>
+                                            <Button DockPanel.Dock="Right" Content="Put here" Classes="row"
+                                                    Command="{Binding $parent[UserControl].((vm:ProjectDetailViewModel)DataContext).JoinSongCommand}"
+                                                    CommandParameter="{Binding}" ToolTip.Tip="Make it a save of this song" />
+                                            <TextBlock DockPanel.Dock="Right" Text="{Binding Modified, StringFormat='d MMM yyyy'}" Margin="8,0"
+                                                       VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource FaintBrush}" />
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}" />
+                                                <TextBlock FontSize="11" Foreground="{StaticResource FaintBrush}" TextTrimming="CharacterEllipsis">
+                                                    <Run Text="{Binding Daw}" /><Run Text=" · " /><Run Text="{Binding FolderName}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Classes="muted" FontSize="12" IsVisible="{Binding !HasSongMatches}" TextWrapping="Wrap"
+                                   Text="No songs found. Type part of a song's name." />
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
             <TabItem Header="Details">
