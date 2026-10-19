@@ -1023,7 +1023,7 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public void A_click_always_plays_and_Autoplay_plays_what_you_arrow_onto_but_not_what_the_list_selects_by_itself()
+    public void A_click_plays_or_stops_and_Autoplay_plays_what_you_arrow_onto_but_not_what_the_list_selects_by_itself()
     {
         var played = new List<string>();
         var player = new Recorder(played);
@@ -1046,7 +1046,6 @@ public class ViewModelTests : IDisposable
         lab.Selected = snare;   // as when a sort or filter moves the selection
         Assert.Empty(played);
         lab.PlayPicked();       // arrowing onto it
-        lab.PlayClicked();      // clicking it while it plays doesn't restart it
         Assert.Equal(["snare.wav"], played);
         Assert.Equal(0, snare.Plays);   // a preview isn't a play Rediscover learns from...
 
@@ -1055,9 +1054,11 @@ public class ViewModelTests : IDisposable
         Assert.Equal(["snare.wav"], played);
         Assert.Equal(1, snare.Plays);
 
-        player.Stop();          // it finished; clicking the selected row plays it again
-        lab.PlayClicked();
+        lab.PlayClicked();      // clicking it while it plays stops it
+        Assert.Null(player.Playing);
+        lab.PlayClicked();      // and clicking it again plays it again
         Assert.Equal(["snare.wav", "snare.wav"], played);
+        Assert.Equal("snare.wav", player.Playing);
 
         Assert.True(new MainViewModel(_db, _sounds).Sounds.AutoPlay);
     }

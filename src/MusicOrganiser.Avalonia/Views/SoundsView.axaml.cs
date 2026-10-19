@@ -17,6 +17,7 @@ public partial class SoundsView : UserControl
         // A click always plays the sound; Autoplay follows the arrow keys. Neither follows every selection
         // change: the grid re-selects rows by itself when you sort or come back to this page.
         SoundGrid.AddHandler(PointerReleasedEvent, OnRowClicked, RoutingStrategies.Bubble, handledEventsToo: true);
+        SoundGrid.AddHandler(PointerPressedEvent, OnPressCounted, RoutingStrategies.Tunnel, handledEventsToo: true);
         // A right-click picks the row under it, so its menu (Play, To Bitwig, Show file) is about that sound.
         SoundGrid.AddHandler(PointerPressedEvent, OnRowRightPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         // Held arrow keys play each sound they pass (after the grid has moved on to it); letting go plays the one you stop on.
@@ -28,6 +29,7 @@ public partial class SoundsView : UserControl
         TileList.AddHandler(KeyUpEvent, OnTilesKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
         HistoryList.AddHandler(KeyDownEvent, OnHistoryKeyDown, RoutingStrategies.Tunnel);
         HistoryList.AddHandler(PointerReleasedEvent, OnHistoryClicked, RoutingStrategies.Bubble, handledEventsToo: true);
+        HistoryList.AddHandler(PointerPressedEvent, OnPressCounted, RoutingStrategies.Tunnel, handledEventsToo: true);
     }
 
     void OnGridDoubleTapped(object? sender, TappedEventArgs e)
@@ -43,9 +45,18 @@ public partial class SoundsView : UserControl
         e.Handled = true;
     }
 
+    /// <summary>
+    /// The click count of the last press on the list or History: a click on a playing sound stops it, so the second click
+    /// of a double-click is left to the double-click (Audition), which keeps it playing.
+    /// </summary>
+    int _clicks;
+
+    void OnPressCounted(object? sender, PointerPressedEventArgs e) => _clicks = e.ClickCount;
+
     void OnRowClicked(object? sender, PointerReleasedEventArgs e)
     {
         if (DataContext is not SoundsViewModel vm || e.InitialPressMouseButton != MouseButton.Left || e.KeyModifiers != KeyModifiers.None) return;
+        if (_clicks > 1) return;
         if (e.Source is not Visual source || source.FindAncestorOfType<Button>(true) is not null) return;
         if (source.FindAncestorOfType<DataGridRow>(true) is { } row && row.DataContext == vm.Selected) vm.PlayClicked();
     }
@@ -170,7 +181,7 @@ public partial class SoundsView : UserControl
 
     void OnHistoryClicked(object? sender, PointerReleasedEventArgs e)
     {
-        if (Vm is not { } vm || e.InitialPressMouseButton != MouseButton.Left || e.KeyModifiers != KeyModifiers.None) return;
+        if (Vm is not { } vm || e.InitialPressMouseButton != MouseButton.Left || e.KeyModifiers != KeyModifiers.None || _clicks > 1) return;
         if (e.Source is not Visual source || source.FindAncestorOfType<Button>(true) is not null) return;
         if (source.FindAncestorOfType<ListBoxItem>(true) is { DataContext: HistoryItem h } && h.Sound == vm.Selected) vm.PlayClicked();
     }

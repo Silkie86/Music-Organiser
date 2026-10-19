@@ -837,13 +837,19 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     /// <summary>
-    /// A single click on a sound (a row, a tile, a History line): it always plays, Autoplay or not. Clicking it
-    /// again while it plays doesn't restart it. Like Autoplay previews, it doesn't count as a play until you
-    /// double-click it.
+    /// A single click on a sound (a row, a tile, a History line): it plays, Autoplay or not, and clicking it again while
+    /// it plays stops it (Solomon's 19 Oct note). Like Autoplay previews, it doesn't count as a play until you
+    /// double-click it; the views leave a double-click's second click to <see cref="Audition"/>.
     /// </summary>
     public void PlayClicked()
     {
-        if (Selected is not { } s || IsPreviewing(s)) return;
+        if (Selected is not { } s) return;
+        if (IsPreviewing(s))
+        {
+            _previews?.Cancel();   // one still opening mustn't start after the click that stopped it
+            StopPlaying();
+            return;
+        }
         StartPreview(s);
     }
 
