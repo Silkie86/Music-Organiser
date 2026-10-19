@@ -472,6 +472,27 @@ public static class Fixtures
     }
 
     /// <summary>
+    /// Three sampler channels: "Snare" playing in pattern 1 (in the playlist), "Kick" with no notes at all, and "Hat"
+    /// playing in pattern 2, whose only clip in the playlist is muted unless <paramref name="hatPlays"/>.
+    /// </summary>
+    public static string FlStudio25Unplayed(string dir, string name, bool hatPlays = false)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 140_000)
+            .Word(65, 1).Text(193, "Snares").Data(224, Note(0, 0, 48, 60, 100))
+            .Word(65, 2).Text(193, "Hats").Data(224, Note(0, 2, 48, 60, 100))
+            .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare").Text(196, @"C:\Samples\Snare 01.wav")
+            .Word(64, 1).Byte(21, 0).Text(201, "").Text(203, "Kick").Text(196, @"C:\Samples\Kick 01.wav")
+            .Word(64, 2).Byte(21, 0).Text(201, "").Text(203, "Hat").Text(196, @"C:\Samples\Hat 01.wav")
+            .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20482, 384, muted: !hatPlays)]);
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, name + ".flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
     /// An FL 25 song laid out like FL writes it, at 132 bpm: a sampler "Snare" (root key A4, pitch -2 semitones,
     /// pan 25%, volume 100%) with an automation clip on its volume in bar 2, and a Serum VST (root
     /// key E5) with an automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2. The volume's
