@@ -1,4 +1,6 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.VisualTree;
 using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -12,8 +14,6 @@ public partial class PlaygroundView : UserControl
     {
         InitializeComponent();
         KeyDown += OnKeyDown;
-        // Shortcuts are looked at on the way in, so a focused button doesn't take Space first (as in a DAW)
-        AddHandler(KeyDownEvent, OnShortcut, RoutingStrategies.Tunnel);
         LeftPane.SizeChanged += (_, e) => { if (e.HeightChanged) LayOutRows(); };   // not while the side panel's edge is dragged
     }
 
@@ -74,7 +74,7 @@ public partial class PlaygroundView : UserControl
 
     void OnClipDividerMoved(object? sender, VectorEventArgs e)
     {
-        if (_vm is null) return;
+        if (_vm is null || e.Vector.Y == 0) return;   // a click without a drag keeps the size chosen
         _vm.ClipPanelHeight = LeftPane.RowDefinitions[3].ActualHeight;
         LayOut();
     }
@@ -86,7 +86,7 @@ public partial class PlaygroundView : UserControl
 
     void OnSideDividerMoved(object? sender, VectorEventArgs e)
     {
-        if (_vm is null) return;
+        if (_vm is null || e.Vector.X == 0) return;
         _vm.SidePanelWidth = Math.Clamp(Body.ColumnDefinitions[2].ActualWidth, PlaygroundViewModel.MinSidePanelWidth, PlaygroundViewModel.MaxSidePanelWidth);
         LayOut();
     }
@@ -111,34 +111,92 @@ public partial class PlaygroundView : UserControl
     void OnTrackEdgeMoved(object? sender, PointerEventArgs e)
     {
         if (_vm is null || _trackDrag is not { } d) return;
+        if (sender is Control edge && !e.GetCurrentPoint(edge).Properties.IsLeftButtonPressed) { EndTrackDrag(); return; }
         var h = d.Height + (e.GetPosition(this).Y - d.Y) / d.Rows;
         _vm.TrackHeight = Math.Round(Math.Clamp(h, PlaygroundViewModel.MinTrackHeight, PlaygroundViewModel.MaxTrackHeight));
     }
 
     void OnTrackEdgeReleased(object? sender, PointerReleasedEventArgs e)
     {
-        _trackDrag = null;
         e.Pointer.Capture(null);
+        EndTrackDrag();
+    }
+
+    void OnTrackEdgeCaptureLost(object? sender, PointerCaptureLostEventArgs e) => EndTrackDrag();
+
+    void EndTrackDrag()
+    {
+        if (_trackDrag is null) return;
+        _trackDrag = null;
+        _vm?.KeepTrackHeight();   // saved once, not on every move
     }
 
     void OnTrackEdgeReset(object? sender, TappedEventArgs e)
     {
-        if (_vm is not null) _vm.TrackHeight = PlaygroundViewModel.DefaultTrackHeight;
+        if (_vm is null) return;
+        _vm.TrackHeight = PlaygroundViewModel.DefaultTrackHeight;
+        _vm.KeepTrackHeight();
     }
+
+    // ---- keyboard shortcuts ----
+
+    // The keys are looked at by the window, on the way in, while this page is on show: so they work straight after the
+    // page is picked in the sidebar (which keeps the keyboard), and a focused button doesn't take Space first.
+    TopLevel? _top;
+    readonly HashSet<Key> _held = [];
+
+    protected override void OnAttachedToVisualTree(global::Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _top = TopLevel.GetTopLevel(this);
+        _top?.AddHandler(KeyDownEvent, OnShortcut, RoutingStrategies.Tunnel);
+        _top?.AddHandler(KeyUpEvent, OnKeyLifted, RoutingStrategies.Tunnel, handledEventsToo: true);
+        if (_top is not null) _top.LostFocus += OnTopLostFocus;
+    }
+
+    protected override void OnDetachedFromVisualTree(global::Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        _top?.RemoveHandler(KeyDownEvent, OnShortcut);
+        _top?.RemoveHandler(KeyUpEvent, OnKeyLifted);
+        if (_top is not null) _top.LostFocus -= OnTopLostFocus;
+        _top = null;
+        _held.Clear();
+    }
+
+    void OnKeyLifted(object? sender, KeyEventArgs e) => _held.Remove(e.Key);
+    void OnTopLostFocus(object? sender, RoutedEventArgs e) => _held.Clear();
 
     /// <summary>
     /// The Playground's keys, from the app's shortcut list (Settings › Shortcuts): Bitwig's unless changed. While typing in
-    /// a box only Ctrl keys count, and lists and the piano roll keep their own arrows and Delete.
+    /// a box only Ctrl keys count (the box keeps its own Ctrl+Z, Ctrl+C and the like, and what's typed is put in first);
+    /// lists, drop-downs and sliders keep their arrows, and the piano roll its Delete. Holding a key down does it once.
     /// </summary>
     void OnShortcut(object? sender, KeyEventArgs e)
     {
-        if (DataContext is not PlaygroundViewModel vm || ShortcutKeys.Of(e) is not { } key) return;
-        if (vm.CheatSheetOpen && key == "Esc") { vm.CheatSheetOpen = false; e.Handled = true; return; }
-        var plain = !ShortcutsViewModel.WorksWhileTyping(key);
-        if (plain && (ShortcutKeys.InTextBox(e) || ShortcutKeys.InList(e))) return;
-        if (plain && e.Source is PianoRollEditor && key is "Delete" or "Backspace") return;   // deletes the note under the pointer
-        if (vm.Shortcuts.Find(ShortcutsViewModel.Playground, key) is { } id && vm.RunShortcut(id)) e.Handled = true;
+        if (!IsEffectivelyVisible || DataContext is not PlaygroundViewModel vm || ShortcutKeys.Of(e) is not { } key) return;
+        if (e.Source is Visual v && !this.IsVisualAncestorOf(v) && e.Source != _top && !IsSidebar(v)) return;   // a key for another part of the window
+        var repeat = !_held.Add(e.Key);
+        var id = vm.Shortcuts.Find(ShortcutsViewModel.Playground, key);
+        if (vm.CheatSheetOpen)
+        {
+            // only closing it works while the sheet covers the page
+            if (key == "Esc" || id == "playground.help") { if (!repeat) vm.CheatSheetOpen = false; e.Handled = true; }
+            return;
+        }
+        if (id is null) return;
+        var box = ShortcutKeys.Box(e);
+        if (box is not null && (!ShortcutsViewModel.WorksWhileTyping(key) || ShortcutKeys.IsTextKey(key))) return;
+        if (ShortcutKeys.UsedByControl(e, key)) return;
+        if (e.Source is PianoRollEditor && key is "Delete" or "Backspace") return;   // deletes the note under the pointer
+        e.Handled = true;
+        if (repeat && id is "playground.play" or "playground.help" or "playground.loop" or "playground.save" or "playground.split" or "playground.duplicate") return;
+        if (box is not null) BindingOperations.GetBindingExpressionBase(box, TextBox.TextProperty)?.UpdateSource();   // Ctrl+S saves the name as typed
+        if (!vm.RunShortcut(id)) e.Handled = false;
     }
+
+    /// <summary>The page list down the side, which keeps the keyboard after the Playground is picked in it.</summary>
+    bool IsSidebar(Visual v) => v.FindAncestorOfType<ListBox>(includeSelf: true) is { } list && !this.IsVisualAncestorOf(list) && list.Classes.Contains("nav");
 
     /// <summary>Enter in the chord chart or a part's name puts what's typed in (those boxes take it when you leave them,
     /// not on every key, so a half-typed chord isn't read).</summary>

@@ -201,7 +201,7 @@
                                             <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding Details}" />
                                         </StackPanel>
                                         <Border Classes="trackEdge" PointerPressed="OnTrackEdgePressed" PointerMoved="OnTrackEdgeMoved"
-                                                PointerReleased="OnTrackEdgeReleased" DoubleTapped="OnTrackEdgeReset"
+                                                PointerReleased="OnTrackEdgeReleased" PointerCaptureLost="OnTrackEdgeCaptureLost" DoubleTapped="OnTrackEdgeReset"
                                                 ToolTip.Tip="Drag to make the tracks taller or shorter; double-click to put them back" />
                                         </Panel>
                                     </DataTemplate>
@@ -213,7 +213,7 @@
                                             Highlight="{Binding Loop}" HighlightCommand="{Binding SetLoopCommand}"
                                             Selected="{Binding SelectedClip.Clip}" SelectCommand="{Binding SelectClipCommand}"
                                             SelectedLabel="{Binding SelectedLabel}" LabelCommand="{Binding SelectLabelCommand}"
-                                            EditCommand="{Binding ChangeClipCommand}" DeleteCommand="{Binding DeleteClipCommand}" Grid="{Binding Grid}" DropCommand="{Binding DropPartCommand}"
+                                            EditCommand="{Binding ChangeClipCommand}" Grid="{Binding Grid}" DropCommand="{Binding DropPartCommand}"
                                             ViewStart="{Binding ViewStart}" ViewLength="{Binding ViewLength}" PlayFrom="{Binding Cursor}" CursorCommand="{Binding SetCursorCommand}"
                                             DragSource="{Binding}"
                                             SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"

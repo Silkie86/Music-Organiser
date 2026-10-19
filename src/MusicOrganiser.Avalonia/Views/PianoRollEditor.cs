@@ -169,7 +169,7 @@ public sealed class PianoRollEditor : Control
         base.OnPointerWheelChanged(e);
         var p = e.GetPosition(this);
         var dy = e.Delta.Y;
-        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);   // Cmd on a Mac
         var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
         var (low, high) = Range();
         if (ctrl && shift && dy != 0)
@@ -189,8 +189,8 @@ public sealed class PianoRollEditor : Control
             _viewSpan = span >= Shown ? 0 : span;
             _viewFrom = at - (long)Math.Round(share * span);
         }
-        else if (shift && dy != 0 || e.Delta.X != 0)
-            _viewFrom = ViewFrom + (long)Math.Round((e.Delta.X != 0 ? -e.Delta.X : -dy) * ViewSpan / 8);
+        else if (shift && dy != 0 || Math.Abs(e.Delta.X) > Math.Abs(dy))   // a trackpad's sideways part only counts when it's mostly sideways
+            _viewFrom = ViewFrom + (long)Math.Round((Math.Abs(e.Delta.X) > Math.Abs(dy) ? -e.Delta.X : -dy) * ViewSpan / 8);
         else if (dy != 0 && _rows > 0)
             _top = high + (int)Math.Round(dy * 3);
         else return;   // all of it shows: the page scrolls instead
@@ -397,7 +397,7 @@ public sealed class PianoRollEditor : Control
         if (SnapRelative) Try(was + (long)Math.Round((raw - was) / (double)Sixteenth) * Sixteenth);
         if (SnapObjects && _working is { } notes)
         {
-            var near = Math.Max(1, (long)(8 * Shown / Math.Max(1, Bounds.Width - Keys)));
+            var near = Math.Max(1, (long)(8 * ViewSpan / Math.Max(1, Bounds.Width - Keys)));   // 8 px at this zoom
             for (var i = 0; i < notes.Count; i++)
             {
                 if (i == _index) continue;
@@ -407,6 +407,12 @@ public sealed class PianoRollEditor : Control
             }
         }
         return best;
+    }
+
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        base.OnPointerCaptureLost(e);
+        _panFrom = null;   // an interrupted pan (Alt+Tab, a dialog) mustn't carry on when the pointer next moves
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -496,6 +502,9 @@ public sealed class PianoRollEditor : Control
             }
             dc.FillRectangle(Black[k % 12] ? Brushes.Black : Brushes.WhiteSmoke, new Rect(Keys - 10, y + 0.5, 9, Math.Max(1, rowH - 1)));
         }
+
+        // Everything from here on stays right of the keyboard, however far it's zoomed and moved along.
+        using var noteArea = dc.PushClip(new Rect(Keys, 0, w - Keys, h));
 
         // Beats and bars, and the bar numbers along the top.
         var shown = Shown;

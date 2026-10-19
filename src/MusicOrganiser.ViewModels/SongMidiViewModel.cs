@@ -12,7 +12,7 @@ namespace MusicOrganiser.ViewModels;
 /// project tab add way to see recommended midi files"). It's worked out the first time the tab is opened, from the
 /// same index and matching as the MIDI page.
 /// </summary>
-public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainViewModel main, string path, string name)
+public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainViewModel main, string path, string name, double? tempo = null)
     : ObservableObject, IFileDragSource
 {
     /// <summary>How many parts each kind shows, unless Settings › MIDI says otherwise.</summary>
@@ -241,8 +241,8 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
         _quickEntry = row.Entry;
         Quick ??= main.Playground.Quick();
         // The song's parts as read for fitting, where they play: nothing read from disk again.
-        await Quick.LoadPairAsync(name, whole.Parts, 0, path, row.Fit?.At ?? 0, row.Entry, row.BarNotes, row.Title);
-        MuteInQuick();
+        // at the song's tempo, with the parts switched off in "Fit to" muted from the start
+        await Quick.LoadPairAsync(name, whole.Parts, 0, path, row.Fit?.At ?? 0, row.Entry, row.BarNotes, row.Title, tempo, PartsOff());
     }
 
     /// <summary>The open part again as it first came, with every song part.</summary>
@@ -251,6 +251,19 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     {
         _quickEntry = null;
         return QuickFollowAsync(Open);
+    }
+
+    /// <summary>Another page shown: the small playground stops playing (and keeps what's been done in it).</summary>
+    public void Left() => Quick?.StopPlaying();
+
+    /// <summary>Another song picked: this song's small playground stops and lets go of its player.</summary>
+    public void Closed()
+    {
+        _quickRequest++;
+        Quick?.StopPlaying();
+        Quick?.Dispose();
+        Quick = null;
+        _quickEntry = null;
     }
 
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>

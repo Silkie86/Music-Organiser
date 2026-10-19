@@ -46,7 +46,6 @@ public sealed class TimelineView : Control
     /// <summary>Takes a <see cref="ClipEdit"/> when a clip has been slid, stretched or trimmed.</summary>
     public static readonly StyledProperty<ICommand?> EditCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(EditCommand));
     /// <summary>Takes the picked clip's <see cref="ClipPick"/> when Delete is pressed.</summary>
-    public static readonly StyledProperty<ICommand?> DeleteCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(DeleteCommand));
     /// <summary>What clips snap to, in ticks: a bar, half a bar or a beat.</summary>
     public static readonly StyledProperty<long> GridProperty = AvaloniaProperty.Register<TimelineView, long>(nameof(Grid), 4 * PhraseAnalyser.Ppq);
 
@@ -69,7 +68,6 @@ public sealed class TimelineView : Control
     public PlaygroundLabel? SelectedLabel { get => GetValue(SelectedLabelProperty); set => SetValue(SelectedLabelProperty, value); }
     public ICommand? LabelCommand { get => GetValue(LabelCommandProperty); set => SetValue(LabelCommandProperty, value); }
     public ICommand? EditCommand { get => GetValue(EditCommandProperty); set => SetValue(EditCommandProperty, value); }
-    public ICommand? DeleteCommand { get => GetValue(DeleteCommandProperty); set => SetValue(DeleteCommandProperty, value); }
     public long Grid { get => GetValue(GridProperty); set => SetValue(GridProperty, value); }
     /// <summary>Where the view starts, in ticks, when zoomed in (Ctrl + scroll); changed by the view as it's panned.</summary>
     public static readonly StyledProperty<long> ViewStartProperty =
@@ -110,6 +108,7 @@ public sealed class TimelineView : Control
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DragLeaveEvent, (_, _) => { _drop = null; InvalidateVisual(); });
         AddHandler(DragDrop.DropEvent, OnDrop);
+        AddHandler(PointerTouchPadGestureMagnifyEvent, OnPinch);
     }
 
     // ---- dropping parts in ----
@@ -133,7 +132,7 @@ public sealed class TimelineView : Control
             name = match.Title;
             length = Math.Max(1, PhraseAnalyser.BarsOf(match.Match.Notes)) * (long)Bar;
         }
-        else if (e.DataTransfer.TryGetFiles() is { Length: > 0 } files
+        else if (!FileDrag.Dragging && e.DataTransfer.TryGetFiles() is { Length: > 0 } files
                  && files.Select(f => f.TryGetLocalPath()).OfType<string>().Where(MidiFileReader.IsMidiPath).ToList() is { Count: > 0 } paths)
         {
             part = paths;
@@ -239,7 +238,8 @@ public sealed class TimelineView : Control
     {
         base.OnPointerWheelChanged(e);
         var dy = e.Delta.Y;
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && dy != 0)
+        // Cmd on a Mac; a trackpad's sideways part only counts when it's mostly sideways
+        if ((e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta)) && dy != 0)
         {
             var at = TickAt(e.GetPosition(this).X);
             var span = (long)Math.Round(Span * Math.Pow(0.8, dy));
@@ -248,9 +248,9 @@ public sealed class TimelineView : Control
             ShowWindow(at - (long)Math.Round(share * span), span);
             e.Handled = true;
         }
-        else if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && dy != 0 || e.Delta.X != 0)
+        else if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && dy != 0 || Math.Abs(e.Delta.X) > Math.Abs(dy))
         {
-            var by = e.Delta.X != 0 ? -e.Delta.X : -dy;
+            var by = Math.Abs(e.Delta.X) > Math.Abs(dy) ? -e.Delta.X : -dy;
             ShowWindow(From + (long)Math.Round(by * Span / 8), Span);
             e.Handled = true;
         }
@@ -258,6 +258,18 @@ public sealed class TimelineView : Control
 
     double? _panFrom;
     long _panStart;
+    static readonly global::Avalonia.Input.Cursor HandCursor = new(StandardCursorType.Hand), StretchCursor = new(StandardCursorType.SizeWestEast);
+
+    /// <summary>A trackpad pinch zooms round the pointer, as Ctrl + scroll does.</summary>
+    void OnPinch(object? sender, PointerDeltaEventArgs e)
+    {
+        if (e.Delta.X == 0) return;
+        var at = TickAt(e.GetPosition(this).X);
+        var span = Math.Clamp((long)Math.Round(Span / (1 + e.Delta.X)), Bar, Math.Max(Bar, Length));
+        var share = (at - From) / (double)Span;
+        ShowWindow(at - (long)Math.Round(share * span), span);
+        e.Handled = true;
+    }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
@@ -390,7 +402,7 @@ public sealed class TimelineView : Control
         {
             if (!d.Moved && Math.Abs(p.X - d.From.X) < 4 && Math.Abs(p.Y - d.From.Y) < 4) return;
             // Pulled right out of the timeline: it goes out to the DAW as a MIDI clip instead.
-            if (d.Grab == Grab.Move && (p.X < -OutBy || p.X > Bounds.Width + OutBy || p.Y < -OutBy || p.Y > Bounds.Height + OutBy))
+            if (d.Grab == Grab.Move && (p.X < -OutLeft || p.X > Bounds.Width + OutBy || p.Y < -OutBy || p.Y > Bounds.Height + OutBy))
             {
                 _clip = null;
                 InvalidateVisual();
@@ -405,7 +417,7 @@ public sealed class TimelineView : Control
         if (_dragFrom is null)
         {
             // The pointer says what a drag would do: slide a clip, or stretch or trim it at its edges.
-            base.Cursor = ClipAt(p) is { } over ? new global::Avalonia.Input.Cursor(GrabAt(over.Clip, p.X) == Grab.Move ? StandardCursorType.Hand : StandardCursorType.SizeWestEast) : global::Avalonia.Input.Cursor.Default;
+            base.Cursor = ClipAt(p) is { } over ? GrabAt(over.Clip, p.X) == Grab.Move ? HandCursor : StretchCursor : global::Avalonia.Input.Cursor.Default;
             return;
         }
         var from = _dragFrom.Value;
@@ -478,7 +490,8 @@ public sealed class TimelineView : Control
                 d.Length = Math.Max(min, Snap(c.End + delta, c.End, keys, points) - c.Start);
                 break;
             case Grab.Trim:
-                d.Start = Math.Clamp(Snap(c.Start + delta, c.Start, keys, points), 0, c.End - min);
+                // never past its end, even for a clip shorter than a grid step
+                d.Start = Math.Clamp(Snap(c.Start + delta, c.Start, keys, points), 0, Math.Max(0, c.End - Math.Min(min, c.Length)));
                 d.Length = c.End - d.Start;
                 // Its notes stay where they were on the timeline: the go round starts further in (or further back).
                 d.Offset = ((c.Offset + d.Start - c.Start) % c.Loop + c.Loop) % c.Loop;
@@ -523,6 +536,8 @@ public sealed class TimelineView : Control
     bool _onRuler;
     /// <summary>How far past its edges a clip is pulled before it counts as dragged out to the DAW.</summary>
     const double OutBy = 24;
+    /// <summary>To the left it's past the track names too, so overshooting bar 1 still just moves the clip.</summary>
+    const double OutLeft = 240;
 
     async void DragOut(object item)
     {
@@ -612,6 +627,7 @@ public sealed class TimelineView : Control
                 foreach (var clip in track.Clips)
                 {
                     var rect = new Rect(X(clip.Start) + 0.5, y + 3, Math.Max(3, W(clip.Length) - 1), RowHeight - 6);
+                    if (rect.Right < 0 || rect.X > w) continue;   // zoomed in: off the view
                     var picked = clip == Selected;
                     dc.DrawRectangle(picked ? soft : faint, new Pen(picked ? accent : stroke, picked ? 2 : 1), new RoundedRect(rect, 5));
                     using (dc.PushClip(rect))
@@ -652,6 +668,7 @@ public sealed class TimelineView : Control
                             var brush = drums ? muted : accent;
                             foreach (var n in notes)
                             {
+                                if (n.Start > From + Span || n.Start + n.Length < From) continue;
                                 var ny = top + (hi - n.Key) / (double)(hi - lo) * span;
                                 dc.FillRectangle(brush, new Rect(X(n.Start), ny, Math.Max(1.5, W(n.Length) - 1), 2));
                             }

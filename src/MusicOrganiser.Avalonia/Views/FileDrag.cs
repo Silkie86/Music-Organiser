@@ -159,6 +159,12 @@ public sealed class FileDrag
         }
     }
 
+    /// <summary>
+    /// The app's own files are being dragged out (a clip, a track, the arrangement), so a drop back onto the app isn't
+    /// taken as new files coming in.
+    /// </summary>
+    public static bool Dragging { get; private set; }
+
     static async Task Run(Control el, PointerPressedEventArgs press, IReadOnlyList<object> items, DragPayload payload)
     {
         if (TopLevel.GetTopLevel(el)?.StorageProvider is not { } storage) return;
@@ -171,9 +177,11 @@ public sealed class FileDrag
         var lifted = LiftRows(el, items);
         Action? hidePreview = null;
         if (OperatingSystem.IsWindows()) hidePreview = ShowPreview(payload);
+        Dragging = true;
         try { await DragDrop.DoDragDropAsync(press, data, DragDropEffects.Copy); }
         finally
         {
+            Dragging = false;
             hidePreview?.Invoke();
             foreach (var row in lifted) row.Opacity = 1;
         }

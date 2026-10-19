@@ -42,11 +42,26 @@ public static class ShortcutKeys
     }
 
     /// <summary>Whether the key was pressed in a box being typed in, where only Ctrl keys count as shortcuts.</summary>
-    public static bool InTextBox(KeyEventArgs e) => e.Source is TextBox || (e.Source as Visual)?.FindAncestorOfType<TextBox>() is not null;
+    public static bool InTextBox(KeyEventArgs e) => Box(e) is not null;
 
-    /// <summary>Whether the key was pressed in a list or drop-down, which uses arrows and Delete itself.</summary>
-    public static bool InList(KeyEventArgs e) =>
-        e.Source is Visual v && (v is SelectingItemsControl or ListBoxItem or ComboBoxItem || v.FindAncestorOfType<SelectingItemsControl>() is not null);
+    /// <summary>
+    /// Whether the control the key was pressed in uses that key itself: the arrows (and Home, End, Page Up/Down) in a
+    /// list, a drop-down or a slider. A tab strip doesn't count, so the side panel's tabs never swallow the page's keys.
+    /// </summary>
+    public static bool UsedByControl(KeyEventArgs e, string key)
+    {
+        if (key is not ("Up" or "Down" or "Left" or "Right" or "Home" or "End" or "PageUp" or "PageDown") || e.Source is not Visual v) return false;
+        return v is ListBox or ComboBox or Slider || v.FindAncestorOfType<ListBox>() is not null
+            || v.FindAncestorOfType<ComboBox>() is not null || v.FindAncestorOfType<Slider>() is not null;
+    }
+
+    /// <summary>The keys a box being typed in keeps for its own text, even though they're held with Ctrl.</summary>
+    public static bool IsTextKey(string key) =>
+        key is "Ctrl+Z" or "Ctrl+Shift+Z" or "Ctrl+Y" or "Ctrl+A" or "Ctrl+C" or "Ctrl+V" or "Ctrl+X" or "Ctrl+Left" or "Ctrl+Right"
+            or "Ctrl+Shift+Left" or "Ctrl+Shift+Right" or "Ctrl+Backspace" or "Ctrl+Delete" or "Ctrl+Home" or "Ctrl+End";
+
+    /// <summary>The box the key was pressed in, if any.</summary>
+    public static TextBox? Box(KeyEventArgs e) => e.Source as TextBox ?? (e.Source as Visual)?.FindAncestorOfType<TextBox>();
 }
 
 /// <summary>
@@ -76,19 +91,45 @@ public sealed class ShortcutBox : Button
         Show();
     }
 
+    ShortcutRow? _watched;
+
     protected override void OnDataContextChanged(EventArgs e)
     {
         base.OnDataContextChanged(e);
-        if (Row is { } row) row.PropertyChanged += (_, _) => { if (!_listening) Show(); };
+        Watch(Row);
         Show();
     }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        Watch(Row);
+        Show();
+    }
+
+    // The rows last as long as the app and Settings is rebuilt on each visit, so a box lets go of its row when it goes.
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        Watch(null);
+    }
+
+    void Watch(ShortcutRow? row)
+    {
+        if (_watched == row) return;
+        if (_watched is not null) _watched.PropertyChanged -= OnRowChanged;
+        _watched = row;
+        if (row is not null) row.PropertyChanged += OnRowChanged;
+    }
+
+    void OnRowChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) { if (!_listening) Show(); }
 
 
     void Show() => Content = _listening ? "Press a key…" : Row?.KeyText ?? "";
 
     void OnKey(object? sender, KeyEventArgs e)
     {
-        if (!_listening) return;
+        if (!_listening || e.Key == Key.Tab) return;   // Tab still moves on, so it can't be a shortcut
         e.Handled = true;
         if (e.Key == Key.Escape) { _listening = false; Show(); return; }
         if (ShortcutKeys.Of(e) is not { } key) return;   // a modifier on its own: wait for the rest

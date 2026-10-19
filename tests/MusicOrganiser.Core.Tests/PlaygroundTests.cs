@@ -136,7 +136,7 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(["Keys", "Bass", "Chords"], t.Layers.Select(l => l.Name));
         var keys = t.Layers[0];
         Assert.Equal([0L, 2L * Bar, 3L * Bar], keys.Clips.Select(c => c.Start));
-        Assert.All(keys.Clips, c => Assert.True(c.Pinned));
+        Assert.All(keys.Clips, c => Assert.False(c.Pinned));   // not changed by hand, so they fit the chords when moved
         Assert.Equal([0L, Bar, 2L * Bar, 3L * Bar, 4L * Bar], keys.Notes.Select(n => n.Start));
         Assert.Equal([60, 62, 65, 60, 62], keys.Notes.Select(n => n.Key));
         Assert.True(t.Layers[1].Muted);
@@ -326,7 +326,8 @@ public class PlaygroundTests : IDisposable
         Assert.True(clip.Pinned);
         Assert.True(p.SelectedClip.CanFitAgain);
         p.ChangeClipCommand.Execute(new ClipEdit(track.Layer, clip, 1, Bar, Bar, 0));
-        Assert.Equal(61, track.Notes.First().Key);   // C up a semitone by hand, over D: left as it is
+        // Trimmed to its second bar: it plays just as it did there (up a tone to fit, up a semitone by hand), left as it is
+        Assert.Equal(63, track.Notes.First().Key);
 
         // Fit again: back to fitting (the semitone by hand goes, no octave was set).
         p.SelectedClip.FitAgainCommand.Execute(null);
@@ -425,6 +426,59 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void Review_fixes_keep_tracks_clips_and_selection_in_step()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+
+        // A next chord with no chord clip to play it makes a chord track, and it shows on the timeline.
+        var bass = Line(Bar, 36, 41);
+        p.AddFromLibrary(new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0], bass, "Bass");
+        p.AddNextChord(ChordSymbol.Parse("G7")!.Value);
+        Assert.Equal(p.CurrentSection.Layers.Count, p.Layers.Count);
+        Assert.Contains(p.Layers, r => r.Role == MidiRoles.Chords);
+
+        // A melody dragged onto a track written from the chords gets a new track, and keeps its notes.
+        p.WriteBassCommand.Execute(null);
+        var written = p.Layers.IndexOf(p.Layers.First(r => r.IsWritten));
+        var tune = Line(Beat, 72, 74, 76, 77);
+        p.AddFromLibrary(new MidiCatalogue([Stored(2, @"K:\Other\Tune.flp", "Lead", tune)]).Entries[0], tune, "Tune");
+        var lead = p.Layers[^1];
+        var clip = lead.Clips[0];
+        var count = p.Layers.Count;
+        p.ChangeClipCommand.Execute(new ClipEdit(lead.Layer, clip, written, clip.Start, clip.Length, clip.Offset));
+        Assert.DoesNotContain(clip, p.Layers[written].Clips);
+        Assert.Equal(count + 1, p.Layers.Count);
+        Assert.Equal([72, 74, 76, 77], clip.Notes.Select(n => n.Key));
+
+        // Undo keeps the place: the same track's clip stays picked, not the first track's.
+        p.UndoCommand.Execute(null);
+        var picked = p.Layers.Count - 1;
+        p.SelectClipCommand.Execute(new ClipPick(p.Layers[picked].Layer, p.Layers[picked].Clips[0]));
+        p.SelectedClip!.UpCommand.Execute(null);
+        p.UndoCommand.Execute(null);
+        Assert.Equal(picked, p.Layers.IndexOf(p.SelectedClip!.Track));
+
+        // Duplicated over the next clip on its track: what it covers is cut out, not played on top.
+        lead = p.Layers.First(r => r.Clips.Any(c => c.Name == "Tune"));
+        var one = lead.Clips[0];
+        one.Length = Bar;
+        p.DuplicateClip(new ClipRow(p, lead, one));
+        p.DuplicateClip(new ClipRow(p, lead, one));
+        Assert.Equal([0L, Bar], lead.Clips.Select(c => c.Start).Order());
+
+        // A new idea doesn't keep the old one's highlight.
+        p.SetLoopCommand.Execute(new RollRange(Bar, 2L * Bar));
+        p.NewIdeaCommand.Execute(null);
+        Assert.Null(p.Loop);
+    }
+
+    [Fact]
     public void Pane_sizes_are_remembered_and_odd_ones_ignored()
     {
         Ui.Current = new Headless();
@@ -437,6 +491,7 @@ public class PlaygroundTests : IDisposable
         p.PutChords("C | F");
         Assert.Equal(PlaygroundViewModel.DefaultTrackHeight, p.Layers[0].Height);
         p.TrackHeight = 70;
+        p.KeepTrackHeight();
         p.ClipPanelHeight = 420;
         p.SidePanelWidth = 520;
         p.FoldPianoCommand.Execute(null);
