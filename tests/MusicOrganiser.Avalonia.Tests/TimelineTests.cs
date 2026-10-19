@@ -134,4 +134,22 @@ public sealed class TimelineTests
         window.MouseUp(new Point(400, ruler), MouseButton.Left);
         Assert.Equal((0L, 0L), (view.ViewStart, view.ViewLength));
     }
+
+    [AvaloniaFact]
+    public void Relative_snap_keeps_a_clip_off_the_grid_and_object_snap_catches_other_clips()
+    {
+        var (window, view, done, keys) = Timeline();
+        keys.Clips[0].Start = Bar / 4;   // a quarter bar late
+        // Grid and Relative both on: 2.1 bars along lands a quarter bar off bar 3, the nearer of the two.
+        Drag(window, new Point(150, RowY(0)), new Point(360, RowY(0)));
+        Assert.Equal(2L * Bar + Bar / 4, done.Edits[^1].Start);
+        // Relative off: straight onto the grid.
+        view.SnapRelative = false;
+        Drag(window, new Point(150, RowY(0)), new Point(360, RowY(0)));
+        Assert.Equal(2L * Bar, done.Edits[^1].Start);
+        // Objects only: dragged near the Bass clip's start (bar 5), it catches it.
+        view.SnapGrid = false;
+        Drag(window, new Point(150, RowY(0)), new Point(150 + 370, RowY(0)));
+        Assert.Equal(4L * Bar, done.Edits[^1].Start);
+    }
 }

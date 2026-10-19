@@ -60,6 +60,31 @@ public static class ChordScales
         };
     }
 
+    /// <summary>
+    /// What pitch class <paramref name="pc"/> is over the chord, as players say it (Solomon, 2026-10-19: "what each note
+    /// is over the heard chord"): 1, ♭9, 9, ♭3 or ♯9, 3, 11, ♭5 or ♯11, 5, ♯5 or ♭13, 6 or 13, ♭7, 7.
+    /// </summary>
+    public static string Degree(ChordSymbol chord, int pc)
+    {
+        var i = ChordSymbol.Mod(pc - chord.Root);
+        bool seventh = chord.Has(10) || chord.Has(11);
+        return i switch
+        {
+            0 => "1",
+            1 => "♭9",
+            2 => "9",
+            3 => chord.Has(4) ? "♯9" : "♭3",
+            4 => "3",
+            5 => "11",
+            6 => chord.Has(7) ? "♯11" : "♭5",
+            7 => "5",
+            8 => chord.Has(7) ? "♭13" : "♯5",
+            9 => seventh ? "13" : chord.Has(3) && chord.Has(6) && !chord.Has(10) ? "°7" : "6",
+            10 => "♭7",
+            _ => "7",
+        };
+    }
+
     /// <summary>How well pitch class <paramref name="pc"/> sits on the chord, from 1 (one of its notes) to about −0.5.</summary>
     public static double Sit(ChordSymbol chord, int pc, HarmonyStyle style = HarmonyStyle.JazzGospel)
     {

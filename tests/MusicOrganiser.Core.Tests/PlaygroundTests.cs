@@ -414,6 +414,17 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void Notes_are_named_by_what_they_are_over_the_chord()
+    {
+        string D(string chord, int pc) => ChordScales.Degree(ChordSymbol.Parse(chord)!.Value, pc);
+        Assert.Equal(["1", "3", "5", "7", "9", "♯11", "13"], new[] { 0, 4, 7, 11, 2, 6, 9 }.Select(pc => D("Cmaj7", pc)));
+        Assert.Equal(["♭3", "♭7", "11"], new[] { 3, 10, 5 }.Select(pc => D("Cm7", pc)));
+        Assert.Equal(["♯9", "♭9", "♭13"], new[] { 3, 1, 8 }.Select(pc => D("C7", pc)));
+        Assert.Equal("♭5", D("Cdim7", 6));
+        Assert.Equal("3", D("G7", 11));
+    }
+
+    [Fact]
     public async Task Open_in_playground_from_a_song_starts_a_section_with_the_part()
     {
         Ui.Current = new Headless();

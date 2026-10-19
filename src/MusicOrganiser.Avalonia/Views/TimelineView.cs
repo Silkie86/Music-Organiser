@@ -84,6 +84,16 @@ public sealed class TimelineView : Control
     public ICommand? CursorCommand { get => GetValue(CursorCommandProperty); set => SetValue(CursorCommandProperty, value); }
     public IFileDragSource? DragSource { get => GetValue(DragSourceProperty); set => SetValue(DragSourceProperty, value); }
 
+    public static readonly StyledProperty<bool> SnapGridProperty = AvaloniaProperty.Register<TimelineView, bool>(nameof(SnapGrid), true);
+    public static readonly StyledProperty<bool> SnapRelativeProperty = AvaloniaProperty.Register<TimelineView, bool>(nameof(SnapRelative), true);
+    public static readonly StyledProperty<bool> SnapObjectsProperty = AvaloniaProperty.Register<TimelineView, bool>(nameof(SnapObjects), true);
+    /// <summary>Snap onto grid lines.</summary>
+    public bool SnapGrid { get => GetValue(SnapGridProperty); set => SetValue(SnapGridProperty, value); }
+    /// <summary>Snap in whole grid steps from where it was, keeping how far off the grid it sat (Bitwig's grid offset).</summary>
+    public bool SnapRelative { get => GetValue(SnapRelativeProperty); set => SetValue(SnapRelativeProperty, value); }
+    /// <summary>Snap to the edges of other clips, the highlight, labels and the play marker (Bitwig's snap to events).</summary>
+    public bool SnapObjects { get => GetValue(SnapObjectsProperty); set => SetValue(SnapObjectsProperty, value); }
+
     /// <summary>Takes a <see cref="PartDrop"/> when a suggestion or .mid files are let go on a track.</summary>
     public static readonly StyledProperty<ICommand?> DropCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(DropCommand));
     public ICommand? DropCommand { get => GetValue(DropCommandProperty); set => SetValue(DropCommandProperty, value); }
@@ -404,23 +414,67 @@ public sealed class TimelineView : Control
         InvalidateVisual();
     }
 
+    /// <summary>The edges other things snap to: every clip but <paramref name="moving"/>, the highlight, labels and the play marker.</summary>
+    List<long> SnapPoints(PlaygroundClip moving)
+    {
+        var points = new List<long> { PlayFrom };
+        if (Tracks is { } tracks)
+            foreach (var c in tracks.SelectMany(t => t.Clips))
+                if (c != moving) { points.Add(c.Start); points.Add(c.End); }
+        if (Highlight is { } hl) { points.Add(hl.Start); points.Add(hl.End); }
+        if (Labels is { } labels)
+            foreach (var l in labels) { points.Add(l.Start); points.Add(l.End); }
+        return points;
+    }
+
+    /// <summary>
+    /// Where an edge dragged from <paramref name="was"/> to <paramref name="raw"/> lands: on the grid, the same distance
+    /// off the grid as it was (relative), or on another object's edge near it, whichever is nearest; anywhere with Shift.
+    /// <paramref name="along"/> is how far the snapped edge is from the clip's start, so a clip's end can catch an edge too.
+    /// </summary>
+    long Snap(long raw, long was, KeyModifiers keys, IReadOnlyList<long> points, params long[] along)
+    {
+        if (keys.HasFlag(KeyModifiers.Shift)) return raw;
+        var grid = Math.Max(1, Grid);
+        var best = raw;
+        var bestBy = long.MaxValue;
+        void Try(long at)
+        {
+            var by = Math.Abs(at - raw);
+            if (by < bestBy) { best = at; bestBy = by; }
+        }
+        if (SnapGrid) Try((long)Math.Round(raw / (double)grid) * grid);
+        if (SnapRelative) Try(was + (long)Math.Round((raw - was) / (double)grid) * grid);
+        if (SnapObjects)
+        {
+            // Only edges close by on screen catch it, so it doesn't jump across the view.
+            var near = Math.Max(1, (long)(10 / Scale));
+            foreach (var point in points)
+                foreach (var a in along.Length == 0 ? [0L] : along)
+                    if (Math.Abs(point - a - raw) <= near) Try(point - a);
+        }
+        return best;
+    }
+
     void DragTo(ClipDrag d, Point p, KeyModifiers keys)
     {
         var c = d.Clip;
         var delta = TickAt(p.X) - TickAt(d.From.X);
         var min = Math.Max(1, keys.HasFlag(KeyModifiers.Shift) ? PhraseAnalyser.Ppq / 4 : Grid);
+        var points = SnapPoints(c);
         switch (d.Grab)
         {
             case Grab.Move:
-                d.Start = Math.Max(0, SnapTo(c.Start + delta, keys));
+                // Its start or its end can catch an object's edge.
+                d.Start = Math.Max(0, Snap(c.Start + delta, c.Start, keys, points, 0, c.Length));
                 // Onto the row under the pointer; below the last one makes a new track.
                 d.Row = Math.Clamp((int)Math.Floor((p.Y - Top) / RowHeight), 0, RowCount);
                 break;
             case Grab.Stretch:
-                d.Length = Math.Max(min, SnapTo(c.End + delta, keys) - c.Start);
+                d.Length = Math.Max(min, Snap(c.End + delta, c.End, keys, points) - c.Start);
                 break;
             case Grab.Trim:
-                d.Start = Math.Clamp(SnapTo(c.Start + delta, keys), 0, c.End - min);
+                d.Start = Math.Clamp(Snap(c.Start + delta, c.Start, keys, points), 0, c.End - min);
                 d.Length = c.End - d.Start;
                 // Its notes stay where they were on the timeline: the go round starts further in (or further back).
                 d.Offset = ((c.Offset + d.Start - c.Start) % c.Loop + c.Loop) % c.Loop;

@@ -125,6 +125,12 @@
                     <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                 </ListBox.ItemsPanel>
             </ListBox>
+            <ToggleButton Classes="chip" Content="Grid" IsChecked="{Binding SnapGrid}" Margin="0,0,4,6"
+                          ToolTip.Tip="Dragged clips land on the grid lines (Bitwig: Snap to Grid)" />
+            <ToggleButton Classes="chip" Content="Relative" IsChecked="{Binding SnapRelative}" Margin="0,0,4,6"
+                          ToolTip.Tip="Dragged clips move in whole grid steps but keep how far off the grid they sat, so a pushed clip stays pushed (Bitwig: Snap to Grid Offset). With Grid on too, whichever is nearer wins." />
+            <ToggleButton Classes="chip" Content="Objects" IsChecked="{Binding SnapObjects}" Margin="0,0,12,6"
+                          ToolTip.Tip="Dragged clips catch the starts and ends of other clips, the highlight, labels and the play marker when they come close (Bitwig: Snap to Events)" />
             <Button Content="+ Label" Classes="tiny" Margin="0,0,10,6" Command="{Binding AddLabelCommand}"
                     ToolTip.Tip="Name some bars (Verse, Build, Drop…): over the highlight, or the bars after the last label. Suggestions for those bars suit its feel." />
             <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,16,6" IsVisible="{Binding HasSelectedLabel}">
@@ -190,6 +196,7 @@
                                             EditCommand="{Binding ChangeClipCommand}" DeleteCommand="{Binding DeleteClipCommand}" Grid="{Binding Grid}" DropCommand="{Binding DropPartCommand}"
                                             ViewStart="{Binding ViewStart}" ViewLength="{Binding ViewLength}" PlayFrom="{Binding Cursor}" CursorCommand="{Binding SetCursorCommand}"
                                             DragSource="{Binding}"
+                                            SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
                                             ToolTip.Tip="Click a clip to edit it below; drag it to slide it, or onto another track (below the last makes a new one). Drag its right edge to play it round more, its left edge to trim it. Hold Shift to drag off the grid. Drag across empty bars, or along the bar numbers, to highlight them: highlight bars of the clip you picked to get other parts for just those bars. Click a label to pick its bars. Drop suggestions from the right, or .mid files from Explorer, onto a track. Pull a clip or a label right out of the timeline to drag it into your DAW. Click the bar numbers to move where Play starts; Ctrl + scroll zooms, Shift + scroll or the middle button moves along, double-click the bar numbers to see it all. Delete takes the picked clip out." />
                     </Grid>
                 </ScrollViewer>
@@ -226,10 +233,21 @@
                         <TextBox DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
                                  Width="160" Margin="0,0,6,6" FontSize="12" ToolTip.Tip="The track's name: its name in your DAW" />
                     </WrapPanel>
+                    <WrapPanel>
+                        <TextBlock Text="Note names" Classes="label" Margin="0,0,6,4" />
+                        <ListBox Classes="chips" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteLabelChoices}" SelectedItem="{Binding NoteLabelPick}" Margin="0,0,0,4"
+                                 ToolTip.Tip="Write each note's name on it and on the keys (C4, F#3), or what it is over the chord heard there (3, ♭7, 9, 13): handy for jazz and gospel tensions">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                        </ListBox>
+                    </WrapPanel>
                     <views:PianoRollEditor Height="230" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}"
+                                           NoteLabels="{Binding NoteLabels}" DegreeOf="{Binding SelectedClip.DegreeOf}"
+                                           SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
                                            Period="{Binding SelectedClip.Loop}" Length="{Binding SelectedClip.Loop}" Position="{Binding SelectedClip.Position}"
                                            EditedCommand="{Binding SelectedClip.EditedCommand}" ClashTest="{Binding SelectedClip.Clashes}"
-                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note, drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked)." />
+                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note (it copies the length and velocity of the last note you clicked), drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Notes snap with the Grid, Relative and Objects switches above; hold Shift to place freely." />
                 </StackPanel>
             </Grid>
             <!-- Getting parts: suggestions, writing from the chords, reharmonising, and songs. -->

@@ -149,7 +149,7 @@
                                            Length="{Binding PairLength}" Position="{Binding PairPosition}"
                                            PartStart="{Binding PartStart}" PartEnd="{Binding PartEnd}"
                                            EditedCommand="{Binding EditCommand}" SeekCommand="{Binding PairSeekCommand}"
-                                           ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Alt to place without snapping. Click the bar numbers to play from there." />
+                                           ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Shift to place without snapping. Click the bar numbers to play from there." />
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
                             <Button Content="Undo" Padding="8,2" FontSize="12" Command="{Binding UndoEditCommand}" IsEnabled="{Binding CanUndoEdit}"

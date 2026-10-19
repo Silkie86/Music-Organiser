@@ -333,7 +333,7 @@
                                                Section="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Section}"
                                                SectionCommand="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetSectionCommand}"
                                                EditedCommand="{Binding EditCommand}" SeekCommand="{Binding PairSeekCommand}"
-                                               ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Alt to place without snapping. Click the bar numbers to play from there; drag along them to set loop points." />
+                                               ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Shift to place without snapping. Click the bar numbers to play from there; drag along them to set loop points." />
                         <!-- Loop points: what's looping, parts for just those bars, or how to set them. -->
                         <WrapPanel>
                             <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SectionHint}" Classes="small"
