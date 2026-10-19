@@ -2192,6 +2192,53 @@ public class ViewModelTests : IDisposable
         main.Midi.Left();
     }
 
+    [Fact]
+    public async Task A_songs_midi_tab_fits_to_just_the_song_parts_picked()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Same", Ppq = 96 };
+        // The song's chords, voiced an octave up: other notes, so it isn't taken for the song's own part.
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k + 12, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Same Am.mid"), Core.Export.MidiWriter.Write(chords));
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        var project = MidiBrowserTests.FlProjectWithChordsAndLead(songs);
+        _db.Upsert(Core.Library.Scanner.Analyse(project));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var tab = new SongMidiViewModel(main.Midi, main, project, "Two Parts");
+        await tab.LoadAsync();
+
+        // Both of the song's parts, picked to start with; the clashing lead pulls the fit down.
+        Assert.True(tab.HasSongParts);
+        Assert.Equal(["Keys", "Lead"], tab.SongParts.Select(p => p.Name));
+        var both = tab.Rows.Single(r => r.Title == "Same Am");
+        Assert.Equal(2, both.With!.Parts.Count);
+        tab.OpenPartCommand.Execute(both);
+
+        // Just the chords: fitted and played against those alone, and the part stays open.
+        tab.SongParts.Single(p => p.Name == "Lead").IsOn = false;
+        for (var i = 0; i < 100 && tab.Rows.FirstOrDefault()?.With?.Parts.Count != 1; i++) await Task.Delay(10);
+        var keysOnly = tab.Rows.Single(r => r.Title == "Same Am");
+        Assert.Equal("Keys", Assert.Single(keysOnly.With!.Parts).Name);
+        Assert.True(keysOnly.Fit!.Score > both.Fit!.Score);
+        Assert.Same(keysOnly, tab.Open);
+        Assert.Equal(keysOnly.With.Notes.Count, keysOnly.With.Parts[0].Notes.Count);
+
+        // None picked: it says so. All parts brings them all back.
+        tab.SongParts.Single(p => p.Name == "Keys").IsOn = false;
+        await Task.Delay(20);
+        Assert.StartsWith("Pick at least one", tab.Status);
+        tab.AllSongPartsCommand.Execute(null);
+        for (var i = 0; i < 100 && tab.Rows.FirstOrDefault()?.With?.Parts.Count != 2; i++) await Task.Delay(10);
+        Assert.All(tab.SongParts, p => Assert.True(p.IsOn));
+        Assert.Equal(2, tab.Rows.First().With!.Parts.Count);
+    }
+
     sealed class HeadlessUi : IPlatformUi
     {
         // Sweep previews and the Sounds list are worked out straight away here, so a test can check them at once.

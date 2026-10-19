@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.Core;
 using MusicOrganiser.Core.Midi;
+using MusicOrganiser.Core.Parsers;
 
 namespace MusicOrganiser.ViewModels;
 
@@ -68,7 +69,8 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
                 _loaded = true;   // the song says nothing to fit to: no use reading it again each time
                 return;
             }
-            _target = target;
+            _target = _whole = target;
+            SongParts = target.Parts.Select(c => new SongPart(c, PartsChanged)).ToList();
             if (await midi.CatalogueAsync() is not { Entries.Count: > 0 } catalogue)
             {
                 Status = "No MIDI has been read yet. Open the MIDI page to read your projects and MIDI folders.";
@@ -78,11 +80,7 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
                                                        .Count(h => h.Fit!.Score >= midi.GoodFitPercent / 100.0));
             GoodCount = good;
             CountText = good == 1 ? "1 good fit" : $"{good:N0} good fits";
-            Status = string.Join(" · ", new[]
-            {
-                target.Key is { } k ? $"Key {k.Name}" : "",
-                target.Chords.Count > 0 ? target.ChordText() : "",
-            }.Where(s => s.Length > 0));
+            Status = Describe(target);
             await ShowAsync();
             _loaded = true;
         }
@@ -93,6 +91,12 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
         }
         finally { IsLoading = false; }
     }
+
+    static string Describe(HarmonyTarget target) => string.Join(" · ", new[]
+    {
+        target.Key is { } k ? $"Key {k.Name}" : "",
+        target.Chords.Count > 0 ? target.ChordText() : "",
+    }.Where(s => s.Length > 0));
 
     async Task ShowAsync()
     {
@@ -120,6 +124,52 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     Task OpenInPlayground() => Selected is { } row
         ? main.Playground.OpenFromSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0)
         : main.Playground.OpenFromSongAsync(path, name);
+
+    // ---- which of the song's parts to fit against ----
+
+    HarmonyTarget? _whole;
+    int _partsRequest;
+
+    /// <summary>The song's pitched parts, each on or off: the list is fitted to, and plays with, just the ones on.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSongParts))] IReadOnlyList<SongPart> _songParts = [];
+    public bool HasSongParts => SongParts.Count >= 2;
+
+    /// <summary>Every part on again.</summary>
+    [RelayCommand]
+    void AllSongParts()
+    {
+        foreach (var p in SongParts) p.SetQuietly(true);
+        PartsChanged();
+    }
+
+    // A few clicks on the chips in a row make one new fit, once they rest.
+    void PartsChanged() => _ = RefitAsync();
+
+    async Task RefitAsync()
+    {
+        var request = ++_partsRequest;
+        if (UiWork.InBackground) await Task.Delay(300);
+        if (request != _partsRequest || _whole is not { } whole) return;
+        var on = SongParts.Where(p => p.IsOn).Select(p => p.Channel).ToList();
+        if (on.Count == 0)
+        {
+            Status = "Pick at least one of the song's parts to fit to.";
+            return;
+        }
+        var target = on.Count == SongParts.Count ? whole : await UiWork.Run(() => HarmonyTarget.FromChannels(name, on));
+        if (request != _partsRequest) return;
+        if (target is null)
+        {
+            Status = "Those parts have too few notes to fit MIDI to. Pick another as well.";
+            return;
+        }
+        _target = target;
+        Status = Describe(target);
+        // The part open in the quick view stays open, fitted afresh.
+        var open = Open?.Entry;
+        await ShowAsync();
+        if (open is not null && Rows.FirstOrDefault(r => MidiBrowserViewModel.Same(r.Entry, open)) is { } again) OpenPart(again);
+    }
 
     // ---- the quick view ----
 
@@ -152,4 +202,28 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
 
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>
         midi.MakeDrag(items.Count > 0 ? items : Selected is { } s ? [s] : []);
+}
+
+/// <summary>One of a song's parts on its "MIDI that fits" tab: on, to fit to and play with, or left out.</summary>
+public sealed partial class SongPart(MidiChannel channel, Action changed) : ObservableObject
+{
+    bool _quiet;
+
+    public MidiChannel Channel => channel;
+    public string Name => channel.Name;
+    public string Tip => $"{channel.Kind} · {channel.Notes.Count:N0} notes" + (channel.Plugin.Length > 0 ? $" · {channel.Plugin}" : "");
+
+    [ObservableProperty] bool _isOn = true;
+
+    partial void OnIsOnChanged(bool value)
+    {
+        if (!_quiet) changed();
+    }
+
+    internal void SetQuietly(bool on)
+    {
+        _quiet = true;
+        IsOn = on;
+        _quiet = false;
+    }
 }
