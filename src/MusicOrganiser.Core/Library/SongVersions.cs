@@ -27,7 +27,8 @@ public sealed record SaveRun(ProjectSummary Last, DateTime Start, DateTime End, 
 /// </summary>
 public static partial class SongVersions
 {
-    [GeneratedRegex(@"^(.+?)_(\d{1,4})$")]
+    /// <summary>"Song_12", or "Song 12" as Bitwig saves are often numbered by hand (up to three digits, so "Swu oct 2026" stays a name).</summary>
+    [GeneratedRegex(@"^(.+?)(?:_(\d{1,4})|\s+(\d{1,3}))$")]
     private static partial Regex Numbered();
 
     /// <summary>Fix's copies: "Didums_70 (fixed)", "Didums_70 (fixed 2)".</summary>
@@ -35,15 +36,15 @@ public static partial class SongVersions
     private static partial Regex FixedTail();
 
     /// <summary>
-    /// "Didums_70" → ("Didums", 70); "Didums" → ("Didums", 1). A fixed copy counts as the save it was made from:
-    /// "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves.
+    /// "Didums_70" → ("Didums", 70); "analog full set nb 36" → ("analog full set nb", 36); "Didums" → ("Didums", 1).
+    /// A fixed copy counts as the save it was made from: "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves.
     /// </summary>
     public static (string Song, int Number) Split(string name)
     {
         name = FixedTail().Replace(name, "");
         var m = Numbered().Match(name);
         return m.Success && m.Groups[1].Value.Trim().Length > 0
-            ? (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Value))
+            ? (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value))
             : (name, 1);
     }
 

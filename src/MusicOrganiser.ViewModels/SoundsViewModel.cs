@@ -179,6 +179,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         _listenToNew = db.GetSetting(ListenToNewKey) != "0";
         _similarCount = int.TryParse(db.GetSetting(SimilarCountKey), out var similar) && similar > 0 ? similar : 12;
         _sweepMs = int.TryParse(db.GetSetting(SweepKey), out var sweep) && sweep > 0 ? sweep : 90;
+        _stepMs = int.TryParse(db.GetSetting(StepKey), out var step) && step > 0 ? step : 250;
         _viewMode = db.GetSetting(ViewKey) is List or Galaxy ? db.GetSetting(ViewKey)! : Tiles;
         _placedBy = db.GetSetting(GalaxyBasisKey) is { } basis && PlacedByChoices.Contains(basis) ? basis : SoundOrganiser.Both;
         _colourBy = db.GetSetting(GalaxyColourKey) is { } c && ColourChoices.Contains(c) ? c : "Type";
@@ -846,7 +847,6 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// </summary>
     public void PlayClicked()
     {
-        _passingNext = null;
         if (Selected is not { } s || IsPreviewing(s)) return;
         StartPreview(s);
     }
@@ -857,40 +857,40 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// </summary>
     public void PlayPicked()
     {
-        _passingNext = null;
         if (!AutoPlay || Selected is not { } s || IsPreviewing(s)) return;
         StartPreview(s);
     }
 
     /// <summary>
-    /// An arrow key held down moved onto another sound: with Autoplay on, each sound it passes plays, a short piece
-    /// each (a new one starts at most every <see cref="PassingEveryMs"/> ms, the newest winning), and the sound the key
-    /// is let go on plays in full (<see cref="PlayPicked"/>, from the key coming up).
+    /// An arrow key moved onto another sound: with Autoplay on, it plays at once. Held down, the key moves on no faster
+    /// than <see cref="StepMs"/> (see <see cref="MayStep"/>), so every sound it lands on plays while it's highlighted and
+    /// none is skipped (Solomon's 19 Oct note); the one the key is let go on plays in full (<see cref="PlayPicked"/>).
     /// </summary>
     public void PlayPassing()
     {
         if (!AutoPlay || Selected is not { } s || IsPreviewing(s)) return;
-        if (System.Diagnostics.Stopwatch.GetElapsedTime(_passingStarted).TotalMilliseconds >= PassingEveryMs)
-        {
-            StartPreview(s);
-            return;
-        }
-        _passingNext = s;
-        (_passingTimer ??= Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(PassingEveryMs), PlayNextPassing)).Start();
+        StartPreview(s);
     }
 
-    /// <summary>How often a held arrow key starts the next sound: long enough to hear a little of each.</summary>
-    public const int PassingEveryMs = 150;
+    public const string StepKey = "sound_step_ms";
+    public static IReadOnlyList<int> StepChoices { get; } = [150, 250, 400, 600, 1000];
+    /// <summary>How long each sound plays while a held arrow key steps through them, in milliseconds (Settings › Sounds).</summary>
+    [ObservableProperty] int _stepMs;
 
-    long _passingStarted;
-    Sound? _passingNext;
-    IUiTimer? _passingTimer;
+    partial void OnStepMsChanged(int value) => _db.SetSetting(StepKey, value.ToString());
 
-    void PlayNextPassing()
+    long _steppedAt;
+
+    /// <summary>
+    /// Whether an arrow key may move the highlight now. A press always may; a key held down (its repeats) waits until
+    /// the sound it's on has played for <see cref="StepMs"/>, so what you see and what you hear stay together.
+    /// </summary>
+    public bool MayStep(bool held)
     {
-        _passingTimer?.Stop();
-        if (_passingNext is { } next && next == Selected && !IsPreviewing(next)) StartPreview(next);
-        _passingNext = null;
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (held && System.Diagnostics.Stopwatch.GetElapsedTime(_steppedAt, now).TotalMilliseconds < StepMs) return false;
+        _steppedAt = now;
+        return true;
     }
 
     /// <summary>The sound is playing, or still being opened to play.</summary>
@@ -899,7 +899,6 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>A preview (not a deliberate play): opened off the UI thread, so the arrow keys never wait for the disk.</summary>
     void StartPreview(Sound s)
     {
-        _passingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         _preview = s.Path;
         Previews.Play(s.Path);
         _clock.Start();

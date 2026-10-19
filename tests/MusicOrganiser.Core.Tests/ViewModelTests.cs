@@ -132,7 +132,7 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task A_fixed_copy_is_listed_with_its_song_and_still_asks_whether_it_loaded_after_leaving_it()
+    public async Task A_fixed_copy_waits_out_of_the_songs_saves_until_kept_and_still_asks_whether_it_loaded_after_leaving_it()
     {
         // The sample library sits outside the projects' folder: a kick inside it would count as found (SampleLocator).
         var libRoot = Fixtures.TempDir();
@@ -153,10 +153,10 @@ public class ViewModelTests : IDisposable
         Assert.Equal(@"FL Studio looked for: C:\Samples\Drums\Kick 01.wav", kick.LookedFor);
         await detail.SaveFixedCommand.ExecuteAsync(null);
 
-        // Listed straight away as the song's newest save, still picked, still asking.
+        // Until it's kept, the song still opens the original and Older saves leave the copy out; still picked, still asking.
         var song = projects.Items.Single(i => i.Daw == "FL Studio");
-        Assert.Equal("Night Drive (fixed)", song.FileName);
-        Assert.Equal(["Night Drive"], song.OlderSaves.Select(o => o.Name));
+        Assert.Equal("Night Drive", song.FileName);
+        Assert.Empty(song.OlderSaves);
         Assert.Same(song, projects.Selected);
         Assert.True(projects.Detail!.HasPendingFix);
 
@@ -173,7 +173,13 @@ public class ViewModelTests : IDisposable
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.True(projects.Detail!.HasPendingFix);
-        projects.Detail.KeepFixedCommand.Execute(null);
+        await projects.Detail.KeepFixedCommand.ExecuteAsync(null);
+
+        // Kept: now it's the song's newest save, the one Open uses, with the original under Older saves.
+        song = projects.Items.Single(i => i.Daw == "FL Studio");
+        Assert.Equal("Night Drive (fixed)", song.FileName);
+        Assert.Equal(["Night Drive"], song.OlderSaves.Select(o => o.Name));
+        Assert.Same(song, projects.Selected);
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.False(projects.Detail!.HasPendingFix);
@@ -1074,27 +1080,36 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public void A_held_arrow_key_plays_the_sounds_it_passes_a_little_each_and_the_last_in_full()
+    public void A_held_arrow_key_plays_every_sound_it_lands_on_and_waits_for_each_before_moving_on()
     {
         var played = new List<string>();
         ((HeadlessUi)Ui.Current).Player = () => new Recorder(played);
         var lab = new MainViewModel(_db, _sounds).Sounds;
         lab.AutoPlay = true;
+        Assert.Equal(250, lab.StepMs);   // until changed in Settings › Sounds
         var (kick, snare, hat) = (new Sound { Path = "kick.wav" }, new Sound { Path = "snare.wav" }, new Sound { Path = "hat.wav" });
 
-        // Key repeats come every 30 ms or so: the first sound plays at once, the ones passed straight after wait their turn...
+        // A press always moves; the key's repeats straight after (every 30 ms or so) don't, so the highlight stays on
+        // the sound that's playing...
+        Assert.True(lab.MayStep(held: false));
         lab.Selected = kick;
         lab.PlayPassing();
-        lab.Selected = snare;
-        lab.PlayPassing();
-        lab.Selected = hat;
-        lab.PlayPassing();
+        Assert.False(lab.MayStep(held: true));
+        Assert.False(lab.MayStep(held: true));
         Assert.Equal(["kick.wav"], played);
 
-        // ...and the sound the key is let go on plays.
-        lab.PlayPicked();
-        Assert.Equal(["kick.wav", "hat.wav"], played);
+        // ...and once it has played its share, the next one it lands on plays too: none is skipped.
+        lab.StepMs = 0;
+        Assert.True(lab.MayStep(held: true));
+        lab.Selected = snare;
+        lab.PlayPassing();
+        Assert.True(lab.MayStep(held: true));
+        lab.Selected = hat;
+        lab.PlayPassing();
+        Assert.Equal(["kick.wav", "snare.wav", "hat.wav"], played);
         Assert.Equal(0, hat.Plays);   // still only a preview
+        lab.StepMs = 600;
+        Assert.Equal(600, new MainViewModel(_db, _sounds).Sounds.StepMs);   // kept
     }
 
     [Fact]
