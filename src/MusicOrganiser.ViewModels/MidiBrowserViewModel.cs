@@ -406,8 +406,25 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     partial void OnTempoChanged(double? value)
     {
         OnPropertyChanged(nameof(TempoValue));
-        _ = RefreshPlayingAsync();
+        _ = RefreshAtNewTempoAsync();
     }
+
+    int _tempoRequest;
+
+    /// <summary>
+    /// What's playing, heard at the new tempo once the slider rests: each step of a drag rendered the whole part again
+    /// (a minute or more of sound), so playback ran dry and the window lagged (Solomon, 2026-10-19: "when i was moving
+    /// the tempo slider and it was laggy").
+    /// </summary>
+    async Task RefreshAtNewTempoAsync()
+    {
+        var request = ++_tempoRequest;
+        if (UiWork.InBackground) await Task.Delay(TempoSettleMs);
+        if (request == _tempoRequest) await RefreshPlayingAsync();
+    }
+
+    /// <summary>How long the tempo slider rests before what's playing is heard at its tempo.</summary>
+    const int TempoSettleMs = 300;
 
     [RelayCommand]
     void OwnTempo() => Tempo = null;
