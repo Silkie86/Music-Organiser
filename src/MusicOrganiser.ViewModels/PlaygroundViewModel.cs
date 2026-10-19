@@ -1827,6 +1827,115 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     public double ViewFrom => Length <= 0 || ViewLength <= 0 || ViewLength >= Length ? 0 : Math.Clamp(ViewStart, 0, Length - ViewSpan) / (double)Length;
     public double ViewTo => Length <= 0 || ViewLength <= 0 || ViewLength >= Length ? 1 : ViewFrom + ViewSpan / (double)Length;
 
+    void Zoom(double by)
+    {
+        var span = (long)Math.Round(ViewSpan * by);
+        if (span >= Length) { ViewLength = 0; ViewStart = 0; return; }
+        span = Math.Max(Ppq, span);
+        // round the play marker, as Ctrl + scroll zooms round the pointer
+        var around = Math.Clamp(Cursor, 0, Length);
+        var share = ViewLength <= 0 ? around / (double)Math.Max(1, Length) : (around - ViewStart) / (double)ViewSpan;
+        share = Math.Clamp(share, 0, 1);
+        ViewStart = Math.Clamp(around - (long)(share * span), 0, Math.Max(0, Length - span));
+        ViewLength = span;
+    }
+
+    /// <summary>Bitwig's "zoom to fit": the highlight fills the timeline, or when it already does (or there's none), the whole idea.</summary>
+    void ZoomToFit()
+    {
+        if (Loop is { } r && (ViewStart != r.Start || ViewLength != r.Length) && r.Length < Length)
+        {
+            ViewStart = r.Start;
+            ViewLength = r.Length;
+        }
+        else { ViewStart = 0; ViewLength = 0; }
+    }
+
+    // ---- keyboard shortcuts ----
+
+    /// <summary>The app's shortcut list, whose Playground keys this page answers (Settings › Shortcuts changes them).</summary>
+    public ShortcutsViewModel Shortcuts => _main.Shortcuts;
+
+    /// <summary>The ? cheat sheet: open, and what's on it.</summary>
+    [ObservableProperty] bool _cheatSheetOpen;
+    public IReadOnlyList<ShortcutRow> CheatSheet => Shortcuts.For(ShortcutsViewModel.Playground);
+    partial void OnCheatSheetOpenChanged(bool value) { if (value) OnPropertyChanged(nameof(CheatSheet)); }
+    [RelayCommand] void CloseCheatSheet() => CheatSheetOpen = false;
+
+    /// <summary>Does what a Playground shortcut is for; false when there was nothing for it to do (so the key goes on to the box or list it was pressed in).</summary>
+    public bool RunShortcut(string id)
+    {
+        var clip = SelectedClip;
+        switch (id)
+        {
+            case "playground.play": PlayCommand.Execute(null); return true;
+            case "playground.loop": LoopOn = !LoopOn; Message = LoopOn ? "Loop on" : "Loop off"; return true;
+            case "playground.undo": Undo(); return true;
+            case "playground.redo": Redo(); return true;
+            case "playground.save": SaveIdea(); return true;
+            case "playground.help": CheatSheetOpen = !CheatSheetOpen; return true;
+            case "playground.zoomIn": Zoom(0.5); return true;
+            case "playground.zoomOut": Zoom(2); return true;
+            case "playground.zoomFit": ZoomToFit(); return true;
+        }
+        if (clip is null) return false;
+        switch (id)
+        {
+            case "playground.duplicate": DuplicateClip(clip); break;
+            case "playground.split": SplitClip(clip); break;
+            case "playground.delete": RemoveClip(clip); break;
+            case "playground.nudgeLeft": Nudge(clip, -Grid); break;
+            case "playground.nudgeRight": Nudge(clip, Grid); break;
+            case "playground.nudgeBarLeft": Nudge(clip, -Bar); break;
+            case "playground.nudgeBarRight": Nudge(clip, Bar); break;
+            case "playground.up": MoveClip(clip, 1); break;
+            case "playground.down": MoveClip(clip, -1); break;
+            case "playground.octaveUp": MoveClip(clip, 12); break;
+            case "playground.octaveDown": MoveClip(clip, -12); break;
+            case "playground.fitAgain": if (clip.CanFitAgain) FitAgain(clip); break;
+            default: return false;
+        }
+        return true;
+    }
+
+    /// <summary>The picked clip slid along its track, as dragging it does (so it fits the chords where it lands).</summary>
+    void Nudge(ClipRow row, long by)
+    {
+        if (row.Clip.Start + by < 0) by = -row.Clip.Start;
+        if (by == 0) return;
+        ChangeClip(new ClipEdit(row.Track.Layer, row.Clip, Layers.IndexOf(row.Track), row.Clip.Start + by, row.Clip.Length, row.Clip.Offset));
+    }
+
+    /// <summary>
+    /// Bitwig's Split: the clip cut in two at the play marker, or at the highlight's edges when the highlight is over it,
+    /// each bit playing just as it did.
+    /// </summary>
+    internal void SplitClip(ClipRow row)
+    {
+        var clip = row.Clip;
+        var cuts = (Loop is { } r && r.Start < clip.End && r.End > clip.Start ? new[] { r.Start, r.End } : [Cursor])
+            .Where(t => t > clip.Start && t < clip.End).Distinct().Order().ToList();
+        if (cuts.Count == 0)
+        {
+            Message = "Put the play marker (click the bar numbers) or the highlight inside the clip to split it there.";
+            return;
+        }
+        Remember();
+        var layer = row.Track.Layer;
+        var at = layer.Clips.IndexOf(clip);
+        layer.Clips.RemoveAt(at);
+        var edges = new List<long> { clip.Start };
+        edges.AddRange(cuts);
+        edges.Add(clip.End);
+        var pieces = edges.Zip(edges.Skip(1), (a, b) => Piece(clip, a, b)).ToList();
+        layer.Clips.InsertRange(at, pieces);
+        layer.Render();
+        row.Track.Changed();
+        SelectedClip = new ClipRow(this, row.Track, pieces[1]);
+        Changed(harmony: false);
+        Message = $"{clip.Name} split in {pieces.Count}.";
+    }
+
     bool _playing;
     IAudioPlayer? _player;
     IUiTimer? _clock;

@@ -514,15 +514,6 @@ public sealed class TimelineView : Control
         InvalidateVisual();
     }
 
-    protected override void OnKeyDown(KeyEventArgs e)
-    {
-        base.OnKeyDown(e);
-        if (e.Key is not (Key.Delete or Key.Back) || Selected is not { } clip || Tracks?.FirstOrDefault(t => t.Clips.Contains(clip)) is not { } track) return;
-        var pick = new ClipPick(track.Layer, clip);
-        if (DeleteCommand?.CanExecute(pick) == true) DeleteCommand.Execute(pick);
-        e.Handled = true;
-    }
-
     PointerPressedEventArgs? _press;
     (PlaygroundLabel Label, Point At)? _labelDrag;
     bool _onRuler;
