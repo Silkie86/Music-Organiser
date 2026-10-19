@@ -998,11 +998,13 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// a section of a song to build on. Its other parts are then never suggested for this section.
     /// </summary>
     [RelayCommand]
-    async Task BringSong(ProjectItem? project)
+    Task BringSong(ProjectItem? project) => project is null ? Task.CompletedTask : BringSongAsync(project.Path, project.Name);
+
+    async Task<bool> BringSongAsync(string path, string songName)
     {
-        if (project is null || Readers.For(project.Path) is not { } reader) return;
+        if (Readers.For(path) is not { } reader) return false;
         SongChoicesOpen = false;
-        Message = $"Reading {project.Name}…";
+        Message = $"Reading {songName}…";
         try
         {
             var from = (long)Math.Max(0, FromBar - 1) * Bar;
@@ -1011,7 +1013,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var parts = await UiWork.Run(() =>
             {
                 var found = new List<(string Name, string Role, List<NoteEvent> Notes)>();
-                foreach (var c in reader.ExtractChannels(project.Path))
+                foreach (var c in reader.ExtractChannels(path))
                 {
                     // Notes held into the first bar (a pushed chord, a tie) come in too, cut to start there.
                     var notes = MidiBrowserViewModel.Cut(PhraseAnalyser.Normalise(c.Notes, c.Ppq, keepPlace: true), from, from + length);
@@ -1023,19 +1025,55 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             });
             if (parts.Count == 0)
             {
-                Message = $"{project.Name} has no notes from bar {FromBar} for {Section.Bars} bars.";
-                return;
+                Message = $"{songName} has no notes from bar {FromBar} for {Section.Bars} bars.";
+                return false;
             }
             Remember();
-            foreach (var (name, role, notes) in parts) AddLayer(name, role, notes, project.Path);
+            foreach (var (name, role, notes) in parts) AddLayer(name, role, notes, path);
             Changed();
-            Message = $"Brought in {parts.Count} parts of {project.Name}, bars {FromBar}–{FromBar + Section.Bars - 1}. Its parts won't be suggested for this section.";
+            Message = $"Brought in {parts.Count} parts of {songName}, bars {FromBar}–{FromBar + Section.Bars - 1}. Its parts won't be suggested for this section.";
             SongSearch = "";
+            return true;
         }
         catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
         {
-            Message = $"Couldn't read {project.Name}: {e.Message}";
+            Message = $"Couldn't read {songName}: {e.Message}";
+            return false;
         }
+    }
+
+    /// <summary>
+    /// From a song's "MIDI that fits" tab (Solomon, 2026-10-19: "Open in Playground" to work an idea up): a new section
+    /// named after the song, with the song's bars where the part fits brought in to build on, the part added on top,
+    /// and the Playground page shown.
+    /// </summary>
+    public async Task OpenFromSongAsync(string path, string songName, MidiEntry? entry = null, IReadOnlyList<NoteEvent>? notes = null,
+                                        string? title = null, long at = 0)
+    {
+        StopPlaying();
+        var bars = notes is { Count: > 0 } ? Math.Clamp(PhraseAnalyser.BarsOf(notes), 1, GrowBars) : NewBars;
+        if (Section.Layers.Count > 0 || ChordsTyped)
+        {
+            Remember();
+            _session.Sections.Add(new PlaygroundSection { Name = NextSectionName(), Bars = bars });
+            _session.Current = _session.Sections.Count - 1;
+            Show();
+            Changed(harmony: false);
+        }
+        else
+        {
+            Section.Bars = bars;
+            _showing = true;
+            Bars = bars;
+            _showing = false;
+        }
+        FromBar = (int)(Math.Max(0, at) / Bar) + 1;
+        if (_main.Nav.FirstOrDefault(n => n.Page == this) is { } page) _main.SelectedNav = page;
+        var brought = await BringSongAsync(path, songName);
+        if (entry is not null && notes is { Count: > 0 }) AddFromLibrary(entry, notes, title);
+        Message = entry is null
+            ? Message
+            : $"Section {SectionName}: {title ?? entry.Title} on {(brought ? $"{songName}, bars {FromBar}–{FromBar + Section.Bars - 1}" : "its own")}. Mute the song's parts to hear it alone; Undo takes it out.";
     }
 
     // ---- loop points ----

@@ -21,8 +21,8 @@
 
     <DockPanel>
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-            <Button DockPanel.Dock="Right" Content="Open on the MIDI page" Command="{Binding OpenInMidiPageCommand}" VerticalAlignment="Center"
-                    ToolTip.Tip="The same list with search, every kind, and What goes with this?" />
+            <Button DockPanel.Dock="Right" Content="Open in Playground" Command="{Binding OpenInPlaygroundCommand}" VerticalAlignment="Center"
+                    ToolTip.Tip="Work the idea up on the Playground: the picked part on top of the bars of this song it fits, in a new section" />
             <StackPanel Spacing="6">
                 <TextBlock Text="{Binding Status}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                 <ListBox Classes="chips" ItemsSource="{x:Static vm:SongMidiViewModel.Kinds}" SelectedItem="{Binding Kind}">

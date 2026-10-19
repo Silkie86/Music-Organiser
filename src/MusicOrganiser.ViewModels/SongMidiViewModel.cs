@@ -115,6 +115,12 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
         await midi.FitToProjectAsync(path, name);
     }
 
+    /// <summary>The picked part on the Playground, on top of the bars of this song it fits, to work the idea up there.</summary>
+    [RelayCommand]
+    Task OpenInPlayground() => Selected is { } row
+        ? main.Playground.OpenFromSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0)
+        : main.Playground.OpenFromSongAsync(path, name);
+
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>
         midi.MakeDrag(items.Count > 0 ? items : Selected is { } s ? [s] : []);
 }
