@@ -117,7 +117,7 @@
                 <StackPanel Spacing="6">
                     <DockPanel>
                         <Button DockPanel.Dock="Right" Content="Close" Classes="row" Command="{Binding CloseDoubtsCommand}" />
-                        <TextBlock Text="Are these saves of one song?" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding QuestionText}" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap" />
                     </DockPanel>
                     <TextBlock Text="{Binding Doubt.Why}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding DoubtA}" TextWrapping="Wrap" />
@@ -126,9 +126,10 @@
                         <Button Content="{Binding KeepAText}" Classes="accent" Margin="0,0,6,6" Command="{Binding SameSongCommand}" CommandParameter="A"
                                 ToolTip.Tip="Put both under this name" />
                         <Button Content="{Binding KeepBText}" Margin="0,0,6,6" Command="{Binding SameSongCommand}" CommandParameter="B"
+                                IsVisible="{Binding KeepBText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                 ToolTip.Tip="Put both under this name" />
-                        <Button Content="Different songs" Margin="0,0,6,6" Command="{Binding DifferentSongsCommand}"
-                                ToolTip.Tip="Keep them apart and don't ask about these two again" />
+                        <Button Content="{Binding DifferentText}" Margin="0,0,6,6" Command="{Binding DifferentSongsCommand}"
+                                ToolTip.Tip="Keep them apart and don't ask about these again" />
                         <Button Content="Skip" Margin="0,0,6,6" Command="{Binding SkipDoubtCommand}"
                                 ToolTip.Tip="Ask again next time the app starts" />
                     </WrapPanel>

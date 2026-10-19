@@ -25,6 +25,9 @@ public sealed class SongChoices(IReadOnlyDictionary<string, string> joined, IRea
         return key;
     }
 
+    /// <summary>Whether you took this save out of its song (and maybe put it under another).</summary>
+    public bool IsSplit(string path) => _split.Contains(path.ToLowerInvariant());
+
     /// <summary>The song of one save split off from its song.</summary>
     public static string SplitKey(string path) => "save:" + path.ToLowerInvariant();
 

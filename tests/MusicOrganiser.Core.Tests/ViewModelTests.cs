@@ -155,7 +155,7 @@ public class ViewModelTests : IDisposable
         Save("Sunrize", 6);
         projects = Main().Projects;
         Assert.Equal(["Sunrise", "Sunrize"], new[] { projects.Doubt!.A.Song, projects.Doubt.B.Song }.Order());
-        projects.DifferentSongsCommand.Execute(null);
+        await projects.DifferentSongsCommand.ExecuteAsync(null);
         Assert.Empty(Main().Projects.Doubts);
 
         // Turned off in Settings, nothing is asked.

@@ -197,9 +197,20 @@ public sealed partial class LibraryDb : IDisposable
     public void SetList(string key, IEnumerable<string> values) => SetSetting(key, JsonSerializer.Serialize(values.ToList()));
 
     /// <summary>Your changes to which saves are one song (see <see cref="Library.SongChoices"/>).</summary>
-    public SongChoices SongChoices()
+    public SongChoices SongChoices() => _songChoices ??= ReadSongChoices(null);
+
+    // Kept until you change them, since a scan asks for every new save.
+    volatile SongChoices? _songChoices;
+
+    SongChoices ReadSongChoices(SqliteTransaction? tx)
     {
-        var rows = Query("SELECT kind, a, b FROM song_choices", r => (Kind: Str(r, "kind"), A: Str(r, "a"), B: Str(r, "b")));
+        var rows = new List<(string Kind, string A, string B)>();
+        using (var cmd = Cmd("SELECT kind, a, b FROM song_choices"))
+        {
+            cmd.Transaction = tx;
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) rows.Add((Str(r, "kind"), Str(r, "a"), Str(r, "b")));
+        }
         return new SongChoices(rows.Where(r => r.Kind == "join").ToDictionary(r => r.A, r => r.B),
                                rows.Where(r => r.Kind == "split").Select(r => r.A).ToList(),
                                rows.Where(r => r.Kind == "apart").Select(r => r.A).ToList());
@@ -214,14 +225,23 @@ public sealed partial class LibraryDb : IDisposable
         if (from == to || SongChoices().Follow(to) == from) return false;
         Exec("INSERT INTO song_choices VALUES ('join', $a, $b) ON CONFLICT(kind, a) DO UPDATE SET b = excluded.b", ("$a", from), ("$b", to));
         Exec("DELETE FROM song_choices WHERE kind = 'apart' AND a = $p", ("$p", Library.SongChoices.Pair(from, to)));
+        _songChoices = null;
         return true;
     }
 
     /// <summary>Takes one save out of its song into a song of its own (<see cref="Library.SongChoices.SplitKey"/>).</summary>
-    public void SplitSave(string path) => Exec("INSERT OR IGNORE INTO song_choices VALUES ('split', $a, '')", ("$a", path.ToLowerInvariant()));
+    public void SplitSave(string path)
+    {
+        Exec("INSERT OR IGNORE INTO song_choices VALUES ('split', $a, '')", ("$a", path.ToLowerInvariant()));
+        _songChoices = null;
+    }
 
     /// <summary>Remembers that two songs are different, so the app stops asking.</summary>
-    public void KeepApart(string a, string b) => Exec("INSERT OR IGNORE INTO song_choices VALUES ('apart', $a, '')", ("$a", Library.SongChoices.Pair(a, b)));
+    public void KeepApart(string a, string b)
+    {
+        Exec("INSERT OR IGNORE INTO song_choices VALUES ('apart', $a, '')", ("$a", Library.SongChoices.Pair(a, b)));
+        _songChoices = null;
+    }
 
     /// <summary>Undoes your changes to a song: its joins (either way) and the saves split off from it go back to the app's guess.</summary>
     public void ForgetSongChoices(string key, IEnumerable<string> paths)
@@ -232,6 +252,7 @@ public sealed partial class LibraryDb : IDisposable
             Exec("DELETE FROM song_choices WHERE kind = 'split' AND a = $p", ("$p", p.ToLowerInvariant()));
             Exec("DELETE FROM song_choices WHERE kind = 'join' AND a = $k", ("$k", Library.SongChoices.SplitKey(p)));
         }
+        _songChoices = null;
     }
 
     public IReadOnlyList<string> Roots() => Query("SELECT path FROM roots ORDER BY path", r => (string)r["path"]);
@@ -349,33 +370,39 @@ public sealed partial class LibraryDb : IDisposable
     }
 
     /// <summary>
-    /// A new numbered save (Song_12 next to Song_11) takes over the status, rating, notes and
-    /// tags you gave the song, so they stay with it as it moves on.
+    /// A new save of a song (Song_12 next to Song_11, or a Bitwig bored_58 in a folder of its own next to bored_57) takes
+    /// over the status, rating, notes and tags you gave the song, so they stay with it as it moves on. It finds the song the
+    /// way the Projects list groups it (<see cref="SongVersions.Key"/> and your <see cref="Library.SongChoices"/>), and copies
+    /// from the save just before it: the highest number below its own, else the last one saved.
     /// </summary>
     void InheritFromEarlierSave(SqliteTransaction tx, long id, string path)
     {
         var name = Path.GetFileNameWithoutExtension(path);
-        var (song, number) = SongVersions.Split(name);
-        var folder = Path.GetDirectoryName(path);
-        long? from = null;
-        string hardware = "";
-        var best = int.MinValue;
-        using (var cmd = Cmd("SELECT id, name, daw, hardware FROM projects WHERE folder = $f AND id != $id",
-                             ("$f", folder), ("$id", id)))
+        var number = SongVersions.Split(name).Number;
+        var folder = Path.GetDirectoryName(path) ?? "";
+        var daw = Readers.For(path)?.Daw;
+        if (daw is null) return;
+        var choices = _songChoices ??= ReadSongChoices(tx);
+        var song = choices.KeyOf(path, folder, daw, name);
+        // The song's saves sit in its folder, or in folders of their own inside it (Bitwig's): the folder's index finds them.
+        var root = SongVersions.SongFolder(folder, name);
+        var candidates = new List<(long Id, int Number, long Mtime, string Hardware)>();
+        using (var cmd = Cmd("""
+            SELECT id, name, path, folder, mtime, hardware FROM projects
+            WHERE daw = $daw AND id != $id AND (folder = $root OR (folder >= $sub AND folder < $end))
+            """, ("$daw", daw), ("$id", id), ("$root", root), ("$sub", root + Path.DirectorySeparatorChar),
+                 ("$end", root + (char)(Path.DirectorySeparatorChar + 1))))
         {
             cmd.Transaction = tx;
             using var r = cmd.ExecuteReader();
-            var daw = Readers.For(path)?.Daw;
             while (r.Read())
-            {
-                var (s, n) = SongVersions.Split((string)r["name"]);
-                if (!s.Equals(song, StringComparison.OrdinalIgnoreCase) || n >= number || n <= best) continue;
-                if (daw is not null && !daw.Equals(Str(r, "daw"), StringComparison.Ordinal)) continue;
-                best = n;
-                from = (long)r["id"];
-                hardware = Str(r, "hardware");
-            }
+                if (choices.KeyOf(Str(r, "path"), Str(r, "folder"), daw, Str(r, "name")) == song)
+                    candidates.Add(((long)r["id"], SongVersions.Split(Str(r, "name")).Number, Long(r, "mtime"), Str(r, "hardware")));
         }
+        var before = candidates.Where(c => c.Number < number).OrderByDescending(c => c.Number).ThenByDescending(c => c.Mtime).ToList();
+        var pick = before.Count > 0 ? before[0] : candidates.OrderByDescending(c => c.Mtime).FirstOrDefault();
+        long? from = pick.Id == 0 ? null : pick.Id;
+        var hardware = pick.Hardware ?? "";
         if (from is null) return;
 
         var autoTags = hardware.Split(", ", StringSplitOptions.RemoveEmptyEntries).Select(h => h.ToLowerInvariant()).ToHashSet();

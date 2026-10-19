@@ -167,7 +167,8 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
 
     /// <summary>Songs that may be saves of one, waiting for you to say; the first is the one asked about.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(Doubt), nameof(HasDoubts), nameof(ShowDoubtsBanner), nameof(DoubtsText), nameof(DoubtA), nameof(DoubtB), nameof(KeepAText), nameof(KeepBText))]
+    [NotifyPropertyChangedFor(nameof(Doubt), nameof(HasDoubts), nameof(ShowDoubtsBanner), nameof(DoubtsText), nameof(DoubtA), nameof(DoubtB), nameof(KeepAText), nameof(KeepBText),
+                              nameof(QuestionText), nameof(DifferentText))]
     IReadOnlyList<SongDoubt> _doubts = [];
     /// <summary>Whether the question card is open (the banner's Check button).</summary>
     [ObservableProperty]
@@ -181,8 +182,10 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     public string DoubtsText => Doubts.Count == 1 ? "Two songs may be saves of one song." : $"{Doubts.Count} pairs of songs may be saves of one song.";
     public string DoubtA => Doubt is { } d ? Describe(d.A) : "";
     public string DoubtB => Doubt is { } d ? Describe(d.B) : "";
-    public string KeepAText => Doubt is { } d ? $"One song, called {d.A.Song}" : "";
-    public string KeepBText => Doubt is { } d ? $"One song, called {d.B.Song}" : "";
+    public string QuestionText => Doubt is { OneSave: true } d ? $"Is {d.B.Song} a save of {d.A.Song}?" : "Are these saves of one song?";
+    public string KeepAText => Doubt is { } d ? d.OneSave ? $"Yes, a save of {d.A.Song}" : $"One song, called {d.A.Song}" : "";
+    public string KeepBText => Doubt is { OneSave: false } d ? $"One song, called {d.B.Song}" : "";
+    public string DifferentText => Doubt is { OneSave: true } ? "No, its own song" : "Different songs";
 
     static string Describe(SongGroup g) =>
         $"{g.Song}: {(g.SaveCount == 1 ? "1 save" : $"{g.SaveCount} saves")}, newest {g.Latest.Name} on {g.Latest.Modified:d MMM yyyy}, " +
@@ -193,17 +196,30 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     async Task SameSong(string keep)
     {
         if (Doubt is not { } d) return;
+        if (d.OneSave)
+        {
+            _db.KeepApart(d.A.Key, d.B.Key);   // answered: it stays where it is, and isn't asked about again
+            Next(d);
+            return;
+        }
         var (into, from) = keep == "B" ? (d.B, d.A) : (d.A, d.B);
         _db.JoinSong(from.Key, into.Key);
         await ReloadAsync(select: Selected is { } open && (open.SongKey == from.Key || open.SongKey == into.Key) ? into.Latest.Path : null);
         CheckingDoubts = HasDoubts && CheckingDoubts;
     }
 
-    /// <summary>They're different songs: don't ask again.</summary>
+    /// <summary>They're different songs: don't ask again. A marked save is taken out into a song of its own.</summary>
     [RelayCommand]
-    void DifferentSongs()
+    async Task DifferentSongs()
     {
         if (Doubt is not { } d) return;
+        if (d.OneSave)
+        {
+            _db.SplitSave(d.B.Latest.Path);
+            await ReloadAsync(select: Selected is { } open && open.SongKey == d.A.Key ? open.Path : null);
+            CheckingDoubts = HasDoubts && CheckingDoubts;
+            return;
+        }
         _db.KeepApart(d.A.Key, d.B.Key);
         Next(d);
     }
