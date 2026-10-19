@@ -80,7 +80,7 @@ public static class PhraseJoiner
             }
             case ".bwproject" or ".song":
             {
-                var arrangement = ArrangementReader.Read(path).FirstOrDefault();
+                var arrangement = ArrangementReader.Read(path, findAudio: false).FirstOrDefault();
                 // Clips only in Bitwig's clip launcher are laid out scene by scene for the preview; that's not a song's order.
                 if (arrangement is null || arrangement.Notes.Any(n => n.Contains("clip launcher", StringComparison.Ordinal))) return [];
                 long Ticks(double beats) => (long)Math.Round(beats * PhraseAnalyser.Ppq);
@@ -104,7 +104,7 @@ public static class PhraseJoiner
     public static IReadOnlyList<MidiChannel>? ArrangedChannels(string path)
     {
         if (Path.GetExtension(path).ToLowerInvariant() is not (".bwproject" or ".song")) return null;
-        var arrangement = ArrangementReader.Read(path).FirstOrDefault();
+        var arrangement = ArrangementReader.Read(path, findAudio: false).FirstOrDefault();
         if (arrangement is null || arrangement.Notes.Any(n => n.Contains("clip launcher", StringComparison.Ordinal))) return null;
         long Ticks(double beats) => (long)Math.Round(beats * PhraseAnalyser.Ppq);
         var channels = arrangement.Lanes.Where(l => l.Kind == LaneKind.Instrument && !l.Muted)

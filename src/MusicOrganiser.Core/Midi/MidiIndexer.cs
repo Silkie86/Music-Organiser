@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
 
@@ -38,8 +39,9 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     public Result Run(IProgress<ScanProgress>? progress = null, CancellationToken ct = default, bool retryFailed = false)
     {
         progress?.Report(new("Finding MIDI", 0, 0, ""));
+        var finding = Stopwatch.StartNew();
         var wanted = new Dictionary<string, MidiSource>(StringComparer.OrdinalIgnoreCase);
-        var readable = library.Projects().Where(p => !p.FileMissing && p.Error is null && Readers.For(p.Path) is not null).ToList();
+        var readable = library.ProjectFiles().Where(p => !p.FileMissing && p.Error is null && Readers.For(p.Path) is not null).ToList();
         // The same song grouping as the Projects page's "One row per song", so its newest save is the one read.
         var projects = library.GetSetting(OlderSavesKey) == "1" ? readable : SongVersions.Group(readable).Select(g => g.Latest);
         foreach (var p in projects)
@@ -62,6 +64,8 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                         failedBefore.Contains(s.Path))
             .OrderByDescending(s => s.Mtime));   // newest first: what you made lately shows up first
         var total = todo.Count;
+        if (finding.Elapsed.TotalSeconds >= SlowSeconds)
+            AppLog.Info("MIDI", $"Finding new and changed files took {finding.Elapsed.TotalSeconds:0.0} s ({wanted.Count:N0} files, {total:N0} to read)");
         if (total == 0) return new(0, 0, forget.Count, 0);
 
         var results = new BlockingCollection<(MidiSource, int, IReadOnlyList<IndexedPhrase>, string?)>(boundedCapacity: 256);
@@ -85,7 +89,16 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                     try
                     {
                         // In one of the app's shared background slots, so a scan or Deep listen running too still leaves cores free.
-                        var found = Parallelism.Background(() => source.Kind == MidiSource.File ? FromFile(source.Path, folders) : FromProject(source.Path));
+                        var asked = Stopwatch.GetTimestamp();
+                        var began = asked;
+                        var paused = GC.GetTotalPauseDuration();
+                        var found = Parallelism.Background(() =>
+                        {
+                            began = Stopwatch.GetTimestamp();
+                            return source.Kind == MidiSource.File ? FromFile(source.Path, folders) : FromProject(source.Path);
+                        });
+                        LogIfSlow(source, found.Count, Stopwatch.GetElapsedTime(asked, began), Stopwatch.GetElapsedTime(began),
+                                  GC.GetTotalPauseDuration() - paused);
                         results.Add((source, Version, found, null), ct);
                     }
                     catch (OperationCanceledException) { break; }
@@ -139,6 +152,23 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         ct.ThrowIfCancellationRequested();
         progress?.Report(new("Done", total, total, ""));
         return new(read, failed, forget.Count, phrases);
+    }
+
+    /// <summary>A file that takes this long (or waits this long for a free slot) is noted in the log, with why.</summary>
+    public const double SlowSeconds = 2;
+
+    /// <summary>
+    /// Notes a slow file in the log: how long it waited for a free slot (other background work had them all), how long
+    /// reading it took, and how long the app spent cleaning up memory meanwhile. On Solomon's PC songs read here in under a
+    /// second took about five each (2026-10-19), and his log is the only place that can say why.
+    /// </summary>
+    static void LogIfSlow(MidiSource source, int parts, TimeSpan waited, TimeSpan took, TimeSpan cleaning)
+    {
+        if (waited.TotalSeconds < SlowSeconds && took.TotalSeconds < SlowSeconds) return;
+        var why = new List<string> { $"{source.Size / 1e6:0.#} MB, {parts:N0} parts" };
+        if (waited.TotalSeconds >= 0.5) why.Add($"waited {waited.TotalSeconds:0.0} s for a free background slot first");
+        if (cleaning.TotalSeconds >= 0.5) why.Add($"the app paused {cleaning.TotalSeconds:0.0} s cleaning up memory meanwhile");
+        AppLog.Info("MIDI", $"Slow read: {source.Path} took {took.TotalSeconds:0.0} s ({string.Join("; ", why)})");
     }
 
     /// <summary>Why a file couldn't be read, in a few plain words, for the list of failed ones.</summary>
