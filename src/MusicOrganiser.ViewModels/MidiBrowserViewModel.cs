@@ -852,7 +852,13 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         {
             var token = _indexCts.Token;
             var result = await Task.Run(() => _indexer.Run(progress, token, retryFailed), token);
-            if (result.Read > 0 || result.Forgotten > 0 || _catalogue is null) await LoadAsync();
+            if (result.Read > 0 || result.Forgotten > 0 || _catalogue is null)
+            {
+                var loading = System.Diagnostics.Stopwatch.StartNew();
+                await LoadAsync();
+                if (loading.Elapsed.TotalSeconds >= MidiIndexer.SlowSeconds)
+                    AppLog.Info("MIDI", $"Showing the new list took {loading.Elapsed.TotalSeconds:0.0} s ({_catalogue?.Entries.Count ?? 0:N0} parts)");
+            }
             else Failures = await UiWork.Run(_index.Failures);
             _ = HearAsync();
             card.Finish(result.Read == 0 ? "MIDI up to date" : "MIDI read",

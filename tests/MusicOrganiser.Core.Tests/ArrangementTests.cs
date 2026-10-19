@@ -83,6 +83,21 @@ public class ArrangementTests
     }
 
     [Fact]
+    public void Reading_a_songs_notes_only_never_looks_on_disk_for_its_audio()
+    {
+        // The MIDI page only wants the notes: Solomon's biggest Bitwig song has 2,594 audio clips, and looking for each
+        // one's file on his drives made reading its MIDI crawl.
+        var dir = Fixtures.TempDir();
+        var path = Fixtures.FlStudio25AudioClips(dir);
+        WavWriter.Write(Path.Combine(dir, "Drop.wav"), [new float[4410]], 44100);
+        var lanes = ArrangementReader.Read(path, findAudio: false)[1].Lanes.Where(l => l.Kind == LaneKind.Audio).ToList();
+        Assert.Equal(5, lanes.Count);
+        Assert.All(lanes.SelectMany(l => l.Clips).SelectMany(c => c.Audio), p => Assert.False(p.Found));
+        // And the preview, which does want them, still finds it.
+        Assert.True(ArrangementReader.Read(path)[1].Lanes.First(l => l.Kind == LaneKind.Audio).Clips.Single().Audio.Single().Found);
+    }
+
+    [Fact]
     public void FlPlaylistTracksKeepTheirNamesAndColoursAndTheTimelineItsMarkers()
     {
         var track = new byte[70];

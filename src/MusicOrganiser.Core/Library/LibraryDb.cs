@@ -544,6 +544,21 @@ public sealed partial class LibraryDb : IDisposable
         Query("SELECT value FROM settings WHERE key LIKE 'fix_check:%' AND value <> ''", r => (string)r["value"])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Every project with just its file details (path, name, DAW, folder, size, time, tempo, whether it's missing or
+    /// failed), for work that only needs to know which files there are. <see cref="Projects"/> also counts each one's
+    /// plugins and samples, which on a big library reads most of the database.
+    /// </summary>
+    public IReadOnlyList<ProjectSummary> ProjectFiles() => Query(
+        "SELECT id, path, name, daw, folder, size, mtime, tempo, file_missing, error FROM projects ORDER BY mtime DESC",
+        r => new ProjectSummary
+        {
+            Id = (long)r["id"], Path = (string)r["path"], Name = (string)r["name"], Daw = (string)r["daw"],
+            Folder = Str(r, "folder"), Size = Long(r, "size"),
+            Modified = DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime, Mtime = Long(r, "mtime"),
+            Tempo = r["tempo"] is double t ? t : null, FileMissing = Long(r, "file_missing") == 1, Error = r["error"] as string,
+        });
+
     /// <summary>A DAW's projects with this file name (without the extension, ignoring case), newest first, leaving out moved files.</summary>
     public IReadOnlyList<ProjectSummary> ProjectsNamed(string daw, string name) =>
         Summaries("WHERE p.daw = $daw AND p.name = $name COLLATE NOCASE AND p.file_missing = 0", ("$daw", daw), ("$name", name.Trim()));
