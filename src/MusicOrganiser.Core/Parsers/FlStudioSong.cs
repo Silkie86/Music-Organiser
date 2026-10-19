@@ -191,7 +191,7 @@ public sealed partial class FlStudioReader
     const int EvRootNote = 135;                 // DWORD: the channel's root key as a MIDI note; absent when it's C5 (60)
     const int EvChannelParams = Data + 7;       // 215: the sampler's settings, its time stretching among them
     const int EvEnvelope = Data + 10;           // 218: an envelope and LFO, one each for pan, volume, mod X, mod Y, pitch
-    const int EvChannelLevels = Data + 11;      // 219: i32 pan (0..12800), volume (0..12800), pitch in cents
+    const int EvChannelLevels = Data + 11;      // 219: i32 pan (0..12800), volume (0..12800), pitch in cents; 0..128 before FL 6
     const int EvAutomationLink = Data + 19;     // 227: which control an automation clip moves
     const int EvAutomationPoints = Data + 26;   // 234: an automation clip's points
     const int EvMixerSettings = Data + 17;      // 225: the mixer's settings, 12 bytes each (see MixerSettings)
@@ -277,7 +277,7 @@ public sealed partial class FlStudioReader
                 case EvChannelInsert or EvChannelRoute when channel is not null && !inMixer: routes[channel.Value] = (int)e.Int; break;
                 case EvChannelType when channel is not null && !inMixer: types[channel.Value] = (int)e.Int; break;
                 case EvRootNote when channel is not null && !inMixer && e.Int <= 127: roots[channel.Value] = (int)e.Int; break;
-                case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span) is { } lv:
+                case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span, flp.Version) is { } lv:
                     levels[channel.Value] = lv;
                     break;
                 case EvEnvelope when channel is not null && !inMixer:
@@ -405,11 +405,16 @@ public sealed partial class FlStudioReader
     }
 
     /// <summary>A channel's levels (event 219): pan and volume as 0..1 knob positions, and pitch in cents.</summary>
-    static (double Pan, double Volume, int Pitch)? Levels(ReadOnlySpan<byte> d) =>
-        d.Length < 12 ? null
-        : (Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d) / LevelsFull, 0, 1),
-           Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[4..]) / LevelsFull, 0, 1),
-           Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[8..]), -4800, 4800));
+    static (double Pan, double Volume, int Pitch)? Levels(ReadOnlySpan<byte> d, string version)
+    {
+        if (d.Length < 12) return null;
+        // FL 4 and 5 count pan and volume to 128 (pan 64 is centre), FL 6 on to 12800 (seen in Solomon's saves). Read
+        // with the newer scale, his FL 4 grimey came into Bitwig with every track panned hard left and its fader at the bottom.
+        var full = int.TryParse(version.Split('.')[0], out var major) && major is > 0 and < 6 ? 128 : LevelsFull;
+        return (Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d) / full, 0, 1),
+                Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[4..]) / full, 0, 1),
+                Math.Clamp(BinaryPrimitives.ReadInt32LittleEndian(d[8..]), -4800, 4800));
+    }
 
     /// <summary>
     /// A channel's time stretching, from its sampler settings (event 215, 168 bytes in FL 25): i32 Time at 96, the
