@@ -153,6 +153,8 @@ public sealed partial class ProjectDetailViewModel
         }
         catch (Exception e)
         {
+            // The whole error, with where it happened and which project, so a failure on Solomon's PC can be traced.
+            AppLog.Info("Fix", $"Couldn't save a fixed copy of {Item.Path}: {e}");
             Message = $"Fix couldn't save a fixed copy: {e.Message}";
             card.Fail("Fix couldn't save a fixed copy", e.Message);
         }
