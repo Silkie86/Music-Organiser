@@ -31,7 +31,7 @@ param(
 )
 
 # Raised whenever this script changes, so an older branch's copy never replaces a newer installed one.
-$LauncherVersion = 5
+$LauncherVersion = 6
 
 $ErrorActionPreference = 'Continue'   # git writes progress to stderr, which Windows PowerShell would treat as failure
 $GitHubRepo = 'Silkie86/Music-Organiser'
@@ -263,6 +263,20 @@ function Stop-Watch($Process) {
     Stop-StrayApps
 }
 
+function Wait-ForNote {
+    # The app puts notes\writing.lock up while an F12 note is open (Diagnostics/NoteForClaude.cs). A restart then
+    # would close it half-written, so the restart waits until the note is saved or cancelled.
+    $lock = Join-Path (Join-Path (Join-Path $DataRoot 'MusicOrganiser') 'notes') 'writing.lock'
+    $said = $false
+    while (Test-Path $lock) {
+        $id = 0
+        if (-not [int]::TryParse(((Get-Content $lock -Raw -ErrorAction SilentlyContinue) + '').Trim(), [ref]$id) -or
+            -not (Get-Process -Id $id -ErrorAction SilentlyContinue)) { break }   # left by an app that has gone
+        if (-not $said) { Say 'Waiting for the F12 note to be saved before restarting the app...' 'Yellow'; $said = $true }
+        Start-Sleep -Seconds 2
+    }
+}
+
 function Test-NeedsRestart([string]$From, [string]$To) {
     # Hot reload can change code and screens that already exist, but a running app can't take in a new class, a
     # new screen or a project change: a screen that names a new class fails to reload ("Unable to resolve type"),
@@ -302,6 +316,7 @@ try {
 
         if ($restart) {
             Say "Restarting the app with a fresh build, because $restart (live reload can't take those in)." 'Yellow'
+            Wait-ForNote
             Stop-Watch $watch
             $watch = Start-Watch
             continue

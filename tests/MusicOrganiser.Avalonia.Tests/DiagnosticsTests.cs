@@ -117,6 +117,25 @@ public sealed class DiagnosticsTests : IDisposable
     }
 
     [Fact]
+    public void A_half_written_note_is_kept_until_it_is_saved_or_dropped()
+    {
+        Assert.Null(NoteForClaude.ReadDraft(_dir));
+        NoteForClaude.KeepDraft(_dir, "The galaxy jumps when I");
+        Assert.Equal("The galaxy jumps when I", NoteForClaude.ReadDraft(_dir));   // offered back after a restart
+        NoteForClaude.ClearDraft(_dir);
+        Assert.Null(NoteForClaude.ReadDraft(_dir));
+    }
+
+    [Fact]
+    public void Writing_a_note_puts_up_a_sign_with_the_apps_id()
+    {
+        NoteForClaude.Writing(_dir, true);
+        Assert.Equal(Environment.ProcessId.ToString(), File.ReadAllText(Path.Combine(_dir, NoteForClaude.WritingFile)));
+        NoteForClaude.Writing(_dir, false);
+        Assert.False(File.Exists(Path.Combine(_dir, NoteForClaude.WritingFile)));
+    }
+
+    [Fact]
     public void A_note_without_words_or_picture_still_says_so()
     {
         var text = File.ReadAllText(NoteForClaude.Save(_dir, "", "", null, new DateTime(2026, 10, 15)));

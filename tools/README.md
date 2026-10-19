@@ -91,7 +91,8 @@ never touches Visual Studio's), and puts a "Music Organiser (latest)" shortcut o
 
 While testing, the app keeps a diary of each run in `logs\` in its data folder (the build, the pages opened,
 every warning and error), and F12 saves a note for Claude with a picture of the window in `notes\`. Claude reads
-both folders from the PC, so nothing needs copying out.
+both folders from the PC, so nothing needs copying out. A note being written is kept as it's typed and holds off
+the launcher's automatic restarts until it's saved, so a new build never loses it.
 
 Settings › Self-check runs the app's checks against the real library (folders there, every project opens, how fast
 the sound library loads, the plugin scanner, sound output, how the galaxy draws) and writes a report to
