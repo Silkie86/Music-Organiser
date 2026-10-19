@@ -27,25 +27,39 @@ public sealed record SaveRun(ProjectSummary Last, DateTime Start, DateTime End, 
 /// </summary>
 public static partial class SongVersions
 {
-    /// <summary>"Song_12", or "Song 12" as Bitwig saves are often numbered by hand (up to three digits, so "Swu oct 2026" stays a name).</summary>
-    [GeneratedRegex(@"^(.+?)(?:_(\d{1,4})|\s+(\d{1,3}))$")]
+    [GeneratedRegex(@"^(.+?)_(\d{1,4})$")]
     private static partial Regex Numbered();
+
+    /// <summary>"Song 12", as Solomon numbers Bitwig saves (up to three digits, so "Swu oct 2026" stays a name).</summary>
+    [GeneratedRegex(@"^(.+?)\s+(\d{1,3})$")]
+    private static partial Regex SpaceNumbered();
+
+    /// <summary>
+    /// Names that are a DAW's or a person's stand-in rather than a song's: "Untitled 3" and "Untitled 4" are different
+    /// songs, not saves of one.
+    /// </summary>
+    static readonly HashSet<string> StandIns = new(StringComparer.OrdinalIgnoreCase)
+        { "untitled", "untitled project", "new project", "project", "song", "new song", "track", "idea", "demo", "beat", "test", "sketch" };
 
     /// <summary>Fix's copies: "Didums_70 (fixed)", "Didums_70 (fixed 2)".</summary>
     [GeneratedRegex(@"(\s*\(fixed(\s+\d+)?\))+$", RegexOptions.IgnoreCase)]
     private static partial Regex FixedTail();
 
     /// <summary>
-    /// "Didums_70" → ("Didums", 70); "analog full set nb 36" → ("analog full set nb", 36); "Didums" → ("Didums", 1).
-    /// A fixed copy counts as the save it was made from: "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves.
+    /// "Didums_70" → ("Didums", 70); "Didums" → ("Didums", 1). A fixed copy counts as the save it was made from:
+    /// "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves. For Bitwig, a number after a space counts
+    /// too: "analog full set nb 36" → ("analog full set nb", 36), unless the name before it is a stand-in like "Untitled".
+    /// Other DAWs' "Kick 808" or "Track 2" are left as names (Solomon numbers those with FL Studio's "_2").
     /// </summary>
-    public static (string Song, int Number) Split(string name)
+    public static (string Song, int Number) Split(string name, string? daw = null)
     {
         name = FixedTail().Replace(name, "");
         var m = Numbered().Match(name);
-        return m.Success && m.Groups[1].Value.Trim().Length > 0
-            ? (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value))
-            : (name, 1);
+        if (m.Success && m.Groups[1].Value.Trim().Length > 0) return (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Value));
+        if (daw == "Bitwig Studio" && SpaceNumbered().Match(name) is { Success: true } spaced &&
+            spaced.Groups[1].Value.Trim() is { Length: > 0 } song && !StandIns.Contains(song))
+            return (song, int.Parse(spaced.Groups[2].Value));
+        return (name, 1);
     }
 
     /// <summary>A gap this long between two saves (Solomon's pick: 3 months) starts a new run.</summary>
@@ -70,7 +84,7 @@ public static partial class SongVersions
     public static IReadOnlyList<SaveRun> Runs(IEnumerable<ProjectSummary> saves, int? gapMonths = null)
     {
         var gap = gapMonths ?? RunGapMonths;
-        var ordered = saves.Where(s => !s.FileMissing).OrderBy(s => s.Modified).ThenBy(s => Split(s.Name).Number).ToList();
+        var ordered = saves.Where(s => !s.FileMissing).OrderBy(s => s.Modified).ThenBy(s => Split(s.Name, s.Daw).Number).ToList();
         var runs = new List<List<ProjectSummary>>();
         foreach (var save in ordered)
         {
@@ -112,7 +126,7 @@ public static partial class SongVersions
 
     /// <summary>Saves of the same song share a key: same folder (see <see cref="SongFolder"/>), same DAW, same name before the number.</summary>
     public static string Key(string folder, string daw, string name) =>
-        $"{SongFolder(folder, name)}\u001f{daw}\u001f{Split(name).Song}".ToLowerInvariant();
+        $"{SongFolder(folder, name)}\u001f{daw}\u001f{Split(name, daw).Song}".ToLowerInvariant();
 
     /// <summary>
     /// The folder a song's saves sit in. Bitwig keeps each project in a folder named after it, so saving bored_58 as a new
@@ -138,11 +152,11 @@ public static partial class SongVersions
             .Select(g =>
             {
                 var ordered = g.OrderBy(p => p.FileMissing)
-                               .ThenByDescending(p => Split(p.Name).Number)
+                               .ThenByDescending(p => Split(p.Name, p.Daw).Number)
                                .ThenByDescending(p => p.Modified)
                                .ThenByDescending(p => FixedTail().IsMatch(p.Name))   // saved the same second: the fix came after
                                .ToList();
-                return new SongGroup(Split(ordered[0].Name).Song, ordered[0], ordered.Skip(1).ToList());
+                return new SongGroup(Split(ordered[0].Name, ordered[0].Daw).Song, ordered[0], ordered.Skip(1).ToList());
             })
             .ToList();
 
@@ -154,8 +168,8 @@ public static partial class SongVersions
         saves.GroupBy(p => Key(p.Folder, p.Daw, p.Name))
             .Select(g =>
             {
-                var latest = g.OrderByDescending(p => Split(p.Name).Number).ThenByDescending(p => p.Saved).First();
-                return new SongUse(Split(latest.Name).Song, latest, g.Count());
+                var latest = g.OrderByDescending(p => Split(p.Name, p.Daw).Number).ThenByDescending(p => p.Saved).First();
+                return new SongUse(Split(latest.Name, latest.Daw).Song, latest, g.Count());
             })
             .OrderByDescending(s => s.Latest.Saved).ThenBy(s => s.Song, StringComparer.OrdinalIgnoreCase)
             .ToList();
