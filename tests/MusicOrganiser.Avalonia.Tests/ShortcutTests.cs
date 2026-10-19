@@ -80,7 +80,7 @@ public sealed class ShortcutTests
         var window = new Window { Content = button, Width = 300, Height = 100 };
         window.Show();
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("Ctrl+D", button.Content);
+        Assert.Equal(ShortcutsViewModel.Display("Ctrl+D"), button.Content);
 
         void Click()
         {
@@ -92,13 +92,13 @@ public sealed class ShortcutTests
         Click();
         Assert.Equal("Press a key…", button.Content);
         window.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null);
-        Assert.Equal("Ctrl+D", button.Content);
+        Assert.Equal(ShortcutsViewModel.Display("Ctrl+D"), button.Content);
 
         Click();
         window.KeyPress(Key.LeftCtrl, RawInputModifiers.Control, PhysicalKey.ControlLeft, null);   // waits for the rest
         Assert.Equal("Press a key…", button.Content);
         window.KeyPress(Key.K, RawInputModifiers.Control, PhysicalKey.K, "k");
-        Assert.Equal("Ctrl+K", button.Content);
+        Assert.Equal(ShortcutsViewModel.Display("Ctrl+K"), button.Content);
         Assert.Equal("playground.duplicate", keys.Find(ShortcutsViewModel.Playground, "Ctrl+K"));
         Assert.True(row.IsChanged);
     }
