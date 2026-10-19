@@ -856,13 +856,32 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (Readers.For(path) is not { } reader) return (null, $"The app can't read the notes of {name} yet.");
         try
         {
-            // Bitwig and Studio One: the parts as they play in the arranger, lined up in time.
-            var target = await UiWork.Run(() => HarmonyTarget.FromChannels(name, PhraseJoiner.ArrangedChannels(path) ?? reader.ExtractChannels(path)));
+            // On a thread of its own, so a busy shared pool right after startup can't keep it waiting.
+            var target = await UiWork.RunOwnThread(() =>
+            {
+                // One scope, so a song with no arranger to go by is decoded once, not again for its clips.
+                using var once = ReadOnce.Scope();
+                return HarmonyTarget.FromChannels(name, Arranged(path) ?? reader.ExtractChannels(path));
+            });
             return (target, target is null ? $"{name} has too few pitched notes to fit MIDI to." : "");
         }
         catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
         {
             return (null, $"Couldn't read {name}: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Bitwig and Studio One: the parts as they play in the arranger, lined up in time. Null, so the clips are used
+    /// instead, when there's no arranger to go by or it can't be read.
+    /// </summary>
+    static IReadOnlyList<MidiChannel>? Arranged(string path)
+    {
+        try { return PhraseJoiner.ArrangedChannels(path); }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            AppLog.Info("MIDI", $"Couldn't read the arrangement of {path}, so its clips are used: {e.Message}");
+            return null;
         }
     }
 
@@ -1008,7 +1027,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     internal async Task Toggle(MidiRow row, double fromTicks = 0, bool? together = null, double? pairTicks = null)
     {
         var both = (together ?? row.CanPlayTogether) && row.CanPlayTogether;
-        if (row.IsPlaying && fromTicks <= 0 && pairTicks is null && (together is null || _plan?.Together == both)) { StopPlaying(); return; }
+        if (row.IsPlaying && fromTicks <= 0 && pairTicks is null && (together is null || row.IsPlayingTogether == both)) { StopPlaying(); return; }
         StopPlaying();
         var request = _listenRequest;
         var tempo = TempoOf(row);
@@ -1035,7 +1054,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _plan = plan;
         _playing = row;
         row.IsPlaying = true;
-        row.IsPlayingTogether = plan.Together;
+        // The button pressed shows Stop, even where the song is silent for the stretch shown and the part plays alone.
+        row.IsPlayingTogether = both;
         Tick();
         _clock.Start();
     }

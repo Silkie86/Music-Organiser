@@ -768,4 +768,36 @@ public class MidiBrowserTests
         File.WriteAllBytes(path, b.Build());
         return path;
     }
+
+    [Fact]
+    public void A_bass_whose_sound_has_a_drum_word_inside_another_word_is_still_a_bass()
+    {
+        // "Phat" has "hat" in it and "808 Sub" has 808: those basslines were taken for drums and left out of the song's
+        // harmony (code review, 2026-10-19).
+        NoteEvent[] line = [new(0, 96, 36, 100), new(96, 96, 39, 100), new(192, 96, 43, 100)];
+        Assert.Equal("Bass", new MidiChannel("Phat Bass", "", 96, line).Kind);
+        Assert.Equal("Bass", new MidiChannel("Low end", "808 Sub", 96, line).Kind);
+        Assert.Equal("Bass", new MidiChannel("808", "", 96, line).Kind);   // an 808 that moves is a bassline
+        Assert.NotEqual("Drums", new MidiChannel("Percussive Keys", "", 96, [new(0, 96, 60, 100), new(0, 96, 64, 100), new(0, 96, 67, 100)]).Kind);
+        // Real drums still are.
+        NoteEvent[] hit = [new(0, 24, 36, 100), new(96, 24, 36, 100)];
+        Assert.Equal("Drums", new MidiChannel("808", "", 96, hit).Kind);
+        Assert.Equal("Drums", new MidiChannel("Hihat 2", "", 96, line).Kind);
+        Assert.Equal("Drums", new MidiChannel("Open hats", "", 96, line).Kind);
+        Assert.Equal("Drums", new MidiChannel("Perc1", "", 96, line).Kind);
+        Assert.Equal("Drums", new MidiChannel("Kick2", "", 96, line).Kind);
+    }
+
+    [Fact]
+    public void A_bitwig_file_cut_short_is_never_read_on_into_whatever_its_borrowed_buffer_held_before()
+    {
+        // The pool's buffer can be twice the file and still hold the last song read; a half-synced file must stop at
+        // its own end (code review, 2026-10-19).
+        var whole = File.ReadAllBytes(Fixtures.BitwigProject(Fixtures.TempDir()));
+        var cut = whole.Length * 3 / 4;
+        var borrowed = (byte[])whole.Clone();   // what was read before: this same song, whole
+        var doc = BitwigFormat.Decode(borrowed, cut);
+        Assert.NotNull(doc.BodyError);
+        Assert.Contains("past end", doc.BodyError);
+    }
 }

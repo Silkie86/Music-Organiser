@@ -189,6 +189,17 @@ public static partial class BitwigFormat
 
     sealed class Reader(byte[] d, Document doc)
     {
+        // Only the file's own bytes are read: a borrowed buffer can be longer, holding the song read before it, so a
+        // file that's cut short (still syncing, or saved while being read) fails cleanly instead of reading on into that.
+        readonly int _end = doc.Length;
+
+        ReadOnlySpan<byte> At(int p, int n) =>
+            p >= 0 && p <= _end && (uint)n <= (uint)(_end - p) ? d.AsSpan(p, n) : throw new InvalidDataException("runs past end of file");
+
+        ReadOnlySpan<byte> From(int p) => p >= 0 && p <= _end ? d.AsSpan(p, _end - p) : throw new InvalidDataException("runs past end of file");
+
+        byte Byte(int p) => (uint)p < (uint)_end ? d[p] : throw new InvalidDataException("runs past end of file");
+
         const int MaxDepth = 512;
         const int ShortString = 64;
         int _depth;
@@ -197,7 +208,7 @@ public static partial class BitwigFormat
         readonly List<byte> _types = new(256);
         readonly Dictionary<string, string> _strings = new(StringComparer.Ordinal);
 
-        int U32(int p) => (int)BinaryPrimitives.ReadUInt32BigEndian(d.AsSpan(p, 4));
+        int U32(int p) => (int)BinaryPrimitives.ReadUInt32BigEndian(At(p, 4));
 
         string Str(ref int p)
         {
@@ -207,7 +218,7 @@ public static partial class BitwigFormat
             if ((n & 0x8000_0000) != 0)
             {
                 var chars = (int)(n & 0x7FFF_FFFF);
-                s = Encoding.BigEndianUnicode.GetString(d, p, checked(chars * 2));
+                s = Encoding.BigEndianUnicode.GetString(At(p, checked(chars * 2)));
                 p += chars * 2;
             }
             else if (n == 0) s = "";
@@ -215,7 +226,7 @@ public static partial class BitwigFormat
             {
                 // A short name: the same one is used again and again, so it's looked up before a new one is made.
                 Span<char> chars = stackalloc char[ShortString];
-                var count = Encoding.UTF8.GetChars(d.AsSpan(p, (int)n), chars);
+                var count = Encoding.UTF8.GetChars(At(p, (int)n), chars);
                 var lookup = _strings.GetAlternateLookup<ReadOnlySpan<char>>();
                 if (!lookup.TryGetValue(chars[..count], out s!))
                 {
@@ -226,7 +237,7 @@ public static partial class BitwigFormat
             }
             else
             {
-                s = Encoding.UTF8.GetString(d, p, checked((int)n));
+                s = Encoding.UTF8.GetString(At(p, checked((int)n)));
                 p += (int)n;
             }
             return s;
@@ -242,7 +253,7 @@ public static partial class BitwigFormat
             {
                 p += 4;
                 var key = Str(ref p);
-                var type = d[p++];
+                var type = Byte(p++);
                 doc.Meta[key] = Value(ref p, type);
                 doc.MetaTypes.Add((key, type));
             }
@@ -266,7 +277,7 @@ public static partial class BitwigFormat
                 var fid = U32(p);
                 p += 4;
                 if (fid == 0) break;
-                var type = d[p++];
+                var type = Byte(p++);
                 // An object inside this one gathers its own fields above these and takes them away again when it ends.
                 var v = Value(ref p, type);
                 _fields.Add((fid, v));
@@ -317,12 +328,12 @@ public static partial class BitwigFormat
         {
             switch (type)
             {
-                case 0x01: case 0x05: return BoxedBytes[d[p++]];
-                case 0x02: { var v = BinaryPrimitives.ReadInt16BigEndian(d.AsSpan(p)); p += 2; return v; }
-                case 0x03: { var v = BinaryPrimitives.ReadInt32BigEndian(d.AsSpan(p)); p += 4; return v; }
-                case 0x04: { var v = BinaryPrimitives.ReadInt64BigEndian(d.AsSpan(p)); p += 8; return v; }
-                case 0x06: { var v = BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(p)); p += 4; return v; }
-                case 0x07: { var v = BinaryPrimitives.ReadDoubleBigEndian(d.AsSpan(p)); p += 8; return Boxed(v); }
+                case 0x01: case 0x05: return BoxedBytes[Byte(p++)];
+                case 0x02: { var v = BinaryPrimitives.ReadInt16BigEndian(From(p)); p += 2; return v; }
+                case 0x03: { var v = BinaryPrimitives.ReadInt32BigEndian(From(p)); p += 4; return v; }
+                case 0x04: { var v = BinaryPrimitives.ReadInt64BigEndian(From(p)); p += 8; return v; }
+                case 0x06: { var v = BinaryPrimitives.ReadSingleBigEndian(From(p)); p += 4; return v; }
+                case 0x07: { var v = BinaryPrimitives.ReadDoubleBigEndian(From(p)); p += 8; return Boxed(v); }
                 case 0x08: return Str(ref p);
                 case 0x09: return ObjectOrRef(ref p);
                 case 0x0a: return null;
@@ -330,7 +341,7 @@ public static partial class BitwigFormat
                 case 0x0d:
                 {
                     var n = U32(p);
-                    if (n < 0 || p + 4 + n > d.Length) throw new InvalidDataException("blob runs past end of file");
+                    if (n < 0 || p + 4 + n > _end) throw new InvalidDataException("blob runs past end of file");
                     var v = new BwBlob(p + 4, n);
                     p += 4 + n;
                     return v;
@@ -339,9 +350,9 @@ public static partial class BitwigFormat
                 {
                     var n = U32(p);
                     p += 4;
-                    if (n < 0 || p + 4L * n > d.Length) throw new InvalidDataException("int array runs past end of file");
+                    if (n < 0 || p + 4L * n > _end) throw new InvalidDataException("int array runs past end of file");
                     var a = new int[n];
-                    for (var i = 0; i < n; i++, p += 4) a[i] = BinaryPrimitives.ReadInt32BigEndian(d.AsSpan(p));
+                    for (var i = 0; i < n; i++, p += 4) a[i] = BinaryPrimitives.ReadInt32BigEndian(From(p));
                     return a;
                 }
                 case 0x12:
@@ -356,21 +367,21 @@ public static partial class BitwigFormat
                 {
                     // A string-keyed map: (u8 1, string key, object) per entry, then u8 0.
                     var map = new Dictionary<string, object?>(StringComparer.Ordinal);
-                    while (d[p] == 1)
+                    while (Byte(p) == 1)
                     {
                         p++;
                         var key = Str(ref p);
                         map[key] = ObjectOrRef(ref p);
                     }
-                    if (d[p] != 0) throw new InvalidDataException($"bad map end at 0x{p:x}");
+                    if (Byte(p) != 0) throw new InvalidDataException($"bad map end at 0x{p:x}");
                     p++;
                     return map;
                 }
-                case 0x15: { var v = new Guid(d.AsSpan(p, 16), bigEndian: true); p += 16; return v; }
+                case 0x15: { var v = new Guid(At(p, 16), bigEndian: true); p += 16; return v; }
                 case 0x16:
                 {
                     var c = new float[4];
-                    for (var i = 0; i < 4; i++, p += 4) c[i] = BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(p));
+                    for (var i = 0; i < 4; i++, p += 4) c[i] = BinaryPrimitives.ReadSingleBigEndian(From(p));
                     return c;
                 }
                 case 0x17:
@@ -378,9 +389,9 @@ public static partial class BitwigFormat
                     // A list of floats: u32 count, then f32s (FM-4's MATRIX).
                     var n = U32(p);
                     p += 4;
-                    if (n < 0 || p + 4L * n > d.Length) throw new InvalidDataException("float list too long");
+                    if (n < 0 || p + 4L * n > _end) throw new InvalidDataException("float list too long");
                     var f = new float[n];
-                    for (var i = 0; i < n; i++, p += 4) f[i] = BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(p));
+                    for (var i = 0; i < n; i++, p += 4) f[i] = BinaryPrimitives.ReadSingleBigEndian(From(p));
                     return f;
                 }
                 case 0x18:
@@ -388,16 +399,16 @@ public static partial class BitwigFormat
                     // A list of doubles: u32 count, then f64s (Bitwig 6.1 keeps a Sampler sample's analysis, such as where its hits are, this way).
                     var n = U32(p);
                     p += 4;
-                    if (n < 0 || p + 8L * n > d.Length) throw new InvalidDataException("double list too long");
+                    if (n < 0 || p + 8L * n > _end) throw new InvalidDataException("double list too long");
                     var f = new double[n];
-                    for (var i = 0; i < n; i++, p += 8) f[i] = BinaryPrimitives.ReadDoubleBigEndian(d.AsSpan(p));
+                    for (var i = 0; i < n; i++, p += 8) f[i] = BinaryPrimitives.ReadDoubleBigEndian(From(p));
                     return f;
                 }
                 case 0x19:
                 {
                     var n = U32(p);
                     p += 4;
-                    if (n < 0 || n > d.Length) throw new InvalidDataException("string list too long");
+                    if (n < 0 || n > _end) throw new InvalidDataException("string list too long");
                     var list = new List<string>(n);
                     for (var i = 0; i < n; i++) list.Add(Str(ref p));
                     return list;
