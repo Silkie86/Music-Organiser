@@ -56,17 +56,26 @@ public sealed class EnergyCurveView : Control
         }
         if (target is { Length: > 0 })
         {
+            // Bars with no target (NaN: no label asking for a feel there) break the line.
             var path = new StreamGeometry();
             using (var g = path.Open())
             {
+                var open = false;
+                double step = width / target.Length;
                 for (var i = 0; i < target.Length; i++)
                 {
-                    var p = new Point(Inset + (i + 0.5) * width / target.Length, Y(target[i]));
-                    if (i == 0) g.BeginFigure(new Point(Inset + 2, p.Y), false);
-                    g.LineTo(p);
+                    if (double.IsNaN(target[i]))
+                    {
+                        if (open) g.EndFigure(false);
+                        open = false;
+                        continue;
+                    }
+                    var y = Y(target[i]);
+                    if (!open) { g.BeginFigure(new Point(Inset + i * step + 2, y), false); open = true; }
+                    g.LineTo(new Point(Inset + (i + 0.5) * step, y));
+                    if (i + 1 == target.Length || double.IsNaN(target[i + 1])) g.LineTo(new Point(Inset + (i + 1) * step - 2, y));
                 }
-                g.LineTo(new Point(Inset + width - 2, Y(target[^1])));
-                g.EndFigure(false);
+                if (open) g.EndFigure(false);
             }
             dc.DrawGeometry(null, new Pen(Res("MutedBrush", Brushes.Gray), 1.2, new DashStyle([4, 3], 0)), path);
         }

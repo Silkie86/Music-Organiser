@@ -112,26 +112,76 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
-    public void The_arrangement_joins_parts_of_the_same_name_across_sections()
+    public void An_idea_saved_as_sections_opens_on_one_timeline()
     {
-        var session = new PlaygroundSession
+        // As saved before the timeline: no version, sections played A B A, a typed chart in B.
+        var old = new PlaygroundSession
         {
             Sections =
             [
-                new() { Name = "A", Bars = 2, Layers = [new PlaygroundLayer { Name = "Keys", Notes = Line(Bar, 60, 62) }] },
-                new() { Name = "B", Bars = 1, Layers = [new PlaygroundLayer { Name = "Keys", Notes = Line(Bar, 65) }, new PlaygroundLayer { Name = "Bass", Notes = Line(Bar, 41), Muted = true }] },
+                new() { Name = "A", Bars = 2, Feel = SectionFeel.Verse, Layers = [new PlaygroundLayer { Name = "Keys", Notes = Line(Bar, 60, 62) }] },
+                new() { Name = "B", Bars = 1, Chart = "G7", Layers = [new PlaygroundLayer { Name = "Keys", Notes = Line(Bar, 65) }, new PlaygroundLayer { Name = "Bass", Role = MidiRoles.Bass, Notes = Line(Bar, 41), Muted = true }] },
             ],
             Arrangement = "A B A",
         };
-        var tracks = session.ArrangedTracks();
-        var keys = Assert.Single(tracks);
+        var json = old.ToJson().Replace("\"Version\": 2,", "");
+        var s = PlaygroundSession.FromJson(json)!;
+        Assert.Equal(2, s.Version);
+        var t = Assert.Single(s.Sections);
+        Assert.Equal(5, t.Bars);
+        Assert.Equal(["A", "B", "A"], t.Labels.Select(l => l.Name));
+        Assert.Equal([0L, 2L * Bar, 3L * Bar], t.Labels.Select(l => l.Start));
+        Assert.Equal(SectionFeel.Verse, t.Labels[0].Feel);
+        // Parts of the same name are one track, a clip where each section played; B's chart is a chord part now.
+        Assert.Equal(["Keys", "Bass", "Chords"], t.Layers.Select(l => l.Name));
+        var keys = t.Layers[0];
+        Assert.Equal([0L, 2L * Bar, 3L * Bar], keys.Clips.Select(c => c.Start));
+        Assert.All(keys.Clips, c => Assert.True(c.Pinned));
         Assert.Equal([0L, Bar, 2L * Bar, 3L * Bar, 4L * Bar], keys.Notes.Select(n => n.Start));
         Assert.Equal([60, 62, 65, 60, 62], keys.Notes.Select(n => n.Key));
+        Assert.True(t.Layers[1].Muted);
+        Assert.Equal(2L * Bar, Assert.Single(t.Layers[2].Clips).Start);
+        Assert.Equal("G7", SectionHarmony.Of(t).Lane.Single(c => c.Start == 2L * Bar).Chord.Name);
 
-        var back = PlaygroundSession.FromJson(session.ToJson())!;
-        Assert.Equal("A B A", back.Arrangement);
-        Assert.Equal(Line(Bar, 65), back.Sections[1].Layers[0].Notes);
-        Assert.True(back.Sections[1].Layers[1].Muted);
+        // Saved again, it opens the same.
+        var back = PlaygroundSession.FromJson(s.ToJson())!;
+        Assert.Equal(keys.Notes, back.Timeline.Layers[0].Notes);
+        Assert.Equal(3, back.Timeline.Labels.Count);
+    }
+
+    [Fact]
+    public void A_clip_plays_round_trimmed_and_moved_and_only_chord_and_bass_clips_say_the_chords()
+    {
+        // A 1-bar riff, its start trimmed by a beat, stretched to 2½ bars from bar 3, the second go round up a tone.
+        var clip = PlaygroundClip.Of("Riff", MidiRoles.Melody, Line(Beat, 60, 62, 64, 65), Bar, 2L * Bar, 5L * Bar / 2);
+        clip.Offset = Beat;
+        clip.Fits = [0, 2];
+        var notes = clip.Render();
+        Assert.Equal(3, clip.Repeats);
+        Assert.Equal([62, 64, 65, 62, 64, 66, 67, 60, 62, 64], notes.Select(n => n.Key));
+        Assert.Equal(2L * Bar, notes[0].Start);
+        Assert.True(notes.All(n => n.Start < clip.End));
+
+        // Chords under the first two bars only: a melody there is judged against them, but after them it's heard.
+        var timeline = new PlaygroundSection
+        {
+            Bars = 4,
+            Layers =
+            [
+                new PlaygroundLayer { Name = "Keys", Role = MidiRoles.Chords, Clips = [PlaygroundClip.Of("Keys", MidiRoles.Chords, Chords([48, 52, 55, 59]), Bar, 0, 2L * Bar)] },
+                new PlaygroundLayer { Name = "Lead", Role = MidiRoles.Melody, Clips = [PlaygroundClip.Of("Lead", MidiRoles.Melody, Chords([50, 53, 57, 60]), 2L * Bar, 0, 4L * Bar)] },
+            ],
+        };
+        foreach (var l in timeline.Layers) l.Render();
+        var lane = SectionHarmony.Of(timeline).Lane;
+        Assert.Equal("Cmaj7", lane.First().Chord.Name);
+        Assert.Contains(lane, c => c.Start >= 2L * Bar && c.Chord.Name == "Dm7");
+        Assert.DoesNotContain(lane, c => c.Start < 2L * Bar && c.Chord.Name == "Dm7");
+
+        // Shift to fit: a C triad over D moves up a tone; with no chords it stays.
+        var d = ChordLane.ParseChart("D", out _)!;
+        Assert.Equal(2, ClipFit.Best(Chords([60, 64, 67]), d, Bar, HarmonyStyle.JazzGospel));
+        Assert.Equal(0, ClipFit.Best(Chords([60, 64, 67]), [], Bar, HarmonyStyle.JazzGospel));
     }
 
     [Fact]
@@ -166,7 +216,7 @@ public class PlaygroundTests : IDisposable
         var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
         var p = main.Playground;
 
-        p.ChartText = "Dm7 | G7 | Cmaj7 | %";
+        p.PutChords("Dm7 | G7 | Cmaj7 | %");
         Assert.Equal(["Dm7", "G7", "Cmaj7"], p.Chords.Select(c => c.Name));
         Assert.Equal(["ii7", "V7", "Imaj7"], p.Chords.Select(c => c.Roman));
         Assert.StartsWith("Key: C major", p.KeySummary);
@@ -175,26 +225,34 @@ public class PlaygroundTests : IDisposable
         p.WriteChordsCommand.Execute(null);
         p.BassPick = "Walking";
         p.WriteBassCommand.Execute(null);
-        Assert.Equal(2, p.Layers.Count);
-        Assert.Equal(16, p.Layers[1].Notes.Count);
+        Assert.Equal(3, p.Layers.Count);
+        Assert.Equal(16, p.Layers[2].Notes.Count);
+        // Chords are heard, never typed: the rootless voicings' 9ths and 13ths are heard too.
+        Assert.Equal(["Dm9", "G13", "Cmaj9"], p.Chords.Select(c => c.Name));
 
-        // The tritone sub: the written parts follow the new chords.
+        // The tritone sub: the chord part plays it, and the written parts follow the new chords.
         var sub = p.Ideas.First(i => i.Title == "Tritone sub");
         sub.ApplyCommand.Execute(null);
-        Assert.Equal(["Dm7", "Db9", "Cmaj7"], p.Chords.Select(c => c.Name));
-        Assert.Equal(1, p.Layers[1].Notes.First(n => n.Start == Bar).Key % 12);   // the walking bass starts bar 2 on Db
+        Assert.StartsWith("Db", p.Chords[1].Name);
+        Assert.Equal(1, p.Layers[2].Notes.First(n => n.Start == Bar).Key % 12);   // the walking bass starts bar 2 on Db
 
         // Undo puts the chords back, and the idea was saved: a new page opens it as it was.
         p.UndoCommand.Execute(null);
-        Assert.Equal(["Dm7", "G7", "Cmaj7"], p.Chords.Select(c => c.Name));
+        Assert.Equal(["Dm9", "G13", "Cmaj9"], p.Chords.Select(c => c.Name));
         var again = new PlaygroundViewModel(db, main);
-        Assert.Equal(2, again.Layers.Count);
-        Assert.Equal("Dm7 | G7 | Cmaj7 | %", again.ChartText);
+        Assert.Equal(3, again.Layers.Count);
+        Assert.Equal(["Dm9", "G13", "Cmaj9"], again.Chords.Select(c => c.Name));
 
-        // Dragging the section out writes one MIDI file with a track per part.
-        var drag = p.MakeDrag(["section"])!;
+        // A chord added on the end is played by the chord part, which goes round into the new bar.
+        p.NextChords.Clear();
+        p.AddNextChord(ChordSymbol.Parse("A7")!.Value);
+        Assert.Equal(5, p.Bars);
+        Assert.Equal("A7", p.Chords[^1].Name);
+
+        // Dragging the arrangement out writes one MIDI file with a track per part.
+        var drag = p.MakeDrag(["arrangement"])!;
         var tracks = MidiFileReader.Read(File.ReadAllBytes(drag.Files[0]), "x");
-        Assert.Equal(2, tracks.Count);
+        Assert.Equal(3, tracks.Count);
     }
 
     [Fact]
@@ -207,15 +265,16 @@ public class PlaygroundTests : IDisposable
         using var sounds = new SoundOrganiser(soundDb);
         var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
         var p = main.Playground;
-        p.ChartText = "Dm7 | G7 | Cmaj7 | %";
+        p.PutChords("Dm7 | G7 | Cmaj7 | %");
 
         var lead = Line(2 * Beat, 65, 69, 65, 64, 64, 67, 71, 74);
         var entry = new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", lead)]).Entries[0];
-        // A song the app can't read (no reader for it): the part still comes in, in its own new section.
+        // A song the app can't read (no reader for it): the part still comes in, after the chords, labelled with the song.
         await p.OpenFromSongAsync(Path.Combine(_root, "song.txt"), "Song", entry, lead, "Lead");
-        Assert.Equal(2, p.Sections.Count);
-        Assert.Equal("B", p.SectionName);
-        Assert.Equal(["Lead"], p.Layers.Select(l => l.Name));
+        Assert.Equal(8, p.Bars);
+        Assert.Equal(["Chords", "Lead"], p.Layers.Select(l => l.Name));
+        Assert.Equal(4L * Bar, p.Layers[1].Clips.Single().Start);
+        Assert.Equal(("Song", 4L * Bar), (p.Labels.Single().Name, p.Labels.Single().Start));
         Assert.Same(p, main.SelectedNav.Page);
     }
 
@@ -228,18 +287,20 @@ public class PlaygroundTests : IDisposable
         using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
         using var sounds = new SoundOrganiser(soundDb);
         var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
-        main.Playground.ChartText = "Dm7 | G7 | Cmaj7 | %";
+        main.Playground.PutChords("Dm7 | G7 | Cmaj7 | %");
 
         var lead = Line(2 * Beat, 65, 69, 65, 64, 64, 67, 71, 74);
         var entry = new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", lead)]).Entries[0];
         var quick = main.Playground.Quick();
         await quick.LoadSongAsync(Path.Combine(_root, "song.txt"), "Song", entry, lead, "Lead");
         Assert.Equal(["Lead"], quick.Layers.Select(l => l.Name));
-        Assert.Single(main.Playground.Sections);   // the Playground's own idea is left alone
+        Assert.Equal(["Chords"], main.Playground.Layers.Select(l => l.Name));   // the Playground's own idea is left alone
 
+        // Taken over, its parts go after the Playground's bars, labelled.
         quick.OpenInMainCommand.Execute(null);
-        Assert.Equal(2, main.Playground.Sections.Count);
-        Assert.Equal(["Lead"], main.Playground.Layers.Select(l => l.Name));
+        Assert.Equal(["Chords", "Lead"], main.Playground.Layers.Select(l => l.Name));
+        Assert.Equal(4L * Bar, main.Playground.Layers[1].Clips.Single().Start);
+        Assert.Equal("Song", main.Playground.Labels.Single().Name);
         Assert.Same(main.Playground, main.SelectedNav.Page);
     }
 
@@ -279,11 +340,11 @@ public class PlaygroundTests : IDisposable
         var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
         var p = main.Playground;
 
-        p.ChartText = "Dm7 | G7 | Cmaj7 | %";
+        p.PutChords("Dm7 | G7 | Cmaj7 | %");
         p.Rhythm = "Held";
         p.WriteChordsCommand.Execute(null);
         p.WriteBassCommand.Execute(null);
-        var chords = p.Layers[0];
+        var chords = p.Layers[1];
         p.SelectedLayer = chords;
         // Copy the walking bass's rhythm: the held chords are now struck on every beat.
         p.GrooveSource = p.GrooveSources.Single(r => r.Role == MidiRoles.Bass);
@@ -292,8 +353,10 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(16, chords.Notes.Select(n => n.Start).Distinct().Count());
         Assert.Contains("groove of", chords.Details);
 
-        // New chords: the part is written again and struck on the beats again.
-        p.ChartText = "Em7 | A7 | Dmaj7 | %";
+        // New chords played on the chord part: the written part is written again and struck on the beats again.
+        p.SelectClipCommand.Execute(new ClipPick(p.Layers[0].Layer, p.Layers[0].Clips[0]));
+        p.SelectedClip!.EditedCommand.Execute(Chords([52, 55, 59, 62], [45, 55, 61, 64], [50, 54, 57, 61], [50, 54, 57, 61]));
+        p.SelectedLayer = chords;
         Assert.Equal(16, chords.Notes.Select(n => n.Start).Distinct().Count());
         Assert.Contains(chords.Notes, n => n.Start == 0 && n.Key % 12 == 4);
 

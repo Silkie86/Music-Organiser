@@ -59,6 +59,22 @@ public static class Voicer
 {
     const int Ppq = PhraseAnalyser.Ppq, Beat = Ppq, Bar = 4 * Ppq;
 
+    /// <summary>
+    /// Each chord held for as long as it lasts, its root low and just its own notes above, nothing added: chords that
+    /// are heard back as exactly the chords they are (a chord part to start from, or new chords put on one).
+    /// </summary>
+    public static List<NoteEvent> Plain(IReadOnlyList<TimedChord> lane, int velocity = 90)
+    {
+        var notes = new List<NoteEvent>();
+        foreach (var c in lane)
+        {
+            notes.Add(new NoteEvent(c.Start, c.Length, 36 + c.Chord.Root, velocity));
+            for (var p = 0; p < 12; p++)
+                if ((c.Chord.Mask >> p & 1) != 0) notes.Add(new NoteEvent(c.Start, c.Length, 52 + ChordSymbol.Mod(p - 4), velocity));
+        }
+        return notes;
+    }
+
     /// <summary>The intervals that matter for voicing, picked from what the chord has (or what suits it when it doesn't say).</summary>
     readonly record struct Parts(int Third, int Fifth, int? Seventh, int Ninth, int Top);
 
