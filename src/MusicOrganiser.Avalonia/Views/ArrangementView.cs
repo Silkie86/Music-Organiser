@@ -43,6 +43,8 @@ public sealed class ArrangementView : Control
     Point? _hover;
     DateTime _shown;
     readonly Dictionary<string, AudioPeaks?> _peaks = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Each lane's lowest and highest note, worked out the first time it's drawn.</summary>
+    readonly Dictionary<PreviewLane, (int Lo, int Hi)> _keys = new(ReferenceEqualityComparer.Instance);
     int _loading;
     DispatcherTimer? _timer;
 
@@ -60,7 +62,12 @@ public sealed class ArrangementView : Control
         if (change.Property != ArrangementProperty) return;
         _zoom = 0;
         _left = _top = 0;
+        _fitAll = false;
         _shown = DateTime.UtcNow;
+        var length = Arrangement?.Length ?? 0;
+        _songBeats = Math.Max(Math.Max(1, Arrangement?.BeatsPerBar ?? 4), double.IsFinite(length) ? length * 1.02 : 0);
+        _contentHeight = Arrangement?.Lanes.Sum(LaneHeight) ?? 0;
+        _keys.Clear();
         Animate();
         LoadWaveforms(Arrangement);
     }
@@ -97,7 +104,10 @@ public sealed class ArrangementView : Control
         {
             foreach (var f in files)
             {
-                var peaks = AudioPeaks.For(f);
+                // A file that fails to read is drawn without a waveform; it mustn't stop the others or leave the timer running.
+                AudioPeaks? peaks;
+                try { peaks = AudioPeaks.For(f); }
+                catch (Exception) { peaks = null; }
                 Dispatcher.UIThread.Post(() =>
                 {
                     _peaks[f] = peaks;
@@ -111,10 +121,15 @@ public sealed class ArrangementView : Control
     // ---- Geometry ----------------------------------------------------------
 
     double Width0 => Math.Max(1, Bounds.Width - HeaderWidth - 8);
-    double SongBeats => Math.Max(Arrangement?.BeatsPerBar ?? 4, (Arrangement?.Length ?? 0) * 1.02);
+    // Worked out once per arrangement: Arrangement.Length goes through every clip, and X() asks for it for every note.
+    double _songBeats = 4, _contentHeight;
+    double SongBeats => _songBeats;
     double FitZoom => Width0 / SongBeats;
     double Zoom => _zoom > 0 ? _zoom : FitZoom;
-    double ContentHeight => Arrangement?.Lanes.Sum(LaneHeight) ?? 0;
+    /// <summary>After a double-click every lane is squeezed to fit the height, so the whole project is on screen.</summary>
+    bool _fitAll;
+    double LaneScale => _fitAll && _contentHeight > 0 ? Math.Min(1, (Bounds.Height - RulerHeight) / _contentHeight) : 1;
+    double ContentHeight => _contentHeight * LaneScale;
 
     double X(double beat) => HeaderWidth + (beat - _left) * Zoom;
     double Beat(double x) => _left + (x - HeaderWidth) / Zoom;
@@ -136,7 +151,7 @@ public sealed class ArrangementView : Control
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta))
         {
             var beat = Beat(Math.Max(at.X, HeaderWidth));
-            _zoom = Math.Clamp(Zoom * Math.Pow(1.25, e.Delta.Y), FitZoom, 400);
+            _zoom = Math.Clamp(Zoom * Math.Pow(1.25, e.Delta.Y), FitZoom, Math.Max(FitZoom, 400));
             _left = beat - (Math.Max(at.X, HeaderWidth) - HeaderWidth) / _zoom;
         }
         else if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) || Math.Abs(e.Delta.X) > Math.Abs(e.Delta.Y))
@@ -154,8 +169,10 @@ public sealed class ArrangementView : Control
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
         if (e.ClickCount == 2)
         {
+            // The whole song across and every track down; a second double-click goes back to full-height tracks.
+            _fitAll = !(_fitAll && _zoom == 0);
             _zoom = 0;
-            _left = 0;
+            _left = _top = 0;
             InvalidateVisual();
             return;
         }
@@ -257,14 +274,16 @@ public sealed class ArrangementView : Control
         // Lanes.
         var y = RulerHeight - _top;
         var hoverText = (string?)null;
+        var shown = 0;
         for (var i = 0; i < a.Lanes.Count; i++)
         {
             var lane = a.Lanes[i];
-            var lh = LaneHeight(lane);
+            var lh = LaneHeight(lane) * LaneScale;
             if (y + lh >= RulerHeight && y <= h)
             {
-                // Each lane slides in a little after the one above it.
-                var delay = Math.Clamp(ease * 1.6 - i * 0.04, 0, 1);
+                // Each on-screen lane fades in a little after the one above it. The stagger is
+                // capped so every lane is fully drawn once the intro ends, however many tracks there are.
+                var delay = Math.Clamp(ease * 1.6 - Math.Min(shown++, 15) * 0.04, 0, 1);
                 using (dc.PushOpacity(delay))
                 {
                     var tip = DrawLane(dc, a, lane, y, lh, w, text, muted, faint, stroke, raised);
@@ -300,8 +319,8 @@ public sealed class ArrangementView : Control
             var bpb = Math.Max(1, a.BeatsPerBar);
             var label = $"Bar {(int)(beat / bpb) + 1}.{(int)(beat % bpb) + 1}" + (hoverText is null ? "" : "  ·  " + hoverText);
             var t = Fit(label, 11.5, text, Math.Max(80, w - hx - 20));
-            var lx = Math.Clamp(p.X + 10, hx + 4, w - t.Width - 10);
-            var ly = Math.Clamp(p.Y + 16, RulerHeight + 2, h - t.Height - 8);
+            var lx = Math.Max(hx + 4, Math.Min(p.X + 10, w - t.Width - 10));
+            var ly = Math.Max(RulerHeight + 2, Math.Min(p.Y + 16, h - t.Height - 8));
             dc.DrawRectangle(Res("SidebarBrush", Brushes.Black), new Pen(stroke, 1), new RoundedRect(new Rect(lx - 6, ly - 3, t.Width + 12, t.Height + 6), 5));
             dc.DrawText(t, new Point(lx, ly));
         }
@@ -319,6 +338,7 @@ public sealed class ArrangementView : Control
     void ForEachBar(Arrangement a, int step, Action<int, double> draw)
     {
         var bpb = Math.Max(1, a.BeatsPerBar);
+        if (!(Zoom > 0) || !double.IsFinite(Zoom)) return;
         var first = (int)Math.Floor(_left / bpb / step) * step;
         for (var bar = Math.Max(0, first); ; bar += step)
         {
@@ -371,7 +391,8 @@ public sealed class ArrangementView : Control
 
         // The name, with a strip of the lane's colour like a DAW's track header.
         var indent = 10 + lane.Depth * 12;
-        dc.DrawRectangle(new SolidColorBrush(colour), null, new RoundedRect(new Rect(indent - 6, y + 6, 3, lh - 13), 1.5));
+        var inset = Math.Min(6, lh * 0.15);
+        dc.DrawRectangle(new SolidColorBrush(colour), null, new RoundedRect(new Rect(indent - 6, y + inset, 3, Math.Max(1, lh - 2 * inset - 1)), 1.5));
         var nameSize = lane.Kind == LaneKind.Automation ? 11 : 12;
         var name = Fit(lane.Name, nameSize, lane.Muted ? muted : text, hx - indent - 10, lane.Kind == LaneKind.Group ? FontWeight.Bold : FontWeight.SemiBold);
         if (lane.Detail.Length > 0 && lh >= 40)
@@ -381,20 +402,25 @@ public sealed class ArrangementView : Control
             dc.DrawText(name, new Point(indent, top));
             dc.DrawText(detail, new Point(indent, top + name.Height));
         }
-        else dc.DrawText(name, new Point(indent, y + (lh - name.Height) / 2));
+        else if (lh >= 14) dc.DrawText(name, new Point(indent, y + (lh - name.Height) / 2));   // squeezed lanes are too thin for names
 
         string? tip = null;
         using (dc.PushClip(new Rect(hx, Math.Max(y, RulerHeight), w - hx, lh)))
         {
             // Notes share one key range across the lane, so the same note sits at the same height in every clip.
-            var keys = lane.Clips.SelectMany(c => c.Notes).Select(n => n.Key).ToList();
-            var (lo, hi) = keys.Count > 0 ? (keys.Min(), keys.Max()) : (60, 60);
+            if (!_keys.TryGetValue(lane, out var range))
+            {
+                var keys = lane.Clips.SelectMany(c => c.Notes).Select(n => n.Key).ToList();
+                _keys[lane] = range = keys.Count > 0 ? (keys.Min(), keys.Max()) : (60, 60);
+            }
+            var (lo, hi) = range;
             foreach (var clip in lane.Clips)
             {
                 var x0 = X(clip.Start);
                 var x1 = X(clip.End);
                 if (x1 < hx || x0 > w) continue;
-                var r = new Rect(x0 + 0.5, y + 3, Math.Max(2, x1 - x0 - 1), lh - 7);
+                var pad = Math.Min(3, lh * 0.1);
+                var r = new Rect(x0 + 0.5, y + pad, Math.Max(2, x1 - x0 - 1), Math.Max(1, lh - 2 * pad - 1));
                 var c = ColourOf(lane, clip);
                 using (dc.PushOpacity(clip.Muted ? 0.35 : 1))
                     DrawClip(dc, a, lane, clip, r, c, lo, hi, text);
@@ -443,7 +469,7 @@ public sealed class ArrangementView : Control
             {
                 if (n.Muted) continue;
                 var x = X(clip.Start + n.Start);
-                if (x > Bounds.Width) break;
+                if (x > Bounds.Width) continue;   // not break: notes aren't always in time order
                 var nw = Math.Max(1.2, n.Length * Zoom - 0.5);
                 if (x + nw < HeaderWidth) continue;
                 var ny = inner.Y + (rows == 1 ? span / 2 : span * (1 - (double)(n.Key - lo) / (rows - 1)));

@@ -10,7 +10,7 @@
     <DockPanel Margin="12,12,12,12">
         <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontSize="11" Foreground="{StaticResource FaintBrush}" TextWrapping="Wrap"
                    IsVisible="{Binding HasArrangement}"
-                   Text="Scroll to move up and down · Ctrl + scroll to zoom · drag to move around · double-click to see it all" />
+                   Text="Scroll to move up and down · Ctrl + scroll to zoom · drag to move around · double-click to see it all (again to go back)" />
         <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,10">
             <DockPanel>
                 <Panel x:Name="FullSizeHolder" DockPanel.Dock="Right">

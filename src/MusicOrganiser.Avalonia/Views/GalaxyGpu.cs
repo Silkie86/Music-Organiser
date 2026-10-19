@@ -83,7 +83,15 @@ static class GalaxyGpu
             var feature = context.TryGetFeature<ISkiaSharpApiLeaseFeature>();
             using var lease = feature?.Lease();
             // No graphics card here (or Avalonia is drawing in software): the processor takes over.
-            if (lease?.GrContext is not { } gr) { GiveUp("Avalonia isn't drawing with the graphics card here"); return; }
+            if (lease?.GrContext is not { } gr)
+            {
+                // Once it has drawn on the graphics card, a frame without it is Windows taking the card away for a
+                // moment (the screen going to sleep, the window moving to another screen): the processor stands in
+                // and the card is tried again, rather than painting 450,000 stars on the processor from then on.
+                if (Available == true && _lost < 3) Lost();
+                else GiveUp("Avalonia isn't drawing with the graphics card here");
+                return;
+            }
             var timer = System.Diagnostics.Stopwatch.StartNew();
             try { Draw(gr, lease.SkCanvas, frame); }
             catch (Exception e)
@@ -99,6 +107,21 @@ static class GalaxyGpu
             if (Environment.GetEnvironmentVariable("MO_GALAXY_TIMING") is not null)
                 Console.Error.WriteLine($"galaxy gpu {timer.Elapsed.TotalMilliseconds:0.0} ms");
         }
+    }
+
+    static int _lost;
+
+    static void Lost()
+    {
+        _lost++;
+        Available = false;
+        _surfaces = null;   // made with the context that went away
+        MusicOrganiser.Core.AppLog.Info("Galaxy", "The graphics card went away for a moment: the processor draws the stars until it's back");
+        Dispatcher.UIThread.Post(() =>
+        {
+            Changed?.Invoke();
+            DispatcherTimer.RunOnce(() => { Available = null; Changed?.Invoke(); }, TimeSpan.FromSeconds(3));
+        });
     }
 
     static void GiveUp(string why)

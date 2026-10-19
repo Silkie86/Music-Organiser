@@ -4,19 +4,19 @@ using MusicOrganiser.Core.Parsers;
 
 namespace MusicOrganiser.Core.Export;
 
-/// <summary>Writes Standard MIDI Files (type 1): a tempo track plus one track per instrument.</summary>
+/// <summary>Writes Standard MIDI Files (type 1): a first track with the clip's name, plus one track per instrument.</summary>
 public static class MidiWriter
 {
+    /// <summary>
+    /// The clip as a MIDI file, with no tempo in it: a DAW asks whether to take a MIDI file's tempo for the project (Bitwig
+    /// does every time), and the app's MIDI never should (asked for on 2026-10-18). The notes are in beats, so they land
+    /// in the same places at any tempo.
+    /// </summary>
+    /// <param name="tempo">Not written, for the reason above; kept so that callers passing the project's tempo still build.</param>
     public static byte[] Write(MidiClip clip, double? tempo = null)
     {
         var tracks = new List<byte[]>();
-        var conductor = new List<(long Tick, byte[] Msg)> { (0, Meta(0x03, clip.Name)) };
-        if (tempo is > 0)
-        {
-            var us = (int)Math.Round(60_000_000 / tempo.Value);
-            conductor.Add((0, [0xFF, 0x51, 0x03, (byte)(us >> 16), (byte)(us >> 8), (byte)us]));
-        }
-        tracks.Add(Track(conductor));
+        tracks.Add(Track([(0, Meta(0x03, clip.Name))]));
 
         var i = 0;
         foreach (var (name, notes) in clip.Tracks)

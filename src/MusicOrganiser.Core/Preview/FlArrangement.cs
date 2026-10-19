@@ -17,19 +17,23 @@ static class FlArrangement
 
     public static IReadOnlyList<Arrangement> Read(string path)
     {
-        var reader = new FlStudioReader();
-        var song = reader.ReadSong(path);
-        var playlist = reader.ReadPlaylist(path);
+        var (song, playlist) = new FlStudioReader().ReadSongAndPlaylist(path);
         var tempo = song.Tempo > 0 ? song.Tempo : 120;
-        return [Playlist(song, playlist, path, tempo), ByChannel(song, playlist, path, tempo)];
+        // Each sample is looked for once, however many clips play it: looking can mean several checks on a slow drive.
+        var located = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        string? Find(string sample) => located.TryGetValue(sample, out var f) ? f : located[sample] = ArrangementReader.Locate(sample, path);
+        return [Playlist(song, playlist, Find, tempo), ByChannel(song, playlist, Find, tempo)];
     }
+
+    /// <summary>Ticks per beat; a damaged header can say 0, so FL's default stands in.</summary>
+    static double Ppq(int ppq) => ppq > 0 ? ppq : 96;
 
     static int? Colour(IReadOnlyDictionary<int, int> colours, int channel) =>
         colours.TryGetValue(channel, out var c) && c != DefaultChannelColour ? c : null;
 
-    static Arrangement Playlist(FlSong song, FlPlaylist pl, string path, double tempo)
+    static Arrangement Playlist(FlSong song, FlPlaylist pl, Func<string, string?> find, double tempo)
     {
-        double Beats(double ticks) => ticks / pl.Ppq;
+        double Beats(double ticks) => ticks / Ppq(pl.Ppq);
         var channels = song.Channels.ToDictionary(c => c.Index);
         var patterns = pl.Patterns.ToDictionary(p => p.Index);
         var notes = new List<string>();
@@ -62,10 +66,11 @@ static class FlArrangement
                 {
                     kinds.Add(LaneKind.Automation);
                     var name = pl.ChannelNames.GetValueOrDefault(ch, $"Automation {ch + 1}");
-                    var curve = song.Automation.FirstOrDefault(a => a.Name == name);
+                    // The clip's own curve, from as far into it as this placement starts (its offset is in ticks / 1000).
+                    var curve = song.Curves.GetValueOrDefault(ch);
                     clips.Add(new PreviewClip(name, start, length, item.Muted)
                     {
-                        Points = curve is null ? [] : Cut(curve.Points, start, length),
+                        Points = curve is null ? [] : Cut(curve, Beats(item.Offset * 1000), length),
                         Colour = Colour(pl.ChannelColours, ch),
                     });
                 }
@@ -74,7 +79,7 @@ static class FlArrangement
                     kinds.Add(LaneKind.Audio);
                     clips.Add(new PreviewClip(c.Name, start, length, item.Muted)
                     {
-                        Audio = c.Sample.Length > 0 ? [Part(c, path, length, item.Offset, tempo)] : [],
+                        Audio = c.Sample.Length > 0 ? [Part(c, find, length, item.Offset, tempo)] : [],
                         Colour = Colour(pl.ChannelColours, audio),
                     });
                 }
@@ -111,9 +116,9 @@ static class FlArrangement
         };
     }
 
-    static Arrangement ByChannel(FlSong song, FlPlaylist pl, string path, double tempo)
+    static Arrangement ByChannel(FlSong song, FlPlaylist pl, Func<string, string?> find, double tempo)
     {
-        double Beats(long ticks) => ticks / (double)song.Ppq;
+        double Beats(long ticks) => ticks / Ppq(song.Ppq);
         var lanes = new List<PreviewLane>();
         foreach (var c in song.Channels)
         {
@@ -135,7 +140,7 @@ static class FlArrangement
                     Colour = colour,
                     Clips = c.AudioClips.Select(k => new PreviewClip(c.Name, Beats(k.Start), Beats(k.Length), k.Muted)
                     {
-                        Audio = c.Sample.Length > 0 ? [Part(c, path, Beats(k.Length), k.From, tempo)] : [],
+                        Audio = c.Sample.Length > 0 ? [Part(c, find, Beats(k.Length), k.From, tempo)] : [],
                     }).ToList(),
                 });
         }
@@ -160,9 +165,9 @@ static class FlArrangement
     }
 
     /// <summary>A channel's sample playing in a clip <paramref name="beats"/> long, from <paramref name="from"/> seconds in, stretched as the channel says.</summary>
-    static AudioPart Part(FlChannel c, string projectPath, double beats, double from, double tempo)
+    static AudioPart Part(FlChannel c, Func<string, string?> find, double beats, double from, double tempo)
     {
-        var found = ArrangementReader.Locate(c.Sample, projectPath);
+        var found = find(c.Sample);
         var s = c.Stretch;
         // Without the Time knob, how far the sample is stretched doesn't depend on its length; with it, the whole sample
         // is fitted to a length, so how fast it moves is only known once the file's length is.
