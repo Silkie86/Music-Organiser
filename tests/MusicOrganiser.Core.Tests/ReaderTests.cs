@@ -305,6 +305,34 @@ public class FlStudioTests
     }
 
     [Fact]
+    public void Fix_relinks_an_FL_4_save_with_step_sequencer_dots()
+    {
+        // Solomon's "grimey" (FL 4, 2003): the reader turns old step sequencer dots into notes of its own, which aren't in
+        // the file, and the relink writer went backwards at them ("Offset and length were out of bounds").
+        var dir = Fixtures.TempDir();
+        var path = Path.Combine(dir, "grimey.flp");
+        var flp = new Fixtures.FlpBuilder()
+            .Ascii(199, "4.0.1").Word(66, 139).Ascii(194, "grimey")
+            .Word(64, 0).Byte(21, 0).Ascii(192, "Kick").Ascii(196, @"C:\Documents and Settings\samples\Kick.wav")
+            .Word(65, 1).Word(91, 256).Word(91, 260).Word(91, 264)
+            .Word(64, 1).Byte(21, 0).Ascii(192, "Snare").Ascii(196, @"C:\Documents and Settings\samples\Snare.wav")
+            .Word(65, 1).Word(91, 260)
+            .Build().ToArray();
+        File.WriteAllBytes(path, flp);
+
+        var (data, changed, _) = FlStudioReader.RelinkSamples(flp, path, new Dictionary<string, string>
+        {
+            [@"C:\Documents and Settings\samples\Kick.wav"] = @"J:\Recover\Older windows\samples\Kick.wav",
+            [@"C:\Documents and Settings\samples\Snare.wav"] = @"J:\S.wav",
+        });
+        Assert.Equal(2, changed);
+        File.WriteAllBytes(path, data);
+        Assert.Equal([@"J:\Recover\Older windows\samples\Kick.wav", @"J:\S.wav"], new FlStudioReader().Read(path).Samples);
+        // Everything else is as it was: the events the reader adds aren't written into the file.
+        Assert.Equal(FlStudioReader.ReadEvents(flp).Events.Select(e => e.Id), FlStudioReader.ReadEvents(data).Events.Select(e => e.Id));
+    }
+
+    [Fact]
     public void SurvivesTruncatedFiles()
     {
         var bytes = File.ReadAllBytes(_path);

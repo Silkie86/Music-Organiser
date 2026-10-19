@@ -143,6 +143,7 @@ public class ViewModelTests : IDisposable
         new Scanner(_db).ScanSampleFolders();
         ScanFixtures();
         var main = Main();
+        await Until(() => !main.IsScanning);   // the scan the app starts with (the sample folder) reloads the list when it ends
         var projects = main.Projects;
         projects.Reload();
         projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
@@ -154,7 +155,9 @@ public class ViewModelTests : IDisposable
         await detail.SaveFixedCommand.ExecuteAsync(null);
 
         // Until it's kept, the song still opens the original and Older saves leave the copy out; still picked, still asking.
-        var song = projects.Items.Single(i => i.Daw == "FL Studio");
+        var fl = projects.Items.Where(i => i.Daw == "FL Studio").ToList();
+        Assert.True(fl.Count == 1, "FL songs: " + string.Join("; ", fl.Select(i => $"{i.Path} (in {i.Folder})")));
+        var song = fl[0];
         Assert.Equal("Night Drive", song.FileName);
         Assert.Empty(song.OlderSaves);
         Assert.Same(song, projects.Selected);

@@ -96,8 +96,11 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     (int Saves, List<ProjectItem> Items, List<string> Tags) Load(bool group)
     {
         // A fixed copy waiting for Keep isn't a save yet: the song still opens its original, and Older saves leave it out.
+        // The saves are read first: Fix marks its copy pending before reading it into the library, so a copy in this list
+        // is always in the pending list read after it, even when a reload runs while Fix is saving.
+        var projects = _db.Projects();
         var pending = _db.PendingFixes();
-        var projects = pending.Count == 0 ? _db.Projects() : _db.Projects().Where(p => !pending.Contains(p.Path)).ToList();
+        if (pending.Count > 0) projects = projects.Where(p => !pending.Contains(p.Path)).ToList();
         var items = group
             ? SongVersions.Group(projects).Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older)).ToList()
             : projects.Select(p => new ProjectItem(_db, p)).ToList();
