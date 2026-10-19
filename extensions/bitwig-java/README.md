@@ -159,6 +159,9 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   each whether its panel showed before and after each go (`visible`), whether the route `ran` it, and whether
   the link put the panel back as it was (`restored`). A panel that shows and hides with them means Bitwig
   carried them out for the link.
+- From 3.14, an effect after a pad's empty Sampler is one Bitwig calls `audio-effect`, as well as `audio_to_audio`.
+  The 2026-10-19 live run showed Bitwig 6.1.5 calling devices `instrument` and `note-effect`, not the
+  `note_to_audio` the link was written for, so a pad with an effect after its Sampler would have counted as taken.
 - From 3.13, `device` gives a parameter on the remote controls page Bitwig shows its control's value, and gives
   `"value": null, "stale": true` for one whose text has changed since Bitwig last told the link its value. In
   the 2026-10-18 live run, Bitwig 6.1.5 showed each new value of MO Probe's knobs (CLAP and VST3), turned by
