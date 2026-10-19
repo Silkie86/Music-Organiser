@@ -67,13 +67,15 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         View = Ui.Current.CreateView(Items);
         View.Filter = o => o is ProjectItem p && Filter(p);
         View.SortBy(nameof(ProjectItem.Made), ListSortDirection.Descending);
+        _askDoubts = db.GetSetting(AskDoubtsKey) != "0";
+        _doubtsAcrossFolders = db.GetSetting(DoubtsAcrossFoldersKey) == "1";
         OnGroupByChanged(GroupBy);
     }
 
     public void Reload()
     {
         _loads++;
-        Show(Load(GroupSaves));
+        Show(Load(GroupSaves, Asking));
     }
 
     // Counts reloads, so one that finishes after a newer one (a scan's, say) doesn't put older rows back.
@@ -86,14 +88,17 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     public async Task ReloadAsync(string? select)
     {
         var group = GroupSaves;
+        var asking = Asking;
         var load = ++_loads;
-        var loaded = await UiWork.Run(() => Load(group));
+        var loaded = await UiWork.Run(() => Load(group, asking));
         if (load != _loads) return;   // a newer reload is on its way
         Show(loaded, select);
     }
 
+    sealed record Loaded(int Saves, List<ProjectItem> Items, List<string> Tags, SongChoices Choices, IReadOnlyList<SongDoubt> Doubts);
+
     /// <summary>The rows, read from the database and grouped into songs (on any thread).</summary>
-    (int Saves, List<ProjectItem> Items, List<string> Tags) Load(bool group)
+    Loaded Load(bool group, (bool Ask, bool AcrossFolders) asking)
     {
         // A fixed copy waiting for Keep isn't a save yet: the song still opens its original, and Older saves leave it out.
         // The saves are read first: Fix marks its copy pending before reading it into the library, so a copy in this list
@@ -101,16 +106,20 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         var projects = _db.Projects();
         var pending = _db.PendingFixes();
         if (pending.Count > 0) projects = projects.Where(p => !pending.Contains(p.Path)).ToList();
+        var choices = _db.SongChoices();
+        var songs = SongVersions.Group(projects, choices);
         var items = group
-            ? SongVersions.Group(projects).Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older)).ToList()
-            : projects.Select(p => new ProjectItem(_db, p)).ToList();
-        return (projects.Count, items, _db.AllTags().Select(t => t.Tag).ToList());
+            ? songs.Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older) { SongKey = g.Key }).ToList()
+            : projects.Select(p => new ProjectItem(_db, p) { SongKey = choices.KeyOf(p.Path, p.Folder, p.Daw, p.Name) }).ToList();
+        var doubts = asking.Ask ? SongVersions.Doubts(songs, choices, asking.AcrossFolders) : [];
+        return new(projects.Count, items, _db.AllTags().Select(t => t.Tag).ToList(), choices, doubts);
     }
 
-    void Show((int Saves, List<ProjectItem> Items, List<string> Tags) loaded, string? select = null)
+    void Show(Loaded loaded, string? select = null)
     {
         var selectedId = Selected?.Id;
         _saveCount = loaded.Saves;
+        Choices = loaded.Choices;   // before the rows, so the song's panel sees what you changed
         // The song you have open keeps its row (and so its panel, with Fix's choices and Check's results) when none of
         // its saves changed: a DAW saving some other project reloads the list.
         if (Selected is { } open && loaded.Items.FindIndex(i => i.Id == open.Id) is >= 0 and var at && Same(open, loaded.Items[at]))
@@ -127,7 +136,97 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
             : Items.FirstOrDefault(i => i.Id == selectedId || i.OlderSaves.Any(o => o.Id == selectedId));
         ApplyFilter();
         _main.Live.MarkProjects();
+        Doubts = loaded.Doubts.Where(d => !_skipped.Contains(SongChoices.Pair(d.A.Key, d.B.Key))).ToList();
     }
+
+    // ---- Which saves are one song: your say (Solomon, 19 Oct) --------------------------------------------------------
+
+    public const string AskDoubtsKey = "ask_song_doubts", DoubtsAcrossFoldersKey = "song_doubts_across_folders";
+
+    /// <summary>Setting: ask when two songs' names are close enough that they may be saves of one (on unless turned off).</summary>
+    [ObservableProperty] bool _askDoubts;
+    /// <summary>Setting: also ask about songs with the same name in different folders (off: different folders are different songs).</summary>
+    [ObservableProperty] bool _doubtsAcrossFolders;
+
+    (bool, bool) Asking => (AskDoubts, DoubtsAcrossFolders);
+
+    partial void OnAskDoubtsChanged(bool value)
+    {
+        _db.SetSetting(AskDoubtsKey, value ? "1" : "0");
+        _ = ReloadAsync();
+    }
+
+    partial void OnDoubtsAcrossFoldersChanged(bool value)
+    {
+        _db.SetSetting(DoubtsAcrossFoldersKey, value ? "1" : "0");
+        _ = ReloadAsync();
+    }
+
+    /// <summary>Your changes to the grouping, as last read (see <see cref="SongChoices"/>).</summary>
+    public SongChoices Choices { get; private set; } = SongChoices.None;
+
+    /// <summary>Songs that may be saves of one, waiting for you to say; the first is the one asked about.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Doubt), nameof(HasDoubts), nameof(ShowDoubtsBanner), nameof(DoubtsText), nameof(DoubtA), nameof(DoubtB), nameof(KeepAText), nameof(KeepBText))]
+    IReadOnlyList<SongDoubt> _doubts = [];
+    /// <summary>Whether the question card is open (the banner's Check button).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowDoubtsBanner))]
+    bool _checkingDoubts;
+    public bool ShowDoubtsBanner => HasDoubts && !CheckingDoubts;
+    readonly HashSet<string> _skipped = [];
+
+    public SongDoubt? Doubt => Doubts.Count > 0 ? Doubts[0] : null;
+    public bool HasDoubts => Doubts.Count > 0;
+    public string DoubtsText => Doubts.Count == 1 ? "Two songs may be saves of one song." : $"{Doubts.Count} pairs of songs may be saves of one song.";
+    public string DoubtA => Doubt is { } d ? Describe(d.A) : "";
+    public string DoubtB => Doubt is { } d ? Describe(d.B) : "";
+    public string KeepAText => Doubt is { } d ? $"One song, called {d.A.Song}" : "";
+    public string KeepBText => Doubt is { } d ? $"One song, called {d.B.Song}" : "";
+
+    static string Describe(SongGroup g) =>
+        $"{g.Song}: {(g.SaveCount == 1 ? "1 save" : $"{g.SaveCount} saves")}, newest {g.Latest.Name} on {g.Latest.Modified:d MMM yyyy}, " +
+        $"in {System.IO.Path.GetFileName(g.Latest.Folder.TrimEnd('\\', '/'))}";
+
+    /// <summary>The two are one song, under the name of <c>"A"</c> or <c>"B"</c>.</summary>
+    [RelayCommand]
+    async Task SameSong(string keep)
+    {
+        if (Doubt is not { } d) return;
+        var (into, from) = keep == "B" ? (d.B, d.A) : (d.A, d.B);
+        _db.JoinSong(from.Key, into.Key);
+        await ReloadAsync(select: Selected is { } open && (open.SongKey == from.Key || open.SongKey == into.Key) ? into.Latest.Path : null);
+        CheckingDoubts = HasDoubts && CheckingDoubts;
+    }
+
+    /// <summary>They're different songs: don't ask again.</summary>
+    [RelayCommand]
+    void DifferentSongs()
+    {
+        if (Doubt is not { } d) return;
+        _db.KeepApart(d.A.Key, d.B.Key);
+        Next(d);
+    }
+
+    /// <summary>Ask about this one another time (after the app restarts).</summary>
+    [RelayCommand]
+    void SkipDoubt()
+    {
+        if (Doubt is { } d) Next(d);
+    }
+
+    void Next(SongDoubt answered)
+    {
+        _skipped.Add(SongChoices.Pair(answered.A.Key, answered.B.Key));
+        Doubts = Doubts.Skip(1).ToList();
+        if (!HasDoubts) CheckingDoubts = false;
+    }
+
+    [RelayCommand]
+    void CheckDoubts() => CheckingDoubts = HasDoubts;
+
+    [RelayCommand]
+    void CloseDoubts() => CheckingDoubts = false;
 
     static void Refill(ObservableCollection<string> target, IEnumerable<string> values, string current, Action<string> reset)
     {
@@ -196,7 +295,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     {
         static IEnumerable<(long, string, long, long, bool, int, int)> Saves(ProjectItem i) =>
             i.OlderSaves.Prepend(i.Summary).Select(p => (p.Id, p.Path, p.Mtime, p.Size, p.FileMissing, p.MissingSamples, p.MissingPlugins));
-        return a.Name == b.Name && Saves(a).SequenceEqual(Saves(b));
+        return a.Name == b.Name && a.SongKey == b.SongKey && Saves(a).SequenceEqual(Saves(b));
     }
 
     partial void OnSelectedChanged(ProjectItem? value)

@@ -17,6 +17,7 @@ public sealed partial class LibraryDb : IDisposable
         PRAGMA journal_mode = WAL;
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS song_choices (kind TEXT, a TEXT, b TEXT, PRIMARY KEY (kind, a));
         CREATE TABLE IF NOT EXISTS roots (path TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY,
@@ -194,6 +195,44 @@ public sealed partial class LibraryDb : IDisposable
         GetSetting(key) is { } json ? JsonSerializer.Deserialize<List<string>>(json) ?? [] : [];
 
     public void SetList(string key, IEnumerable<string> values) => SetSetting(key, JsonSerializer.Serialize(values.ToList()));
+
+    /// <summary>Your changes to which saves are one song (see <see cref="Library.SongChoices"/>).</summary>
+    public SongChoices SongChoices()
+    {
+        var rows = Query("SELECT kind, a, b FROM song_choices", r => (Kind: Str(r, "kind"), A: Str(r, "a"), B: Str(r, "b")));
+        return new SongChoices(rows.Where(r => r.Kind == "join").ToDictionary(r => r.A, r => r.B),
+                               rows.Where(r => r.Kind == "split").Select(r => r.A).ToList(),
+                               rows.Where(r => r.Kind == "apart").Select(r => r.A).ToList());
+    }
+
+    /// <summary>
+    /// Puts the song with key <paramref name="from"/> under the song <paramref name="to"/> (see <see cref="SongVersions.Key"/>);
+    /// false when <paramref name="to"/> is already under <paramref name="from"/>, which would make a loop.
+    /// </summary>
+    public bool JoinSong(string from, string to)
+    {
+        if (from == to || SongChoices().Follow(to) == from) return false;
+        Exec("INSERT INTO song_choices VALUES ('join', $a, $b) ON CONFLICT(kind, a) DO UPDATE SET b = excluded.b", ("$a", from), ("$b", to));
+        Exec("DELETE FROM song_choices WHERE kind = 'apart' AND a = $p", ("$p", Library.SongChoices.Pair(from, to)));
+        return true;
+    }
+
+    /// <summary>Takes one save out of its song into a song of its own (<see cref="Library.SongChoices.SplitKey"/>).</summary>
+    public void SplitSave(string path) => Exec("INSERT OR IGNORE INTO song_choices VALUES ('split', $a, '')", ("$a", path.ToLowerInvariant()));
+
+    /// <summary>Remembers that two songs are different, so the app stops asking.</summary>
+    public void KeepApart(string a, string b) => Exec("INSERT OR IGNORE INTO song_choices VALUES ('apart', $a, '')", ("$a", Library.SongChoices.Pair(a, b)));
+
+    /// <summary>Undoes your changes to a song: its joins (either way) and the saves split off from it go back to the app's guess.</summary>
+    public void ForgetSongChoices(string key, IEnumerable<string> paths)
+    {
+        Exec("DELETE FROM song_choices WHERE kind = 'join' AND (a = $k OR b = $k)", ("$k", key));
+        foreach (var p in paths)
+        {
+            Exec("DELETE FROM song_choices WHERE kind = 'split' AND a = $p", ("$p", p.ToLowerInvariant()));
+            Exec("DELETE FROM song_choices WHERE kind = 'join' AND a = $k", ("$k", Library.SongChoices.SplitKey(p)));
+        }
+    }
 
     public IReadOnlyList<string> Roots() => Query("SELECT path FROM roots ORDER BY path", r => (string)r["path"]);
     public void AddRoot(string path) => Exec("INSERT OR IGNORE INTO roots VALUES ($p)", ("$p", path));
@@ -724,10 +763,10 @@ public sealed partial class LibraryDb : IDisposable
     /// only that row's ones: a DAW's own device in that DAW's projects, or "" for the plugin rather than a device.
     /// </summary>
     public IReadOnlyList<PluginProject> ProjectsWithPlugin(string name, string? own = null) => Query($"""
-        SELECT DISTINCT p.id, p.name, p.daw, p.mtime, p.folder FROM plugins pl JOIN projects p ON p.id = pl.project_id
+        SELECT DISTINCT p.id, p.name, p.daw, p.mtime, p.folder, p.path FROM plugins pl JOIN projects p ON p.id = pl.project_id
         WHERE pl.name_key = $k AND p.file_missing = 0 {OwnFilter(own)} ORDER BY p.mtime DESC
         """, r => new PluginProject((long)r["id"], Str(r, "name"), Str(r, "daw"), DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime,
-                                     Str(r, "folder")),
+                                     Str(r, "folder"), Str(r, "path")),
         ("$k", NameKey(name)), ("$own", own ?? ""));
 
     /// <summary>The part of a query on <c>plugins pl JOIN projects p</c> that keeps one Plugins page row's uses.</summary>
@@ -765,7 +804,7 @@ public sealed partial class LibraryDb : IDisposable
 
         // A sound muted in a song's newest save doesn't count for that song at all: its older saves are left out too.
         var newest = new Dictionary<long, long>();
-        foreach (var g in SongVersions.Group(Projects()))
+        foreach (var g in SongVersions.Group(Projects(), SongChoices()))
             foreach (var p in g.Older.Append(g.Latest))
                 newest[p.Id] = g.Latest.Id;
         var muted = Query("SELECT project_id, path FROM samples WHERE unplayed = 2", r => ((long)r["project_id"], Str(r, "path")))

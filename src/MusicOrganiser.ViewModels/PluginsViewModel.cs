@@ -223,7 +223,7 @@ public sealed partial class PluginsViewModel : ObservableObject
     void ShowSaves()
     {
         var saves = ShownSaves();
-        var songs = SongVersions.Songs(saves);
+        var songs = SongVersions.Songs(saves, _main.Projects.Choices);
         Projects = EverySave ? saves.Select(x => new SongUse(x.Name, x, 1)).ToList() : songs;
         var where = ProjectsDaw == ProjectsViewModel.Any ? "" : $" in {ProjectsDaw}";
         ProjectsTitle = songs.Count == 1 ? $"Used in 1 song{where}" : $"Used in {songs.Count} songs{where}";

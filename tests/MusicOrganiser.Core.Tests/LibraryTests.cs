@@ -321,6 +321,62 @@ public class LibraryTests : IDisposable
         Assert.Equal(["track1"], track.Older.Select(o => o.Name));
     }
 
+    static ProjectSummary Song(string name, string folder, int day) =>
+        new() { Name = name, Path = $@"{folder}\{name}.flp", Daw = "FL Studio", Folder = folder, Modified = new DateTime(2025, 3, day) };
+
+    [Fact]
+    public void Songs_whose_names_are_close_are_asked_about_but_not_ones_you_said_are_different()
+    {
+        // Solomon, 19 Oct 2026: "if there is a doubt the app should let you choose".
+        var songs = SongVersions.Group([Song("track nd 1", @"C:\beats", 1), Song("track 2", @"C:\beats", 2), Song("Sunrise", @"C:\beats", 3),
+                                        Song("Sunrize", @"C:\beats", 4), Song("Sunrise", @"C:\other", 5), Song("bass", @"C:\beats", 6),
+                                        Song("bossa", @"C:\beats", 7), Song("Untitled", @"C:\beats", 8), Song("Untitled 2", @"C:\beats", 9)]);
+        var doubts = SongVersions.Doubts(songs);
+        Assert.Equal(2, doubts.Count);
+        Assert.Equal(("Sunrize", "Sunrise"), (doubts[0].A.Song, doubts[0].B.Song));   // newest first
+        Assert.Equal("The names are one letter apart", doubts[0].Why);
+        Assert.Equal(("track", "track nd"), (doubts[1].A.Song, doubts[1].B.Song));
+        Assert.Equal("The names differ only by \"nd\"", doubts[1].Why);
+
+        // Across folders only when asked for.
+        Assert.Contains(SongVersions.Doubts(songs, acrossFolders: true), d => d.Why == "Same name in different folders");
+
+        _db.KeepApart(doubts[1].A.Key, doubts[1].B.Key);
+        Assert.Equal(["Sunrize"], SongVersions.Doubts(songs, _db.SongChoices()).Select(d => d.A.Song));
+    }
+
+    [Fact]
+    public void You_can_join_songs_split_a_save_off_and_move_a_save_and_Reset_undoes_it()
+    {
+        var saves = new[] { Song("track nd 1", @"C:\beats", 1), Song("track 2", @"C:\beats", 2), Song("track 3", @"C:\beats", 3),
+                            Song("bossa", @"C:\beats", 4) };
+        IReadOnlyList<SongGroup> Groups() => SongVersions.Group(saves, _db.SongChoices());
+        var track = Groups().Single(g => g.Song == "track");
+        var nd = Groups().Single(g => g.Song == "track nd");
+
+        // "track nd" goes under "track": one song, called track, newest track 3.
+        Assert.True(_db.JoinSong(nd.Key, track.Key));
+        var joined = Assert.Single(Groups(), g => g.Song == "track");
+        Assert.Equal(["track 2", "track nd 1"], joined.Older.Select(o => o.Name));
+        Assert.Equal(2, Groups().Count);
+        Assert.False(_db.JoinSong(track.Key, nd.Key));   // a loop
+        Assert.True(_db.SongChoices().Changed(joined.Key, joined.Older.Append(joined.Latest).Select(p => p.Path)));
+
+        // track 2 split off into a song of its own, then moved under bossa.
+        _db.SplitSave(saves[1].Path);
+        Assert.Equal(3, Groups().Count);
+        Assert.True(_db.JoinSong(SongChoices.SplitKey(saves[1].Path), Groups().Single(g => g.Song == "bossa").Key));
+        var bossa = Groups().Single(g => g.Song == "bossa");
+        Assert.Equal(("bossa", "track 2"), (bossa.Latest.Name, bossa.Older.Single().Name));   // saved last, whatever the numbers
+
+        // Reset on track puts its join back; Reset on bossa takes track 2 back to track.
+        _db.ForgetSongChoices(joined.Key, [saves[0].Path, saves[2].Path]);
+        _db.ForgetSongChoices(bossa.Key, [saves[1].Path, saves[3].Path]);
+        Assert.Equal(3, Groups().Count);
+        Assert.Equal(["track 2"], Groups().Single(g => g.Song == "track").Older.Select(o => o.Name));
+        Assert.True(_db.SongChoices().IsEmpty);
+    }
+
     [Fact]
     public void Bitwig_saves_numbered_with_a_space_are_one_song()
     {
