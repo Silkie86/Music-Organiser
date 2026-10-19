@@ -118,7 +118,7 @@
         <WrapPanel Grid.Row="3" Margin="0,2,0,0">
             <TextBlock Text="Snap to" Classes="label" Margin="0,0,6,6" />
             <ListBox Classes="chips" ItemsSource="{x:Static vm:PlaygroundViewModel.GridChoices}" SelectedItem="{Binding GridPick}" Margin="0,0,12,6"
-                     ToolTip.Tip="What clips snap to when you drag them. Hold Alt while dragging to place them freely.">
+                     ToolTip.Tip="What clips snap to when you drag them. Hold Shift while dragging to place them freely.">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                 </ListBox.ItemsPanel>
@@ -184,8 +184,8 @@
                                             Highlight="{Binding Loop}" HighlightCommand="{Binding SetLoopCommand}"
                                             Selected="{Binding SelectedClip.Clip}" SelectCommand="{Binding SelectClipCommand}"
                                             SelectedLabel="{Binding SelectedLabel}" LabelCommand="{Binding SelectLabelCommand}"
-                                            EditCommand="{Binding ChangeClipCommand}" DeleteCommand="{Binding DeleteClipCommand}" Grid="{Binding Grid}"
-                                            ToolTip.Tip="Click a clip to edit it below; drag it to slide it, or onto another track (below the last makes a new one). Drag its right edge to play it round more, its left edge to trim it. Hold Alt to drag off the grid. Drag across empty bars to highlight them; click a label to pick its bars. Delete takes the picked clip out." />
+                                            EditCommand="{Binding ChangeClipCommand}" DeleteCommand="{Binding DeleteClipCommand}" Grid="{Binding Grid}" DropCommand="{Binding DropPartCommand}"
+                                            ToolTip.Tip="Click a clip to edit it below; drag it to slide it, or onto another track (below the last makes a new one). Drag its right edge to play it round more, its left edge to trim it. Hold Shift to drag off the grid. Drag across empty bars, or along the bar numbers, to highlight them: highlight bars of the clip you picked to get other parts for just those bars. Click a label to pick its bars. Drop suggestions from the right, or .mid files from Explorer, onto a track. Delete takes the picked clip out." />
                     </Grid>
                 </ScrollViewer>
 
@@ -266,7 +266,7 @@
                                                     <TextBlock Text="{Binding From}" Classes="small" ToolTip.Tip="{Binding From}" />
                                                 </StackPanel>
                                             </DockPanel>
-                                            <views:NoteRoll Height="36" Channel="{Binding Channel}" />
+                                            <views:NoteRoll Height="36" Channel="{Binding Channel}" views:PartDrag.Part="{Binding}" ToolTip.Tip="Drag it onto a track on the timeline" />
                                             <TextBlock Text="{Binding Why}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                                             <TextBlock Text="{Binding Chords}" Classes="small" FontFamily="{DynamicResource NumberFont}" />
                                             <StackPanel Orientation="Horizontal" Spacing="6">
@@ -276,7 +276,7 @@
                                                         <TextBlock Text="■ Stop" IsVisible="{Binding IsPlaying}" />
                                                     </Panel>
                                                 </Button>
-                                                <Button Content="Add" Classes="tiny accent" Command="{Binding AddCommand}" ToolTip.Tip="Add it on a new track over the highlight (or from bar 1), moved into key" />
+                                                <Button Content="{Binding AddText}" Classes="tiny accent" Command="{Binding AddCommand}" ToolTip.Tip="Add: on a new track over the highlight (or from bar 1), moved into key. Swap in: in place of the highlighted bars of the clip you picked." />
                                                 <Button Content="Copy its groove" Classes="tiny" Command="{Binding TakeGrooveCommand}"
                                                         ToolTip.Tip="Put its feel, rhythm or whole playing on the part picked (block chords played like it)" />
                                             </StackPanel>

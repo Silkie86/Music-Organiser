@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Playground;
 using MusicOrganiser.Core.Parsers;
@@ -16,8 +17,9 @@ namespace MusicOrganiser.Avalonia.Views;
 /// under them, then a row for each track with its clips drawn where they play, their notes inside and a faint line
 /// where each go round starts. Click a clip to pick it and drag it to slide it along or onto another track (below
 /// the last track makes a new one); drag its right edge to play it round more times, its left edge to trim its start.
-/// Everything snaps to <see cref="Grid"/>, or to nothing while Alt is held. Drag across empty bars (or the bar numbers)
-/// to highlight them. The track names and buttons are drawn beside it by the page, row for row.
+/// Everything snaps to <see cref="Grid"/>, or to nothing while Shift is held (Solomon, 04:56). Drag across empty bars
+/// (or the bar numbers, over clips too) to highlight them. Suggestions from the side panel and .mid files from Explorer
+/// can be dropped onto a track. The track names and buttons are drawn beside it by the page, row for row.
 /// </summary>
 public sealed class TimelineView : Control
 {
@@ -65,8 +67,95 @@ public sealed class TimelineView : Control
     public ICommand? EditCommand { get => GetValue(EditCommandProperty); set => SetValue(EditCommandProperty, value); }
     public ICommand? DeleteCommand { get => GetValue(DeleteCommandProperty); set => SetValue(DeleteCommandProperty, value); }
     public long Grid { get => GetValue(GridProperty); set => SetValue(GridProperty, value); }
+    /// <summary>Takes a <see cref="PartDrop"/> when a suggestion or .mid files are let go on a track.</summary>
+    public static readonly StyledProperty<ICommand?> DropCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(DropCommand));
+    public ICommand? DropCommand { get => GetValue(DropCommandProperty); set => SetValue(DropCommandProperty, value); }
 
-    public TimelineView() => Focusable = true;
+    public TimelineView()
+    {
+        Focusable = true;
+        DragDrop.SetAllowDrop(this, true);
+        AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DragLeaveEvent, (_, _) => { _drop = null; InvalidateVisual(); });
+        AddHandler(DragDrop.DropEvent, OnDrop);
+    }
+
+    // ---- dropping parts in ----
+
+    /// <summary>A part being dragged over the timeline, where it would land.</summary>
+    sealed record Landing(object Part, string Name, int Row, long Start, long Length);
+
+    Landing? _drop;
+    // A dragged file is read once, not on every move of the pointer.
+    string _peekedFor = "";
+    (string Name, long Length, int Parts) _peeked;
+
+    Landing? LandingOf(DragEventArgs e)
+    {
+        object part;
+        string name;
+        long length;
+        if (e.DataTransfer.TryGetValue(PartDrag.Format) is { } match)
+        {
+            part = match;
+            name = match.Title;
+            length = Math.Max(1, PhraseAnalyser.BarsOf(match.Match.Notes)) * (long)Bar;
+        }
+        else if (e.DataTransfer.TryGetFiles() is { Length: > 0 } files
+                 && files.Select(f => f.TryGetLocalPath()).OfType<string>().Where(MidiFileReader.IsMidiPath).ToList() is { Count: > 0 } paths)
+        {
+            part = paths;
+            var key = string.Join("|", paths);
+            if (key != _peekedFor)
+            {
+                _peekedFor = key;
+                _peeked = Peek(paths);
+            }
+            (name, length, _) = _peeked;
+        }
+        else return null;
+        var p = e.GetPosition(this);
+        // It starts at the grid step the pointer is in (anywhere with Shift); a file of several parts gets new tracks.
+        var grid = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 1 : Math.Max(1, Grid);
+        var start = Math.Max(0, TickAt(p.X) / grid * grid);
+        var row = part is List<string> && _peeked.Parts > 1 ? RowCount : Math.Clamp((int)Math.Floor((p.Y - Top) / RowHeight), 0, RowCount);
+        return new Landing(part, name, row, start, length);
+    }
+
+    /// <summary>The name and length of .mid files dragged in, and how many parts they hold.</summary>
+    static (string Name, long Length, int Parts) Peek(IReadOnlyList<string> paths)
+    {
+        try
+        {
+            var parts = paths.SelectMany(p => MidiFileReader.Read(p)).Select(p => PhraseAnalyser.Normalise(p.Notes, p.Ppq)).Where(n => n.Count > 0).ToList();
+            var name = paths.Count == 1 ? Path.GetFileNameWithoutExtension(paths[0]) : $"{paths.Count} files";
+            return (name, Math.Max(1, parts.Count == 0 ? 1 : parts.Max(n => PhraseAnalyser.BarsOf(n))) * (long)Bar, parts.Count);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or IndexOutOfRangeException)
+        {
+            return (Path.GetFileName(paths[0]), Bar, 1);
+        }
+    }
+
+    void OnDragOver(object? sender, DragEventArgs e)
+    {
+        _drop = LandingOf(e);
+        e.DragEffects = _drop is null ? DragDropEffects.None : DragDropEffects.Copy;
+        e.Handled = true;
+        InvalidateVisual();
+    }
+
+    void OnDrop(object? sender, DragEventArgs e)
+    {
+        var landing = LandingOf(e);
+        _drop = null;
+        _peekedFor = "";
+        InvalidateVisual();
+        if (landing is null) return;
+        var drop = new PartDrop(landing.Part, landing.Row, landing.Start);
+        if (DropCommand?.CanExecute(drop) == true) DropCommand.Execute(drop);
+        e.Handled = true;
+    }
 
     const int Bar = 4 * PhraseAnalyser.Ppq;
 
@@ -141,7 +230,7 @@ public sealed class TimelineView : Control
 
     long SnapTo(long tick, KeyModifiers keys)
     {
-        var grid = keys.HasFlag(KeyModifiers.Alt) ? 1 : Math.Max(1, Grid);
+        var grid = keys.HasFlag(KeyModifiers.Shift) ? 1 : Math.Max(1, Grid);
         return (long)Math.Round(tick / (double)grid) * grid;
     }
 
@@ -210,7 +299,7 @@ public sealed class TimelineView : Control
     {
         var c = d.Clip;
         var delta = TickAt(p.X) - TickAt(d.From.X);
-        var min = Math.Max(1, keys.HasFlag(KeyModifiers.Alt) ? PhraseAnalyser.Ppq / 4 : Grid);
+        var min = Math.Max(1, keys.HasFlag(KeyModifiers.Shift) ? PhraseAnalyser.Ppq / 4 : Grid);
         switch (d.Grab)
         {
             case Grab.Move:
@@ -389,6 +478,15 @@ public sealed class TimelineView : Control
             var rect = new Rect(X(g.Start) + 0.5, Top + g.Row * RowHeight + 3, Math.Max(3, X(g.Length) - 1), RowHeight - 6);
             dc.DrawRectangle(soft, new Pen(accent, 2, new DashStyle([4, 3], 0)), new RoundedRect(rect, 5));
             var where = $"Bar {g.Start / (double)Bar + 1:0.##}{(g.Grab == Grab.Move ? "" : $" · {g.Length / (double)Bar:0.##} bars")}{(g.Row >= rows ? " · new track" : "")}";
+            dc.DrawText(Text(where, 11, text, bold), new Point(rect.X + 5, rect.Y + 1));
+        }
+
+        // A suggestion or .mid file being dragged in, where it would land.
+        if (_drop is { } d)
+        {
+            var rect = new Rect(X(d.Start) + 0.5, Top + d.Row * RowHeight + 3, Math.Max(3, X(d.Length) - 1), RowHeight - 6);
+            dc.DrawRectangle(soft, new Pen(accent, 2, new DashStyle([4, 3], 0)), new RoundedRect(rect, 5));
+            var where = $"{d.Name} · bar {d.Start / (double)Bar + 1:0.##}{(d.Row >= rows ? " · new track" : "")}{(_peeked.Parts > 1 && d.Part is List<string> ? $" · {_peeked.Parts} new tracks" : "")}";
             dc.DrawText(Text(where, 11, text, bold), new Point(rect.X + 5, rect.Y + 1));
         }
 

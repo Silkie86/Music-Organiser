@@ -87,8 +87,8 @@ public sealed class TimelineTests
         Assert.Same(keys.Clips[0], e.Clip);
         Assert.Equal((1, 2L * Bar, 4L * Bar), (e.Row, e.Start, e.Length));
 
-        // Below the last track: a new one. Alt places it off the grid.
-        Drag(window, new Point(150, RowY(0)), new Point(180, RowY(2)), RawInputModifiers.Alt);
+        // Below the last track: a new one. Shift places it off the grid.
+        Drag(window, new Point(150, RowY(0)), new Point(180, RowY(2)), RawInputModifiers.Shift);
         Assert.Equal(2, done.Edits[^1].Row);
         Assert.InRange(done.Edits[^1].Start, 110L, 120L);   // 0.3 of a bar
     }
@@ -103,8 +103,8 @@ public sealed class TimelineTests
         // Its start pulled in by 1.3 bars: on the grid, a bar in and a bar shorter, its 1-bar loop starting where it was.
         Drag(window, new Point(2, RowY(0)), new Point(132, RowY(0)));
         Assert.Equal((1L * Bar, 3L * Bar, 0L), (done.Edits[^1].Start, done.Edits[^1].Length, done.Edits[^1].Offset));
-        // Off the grid (Alt), half a bar in: the go round now starts half way through.
-        Drag(window, new Point(2, RowY(0)), new Point(52, RowY(0)), RawInputModifiers.Alt);
+        // Off the grid (Shift), half a bar in: the go round now starts half way through.
+        Drag(window, new Point(2, RowY(0)), new Point(52, RowY(0)), RawInputModifiers.Shift);
         Assert.Equal((Bar / 2L, Bar / 2L), (done.Edits[^1].Start, done.Edits[^1].Offset));
     }
 }

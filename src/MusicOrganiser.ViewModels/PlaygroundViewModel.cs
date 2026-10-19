@@ -680,6 +680,189 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         clip.Fits = ClipFit.Repeats(clip, lane, _session.Style);
     }
 
+    // ---- parts swapped in, or dropped onto the timeline ----
+
+    /// <summary>
+    /// The clip the highlight is in (Solomon, 2026-10-19: "highlighting inside a clip gives alternatives of the same kind
+    /// for just those bars"): the picked clip, when the highlight covers some of it. Suggest then lists parts of its kind
+    /// for those bars, and picking one swaps it in there.
+    /// </summary>
+    public ClipRow? SwapTarget => Loop is { } r && SelectedClip is { } c && !c.Track.IsWritten && c.Clip.Start < r.End && c.Clip.End > r.Start ? c : null;
+
+    /// <summary>The bars of <see cref="SwapTarget"/> under the highlight.</summary>
+    (long Start, long End)? SwapRange => SwapTarget is { } t && Loop is { } r ? (Math.Max(r.Start, t.Clip.Start), Math.Min(r.End, t.Clip.End)) : null;
+
+    static string RoleOf(ClipRow row) => row.Clip.Role == MidiRoles.Other ? row.Track.Role : row.Clip.Role;
+
+    PlaygroundClip? _swapFor;
+
+    /// <summary>
+    /// The highlight moved or another clip was picked: the suggestions follow, for the clip the highlight is in (its kind
+    /// of part) or for the bars highlighted.
+    /// </summary>
+    void SuggestFollow(bool highlightMoved)
+    {
+        var target = SwapTarget;
+        if (target?.Clip == _swapFor && !highlightMoved) return;
+        _swapFor = target?.Clip;
+        OnPropertyChanged(nameof(SwapTarget));
+        if (target is not null && RoleChips.FirstOrDefault(c => c.Role == RoleOf(target)) is { } chip && chip != SuggestRole)
+        {
+            SuggestRole = chip;   // finds again
+            return;
+        }
+        if (Matches.Count > 0 || target is not null) _ = FindMatchesAsync();
+    }
+
+    partial void OnSelectedClipChanged(ClipRow? value) => SuggestFollow(false);
+
+    /// <summary>
+    /// Cuts <paramref name="from"/>–<paramref name="to"/> out of the clips on <paramref name="layer"/>, as a DAW does when
+    /// a clip is put on top of others: what's left either side stays where it was.
+    /// </summary>
+    static void CutOut(PlaygroundLayer layer, long from, long to)
+    {
+        for (var i = layer.Clips.Count - 1; i >= 0; i--)
+        {
+            var c = layer.Clips[i];
+            if (c.End <= from || c.Start >= to) continue;
+            layer.Clips.RemoveAt(i);
+            if (c.End > to) layer.Clips.Insert(i, Piece(c, to, c.End));
+            if (c.Start < from) layer.Clips.Insert(i, Piece(c, c.Start, from));
+        }
+    }
+
+    /// <summary>The bit of <paramref name="clip"/> from <paramref name="from"/> to <paramref name="to"/>: its notes where they were, each go round still moved as far.</summary>
+    internal static PlaygroundClip Piece(PlaygroundClip clip, long from, long to)
+    {
+        var piece = clip.Copy();
+        var loop = Math.Max(1, clip.Loop);
+        var into = clip.Offset % loop + from - clip.Start;
+        piece.Start = from;
+        piece.Length = to - from;
+        piece.Offset = into % loop;
+        piece.Fits = [.. clip.Fits.Skip((int)(into / loop))];
+        return piece;
+    }
+
+    /// <summary>
+    /// Puts <paramref name="clip"/> on track <paramref name="row"/>, cutting out what was there (a track written from the
+    /// chords, or one past the last, gives it a new track named <paramref name="trackName"/>), then fits and picks it.
+    /// </summary>
+    LayerRow PlaceClip(PlaygroundClip clip, int row, string trackName)
+    {
+        LayerRow to;
+        if (row >= 0 && row < Layers.Count && !Layers[row].IsWritten)
+        {
+            to = Layers[row];
+            CutOut(to.Layer, clip.Start, clip.End);
+        }
+        else
+        {
+            var layer = new PlaygroundLayer
+            {
+                Name = UniqueName(trackName), Role = clip.Role, Program = GmSounds.DefaultFor(clip.Role), SourcePath = clip.SourcePath, SourceHash = clip.SourceHash,
+            };
+            Section.Layers.Add(layer);
+            Layers.Add(to = new LayerRow(this, layer));
+        }
+        to.Layer.Clips.Add(clip);
+        Reach(clip.End);
+        Refit(to.Layer, clip);
+        to.Layer.Render();
+        to.Changed();
+        SelectedLayer = to;
+        SelectedClip = new ClipRow(this, to, clip);
+        RefreshGrooveSources();
+        return to;
+    }
+
+    /// <summary>A library part as a clip: one go round of its bars (chord parts turned into smooth inversions when that's on).</summary>
+    PlaygroundClip LibraryClip(MidiEntry entry, IReadOnlyList<NoteEvent> notes, long start, long? length = null)
+    {
+        var loop = Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
+        var one = notes.Where(n => n.Start < loop).ToList();
+        if (SmoothIncoming && entry.Role == MidiRoles.Chords) one = Inversions.Smooth(one, ChordCentre(null));
+        return PlaygroundClip.Of(entry.Title.Length > 0 ? entry.Title : entry.SourceName, entry.Role, one, loop, start, length ?? loop,
+                                 entry.Phrase.Source.Path, entry.Phrase.Hash);
+    }
+
+    /// <summary>A suggestion picked for bars of a clip: it takes their place, and the rest of the clip stays either side.</summary>
+    internal void SwapIn(ClipRow target, (long Start, long End) bars, MidiEntry entry, IReadOnlyList<NoteEvent> notes)
+    {
+        if (notes.Count == 0) return;
+        Remember();
+        var was = target.Clip.Name;
+        var clip = LibraryClip(entry, notes, bars.Start, bars.End - bars.Start);
+        PlaceClip(clip, Layers.IndexOf(target.Track), clip.Name);
+        Changed();
+        Message = $"Bars {bars.Start / Bar + 1}–{(bars.End + Bar - 1) / Bar} of {was} swapped for {clip.Name} from {entry.SourceName}. Undo puts them back.";
+    }
+
+    /// <summary>
+    /// A suggestion dragged from the side panel, or .mid files dragged in from Explorer, let go on the timeline at
+    /// <see cref="PartDrop.Start"/> on track <see cref="PartDrop.Row"/> (one past the last: a new track).
+    /// </summary>
+    [RelayCommand]
+    void DropPart(PartDrop? drop)
+    {
+        switch (drop?.Part)
+        {
+            case PlaygroundMatchRow m when m.Match.Notes.Count > 0:
+                Remember();
+                var clip = LibraryClip(m.Match.Entry, m.Match.Notes, drop.Start);
+                PlaceClip(clip, drop.Row, clip.Name);
+                Changed();
+                Message = $"Added {clip.Name} from {m.Match.Entry.SourceName} at bar {drop.Start / Bar + 1}. Parts from {m.Match.Entry.SourceName} won't be suggested now.";
+                break;
+            case IReadOnlyList<string> paths:
+                DropFiles(paths, drop.Row, drop.Start);
+                break;
+        }
+    }
+
+    /// <summary>The parts of .mid files, kept in time with each other, as clips from <paramref name="start"/>: one part goes on the track it was let go on, more go on new tracks.</summary>
+    void DropFiles(IReadOnlyList<string> paths, int row, long start)
+    {
+        var parts = new List<(string Name, string Role, List<NoteEvent> Notes, string Path, string Hash)>();
+        var problems = new List<string>();
+        foreach (var path in paths.Where(MidiFileReader.IsMidiPath))
+        {
+            try
+            {
+                var file = Path.GetFileNameWithoutExtension(path);
+                var read = MidiFileReader.Read(path).Select(p => (Part: p, Notes: PhraseAnalyser.Normalise(p.Notes, p.Ppq, keepPlace: true))).Where(p => p.Notes.Count > 0).ToList();
+                if (read.Count == 0) continue;
+                // The whole file moves to start in its first bar with notes, its parts staying in time together.
+                var shift = read.Min(p => p.Notes[0].Start) / Bar * Bar;
+                foreach (var (part, notes) in read)
+                {
+                    var moved = notes.Select(n => n with { Start = n.Start - shift }).ToList();
+                    var analysis = PhraseAnalyser.Analyse(moved, $"{part.Name} {file}", part.Drums);
+                    parts.Add((part.Name.Trim().Length > 0 ? part.Name.Trim() : file, analysis.Role, moved, path, analysis.Hash));
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or IndexOutOfRangeException)
+            {
+                problems.Add($"{Path.GetFileName(path)} ({ex.Message})");
+            }
+        }
+        if (parts.Count == 0)
+        {
+            Message = problems.Count > 0 ? $"Couldn't read {string.Join(", ", problems)}." : "No notes in that: only .mid files with notes can be dropped in.";
+            return;
+        }
+        Remember();
+        foreach (var (name, role, notes, path, hash) in parts)
+        {
+            var loop = Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
+            PlaceClip(PlaygroundClip.Of(name, role, notes, loop, start, loop, path, hash), parts.Count == 1 ? row : Layers.Count, name);
+        }
+        Changed();
+        Message = $"Added {(parts.Count == 1 ? parts[0].Name : $"{parts.Count} parts")} from {string.Join(", ", paths.Where(MidiFileReader.IsMidiPath).Select(Path.GetFileName))} at bar {start / Bar + 1}."
+                  + (problems.Count > 0 ? $" Couldn't read {string.Join(", ", problems)}." : "");
+    }
+
     /// <summary>Hands a clip changed by hand back to shift to fit: its octave kept, the rest worked out again.</summary>
     internal void FitAgain(ClipRow row) =>
         EditClip(row, c =>
@@ -1307,7 +1490,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             Matches.Clear();
             foreach (var m in found) Matches.Add(new PlaygroundMatchRow(this, m));
             var left = harmony.Songs.Count == 0 ? "" : $" Left out: {string.Join(", ", harmony.Songs.Select(s => Path.GetFileName(s)))}, already in the idea.";
+            var target = SwapTarget;
             MatchStatus = found.Count == 0 ? "Nothing found. Try another kind of part, or fewer words."
+                : target is not null && SwapRange is { } bars
+                    ? $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} for bars {bars.Start / Bar + 1}–{(bars.End + Bar - 1) / Bar} of {target.Clip.Name}, best first: Swap in puts one there instead." + left
                 : (harmony.IsEmpty ? $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()}, newest first: add a part or chords to rank them by fit."
                                    : $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} that fit {(Loop is null ? "the whole idea" : LoopText.ToLowerInvariant())}, best first, moved into its key.") + left;
         }
@@ -1318,7 +1504,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         }
     }
 
-    internal void AddMatch(PlaygroundMatchRow row) => AddFromLibrary(row.Match.Entry, row.Match.Notes);
+    internal void AddMatch(PlaygroundMatchRow row)
+    {
+        if (SwapTarget is { } target && SwapRange is { } bars) SwapIn(target, bars, row.Match.Entry, row.Match.Notes);
+        else AddFromLibrary(row.Match.Entry, row.Match.Notes);
+    }
 
     // ---- a stretch of one of your songs ----
 
@@ -1563,13 +1753,19 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Loop = range is { } r && Math.Clamp(r.End, 1, Length) > Math.Clamp(r.Start, 0, Length)
             ? new RollRange(Math.Clamp(r.Start, 0, Length), Math.Clamp(r.End, 1, Length)) : null;
         if (_playing) _ = PlayAsync();
+        SuggestFollow(true);
     }
 
     [RelayCommand]
     void ClearLoop() => SetLoop(null);
 
     /// <summary>The harmony suggestions are fitted to: the loop's bars when there are loop points, else the section.</summary>
-    SectionHarmony MatchHarmony => Loop is { } r ? Harmony.Slice(r.Start, r.End) : Harmony;
+    /// <summary>
+    /// Swapping bars of a clip, the bars it covers, heard without its track (it's what's being replaced).
+    /// </summary>
+    SectionHarmony MatchHarmony => SwapTarget is { } t && SwapRange is { } bars
+        ? SectionHarmony.Of(Section, _session.Key, _session.Style, [t.Track.Layer]).Slice(bars.Start, bars.End)
+        : Loop is { } r ? Harmony.Slice(r.Start, r.End) : Harmony;
 
     // ---- listening ----
 
@@ -1705,6 +1901,18 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         if (row.IsPlaying) { StopPlaying(); return; }
         StopPlaying();
+        if (SwapTarget is { } target && SwapRange is { } bars)
+        {
+            // Heard as Swap in would leave it: those bars of the clip played by the suggestion instead.
+            var tried = PlaygroundSession.FromJson(_session.ToJson())!.Timeline;
+            var layer = tried.Layers[Section.Layers.IndexOf(target.Track.Layer)];
+            CutOut(layer, bars.Start, bars.End);
+            layer.Clips.Add(LibraryClip(row.Match.Entry, row.Match.Notes, bars.Start, bars.End - bars.Start));
+            layer.Render();
+            await PlayAsync(instead: ChannelsOf(tried).ToList());
+            row.IsPlaying = _playing;
+            return;
+        }
         var channels = ChannelsOf(Section).ToList();
         var notes = row.Match.Notes;
         var period = Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
@@ -1943,6 +2151,12 @@ public sealed record ClipPick(PlaygroundLayer Track, PlaygroundClip Clip);
 /// A clip dragged on the timeline: onto track <paramref name="Row"/> (one past the last makes a new track), starting at
 /// <paramref name="Start"/>, playing for <paramref name="Length"/>, from <paramref name="Offset"/> into its go round.
 /// </summary>
+/// <summary>
+/// A part let go on the timeline: a suggestion (<see cref="PlaygroundMatchRow"/>) or .mid file paths, on track
+/// <paramref name="Row"/> (one past the last makes a new track) from <paramref name="Start"/>.
+/// </summary>
+public sealed record PartDrop(object Part, int Row, long Start);
+
 public sealed record ClipEdit(PlaygroundLayer Track, PlaygroundClip Clip, int Row, long Start, long Length, long Offset);
 
 /// <summary>
@@ -2069,6 +2283,8 @@ public sealed partial class PlaygroundMatchRow(PlaygroundViewModel owner, Playgr
     public MidiChannel Channel => new(Title, "", PhraseAnalyser.Ppq, match.Notes);
     [ObservableProperty] bool _isPlaying;
     [RelayCommand] void Add() => owner.AddMatch(this);
+    /// <summary>What Add does: a new track, or (with a highlight in a clip) swapping those bars of it.</summary>
+    public string AddText { get; } = owner.SwapTarget is null ? "Add" : "Swap in";
     [RelayCommand] Task Preview() => owner.PreviewMatch(this);
     /// <summary>Copy its groove (up to its whole playing) onto the part picked in the section.</summary>
     [RelayCommand] void TakeGroove() => owner.TakeGrooveFrom(this);
