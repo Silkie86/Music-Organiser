@@ -1735,6 +1735,28 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task The_playground_lists_suggestions_as_soon_as_it_opens()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Keys", Ppq = 96 };
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Keys Am.mid"), Core.Export.MidiWriter.Write(chords));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var playground = main.Playground;
+        Assert.Equal(Core.Midi.MidiRoles.Chords, playground.SuggestRole.Role);
+        main.SelectedNav = main.Nav.First(n => n.Page == playground);
+        for (var i = 0; i < 300 && playground.Matches.Count == 0; i++) await Task.Delay(10);
+        Assert.True(playground.Matches.Count > 0, playground.MatchStatus);
+        Assert.Contains(playground.Matches, m => m.Match.Entry.Title.Contains("Keys"));
+    }
+
+    [Fact]
     public async Task What_goes_with_this_works_in_a_small_playground_as_long_as_the_longer_part()
     {
         const int bar = 4 * 96;

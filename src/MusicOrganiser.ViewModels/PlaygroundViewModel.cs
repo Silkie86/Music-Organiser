@@ -900,8 +900,15 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     int _nextRequest;
 
-    /// <summary>The page was opened: the MIDI is being read now, so the next-chord ideas can learn from it.</summary>
-    public void Opened() => _ = RefreshNextChordsAsync(load: true);
+    /// <summary>
+    /// The page was opened: the MIDI is being read now, so the next-chord ideas can learn from it, and Suggest lists parts
+    /// straight away (Solomon, 2026-10-19: "the list of midi didnt load initially", until he clicked another kind and back).
+    /// </summary>
+    public void Opened()
+    {
+        _ = RefreshNextChordsAsync(load: true);
+        if (Matches.Count == 0 && !IsMatching) _ = FindMatchesAsync();
+    }
 
     /// <summary>
     /// What usually comes next, learned from your chord parts. Only reads the MIDI when the page is open (<paramref name="load"/>),
