@@ -220,6 +220,30 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public async Task A_cut_down_playground_works_apart_and_hands_its_section_to_the_playground()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        main.Playground.ChartText = "Dm7 | G7 | Cmaj7 | %";
+
+        var lead = Line(2 * Beat, 65, 69, 65, 64, 64, 67, 71, 74);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", lead)]).Entries[0];
+        var quick = main.Playground.Quick();
+        await quick.LoadSongAsync(Path.Combine(_root, "song.txt"), "Song", entry, lead, "Lead");
+        Assert.Equal(["Lead"], quick.Layers.Select(l => l.Name));
+        Assert.Single(main.Playground.Sections);   // the Playground's own idea is left alone
+
+        quick.OpenInMainCommand.Execute(null);
+        Assert.Equal(2, main.Playground.Sections.Count);
+        Assert.Equal(["Lead"], main.Playground.Layers.Select(l => l.Name));
+        Assert.Same(main.Playground, main.SelectedNav.Page);
+    }
+
+    [Fact]
     public void Settings_options_are_kept_and_start_new_ideas()
     {
         Ui.Current = new Headless();

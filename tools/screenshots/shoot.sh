@@ -70,6 +70,17 @@ shot() { sleep "${2:-1.5}"; import -window root "$OUT/$1.png"; echo "$OUT/$1.png
 # Rail items are 62 px apart from y=106: Projects, Sounds, MIDI, Playground, Plugins (Settings sits at the bottom, y=750). Clicking moves the pointer away after, so no item looks hovered, but
 # keeps it inside the window: with no window manager, keys go to whichever window the pointer is over.
 nav() { local y=$((106 + $1 * 62)); [[ $1 == 5 ]] && y=750; xdotool mousemove 42 $y click 1 mousemove 1430 892; }
+# SONG_FITS=1: only a song's MIDI that fits tab, its quick view and the cut-down playground in it, then stop.
+if [[ -n ${SONG_FITS:-} ]]; then
+  nav 2; sleep 10   # the MIDI page reads the MIDI first
+  nav 0; sleep 1; xdotool mousemove 330 ${SONG_Y:-220} click 1; sleep 1
+  xdotool mousemove ${TAB_X:-867} ${TAB_Y:-385} click 1 mousemove 1430 892; shot 2c-song-midi-fits 10
+  xdotool mousemove ${ROW_X:-700} ${ROW_Y:-500} click 1 mousemove 1430 892; shot 2d-song-quick-view 3
+  xdotool mousemove 1100 600; for _ in $(seq ${SCROLLS:-10}); do xdotool click 5; done; xdotool mousemove 1430 892; shot 2e-song-quick-view-end 1
+  xdotool mousemove ${LAYER_X:-982} ${LAYER_Y:-833} click 1 mousemove 1430 892; shot 2f-song-cut-down-playground 4
+  xdotool mousemove 1100 600; for _ in $(seq 10); do xdotool click 5; done; xdotool mousemove 1430 892; shot 2g-song-cut-down-playground-roll 1
+  exit 0
+fi
 # The search box has the keyboard when the app opens: typing straight away searches; Down goes into the list.
 xdotool type --delay 40 "drum"; xdotool key Down; shot 0-type-on-open
 xdotool key ctrl+f; sleep 0.3; xdotool key Escape   # Ctrl+F back to the search box, Esc empties it
