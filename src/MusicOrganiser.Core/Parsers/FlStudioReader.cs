@@ -80,9 +80,10 @@ public sealed partial class FlStudioReader : IProjectReader
         }
     }
 
-    static Flp Load(string path)
+    static Flp Load(string path) => Load(File.ReadAllBytes(path));
+
+    static Flp Load(byte[] raw)
     {
-        var raw = File.ReadAllBytes(path);
         if (raw.Length < 22 || Encoding.ASCII.GetString(raw, 0, 4) != "FLhd") throw new InvalidDataException(Damaged);
         var headerLen = BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(4));
         if (headerLen < 0 || headerLen > raw.Length - 16) throw new InvalidDataException(Damaged);
@@ -657,7 +658,7 @@ public sealed partial class FlStudioReader : IProjectReader
             .Select(ch => new MidiChannel(names.GetValueOrDefault(ch, $"Channel {ch + 1}"), sources.GetValueOrDefault(ch, ""), flp.Ppq,
                                           notes[ch],
                                           plugins.GetValueOrDefault(ch, ""), samples.GetValueOrDefault(ch, ""),
-                                          roots.GetValueOrDefault(ch, DefaultRoot), pitches.GetValueOrDefault(ch)))
+                                          roots.GetValueOrDefault(ch, DefaultRoot), pitches.GetValueOrDefault(ch)) { Channel = ch })
             .ToList();
     }
 
@@ -861,6 +862,7 @@ public sealed partial class FlStudioReader : IProjectReader
                             presets.Add(WrapperPreset(f, state, name, plugin) with
                             {
                                 Kind = onChannel ? PluginKind.Instrument : PluginKind.Effect,
+                                Channel = onChannel ? channel : null,
                             });
                     }
                     else if (pendingInternal.Length > 0)
@@ -870,6 +872,7 @@ public sealed partial class FlStudioReader : IProjectReader
                         {
                             Kind = onChannel || NativeGenerators.Contains(pendingInternal) ? PluginKind.Instrument : PluginKind.Effect,
                             Native = true,
+                            Channel = onChannel ? channel : null,
                         });
                     }
                     pendingInternal = "";

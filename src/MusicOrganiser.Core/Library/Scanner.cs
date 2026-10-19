@@ -1,4 +1,5 @@
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins;
 
 namespace MusicOrganiser.Core.Library;
 
@@ -138,12 +139,66 @@ public sealed class Scanner(LibraryDb db)
     static string ReaderVersionKey(IProjectReader r) => $"reader_version:{r.Daw}";
 
     /// <summary>Refresh the list of plugins installed on this PC.</summary>
-    public int ScanInstalledPlugins()
+    public int ScanInstalledPlugins() => ScanInstalledPlugins(out _);
+
+    /// <summary>
+    /// Refresh the list of plugins installed on this PC: the plugin files in the plugin folders, and
+    /// the plugins the native scanner found inside them (a Waves shell holds hundreds).
+    /// <paramref name="toRead"/> gets the files the scanner hasn't read since they last changed.
+    /// </summary>
+    public int ScanInstalledPlugins(out IReadOnlyList<string> toRead)
     {
         var folders = db.GetList(PluginFoldersKey) is { Count: > 0 } custom ? custom : PluginCatalog.DefaultFolders().ToList();
-        var names = PluginCatalog.Scan(folders);
+        var files = PluginCatalog.ScanFiles(folders);
+        db.ForgetPluginScans(files.Select(f => f.Path));
+        var read = db.PluginScanStamps();
+        toRead = files.Select(f => f.Path).Where(PluginScanner.CanRead)
+                      .Where(f => !read.TryGetValue(f, out var stamp) || stamp != PluginScanner.Stamp(f))
+                      .ToList();
+        var names = new HashSet<string>(PluginCatalog.AlwaysKnown, StringComparer.OrdinalIgnoreCase);
+        names.UnionWith(files.Select(f => f.Name));
+        names.UnionWith(db.ScannedPluginNames());
         db.ReplaceInstalledPlugins(names);
         return names.Count;
+    }
+
+    /// <summary>
+    /// Reads plugin files with the native scanner, four at a time, and stores the plugins inside each
+    /// one: exact ID, name, vendor, version and kind. Parameters are read later (<see cref="ReadAllParametersAsync"/>).
+    /// </summary>
+    public async Task ReadPluginFilesAsync(PluginScanner scanner, IReadOnlyList<string> paths,
+                                           IProgress<ScanProgress>? progress = null, CancellationToken ct = default)
+    {
+        var done = 0;
+        await Parallel.ForEachAsync(paths, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, async (path, token) =>
+        {
+            var stamp = PluginScanner.Stamp(path);
+            var scan = await scanner.ScanAsync(path, ct: token);
+            db.SavePluginScan(scan, stamp);
+            progress?.Report(new("Reading plugins", Interlocked.Increment(ref done), paths.Count, Path.GetFileName(path.TrimEnd('\\', '/'))));
+        });
+    }
+
+    /// <summary>
+    /// Reads the parameters of every installed plugin that doesn't have them yet: each plugin is loaded in
+    /// the native scanner, four at a time. Stopped part way, it carries on from there next time. A plugin
+    /// that can't be loaded keeps why, and is left out after that.
+    /// </summary>
+    public async Task<(int Read, int Failed)> ReadAllParametersAsync(PluginScanner scanner, IProgress<ScanProgress>? progress = null,
+                                                                     CancellationToken ct = default)
+    {
+        var todo = db.PluginsWithoutParameters();
+        int done = 0, read = 0, failed = 0;
+        progress?.Report(new("Reading parameters", 0, todo.Count, ""));
+        await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, async (plugin, token) =>
+        {
+            var result = await scanner.ReadParametersAsync(plugin, token);
+            db.SaveScannedPlugin(result);
+            if (result.Params is null) Interlocked.Increment(ref failed);
+            else Interlocked.Increment(ref read);
+            progress?.Report(new("Reading parameters", Interlocked.Increment(ref done), todo.Count, plugin.Name));
+        });
+        return (read, failed);
     }
 
     /// <summary>Index audio files in your sample folders, so missing samples can be matched.</summary>

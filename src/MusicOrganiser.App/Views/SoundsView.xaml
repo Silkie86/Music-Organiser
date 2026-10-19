@@ -4,7 +4,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-             xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+             xmlns:vm="clr-namespace:MusicOrganiser.ViewModels;assembly=MusicOrganiser.ViewModels"
              xmlns:views="clr-namespace:MusicOrganiser.App.Views"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:SoundsViewModel}">
@@ -103,6 +103,8 @@
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                             <ToggleButton DockPanel.Dock="Right" Content="Describe it" IsChecked="{Binding DescribeMode}" Margin="8,0,0,0"
                                           ToolTip="Search by describing the sound, e.g. “dusty vinyl snare” or “dark gritty reese”. Press Enter to search." />
+                            <CheckBox DockPanel.Dock="Right" Content="Autoplay" IsChecked="{Binding AutoPlay}" Margin="12,0,0,0" VerticalAlignment="Center"
+                                      ToolTip="Play each sound as soon as you click it or arrow onto it" />
                             <ui:TextBox PlaceholderText="Search names, types and tags… or switch on Describe it" Icon="{ui:SymbolIcon Search24}"
                                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}">
                                 <ui:TextBox.InputBindings>
@@ -111,12 +113,12 @@
                             </ui:TextBox>
                         </DockPanel>
                         <Border Style="{StaticResource Card}" Padding="8,10,8,8">
-                        <DataGrid ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
+                        <DataGrid x:Name="SoundGrid" ItemsSource="{Binding View}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False"
                                   IsReadOnly="True" SelectionMode="Extended" views:FileDrag.Source="{Binding}"
                                   EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizingWhenGrouping="True">
                             <DataGrid.InputBindings>
                                 <KeyBinding Key="Space" Command="{Binding PlayCommand}" />
-                                <MouseBinding Gesture="LeftDoubleClick" Command="{Binding PlayCommand}" />
+                                <MouseBinding Gesture="LeftDoubleClick" Command="{Binding AuditionCommand}" />
                             </DataGrid.InputBindings>
                             <DataGrid.Columns>
                                 <DataGridTemplateColumn Header="" Width="32" SortMemberPath="Favourite">
@@ -396,6 +398,8 @@
                         <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                             <ui:Button Content="Roll a kit" Appearance="Primary" Icon="{ui:SymbolIcon ArrowShuffle24}" Command="{Binding RollCommand}" Margin="0,0,8,0" />
                             <ui:Button Content="Export kit" Icon="{ui:SymbolIcon FolderArrowRight24}" Command="{Binding ExportCommand}" Margin="0,0,8,0" />
+                            <ui:Button Content="Send to Bitwig" Icon="{ui:SymbolIcon Send24}" Command="{Binding SendToBitwigCommand}" Margin="0,0,8,0"
+                                       ToolTip="Put the kit on a Drum Machine in the project open in Bitwig, on a new track: kick on C1, snare on D1, closed hat on F#1, and the rest on the free pads" />
                             <Border Style="{StaticResource DragChip}" views:FileDrag.Source="{Binding}"
                                     views:FileDrag.AllOf="{Binding ElementName=KitSlots}" Margin="0,0,12,0"
                                     ToolTip="Drag the whole kit into your DAW or sampler, pads in order (exported with the options on the right)">
@@ -404,8 +408,9 @@
                                     <TextBlock Text="Drag kit" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
-                            <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Style="{StaticResource Muted}" />
                         </WrapPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding Status}" Style="{StaticResource Muted}" Margin="0,0,0,8"
+                                   Visibility="{Binding Status, Converter={StaticResource NullToVisibility}}" />
                         <ItemsControl x:Name="KitSlots" ItemsSource="{Binding Slots}" views:FileDrag.Source="{Binding}">
                             <ItemsControl.Template>
                                 <ControlTemplate TargetType="ItemsControl">

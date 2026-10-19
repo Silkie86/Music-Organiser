@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The app for Windows, macOS and Linux, on Avalonia. It shares its screens' logic with the WPF app
+       (MusicOrganiser.ViewModels) and replaces it once every screen is ported. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MusicOrganiser.Avalonia</AssemblyName>
+    <RootNamespace>MusicOrganiser.Avalonia</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
+    <!-- Sound output on every system: OpenAL Soft, with its native library for Windows, macOS and Linux. -->
+    <PackageReference Include="Silk.NET.OpenAL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
+    <!-- On Windows, MP3, FLAC, M4A and OGG through Media Foundation, and compressed WAVs through Windows'
+         audio codecs, as in the WPF app. Unused on a Mac or Linux. -->
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MusicOrganiser.ViewModels\MusicOrganiser.ViewModels.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MusicOrganiser.Avalonia.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,56 @@
+<Project>
+  <!--
+    Builds the plugin scanner (native/mo-scan, C++) with CMake when it isn't built yet or its code changed,
+    and copies it next to the app. MusicOrganiser.Core imports this, so the Windows app, the Avalonia app
+    and the tests all get mo-scan beside them.
+
+    It needs CMake and a C++ compiler. In Visual Studio that's the "Desktop development with C++"
+    workload; on a Mac, Xcode's command line tools and CMake. Without them the build still succeeds,
+    with a warning, and the app just can't read plugin details. -p:MoBuildNative=false turns it off.
+    CI builds the native tools in their own job, so there it's off unless asked for.
+  -->
+  <PropertyGroup>
+    <MoNativeDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)'))</MoNativeDir>
+    <MoScanFile Condition="'$(OS)' == 'Windows_NT'">mo-scan.exe</MoScanFile>
+    <MoScanFile Condition="'$(OS)' != 'Windows_NT'">mo-scan</MoScanFile>
+    <MoScanBuilt>$(MoNativeDir)out/app/bin/$(MoScanFile)</MoScanBuilt>
+    <MoBuildNative Condition="'$(MoBuildNative)' == '' and '$(CI)' == 'true'">false</MoBuildNative>
+    <MoBuildNative Condition="'$(MoBuildNative)' == ''">true</MoBuildNative>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <MoScanSource Include="$(MoNativeDir)CMakeLists.txt;$(MoNativeDir)build-scanner.*;$(MoNativeDir)mo-scan/**" />
+  </ItemGroup>
+  <!-- Visual Studio doesn't build a project it thinks is up to date. These make it build when the C++ code
+       changes, and also while the scanner is missing, so after adding the C++ workload F5 is enough.
+       They're a set of their own, so the scanner is only compared with its own code, not the C# files. -->
+  <ItemGroup Condition="'$(MoBuildNative)' == 'true'">
+    <UpToDateCheckInput Include="@(MoScanSource)" Set="MoScanner" />
+    <UpToDateCheckOutput Include="$(MoScanBuilt)" Set="MoScanner" />
+  </ItemGroup>
+
+  <Target Name="MoBuildScanner" Condition="'$(MoBuildNative)' == 'true' and '$(DesignTimeBuild)' != 'true'"
+          Inputs="@(MoScanSource)" Outputs="$(MoScanBuilt)">
+    <Message Importance="high" Text="Building the plugin scanner (native/mo-scan). This only happens when it isn't built yet or its code changed." />
+    <Exec Condition="'$(OS)' == 'Windows_NT'" Command="&quot;$(MoNativeDir)build-scanner.cmd&quot;"
+          IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="MoScanExit" />
+    </Exec>
+    <Exec Condition="'$(OS)' != 'Windows_NT'" Command="/bin/sh &quot;$(MoNativeDir)build-scanner.sh&quot;"
+          IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="MoScanExit" />
+    </Exec>
+    <Warning Condition="'$(MoScanExit)' != '0'"
+             Text="The plugin scanner (native/mo-scan) couldn't be built, so the app can't read plugin details yet. It needs CMake and a C++ compiler: in Visual Studio Installer, add the 'Desktop development with C++' workload. What went wrong is in native/out/app/build.log; native/README.md has more." />
+    <!-- The compiler leaves mo-scan alone when only other files changed; mark it current so this doesn't rerun every build. -->
+    <Touch Condition="'$(MoScanExit)' == '0' and Exists('$(MoScanBuilt)')" Files="$(MoScanBuilt)" />
+  </Target>
+
+  <!-- Copy it to the output, and to the output of every project that uses Core. -->
+  <Target Name="MoAddScanner" BeforeTargets="AssignTargetPaths" DependsOnTargets="MoBuildScanner"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup Condition="Exists('$(MoScanBuilt)')">
+      <None Include="$(MoScanBuilt)" Link="$(MoScanFile)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>

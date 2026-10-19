@@ -40,6 +40,20 @@ public static class BitwigProject
     const int AudioClipClass = 0xee;                      // an arrangement audio clip (a clip of notes is 0x47)
     const int AudioEntry = 0x287;                         // an audio track in the project's summary (instrument tracks are 0x288)
 
+    /// <summary>Why a project can't be the template (for example "The Bitwig template needs a VST2 instrument track"), or null when it can.</summary>
+    public static string? TemplateProblem(byte[] template)
+    {
+        try
+        {
+            _ = new Template(template);
+            return null;
+        }
+        catch (Exception e) when (e is InvalidDataException or ArgumentException or IndexOutOfRangeException or EndOfStreamException)
+        {
+            return e.Message.StartsWith("The Bitwig template", StringComparison.Ordinal) ? e.Message : $"The Bitwig template couldn't be read ({e.Message})";
+        }
+    }
+
     /// <summary>
     /// Reads what Bitwig records about a sample, or null when the file can't be read. When it can be read but not
     /// decoded (a format the app doesn't play), its length is 0.

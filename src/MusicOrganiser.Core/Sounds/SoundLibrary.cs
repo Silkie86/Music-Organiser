@@ -73,7 +73,7 @@ public sealed class SoundLibrary : IDisposable
     public string FilePath { get; }
 
     public static string DefaultPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicOrganiser", "sounds.db");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "sounds.db");
 
     public SoundLibrary(string path)
     {
@@ -84,7 +84,12 @@ public sealed class SoundLibrary : IDisposable
         Exec(Schema);
     }
 
-    public void Dispose() => _conn.Dispose();
+    // Under the lock, so a query still running on a background task (say, Settings looking for the DAW scripts) finishes
+    // first rather than having the connection closed under it.
+    public void Dispose()
+    {
+        lock (_lock) _conn.Dispose();
+    }
 
     // ---- plumbing ----------------------------------------------------------------
 

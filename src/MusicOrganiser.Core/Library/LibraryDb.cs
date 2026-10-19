@@ -55,7 +55,7 @@ public sealed partial class LibraryDb : IDisposable
     public string FilePath { get; }
 
     public static string DefaultPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicOrganiser", "library.db");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "library.db");
 
     public LibraryDb(string path)
     {
@@ -64,9 +64,15 @@ public sealed partial class LibraryDb : IDisposable
         _conn = new SqliteConnection($"Data Source={path}");
         _conn.Open();
         Exec(Schema);
+        Exec(PluginScanSchema);
     }
 
-    public void Dispose() => _conn.Dispose();
+    // Under the lock, so a query still running on a background task (say, Settings looking for the DAW scripts) finishes
+    // first rather than having the connection closed under it.
+    public void Dispose()
+    {
+        lock (_lock) _conn.Dispose();
+    }
 
     // ---- plumbing --------------------------------------------------------------
 
@@ -386,6 +392,10 @@ public sealed partial class LibraryDb : IDisposable
 
     public IReadOnlyList<ProjectSummary> Projects() => Summaries("");
 
+    /// <summary>A DAW's projects with this file name (without the extension, ignoring case), newest first, leaving out moved files.</summary>
+    public IReadOnlyList<ProjectSummary> ProjectsNamed(string daw, string name) =>
+        Summaries("WHERE p.daw = $daw AND p.name = $name COLLATE NOCASE AND p.file_missing = 0", ("$daw", daw), ("$name", name.Trim()));
+
     IReadOnlyList<ProjectSummary> Summaries(string where, params (string, object?)[] args) => Query($"""
         SELECT p.*,
           (SELECT COUNT(*) FROM plugins WHERE project_id = p.id) AS plugin_count,
@@ -401,7 +411,7 @@ public sealed partial class LibraryDb : IDisposable
     {
         Id = (long)r["id"], Path = (string)r["path"], Name = (string)r["name"], Daw = (string)r["daw"],
         Folder = Str(r, "folder"), Size = Long(r, "size"),
-        Modified = DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime,
+        Modified = DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime, Mtime = Long(r, "mtime"),
         Tempo = r["tempo"] is double t ? t : null, Version = Str(r, "version"),
         Confidence = (Confidence)Long(r, "confidence"), FileMissing = Long(r, "file_missing") == 1,
         Error = r["error"] as string,

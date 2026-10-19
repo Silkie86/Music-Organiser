@@ -32,7 +32,7 @@ public sealed class ClapModel : IDisposable
     ];
 
     public static string DefaultFolder =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicOrganiser", "models", "clap");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "MusicOrganiser", "models", "clap");
 
     /// <summary>
     /// Downloads the model files from Hugging Face into <paramref name="folder"/>. Each file
