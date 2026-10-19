@@ -345,6 +345,60 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void Highlighted_bars_of_a_clip_swap_for_another_part_and_mid_files_drop_onto_tracks()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
+        p.AddFromLibrary(entry, bass, "Bass");
+        var track = p.Layers[1];
+        var clip = track.Clips[0];
+
+        // Bars 2–3 highlighted with the bass clip picked: Suggest turns to basslines for those bars of it.
+        p.SetLoopCommand.Execute(new RollRange(Bar, 3L * Bar));
+        Assert.Same(clip, p.SwapTarget!.Clip);
+        Assert.Equal(MidiRoles.Bass, p.SuggestRole.Role);
+
+        // Swapped in: the new part plays those bars, and the old clip keeps bar 1 and bar 4 either side.
+        var walk = Line(Beat, 36, 38, 40, 41);
+        var other = new MidiCatalogue([Stored(2, @"K:\Other\Walk.flp", "Bass", walk, "bass")]).Entries[0];
+        p.SwapIn(p.SwapTarget, (Bar, 3L * Bar), other, walk);
+        Assert.Equal([0L, Bar, 3L * Bar], track.Clips.Select(c => c.Start).Order());
+        Assert.Equal(36, track.Notes.Single(n => n.Start == 0).Key);
+        Assert.Equal(36, track.Notes.Single(n => n.Start == 3L * Bar).Key);
+        Assert.Equal(8, track.Notes.Count(n => n.Start >= Bar && n.Start < 3L * Bar));
+        p.UndoCommand.Execute(null);
+        Assert.Single(p.Layers[1].Clips);
+
+        // A two-part .mid file let go at bar 3: both parts on new tracks there, in time with each other.
+        var file = new MidiClip { Name = "Idea", Ppq = 96 };
+        file.Track("Keys").AddRange(Line(Bar, 60, 65));
+        file.Track("Lead").AddRange(Line(Beat, 72, 74, 76, 77).Select(n => n with { Start = n.Start + Bar }));
+        var path = Path.Combine(_root, "Idea.mid");
+        File.WriteAllBytes(path, MusicOrganiser.Core.Export.MidiWriter.Write(file, 90));
+        var tracks = p.Layers.Count;
+        p.DropPartCommand.Execute(new PartDrop(new List<string> { path }, 0, 2L * Bar));
+        Assert.Equal(tracks + 2, p.Layers.Count);
+        Assert.Equal(2L * Bar, p.Layers[^2].Clips[0].Start);
+        Assert.Equal(3L * Bar, p.Layers[^1].Notes.Min(n => n.Start));   // the lead came in a bar after the keys
+
+        // One part let go on the chords track: it takes those bars, the chords keep the rest.
+        var one = new MidiClip { Name = "Stab", Ppq = 96 };
+        one.Track("Stab").AddRange(Line(Bar, 60));
+        var stab = Path.Combine(_root, "Stab.mid");
+        File.WriteAllBytes(stab, MusicOrganiser.Core.Export.MidiWriter.Write(one, 90));
+        p.DropPartCommand.Execute(new PartDrop(new List<string> { stab }, 0, Bar));
+        Assert.Equal([0L, Bar, 2L * Bar], p.Layers[0].Clips.Select(c => c.Start).Order());
+    }
+
+    [Fact]
     public async Task Open_in_playground_from_a_song_starts_a_section_with_the_part()
     {
         Ui.Current = new Headless();
