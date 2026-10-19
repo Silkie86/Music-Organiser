@@ -1073,27 +1073,36 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public void A_held_arrow_key_plays_the_sounds_it_passes_a_little_each_and_the_last_in_full()
+    public void A_held_arrow_key_plays_every_sound_it_lands_on_and_waits_for_each_before_moving_on()
     {
         var played = new List<string>();
         ((HeadlessUi)Ui.Current).Player = () => new Recorder(played);
         var lab = new MainViewModel(_db, _sounds).Sounds;
         lab.AutoPlay = true;
+        Assert.Equal(250, lab.StepMs);   // until changed in Settings › Sounds
         var (kick, snare, hat) = (new Sound { Path = "kick.wav" }, new Sound { Path = "snare.wav" }, new Sound { Path = "hat.wav" });
 
-        // Key repeats come every 30 ms or so: the first sound plays at once, the ones passed straight after wait their turn...
+        // A press always moves; the key's repeats straight after (every 30 ms or so) don't, so the highlight stays on
+        // the sound that's playing...
+        Assert.True(lab.MayStep(held: false));
         lab.Selected = kick;
         lab.PlayPassing();
-        lab.Selected = snare;
-        lab.PlayPassing();
-        lab.Selected = hat;
-        lab.PlayPassing();
+        Assert.False(lab.MayStep(held: true));
+        Assert.False(lab.MayStep(held: true));
         Assert.Equal(["kick.wav"], played);
 
-        // ...and the sound the key is let go on plays.
-        lab.PlayPicked();
-        Assert.Equal(["kick.wav", "hat.wav"], played);
+        // ...and once it has played its share, the next one it lands on plays too: none is skipped.
+        lab.StepMs = 0;
+        Assert.True(lab.MayStep(held: true));
+        lab.Selected = snare;
+        lab.PlayPassing();
+        Assert.True(lab.MayStep(held: true));
+        lab.Selected = hat;
+        lab.PlayPassing();
+        Assert.Equal(["kick.wav", "snare.wav", "hat.wav"], played);
         Assert.Equal(0, hat.Plays);   // still only a preview
+        lab.StepMs = 600;
+        Assert.Equal(600, new MainViewModel(_db, _sounds).Sounds.StepMs);   // kept
     }
 
     [Fact]
