@@ -1,4 +1,5 @@
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 
 namespace MusicOrganiser.Core.Export;
 
@@ -50,9 +51,10 @@ public static class Exporter
     /// </summary>
     /// <param name="upgrade">Swap older versions of the template's VST3 synth for it (see <see cref="BitwigProject.FromFl"/>).</param>
     /// <param name="saveAs">The name to save it under (see <see cref="BitwigName"/>), or null for the project's own.</param>
+    /// <param name="serum2User">Serum 2's user presets folder, for Serum 1's sounds; the usual one (<see cref="Serum1To2.Serum2UserFolder"/>) unless given.</param>
     public static (string File, IReadOnlyList<string> LeftOut) BitwigFromFl(string project, string exportRoot, byte[] template,
                                                                             bool stepsUntilNextNote = false, bool upgrade = false,
-                                                                            string? saveAs = null)
+                                                                            string? saveAs = null, string? serum2User = null)
     {
         var name = TextScan.SafeFileName(saveAs ?? Path.GetFileNameWithoutExtension(project));
         var result = BitwigProject.FromFl(Readers.FlStudio.ReadSong(project), template, stepsUntilNextNote: stepsUntilNextNote, upgrade: upgrade);
@@ -69,11 +71,15 @@ public static class Exporter
             foreach (var (channel, sound) in upgraded)
                 File.WriteAllBytes(Path.Combine(sounds, $"{TextScan.SafeFileName(channel)} ({TextScan.SafeFileName(sound.Plugin)}){sound.Extension}"), sound.Data);
         }
+        // Serum 1's sounds also go where Serum 2's browser finds them, as Fix does, named after the FL song.
+        IReadOnlyList<string> notes = result.Notes;
+        if (Serum1To2.KeepOriginals(Path.GetFileNameWithoutExtension(project), result.Serum1 ?? [], serum2User ?? Serum1To2.Serum2UserFolder()) is { } kept)
+            notes = [.. notes, kept];
         var notesFile = Path.Combine(dir, name + " - not carried over.txt");
-        if (result.Notes.Count > 0)
-            File.WriteAllLines(notesFile, [$"What didn't come across from FL Studio to Bitwig for {name}", "", .. result.Notes.Select(n => "  " + n)]);
+        if (notes.Count > 0)
+            File.WriteAllLines(notesFile, [$"What didn't come across from FL Studio to Bitwig for {name}", "", .. notes.Select(n => "  " + n)]);
         else if (File.Exists(notesFile)) File.Delete(notesFile);
-        return (file, result.Notes);
+        return (file, notes);
     }
 
     /// <summary>
