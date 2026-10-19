@@ -396,6 +396,21 @@ public class PlaygroundTests : IDisposable
         File.WriteAllBytes(stab, MusicOrganiser.Core.Export.MidiWriter.Write(one, 90));
         p.DropPartCommand.Execute(new PartDrop(new List<string> { stab }, 0, Bar));
         Assert.Equal([0L, Bar, 2L * Bar], p.Layers[0].Clips.Select(c => c.Start).Order());
+
+        // Pulled out of the timeline: a clip goes out alone from its start, a label as its bars with a track per part.
+        var stabClip = p.Layers[0].Clips.Single(c => c.Start == Bar);
+        var alone = MidiFileReader.Read(File.ReadAllBytes(p.MakeDrag([new ClipPick(p.Layers[0].Layer, stabClip)])!.Files[0]), "x").Single();
+        Assert.Equal([60], alone.Notes.Select(n => n.Key));
+        Assert.Equal(0, alone.Notes[0].Start);
+        var bars = MidiFileReader.Read(File.ReadAllBytes(p.MakeDrag([new PlaygroundLabel { Name = "B", Start = 2L * Bar, Length = 2L * Bar }])!.Files[0]), "x");
+        Assert.True(bars.Count >= 3);
+
+        // Where Play starts, and the zoomed view as shares for the chord lane above.
+        p.SetCursorCommand.Execute(2L * Bar);
+        Assert.Equal(2L * Bar, p.Cursor);
+        p.ViewLength = p.Length / 2;
+        p.ViewStart = p.Length / 4;
+        Assert.Equal((0.25, 0.75), (p.ViewFrom, p.ViewTo));
     }
 
     [Fact]

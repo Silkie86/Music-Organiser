@@ -21,8 +21,17 @@ public sealed class ChordLaneView : Control
     public static readonly StyledProperty<long> LengthProperty = AvaloniaProperty.Register<ChordLaneView, long>(nameof(Length));
     /// <summary>The piano roll's keyboard is this wide, so the chords line up with the notes under them.</summary>
     public static readonly StyledProperty<double> InsetProperty = AvaloniaProperty.Register<ChordLaneView, double>(nameof(Inset));
+    /// <summary>The part shown when the timeline under it is zoomed in, as shares of the whole (0 to 1: all of it).</summary>
+    public static readonly StyledProperty<double> ViewFromProperty = AvaloniaProperty.Register<ChordLaneView, double>(nameof(ViewFrom));
+    public static readonly StyledProperty<double> ViewToProperty = AvaloniaProperty.Register<ChordLaneView, double>(nameof(ViewTo), 1);
 
-    static ChordLaneView() => AffectsRender<ChordLaneView>(ItemsProperty, PositionProperty, LengthProperty, InsetProperty);
+    static ChordLaneView() => AffectsRender<ChordLaneView>(ItemsProperty, PositionProperty, LengthProperty, InsetProperty, ViewFromProperty, ViewToProperty);
+
+    public double ViewFrom { get => GetValue(ViewFromProperty); set => SetValue(ViewFromProperty, value); }
+    public double ViewTo { get => GetValue(ViewToProperty); set => SetValue(ViewToProperty, value); }
+    double Shown => Math.Max(1e-6, ViewTo - ViewFrom);
+    /// <summary>Where a share of the whole sits across the lane.</summary>
+    double At(double share) => Inset + (share - ViewFrom) / Shown * Math.Max(1, Bounds.Width - Inset);
 
     public IReadOnlyList<ChordCell>? Items { get => GetValue(ItemsProperty); set => SetValue(ItemsProperty, value); }
     public double Position { get => GetValue(PositionProperty); set => SetValue(PositionProperty, value); }
@@ -59,13 +68,13 @@ public sealed class ChordLaneView : Control
     (double X, double W) Place(ChordCell c)
     {
         var width = Math.Max(1, Bounds.Width - Inset);
-        return (Inset + c.Start * width, c.Share * width);
+        return (At(c.Start), c.Share / Shown * width);
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         var x = e.GetPosition(this).X;
-        var hit = Items?.FirstOrDefault(c => { var (cx, w) = Place(c); return x >= cx && x < cx + w; });
+        var hit = x < Inset ? null : Items?.FirstOrDefault(c => { var (cx, w) = Place(c); return x >= cx && x < cx + w; });
         if (hit == _hover) return;
         _hover = hit;
         ToolTip.SetTip(this, hit?.Tip);
@@ -97,10 +106,14 @@ public sealed class ChordLaneView : Control
         if (Length > 0)
         {
             var bars = (int)Math.Ceiling(Length / (4.0 * 96));
-            var width = Math.Max(1, Bounds.Width - Inset);
             var line = Res("StrokeBrush", Brushes.DimGray);
-            for (var b = 1; b < bars; b++) dc.FillRectangle(line, new Rect(Inset + width * b / bars, 0, 1, h));
+            for (var b = 1; b < bars; b++)
+            {
+                var bx = At(b / (double)bars);
+                if (bx > Inset && bx < Bounds.Width) dc.FillRectangle(line, new Rect(bx, 0, 1, h));
+            }
         }
+        using var clip = dc.PushClip(new Rect(Inset, 0, Math.Max(0, Bounds.Width - Inset), h));
         foreach (var c in items)
         {
             var (x, w) = Place(c);
@@ -127,7 +140,7 @@ public sealed class ChordLaneView : Control
         }
         if (Position >= 0 && Length > 0)
         {
-            var px = Inset + Position / Length * Math.Max(1, Bounds.Width - Inset);
+            var px = At(Position / Length);
             dc.FillRectangle(text, new Rect(px, 0, 2, h));
         }
     }

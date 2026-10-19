@@ -19,14 +19,14 @@ public sealed class TimelineTests
 {
     const int Bar = 4 * PhraseAnalyser.Ppq;
 
-    sealed record Done(List<RollRange?> Highlights, List<ClipPick> Picks, List<ClipEdit> Edits);
+    sealed record Done(List<RollRange?> Highlights, List<ClipPick> Picks, List<ClipEdit> Edits, List<long> Cursors);
 
     // Two tracks over 8 bars, 100 px a bar: Keys plays bars 1–4, Bass bars 5–8.
     static (Window Window, TimelineView View, Done Done, PlaygroundLayer Keys) Timeline()
     {
         var keys = new PlaygroundLayer { Name = "Keys", Role = MidiRoles.Chords, Clips = [PlaygroundClip.Of("Keys", MidiRoles.Chords, [new NoteEvent(0, Bar, 60, 90)], Bar, 0, 4L * Bar)] };
         var bass = new PlaygroundLayer { Name = "Bass", Role = MidiRoles.Bass, Clips = [PlaygroundClip.Of("Bass", MidiRoles.Bass, [new NoteEvent(0, Bar, 36, 90)], Bar, 4L * Bar, 4L * Bar)] };
-        var done = new Done([], [], []);
+        var done = new Done([], [], [], []);
         var view = new TimelineView
         {
             Width = 800, Length = 8L * Bar,
@@ -34,6 +34,7 @@ public sealed class TimelineTests
             HighlightCommand = new RelayCommand<RollRange?>(r => done.Highlights.Add(r)),
             SelectCommand = new RelayCommand<ClipPick>(p => done.Picks.Add(p!)),
             EditCommand = new RelayCommand<ClipEdit>(e => done.Edits.Add(e!)),
+            CursorCommand = new RelayCommand<long>(t => done.Cursors.Add(t)),
         };
         var window = new Window { Content = view, Width = 800, Height = 300 };
         window.Show();
@@ -106,5 +107,31 @@ public sealed class TimelineTests
         // Off the grid (Shift), half a bar in: the go round now starts half way through.
         Drag(window, new Point(2, RowY(0)), new Point(52, RowY(0)), RawInputModifiers.Shift);
         Assert.Equal((Bar / 2L, Bar / 2L), (done.Edits[^1].Start, done.Edits[^1].Offset));
+    }
+
+    [AvaloniaFact]
+    public void The_bar_numbers_move_where_play_starts_and_ctrl_scroll_zooms_round_the_pointer()
+    {
+        var (window, view, done, _) = Timeline();
+        var ruler = TimelineView.LabelHeight + 5;
+        // A click on the bar numbers in bar 3: Play starts there (snapped to the bar).
+        window.MouseDown(new Point(230, ruler), MouseButton.Left);
+        window.MouseUp(new Point(230, ruler), MouseButton.Left);
+        Assert.Equal(2L * Bar, Assert.Single(done.Cursors));
+        Assert.Empty(done.Highlights);
+
+        // Ctrl + scroll up over bar 5's start: in closer, bar 5 stays under the pointer.
+        window.MouseWheel(new Point(400, RowY(0)), new Vector(0, 2), RawInputModifiers.Control);
+        Assert.InRange(view.ViewLength, 4L * Bar, 6L * Bar);
+        Assert.Equal(4L * Bar, view.ViewStart + (long)Math.Round(0.5 * view.ViewLength));
+        // Shift + scroll moves along; a double-click on the bar numbers shows it all again.
+        var start = view.ViewStart;
+        window.MouseWheel(new Point(400, RowY(0)), new Vector(0, -1), RawInputModifiers.Shift);
+        Assert.True(view.ViewStart > start);
+        window.MouseDown(new Point(400, ruler), MouseButton.Left);
+        window.MouseUp(new Point(400, ruler), MouseButton.Left);
+        window.MouseDown(new Point(400, ruler), MouseButton.Left);
+        window.MouseUp(new Point(400, ruler), MouseButton.Left);
+        Assert.Equal((0L, 0L), (view.ViewStart, view.ViewLength));
     }
 }

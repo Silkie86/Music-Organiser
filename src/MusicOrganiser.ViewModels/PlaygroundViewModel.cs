@@ -127,6 +127,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         RefreshGrooveSources();
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(Length));
+        OnPropertyChanged(nameof(ViewFrom));
+        OnPropertyChanged(nameof(ViewTo));
     }
 
     /// <summary>The parts or chords changed: the chord lane, key and every roll's guide are worked out again.</summary>
@@ -152,7 +154,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     public const string SuggestCountKey = "playground_suggestions", GrowBarsKey = "playground_grow_bars", SmoothKey = "playground_smooth",
                         NewTempoKey = "playground_new_tempo", NewBarsKey = "playground_new_bars", NewStyleKey = "playground_new_style",
-                        UndoStepsKey = "playground_undo_steps";
+                        UndoStepsKey = "playground_undo_steps", LoopKey = "playground_loop";
     public const string JazzGospel = "Jazz and gospel", Classical = "Classical";
     public static IReadOnlyList<int> SuggestCountChoices { get; } = [30, 60, 100, 200];
     public static IReadOnlyList<int> GrowBarsChoices { get; } = [4, 8, 16, 32, 64];
@@ -186,6 +188,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         UndoSteps = Number(UndoStepsKey, UndoStepsChoices, 60);
         NewStyle = _db.GetSetting(NewStyleKey) == Classical ? Classical : JazzGospel;
         SmoothIncoming = _db.GetSetting(SmoothKey) != "0";
+        LoopOn = _db.GetSetting(LoopKey) != "0";
         _loadingOptions = false;
     }
 
@@ -201,6 +204,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     partial void OnNewStyleChanged(string value) => SaveOption(NewStyleKey, value);
     partial void OnUndoStepsChanged(int value) => SaveOption(UndoStepsKey, value.ToString());
     partial void OnSmoothIncomingChanged(bool value) => SaveOption(SmoothKey, value ? "1" : "0");
+    partial void OnLoopOnChanged(bool value)
+    {
+        SaveOption(LoopKey, value ? "1" : "0");
+        if (_playing) _ = PlayAsync(keepPlace: true);
+    }
 
     /// <summary>A new, empty idea, started the way Settings › Playground says.</summary>
     PlaygroundSession Fresh() => new()
@@ -377,6 +385,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Bars = Section.Bars;
         _showing = false;
         OnPropertyChanged(nameof(Length));
+        OnPropertyChanged(nameof(ViewFrom));
+        OnPropertyChanged(nameof(ViewTo));
         foreach (var row in Layers) row.Changed();
     }
 
@@ -1771,6 +1781,28 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     [ObservableProperty] bool _isPlaying;
     [ObservableProperty] double _position = -1;
+    /// <summary>
+    /// The Loop button (Solomon, 2026-10-19): on, Play goes round the highlight (or the whole idea); off, it plays from
+    /// where it starts to the end of the highlight (or the idea) and stops.
+    /// </summary>
+    [ObservableProperty] bool _loopOn = true;
+    /// <summary>Where Play starts, set by clicking the bar numbers (inside the highlight, it starts there and goes round the highlight).</summary>
+    [ObservableProperty] long _cursor;
+    partial void OnCursorChanged(long value) { if (_playing) _ = PlayAsync(); }
+
+    [RelayCommand]
+    void SetCursor(long tick) => Cursor = Math.Clamp(tick, 0, Math.Max(0, Length - 1));
+
+    // ---- zoom ----
+
+    /// <summary>The timeline's view when zoomed in (Ctrl + scroll): its first tick and how many it shows (0: the whole idea).</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(ViewFrom), nameof(ViewTo))] long _viewStart;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(ViewFrom), nameof(ViewTo))] long _viewLength;
+    long ViewSpan => ViewLength <= 0 || ViewLength >= Length ? Math.Max(1, Length) : ViewLength;
+    /// <summary>The view as shares of the whole idea, for the chord lane and energy line above the timeline.</summary>
+    public double ViewFrom => Length <= 0 || ViewLength <= 0 || ViewLength >= Length ? 0 : Math.Clamp(ViewStart, 0, Length - ViewSpan) / (double)Length;
+    public double ViewTo => Length <= 0 || ViewLength <= 0 || ViewLength >= Length ? 1 : ViewFrom + ViewSpan / (double)Length;
+
     bool _playing;
     IAudioPlayer? _player;
     IUiTimer? _clock;
@@ -1831,6 +1863,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var start = 0.0;
         if (keepPlace && _player.Playing == _playKey && _player.Position is { } at)
             start = MidiRender.TicksToSeconds((long)(MidiRender.SecondsToTicks(at, Ppq, _playTempo) % Math.Max(1, total)), Ppq, tempo);
+        else if (instead is null)
+        {
+            // From where Play starts, when that's within what plays.
+            var from = Loop?.Start ?? 0;
+            if (Cursor > from && Cursor < from + total) start = MidiRender.TicksToSeconds(Cursor - from, Ppq, tempo);
+        }
         _playKey = $"playground:{request}";
         _audio = audio;
         _playTempo = tempo;
@@ -1867,6 +1905,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     void GoRound()
     {
         if (!_playing || _audio is null || _player is null) return;
+        if (!LoopOn) { StopPlaying(); return; }
         try { _player.Play(_audio, MidiRender.Rate, _playKey); }
         catch (Exception e) { Message = $"Couldn't play it: {e.Message}"; StopPlaying(); }
     }
@@ -1979,6 +2018,32 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             File.WriteAllBytes(file, MidiWriter.Write(clip, _session.Tempo));
             return new DragPayload([file], tracks.Select(t => new DragCard(t.Name, $"{t.Notes.Count} notes", Glyphs.Midi)).ToList(),
                                    $"{name}: {tracks.Count} tracks", Numbered: true);
+        }
+        // A label pulled out of the timeline: its bars, a track for each part playing in them.
+        if (items.FirstOrDefault() is PlaygroundLabel label)
+        {
+            var tracks = PlaygroundSession.Audible(Section)
+                .Select(l => (l.Name, Notes: MidiBrowserViewModel.Cut(l.Notes, label.Start, Math.Min(label.End, Section.Length)).Select(n => n with { Start = n.Start - label.Start }).ToList()))
+                .Where(t => t.Notes.Count > 0).ToList();
+            if (tracks.Count == 0) return null;
+            var name = $"{label.Name} ({_session.Name})";
+            var clip = new MidiClip { Name = name, Ppq = Ppq };
+            foreach (var t in tracks) clip.Track(t.Name).AddRange(t.Notes);
+            var file = Path.Combine(dir, TextScan.SafeFileName(name) + ".mid");
+            File.WriteAllBytes(file, MidiWriter.Write(clip, _session.Tempo));
+            return new DragPayload([file], tracks.Select(t => new DragCard(t.Name, $"{t.Notes.Count} notes", Glyphs.Midi)).ToList(),
+                                   $"{label.Name}: {tracks.Count} tracks", Numbered: true);
+        }
+        // A clip pulled out of the timeline: just its notes, from its start.
+        if (items.FirstOrDefault() is ClipPick pick)
+        {
+            var notes = pick.Clip.Render().Select(n => n with { Start = n.Start - pick.Clip.Start }).ToList();
+            if (notes.Count == 0) return null;
+            var clip = new MidiClip { Name = pick.Clip.Name, Ppq = Ppq };
+            clip.Track(pick.Track.Name).AddRange(notes);
+            var file = Path.Combine(dir, TextScan.SafeFileName($"{pick.Clip.Name} ({_session.Name})") + ".mid");
+            File.WriteAllBytes(file, MidiWriter.Write(clip, _session.Tempo));
+            return new DragPayload([file], [new DragCard(pick.Clip.Name, $"{notes.Count} notes", Glyphs.Midi)], "1 MIDI clip");
         }
         var rows = items.OfType<LayerRow>().ToList();
         if (rows.Count == 0 && SelectedLayer is { } s) rows = [s];

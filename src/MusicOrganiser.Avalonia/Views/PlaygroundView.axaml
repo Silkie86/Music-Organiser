@@ -92,12 +92,14 @@
 
         <!-- Transport, tempo, length, key and the harmony's ears. -->
         <WrapPanel Grid.Row="2" Margin="0,12,0,0">
-            <Button Classes="accent" Margin="0,0,10,6" MinWidth="80" Command="{Binding PlayCommand}" ToolTip.Tip="Play the idea round and round, or just the highlighted bars">
+            <Button Classes="accent" Margin="0,0,10,6" MinWidth="80" Command="{Binding PlayCommand}" ToolTip.Tip="Play from the marker on the bar numbers (Space does it too). Click the bar numbers to move the marker.">
                 <Panel>
                     <TextBlock Text="▶ Play" IsVisible="{Binding !IsPlaying}" />
                     <TextBlock Text="■ Stop" IsVisible="{Binding IsPlaying}" />
                 </Panel>
             </Button>
+            <ToggleButton Classes="chip" Content="⟲ Loop" IsChecked="{Binding LoopOn}" Margin="0,0,12,6"
+                          ToolTip.Tip="On: Play goes round the highlighted bars, or the whole idea. Off: it plays to the end of them and stops." />
             <TextBlock Text="Tempo" Classes="label" Margin="0,0,6,6" />
             <Slider Minimum="40" Maximum="200" Value="{Binding Tempo}" Width="120" Margin="0,-6,6,0" />
             <TextBlock Text="{Binding Tempo, StringFormat={}{0:0} BPM}" Classes="label" MinWidth="58" Margin="0,0,12,6" />
@@ -135,18 +137,19 @@
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,0,6" IsVisible="{Binding HasLoop}">
                 <TextBlock Text="{Binding LoopText}" Classes="label" FontWeight="SemiBold" />
-                <TextBlock Text="highlighted: Play goes round them, suggestions fit them, new parts go there." Classes="label" />
+                <TextBlock Text="highlighted: Play loops them, suggestions fit them, new parts go there." Classes="label" />
                 <Button Content="Clear" Classes="tiny" Command="{Binding ClearLoopCommand}" />
             </StackPanel>
-            <TextBlock Text="Drag across empty bars on the timeline to highlight them." Classes="label" Margin="0,0,0,6" IsVisible="{Binding !HasLoop}" />
+            <TextBlock Text="Drag across empty bars or the bar numbers to highlight them. Ctrl + scroll zooms, Shift + scroll moves along." Classes="label" Margin="0,0,0,6" IsVisible="{Binding !HasLoop}" />
         </WrapPanel>
 
         <Grid Grid.Row="4" ColumnDefinitions="*,400" Margin="0,6,0,0">
             <!-- The timeline: chords heard, energy, tracks of clips, and the piano roll for the clip picked. -->
             <Grid RowDefinitions="Auto,Auto,Auto">
                 <StackPanel Spacing="2" Margin="0,0,0,6">
-                    <views:ChordLaneView Height="46" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210" />
-                    <views:EnergyCurveView Height="36" Values="{Binding EnergyCurve}" Target="{Binding EnergyTarget}" Inset="210"
+                    <views:ChordLaneView Height="46" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
+                                         ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}" />
+                    <views:EnergyCurveView Height="36" Values="{Binding EnergyCurve}" Target="{Binding EnergyTarget}" Inset="210" ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}"
                                            ToolTip.Tip="Energy, bar by bar: how busy, loud and high it plays, and how far its harmony pulls from the key. Dashed: what each label's feel asks for." />
                     <DockPanel Margin="210,0,0,0">
                         <TextBlock DockPanel.Dock="Right" Text="{Binding EnergyText}" Classes="small" Margin="8,0,0,0" />
@@ -185,7 +188,9 @@
                                             Selected="{Binding SelectedClip.Clip}" SelectCommand="{Binding SelectClipCommand}"
                                             SelectedLabel="{Binding SelectedLabel}" LabelCommand="{Binding SelectLabelCommand}"
                                             EditCommand="{Binding ChangeClipCommand}" DeleteCommand="{Binding DeleteClipCommand}" Grid="{Binding Grid}" DropCommand="{Binding DropPartCommand}"
-                                            ToolTip.Tip="Click a clip to edit it below; drag it to slide it, or onto another track (below the last makes a new one). Drag its right edge to play it round more, its left edge to trim it. Hold Shift to drag off the grid. Drag across empty bars, or along the bar numbers, to highlight them: highlight bars of the clip you picked to get other parts for just those bars. Click a label to pick its bars. Drop suggestions from the right, or .mid files from Explorer, onto a track. Delete takes the picked clip out." />
+                                            ViewStart="{Binding ViewStart}" ViewLength="{Binding ViewLength}" PlayFrom="{Binding Cursor}" CursorCommand="{Binding SetCursorCommand}"
+                                            DragSource="{Binding}"
+                                            ToolTip.Tip="Click a clip to edit it below; drag it to slide it, or onto another track (below the last makes a new one). Drag its right edge to play it round more, its left edge to trim it. Hold Shift to drag off the grid. Drag across empty bars, or along the bar numbers, to highlight them: highlight bars of the clip you picked to get other parts for just those bars. Click a label to pick its bars. Drop suggestions from the right, or .mid files from Explorer, onto a track. Pull a clip or a label right out of the timeline to drag it into your DAW. Click the bar numbers to move where Play starts; Ctrl + scroll zooms, Shift + scroll or the middle button moves along, double-click the bar numbers to see it all. Delete takes the picked clip out." />
                     </Grid>
                 </ScrollViewer>
 
