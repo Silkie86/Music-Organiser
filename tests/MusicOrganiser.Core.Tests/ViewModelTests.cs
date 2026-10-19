@@ -1189,6 +1189,13 @@ public class ViewModelTests : IDisposable
         lab.PlayPassing();
         Assert.Equal(["kick.wav", "snare.wav", "hat.wav"], played);
         Assert.Equal(0, hat.Plays);   // still only a preview
+
+        // With Autoplay off nothing plays, so a held key isn't slowed down.
+        lab.StepMs = 1000;
+        lab.AutoPlay = false;
+        Assert.True(lab.MayStep(held: false));
+        Assert.True(lab.MayStep(held: true));
+        lab.AutoPlay = true;
         lab.StepMs = 600;
         Assert.Equal(600, new MainViewModel(_db, _sounds).Sounds.StepMs);   // kept
     }

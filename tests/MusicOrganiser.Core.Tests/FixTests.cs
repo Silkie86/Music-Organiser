@@ -241,4 +241,23 @@ public class FixTests : IDisposable
         Assert.Equal(FixAction.StillMissing, line.Action);
         Assert.Contains("Settings", line.Note);
     }
+
+    [Fact]
+    public void Serum_1_sounds_of_two_songs_with_one_name_dont_overwrite_each_other()
+    {
+        // Code review U9 (19 Oct): two "beat" projects in different folders, and two channels both called Serum.
+        var user = Fixtures.TempDir();
+        string Folder(string name) => Path.Combine(user, "From Serum 1", name);
+        Assert.NotNull(Serum1To2.KeepOriginals("beat", [("Serum", [1]), ("Serum", [2])], user));
+        Assert.Equal([1], File.ReadAllBytes(Path.Combine(Folder("beat"), "Serum.fxp")));
+        Assert.Equal([2], File.ReadAllBytes(Path.Combine(Folder("beat"), "Serum (2).fxp")));
+
+        // The same sounds again (the same song fixed twice) go where they are; another song's go next to them.
+        Serum1To2.KeepOriginals("beat", [("Serum", [1]), ("Serum", [2])], user);
+        Assert.False(Directory.Exists(Folder("beat (2)")));
+        var note = Serum1To2.KeepOriginals("beat", [("Lead", [3])], user);
+        Assert.Equal([3], File.ReadAllBytes(Path.Combine(Folder("beat (2)"), "Lead.fxp")));
+        Assert.Contains("From Serum 1 › beat (2)", note);
+        Assert.Equal([1], File.ReadAllBytes(Path.Combine(Folder("beat"), "Serum.fxp")));
+    }
 }
