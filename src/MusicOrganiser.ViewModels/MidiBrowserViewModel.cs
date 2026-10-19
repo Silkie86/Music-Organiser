@@ -1834,12 +1834,11 @@ public sealed partial class MidiRow : ObservableObject
             var theirs = MidiBrowserViewModel.Cut(guide, range.Start, range.End);
             var where = LoopPoints is null ? "" : $"Looping {range.Describe()}: ";
             if (HarmonyMatcher.SitsWithin(mine, theirs, range.Length) is not { } sits) return where + "they hardly play at the same time.";
-            var rubs = mine.Count(n => theirs.Any(g => g.Start < n.Start + n.Length && g.Start + g.Length > n.Start &&
-                                                       (((n.Key - g.Key) % 12 + 12) % 12) is 1 or 11));
+            var rubs = mine.Count(n => HarmonyMatcher.Rubs(n.Start, n.Length, n.Key, theirs));
             // Two different checks: the score is per half bar (the harmony around a note), the red is note against note.
             return where + $"{Math.Round(sits * 100)}% of its notes fit the other part's harmony" +
-                   (rubs == 0 ? "." : rubs == 1 ? ". 1 note rubs a semitone against a note playing at the same moment (red)."
-                                                : $". {rubs} notes rub a semitone against a note playing at the same moment (red).");
+                   (rubs == 0 ? "." : rubs == 1 ? ". 1 note rubs a semitone against the chord playing with it (red)."
+                                                : $". {rubs} notes rub a semitone against the chord playing with them (red).");
         }
     }
 

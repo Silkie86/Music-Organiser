@@ -24,6 +24,21 @@ public class MidiBrowserTests
     // ---- reading .mid files ----
 
     [Fact]
+    public void A_note_the_chord_itself_plays_is_never_marked_as_rubbing()
+    {
+        // Em9 (E G B D F#) for a bar, then Baug (B D# G).
+        var chords = Chords([40, 43, 47, 50, 54], [47, 51, 55]);
+        // F#, the 9th, is a semitone from G, but the chord plays it too: it sits in the chord.
+        Assert.False(HarmonyMatcher.Rubs(0, Bar, 66, chords));
+        // F isn't in the chord and rubs against E and F#.
+        Assert.True(HarmonyMatcher.Rubs(0, Bar, 65, chords));
+        // E over Baug rubs against its D#, even though the bar before had an E.
+        Assert.True(HarmonyMatcher.Rubs(Bar, Bar, 64, chords));
+        // A note over a chord in the whole bar before ends where that chord changes, so it's judged on that chord only.
+        Assert.False(HarmonyMatcher.Rubs(0, Bar, 64, chords));
+    }
+
+    [Fact]
     public void A_midi_file_reads_back_track_by_track()
     {
         var clip = new MidiClip { Name = "Idea", Ppq = 480 };

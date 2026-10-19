@@ -408,6 +408,31 @@ public static class HarmonyMatcher
     }
 
     /// <summary>
+    /// Whether a note (placed at <paramref name="start"/>) rubs against the harmony: a semitone (or a major seventh)
+    /// from a note sounding with it, when the chord sounding then doesn't have that note itself. The 9th of an Em9
+    /// (F#) is a semitone from its 3rd (G), and the major 7th of a Cmaj9 (B) from its root, but the chord already
+    /// plays them, so a part playing them too sits in the chord (Solomon, 2026-10-19: "notes are coloured red even
+    /// though they go with the chord").
+    /// </summary>
+    public static bool Rubs(long start, long length, int key, IReadOnlyList<NoteEvent> harmony)
+    {
+        long a = start, b = start + Math.Max(1, length);
+        var pc = key % 12;
+        foreach (var g in harmony)
+        {
+            if (g.Start >= b || g.Start + g.Length <= a) continue;
+            if (((pc - g.Key % 12) % 12 + 12) % 12 is not (1 or 11)) continue;
+            // What sounds with that note while this one plays: if it has this note too, it's part of the chord.
+            long from = Math.Max(a, g.Start), to = Math.Min(b, g.Start + g.Length);
+            var inChord = false;
+            foreach (var h in harmony)
+                if (h.Key % 12 == pc && h.Start < to && h.Start + h.Length > from) { inChord = true; break; }
+            if (!inChord) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// The same over one stretch exactly as it plays (both cut to it and starting at 0, <paramref name="length"/> ticks
     /// long): how the loop you set sounds, kept up to date as you change it (Solomon, 2026-10-17: "dynamically tell you
     /// if you still match based on how it's looping").
