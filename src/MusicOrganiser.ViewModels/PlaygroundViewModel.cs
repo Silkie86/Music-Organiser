@@ -571,6 +571,23 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     internal void MoveLayer(LayerRow row, int semitones) =>
         EditLayer(row, l => l.Notes = l.Notes.Select(n => n with { Key = Math.Clamp(n.Key + semitones, 0, 127) }).ToList());
 
+    /// <summary>
+    /// The song's parts switched off in "Fit to" muted, the rest playing, in one Undo step (Solomon, 2026-10-19: "see the
+    /// midi from the channel when i pick fit to … make it so i can hide them then i can test alongside them").
+    /// </summary>
+    public void MuteSongParts(IReadOnlyCollection<string> song, IReadOnlyCollection<string> off)
+    {
+        var rows = Layers.Where(r => song.Contains(r.Name) && r.Layer.Muted != off.Contains(r.Name)).ToList();
+        if (rows.Count == 0) return;
+        Remember();
+        foreach (var r in rows)
+        {
+            r.Layer.Muted = off.Contains(r.Name);
+            r.Changed();
+        }
+        Changed(harmony: true);
+    }
+
     internal void ToggleMute(LayerRow row) => EditLayer(row, l => l.Muted = !l.Muted);
 
     internal void ToggleSolo(LayerRow row)

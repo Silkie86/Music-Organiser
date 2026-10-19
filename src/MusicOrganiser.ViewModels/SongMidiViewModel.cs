@@ -147,7 +147,15 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     }
 
     // A few clicks on the chips in a row make one new fit, once they rest.
-    void PartsChanged() => _ = RefitAsync();
+    void PartsChanged()
+    {
+        MuteInQuick();
+        _ = RefitAsync();
+    }
+
+    // The small playground follows the chips at once: a part switched off is muted there, not taken away.
+    void MuteInQuick() =>
+        Quick?.MuteSongParts(SongParts.Select(p => p.Name).ToHashSet(), PartsOff() ?? new HashSet<string>());
 
     async Task RefitAsync()
     {
@@ -220,7 +228,8 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     {
         if (Open is not { } row) return;
         Quick ??= main.Playground.Quick();
-        await Quick.LoadSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0, PartsOff());
+        await Quick.LoadSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0);
+        MuteInQuick();
     }
 
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>

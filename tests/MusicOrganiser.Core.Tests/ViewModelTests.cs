@@ -2158,7 +2158,7 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task The_small_playground_brings_in_just_the_song_parts_picked()
+    public async Task The_small_playground_mutes_the_song_parts_switched_off()
     {
         const int bar = 4 * 96;
         int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
@@ -2183,12 +2183,18 @@ public class ViewModelTests : IDisposable
         Assert.Contains(tab.Quick!.Layers, l => l.Name == "Lead");
         Assert.Contains(tab.Quick.Layers, l => l.Name == "Keys");
 
-        // The lead switched off in "Fit to": it stays out of the small playground too.
+        // The lead switched off in "Fit to": muted in the small playground at once, still there to see and turn back on.
         tab.SongParts.Single(p => p.Name == "Lead").IsOn = false;
+        Assert.True(tab.Quick.Layers.Single(l => l.Name == "Lead").Muted);
+        Assert.False(tab.Quick.Layers.Single(l => l.Name == "Keys").Muted);
         for (var i = 0; i < 100 && tab.Rows.FirstOrDefault()?.With?.Parts.Count != 1; i++) await Task.Delay(10);
+        Assert.NotNull(tab.Quick);   // a refit keeps the small playground
+
+        // Started again with the lead still off: it comes in muted.
         await tab.WorkHereCommand.ExecuteAsync(null);
-        Assert.DoesNotContain(tab.Quick.Layers, l => l.Name == "Lead");
-        Assert.Contains(tab.Quick.Layers, l => l.Name == "Keys");
+        Assert.True(tab.Quick.Layers.Single(l => l.Name == "Lead").Muted);
+        tab.AllSongPartsCommand.Execute(null);
+        Assert.False(tab.Quick.Layers.Single(l => l.Name == "Lead").Muted);
     }
 
     [Fact]

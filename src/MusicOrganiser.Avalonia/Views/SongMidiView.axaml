@@ -202,7 +202,7 @@
                     <StackPanel Spacing="8" DataContext="{Binding $parent[UserControl].DataContext}" x:DataType="vm:SongMidiViewModel">
                         <Separator Margin="0,4" />
                         <Button Content="{Binding QuickButtonText}" Command="{Binding WorkHereCommand}" HorizontalAlignment="Left"
-                                ToolTip.Tip="Lay this part over the song's own parts, each its own lane with mute and solo, and edit any of them here. Nothing changes on the Playground page until you press Open in Playground." />
+                                ToolTip.Tip="Lay this part over the song's own parts, each its own lane with mute and solo, and edit any of them here. Parts switched off in Fit to come in muted. Nothing changes on the Playground page until you press Open in Playground." />
                         <views:PlaygroundMiniView DataContext="{Binding Quick}" IsVisible="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).HasQuick}" />
                     </StackPanel>
                 </StackPanel>
