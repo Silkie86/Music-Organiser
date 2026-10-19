@@ -218,18 +218,39 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
 
     // ---- the cut-down playground in the quick view ----
 
-    /// <summary>The open part layered with the song's own parts, to work on here (a small Playground of its own).</summary>
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasQuick), nameof(QuickButtonText))] PlaygroundViewModel? _quick;
+    /// <summary>
+    /// The open part layered with the song's own parts, to work on here: a small Playground of its own, the quick view's
+    /// main view (Solomon, 2026-10-19: "this should all be based off of playground").
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasQuick))] PlaygroundViewModel? _quick;
     public bool HasQuick => Quick is not null;
-    public string QuickButtonText => Quick is null ? "Layer it with the song's parts" : "Start again with this part";
+    MidiEntry? _quickEntry;
+    int _quickRequest;
 
-    [RelayCommand]
-    async Task WorkHere()
+    // Another part opened: the small playground starts again with it. The same part opened again (the list re-fitted
+    // after a Fit to chip) keeps what you've done to it.
+    partial void OnOpenChanged(MidiRow? value) => _ = QuickFollowAsync(value);
+
+    async Task QuickFollowAsync(MidiRow? row)
     {
-        if (Open is not { } row) return;
+        var request = ++_quickRequest;
+        if (row is null || _whole is not { } whole || row.BarNotes.Count == 0) return;
+        if (Quick is not null && _quickEntry is not null && MidiBrowserViewModel.Same(_quickEntry, row.Entry)) return;
+        if (UiWork.InBackground) await Task.Delay(150);
+        if (request != _quickRequest) return;
+        _quickEntry = row.Entry;
         Quick ??= main.Playground.Quick();
-        await Quick.LoadSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0);
+        // The song's parts as read for fitting, where they play: nothing read from disk again.
+        await Quick.LoadPairAsync(name, whole.Parts, 0, path, row.Fit?.At ?? 0, row.Entry, row.BarNotes, row.Title);
         MuteInQuick();
+    }
+
+    /// <summary>The open part again as it first came, with every song part.</summary>
+    [RelayCommand]
+    Task StartAgain()
+    {
+        _quickEntry = null;
+        return QuickFollowAsync(Open);
     }
 
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>

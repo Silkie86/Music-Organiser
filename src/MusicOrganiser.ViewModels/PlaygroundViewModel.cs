@@ -219,7 +219,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         // Parts written from the chords follow when an edit changed the chords heard (or the length grew), not only the chart.
         if (harmony && Section.Layers.Any(l => l.Written.Length > 0) && _writtenFor != (Section, ChordLane.ToChart(LaneForWriting(), Section.Length)))
             RewriteWritten();
-        try { _store.SaveCurrent(_session); }
+        // A cut-down playground is a sketch: nothing to keep until Open in Playground takes it over.
+        try { if (!IsQuick) _store.SaveCurrent(_session); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save the idea: {e.Message}"; }
         if (harmony) HarmonyChanged();
         else RefreshEnergy();
@@ -1028,21 +1029,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var from = (long)Math.Max(0, FromBar - 1) * Bar;
             var length = Section.Length;
             // Read and worked out off the screen's thread, so a big song doesn't freeze the window.
-            var parts = await UiWork.Run(() =>
-            {
-                var found = new List<(string Name, string Role, List<NoteEvent> Notes)>();
-                // Where the parts play in the arranger (as MIDI that fits reads them), so they line up with each other.
-                foreach (var c in PhraseJoiner.ArrangedChannels(path) ?? reader.ExtractChannels(path))
-                {
-                    if (leaveOut is not null && leaveOut.Contains(c.Name)) continue;   // a part switched off in "Fit to"
-                    // Notes held into the first bar (a pushed chord, a tie) come in too, cut to start there.
-                    var notes = MidiBrowserViewModel.Cut(PhraseAnalyser.Normalise(c.Notes, c.Ppq, keepPlace: true), from, from + length);
-                    if (notes.Count == 0) continue;
-                    var role = c.Kind == "Drums" ? MidiRoles.Drums : PhraseAnalyser.Analyse(notes, c.Name).Role;
-                    found.Add((c.Name, role, notes));
-                }
-                return found;
-            });
+            // Where the parts play in the arranger (as MIDI that fits reads them), so they line up with each other.
+            var parts = await UiWork.Run(() => CutParts(PhraseJoiner.ArrangedChannels(path) ?? reader.ExtractChannels(path), from, length, leaveOut));
             if (parts.Count == 0)
             {
                 Message = $"{songName} has no notes from bar {FromBar} for {Section.Bars} bars.";
@@ -1060,6 +1048,28 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             Message = $"Couldn't read {songName}: {e.Message}";
             return false;
         }
+    }
+
+    /// <summary>
+    /// Each part's notes from <paramref name="from"/> for <paramref name="length"/> ticks, with what it plays as. A part
+    /// that loops (<paramref name="period"/> above 0) plays round again to fill the length.
+    /// </summary>
+    static List<(string Name, string Role, List<NoteEvent> Notes)> CutParts(IEnumerable<MidiChannel> channels, long from, long length,
+                                                                          IReadOnlyCollection<string>? leaveOut = null, long period = 0)
+    {
+        var found = new List<(string Name, string Role, List<NoteEvent> Notes)>();
+        foreach (var c in channels)
+        {
+            if (leaveOut is not null && leaveOut.Contains(c.Name)) continue;   // a part switched off in "Fit to"
+            var all = PhraseAnalyser.Normalise(c.Notes, c.Ppq, keepPlace: true);
+            if (period > 0) all = SectionMatcher.Loop(all, period, from + length);
+            // Notes held into the first bar (a pushed chord, a tie) come in too, cut to start there.
+            var notes = MidiBrowserViewModel.Cut(all, from, from + length);
+            if (notes.Count == 0) continue;
+            var role = c.Kind == "Drums" ? MidiRoles.Drums : PhraseAnalyser.Analyse(notes, c.Name).Role;
+            found.Add((c.Name, role, notes));
+        }
+        return found;
     }
 
     // ---- the cut-down playground on a song's "MIDI that fits" tab ----
@@ -1080,20 +1090,56 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     public async Task LoadSongAsync(string path, string songName, MidiEntry? entry, IReadOnlyList<NoteEvent>? notes, string? title,
                                     long at = 0, IReadOnlyCollection<string>? leaveOut = null)
     {
-        StopPlaying();
-        _undo.Clear();
-        _redo.Clear();
-        CanUndo = CanRedo = false;
-        var bars = notes is { Count: > 0 } ? Math.Clamp(PhraseAnalyser.BarsOf(notes), 1, GrowBars) : NewBars;
-        _session = Fresh();
-        _session.Name = $"{songName} sketch";
-        Section.Bars = bars;
-        Show();
-        FromBar = (int)(Math.Max(0, at) / Bar) + 1;
+        StartAgain(songName, notes is { Count: > 0 } ? PhraseAnalyser.BarsOf(notes) : NewBars, at);
         await BringSongAsync(path, songName, leaveOut);
         if (entry is not null && notes is { Count: > 0 }) AddFromLibrary(entry, notes, title);
         SelectedLayer = Layers.LastOrDefault();
         Message = "";
+    }
+
+    /// <summary>
+    /// Starts again with the parts a part is fitted to on the MIDI page and the part on top (Solomon, 2026-10-19: "i want
+    /// this and the playground to be linked so when features are added to the playground the midi version gets those too").
+    /// The section is as long as the longer of the two, so a part longer than what it's fitted to plays all of it; what
+    /// it's fitted to plays round again to fill it when it loops.
+    /// </summary>
+    /// <param name="partners">What it's fitted to: a song's parts where they play, or one part from its first bar.</param>
+    /// <param name="period">How long what it's fitted to is when it loops (0 when it's a song, which doesn't).</param>
+    /// <param name="at">Where in what it's fitted to the part lines up.</param>
+    public async Task LoadPairAsync(string name, IReadOnlyList<MidiChannel> partners, long period, string? path, long at,
+                                    MidiEntry entry, IReadOnlyList<NoteEvent> notes, string? title)
+    {
+        var bars = PhraseAnalyser.BarsOf(notes);
+        if (period > 0) bars = Math.Max(bars, (int)Math.Ceiling(period / (double)Bar));
+        var load = ++_loads;
+        StartAgain(name, bars, period > 0 ? 0 : at);
+        var from = (long)(FromBar - 1) * Bar;
+        var length = Section.Length;
+        var parts = await UiWork.Run(() => CutParts(partners, from, length, period: period));
+        if (load != _loads) return;   // another part picked meanwhile
+        foreach (var (part, role, partNotes) in parts) AddLayer(part, role, partNotes, path ?? "");
+        AddFromLibrary(entry, notes, title);
+        SelectedLayer = Layers.LastOrDefault();
+        _undo.Clear();
+        CanUndo = false;
+        Message = "";
+    }
+
+    int _loads;
+
+    // A new, empty idea named after the song or part, its section as long as the part (within Settings' longest), from the
+    // bar the part lines up at. Undo starts afresh.
+    void StartAgain(string name, int bars, long at)
+    {
+        StopPlaying();
+        _undo.Clear();
+        _redo.Clear();
+        CanUndo = CanRedo = false;
+        _session = Fresh();
+        _session.Name = $"{name} sketch";
+        Section.Bars = Math.Clamp(bars, 1, GrowBars);
+        Show();
+        FromBar = (int)(Math.Max(0, at) / Bar) + 1;
     }
 
     /// <summary>The cut-down playground's section, taken to the Playground page to work up further.</summary>

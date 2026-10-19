@@ -39,6 +39,16 @@
                 <TextBlock Text="Drag them all" />
             </Border>
         </WrapPanel>
+        <!-- How long it loops, and how its harmony is heard: the Playground's own settings for this sketch. -->
+        <WrapPanel>
+            <TextBlock Text="Bars" Classes="small" VerticalAlignment="Center" Margin="0,0,6,6" />
+            <NumericUpDown Value="{Binding Bars}" Minimum="1" Maximum="64" Increment="1" FormatString="0" Width="104" Margin="0,0,12,6"
+                           ToolTip.Tip="How many bars it plays before going round again. Make it longer to hear more of a part, or drag along the piano roll's bar numbers to loop just some bars." />
+            <ToggleButton Classes="chip" Content="Jazz and gospel" IsChecked="{Binding !IsClassical}" Margin="0,0,4,6" FontSize="12"
+                          ToolTip.Tip="Hear 9ths, 11ths, 13ths, altered dominants and blue notes as colour" />
+            <ToggleButton Classes="chip" Content="Classical" IsChecked="{Binding IsClassical}" Margin="0,0,6,6" FontSize="12"
+                          ToolTip.Tip="The chords' own notes are the safe ones; a clash on a strong beat counts against a part" />
+        </WrapPanel>
         <TextBlock Text="{Binding Message}" Classes="small" TextWrapping="Wrap" TextTrimming="None" IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
 
         <StackPanel Spacing="2">

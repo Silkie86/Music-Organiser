@@ -543,6 +543,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         OnPropertyChanged(nameof(WithSound));
         OnPropertyChanged(nameof(OrderText));
+        QuickFollow();
     }
 
     /// <summary>Showing a random pick in a random order (Shuffle), until the search changes.</summary>
@@ -663,10 +664,15 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         if (_playing is { } playing && !Same(playing.Entry, value?.Entry)) StopPlaying();
         if (Tempo is null) OnPropertyChanged(nameof(TempoValue));
+        QuickFollow();
     }
 
     /// <summary>Another page is showing: nothing keeps playing behind it.</summary>
-    public void Left() => StopPlaying();
+    public void Left()
+    {
+        StopPlaying();
+        Quick?.StopPlaying();
+    }
 
     partial void OnSearchChanged(string value)
     {
