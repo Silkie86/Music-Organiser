@@ -31,7 +31,9 @@ import org.musicorganiser.bitwig.FakeBitwig.TrackSpec;
  * Sends the same requests (plenty of them odd) to the JavaScript script, running in its own stand-in Bitwig with
  * Node.js (src/test/js/run-script.js), and to the extension in FakeBitwig, and checks every message that comes
  * back is the same, apart from what link version 3 adds on purpose. The script is the reference: while both are
- * in use, this keeps them from drifting apart, and it checks FakeBitwig behaves as the script's stand-in does.
+ * in use, this keeps them from drifting apart, and it checks FakeBitwig behaves as the script's stand-in does. The
+ * commands only the extension has (clicked, recorder, selftest and the arrange experiment) aren't sent: the script
+ * answers each with "Unknown command", and NewerApiTest, SelfCheckTest and ArrangerTest check them.
  *
  * Without Node.js on the PATH it's skipped, except on CI, where the workflow installs it.
  */
@@ -133,6 +135,7 @@ class ParityTest {
                 m.remove("runtime");
                 m.remove("extension");
                 m.remove("loadedFrom");
+                m.remove("loopback");
             }
             if (m.containsKey("params") && m.containsKey("drumPads")) {
                 m.remove("page");
@@ -264,7 +267,10 @@ class ParityTest {
         reading.add(send(obj("id", 9, "cmd", "device")));
         reading.add(advance(1990));
         reading.add(advance(100));
-        reading.addAll(each(obj("id", 10, "cmd", "action"), "action", MISSING, null, 5, obj(), "Format C:", "save", "Save", "toggle_metronome"));
+        // Straight away is the one route both run an action by (the script refuses the others). Without one, the script runs
+        // it straight away and the extension (from 3.8) from Bitwig's flush, so these name it.
+        reading.addAll(each(obj("id", 10, "cmd", "action", "via", "direct"), "action", MISSING, null, 5, obj(), "Format C:", "save", "Save",
+                            "toggle_metronome"));
         reading.add(send(obj("id", 11, "cmd", "actions")));
         reading.add(send(obj("id", 12, "cmd", "project")));
         reading.add(send(obj("id", 13, "cmd", "hello")));

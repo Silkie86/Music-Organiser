@@ -16,6 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
+    public int Version => 3;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
@@ -141,7 +142,69 @@ public sealed partial class FlStudioReader : IProjectReader
             if (parts.Length >= 2 && major > 0 && int.TryParse(parts[1], out var minor))
                 flp.Utf16 = major > 11 || (major == 11 && minor >= 5);
         }
+        if (major is > 0 and < 12) StepsAsNotes(flp);
         return flp;
+    }
+
+    // FL 9 and older keep the step sequencer's steps in each channel's events, after the pattern they're in (event 65):
+    // a dot (WORD 91: step + 256), the step's volume (WORD 72: step, volume) and its shift (WORD 92: step, shift).
+    // Newer FL saves steps as notes with no length, as FL 25 did when funk step_8 was saved again.
+    const int EvShuffle = 11, EvDot = 91, EvDotVolume = 72, EvDotShift = 92;
+
+    /// <summary>
+    /// Turns old step sequencer dots into note events (224) placed right after them, so they're read like FL 25's
+    /// steps: key C5, no length, the step's volume as velocity. Odd steps are swung by the song's shuffle, and a shift
+    /// moves its step in 192nds of a beat; both checked against FL 25's re-save of funk step_8 (shuffle 36 moves odd
+    /// steps 3 ticks at 96 PPQ, shift 24 moves a step 12).
+    /// </summary>
+    static void StepsAsNotes(Flp flp)
+    {
+        if (!flp.Events.Any(e => e.Id == EvDot)) return;
+        var step = flp.Ppq / 4;
+        var swing = (int)(flp.Events.FirstOrDefault(e => e.Id == EvShuffle).Int * step / 256);
+        var events = new List<Event>(flp.Events.Count);
+        int? channel = null;
+        var dots = new SortedSet<int>();
+        var volumes = new Dictionary<int, int>();
+        var shifts = new Dictionary<int, int>();
+        void Flush()
+        {
+            if (channel is { } ch && dots.Count > 0)
+            {
+                var notes = new byte[24 * dots.Count];
+                var i = 0;
+                foreach (var d in dots)
+                {
+                    var n = notes.AsSpan(24 * i++, 24);
+                    var at = d * step + (d % 2 == 1 ? swing : 0) + shifts.GetValueOrDefault(d) * flp.Ppq / 192;
+                    BinaryPrimitives.WriteInt32LittleEndian(n, Math.Max(at, 0));
+                    BinaryPrimitives.WriteUInt16LittleEndian(n[4..], 0x4000);
+                    BinaryPrimitives.WriteUInt16LittleEndian(n[6..], (ushort)ch);
+                    BinaryPrimitives.WriteUInt16LittleEndian(n[12..], (ushort)DefaultRoot);
+                    n[16] = 120; n[18] = 64; n[20] = 64; n[22] = 128; n[23] = 128;   // fine pitch, pan, release and mods centred, as FL writes them
+                    n[21] = (byte)Math.Clamp(volumes.GetValueOrDefault(d, 100), 0, 128);
+                }
+                events.Add(new Event(EvPatternNotes, notes));
+            }
+            dots.Clear(); volumes.Clear(); shifts.Clear();
+        }
+        foreach (var e in flp.Events)
+        {
+            switch (e.Id)
+            {
+                case EvDot when channel is not null: dots.Add((int)(e.Int & 0xff)); break;
+                case EvDotVolume when channel is not null: volumes[(int)(e.Int & 0xff)] = (int)(e.Int >> 8); break;
+                case EvDotShift when channel is not null: shifts[(int)(e.Int & 0xff)] = (int)(e.Int >> 8); break;
+                default:
+                    Flush();
+                    if (e.Id == EvChannelNew) channel = (int)e.Int;
+                    break;
+            }
+            events.Add(e);
+        }
+        Flush();
+        flp.Events.Clear();
+        flp.Events.AddRange(events);
     }
 
     static Dictionary<int, byte[]> WrapperFields(ReadOnlySpan<byte> blob)
@@ -187,6 +250,7 @@ public sealed partial class FlStudioReader : IProjectReader
         var pendingInternal = "";
         var channelHasPlugin = false;
         int patterns = 0, notes = 0;
+        var nothingSaved = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var e in flp.Events)
         {
@@ -228,14 +292,18 @@ public sealed partial class FlStudioReader : IProjectReader
                     var f = WrapperFields(e.Payload.Span);
                     var name = WrapperText(f, VstName);
                     var vpath = WrapperText(f, VstPath);
+                    if (f.TryGetValue(VstState, out var st) && SavedNothing(st) && (name.Length > 0 || vpath.Length > 0))
+                        nothingSaved.Add(name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath));
                     if (name.Length > 0 || vpath.Length > 0)
                     {
                         var isInst = !inMixer && channel is not null && channelTypes.GetValueOrDefault(channel.Value) == ChannelTypeInstrument;
-                        info.Plugins.Add(new PluginRef(
-                            name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath),
-                            WrapperText(f, VstVendor),
+                        var vendor = WrapperText(f, VstVendor);
+                        var shown = name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath);
+                        // Old FL (FL 9) hosted its own effects, such as Fruity Compressor, in the wrapper: they're still FL's own.
+                        var own = PluginCatalog.IsFlStudioBundled(shown, vendor, vpath);
+                        info.Plugins.Add(new PluginRef(shown, own && vendor.Length == 0 ? "Image-Line" : vendor,
                             isInst ? PluginKind.Instrument : PluginKind.Effect,
-                            TextScan.PluginFormatFromPath(vpath) is { Length: > 0 } fmt ? fmt : "VST",
+                            own ? "Native" : TextScan.PluginFormatFromPath(vpath) is { Length: > 0 } fmt ? fmt : "VST",
                             vpath));
                     }
                     pendingInternal = "";
@@ -245,6 +313,9 @@ public sealed partial class FlStudioReader : IProjectReader
 
         foreach (var i in channelNames.Keys.Union(channelTypes.Keys).Order())
             info.Tracks.Add(channelNames.GetValueOrDefault(i, $"Channel {i + 1}"));
+        foreach (var n in nothingSaved)
+            info.Warnings.Add($"{n} has no saved sound in this file (it gave FL Studio nothing when the project was saved), " +
+                              "so it opens at its default sound. An earlier save of the project may still have it; converting to Bitwig takes it from there.");
         info.Details["Channels"] = info.Tracks.Count.ToString();
         info.Details["Patterns"] = patterns.ToString();
         info.Details["Notes"] = notes.ToString();
@@ -307,35 +378,55 @@ public sealed partial class FlStudioReader : IProjectReader
             return new PresetBlob(name, plugin, ".vst3state", state);
         }
 
-        // VST2: FL puts a 21-byte header in front of the plugin's state:
-        // i32 -9, u8 flags (0x08 = the plugin saves a chunk), i32 -2, u32 chunk length, 8 zero bytes.
         var id = f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4
             ? BinaryPrimitives.ReadInt32LittleEndian(cc)
             : 0;
         var chunk = state;
-        if (state.Length >= 21 && BinaryPrimitives.ReadInt32LittleEndian(state) == -9)
+        var selected = 0;
+        if (Vst2Header(state) is var (start, len, current))
         {
-            var len = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9));
-            if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state) is var (values, program))
-                return new PresetBlob(name, plugin, ".fxp", Fxp.WrapParams(values, program.Length > 0 ? program : plugin, id));
-            if (21 + (long)len <= state.Length) chunk = state.AsSpan(21, (int)len).ToArray();
+            selected = current;
+            if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state, start) is var (values, program))
+                return new PresetBlob(name, plugin, ".fxp", Fxp.WrapParams(values, program.Length > 0 ? program : plugin, id)) { Program = selected };
+            if (start + (long)len <= state.Length) chunk = state.AsSpan(start, (int)len).ToArray();
         }
-        return new PresetBlob(name, plugin, ".fxp", Fxp.WrapChunk(chunk, plugin, id));
+        return new PresetBlob(name, plugin, ".fxp", Fxp.WrapChunk(chunk, plugin, id)) { Program = selected };
     }
+
+    /// <summary>
+    /// Where the plugin's own state starts after the header FL puts in front of a VST2's state, and its chunk length.
+    /// Newer FL (seen in FL 21 and 25): i32 -9, u8 flags (0x08 = the plugin saves a chunk), i32 -2,
+    /// u32 chunk length, u32 0, u32 program, so 21 bytes. FL 9 (wrapper version 6) has no -2 or 0:
+    /// i32 -9, u8 flags, u32 chunk length, u32 program, so 13 bytes, and reading it as the newer one
+    /// kept only a few bytes of a big chunk, so the plugin came up at its default sound. Program is the plugin's
+    /// program that was selected, which FL selects again after giving the plugin its chunk.
+    /// </summary>
+    static (int Start, uint Length, int Program)? Vst2Header(byte[] state)
+    {
+        if (state.Length < 13 || BinaryPrimitives.ReadInt32LittleEndian(state) != -9) return null;
+        if (BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(5)) == -2)
+            return state.Length >= 21
+                ? (21, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9)), Math.Max(0, BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(17))))
+                : null;
+        return (13, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(5)), Math.Max(0, BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(9))));
+    }
+
+    /// <summary>A VST2 that saves its sound as a chunk but gave FL an empty one, so FL kept none of it.</summary>
+    static bool SavedNothing(byte[] state) => Vst2Header(state) is (_, 0, _) && (state[4] & 0x08) != 0;
 
     /// <summary>
     /// Plugins that don't save a chunk (Predator, older FabFilter) have their parameters after
     /// FL's header instead: u32 count, the values as floats, then u32 1 and the program name.
     /// </summary>
-    static (float[] Values, string Program)? ParamState(byte[] state)
+    static (float[] Values, string Program)? ParamState(byte[] state, int start)
     {
-        if (state.Length < 25) return null;
-        var n = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(21));
-        if (n == 0 || 25 + 4L * n > state.Length) return null;
+        if (state.Length < start + 4) return null;
+        var n = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(start));
+        if (n == 0 || start + 4 + 4L * n > state.Length) return null;
         var values = new float[n];
-        for (var i = 0; i < n; i++) values[i] = BinaryPrimitives.ReadSingleLittleEndian(state.AsSpan(25 + 4 * i));
+        for (var i = 0; i < n; i++) values[i] = BinaryPrimitives.ReadSingleLittleEndian(state.AsSpan(start + 4 + 4 * i));
         var program = "";
-        var at = 25 + 4 * (int)n;
+        var at = start + 4 + 4 * (int)n;
         if (at + 4 < state.Length && BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(at)) == 1)
         {
             var text = state.AsSpan(at + 4, Math.Min(28, state.Length - at - 4));
@@ -461,6 +552,52 @@ public sealed partial class FlStudioReader : IProjectReader
     const int PatternBase = 20480;              // playlist item index above this = pattern (index - base)
 
     /// <summary>
+    /// The first arrangement's playlist tracks and which are muted. FL saves every track, used or not, after its
+    /// arrangement's playlist (500 from FL 12.9), so their count is how many the playlist has. A track's settings (event
+    /// 238, 70 bytes in FL 25 and 26) start with u32 its number from 1, colour and icon, then a byte at 12 that's 1 when
+    /// the track plays and 0 when it's muted.
+    /// </summary>
+    sealed class PlaylistTracks
+    {
+        const int EvArrangementNew = 99;        // WORD: starts an arrangement (FL 12.9 onwards); its name, playlist and tracks follow
+        const int EvTrackData = Data + 30;      // 238: a playlist track's settings
+        const int EvTrackName = Text + 47;      // 239: the track's name, after its settings (only when it was named)
+
+        readonly Dictionary<int, (FlTrack Track, bool Muted)> tracks = new();
+        int arrangements, last;
+
+        /// <summary>Takes in the event if it's one of the first arrangement's tracks (or starts an arrangement).</summary>
+        public void Read(Event e, Flp flp)
+        {
+            switch (e.Id)
+            {
+                case EvArrangementNew: arrangements++; break;
+                case EvTrackData when arrangements <= 1 && e.Payload.Length > 12:
+                    last = (int)e.Int;
+                    tracks[last] = (new FlTrack(last, ""), e.Payload.Span[12] == 0);
+                    break;
+                case EvTrackName when arrangements <= 1 && tracks.TryGetValue(last, out var t):
+                    tracks[last] = t with { Track = t.Track with { Name = flp.Str(e) } };
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// The track a clip is on, from the slot FL saves with it, which counts down from the first track (499 is track 1
+        /// of 500), and whether that track is muted.
+        /// </summary>
+        public (FlTrack Track, bool Muted)? At(int slot) =>
+            tracks.TryGetValue(tracks.Count - slot, out var t) ? t : null;
+
+        /// <summary>The number of the track a clip's slot is, or 0 when the file doesn't say.</summary>
+        public int Number(int slot) => At(slot)?.Track.Number ?? 0;
+    }
+
+    /// <summary>The playlist's clips, with those on a muted track muted too (for automation, which then doesn't play).</summary>
+    static List<PlaylistItem> PlaylistItems(ReadOnlySpan<byte> d, PlaylistTracks tracks) =>
+        PlaylistItems(d).Select(i => tracks.At(i.Slot) is { Muted: true } ? i with { Muted = true } : i).ToList();
+
+    /// <summary>
     /// Each channel's notes across the song. Patterns are placed where the playlist puts them
     /// (the first arrangement); a song with nothing in the playlist gets its patterns one after
     /// another, in pattern order.
@@ -478,6 +615,7 @@ public sealed partial class FlStudioReader : IProjectReader
         var rawNotes = new List<(int Pattern, ReadOnlyMemory<byte> Data)>();
         var patternNames = new Dictionary<int, string>();
         ReadOnlyMemory<byte>? playlist = null;
+        var tracks = new PlaylistTracks();
         int? channel = null, pattern = null;
         var inMixer = false;
         var channelHasPlugin = false;
@@ -485,6 +623,7 @@ public sealed partial class FlStudioReader : IProjectReader
 
         foreach (var e in flp.Events)
         {
+            tracks.Read(e, flp);
             switch (e.Id)
             {
                 case EvChannelNew:
@@ -526,7 +665,7 @@ public sealed partial class FlStudioReader : IProjectReader
                     }
                     break;
                 case EvRootNote when channel is not null && !inMixer && e.Int <= 127: roots[channel.Value] = (int)e.Int; break;
-                case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span) is { } lv:
+                case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span, flp.Version) is { } lv:
                     pitches[channel.Value] = lv.Pitch;
                     break;
                 case EvPatternNew: pattern = (int)e.Int; break;
@@ -536,7 +675,7 @@ public sealed partial class FlStudioReader : IProjectReader
             }
         }
 
-        var notes = PlaceClips(flp, rawNotes, playlist, order.ToHashSet(), patternNames)
+        var notes = PlaceClips(flp, rawNotes, playlist, tracks, order.ToHashSet(), patternNames)
             .Select(kv => (Channel: kv.Key, Notes: Audible(kv.Value))).Where(x => x.Notes.Count > 0)
             .ToDictionary(x => x.Channel, x => x.Notes);
 
@@ -551,10 +690,11 @@ public sealed partial class FlStudioReader : IProjectReader
     /// <summary>
     /// Each channel's clips across the song: one per pattern placed in the playlist (the first
     /// arrangement), holding the channel's notes in that part of the pattern, timed from the clip's
-    /// start. With nothing in the playlist, patterns play one after another.
+    /// start. With nothing in the playlist, patterns play one after another. Clips on a muted track are marked
+    /// <see cref="FlClip.OnMutedTrack"/>; <see cref="FlClip.Muted"/> is only the clip's own mute.
     /// </summary>
     static Dictionary<int, List<FlClip>> PlaceClips(Flp flp, List<(int Pattern, ReadOnlyMemory<byte> Data)> rawNotes,
-                                                    ReadOnlyMemory<byte>? playlist, IReadOnlySet<int> known,
+                                                    ReadOnlyMemory<byte>? playlist, PlaylistTracks tracks, IReadOnlySet<int> known,
                                                     IReadOnlyDictionary<int, string> patternNames)
     {
         var patterns = new SortedDictionary<int, List<(int Channel, NoteEvent Note)>>();
@@ -565,7 +705,7 @@ public sealed partial class FlStudioReader : IProjectReader
         }
 
         var clips = new Dictionary<int, List<FlClip>>();
-        void Place(int pat, long at, long from, long length, bool muted)
+        void Place(int pat, long at, long from, long length, bool muted, int track, bool onMutedTrack)
         {
             if (!patterns.TryGetValue(pat, out var pn)) return;
             foreach (var channel in pn.Where(x => x.Note.Start >= from && x.Note.Start < from + length).GroupBy(x => x.Channel))
@@ -573,13 +713,18 @@ public sealed partial class FlStudioReader : IProjectReader
                 var notes = channel.Select(x => x.Note with { Start = x.Note.Start - from, Length = Math.Min(x.Note.Length, from + length - x.Note.Start) })
                                    .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
                 if (!clips.TryGetValue(channel.Key, out var cl)) clips[channel.Key] = cl = new();
-                cl.Add(new FlClip(patternNames.GetValueOrDefault(pat, $"Pattern {pat}"), at, length, notes, muted));
+                cl.Add(new FlClip(patternNames.GetValueOrDefault(pat, $"Pattern {pat}"), at, length, notes, muted)
+                {
+                    Track = track,
+                    OnMutedTrack = onMutedTrack,
+                });
             }
         }
 
         var items = playlist is { } pl ? PlaylistItems(pl.Span).Where(i => i.Index > PatternBase).ToList() : [];
         if (items.Count > 0)
-            foreach (var i in items.OrderBy(i => i.At)) Place(i.Index - PatternBase, i.At, i.From, i.Length, i.Muted);
+            foreach (var i in items.OrderBy(i => i.At))
+                Place(i.Index - PatternBase, i.At, i.From, i.Length, i.Muted, tracks.Number(i.Slot), tracks.At(i.Slot) is { Muted: true });
         else
         {
             // Pattern mode: one pattern after another, each rounded up to whole bars.
@@ -590,7 +735,7 @@ public sealed partial class FlStudioReader : IProjectReader
                 if (pn.Count == 0) continue;
                 var end = pn.Max(x => x.Note.Start + x.Note.Length);
                 var length = Math.Max(bar, (end + bar - 1) / bar * bar);
-                Place(pat, at, 0, length, false);
+                Place(pat, at, 0, length, false, 0, false);
                 at += length;
             }
         }
@@ -602,21 +747,25 @@ public sealed partial class FlStudioReader : IProjectReader
     /// pattern. An audio clip's start offset is in milliseconds of the sample, as FL 25 saves it (a clip trimmed to
     /// start halfway through a 32 second sample says 16000).
     /// </summary>
-    static Dictionary<int, List<FlAudioClip>> PlaceAudioClips(ReadOnlyMemory<byte>? playlist, IReadOnlySet<int> channels)
+    static Dictionary<int, List<FlAudioClip>> PlaceAudioClips(ReadOnlyMemory<byte>? playlist, PlaylistTracks tracks, IReadOnlySet<int> channels)
     {
         var clips = new Dictionary<int, List<FlAudioClip>>();
         if (playlist is not { } pl) return clips;
         foreach (var i in PlaylistItems(pl.Span).Where(i => i.Index < PatternBase && channels.Contains(i.Index) && i.Length > 0).OrderBy(i => i.At))
         {
             if (!clips.TryGetValue(i.Index, out var list)) clips[i.Index] = list = new();
-            list.Add(new FlAudioClip(i.At, i.Length, i.Offset / 1000, i.Muted));
+            list.Add(new FlAudioClip(i.At, i.Length, i.Offset / 1000, i.Muted)
+            {
+                Track = tracks.Number(i.Slot),
+                OnMutedTrack = tracks.At(i.Slot) is { Muted: true },
+            });
         }
         return clips;
     }
 
-    /// <summary>What plays of a channel's clips: the notes, less muted ones and those in muted clips, in song ticks.</summary>
+    /// <summary>What plays of a channel's clips: the notes, less muted ones and those in muted clips or on muted tracks, in song ticks.</summary>
     static List<NoteEvent> Audible(IEnumerable<FlClip> clips) =>
-        clips.Where(c => !c.Muted)
+        clips.Where(c => !c.Muted && !c.OnMutedTrack)
              .SelectMany(c => c.Notes.Where(n => !n.Muted).Select(n => n with { Start = c.Start + n.Start }))
              .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
 
@@ -653,6 +802,26 @@ public sealed partial class FlStudioReader : IProjectReader
                                            (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 0x2000) != 0,
                                            BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 12)..])));
             break;
+        }
+        // FL 9: 32-byte items with 0 and 0x6000 where newer FL has the pattern, and the playlist row, counted
+        // from 999 down, at 12. Each row plays one pattern there: row 999 - n is pattern n (checked against
+        // FL 25's re-save of funk step_8, which put the same 123 items on its own tracks). FL 25 gives each
+        // pattern played a track, in pattern order from track 1, so the slot is the one newer FL saves for that track.
+        if (items.Count == 0 && d.Length > 0 && d.Length % 32 == 0)
+        {
+            for (var off = 0; off < d.Length; off += 32)
+            {
+                var row = BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 12)..]);
+                if (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 4)..]) != 0 || BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 6)..]) != 0x6000 ||
+                    row is 0 or > 999)
+                    return [];
+                items.Add(new PlaylistItem(PatternBase + 999 - row, BinaryPrimitives.ReadUInt32LittleEndian(d[off..]),
+                                           BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), ItemOffset(d[(off + 24)..]),
+                                           (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 0x2000) != 0, row));
+            }
+            var order = items.Select(i => i.Index).Distinct().Order().Select((index, n) => (index, n)).ToDictionary();
+            for (var n = 0; n < items.Count; n++)
+                items[n] = items[n] with { Slot = 499 - order[items[n].Index] };
         }
         return items;
     }
@@ -715,7 +884,7 @@ public sealed partial class FlStudioReader : IProjectReader
                         var f = WrapperFields(e.Payload.Span);
                         var plugin = WrapperText(f, VstName) is { Length: > 0 } n ? n : TextScan.PluginNameFromPath(WrapperText(f, VstPath));
                         var name = currentName.Length > 0 ? currentName : plugin;
-                        if (f.TryGetValue(VstState, out var state) && state.Length > 0)
+                        if (f.TryGetValue(VstState, out var state) && state.Length > 0 && !SavedNothing(state))
                             presets.Add(WrapperPreset(f, state, name, plugin) with
                             {
                                 Kind = onChannel ? PluginKind.Instrument : PluginKind.Effect,
@@ -751,11 +920,12 @@ public sealed partial class FlStudioReader : IProjectReader
 public static class Fxp
 {
     /// <summary>
-    /// The same settings as a one-program .fxb bank, the form Bitwig writes (and reads back) in
-    /// DAWproject files: an 'FPCh' chunk becomes an 'FBCh' bank chunk; an 'FxCk' parameter
-    /// program goes inside an 'FxBk' bank. Anything else comes back unchanged.
+    /// The same settings as a .fxb bank, the form Bitwig writes (and reads back) in DAWproject
+    /// files: an 'FPCh' chunk becomes an 'FBCh' bank chunk, with <paramref name="program"/> as the
+    /// plugin's selected program; an 'FxCk' parameter program goes inside a one-program 'FxBk' bank.
+    /// Anything else comes back unchanged.
     /// </summary>
-    public static byte[] ToBank(byte[] fxp)
+    public static byte[] ToBank(byte[] fxp, int program = 0)
     {
         const int ProgramHeader = 60;   // CcnK, size, magic, version, id, plugin version, count, name[28]
         if (fxp.Length < ProgramHeader - 4 || !fxp.AsSpan(0, 4).SequenceEqual("CcnK"u8)) return fxp;
@@ -773,8 +943,12 @@ public static class Fxp
         ms.Write(isChunk ? "FBCh"u8 : "FxBk"u8);
         I32(2);                       // format version
         ms.Write(fxp.AsSpan(16, 8));  // plugin id and version, as the program had them
-        I32(1);                       // number of programs
-        I32(0);                       // current program
+        // A chunk bank names the program the plugin had selected: Bitwig selects it again after loading the chunk, as
+        // FL does, and KORG's M1 plays that program, so 0 brought it up on its first program, not the song's. A
+        // parameter bank holds only this one program.
+        if (!isChunk) program = 0;
+        I32(program + 1);             // number of programs
+        I32(program);                 // current program
         ms.Write(new byte[124]);
         if (isChunk) I32(body.Length);
         ms.Write(body);

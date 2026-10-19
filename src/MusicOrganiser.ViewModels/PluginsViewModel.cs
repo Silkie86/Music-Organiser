@@ -87,8 +87,12 @@ public sealed partial class PluginsViewModel : ObservableObject
 
     Loaded Load() => new(_db.PluginUsage(), _db.InstalledNames(), _db.MissingPluginsByProject(), _db.PluginScanCounts(), _db.ParameterCounts());
 
+    /// <summary>What the page last read, so changing how many cards to show doesn't read the database again.</summary>
+    Loaded? _loaded;
+
     void Show(Loaded loaded)
     {
+        _loaded = loaded;
         var selected = Selected;
         Items = loaded.Items;
         View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
@@ -163,10 +167,15 @@ public sealed partial class PluginsViewModel : ObservableObject
                                     : "Each also misses other plugins, so these are the ones the most projects use.");
     }
 
+    /// <summary>
+    /// Only the cards change, from what the page already read: reloading the whole page here froze the window for 4 s
+    /// on Solomon's library (2026-10-19, Settings › Plugins).
+    /// </summary>
     partial void OnNeededCountChanged(int value)
     {
         _db.SetSetting(NeededCountKey, value.ToString());
-        Reload();
+        if (_loaded is { } loaded) BuildNeeded(loaded);
+        else _ = ReloadAsync();
     }
 
     partial void OnSearchTextChanged(string value) => View?.Refresh();

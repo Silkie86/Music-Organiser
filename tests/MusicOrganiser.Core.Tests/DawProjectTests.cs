@@ -188,6 +188,26 @@ public class DawProjectTests
     }
 
     [Fact]
+    public void ChannelsThePlaylistNeverPlaysAreTracksWithNoClipsInADawProject()
+    {
+        var notes = new NoteEvent[] { new(0, 96, 60, 100) };
+        var m1 = new FlPlugin("M1", "KORG", "VST2", "1263359281", null);
+        var song = new FlSong("", 96, 120,
+        [
+            new FlChannel(0, "M1", m1, "", 0, notes) { Clips = [new FlClip("A", 0, 384, notes)] },
+            new FlChannel(1, "M1 #2", m1, "", 0, []),
+            new FlChannel(2, "Layer", null, "", 0, []),
+        ], [], []);
+        var result = DawProject.FromFl(song, "Unplayed");
+        using var zip = new ZipArchive(new MemoryStream(result.Bytes));
+        using var p = zip.GetEntry("project.xml")!.Open();
+        var tracks = XDocument.Load(p).Root!.Element("Structure")!.Elements("Track").Select(t => (string?)t.Attribute("name"));
+        Assert.Equal(["M1", "M1 #2", "Master"], tracks);
+        Assert.Contains("M1 #2: the FL Studio playlist never plays it, so its track is here with its sound but no clips", result.Notes);
+        Assert.DoesNotContain(result.Notes, n => n.StartsWith("M1:") && n.Contains("never plays"));
+    }
+
+    [Fact]
     public void WorksOutHowLongAndHowHighFlPlaysAStretchedSample()
     {
         // FL's stretch modes keep pitch and length apart.
@@ -221,6 +241,56 @@ public class DawProjectTests
             // Steps last until the next one on their key or the end of the clip.
             Assert.Equal([("0", "1"), ("1", "1"), ("2", "1.5"), ("3.5", "0.5")],
                          clips[1][0].Descendants("Note").Select(n => ((string)n.Attribute("time")!, (string)n.Attribute("duration")!)));
+        }
+    }
+
+    [Fact]
+    public void MutesSwitchedOffChannelsAndSwitchesOffClipsOnMutedPlaylistTracks()
+    {
+        var dir = Fixtures.TempDir();
+        var (file, notes, _) = Exporter.DawProjectFromFl(Fixtures.FlStudio25MutedTracks(dir), Path.Combine(dir, "out"));
+        Assert.Contains("Hat: switched off in FL Studio's Channel Rack, so its track is muted", notes);
+        Assert.Contains("Snare: its clips on a muted playlist track in FL Studio (Acapellas, playlist track 2) are muted, " +
+                        "as it also has clips from other playlist tracks", notes);
+        Assert.Contains("Pad: muted, because its clips are all on a muted playlist track in FL Studio (playlist track 4)", notes);
+        // Audio clips aren't carried over to DAWproject, so nothing is said of the Acapella's or the vox's.
+        Assert.DoesNotContain(notes, n => n.StartsWith("Acapella: muted") || n.StartsWith("Vox: switched off"));
+        var (project, zip) = Open(file);
+        using (zip)
+        {
+            var tracks = project.Descendants("Track").Where(t => (string?)t.Attribute("contentType") == "notes").ToList();
+            Assert.Equal([("Snare", "false"), ("Hat", "true"), ("Pad", "true")],
+                         tracks.Select(t => ((string)t.Attribute("name")!, (string)t.Element("Channel")!.Element("Mute")!.Attribute("value")!)));
+            // Bar 2 of the snare and the hat is on the muted track, so it's switched off; the Pad's track is muted instead.
+            var lanes = project.Descendants("Lanes").Where(l => l.Attribute("track") is not null).ToList();
+            Assert.All(lanes.Take(2), l =>
+                Assert.Equal(["true", "false"], l.Descendants("Clip").Select(c => (string?)c.Attribute("enable") ?? "true")));
+            Assert.Equal(["true"], lanes[2].Descendants("Clip").Select(c => (string?)c.Attribute("enable") ?? "true"));
+        }
+    }
+
+    [Fact]
+    public void LeavesOutWhatAnAutomatedChannelPlaysWhileItsOffAndSwitchesOffInsertEffectsSwitchedOffInFl()
+    {
+        var dir = Fixtures.TempDir();
+        var (file, notes, _) = Exporter.DawProjectFromFl(Fixtures.FlStudio25SwitchedAndMixer(dir), Path.Combine(dir, "out"));
+        Assert.Contains("Bass: switched on and off by \"Bass - Mute / solo\" in FL Studio, so what it plays while it's off is muted", notes);
+        Assert.Contains("Pro-Q 3 - Gain: automation left out (automating mixer effects isn't carried over to DAWproject yet)", notes);
+        Assert.Contains("Tempo: automation left out (tempo automation isn't carried over yet; the project is set to 120 BPM)", notes);
+        Assert.DoesNotContain(notes, n => n.Contains("Bass - Mute / solo: automation left out") || n.StartsWith("Bass: switched off"));
+        var (project, zip) = Open(file);
+        using (zip)
+        {
+            // The bass's track isn't muted; its clip at beats 0-4 is switched off, and its note on beat 10 left out.
+            var bass = project.Descendants("Track").Single(t => (string?)t.Attribute("name") == "Bass");
+            Assert.Equal("false", (string)bass.Element("Channel")!.Element("Mute")!.Attribute("value")!);
+            var lane = project.Descendants("Lanes").Single(l => (string?)l.Attribute("track") == (string)bass.Attribute("id")!);
+            Assert.Equal(["false", "true", "true"], lane.Descendants("Clip").Select(c => (string?)c.Attribute("enable") ?? "true"));
+            Assert.Equal(["2"], lane.Descendants("Clip").Last().Descendants("Note").Select(n => (string)n.Attribute("time")!));
+            // Insert 1's WOW2 is switched off, as in FL.
+            Assert.Equal([("Pro-Q 3", "true"), ("WOW2", "false")],
+                         project.Descendants("Vst2Plugin").Where(d => (string?)d.Attribute("deviceRole") == "audioFX")
+                                .Select(d => ((string)d.Attribute("deviceName")!, (string)d.Element("Enabled")!.Attribute("value")!)));
         }
     }
 

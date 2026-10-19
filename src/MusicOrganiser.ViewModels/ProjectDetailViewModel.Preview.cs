@@ -56,13 +56,8 @@ public sealed partial class ProjectDetailViewModel
     async Task ReadArrangementAsync()
     {
         _arrangementRead = true;
-        if (!CanPreview)
-        {
-            ArrangementMessage = Item.FileMissing
-                ? "The project file isn't where it was, so it can't be drawn."
-                : $"Drawing {Item.Daw} projects isn't possible yet. FL Studio, Bitwig and Studio One projects can be drawn.";
-            return;
-        }
+        // Other DAWs, and missing files, hide the arrangement altogether (see the Overview layout), so there's nothing to say.
+        if (!CanPreview) return;
         ArrangementLoading = true;
         try
         {

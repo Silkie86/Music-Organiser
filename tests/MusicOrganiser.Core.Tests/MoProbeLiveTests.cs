@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Formats;
+using MusicOrganiser.Core.LiveTests;
 
 namespace MusicOrganiser.Core.Tests;
 
@@ -486,6 +487,41 @@ public class ProbeKnobCheckTests
     }
 
     [Fact]
+    public async Task NotesKnobsTheDawShowsWithoutTellingTheirValues()
+    {
+        var dir = Fixtures.TempDir();
+        await using var probe = new FakeProbe(dir);
+        // Only MO Gain and MO Switch, so it's quick.
+        var daw = new FakeDaw(probe) { Untold = true, Hidden = [.. MoProbe.Knobs.Select(k => k.Id).Where(k => k is not (1002 or 1005))] };
+        var check = await ProbeKnobCheck.RunAsync(daw, Assert.Single(MoProbeLive.Running(dir)), wait: Quick, settle: Settle);
+
+        Assert.All(check.Lines.Where(l => l.Way == KnobWay.ToProbe), l => Assert.True(l.Matched, l.Text));
+        var toDaw = check.Lines.Where(l => l.Way == KnobWay.ToDaw).ToList();
+        Assert.Equal(6, toDaw.Count);
+        Assert.All(toDaw, l => Assert.True(l is { Untold: true, Got: null, Matched: false }, l.Text));
+        // It stops waiting once Bitwig shows the probe's value, as no number is coming.
+        Assert.All(toDaw, l => Assert.True(l.Took < Quick, l.Text));
+        Assert.StartsWith("MO Gain, probe → Bitwig: sent -60.0 dB, expected 0.000, got nothing (Bitwig shows “-60.0 dB”), ", toDaw[0].Text);
+        Assert.EndsWith("; Bitwig shows it, but didn't tell the app its value", toDaw[0].Text);
+        Assert.Equal("MO Probe Instrument on “Inst 3”: 6 of 12 checks matched, and Bitwig showed 6 more without telling the app the value.",
+                     check.Summary);
+
+        var verdict = BitwigLiveTests.KnobVerdict(check);
+        Assert.Equal(LiveOutcome.Noted, verdict.Outcome);
+        Assert.StartsWith("Every knob moved both ways, and each stepped knob landed on its step, but Bitwig didn't tell the app the value " +
+                          "of 2 knobs when the probe turned them. ", verdict.Detail);
+        Assert.Equal("- Bitwig follows MO Gain, MO Switch when the probe turns them (it shows each new value), but didn't tell the app " +
+                     "their values as a number, so the app can't read them back. The app reads a knob's number from Bitwig's remote controls " +
+                     "when it's on the page Bitwig shows.", verdict.Lines[0]);
+        var mapping = BitwigLiveTests.KnobMapping(check, "VST3");
+        Assert.Contains("| MO Switch | 0 → Off, 1 → On | Off → shown, no number, On → shown, no number |", mapping.Lines);
+        Assert.EndsWith(" Bitwig showed 6 of the probe's turns without telling the app their 0 to 1 values (“shown, no number”).", mapping.Detail);
+
+        // Back as they were, through the probe.
+        Assert.Equal((0, 0), (probe[1002], probe[1005]));
+    }
+
+    [Fact]
     public async Task WaitsForTheKnobsToBeBackWhenTheProbeIsHeldUp()
     {
         var dir = Fixtures.TempDir();
@@ -588,8 +624,15 @@ public class ProbeKnobCheckTests
             _probe = probe;
             _toProbe = toProbe ?? ProbeKnobs.Plain;
             _values = MoProbe.Knobs.ToDictionary(k => k.Id, k => ProbeKnobs.Normalized(k.Id, probe[k.Id]));
-            probe.Turned = (knob, value) => { lock (_values) _values[knob] = ProbeKnobs.Normalized(knob, value); };
+            probe.Turned = (knob, value) =>
+            {
+                lock (_values)
+                    if (Untold) _moved.Add(knob);
+                    else _values[knob] = ProbeKnobs.Normalized(knob, value);
+            };
         }
+
+        readonly HashSet<int> _moved = [];
 
         public string Daw => "Bitwig";
         public string? CantSet { get; init; }
@@ -597,13 +640,19 @@ public class ProbeKnobCheckTests
         public int FailAfter { get; init; } = int.MaxValue;
         /// <summary>Knobs the DAW doesn't list.</summary>
         public int[] Hidden { get; init; } = [];
+        /// <summary>
+        /// Like Bitwig 6.1.5 with a plugin's knobs that aren't on its remote controls page: once a knob is turned, by the
+        /// probe or by the app, it shows the new value but doesn't tell its number.
+        /// </summary>
+        public bool Untold { get; init; }
         public List<(string Id, double Value)> Sets { get; } = [];
 
         public Task<IReadOnlyList<BitwigParam>> KnobsAsync(CancellationToken ct = default)
         {
             lock (_values)
                 return Task.FromResult<IReadOnlyList<BitwigParam>>(MoProbe.Knobs.Where(k => !Hidden.Contains(k.Id))
-                    .Select(k => new BitwigParam($"CONTENTS/PID{k.Id:x}", k.Name, _values[k.Id], ProbeKnobs.Text(k.Id, _probe[k.Id]))).ToList());
+                    .Select(k => new BitwigParam($"CONTENTS/PID{k.Id:x}", k.Name, _moved.Contains(k.Id) ? null : _values[k.Id],
+                                                 ProbeKnobs.Text(k.Id, _probe[k.Id]), _moved.Contains(k.Id))).ToList());
         }
 
         public Task SetAsync(string id, double value, CancellationToken ct = default)
@@ -612,7 +661,9 @@ public class ProbeKnobCheckTests
             if (Sets.Count >= FailAfter) throw new DawLinkException("Lost the connection to Bitwig.");
             Sets.Add((id, value));
             var knob = Convert.ToInt32(id.Split("PID")[1], 16);
-            lock (_values) _values[knob] = value;
+            lock (_values)
+                if (Untold) _moved.Add(knob);
+                else _values[knob] = value;
             _probe[knob] = _toProbe(knob, value);
             return Task.CompletedTask;
         }

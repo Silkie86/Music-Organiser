@@ -60,12 +60,15 @@ public static class Shell
         Open(Path.GetDirectoryName(path)!);
     });
 
-    /// <summary>The dbus-send arguments that show <paramref name="path"/> picked in the file manager.</summary>
+    /// <summary>
+    /// The dbus-send arguments that show <paramref name="path"/> picked in the file manager. dbus-send splits an
+    /// array at its commas, and a file link may keep them, so they're written as %2C, which the file manager reads back.
+    /// </summary>
     public static string[] ShowItemsArgs(string path) =>
     [
         "--session", "--print-reply", "--reply-timeout=4000", "--dest=org.freedesktop.FileManager1",
         "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems",
-        "array:string:" + new UriBuilder { Scheme = Uri.UriSchemeFile, Host = "", Path = path }.Uri.AbsoluteUri, "string:",
+        "array:string:" + new UriBuilder { Scheme = Uri.UriSchemeFile, Host = "", Path = path }.Uri.AbsoluteUri.Replace(",", "%2C"), "string:",
     ];
 
     static void Run(string tool, params string[] args)

@@ -151,17 +151,14 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments, Environment.SpecialFolderOption.Create), "Music Organiser Exports");
 
     [RelayCommand]
-    void OpenInDaw() => Open(Item.Id, Item.Path, Item.Daw);
+    Task OpenInDaw() => Open(Item.Id, Item.Path, Item.Daw);
 
     /// <summary>Open one of the song's older numbered saves.</summary>
     [RelayCommand]
-    void OpenSave(ProjectSummary? save)
-    {
-        if (save is not null) Open(save.Id, save.Path, save.Daw);
-    }
+    Task OpenSave(ProjectSummary? save) => save is null ? Task.CompletedTask : Open(save.Id, save.Path, save.Daw);
 
     /// <summary>Opens a save in its own DAW (FL Studio for an FL project).</summary>
-    internal void OpenInOwnDaw(ProjectSummary save) => Open(save.Id, save.Path, save.Daw);
+    internal Task OpenInOwnDaw(ProjectSummary save) => Open(save.Id, save.Path, save.Daw);
 
     [RelayCommand]
     void RevealSave(ProjectSummary? save)
@@ -172,18 +169,20 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     /// <summary>The window's activity cards.</summary>
     internal ActivityFeed Activities => _main.Activities;
 
-    void Open(long id, string path, string daw)
+    async Task Open(long id, string path, string daw)
     {
-        if (!File.Exists(path))
+        if (!await Task.Run(() => File.Exists(path)))
         {
             Message = "This project file isn't where it used to be. Rescan to update the library.";
             Activities.Failed("Can't find the project file", "It has moved or been deleted. Rescan to update the library.");
             return;
         }
-        if (_db.GetSetting(DawExeKey(daw)) is { Length: > 0 } exe && File.Exists(exe))
-            Shell.OpenWith(path, exe);
-        else
-            Shell.Open(path);
+        try { await OpenIn(_db, daw, path); }
+        catch (Exception e)
+        {
+            Activities.Failed($"Couldn't open it in {daw}", e.Message);
+            return;
+        }
         _db.MarkOpened(id);
         Message = "";
         Activities.Done($"Opening {Path.GetFileNameWithoutExtension(path)}", $"Sent to {daw}. It opens there in a moment.");
@@ -276,7 +275,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             var saveAs = Exporter.BitwigName(path, n => OpenedInBitwig.Contains(n) ||
                                                         bitwig is { Answering: true } && bitwig.Project.Trim().Equals(n, StringComparison.OrdinalIgnoreCase));
             var (file, leftOut) = await Task.Run(() => Exporter.BitwigFromFl(path, ExportRoot, File.ReadAllBytes(template), untilNextNote, upgrade, saveAs));
-            OpenWithBitwig(_db, file);
+            await OpenWithBitwig(_db, file);
             OpenedInBitwig.Add(saveAs);
             var renamed = saveAs != Exporter.BitwigName(path, _ => false)
                 ? " It has a new name because Bitwig may still have an earlier convert open, and would show that one instead. " +
@@ -302,12 +301,21 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     }
 
     /// <summary>Opens a Bitwig project with the Bitwig chosen in Settings, or whatever opens .bwproject files.</summary>
-    internal static void OpenWithBitwig(LibraryDb db, string file)
+    internal static Task OpenWithBitwig(LibraryDb db, string file) => OpenIn(db, "Bitwig Studio", file);
+
+    /// <summary>
+    /// Opens a project with the DAW chosen in Settings for it, or whatever opens its kind of file, off the window's thread:
+    /// handing a project to a DAW that's already running can keep Windows busy for seconds (a 2.3 s freeze on Projects
+    /// as FL Studio was sent a fixed copy).
+    /// </summary>
+    internal static Task OpenIn(LibraryDb db, string daw, string file)
     {
-        if (db.GetSetting(DawExeKey("Bitwig Studio")) is { Length: > 0 } exe && File.Exists(exe))
-            Shell.OpenWith(file, exe);
-        else
-            Shell.Open(file);
+        var exe = db.GetSetting(DawExeKey(daw));
+        return Task.Run(() =>
+        {
+            if (exe is { Length: > 0 } && File.Exists(exe)) Shell.OpenWith(file, exe);
+            else Shell.Open(file);
+        });
     }
 
     /// <summary>Converts an FL Studio project to a DAWproject file Bitwig can open, and shows it.</summary>
@@ -588,7 +596,7 @@ public sealed class RunChoice(ProjectDetailViewModel owner, SaveRun run, bool ne
     public bool IsFlStudio => run.Last.Daw == "FL Studio";
     public string OpenInDawText => $"Open in {run.Last.Daw}";
 
-    public IRelayCommand OpenInDawCommand { get; } = new RelayCommand(() => owner.OpenInOwnDaw(run.Last));
+    public IRelayCommand OpenInDawCommand { get; } = new AsyncRelayCommand(() => owner.OpenInOwnDaw(run.Last));
     public IAsyncRelayCommand OpenInBitwigCommand { get; } = new AsyncRelayCommand(() => owner.ConvertForBitwig(run.Last, run.Last.Name));
     public IRelayCommand RevealCommand { get; } = new RelayCommand(() => Shell.Reveal(run.Last.Path));
 }

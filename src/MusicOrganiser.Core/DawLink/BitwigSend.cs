@@ -349,9 +349,9 @@ public static class BitwigSend
     /// <summary>
     /// The project's settings as files Bitwig can load, best first: a Bitwig preset (when a template for the plugin
     /// was found), then the plugin's own format. A VST2 program goes in as a one-program bank, the form Bitwig
-    /// restores.
+    /// restores, naming the program the plugin had selected (<see cref="PresetBlob.Program"/>), which Bitwig selects.
     /// </summary>
-    static List<string> PresetFiles(PresetBlob preset, Files files)
+    public static List<string> PresetFiles(PresetBlob preset, Files files)
     {
         var written = Exporter.Presets([preset], files.Project, files.ExportRoot, files.Templates);
         var paths = written.Files.Select(f => Path.Combine(written.Folder, f)).ToList();
@@ -363,7 +363,7 @@ public static class BitwigSend
                 case ".vstpreset":
                     best.Add(p);
                     break;
-                case ".fxp" when Fxp.ToBank(preset.Data) is var bank && !ReferenceEquals(bank, preset.Data):
+                case ".fxp" when Fxp.ToBank(preset.Data, preset.Program) is var bank && !ReferenceEquals(bank, preset.Data):
                     var fxb = Path.ChangeExtension(p, ".fxb");
                     File.WriteAllBytes(fxb, bank);
                     best.Add(fxb);

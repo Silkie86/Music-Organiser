@@ -70,20 +70,46 @@ public class SerumTests
     }
 
     /// <summary>A Serum 1 state laid out as Serum 1.3 saves one, with a few things set.</summary>
-    internal static byte[] Serum1(bool flWrapped = false)
+    /// <param name="ownTables">
+    /// Like Solomon's "requiem serum 1" instead: tables of its own (two frames for A, one for B, in a second zlib stream
+    /// after the first, then the first one's packed length), mono, a hall reverb, the noise following pitch, Osc A on
+    /// FM from B, and distortion, compressor and filter effects, with a row moving the filter's cutoff.
+    /// </param>
+    internal static byte[] Serum1(bool flWrapped = false, bool ownTables = false)
     {
         var raw = new byte[Serum1State.Size];
         void F(int at, float v) => BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(at), v);
         void T(int at, string s) => Encoding.Latin1.GetBytes(s).CopyTo(raw, at);
+        void K(int knob, float v) => F(knob < 228 ? 13_408 + 4 * knob : 19_168 + 4 * (knob - 228), v);
         F(13_408 + 4 * 1, 0.4809f);           // knob 1 (Osc A level)
         F(13_408 + 4 * 45, 0.2829f);          // knob 45 (filter cutoff)
         F(19_168 + 4 * (228 - 228), 0.6974f); // knob 228 (Mod 17 amount), in the later block
-        T(15_368, @"Analog\Analog_BD_Sin.wav");
-        T(15_880, "/User/grime.wav");
-        T(16_392, @"Attacks_Kick\XF_KikAtk_32.wav");
-        T(18_802, "BA Organ Bass [FP]");
-        T(18_848, "Francis Preve");
-        T(18_896, "M1 Preset #17");
+        if (ownTables)
+        {
+            BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(18_792), 2 * 2048 * 4);
+            BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(18_796), 2048 * 4);
+            raw[18_800] = 1;                  // Osc A smooths between its frames
+            F(19_544, 1);                     // mono
+            F(19_568, 1);                     // noise follows pitch
+            F(19_620, 1);                     // hall reverb
+            K(168, 18 / 23f);                 // Osc A warp: FM (from B)
+            K(154, 1); K(99, 2 / 15f);        // distortion on, HardClip
+            K(159, 1); K(139, 8 / 57f);       // compressor on, 4 dB of gain
+            K(160, 1); K(83, 0.3305f); K(84, 0.8553f); K(85, 0.3063f);   // reverb on: pre-delay, low cut, damping
+            K(162, 1); K(143, 16 / 19f);      // filter effect on
+            // Mod row 5: Macro 1 to the filter effect's cutoff.
+            F(4 * 40 + 4, 0.7719f); BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(4 * 40 + 20), 25);
+            BinaryPrimitives.WriteUInt16LittleEndian(raw.AsSpan(4 * 40 + 26), 143);
+        }
+        else
+        {
+            T(15_368, @"Analog\Analog_BD_Sin.wav");
+            T(15_880, "/User/grime.wav");
+            T(16_392, @"Attacks_Kick\XF_KikAtk_32.wav");
+            T(18_802, "BA Organ Bass [FP]");
+            T(18_848, "Francis Preve");
+            T(18_896, "M1 Preset #17");
+        }
         // Mod matrix: row 1 (source 3 to knob 45), and row 17, which is kept further on.
         F(40 + 4, 0.7254f); BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(40 + 20), 3); BinaryPrimitives.WriteUInt16LittleEndian(raw.AsSpan(40 + 26), 45);
         var row17 = 20_704 + 40;
@@ -91,9 +117,83 @@ public class SerumTests
 
         var packed = new MemoryStream();
         using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
+        if (ownTables)
+        {
+            var first = (int)packed.Length;
+            using (var z = new ZLibStream(packed, CompressionLevel.Fastest, leaveOpen: true))
+                foreach (var w in OwnWaves()) { Span<byte> b = stackalloc byte[4]; BinaryPrimitives.WriteSingleLittleEndian(b, w); z.Write(b); }
+            Span<byte> n = stackalloc byte[4];
+            BinaryPrimitives.WriteInt32LittleEndian(n, first);
+            packed.Write(n);
+        }
         var bytes = packed.ToArray();
         // FL Studio's wrapper puts its own 21 bytes in front.
         return flWrapped ? [.. Convert.FromHexString("F7FFFFFF0DFEFFFFFF180D0000000000000000000000"), .. bytes] : bytes;
+    }
+
+    /// <summary>The own tables' waves: a falling ramp and a rising one for A's two frames, a saw for B.</summary>
+    static float[] OwnWaves() =>
+        [.. Enumerable.Range(0, 2048).Select(i => 1 - i / 1024f), .. Enumerable.Range(0, 2048).Select(i => i / 1024f - 1),
+         .. Enumerable.Range(0, 2048).Select(i => i / 1024f)];
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_sound_with_its_own_tables_comes_across_as_Serum_2_made_requiem(bool flWrapped)
+    {
+        var s1 = Serum1State.Read(Serum1(flWrapped, ownTables: true))!;
+        Assert.Equal(OwnWaves()[..4096], s1.OwnTable(0));
+        Assert.Equal(OwnWaves()[4096..], s1.OwnTable(1));
+        Assert.Equal((true, true, true, false), (s1.Mono, s1.HallReverb, s1.NoisePitchTrack, s1.NoiseOneShot));
+
+        var sound = Serum1To2.Translate(s1, _ => null).State;
+        var settings = Serum2State.Read(sound.Write())!.Settings;   // as Serum 2 would read it
+        var a = settings["Oscillator0"]!["WTOsc0"]!;
+        Assert.Equal(OwnWaves()[..4096].Select(w => (double)w), a["embeddedWTData"]!.AsArray().Select(w => w!.GetValue<double>()));
+        Assert.Equal(1, a["interpolateAfterLoad"]!.GetValue<long>());
+        Assert.Null(a["relativePathToWT"]);
+        Assert.Equal("kPD_OSC", a["plainParams"]!["kParamWarpMenu"]!.GetValue<string>());
+        Assert.Equal(0, settings["Oscillator1"]!["WTOsc1"]!["interpolateAfterLoad"]!.GetValue<long>());
+        Assert.Equal(2048, settings["Oscillator1"]!["WTOsc1"]!["embeddedWTData"]!.AsArray().Count);
+
+        var global = settings["Global0"]!["plainParams"]!;
+        Assert.Equal((1.0, 16.0), (global["kParamMonoToggle"]!.GetValue<double>(), global["kParamPolyCount"]!.GetValue<double>()));
+        Assert.Equal(["Wavetable", "Embedded-Data", "Mono"], settings["tags"]!.AsArray().Select(t => t!.GetValue<string>()));
+        Assert.Equal(1, settings["Oscillator3"]!["plainParams"]!["kParamPitchTrack"]!.GetValue<double>());
+        Assert.Null(settings["Oscillator3"]!["NoiseOsc3"]!["plainParams"]?["kParamOneShot"]);
+
+        // The effects, with the values Serum 2 gave requiem's.
+        var fx = settings["FXRack0"]!["FX"]!.AsArray().Select(f => f!.AsObject().First(kv => kv.Key.StartsWith("FX")))
+            .ToDictionary(kv => kv.Key, kv => kv.Value!["plainParams"]!);
+        Assert.Equal("kHardClip", fx["FXDistortion"]["kParamMode"]!.GetValue<string>());
+        Assert.Equal(1.5909, fx["FXComp"]["kParamMakeup"]!.GetValue<double>(), 3);
+        Assert.Equal("kHall", fx["FXReverb"]["kParamType"]!.GetValue<string>());
+        Assert.Equal(27.31, fx["FXReverb"]["kParamDelay"]!.GetValue<double>(), 2);
+        Assert.Equal(85.53, fx["FXReverb"]["kParamFreq"]!.GetValue<double>(), 2);
+        Assert.Equal(30.63, fx["FXReverb"]["kParamFeedback"]!.GetValue<double>(), 2);
+        Assert.Null(fx["FXReverb"]["kParamPreDelay"]);
+        Assert.Equal(0.7879, fx["FXFilter"]["kParamFreq"]!.GetValue<double>(), 3);
+
+        // The row moving the filter effect's cutoff points at it, by its place in the rack.
+        var row = settings["ModSlot4"]!;
+        var place = fx.Keys.ToList().IndexOf("FXFilter");
+        Assert.Equal(("FXFilter", place, "kParamFreq", 3L), (row["destModuleTypeString"]!.GetValue<string>(), (int)row["destModuleID"]!.GetValue<long>(),
+                                                          row["destModuleParamName"]!.GetValue<string>(), row["destModuleParamID"]!.GetValue<long>()));
+        Assert.Equal(77.19, row["plainParams"]!["kParamAmount"]!.GetValue<double>(), 2);
+    }
+
+    [Fact]
+    public void A_Serum_1_sound_is_written_out_as_a_preset_Serum_2_can_open()
+    {
+        var s1 = Serum1State.Read(Serum1(flWrapped: true, ownTables: true))!;
+        var fxp = s1.ToFxp("Lead");
+        Assert.Equal("CcnK", Encoding.ASCII.GetString(fxp, 0, 4));
+        Assert.Equal(fxp.Length, BinaryPrimitives.ReadInt32BigEndian(fxp.AsSpan(4)));   // Serum counts the whole file
+        Assert.Equal("FPChXfsX", Encoding.ASCII.GetString(fxp, 8, 4) + Encoding.ASCII.GetString(fxp, 16, 4));
+        Assert.Equal("Lead", Encoding.Latin1.GetString(fxp, 28, 4));
+        var again = Serum1State.Read(fxp)!;
+        Assert.Equal(s1.Knobs, again.Knobs);
+        Assert.Equal(s1.OwnTable(0), again.OwnTable(0));
     }
 
     [Theory]
@@ -168,7 +268,7 @@ public class SerumTests
     [InlineData(1 / 23f, "kSync")]          // Serum 2 saves all three of Serum 1's sync modes as kSync
     [InlineData(3 / 23f, "kSync")]
     [InlineData(4 / 23f, "kBendPos")]
-    [InlineData(18 / 23f, "kFM_OSC")]       // FM from the other oscillator
+    [InlineData(18 / 23f, "kPD_OSC")]       // FM from the other oscillator, which Serum 2 calls phase distortion
     [InlineData(1f, null)]                  // past the last mode, which Serum 1 shows blank
     public void A_Serum_1_warp_mode_is_saved_under_Serum_2s_name_for_it(float knob, string? expected)
     {
@@ -247,7 +347,7 @@ public class SerumTests
         K(69, 0.25118899f);                                                         // Chaos 1 rate
         K(81, 0.10234101f); K(82, 0.24572438f); K(83, 0.12f); K(85, 0.28f); K(86, 0.5f); K(87, 1); // reverb
         for (var i = 0; i < 10; i++) BinaryPrimitives.WriteInt32LittleEndian(raw.AsSpan(15_324 + 4 * i), i); // FX order
-        raw[18_768] = raw[18_769] = 1;
+        BinaryPrimitives.WriteSingleLittleEndian(raw.AsSpan(19_564), 1);   // the noise plays once
         Row(0, 0.7314967f, 4, 14);     // Env 3 to Osc B level
         Row(1, 0.72539747f, 3, 45);    // Env 2 to the cutoff
         Row(2, -0.12085938f, 33, 222); // Fixed to Amp

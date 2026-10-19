@@ -253,6 +253,12 @@ public sealed class ProjectsPageTests : IDisposable
                             .Select(t => t.Text).ToList();
         Assert.Contains("Live tests with Bitwig", headers);
         Assert.Contains("MO Probe", headers);
+        // Settings opens on the tab last used, after a restart too.
+        window.Close();
+        var reopened = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        Assert.Equal("Developer", reopened.Settings.Tab);
+        var view = new SettingsView { DataContext = reopened.Settings };
+        Assert.Equal("Developer", (string)((TabItem)view.FindControl<TabControl>("Tabs")!.SelectedItem!).Header!);
 
         // Each number is stored, and the page uses it.
         main.Settings.SoundLab.Rediscover.HowMany = 250;

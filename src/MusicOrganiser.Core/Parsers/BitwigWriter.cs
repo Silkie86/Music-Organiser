@@ -144,6 +144,7 @@ public static partial class BitwigFormat
                 Guid g => ids.GetValueOrDefault(g, g),
                 int[] a => a.ToArray(),
                 float[] a => a.ToArray(),
+                double[] a => a.ToArray(),
                 List<string> l => l.ToList(),
                 _ => v,
             };
@@ -239,6 +240,11 @@ public static partial class BitwigFormat
                 U32(id);
                 var type = TypeAt(o, i);
                 if (type == 0x0b && v is not null && !Written(v)) type = 0x09;   // first reached here, so written in full, as Bitwig does
+                // and one already written is a bare reference: Bitwig can't read a reference in a field that holds one
+                // object ("Unknown class ID 1"), only in lists and maps. Solomon's requiem_80 had two automation lanes on
+                // one Reaktor, and the second lane's reference to it stopped the whole project opening. (A reference read
+                // from the file stays as it was, so an untouched document still comes back byte for byte.)
+                else if (type == 0x09 && v is not (null or BwRef) && Written(v)) type = 0x0b;
                 Out.WriteByte(type);
                 Value(type, v);
             }
@@ -270,6 +276,7 @@ public static partial class BitwigFormat
             Dictionary<string, object?> => 0x14,
             Guid => 0x15,
             float[] => 0x16,
+            double[] => 0x18,
             List<string> => 0x19,
             KeyValuePair<object?, string> => 0x1a,
             _ => throw new InvalidDataException($"can't write a {v.GetType().Name}"),
@@ -319,6 +326,10 @@ public static partial class BitwigFormat
                 case 0x17:
                     U32(((float[])v!).Length);
                     foreach (var c in (float[])v!) { BinaryPrimitives.WriteSingleBigEndian(_b, c); Out.Write(_b, 0, 4); }
+                    break;
+                case 0x18:
+                    U32(((double[])v!).Length);
+                    foreach (var c in (double[])v!) { BinaryPrimitives.WriteDoubleBigEndian(_b, c); Out.Write(_b, 0, 8); }
                     break;
                 case 0x19:
                     var strings = (List<string>)v!;

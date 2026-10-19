@@ -533,6 +533,17 @@ public sealed partial class LibraryDb : IDisposable
 
     public IReadOnlyList<ProjectSummary> Projects() => Summaries("");
 
+    /// <summary>The project at this path, or null if it isn't in the library.</summary>
+    public ProjectSummary? ProjectAt(string path) => Summaries("WHERE p.path = $p", ("$p", path)).FirstOrDefault();
+
+    /// <summary>
+    /// Fix's copies still waiting for Keep or Delete (the values of the fix_check: settings). Until Keep, the song's
+    /// newest save stays the original, so the Projects list leaves these out.
+    /// </summary>
+    public IReadOnlySet<string> PendingFixes() =>
+        Query("SELECT value FROM settings WHERE key LIKE 'fix_check:%' AND value <> ''", r => (string)r["value"])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Every project with just its file details (path, name, DAW, folder, size, time, tempo, whether it's missing or
     /// failed), for work that only needs to know which files there are. <see cref="Projects"/> also counts each one's
