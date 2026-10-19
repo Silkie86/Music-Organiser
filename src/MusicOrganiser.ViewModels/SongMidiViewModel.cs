@@ -14,10 +14,10 @@ namespace MusicOrganiser.ViewModels;
 public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainViewModel main, string path, string name)
     : ObservableObject, IFileDragSource
 {
-    /// <summary>How many parts each kind shows.</summary>
+    /// <summary>How many parts each kind shows, unless Settings › MIDI says otherwise.</summary>
     public const int Limit = 40;
 
-    /// <summary>A fit this good or better counts towards the tab's "N good fits".</summary>
+    /// <summary>A fit this good or better counts towards the tab's "N good fits", unless Settings › MIDI says otherwise.</summary>
     public const double GoodFit = 0.7;
 
     public static IReadOnlyList<RoleChip> Kinds { get; } =
@@ -75,7 +75,7 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
                 return;
             }
             var good = await UiWork.Run(() => catalogue.Search(new MidiQuery(Fit: target, Limit: 500, Leave: path, Notes: midi.NotesOf), out _)
-                                                       .Count(h => h.Fit!.Score >= GoodFit));
+                                                       .Count(h => h.Fit!.Score >= midi.GoodFitPercent / 100.0));
             GoodCount = good;
             CountText = good == 1 ? "1 good fit" : $"{good:N0} good fits";
             Status = string.Join(" · ", new[]
@@ -98,7 +98,7 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     {
         var request = ++_request;
         if (_target is not { } target || await midi.CatalogueAsync() is not { } catalogue) return;
-        var query = new MidiQuery(Role: Kind.Role == "All" ? null : Kind.Role, Fit: target, Limit: Limit, Leave: path, Notes: midi.NotesOf);
+        var query = new MidiQuery(Role: Kind.Role == "All" ? null : Kind.Role, Fit: target, Limit: midi.SongTabLimit, Leave: path, Notes: midi.NotesOf);
         var hits = await UiWork.Run(() => catalogue.Search(query, out _));
         if (request != _request) return;
         Rows = hits.Select(h => new MidiRow(h, midi, target)).ToList();
@@ -120,6 +120,35 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     Task OpenInPlayground() => Selected is { } row
         ? main.Playground.OpenFromSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0)
         : main.Playground.OpenFromSongAsync(path, name);
+
+    // ---- the quick view ----
+
+    /// <summary>
+    /// The part opened beside the list with a click: a slim mini playground to try it with the song, edit it and drag it
+    /// out, with the Playground for more (Solomon, 2026-10-19: "a slimmed down playground for quick testing").
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsOpen))] MidiRow? _open;
+    public bool IsOpen => Open is not null;
+
+    /// <summary>The MIDI page, for what the quick view shares with it (looping).</summary>
+    public MidiBrowserViewModel Midi => midi;
+
+    // While it's open, picking another part (a click, the arrow keys, another kind) opens that one.
+    partial void OnSelectedChanged(MidiRow? value)
+    {
+        if (Open is not null && value is not null) Open = value;
+    }
+
+    [RelayCommand]
+    void OpenPart(MidiRow? row)
+    {
+        if (row is null) return;
+        Selected = row;
+        Open = row;
+    }
+
+    [RelayCommand]
+    void Close() => Open = null;
 
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>
         midi.MakeDrag(items.Count > 0 ? items : Selected is { } s ? [s] : []);

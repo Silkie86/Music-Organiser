@@ -1,0 +1,75 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             x:Class="MusicOrganiser.Avalonia.Views.MidiSettingsView"
+             x:DataType="vm:MidiBrowserViewModel">
+    <!-- Settings › MIDI: the MIDI page's numbers that were fixed in code. Sits inside Settings, so its card styles apply. -->
+    <StackPanel>
+        <Border Classes="card settingsCard">
+            <StackPanel>
+                <TextBlock Text="MIDI page" Classes="sectionHeader" />
+                <TextBlock Classes="cardIntro" Text="How many parts the MIDI page lists, and which songs it reads." />
+                <DockPanel Margin="0,0,0,10">
+                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:MidiBrowserViewModel.ListLimitChoices}" SelectedItem="{Binding ListLimit}" MinWidth="130"
+                              ToolTip.Tip="When fitting, each part listed gets a closer look against the harmony, so a longer list takes longer">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0:N0} parts'}" /></DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="Parts in the list" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                </DockPanel>
+                <CheckBox Content="Include older saves of each song" IsChecked="{Binding IncludeOlderSaves}"
+                          ToolTip.Tip="Off: only the newest save of each song is read, as Projects' one row per song shows them" />
+            </StackPanel>
+        </Border>
+
+        <Border Classes="card settingsCard">
+            <StackPanel>
+                <TextBlock Text="Trying ideas" Classes="sectionHeader" />
+                <TextBlock Classes="cardIntro" Text="The piano roll on a part's card, and playing two parts together." />
+                <DockPanel Margin="0,0,0,10">
+                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:MidiBrowserViewModel.QuantiseChoices}" SelectedItem="{Binding QuantiseTo}" MinWidth="130"
+                              ToolTip.Tip="Quantise moves every note onto the nearest of these">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}1/{0} notes'}" /></DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="Quantise to" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                </DockPanel>
+                <DockPanel>
+                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:MidiBrowserViewModel.LongestLoopChoices}" SelectedItem="{Binding LongestLoopBars}" MinWidth="130"
+                              ToolTip.Tip="A 7-bar part over an 8-bar one meets again after 56 bars: past this, they go round with the longer one instead">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} bars'}" /></DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="Two parts of different lengths go round together after at most" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                </DockPanel>
+            </StackPanel>
+        </Border>
+
+        <Border Classes="card settingsCard">
+            <StackPanel>
+                <TextBlock Text="A song's MIDI that fits" Classes="sectionHeader" />
+                <TextBlock Classes="cardIntro" Text="The tab on a song in Projects listing parts from your other songs and MIDI folders that fit it." />
+                <DockPanel Margin="0,0,0,10">
+                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:MidiBrowserViewModel.SongTabLimitChoices}" SelectedItem="{Binding SongTabLimit}" MinWidth="130">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} parts'}" /></DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="Parts of each kind it shows" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                </DockPanel>
+                <DockPanel>
+                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:MidiBrowserViewModel.GoodFitChoices}" SelectedItem="{Binding GoodFitPercent}" MinWidth="130"
+                              ToolTip.Tip="Counted in the song panel's &quot;N good fits&quot;">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0}% or more'}" /></DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="A good fit is" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                </DockPanel>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>

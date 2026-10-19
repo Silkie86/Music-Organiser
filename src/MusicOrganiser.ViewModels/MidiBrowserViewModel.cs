@@ -67,6 +67,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _loop = db.GetSetting(LoopKey) == "1";
         GmSounds.ChosenFile = db.GetSetting(SoundFontKey) is { Length: > 0 } chosen ? chosen : null;
         _hasGoodSounds = GmSounds.IsInstalled;
+        LoadOptions(db);
     }
 
     // ---- sounds ----
@@ -413,8 +414,25 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     partial void OnTempoChanged(double? value)
     {
         OnPropertyChanged(nameof(TempoValue));
-        _ = RefreshPlayingAsync();
+        _ = RefreshAtNewTempoAsync();
     }
+
+    int _tempoRequest;
+
+    /// <summary>
+    /// What's playing, heard at the new tempo once the slider rests: each step of a drag rendered the whole part again
+    /// (a minute or more of sound), so playback ran dry and the window lagged (Solomon, 2026-10-19: "when i was moving
+    /// the tempo slider and it was laggy").
+    /// </summary>
+    async Task RefreshAtNewTempoAsync()
+    {
+        var request = ++_tempoRequest;
+        if (UiWork.InBackground) await Task.Delay(TempoSettleMs);
+        if (request == _tempoRequest) await RefreshPlayingAsync();
+    }
+
+    /// <summary>How long the tempo slider rests before what's playing is heard at its tempo.</summary>
+    const int TempoSettleMs = 300;
 
     [RelayCommand]
     void OwnTempo() => Tempo = null;
@@ -734,6 +752,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
                                   From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, _sectionTarget ?? Fit, Like, Leave: _fitPath,
                                   Words: words, Within: PhrasesOf, NameWeight: (float)NameWeight, Notes: NotesOf, Shuffle: _shuffle);
+        query = query with { Limit = ListLimit };
         // A new search stops the one before: scoring every part against a harmony is the heavy part, and only the
         // newest is shown.
         _searchCts?.Cancel();
@@ -1836,7 +1855,7 @@ public sealed partial class MidiRow : ObservableObject
         {
             "up" => (MidiTools.Transpose(notes, 1), length),
             "down" => (MidiTools.Transpose(notes, -1), length),
-            "quantise" => (MidiTools.Quantise(notes), length),
+            "quantise" => (MidiTools.Quantise(notes, _owner.QuantiseGrid), length),
             "twice" => (MidiTools.Repeat(notes, length), 2 * length),
             "half" => (MidiTools.FirstHalf(notes, length), Math.Max(Bar, length / 2 / Bar * Bar)),
             "reverse" => (MidiTools.Reverse(notes, length), length),
@@ -1868,7 +1887,7 @@ public sealed partial class MidiRow : ObservableObject
             long a = LoopLength, b = PartnerLength;
             if (a == b) return a;
             var both = a / Gcd(a, b) * b;
-            return both <= 32 * Bar ? both : Math.Max(a, b);
+            return both <= _owner.LongestLoopBars * Bar ? both : Math.Max(a, b);
         }
     }
 
@@ -1896,6 +1915,14 @@ public sealed partial class MidiRow : ObservableObject
 
     [RelayCommand]
     Task Play() => _owner.Toggle(this);
+
+    /// <summary>With what it's fitted to (on a song's MIDI tab, the song), or stopped.</summary>
+    [RelayCommand]
+    Task PlayTogether() => _owner.Toggle(this, together: true);
+
+    /// <summary>On its own, or stopped.</summary>
+    [RelayCommand]
+    Task PlayAlone() => _owner.Toggle(this, together: false);
 
     [RelayCommand]
     Task Seek(double ticks) => _owner.Toggle(this, Math.Max(1, ticks));

@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.SettingsView"
              x:DataType="vm:SettingsViewModel">
     <UserControl.Styles>
@@ -425,6 +426,14 @@
                                 </DockPanel>
                             </StackPanel>
                         </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="MIDI">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="How the MIDI page reads, ranks and plays your MIDI." />
+                        <views:MidiSettingsView DataContext="{Binding MidiPage}" />
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

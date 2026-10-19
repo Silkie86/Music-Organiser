@@ -1956,6 +1956,48 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task The_midi_pages_numbers_are_options_that_are_remembered_and_take_effect()
+    {
+        const int bar = 4 * 96;
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Keys", Ppq = 96 };
+        int[][] eight = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62], [50, 53, 57], [52, 56, 59], [57, 60, 64], [52, 56, 59]];
+        chords.Track("Piano").AddRange(eight.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Keys Am.mid"), Core.Export.MidiWriter.Write(chords));
+        var lead = new Core.Parsers.MidiClip { Name = "Lead", Ppq = 96 };
+        lead.Track("Lead").AddRange(Enumerable.Range(0, 7).SelectMany(i => new[] { 69, 72, 76, 72 }.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96 + 7, 90, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Lead melody.mid"), Core.Export.MidiWriter.Write(lead));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+
+        var main = Main();
+        var midi = main.Settings.MidiPage;
+        Assert.Same(main.Midi, midi);
+        Assert.Equal(500, midi.ListLimit);
+        midi.Opened();
+        await midi.IndexAsync();
+        midi.Selected = midi.Results.Single(r => r.Title.Contains("Keys"));
+        midi.FitToSelectedCommand.Execute(null);
+        var melody = midi.Selected = midi.Results.Single(r => r.Title.Contains("Lead"));
+        // 7 bars over 8 meet again after 56: past the 32-bar most, they go round with the longer one.
+        Assert.Equal(8 * bar, melody.PairLength);
+        midi.LongestLoopBars = 64;
+        Assert.Equal(56 * bar, melody.PairLength);
+
+        midi.QuantiseTo = 8;
+        await melody.ToolCommand.ExecuteAsync("quantise");
+        Assert.All(melody.BarNotes, n => Assert.Equal(0, n.Start % 48));
+
+        midi.ListLimit = 100;
+        midi.SongTabLimit = 10;
+        midi.GoodFitPercent = 90;
+
+        // Remembered for next time.
+        var again = Main().Midi;
+        Assert.Equal((100, 10, 90, 8, 64), (again.ListLimit, again.SongTabLimit, again.GoodFitPercent, again.QuantiseTo, again.LongestLoopBars));
+    }
+
+    [Fact]
     public async Task Edits_picks_and_what_plays_outlast_the_list_being_read_again()
     {
         const int bar = 4 * 96;
@@ -2060,6 +2102,59 @@ public class ViewModelTests : IDisposable
         await tab.OpenInMidiPageCommand.ExecuteAsync(null);
         Assert.Same(main.Midi, main.SelectedNav.Page);
         Assert.Equal("Chords Song", main.Midi.Fit!.Name);
+    }
+
+    [Fact]
+    public async Task A_part_clicked_on_a_songs_midi_tab_opens_in_a_quick_view_to_try_with_the_song()
+    {
+        const int bar = 4 * 96;
+        int[][] cMinor = [[60, 63, 67], [56, 60, 63], [51, 55, 58], [58, 62, 65]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Moody", Ppq = 96 };
+        chords.Track("Piano").AddRange(cMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Moody Cm.mid"), Core.Export.MidiWriter.Write(chords));
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        var project = MidiBrowserTests.FlProjectWithChords(songs);
+        _db.Upsert(Core.Library.Scanner.Analyse(project));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        ((HeadlessUi)Ui.Current).Player = () => new Recorder([]);
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var tab = new SongMidiViewModel(main.Midi, main, project, "Chords Song");
+        await tab.LoadAsync();
+
+        // Picked by itself when the list shows, but only a click opens it.
+        var row = Assert.Single(tab.Rows);
+        Assert.Same(row, tab.Selected);
+        Assert.False(tab.IsOpen);
+        tab.OpenPartCommand.Execute(row);
+        Assert.True(tab.IsOpen);
+        Assert.Same(row, tab.Open);
+        Assert.True(row.CanPlayTogether);
+        Assert.NotEmpty(row.EditorGuide!);   // the song's own chords, grey behind it
+
+        // With the song, then on its own, then stopped.
+        await row.PlayTogetherCommand.ExecuteAsync(null);
+        Assert.True(row.IsPlayingTogether);
+        await row.PlayAloneCommand.ExecuteAsync(null);
+        Assert.True(row.IsPlayingAlone);
+        Assert.False(row.IsPlayingTogether);
+        await row.PlayAloneCommand.ExecuteAsync(null);
+        Assert.False(row.IsPlaying);
+
+        // A one-click change, undone like any edit; the file is never changed.
+        var before = row.BarNotes.Select(n => n.Key).ToList();
+        await row.ToolCommand.ExecuteAsync("up");
+        Assert.Equal(before.Select(k => k + 1), row.BarNotes.Select(n => n.Key));
+        Assert.True(row.IsEdited);
+        await row.UndoEditCommand.ExecuteAsync(null);
+        Assert.Equal(before, row.BarNotes.Select(n => n.Key));
+
+        tab.CloseCommand.Execute(null);
+        Assert.False(tab.IsOpen);
+        main.Midi.Left();
     }
 
     sealed class HeadlessUi : IPlatformUi
