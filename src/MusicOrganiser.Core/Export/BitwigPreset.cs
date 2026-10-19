@@ -130,7 +130,7 @@ public static class BitwigPreset
     public static byte[] Build(Template template, PresetBlob preset, string presetName)
     {
         var (state, extension) = (preset.Data, preset.Extension);
-        if (extension == ".fxp" && Fxp.ToBank(state) is var bank && !ReferenceEquals(bank, state)) (state, extension) = (bank, ".fxb");
+        if (extension == ".fxp" && Fxp.ToBank(state, preset.Program) is var bank && !ReferenceEquals(bank, state)) (state, extension) = (bank, ".fxb");
         var bytes = Build(File.ReadAllBytes(template.Path), template.StateEntry, state, extension, presetName,
                           [Path.GetFileNameWithoutExtension(template.Path), template.PresetName], template.Plugin);
         var doc = BitwigFormat.Decode(bytes);

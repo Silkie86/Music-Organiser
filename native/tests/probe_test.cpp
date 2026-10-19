@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <clocale>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -381,6 +382,31 @@ int main(int argc, char** argv)
     CHECK(state2->load(p2, &saved.in), "load the saved state");
     value = 0;
     CHECK(params2->get_value(p2, 1007, &value) && value == 75, "the loaded state restores the parameter");
+
+    // A DAW running with a decimal comma (on a German system, say) still gets 0.25 saved with a point, and read back.
+    bool comma = false;
+    for (const char* name : { "de_DE.UTF-8", "de_DE.utf8", "de_DE", "de-DE", "German_Germany.1252", "fr_FR.UTF-8" })
+        if (std::setlocale(LC_NUMERIC, name) && std::localeconv()->decimal_point[0] == ',') { comma = true; break; }
+    if (comma)
+    {
+        Stream commaSaved;
+        CHECK(state2->save(p2, &commaSaved.out), "save with a decimal comma");
+        std::string commaText(commaSaved.data.begin(), commaSaved.data.end());
+        CHECK(commaText.find("\"1001\":0.25,") != std::string::npos, "the state writes 0.25 with a point");
+        auto again = factory->create_plugin(factory, &host, "org.musicorganiser.probe.instrument");
+        CHECK(again && again->init(again), "create an instrument to load it");
+        auto againParams = static_cast<const clap_plugin_params_t*>(again->get_extension(again, CLAP_EXT_PARAMS));
+        auto againState = static_cast<const clap_plugin_state_t*>(again->get_extension(again, CLAP_EXT_STATE));
+        Stream withPoint;
+        withPoint.data.assign(commaText.begin(), commaText.end());
+        auto at = commaText.find("\"1001\":0.25");
+        if (at != std::string::npos) withPoint.data[at + 9] = '3';   // 0.35, so a load that read only the 0 shows
+        CHECK(againState->load(again, &withPoint.in), "load with a decimal comma");
+        CHECK(againParams->get_value(again, 1001, &value) && value == 0.35, "the state reads 0.35 back with a decimal comma");
+        again->destroy(again);
+    }
+    else std::printf("(no decimal-comma locale here, so the decimal-comma checks were skipped)\n");
+    std::setlocale(LC_NUMERIC, "C");
     p2->destroy(p2);
 
     // ---- Talking to it while it runs ----

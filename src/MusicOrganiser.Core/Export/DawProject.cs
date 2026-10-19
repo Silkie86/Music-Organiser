@@ -30,6 +30,68 @@ public static class DawProject
     /// <summary>What's said of a channel whose FL volume envelope is switched on.</summary>
     internal const string EnvelopeLeftOut = "its volume envelope (ADSR) isn't carried over yet, so it plays without one";
 
+    /// <summary>What's said of a channel that the FL playlist never plays, carried as a track with no clips.</summary>
+    internal const string PlaysNothing = "the FL Studio playlist never plays it, so its track is here with its sound but no clips";
+
+    /// <summary>What's said of a channel switched off in FL's Channel Rack, whose <paramref name="tracks"/> tracks are muted.</summary>
+    internal static string SwitchedOff(int tracks) =>
+        $"switched off in FL Studio's Channel Rack, so {(tracks > 1 ? "its tracks are" : "its track is")} muted";
+
+    /// <summary>What's said of a channel whose on/off is automated (<see cref="FlChannel.SwitchedBy"/>); <paramref name="audio"/> when its audio clips are carried.</summary>
+    internal static string SwitchedOnAndOff(FlChannel c, bool audio)
+    {
+        var partly = audio ? c.AudioClips.Count(x => x.PartlyOff && !x.Muted && !x.OnMutedTrack) : 0;
+        return $"switched on and off by {string.Join(" and ", c.SwitchedBy.Select(n => $"\"{n}\""))} in FL Studio, so what it plays while it's off is muted" +
+               (partly == 0 ? "" : partly == 1 ? "; one audio clip it switches off part of the way through plays whole"
+                                               : $"; {partly} audio clips it switches off part of the way through play whole");
+    }
+
+    /// <summary>
+    /// What's said of the mixer inserts (the master is insert 0) whose fader or pan isn't where FL leaves it, which
+    /// isn't carried over yet; null when none.
+    /// </summary>
+    internal static string? MovedInserts(IEnumerable<FlInsert> inserts)
+    {
+        var moved = inserts.Where(i => i.Moved).Select(InsertLabel).ToList();
+        return moved.Count == 0 ? null
+            : $"Mixer: the fader or pan of {string.Join(", ", moved)} isn't at FL Studio's default, and mixer faders and pans aren't carried over yet";
+    }
+
+    /// <summary>How a note names an insert: "the master", "insert 4", or "Drums (insert 4)".</summary>
+    internal static string InsertLabel(FlInsert insert) =>
+        insert.Index == 0 ? "the master" : insert.Name.Length > 0 ? $"{insert.Name} (insert {insert.Index})" : $"insert {insert.Index}";
+
+    /// <summary>Why an automation clip moving something neither export carries yet is left out.</summary>
+    internal static string NotCarried(FlAutomation a, FlSong song)
+    {
+        var insert = song.Inserts.FirstOrDefault(i => i.Index == a.Insert) is { } found ? InsertLabel(found)
+                   : a.Insert == 0 ? "the master" : $"insert {a.Insert}";
+        return a.Control switch
+        {
+            FlControl.Tempo => $"tempo automation isn't carried over yet; the project is set to {song.Tempo:0.##} BPM",
+            FlControl.MainVolume => "the master volume isn't automated here yet",
+            FlControl.InsertVolume => $"the fader of {insert} isn't automated here yet",
+            FlControl.InsertPan => $"the pan of {insert} isn't automated here yet",
+            FlControl.InsertSlotOnOff => $"switching an effect on {insert} on and off isn't carried over yet, so it stays on",
+            FlControl.Pitch => "pitch has no equivalent here",
+            _ => "this control has no equivalent here",
+        };
+    }
+
+    /// <summary>
+    /// What's said of a track some of whose clips (<paramref name="on"/>, by playlist track) sit on FL's muted playlist
+    /// tracks: the track is muted when they all do (<paramref name="trackMuted"/>), otherwise those clips are. Null when none do.
+    /// </summary>
+    internal static string? OnMutedTracks(string track, IEnumerable<int> on, IReadOnlyList<FlTrack> muted, bool trackMuted)
+    {
+        var numbers = on.ToHashSet();
+        var from = muted.Where(t => numbers.Contains(t.Number)).ToList();
+        if (from.Count == 0) return null;
+        var where = $"{(from.Count == 1 ? "a muted playlist track" : "muted playlist tracks")} in FL Studio ({string.Join("; ", from.Select(t => t.Label))})";
+        return trackMuted ? $"{track}: muted, because its clips are all on {where}"
+                          : $"{track}: its clips on {where} are muted, as it also has clips from other playlist tracks";
+    }
+
     /// <summary>
     /// FL's channel volume knob (0..1, 0 dB at its default 78%) as a gain for a 0..2 linear fader.
     /// FL's curve isn't published; a square law keeps each channel's level relative to the default.
@@ -59,16 +121,20 @@ public static class DawProject
 
         XElement? Device(FlPlugin p, string role, List<string> skipped)
         {
-            if (p.Native || p.State is null)
+            if (p.Native || p.State is null && !p.NothingSaved)
             {
                 skipped.Add(p.Native ? $"{p.Name} (FL Studio plugin)" : $"{p.Name} (settings not readable)");
                 return null;
             }
-            // VST2 settings go in as a bank (.fxb), as Bitwig's own DAWproject files have them.
-            var (data, extension) = p.Format == "VST2" && p.State.Extension == ".fxp"
-                ? (Fxp.ToBank(p.State.Data), ".fxb") : (p.State.Data, p.State.Extension);
-            var path = $"plugins/{Guid.NewGuid()}{extension}";
-            files.Add((path, data));
+            string? path = null;
+            if (p.State is { } s)
+            {
+                // VST2 settings go in as a bank (.fxb), as Bitwig's own DAWproject files have them.
+                var (data, extension) = p.Format == "VST2" && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data, s.Program), ".fxb") : (s.Data, s.Extension);
+                path = $"plugins/{Guid.NewGuid()}{extension}";
+                files.Add((path, data));
+            }
+            else skipped.Add($"{p.Name}'s sound (FL Studio saved none in this file, so it opens at its default)");
             return new XElement(p.Format == "VST3" ? "Vst3Plugin" : "Vst2Plugin",
                 new XAttribute("id", Id()),
                 p.DeviceId.Length > 0 ? new XAttribute("deviceID", p.DeviceId) : null,
@@ -76,18 +142,19 @@ public static class DawProject
                 new XAttribute("deviceRole", role),
                 new XAttribute("deviceVendor", p.Vendor),
                 new XAttribute("loaded", "true"),
-                new XElement("Enabled", new XAttribute("id", Id()), new XAttribute("value", "true")),
-                new XElement("State", new XAttribute("path", path)));
+                new XElement("Enabled", new XAttribute("id", Id()), new XAttribute("value", p.Enabled ? "true" : "false")),
+                path is null ? null : new XElement("State", new XAttribute("path", path)));
         }
 
-        XElement Channel(string role, string? destination, IEnumerable<XElement> devices, double volume = 1, double pan = 0.5) =>
+        XElement Channel(string role, string? destination, IEnumerable<XElement> devices, double volume = 1, double pan = 0.5,
+                         bool muted = false) =>
             new("Channel",
                 new XAttribute("id", Id()),
                 new XAttribute("role", role),
                 new XAttribute("audioChannels", 2),
                 destination is null ? null : new XAttribute("destination", destination),
                 new XElement("Devices", devices),
-                new XElement("Mute", new XAttribute("id", Id()), new XAttribute("value", "false")),
+                new XElement("Mute", new XAttribute("id", Id()), new XAttribute("value", muted ? "true" : "false")),
                 Param("Pan", "normalized", pan, 0, 1),
                 Param("Volume", "linear", volume, 0, 2));
 
@@ -120,10 +187,9 @@ public static class DawProject
         var masterId = (string)masterChannel.Attribute("id")!;
 
         // Inserts that channels feed or that hold effects, as effect tracks into the master.
-        // Channels that play notes or are automated, with a plugin or sample to make the sound.
-        var automated = song.Automation.Select(a => a.Channel).ToHashSet();
-        // An audio clip channel with no notes isn't a Sampler, automated or not.
-        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index) && c.AudioClips.Count == 0) &&
+        // Every channel with a plugin or sample to make the sound, as in FL's Channel Rack, even one the playlist
+        // never plays. An audio clip channel with no notes isn't a Sampler.
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || c.AudioClips.Count == 0) &&
                                                (c.Instrument is not null || c.Sample.Length > 0)).ToList();
         var used = playing.Select(c => c.Insert).Where(i => i > 0).ToHashSet();
         var insertChannels = new Dictionary<int, string>();
@@ -167,17 +233,24 @@ public static class DawProject
                 setup.Add($"{c.Name}: add Bitwig's Transpose note effect before {plugin.Name} and set it to {shift}" +
                           $" (its FL root key was {NoteName(c.RootKey, flStudio: true)}).");
             }
+            // When all its clips are on muted FL playlist tracks, the track is muted rather than its clips.
+            var trackMuted = FlClips.AllOnMutedTracks(c.Clips);
             var ch = Channel("regular", insertChannels.GetValueOrDefault(c.Insert, masterId), device is null ? [] : [device],
-                             Gain(c.Volume), c.Pan);
+                             Gain(c.Volume), c.Pan, muted: !c.Enabled || trackMuted);
             var track = Track(c.Name, "notes", ch, skipped, todo);
             structure.Add(track);
+            if (!c.Enabled) notes.Add($"{c.Name}: {SwitchedOff(1)}");
+            if (c.SwitchedBy.Count > 0) notes.Add($"{c.Name}: {SwitchedOnAndOff(c, audio: false)}");
+            if (OnMutedTracks(c.Name, c.Clips.Where(x => x.OnMutedTrack).Select(x => x.Track), song.MutedTracks, trackMuted) is { } onMuted)
+                notes.Add(onMuted);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
+            if (c.Clips.Count == 0) notes.Add($"{c.Name}: {PlaysNothing}");
             if (c.VolumeEnvelope is not null) notes.Add($"{c.Name}: {EnvelopeLeftOut}");
 
             var trackLanes = new XElement("Lanes", new XAttribute("id", Id()), new XAttribute("track", (string)track.Attribute("id")!));
             placed[c.Index] = (trackLanes, ch, device?.Name.LocalName is "Vst2Plugin" or "Vst3Plugin" ? device : null);
             lanes.Add(trackLanes);
-            var clips = FlClips.Of(c, song.Ppq);
+            var clips = FlClips.Of(c with { Clips = FlClips.OnMutedTracks(c.Clips, trackMuted) }, song.Ppq);
             if (clips.Count == 0) continue;
 
             // DAWproject has no muted notes, so FL's muted notes are left out; a muted clip is switched off.
@@ -199,9 +272,23 @@ public static class DawProject
             })));
         }
 
+        if (MovedInserts(song.Inserts.Where(i => i.Index == 0 || used.Contains(i.Index))) is { } moved) notes.Add(moved);
+
         // Automation clips, as automation on the track they move: its volume, pan or plugin parameter.
         foreach (var a in song.Automation)
         {
+            if (a.Control == FlControl.InsertEffect)
+            {
+                notes.Add($"{a.Name}: automation left out (automating mixer effects isn't carried over to DAWproject yet)");
+                continue;
+            }
+            if (a.Channel < 0 || a.Control is FlControl.Pitch or FlControl.Other)
+            {
+                notes.Add($"{a.Name}: automation left out ({NotCarried(a, song)})");
+                continue;
+            }
+            // Carried by leaving out what the channel plays while it's off (see FlChannel.SwitchedBy).
+            if (a.Control == FlControl.OnOff) continue;
             if (!placed.TryGetValue(a.Channel, out var t))
             {
                 notes.Add($"{a.Name}: automation left out (what it moves isn't converted)");
@@ -243,7 +330,7 @@ public static class DawProject
             }
             if (target is null)
             {
-                notes.Add($"{a.Name}: automation left out ({(a.Control == FlControl.Pitch ? "pitch" : "this control")} has no equivalent here)");
+                notes.Add($"{a.Name}: automation left out ({NotCarried(a, song)})");
                 continue;
             }
             t.Lanes.Add(new XElement("Points", new XAttribute("id", Id()), new XAttribute("unit", unit),

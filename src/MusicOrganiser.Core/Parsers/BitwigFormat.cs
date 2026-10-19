@@ -328,6 +328,16 @@ public static partial class BitwigFormat
                     for (var i = 0; i < n; i++, p += 4) f[i] = BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(p));
                     return f;
                 }
+                case 0x18:
+                {
+                    // A list of doubles: u32 count, then f64s (Bitwig 6.1 keeps a Sampler sample's analysis, such as where its hits are, this way).
+                    var n = U32(p);
+                    p += 4;
+                    if (n < 0 || p + 8L * n > d.Length) throw new InvalidDataException("double list too long");
+                    var f = new double[n];
+                    for (var i = 0; i < n; i++, p += 8) f[i] = BinaryPrimitives.ReadDoubleBigEndian(d.AsSpan(p));
+                    return f;
+                }
                 case 0x19:
                 {
                     var n = U32(p);

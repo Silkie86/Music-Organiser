@@ -161,7 +161,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         Links =
         [
             // Into the chosen user folder, each one found in Documents, and the Extensions folder Bitwig loaded it from.
-            new DawLinkSetting("Bitwig Studio", () => BitwigSteps,
+            new DawLinkSetting("Bitwig Studio", () => BitwigSteps(File.Exists(DawScripts.Shipped("Bitwig", "MusicOrganiser.bwextension"))),
                                () => DawScripts.BitwigLink(DawScripts.BitwigLinkFolders(db.GetSetting(BitwigUserKey)),
                                                            loadedFrom: db.GetSetting(BitwigLoadsFromKey)),
                                () => CheckBitwig(watch), new FolderChoice(
@@ -241,10 +241,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         };
     }
 
-    static string BitwigSteps =>
+    /// <param name="extension">Whether Install puts in the extension, which has a MIDI in and out, not the script, which has none.</param>
+    static string BitwigSteps(bool extension) =>
         "Then open Settings > Controllers in Bitwig, click Add controller and pick Music Organiser > DAW link. " +
         "If it isn't in the list, restart Bitwig. (When the app has its Bitwig extension, Install puts that in place of " +
         "the script: it's the same controller, so one that's set up already stays set up once Bitwig restarts.)" +
+        (extension
+            ? $" Then set that controller's MIDI in and MIDI out to the MIDI port “{BitwigLink.LoopbackPort}”" +
+              (OperatingSystem.IsWindows() ? " (make it in loopMIDI first)" : " (make it first as a virtual MIDI port: on a Mac, an IAC bus in Audio MIDI Setup may do)") +
+              ", never to FL Studio's port, “Music Organiser”. Bitwig has only saved for the app once they were set."
+            : "") +
         (OperatingSystem.IsWindows() ? " If Windows asks whether Bitwig may use the network, you can say no: the app only talks to it on this PC." : "");
 
     static string FlSteps(FlMidiPort port) =>
@@ -263,19 +269,21 @@ public sealed partial class SettingsViewModel : ObservableObject
     static DawScript FlScript(LibraryDb db) => DawScripts.FlStudio(DawScripts.FlUserDataFolders(
         db.Projects().Where(p => p.Daw == "FL Studio").Select(p => p.Path), db.GetSetting(FlUserDataKey)));
 
-    static async Task<string> CheckBitwig(DawWatch watch)
+    static async Task<(string Text, bool Ready)> CheckBitwig(DawWatch watch)
     {
         using var link = await watch.ConnectBitwigAsync();
-        return $"Connected to {link.Hello.Product} {link.Hello.Version} through {link.Hello.Answering}, with “{link.Hello.Project}” open.";
+        var setUp = BitwigLink.LoopbackMissing(link.Hello);
+        return ($"Connected to {link.Hello.Product} {link.Hello.Version} through {link.Hello.Answering}, with “{link.Hello.Project}” open." +
+                (setUp is null ? "" : " " + setUp), setUp is null);
     }
 
-    static async Task<string> CheckFlStudio(DawWatch watch)
+    static async Task<(string Text, bool Ready)> CheckFlStudio(DawWatch watch)
     {
         var fl = watch.Fl();
         fl.Timeout = TimeSpan.FromSeconds(3);
         var hello = await fl.HelloAsync();
-        return $"Connected to FL Studio {hello.Version}. Its window says “{hello.Title}”." +
-               (hello.Api < 26 ? " This FL Studio is too old to check projects with: that needs scripting version 26 or later." : "");
+        return ($"Connected to FL Studio {hello.Version}. Its window says “{hello.Title}”." +
+                (hello.Api < 26 ? " This FL Studio is too old to check projects with: that needs scripting version 26 or later." : ""), true);
     }
 
     /// <summary>Shows whether each DAW's script is installed. Settings calls it each time it opens.</summary>
@@ -570,7 +578,8 @@ public sealed partial class DawLinkSetting : ObservableObject
 {
     readonly Func<string> _steps;
     readonly Func<DawScript> _script;
-    readonly Func<Task<string>> _check;
+    /// <summary>Asks the DAW to answer: what it said, and whether nothing's left to set up.</summary>
+    readonly Func<Task<(string Text, bool Ready)>> _check;
     readonly Func<bool> _found;
     readonly FolderChoice? _folder;
     /// <summary>The extension version Install copies, from the last look (null for a script).</summary>
@@ -602,7 +611,7 @@ public sealed partial class DawLinkSetting : ObservableObject
     [ObservableProperty] bool _isAnswering;
 
     /// <param name="found">Whether the DAW is on this computer, for Set up both: unless given, whether the app found a folder for its script.</param>
-    public DawLinkSetting(string daw, Func<string> steps, Func<DawScript> script, Func<Task<string>> check,
+    public DawLinkSetting(string daw, Func<string> steps, Func<DawScript> script, Func<Task<(string Text, bool Ready)>> check,
                           FolderChoice? folder = null, FlPortSetting? midiPort = null, Func<bool>? found = null,
                           LiveTestsViewModel? liveTests = null)
     {
@@ -766,17 +775,20 @@ public sealed partial class DawLinkSetting : ObservableObject
         if (MidiPort is not null) await MidiPort.SetUpAsync();
         Result = $"{done} Asking {Daw}…";
         var answered = false;
+        var ready = false;
         string answer;
         try
         {
-            answer = await _check();
+            (answer, ready) = await _check();
             answered = true;
         }
         catch (DawLinkException e) { answer = e.Message; }
         catch (Exception e) { answer = $"Couldn't reach {Daw}: {e.Message}"; }
         Result = $"{done} {answer}";
         await RefreshAsync();
-        return answered ? $"✓ {Daw}: set up and answering." : $"{Daw}: {what} is in place, but {Daw} isn't answering yet. What's left is below.";
+        return !answered ? $"{Daw}: {what} is in place, but {Daw} isn't answering yet. What's left is below."
+             : ready ? $"✓ {Daw}: set up and answering."
+             : $"{Daw}: answering, but there's still something to set up. What's left is below.";
     }
 
     partial void OnIsAnsweringChanged(bool value)
@@ -793,7 +805,8 @@ public sealed partial class DawLinkSetting : ObservableObject
             ? $"✓ Answering now: {state.Version}" + (state.Project.Length > 0 ? $", with “{state.Project}” open." : ".") +
               (state.Daw == DawState.Bitwig && !state.Changes
                   ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "") +
-              (state.LoadedFrom is { Length: > 0 } file ? $" Bitwig loads the extension from {Path.GetDirectoryName(file)}." : "") +
+              // Only an Extensions folder, which Install puts the next version in: not a copy Bitwig made somewhere of its own (Temp, say).
+              (DawScripts.BitwigExtensionsFolder(state.LoadedFrom) is { } folder ? $" Bitwig loads the extension from {folder}." : "") +
               (state.Extension is { } running && _shipped is { } shipped && running != shipped ? Running(running, shipped) : "")
             : state.Running == true ? $"Not answering right now, though {Daw} is open. Check connection says what's missing."
             : "Not answering right now.";
@@ -816,7 +829,7 @@ public sealed partial class DawLinkSetting : ObservableObject
         Result = $"Asking {Daw}…";
         try
         {
-            Result = await _check();
+            Result = (await _check()).Text;
         }
         catch (DawLinkException e) { Result = e.Message; }
         catch (Exception e) { Result = $"Couldn't reach {Daw}: {e.Message}"; }

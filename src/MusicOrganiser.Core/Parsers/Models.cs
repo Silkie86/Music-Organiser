@@ -49,6 +49,8 @@ public sealed record PresetBlob(string Name, string Plugin, string Extension, by
     public string Where { get; init; } = "";
     /// <summary>FL Studio: the channel an instrument is on (its place in the channel rack, from 0).</summary>
     public int? Channel { get; init; }
+    /// <summary>A VST2's program that was selected when it was saved (FL Studio), which the host selects again after loading it.</summary>
+    public int Program { get; init; }
 }
 
 public sealed class ProjectInfo
@@ -89,6 +91,11 @@ public interface IProjectReader
 {
     string Daw { get; }
     IReadOnlyList<string> Extensions { get; }
+    /// <summary>
+    /// Goes up by one whenever the reader learns to read its projects better, so a scan reads that DAW's projects again
+    /// even though their files haven't changed.
+    /// </summary>
+    int Version => 1;
     ProjectInfo Read(string path);
     IReadOnlyList<MidiClip> ExtractMidi(string path) => Array.Empty<MidiClip>();
     /// <summary>Each channel or track's notes across the song, with what plays them.</summary>

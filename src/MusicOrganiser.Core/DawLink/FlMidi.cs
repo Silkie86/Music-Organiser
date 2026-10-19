@@ -63,8 +63,8 @@ public sealed class FlMidi : IFlMidi, IDisposable
         var outputs = FlSetup.MidiPorts(inputs: false) ?? [];
         foreach (var name in new[] { WindowsMidiPort.SpareEnd, FlSetup.PortName })
         {
-            var i = inputs.FindIndex(n => n.Contains(name, StringComparison.OrdinalIgnoreCase));
-            var o = outputs.FindIndex(n => n.Contains(name, StringComparison.OrdinalIgnoreCase));
+            var i = FlSetup.FindPort(inputs, name);
+            var o = FlSetup.FindPort(outputs, name);
             if (i >= 0 && o >= 0) return new FlMidi((uint)i, inputs[i], (uint)o, outputs[o]);
         }
         return null;

@@ -25,6 +25,12 @@ public sealed class PluginScanner
 
     public string? Executable { get; }
     public bool Available => Executable is not null;
+    /// <summary>
+    /// On a Mac or Linux, nice, which starts the scanner with its niceness 10 more than the app's, so it never runs at the
+    /// app's priority, even for a moment. Setting its priority after it started didn't hold on macOS CI: the scanner read
+    /// niceness -10 a second later, twice in a row.
+    /// </summary>
+    static readonly string? Nice = OperatingSystem.IsWindows() ? null : new[] { "/usr/bin/nice", "/bin/nice" }.FirstOrDefault(File.Exists);
     readonly HashSet<Process> _running = [];
     /// <summary>How long one plugin file may take before the scanner is stopped.</summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(30);
@@ -137,7 +143,10 @@ public sealed class PluginScanner
             var wanted = only is null ? listed : listed.Where(p => p.Id.Equals(only, StringComparison.OrdinalIgnoreCase)).ToList();
             if (wanted.Count > 0) return new(path, wanted);
         }
-        var psi = new ProcessStartInfo(Executable)
+        // Through nice only when the scanner can run, so a missing one still says it couldn't be run, rather than how nice failed.
+        var niced = !OperatingSystem.IsWindows() && Nice is not null && File.Exists(Executable) &&
+                    (File.GetUnixFileMode(Executable) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+        var psi = new ProcessStartInfo(niced ? Nice! : Executable)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -148,6 +157,13 @@ public sealed class PluginScanner
             // Some plugins write logs to the working folder; keep them out of the app's.
             WorkingDirectory = Path.GetTempPath(),
         };
+        if (niced)
+        {
+            // nice becomes the scanner (same process), and finds it from the scanner's working folder, so it needs the full path.
+            psi.ArgumentList.Add("-n");
+            psi.ArgumentList.Add("10");
+            psi.ArgumentList.Add(Path.GetFullPath(Executable));
+        }
         if (!parameters) psi.ArgumentList.Add("--no-params");
         if (only is not null)
         {
@@ -161,6 +177,15 @@ public sealed class PluginScanner
         catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
         {
             return new(path, [], $"Couldn't run the plugin scanner: {e.Message}");
+        }
+        // Below normal, as the app's own background work is, so a scan gets only what the PC has spare and the app
+        // (or a DAW playing) never lags behind it. On a Mac or Linux nice has started it 10 below the app already, and
+        // setting it again is left out: on macOS CI the scanner read -10 after it. A scanner that has already finished
+        // can't be changed, which is fine.
+        if (!niced)
+        {
+            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
+            catch (Exception e) when (e is Win32Exception or InvalidOperationException or NotSupportedException) { }
         }
         lock (_running) _running.Add(process);
 
