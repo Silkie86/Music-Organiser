@@ -204,10 +204,18 @@ public class FixTests : IDisposable
         var swap = ProjectFixer.Plan(_db, Scan("FL Studio")).Single(l => l.IsSwap);
         Assert.Equal(("Serum", FixAction.Relink), (swap.Name, swap.Action));
 
-        var result = ProjectFixer.Write(path, [swap], _ => null);
+        var serum2User = Path.Combine(_root, "Serum 2 Presets", "Presets", "User");
+        var result = ProjectFixer.Write(path, [swap], _ => null, serum2User);
         Assert.Equal((1, 0), (result.Swapped, result.Relinked));
         Assert.Equal(before, File.ReadAllBytes(path));
-        Assert.StartsWith("Lead: Serum swapped for Serum 2, with its sound translated", Assert.Single(result.Notes));
+        Assert.StartsWith("Lead: Serum swapped for Serum 2, with its sound translated", result.Notes[0]);
+
+        // Serum's own sound is saved where Serum 2's browser finds it, to load by hand for the exact sound.
+        var song1 = Path.GetFileNameWithoutExtension(path);
+        Assert.Equal($"Serum's own sound is also saved in Serum 2's browser, under User › From Serum 1 › {song1}: load it there for the exact Serum 1 sound.",
+                     result.Notes[1]);
+        var fxp = File.ReadAllBytes(Path.Combine(serum2User, "From Serum 1", song1, "Lead.fxp"));
+        Assert.Equal(Serum1State.Read(SerumTests.Serum1())!.Knobs, Serum1State.Read(fxp)!.Knobs);
 
         // The channel now holds Serum 2's VST3, as FL saves it, with the translated sound; the others are as they were.
         var song = Readers.FlStudio.ReadSong(result.Path);
