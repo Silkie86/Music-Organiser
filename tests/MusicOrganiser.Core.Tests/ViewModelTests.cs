@@ -161,7 +161,9 @@ public class ViewModelTests : IDisposable
 
         // The finished card's "Open it" opens it from the panel showing now, which then asks whether it loaded,
         // and still does after leaving the song and coming back.
-        _db.SetSetting(ProjectDetailViewModel.DawExeKey("FL Studio"), "/bin/true");
+        // A program that's there on each system and exits at once ("/bin/true" isn't there on macOS).
+        _db.SetSetting(ProjectDetailViewModel.DawExeKey("FL Studio"),
+                       OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, "where.exe") : "/usr/bin/true");
         main.Activities.Items.First(a => a.Title.StartsWith("Saved Night Drive (fixed)")).RunActionCommand.Execute(null);
         Assert.True(projects.Detail.PendingFixOpened);
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
