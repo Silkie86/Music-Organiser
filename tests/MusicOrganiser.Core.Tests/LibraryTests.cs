@@ -212,9 +212,9 @@ public class LibraryTests : IDisposable
     [InlineData("Untitled 3", "Untitled 3", 1)]   // a DAW's name for a new project: songs of their own
     [InlineData("Untitled_2", "Untitled", 2)]     // but FL Studio's "Save new version" of it is a save
     // The usual marks count too.
-    [InlineData("fleck athens FLP19", "fleck athens", 19)]
-    [InlineData("fleck athens flp_15", "fleck athens", 15)]
-    [InlineData("fleckathensFLP19", "fleckathens", 19)]
+    [InlineData("fleck athens FLP19", "fleck athens FLP", 19)]   // FLP is part of the name (Solomon, 19 Oct)
+    [InlineData("fleck athens FLP", "fleck athens FLP", 1)]
+    [InlineData("fleck athens flp_15", "fleck athens flp", 15)]
     [InlineData("Night Drive v2", "Night Drive", 2)]
     [InlineData("Night Drive_V3", "Night Drive", 3)]
     [InlineData("Night Drive v2.1", "Night Drive", 2)]
@@ -268,16 +268,21 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
-    public void Saves_marked_FLP15_to_FLP19_each_in_their_own_Bitwig_folder_are_one_song()
+    public void Saves_numbered_FLP1_to_FLP20_join_the_unnumbered_FLP_save_as_one_song()
     {
-        ProjectSummary P(string name, int day) =>
-            new() { Name = name, Path = $@"K:\Bitwig Studio\Projects\{name}\{name}.bwproject", Daw = "Bitwig Studio",
-                    Folder = $@"K:\Bitwig Studio\Projects\{name}", Modified = new DateTime(2025, 3, day) };
-        var groups = SongVersions.Group(Enumerable.Range(15, 5).Select(n => P($"fleck athens FLP{n}", n)).Append(P("fleck athens", 1)));
+        // Solomon's Bitwig "fleck athens FLP" and "fleck athens FLP1" … "FLP20" in one folder (19 Oct): one song, called
+        // "fleck athens FLP". A save in a folder of its own name counts as in the folder around it.
+        const string folder = @"K:\Bitwig Studio\Projects\fleck athens";
+        ProjectSummary P(string name, int day, string? own = null) =>
+            new() { Name = name, Path = $@"{own ?? folder}\{name}.bwproject", Daw = "Bitwig Studio", Folder = own ?? folder,
+                    Modified = new DateTime(2025, 3, 1).AddDays(day) };
+        var groups = SongVersions.Group([.. Enumerable.Range(1, 19).Select(n => P($"fleck athens FLP{n}", n)), P("fleck athens FLP", 0),
+                                         P("fleck athens FLP20", 20, $@"{folder}\fleck athens FLP20")]);
         var song = Assert.Single(groups);
-        Assert.Equal("fleck athens", song.Song);
-        Assert.Equal("fleck athens FLP19", song.Latest.Name);
-        Assert.Equal(5, song.Older.Count);
+        Assert.Equal("fleck athens FLP", song.Song);
+        Assert.Equal("fleck athens FLP20", song.Latest.Name);
+        Assert.Equal(20, song.Older.Count);
+        Assert.Equal("fleck athens FLP", song.Older[^1].Name);
     }
 
     [Fact]

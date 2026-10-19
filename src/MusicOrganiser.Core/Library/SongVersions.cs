@@ -50,14 +50,15 @@ public static partial class SongVersions
     private static partial Regex FixedTail();
 
     /// <summary>
-    /// A word that marks a save, then its number: "fleck athens FLP19", "Song v2", "Song v2.1", "Song take 4", "Song mix_3",
-    /// "Song rev 7". There has to be a space, "_", "-" or "." before the word, so "Remix2" and "Dev3" stay names.
+    /// A word that marks a save, then its number: "Song v2", "Song v2.1", "Song take 4", "Song mix_3", "Song rev 7". There has
+    /// to be a space, "_", "-" or "." before the word, so "Remix2" isn't read as a "mix". Not "FLP": in "fleck athens FLP19"
+    /// it's part of the song's name (Solomon, 19 Oct), and only the number is the save.
     /// </summary>
-    [GeneratedRegex(@"^(.+?)[\s_.-]+(?:v|ver|version|take|tk|mix|rev|revision|flp|draft|alt)\s*[.#_]?\s*(\d{1,4})(?:\.(\d{1,3}))?$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(.+?)[\s_.-]+(?:v|ver|version|take|tk|mix|rev|revision|draft|alt)\s*[.#_]?\s*(\d{1,4})(?:\.(\d{1,3}))?$", RegexOptions.IgnoreCase)]
     private static partial Regex MarkedNumber();
 
-    /// <summary>The same words glued on with a capital: "fleckathensFLP19", "SongV2", "SongTake4".</summary>
-    [GeneratedRegex(@"^(.*\p{Ll})(?:V|Ver|VER|FLP|Flp|Take|TAKE|Mix|MIX|Rev|REV)(\d{1,4})$")]
+    /// <summary>The same words glued on with a capital: "SongV2", "SongTake4".</summary>
+    [GeneratedRegex(@"^(.*\p{Ll})(?:V|Ver|VER|Take|TAKE|Mix|MIX|Rev|REV)(\d{1,4})$")]
     private static partial Regex GluedNumber();
 
     /// <summary>"Song final", "Song FINAL FINAL", "Song final2", "Song final v3": the last save, ahead of any number.</summary>
@@ -78,8 +79,9 @@ public static partial class SongVersions
     /// "Didums_70" → ("Didums", 70); "Didums" → ("Didums", 1). A fixed copy counts as the save it was made from:
     /// "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves. Solomon's rule for every DAW (2026-10-19):
     /// the same name with a number on the end is a save of one song, whether the number is glued to the last word
-    /// ("track2", "fleck athens FLP19"), after a space ("analog full set nb 36"), a dash ("song-3") or "_". So "track1"
-    /// and "track2" are one song, "track nd 1" and "track 2" aren't (<see cref="Key"/> also needs the same folder). The
+    /// ("track2"; "fleck athens FLP19" is a save of "fleck athens FLP"), after a space ("analog full set nb 36"), a dash
+    /// ("song-3") or "_". So "track1" and "track2" are one song, "track nd 1" and "track 2" aren't (<see cref="Key"/> also
+    /// needs the same folder). The
     /// usual marks count too: "Song v2.1", "Song take 4", "Song final" (the last save), and copies, side saves and dates
     /// such as "Song - Copy", "Song wip" and "Song 2024-03-01", which keep the number of what's left. A DAW's own name
     /// for a new project is never cut down to: "Untitled 3" and "Untitled 4" are songs of their own.
