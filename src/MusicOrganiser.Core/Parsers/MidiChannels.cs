@@ -31,8 +31,12 @@ public sealed record MidiChannel(string Name, string Source, int Ppq, IReadOnlyL
         Path.GetFileNameWithoutExtension(Source).Equals(Name, StringComparison.OrdinalIgnoreCase)
             ? Name : $"{Name} ({Source})";
 
-    static readonly string[] DrumParts = ["kick", "snare", "hat", "clap", "drum", "perc", "cymbal", "shaker", "fpc", "808", "909"];
-    static readonly HashSet<string> DrumWords = ["rim", "tom", "toms", "ride", "crash", "kit"];
+    // Found inside a word too ("kick2", "hihat", "fpc_kit"), so none of these may hide inside an everyday word: "hat"
+    // is in "phat" and "perc" in "percussive", so those two are matched with a pattern instead.
+    static readonly string[] DrumParts = ["kick", "snare", "clap", "drum", "cymbal", "shaker", "fpc", "909"];
+    static readonly HashSet<string> DrumWords = ["rim", "tom", "toms", "ride", "crash", "kit", "percussion"];
+    static readonly System.Text.RegularExpressions.Regex HatOrPerc = new(@"^((hi|open|closed|oh|ch)?hats?|percs?)\d*$");
+    static readonly HashSet<string> BassWords = ["bass", "sub", "subs", "reese"];
 
     /// <summary>A rough guess at what the part is, from its notes and what plays it.</summary>
     public string Kind
@@ -41,7 +45,9 @@ public sealed record MidiChannel(string Name, string Source, int Ppq, IReadOnlyL
         {
             if (Notes.Count == 0) return "";
             var words = System.Text.RegularExpressions.Regex.Split($"{Name} {Source}".ToLowerInvariant(), "[^a-z0-9]+");
-            if (words.Any(w => DrumParts.Any(w.Contains) || DrumWords.Contains(w))) return "Drums";
+            if (words.Any(w => DrumParts.Any(w.Contains) || DrumWords.Contains(w) || HatOrPerc.IsMatch(w))) return "Drums";
+            // An 808 is a kick on one note, but a bassline once it moves or is called a bass ("808 Sub").
+            if (DistinctKeys == 1 && words.Any(w => w.Contains("808")) && !words.Any(w => BassWords.Contains(w) || w.EndsWith("bass"))) return "Drums";
             if (DistinctKeys == 1) return "Hits";
             var overlapping = Notes.GroupBy(n => n.Start).Count(g => g.Count() >= 3);
             if (overlapping * 4 >= Notes.GroupBy(n => n.Start).Count()) return "Chords";

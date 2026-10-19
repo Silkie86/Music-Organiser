@@ -107,8 +107,10 @@ public static class PhraseJoiner
         var arrangement = ArrangementReader.Read(path, findAudio: false).FirstOrDefault();
         if (arrangement is null || arrangement.Notes.Any(n => n.Contains("clip launcher", StringComparison.Ordinal))) return null;
         long Ticks(double beats) => (long)Math.Round(beats * PhraseAnalyser.Ppq);
-        var channels = arrangement.Lanes.Where(l => l.Kind == LaneKind.Instrument && !l.Muted)
-            .Select(l => new MidiChannel(l.Name, l.Detail, PhraseAnalyser.Ppq,
+        var channels = Heard(arrangement.Lanes).Where(l => l.Kind == LaneKind.Instrument)
+            // The device goes in Plugin only, as it does for clips read one by one: a preset called "808 Sub" or
+            // "Phat Bass" isn't a name for the part, and its words made basslines look like drums.
+            .Select(l => new MidiChannel(l.Name, "", PhraseAnalyser.Ppq,
                 l.Clips.Where(c => !c.Muted)
                        .SelectMany(c => c.Notes.Where(n => !n.Muted && n.Start < c.Length)
                                          .Select(n => new NoteEvent(Ticks(c.Start + n.Start), Math.Max(1, Ticks(Math.Min(n.Length, c.Length - n.Start))), n.Key, n.Velocity)))
@@ -116,6 +118,18 @@ public static class PhraseJoiner
                 Plugin: l.Detail))
             .Where(c => c.Notes.Count > 0).ToList();
         return channels.Count > 0 ? channels : null;
+    }
+
+    /// <summary>The tracks the song plays: not muted, and not inside a muted group (which the DAW doesn't play either).</summary>
+    static IEnumerable<PreviewLane> Heard(IEnumerable<PreviewLane> lanes)
+    {
+        var mutedGroups = new List<int>();   // the depths of the muted groups the lanes are inside
+        foreach (var lane in lanes)
+        {
+            mutedGroups.RemoveAll(depth => depth >= lane.Depth);
+            if (lane.Kind == LaneKind.Group && lane.Muted) mutedGroups.Add(lane.Depth);
+            if (!lane.Muted && mutedGroups.Count == 0) yield return lane;
+        }
     }
 
     /// <summary>
