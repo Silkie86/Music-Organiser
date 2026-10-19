@@ -639,7 +639,7 @@ public sealed partial class FlStudioReader : IProjectReader
                     }
                     break;
                 case EvRootNote when channel is not null && !inMixer && e.Int <= 127: roots[channel.Value] = (int)e.Int; break;
-                case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span) is { } lv:
+                case EvChannelLevels when channel is not null && !inMixer && Levels(e.Payload.Span, flp.Version) is { } lv:
                     pitches[channel.Value] = lv.Pitch;
                     break;
                 case EvPatternNew: pattern = (int)e.Int; break;
