@@ -346,6 +346,77 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void An_old_final_save_doesnt_open_over_newer_saves_and_the_app_asks_about_it()
+    {
+        // Code review U1 (19 Oct): "Night Drive final" from 2023 next to Night Drive_2 … _14 from 2025.
+        ProjectSummary P(string name, DateTime saved) =>
+            new() { Name = name, Path = $@"C:\beats\{name}.flp", Daw = "FL Studio", Folder = @"C:\beats", Modified = saved };
+        var saves = new List<ProjectSummary> { P("Night Drive final", new(2023, 5, 1)), P("Night Drive_70 - Copy", new(2025, 6, 1)) };
+        saves.AddRange(Enumerable.Range(2, 13).Select(n => P($"Night Drive_{n}", new DateTime(2025, 1, 1).AddDays(n))));
+        saves.Add(P("Night Drive_70", new(2025, 6, 1)));
+        var song = Assert.Single(SongVersions.Group(saves));
+        Assert.Equal("Night Drive_70", song.Latest.Name);   // the newest by date; its copy, saved with it, comes after
+
+        var asked = SongVersions.Doubts([song]);
+        Assert.Equal(["Night Drive final", "Night Drive_70 - Copy"], asked.Select(d => d.B.Song).Order());
+        Assert.All(asked, d => Assert.True(d.OneSave));
+        Assert.Contains(asked, d => d.Why == "It was put with Night Drive because its name adds \"final\"");
+
+        // Answered: final is a save of the song (not asked again); the copy is its own song.
+        _db.KeepApart(song.Key, asked.Single(d => d.B.Song == "Night Drive final").B.Key);
+        _db.SplitSave(saves[1].Path);
+        var choices = _db.SongChoices();
+        Assert.Empty(SongVersions.Doubts(SongVersions.Group(saves, choices), choices));
+        Assert.Equal(2, SongVersions.Group(saves, choices).Count);
+
+        // Saves that all carry the same mark have nothing to ask.
+        Assert.Empty(SongVersions.Doubts(SongVersions.Group([P("Dub v2", new(2025, 1, 1)), P("Dub v3", new(2025, 2, 1))])));
+    }
+
+    [Fact]
+    public void Saves_at_a_drives_root_group_with_ones_in_a_folder_of_their_own_name()
+    {
+        ProjectSummary P(string name, string folder) =>
+            new() { Name = name, Path = $@"{folder.TrimEnd('\\')}\{name}.bwproject", Daw = "Bitwig Studio", Folder = folder, Modified = new DateTime(2025, 1, 1) };
+        Assert.Single(SongVersions.Group([P("beat", @"C:\beat"), P("beat_2", @"C:\")]));
+    }
+
+    [Fact]
+    public void A_name_ending_in_a_non_English_digit_is_a_name_not_a_crash()
+    {
+        Assert.Equal(("beat_٢", 1), SongVersions.Split("beat_٢"));
+        Assert.Equal(("曲１", 1), SongVersions.Split("曲１"));
+    }
+
+    [Fact]
+    public void A_new_Bitwig_save_in_a_folder_of_its_own_keeps_the_songs_rating_notes_and_tags()
+    {
+        // Code review U4 (19 Oct): Projects\bored_57\bored_57.bwproject, then Bitwig saves Projects\bored_58\bored_58.bwproject.
+        string Save(string name)
+        {
+            var folder = Path.Combine(_root, "Projects", name);
+            Directory.CreateDirectory(folder);
+            var file = Path.Combine(folder, name + ".bwproject");
+            File.WriteAllBytes(file, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(file, 1, 100, new ProjectInfo { Daw = "Bitwig Studio" }, null, [], []));
+            return file;
+        }
+        Save("bored_57");
+        var first = _db.Projects().Single();
+        first.Rating = 4;
+        first.Notes = "needs a drop";
+        _db.SaveOrganisation(first);
+        _db.SetTags(first.Id, ["techno"]);
+        Save("other_3");   // another song beside it isn't a save of it
+
+        Save("bored_58");
+        var newer = _db.Projects().Single(p => p.Name == "bored_58");
+        Assert.Equal((4, "needs a drop"), (newer.Rating, newer.Notes));
+        Assert.Contains("techno", newer.Tags);
+        Assert.Equal((0, ""), (_db.Projects().Single(p => p.Name == "other_3").Rating, _db.Projects().Single(p => p.Name == "other_3").Notes));
+    }
+
+    [Fact]
     public void You_can_join_songs_split_a_save_off_and_move_a_save_and_Reset_undoes_it()
     {
         var saves = new[] { Song("track nd 1", @"C:\beats", 1), Song("track 2", @"C:\beats", 2), Song("track 3", @"C:\beats", 3),

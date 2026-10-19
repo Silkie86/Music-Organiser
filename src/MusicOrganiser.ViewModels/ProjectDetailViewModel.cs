@@ -328,14 +328,14 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     /// </summary>
     static readonly HashSet<string> OpenedInBitwig = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Converts one save (the newest, or the last of an older run) and opens it in Bitwig.</summary>
-    internal async Task ConvertForBitwig(ProjectSummary save, string name)
+    /// <summary>Converts one save (the newest, or the last of an older run) and opens it in Bitwig; false when it couldn't.</summary>
+    internal async Task<bool> ConvertForBitwig(ProjectSummary save, string name)
     {
         if (!File.Exists(save.Path))
         {
             Message = "This project file isn't where it used to be. Rescan to update the library.";
             Activities.Failed("Can't find the project file", "It has moved or been deleted. Rescan to update the library.");
-            return;
+            return false;
         }
         var template = BitwigTemplateStore.Find(_db, _main.DataFolder);
         if (template is null)
@@ -346,7 +346,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
                 Message = problem ?? "Converting needs a Bitwig template: a project saved in Bitwig with a Sampler track, a VST3 synth " +
                                      "with a Note Transpose before it and a clip of notes, and a VST2 synth (and an audio track with an audio clip on it, " +
                                      "for FL Studio's audio clips). Pick it in Settings or try again.";
-                return;
+                return false;
             }
             _main.Settings.TemplateChanged(template);
         }
@@ -375,16 +375,19 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             card.Finish($"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig",
                         leftOut.Count == 0 ? "Converted. Everything carried over." : $"Converted. {Things(leftOut.Count)} not carried over (see the project panel).",
                         "Show file", () => Shell.Reveal(file));
+            return true;
         }
         catch (InvalidDataException e) when (e.Message.StartsWith("The Bitwig template", StringComparison.Ordinal))
         {
             Message = $"{e.Message}. Pick another template in Settings.";
             card.Fail("Converting for Bitwig failed", "The Bitwig template needs changing (see the project panel).");
+            return false;
         }
         catch (Exception e)
         {
             Message = $"Converting for Bitwig failed: {e.Message}";
             card.Fail("Converting for Bitwig failed", e.Message);
+            return false;
         }
     }
 

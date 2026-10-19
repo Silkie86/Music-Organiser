@@ -56,17 +56,53 @@ static class WindowsDecoders
         bool At(int offset, string tag) => System.Text.Encoding.ASCII.GetString(head, offset, tag.Length) == tag;
         if (At(0, "RIFF") && At(8, "WAVE")) return Pcm(new WaveFileReader(path));
         if (At(0, "FORM") && (At(8, "AIFF") || At(8, "AIFC"))) return new AiffFileReader(path);
+        // OGG, FLAC and M4A/AAC go straight to Media Foundation's reader by contents: NAudio's MP3 reader would find a
+        // fake frame somewhere in them and play noise (code review U2).
+        if (At(0, "OggS") || At(0, "fLaC") || At(4, "ftyp")) return ByMediaFoundation(path);
         // An MP3 that Media Foundation's reader won't take: NAudio finds the frames itself (past any tags or junk) and
-        // Windows' MP3 codec decodes them.
+        // Windows' MP3 codec decodes them. Tried first only when the file starts like an MP3 (a tag, or a frame's sync).
+        var mp3 = At(0, "ID3") || head[0] == 0xFF && (head[1] & 0xE0) == 0xE0;
+        return mp3 ? Mp3(path) ?? ByMediaFoundation(path) : ByMediaFoundation(path) ?? Mp3(path);
+    }
+
+    static WaveStream? Mp3(string path)
+    {
         try { return new Mp3FileReaderBase(path, format => new AcmMp3FrameDecompressor(format)); }
-        catch (Exception e) when (e is InvalidDataException or InvalidOperationException or IOException) { }
-        // Anything else Media Foundation knows (M4A, FLAC, OGG …), found by its contents rather than the name.
-        Stream? stream = null;
-        try { return new StreamMediaFoundationReader(stream = File.OpenRead(path)); }
+        catch (Exception e) when (e is InvalidDataException or InvalidOperationException or IOException or NAudio.MmException) { return null; }
+    }
+
+    /// <summary>Anything Media Foundation knows (M4A, FLAC, OGG …), found by its contents rather than the name.</summary>
+    static WaveStream? ByMediaFoundation(string path)
+    {
+        var stream = File.OpenRead(path);
+        try { return new Owning(new StreamMediaFoundationReader(stream), stream); }
         catch (COMException)
         {
-            stream?.Dispose();
+            stream.Dispose();
             return null;
+        }
+    }
+
+    /// <summary>
+    /// A reader that also closes the file it reads: NAudio's StreamMediaFoundationReader leaves its stream open, which kept
+    /// the file locked until the garbage collector got to it (code review U7).
+    /// </summary>
+    sealed class Owning(WaveStream inner, IDisposable file) : WaveStream
+    {
+        public override WaveFormat WaveFormat => inner.WaveFormat;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override TimeSpan TotalTime => inner.TotalTime;
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+                file.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 
@@ -105,7 +141,7 @@ static class WindowsDecoders
     sealed class MtaOnly(WaveStream inner) : WaveStream
     {
         static bool OnSta => Thread.CurrentThread.GetApartmentState() == ApartmentState.STA;
-        static T Shared<T>(Func<T> f) => OnSta ? Task.Run(f).GetAwaiter().GetResult() : f();
+        static T Shared<T>(Func<T> f) => OnSta ? MtaThread.Run(f) : f();
 
         public override WaveFormat WaveFormat => inner.WaveFormat;
         public override long Length => inner.Length;
@@ -117,6 +153,35 @@ static class WindowsDecoders
         {
             if (disposing) Shared(() => { inner.Dispose(); return 0; });
             base.Dispose(disposing);
+        }
+    }
+
+    /// <summary>
+    /// One thread of its own in the shared apartment, for the window thread's reads: a click used to wait for a thread-pool
+    /// thread, which during a scan or deep listen could take hundreds of milliseconds (code review U8).
+    /// </summary>
+    static class MtaThread
+    {
+        static readonly System.Collections.Concurrent.BlockingCollection<Action> Work = [];
+        static readonly Lazy<Thread> Worker = new(() =>
+        {
+            var t = new Thread(() => { foreach (var job in Work.GetConsumingEnumerable()) job(); })
+                { IsBackground = true, Name = "Media Foundation reads" };
+            t.SetApartmentState(ApartmentState.MTA);
+            t.Start();
+            return t;
+        });
+
+        public static T Run<T>(Func<T> f)
+        {
+            _ = Worker.Value;
+            var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Work.Add(() =>
+            {
+                try { done.SetResult(f()); }
+                catch (Exception e) { done.SetException(e); }
+            });
+            return done.Task.GetAwaiter().GetResult();
         }
     }
 

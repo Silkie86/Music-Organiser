@@ -11,7 +11,11 @@ public sealed record SongGroup(string Song, ProjectSummary Latest, IReadOnlyList
 }
 
 /// <summary>Two songs that may be saves of one: their names are close but not close enough to be sure (see <see cref="SongVersions.Doubts"/>).</summary>
-public sealed record SongDoubt(SongGroup A, SongGroup B, string Why);
+public sealed record SongDoubt(SongGroup A, SongGroup B, string Why)
+{
+    /// <summary>B is one save inside A, put there by a save mark ("final", "copy", "v2", a date): is it a save of A?</summary>
+    public bool OneSave { get; init; }
+}
 
 /// <summary>
 /// One working period on a song: saves less than <see cref="SongVersions.RunGapMonths"/> months apart. <see cref="Last"/> is the save
@@ -35,15 +39,15 @@ public sealed record SaveRun(ProjectSummary Last, DateTime Start, DateTime End, 
 /// </summary>
 public static partial class SongVersions
 {
-    [GeneratedRegex(@"^(.+?)_(\d{1,4})$")]
+    [GeneratedRegex(@"^(.+?)_([0-9]{1,4})$")]
     private static partial Regex Numbered();
 
     /// <summary>"Song 12", "Song-12", "Song - 12" (up to three digits, so "Swu oct 2026" stays a name).</summary>
-    [GeneratedRegex(@"^(.+?)(?:\s*-\s*|\s+)(\d{1,3})$")]
+    [GeneratedRegex(@"^(.+?)(?:\s*-\s*|\s+)([0-9]{1,3})$")]
     private static partial Regex SpaceNumbered();
 
     /// <summary>"track2", "FLP19": a number glued to the last word.</summary>
-    [GeneratedRegex(@"^(.*\p{L})(\d{1,3})$")]
+    [GeneratedRegex(@"^(.*\p{L})([0-9]{1,3})$")]
     private static partial Regex GluedOn();
 
     /// <summary>
@@ -54,7 +58,7 @@ public static partial class SongVersions
         { "untitled", "untitled project", "untitled song", "new project", "new song" };
 
     /// <summary>Fix's copies: "Didums_70 (fixed)", "Didums_70 (fixed 2)".</summary>
-    [GeneratedRegex(@"(\s*\(fixed(\s+\d+)?\))+$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(\s*\(fixed(\s+[0-9]+)?\))+$", RegexOptions.IgnoreCase)]
     private static partial Regex FixedTail();
 
     /// <summary>
@@ -62,22 +66,22 @@ public static partial class SongVersions
     /// to be a space, "_", "-" or "." before the word, so "Remix2" isn't read as a "mix". Not "FLP": in "fleck athens FLP19"
     /// it's part of the song's name (Solomon, 19 Oct), and only the number is the save.
     /// </summary>
-    [GeneratedRegex(@"^(.+?)[\s_.-]+(?:v|ver|version|take|tk|mix|rev|revision|draft|alt)\s*[.#_]?\s*(\d{1,4})(?:\.(\d{1,3}))?$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(.+?)[\s_.-]+(?:v|ver|version|take|tk|mix|rev|revision|draft|alt)\s*[.#_]?\s*([0-9]{1,4})(?:\.([0-9]{1,3}))?$", RegexOptions.IgnoreCase)]
     private static partial Regex MarkedNumber();
 
     /// <summary>The same words glued on with a capital: "SongV2", "SongTake4".</summary>
-    [GeneratedRegex(@"^(.*\p{Ll})(?:V|Ver|VER|Take|TAKE|Mix|MIX|Rev|REV)(\d{1,4})$")]
+    [GeneratedRegex(@"^(.*\p{Ll})(?:V|Ver|VER|Take|TAKE|Mix|MIX|Rev|REV)([0-9]{1,4})$")]
     private static partial Regex GluedNumber();
 
     /// <summary>"Song final", "Song FINAL FINAL", "Song final2", "Song final v3": the last save, ahead of any number.</summary>
-    [GeneratedRegex(@"^(.+?)[\s_.-]+final(?:[\s_.-]*final)*(?:[\s_.-]*v?(\d{1,3}))?$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(.+?)[\s_.-]+final(?:[\s_.-]*final)*(?:[\s_.-]*v?([0-9]{1,3}))?$", RegexOptions.IgnoreCase)]
     private static partial Regex Final();
 
     /// <summary>
     /// Copies and side saves that say nothing about order: Windows' "Song - Copy", "Song - Copy (2)" and "Song (2)",
     /// "Song copy", "Song wip", "Song backup", and a date: "Song 2024-03-01", "Song_20240301".
     /// </summary>
-    [GeneratedRegex(@"^(.+?)(?:\s*-\s*copy(?:\s*\(\d{1,3}\))?|\s+copy(?:\s*\d{1,3})?|\s*\(copy\)|\s*\(\d{1,2}\)|[\s_.-]+(?:wip|backup|bak|bkp)|[\s_.-]+(?:19|20)\d\d[-_.]?(?:0[1-9]|1[0-2])[-_.]?(?:0[1-9]|[12]\d|3[01]))$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(.+?)(?:\s*-\s*copy(?:\s*\([0-9]{1,3}\))?|\s+copy(?:\s*[0-9]{1,3})?|\s*\(copy\)|\s*\([0-9]{1,2}\)|[\s_.-]+(?:wip|backup|bak|bkp)|[\s_.-]+(?:19|20)[0-9][0-9][-_.]?(?:0[1-9]|1[0-2])[-_.]?(?:0[1-9]|[12][0-9]|3[01]))$", RegexOptions.IgnoreCase)]
     private static partial Regex SideSave();
 
     /// <summary>A "final" save's number: above every numbered save, so it's the one the song opens.</summary>
@@ -95,6 +99,39 @@ public static partial class SongVersions
     /// for a new project is never cut down to: "Untitled 3" and "Untitled 4" are songs of their own.
     /// </summary>
     public static (string Song, int Number) Split(string name)
+    {
+        // Every grouping, key and sort asks this many times per save, so each name is worked out once.
+        if (SplitCache.TryGetValue(name, out var known)) return known;
+        if (SplitCache.Count > 200_000) SplitCache.Clear();
+        return SplitCache[name] = SplitUncached(name);
+    }
+
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string, int)> SplitCache = new();
+
+    /// <summary>
+    /// The song a name is a numbered save of by the plain rule alone (a number on the end, see <see cref="Split"/>), leaving
+    /// save marks such as "final", "copy", "v2" or a date in the name.
+    /// </summary>
+    static string PlainSong(string name)
+    {
+        name = FixedTail().Replace(name, "");
+        var m = Numbered().Match(name);
+        if (m.Success && m.Groups[1].Value.Trim().Length > 0) return m.Groups[1].Value.TrimEnd();
+        var tail = SpaceNumbered().Match(name) is { Success: true } spaced ? spaced : GluedOn().Match(name);
+        return tail.Success && IsSong(tail.Groups[1].Value) ? tail.Groups[1].Value.Trim() : name;
+    }
+
+    /// <summary>Whether a save mark ("final", "copy", "wip", "v2", a date) put this save with its song: a guess, so the app asks.</summary>
+    public static bool Marked(string name) => !PlainSong(name).Equals(Split(name).Song, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether a song's saves aren't all one name numbered (a marked save, or songs you joined). Their numbers then don't
+    /// count against each other, so the newest is the one saved last: an old "final" doesn't win over newer saves.
+    /// </summary>
+    static bool Mixed(IEnumerable<string> names) =>
+        names.Select(PlainSong).Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any();
+
+    static (string Song, int Number) SplitUncached(string name)
     {
         name = FixedTail().Replace(name, "");
         int? number = null;
@@ -202,11 +239,12 @@ public static partial class SongVersions
     /// </summary>
     public static string SongFolder(string folder, string name)
     {
+        // Always without a closing separator, so a drive's root reads "C:" whether a save is in it or in a folder of its own.
         var trimmed = folder.TrimEnd('\\', '/');
         var cut = trimmed.LastIndexOfAny(['\\', '/']);
-        if (cut < 0) return folder;
+        if (cut < 0) return trimmed;
         var own = trimmed[(cut + 1)..];
-        return string.Equals(Split(own).Song, Split(name).Song, StringComparison.OrdinalIgnoreCase) ? trimmed[..cut] : folder;
+        return string.Equals(Split(own).Song, Split(name).Song, StringComparison.OrdinalIgnoreCase) ? trimmed[..cut] : trimmed;
     }
 
     /// <summary>
@@ -224,6 +262,7 @@ public static partial class SongVersions
                 var ordered = g.OrderBy(p => p.FileMissing)
                                .ThenByDescending(p => mixed ? 0 : Split(p.Name).Number)
                                .ThenByDescending(p => p.Modified)
+                               .ThenBy(p => Marked(p.Name))   // "Didums_70 - Copy" saved with Didums_70: the original
                                .ThenByDescending(p => Split(p.Name).Number)
                                .ThenByDescending(p => FixedTail().IsMatch(p.Name))   // saved the same second: the fix came after
                                .ToList();
@@ -268,15 +307,27 @@ public static partial class SongVersions
                                            StringComparison.OrdinalIgnoreCase))
                             Add(list[i], list[j], "Same name in different folders");
             }
+        // Saves a mark put with their song ("Night Drive final" with Night Drive_2 … _14): asked once each. A song whose saves
+        // all carry the same mark ("Night Drive v2", "v3") has nothing to ask.
+        foreach (var g in songs.Where(g => g.SaveCount > 1))
+        {
+            var saves = g.Older.Prepend(g.Latest).ToList();
+            var plain = saves.Select(p => PlainSong(p.Name)).ToList();
+            for (var i = 0; i < saves.Count; i++)
+            {
+                var save = saves[i];
+                var own = SongChoices.SplitKey(save.Path);
+                if (!Marked(save.Name) || choices.IsSplit(save.Path) || choices.Apart(g.Key, own) ||
+                    plain.All(p => p.Equals(plain[i], StringComparison.OrdinalIgnoreCase))) continue;
+                var name = FixedTail().Replace(save.Name, "");
+                var mark = name.StartsWith(g.Song, StringComparison.OrdinalIgnoreCase) ? name[g.Song.Length..].Trim(' ', '_', '-', '.') : "";
+                doubts.Add(new(g, new SongGroup(save.Name, save, []) { Key = own },
+                               mark.Length > 0 ? $"It was put with {g.Song} because its name adds \"{mark}\"" : $"It was put with {g.Song} by a save mark in its name")
+                           { OneSave = true });
+            }
+        }
         return doubts.OrderByDescending(d => d.A.Latest.Modified).Take(most).ToList();
     }
-
-    /// <summary>
-    /// Whether a song holds saves of differently named songs (you joined them): their numbers don't count against each
-    /// other ("bossa" saved after "track 2" is newer), so the newest is the one saved last.
-    /// </summary>
-    static bool Mixed(IEnumerable<string> names) =>
-        names.Select(n => Split(n).Song).Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any();
 
     /// <summary>A song's name with only its letters, lower case: "Track nd" is "tracknd".</summary>
     static string Skeleton(string song) => new(song.Where(char.IsLetter).Select(char.ToLowerInvariant).ToArray());

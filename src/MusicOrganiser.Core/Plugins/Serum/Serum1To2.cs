@@ -90,21 +90,32 @@ public static class Serum1To2
     public static string? KeepOriginals(string song, IReadOnlyList<(string Name, byte[] Fxp)> originals, string? userFolder)
     {
         if (originals.Count == 0 || userFolder is null) return null;
-        var folder = Path.Combine(userFolder, "From Serum 1", SafeName(song));
+        // Each sound's file name: a second "Serum" is "Serum (2)", not "Serum 2", which reads like a Serum 2 preset.
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var files = originals.Select(o =>
+        {
+            var file = SafeName(o.Name);
+            for (var n = 2; !used.Add(file); n++) file = $"{SafeName(o.Name)} ({n})";
+            return (File: file + ".fxp", o.Fxp);
+        }).ToList();
         try
         {
+            // Two songs with one file name (two "beat" projects in different folders) mustn't overwrite each other's
+            // sounds: a folder already holding other presets gets the next number, unless it holds exactly these.
+            var root = Path.Combine(userFolder, "From Serum 1");
+            var folder = Path.Combine(root, SafeName(song));
+            for (var n = 2; Directory.Exists(folder) && Directory.EnumerateFiles(folder).Any() && !Holds(folder, files); n++)
+                folder = Path.Combine(root, $"{SafeName(song)} ({n})");
             Directory.CreateDirectory(folder);
-            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (name, fxp) in originals)
-            {
-                var file = SafeName(name);
-                for (var n = 2; !used.Add(file); n++) file = $"{SafeName(name)} {n}";
-                File.WriteAllBytes(Path.Combine(folder, file + ".fxp"), fxp);
-            }
+            foreach (var (file, fxp) in files) File.WriteAllBytes(Path.Combine(folder, file), fxp);
+            return $"Serum's own sound{(originals.Count == 1 ? " is" : "s are")} also saved in Serum 2's browser, under User › From Serum 1 › " +
+                   $"{Path.GetFileName(folder)}: load {(originals.Count == 1 ? "it" : "one")} there for the exact Serum 1 sound.";
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Serum's own sounds couldn't be saved for Serum 2: {e.Message}"; }
-        return $"Serum's own sound{(originals.Count == 1 ? " is" : "s are")} also saved in Serum 2's browser, under User › From Serum 1 › " +
-               $"{Path.GetFileName(folder)}: load {(originals.Count == 1 ? "it" : "one")} there for the exact Serum 1 sound.";
+
+        static bool Holds(string folder, List<(string File, byte[] Fxp)> files) =>
+            Directory.EnumerateFiles(folder).Count() == files.Count &&
+            files.All(f => File.Exists(Path.Combine(folder, f.File)) && File.ReadAllBytes(Path.Combine(folder, f.File)).AsSpan().SequenceEqual(f.Fxp));
     }
 
     static string SafeName(string name)

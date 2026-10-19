@@ -156,7 +156,7 @@ public class ViewModelTests : IDisposable
         Save("Sunrize", 6);
         projects = Main().Projects;
         Assert.Equal(["Sunrise", "Sunrize"], new[] { projects.Doubt!.A.Song, projects.Doubt.B.Song }.Order());
-        projects.DifferentSongsCommand.Execute(null);
+        await projects.DifferentSongsCommand.ExecuteAsync(null);
         Assert.Empty(Main().Projects.Doubts);
 
         // Turned off in Settings, nothing is asked.
@@ -1190,6 +1190,13 @@ public class ViewModelTests : IDisposable
         lab.PlayPassing();
         Assert.Equal(["kick.wav", "snare.wav", "hat.wav"], played);
         Assert.Equal(0, hat.Plays);   // still only a preview
+
+        // With Autoplay off nothing plays, so a held key isn't slowed down.
+        lab.StepMs = 1000;
+        lab.AutoPlay = false;
+        Assert.True(lab.MayStep(held: false));
+        Assert.True(lab.MayStep(held: true));
+        lab.AutoPlay = true;
         lab.StepMs = 600;
         Assert.Equal(600, new MainViewModel(_db, _sounds).Sounds.StepMs);   // kept
     }

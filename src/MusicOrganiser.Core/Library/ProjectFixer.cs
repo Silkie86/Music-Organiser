@@ -167,6 +167,7 @@ public static partial class ProjectFixer
         }
         var swapped = 0;
         IReadOnlyList<string> notes = [];
+        IReadOnlyList<(string Name, byte[] Fxp)> originals = [];
         if (swap)
         {
             serumAudio ??= Serum1To2.XferAudio();
@@ -179,7 +180,7 @@ public static partial class ProjectFixer
             };
             if (result.Swapped == 0) throw new InvalidDataException(result.Notes.FirstOrDefault() ?? "No Serum was found inside the project file.");
             (data, swapped, notes) = (result.Data, result.Swapped, kind == ".flp" ? [.. result.Notes, .. FlAutomationNote(projectPath)] : result.Notes);
-            if (Serum1To2.KeepOriginals(Path.GetFileNameWithoutExtension(projectPath), result.Originals ?? [], serum2User ?? Serum1To2.Serum2UserFolder()) is { } kept) notes = [.. notes, kept];
+            originals = result.Originals ?? [];
         }
         if (cantWrite.Count > 0) notes = [CantWriteNote(cantWrite), .. notes];
 
@@ -195,6 +196,9 @@ public static partial class ProjectFixer
             File.Delete(target);
             throw;
         }
+        // Serum 1's own sounds, saved only once the copy is known to be good: a failed Fix leaves nothing behind.
+        if (Serum1To2.KeepOriginals(Path.GetFileNameWithoutExtension(projectPath), originals, serum2User ?? Serum1To2.Serum2UserFolder()) is { } kept)
+            notes = [.. notes, kept];
         return new FixResult(target, changed, swapped, notes);
     }
 

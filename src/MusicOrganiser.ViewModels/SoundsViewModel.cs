@@ -915,10 +915,12 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     /// <summary>
     /// Whether an arrow key may move the highlight now. A press always may; a key held down (its repeats) waits until
-    /// the sound it's on has played for <see cref="StepMs"/>, so what you see and what you hear stay together.
+    /// the sound it's on has played for <see cref="StepMs"/>, so what you see and what you hear stay together. With
+    /// Autoplay off nothing plays, so a held key runs through the list at the keyboard's own speed.
     /// </summary>
     public bool MayStep(bool held)
     {
+        if (!AutoPlay) return true;
         var now = System.Diagnostics.Stopwatch.GetTimestamp();
         if (held && System.Diagnostics.Stopwatch.GetElapsedTime(_steppedAt, now).TotalMilliseconds < StepMs) return false;
         _steppedAt = now;
