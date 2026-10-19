@@ -1,8 +1,10 @@
 using System.Globalization;
+using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
+using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia;
 
@@ -11,18 +13,54 @@ public sealed class DawBrush : IValueConverter
 {
     static readonly Dictionary<string, Color> Colours = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Bitwig Studio"] = Color.FromRgb(0xFF, 0x8A, 0x4C),
-        ["FL Studio"] = Color.FromRgb(0x9C, 0xD0, 0x6A),
-        ["Studio One"] = Color.FromRgb(0x5A, 0xAE, 0xFF),
+        ["Bitwig Studio"] = Color.FromRgb(0xF2, 0x99, 0x4A),
+        ["FL Studio"] = Color.FromRgb(0x5E, 0xA8, 0xFF),
+        ["Studio One"] = Color.FromRgb(0x4A, 0xCB, 0x8B),
     };
 
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        var c = Colours.TryGetValue(value as string ?? "", out var found) ? found : Color.FromRgb(0x9A, 0x9D, 0xA7);
+        var known = Colours.TryGetValue(value as string ?? "", out var found);
+        var c = known ? found : Color.FromRgb(0x67, 0x6A, 0x74);
+        // "Light": a DAW light's fill, lit in the DAW's colour, hollow when it isn't answering.
+        if (parameter as string == "Light") return known ? new ImmutableSolidColorBrush(c) : Brushes.Transparent;
         if (parameter as string == "Soft") c = Color.FromArgb(0x26, c.R, c.G, c.B);
         return new ImmutableSolidColorBrush(c);
     }
 
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>The short label under a rail icon: "Sound Lab" fits as "Sounds".</summary>
+public sealed class NavLabel : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value as string == "Sound Lab" ? "Sounds" : value;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>Settings docks at the bottom of the rail; every other place stacks from the top.</summary>
+public sealed class NavDock : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is NavItem { Title: "Settings" } ? Dock.Bottom : Dock.Top;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>The DAW chips: "Any" reads "All DAWs".</summary>
+public sealed class DawChipText : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value as string == ProjectsViewModel.Any ? "All DAWs" : value;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+public sealed class NotAny : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value as string != ProjectsViewModel.Any;
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
 
@@ -84,5 +122,73 @@ public sealed class Seconds : IValueConverter
 public sealed class Zero : IValueConverter
 {
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value is 0;
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>A sidebar page's icon: the NavIcon.&lt;title without spaces&gt; geometry in App.axaml.</summary>
+public sealed class NavIcon : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        global::Avalonia.Application.Current?.TryGetResource("NavIcon." + (value as string ?? "").Replace(" ", ""), null, out var icon) == true
+            ? icon
+            : null;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>A percentage as the sweep of a progress ring, in degrees.</summary>
+public sealed class PercentAngle : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is double d ? Math.Clamp(d, 0, 100) * 3.6 : 0.0;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>"#RRGGBB" as a brush, for previews of a theme's colours; an empty string draws nothing.</summary>
+public sealed class HexBrush : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is string { Length: > 0 } hex && Color.TryParse(hex, out var c) ? new SolidColorBrush(c) : Brushes.Transparent;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>An outline only for the "Theme's own" swatch, which has no colour of its own to fill it.</summary>
+public sealed class HexStroke : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value is string { Length: > 0 } ? 0.0 : 1.5;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>A number as even corners.</summary>
+public sealed class Radius : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        new global::Avalonia.CornerRadius(value is double d ? d : 0);
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>A share (0 to 1) as a width: the parameter is the full width, e.g. a liked bar's track.</summary>
+public sealed class Scale : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is double d && double.TryParse(parameter as string, NumberStyles.Float, CultureInfo.InvariantCulture, out var full)
+            ? Math.Clamp(d, 0, 1) * full : 0.0;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
+/// <summary>
+/// A colour per kind of sound, so a page of tiles reads at a glance: drums warm, tonal sounds cool, the rest muted.
+/// Types not listed get a steady colour from their name.
+/// </summary>
+public sealed class TypeBrush : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        new ImmutableSolidColorBrush(Color.FromUInt32(StarColours.Type(value as string)));
+
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }

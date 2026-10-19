@@ -12,4 +12,9 @@ public partial class PluginsView : UserControl
     {
         if (e.IsOnRow()) (DataContext as PluginsViewModel)?.ShowProjectsCommand.Execute(null);
     }
+
+    void OnNeededPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is NeededPlugin n) n.PickCommand.Execute(null);
+    }
 }

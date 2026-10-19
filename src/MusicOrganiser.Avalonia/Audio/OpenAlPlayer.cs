@@ -485,6 +485,10 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
         var al = output.Al;
         lock (_gate)
         {
+            // Another Play may have started between this one's Stop and here (a sweep preview opens on a background
+            // thread while a click plays on the window's): stop it, or its sound and OpenAL source would be orphaned.
+            _generation++;
+            Release();
             _pcm = pcm;
             if (startSeconds > 0) pcm.SeekTo(startSeconds);
             _startSeconds = Math.Max(0, startSeconds);

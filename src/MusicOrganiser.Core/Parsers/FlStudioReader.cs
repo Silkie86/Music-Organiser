@@ -16,7 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
-    public int Version => 3;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist
+    public int Version => 4;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
@@ -32,6 +32,7 @@ public sealed partial class FlStudioReader : IProjectReader
     const int EvPatternNotes = Data + 16;       // 224: 24-byte note records
     const int EvInsertFlags = Data + 28;        // 236: starts each mixer insert (0 is the master)
     const int EvInsertName = Text + 12;         // 204: an insert's name, just before the flags that start it
+    const int EvProjectTime = Data + 29;        // 237: when the project was made and how long it has been open, as two Delphi dates
 
     // Fruity Wrapper (VST host) state: u32 version (8, 10, 12 in FL 25), then records of (u32 id, u64 size, data).
     const int VstKind = 50, VstFourCc = 51, VstClassId = 52;
@@ -263,6 +264,10 @@ public sealed partial class FlStudioReader : IProjectReader
                 case EvMixerSlot or EvInsertFlags: inMixer = true; break;
                 case EvSamplePath: info.Samples.Add(ResolveSamplePath(flp.Str(e), path)); break;
                 case EvPatternNotes: notes += e.Payload.Length / 24; break;
+                case EvProjectTime when e.Payload.Length >= 16:
+                    (info.Created, var spent) = ProjectTime(e.Payload.Span);
+                    if (spent is { } time) info.Details["Time spent"] = time;
+                    break;
                 case EvPluginName or EvChannelNameOld when channel is not null && !inMixer:
                     channelNames.TryAdd(channel.Value, flp.Str(e));
                     break;
@@ -311,8 +316,43 @@ public sealed partial class FlStudioReader : IProjectReader
         info.Details["Channels"] = info.Tracks.Count.ToString();
         info.Details["Patterns"] = patterns.ToString();
         info.Details["Notes"] = notes.ToString();
+        try { NoteUnplayed(ReadSong(flp, path), info); }
+        catch (Exception e) when (e is not OutOfMemoryException) { }   // the rest is still worth listing
         return info.Dedupe();
     }
+
+    /// <summary>
+    /// The samples this save holds but doesn't play (<see cref="ProjectInfo.Unplayed"/>): on a channel with nothing in the
+    /// playlist, or muted (the channel switched off, or every clip of it muted or on a muted playlist track). A sample on
+    /// several channels plays when any of them does.
+    /// </summary>
+    static void NoteUnplayed(FlSong song, ProjectInfo info)
+    {
+        foreach (var bySample in song.Channels.Where(c => c.Sample.Length > 0).GroupBy(c => c.Sample, StringComparer.OrdinalIgnoreCase))
+        {
+            static bool Placed(FlChannel c) => c.Clips.Any(clip => clip.Notes.Count > 0) || c.AudioClips.Count > 0;
+            static bool Plays(FlChannel c) => c.Enabled && (c.Notes.Count > 0 || c.AudioClips.Any(a => !a.Muted && !a.OnMutedTrack));
+            if (bySample.Any(Plays)) continue;
+            info.Unplayed[bySample.Key] = bySample.Any(Placed) ? SampleUse.Muted : SampleUse.NoNotes;
+        }
+    }
+
+    /// <summary>
+    /// Event 237: the day the project was first made (a Delphi date: days since 30 Dec 1899) and how long FL Studio has
+    /// had it open, in days. Saving again, even in a newer FL Studio, keeps the date. Out-of-range dates are left out.
+    /// </summary>
+    public static (DateTime? Created, string? Spent) ProjectTime(ReadOnlySpan<byte> payload)
+    {
+        var made = BitConverter.ToDouble(payload[..8]);
+        var open = BitConverter.ToDouble(payload[8..16]);
+        DateTime? created = double.IsFinite(made) && made > 35_000 && made < 80_000   // 1995 to 2119
+            ? DateTime.SpecifyKind(new DateTime(1899, 12, 30).AddDays(made), DateTimeKind.Local) : null;
+        string? spent = double.IsFinite(open) && open > 0 && open < 3650 ? Duration(TimeSpan.FromDays(open)) : null;
+        return (created, spent);
+    }
+
+    static string Duration(TimeSpan t) =>
+        t.TotalHours >= 1 ? $"{(int)t.TotalHours} h {t.Minutes} min" : $"{Math.Max(1, (int)t.TotalMinutes)} min";
 
     /// <summary>
     /// FL writes paths under its user data folder as %FLStudioUserData%\..., which is the
@@ -929,6 +969,17 @@ public static class Fxp
         return ms.ToArray();
     }
 
+    /// <summary>The plugin's own chunk inside an 'FPCh' .fxp or an 'FBCh' .fxb (as Bitwig saves VST2 settings), or null when it isn't one.</summary>
+    public static byte[]? Chunk(byte[] fxp)
+    {
+        const int ProgramHeader = 60, BankHeader = 160;   // a bank: CcnK, size, magic, version, id, plugin version, count, current, 124 spare
+        if (fxp.Length < ProgramHeader || !fxp.AsSpan(0, 4).SequenceEqual("CcnK"u8)) return null;
+        var header = fxp.AsSpan(8, 4).SequenceEqual("FPCh"u8) ? ProgramHeader : fxp.AsSpan(8, 4).SequenceEqual("FBCh"u8) ? BankHeader : 0;
+        if (header == 0 || fxp.Length < header) return null;
+        var length = BinaryPrimitives.ReadInt32BigEndian(fxp.AsSpan(header - 4));
+        return length >= 0 && length <= fxp.Length - header ? fxp[header..(header + length)] : null;
+    }
+
     /// <summary>
     /// Wraps a VST chunk in an 'FPCh' (opaque chunk) .fxp header. Pass the plugin's
     /// four-character id when known so hosts can match the preset to the plugin.
@@ -1006,7 +1057,30 @@ public static class VstPreset
     /// "VST3", version 1, class id, offset of the chunk list; then the component
     /// state ("Comp") and controller state ("Cont"); then the chunk list.
     /// </summary>
-    public static byte[] Build(ReadOnlySpan<byte> classId, byte[] component, byte[] controller)
+    public static byte[] Build(ReadOnlySpan<byte> classId, byte[] component, byte[] controller) =>
+        Build(ClassIdString(classId), component, controller);
+
+    /// <summary>The component state ("Comp") inside a .vstpreset, or null when it isn't one.</summary>
+    public static byte[]? Component(byte[] preset)
+    {
+        const int HeaderSize = 4 + 4 + 32 + 8;
+        if (preset.Length < HeaderSize || !preset.AsSpan(0, 4).SequenceEqual("VST3"u8)) return null;
+        var list = BinaryPrimitives.ReadInt64LittleEndian(preset.AsSpan(40));
+        if (list < HeaderSize || list + 8 > preset.Length || !preset.AsSpan((int)list, 4).SequenceEqual("List"u8)) return null;
+        var count = BinaryPrimitives.ReadInt32LittleEndian(preset.AsSpan((int)list + 4));
+        for (var i = 0; i < count && list + 8 + 20 * (i + 1) <= preset.Length; i++)
+        {
+            var at = (int)list + 8 + 20 * i;
+            if (!preset.AsSpan(at, 4).SequenceEqual("Comp"u8)) continue;
+            var offset = BinaryPrimitives.ReadInt64LittleEndian(preset.AsSpan(at + 4));
+            var size = BinaryPrimitives.ReadInt64LittleEndian(preset.AsSpan(at + 12));
+            return offset >= HeaderSize && size >= 0 && offset + size <= list ? preset[(int)offset..(int)(offset + size)] : null;
+        }
+        return null;
+    }
+
+    /// <param name="classId">The class id as a .vstpreset writes it (see <see cref="ClassIdString"/>).</param>
+    public static byte[] Build(string classId, byte[] component, byte[] controller)
     {
         using var ms = new MemoryStream();
         var b = new byte[8];
@@ -1021,7 +1095,7 @@ public static class VstPreset
 
         ms.Write("VST3"u8);
         I32(1);
-        ms.Write(Encoding.ASCII.GetBytes(ClassIdString(classId)));
+        ms.Write(Encoding.ASCII.GetBytes(classId));
         I64(listOffset);
         ms.Write(component);
         ms.Write(controller);

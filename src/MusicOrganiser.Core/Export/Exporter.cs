@@ -1,4 +1,5 @@
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 
 namespace MusicOrganiser.Core.Export;
 
@@ -54,25 +55,56 @@ public static class Exporter
     /// saved next to it as "... - not carried over.txt". With <paramref name="stepsUntilNextNote"/>, steps on a
     /// Sampler don't end with their sample (see <see cref="BitwigProject.FromFl"/>).
     /// </summary>
+    /// <param name="upgrade">Swap older versions of the template's VST3 synth for it (see <see cref="BitwigProject.FromFl"/>).</param>
+    /// <param name="saveAs">The name to save it under (see <see cref="BitwigName"/>), or null for the project's own.</param>
+    /// <param name="serum2User">Serum 2's user presets folder, for Serum 1's sounds; the usual one (<see cref="Serum1To2.Serum2UserFolder"/>) unless given.</param>
     public static (string File, IReadOnlyList<string> LeftOut) BitwigFromFl(string project, string exportRoot, byte[] template,
-                                                                            bool stepsUntilNextNote = false)
+                                                                            bool stepsUntilNextNote = false, bool upgrade = false,
+                                                                            string? saveAs = null, string? serum2User = null)
     {
-        var name = TextScan.SafeFileName(Path.GetFileNameWithoutExtension(project));
+        var name = TextScan.SafeFileName(saveAs ?? Path.GetFileNameWithoutExtension(project));
         var (song, taken) = LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(project), project);
-        var result = BitwigProject.FromFl(song, template, stepsUntilNextNote: stepsUntilNextNote);
+        var result = BitwigProject.FromFl(song, template, stepsUntilNextNote: stepsUntilNextNote, upgrade: upgrade);
         var dir = Path.Combine(OutDir(exportRoot, project, "Bitwig"), name);
         Directory.CreateDirectory(dir);
         var file = Path.Combine(dir, name + ".bwproject");
         File.WriteAllBytes(file, result.Bytes);
+        // The swapped synths' sounds as presets for the older version, the newer one's browser opens them too:
+        // the way back if the newer one didn't take them.
+        if (result.Upgraded is { Count: > 0 } upgraded)
+        {
+            var sounds = Path.Combine(dir, BitwigProject.UpgradedFolder);
+            Directory.CreateDirectory(sounds);
+            foreach (var (channel, sound) in upgraded)
+                File.WriteAllBytes(Path.Combine(sounds, $"{TextScan.SafeFileName(channel)} ({TextScan.SafeFileName(sound.Plugin)}){sound.Extension}"), sound.Data);
+        }
+        // Serum 1's sounds also go where Serum 2's browser finds them, as Fix does, named after the FL song.
+        IReadOnlyList<string> notes = result.Notes;
+        if (Serum1To2.KeepOriginals(Path.GetFileNameWithoutExtension(project), result.Serum1 ?? [], serum2User ?? Serum1To2.Serum2UserFolder()) is { } kept)
+            notes = [.. notes, kept];
         var notesFile = Path.Combine(dir, name + " - not carried over.txt");
         var lines = new List<string>();
-        if (result.Notes.Count > 0)
-            lines.AddRange([$"What didn't come across from FL Studio to Bitwig for {name}", "", .. result.Notes.Select(n => "  " + n), ""]);
+        if (notes.Count > 0)
+            lines.AddRange([$"What didn't come across from FL Studio to Bitwig for {name}", "", .. notes.Select(n => "  " + n), ""]);
         if (taken.Count > 0)
             lines.AddRange([TakenHeader, .. taken.Select(t => "  " + t)]);
         if (lines.Count > 0) File.WriteAllLines(notesFile, lines);
         else if (File.Exists(notesFile)) File.Delete(notesFile);
-        return (file, result.Notes);
+        return (file, notes);
+    }
+
+    /// <summary>
+    /// The name an FL Studio project's Bitwig copy is saved under: the project's own, or "Name (2)", "Name (3)" and so
+    /// on while Bitwig may have a copy with that name open (<paramref name="open"/>). Opening a project Bitwig already
+    /// has open only brings that copy forward, so a new convert saved over it would look unchanged.
+    /// </summary>
+    public static string BitwigName(string project, Func<string, bool> open)
+    {
+        var name = TextScan.SafeFileName(Path.GetFileNameWithoutExtension(project));
+        if (!open(name)) return name;
+        for (var n = 2; n < 1000; n++)
+            if ($"{name} ({n})" is var numbered && !open(numbered)) return numbered;
+        return name;
     }
 
     /// <summary>One MIDI file per channel (FL Studio) or track, named after it and what plays it.</summary>

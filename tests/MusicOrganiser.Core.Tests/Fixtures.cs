@@ -416,7 +416,8 @@ public static class Fixtures
     /// An FL Studio 25 project inside "FL Studio/Projects": wrapper state version 12 with a
     /// VST2 (Serum) and a VST3 (Arcade), and a sample under %FLStudioUserData%.
     /// </summary>
-    public static string FlStudio25Project(string dir, bool withNotes = false)
+    /// <param name="serumChunk">Serum's own state (a Serum 1 chunk) in place of three placeholder bytes.</param>
+    public static string FlStudio25Project(string dir, bool withNotes = false, byte[]? serumChunk = null)
     {
         var projects = Path.Combine(dir, "FL Studio", "Projects");
         Directory.CreateDirectory(projects);
@@ -430,7 +431,7 @@ public static class Fixtures
             .Word(64, 1).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Lead")
             .Data(213, WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Xfer\Serum_x64.dll", "Xfer Records",
-                                   FlVst2State([1, 2, 3]), version: 12, kind: 4, fourCc: "XsfX"))
+                                   FlVst2State(serumChunk ?? [1, 2, 3]), version: 12, kind: 4, fourCc: "XsfX"))
             .Word(64, 2).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Keys")
             .Data(213, WrapperBlob("Arcade", @"C:\Program Files\Common Files\VST3\Arcade.vst3", "Output",
@@ -466,6 +467,27 @@ public static class Fixtures
             .Data(218, Envelope()).Data(218, Envelope()).Data(218, Envelope())
             .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384, muted: true)]);
         var path = Path.Combine(dir, "Mutes and steps.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// Three sampler channels: "Snare" playing in pattern 1 (in the playlist), "Kick" with no notes at all, and "Hat"
+    /// playing in pattern 2, whose only clip in the playlist is muted unless <paramref name="hatPlays"/>.
+    /// </summary>
+    public static string FlStudio25Unplayed(string dir, string name, bool hatPlays = false)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 140_000)
+            .Word(65, 1).Text(193, "Snares").Data(224, Note(0, 0, 48, 60, 100))
+            .Word(65, 2).Text(193, "Hats").Data(224, Note(0, 2, 48, 60, 100))
+            .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare").Text(196, @"C:\Samples\Snare 01.wav")
+            .Word(64, 1).Byte(21, 0).Text(201, "").Text(203, "Kick").Text(196, @"C:\Samples\Kick 01.wav")
+            .Word(64, 2).Byte(21, 0).Text(201, "").Text(203, "Hat").Text(196, @"C:\Samples\Hat 01.wav")
+            .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20482, 384, muted: !hatPlays)]);
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, name + ".flp");
         File.WriteAllBytes(path, b.Build());
         return path;
     }

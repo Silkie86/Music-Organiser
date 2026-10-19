@@ -1,21 +1,22 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="using:MusicOrganiser.Avalonia"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.App"
              RequestedThemeVariant="Dark">
     <Application.Resources>
         <!-- Palette: the same dark studio look with one violet accent as the Windows app. -->
-        <Color x:Key="AccentColor">#FF8B7CF6</Color>
-        <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF101114" />
-        <SolidColorBrush x:Key="SidebarBrush" Color="#FF15161A" />
-        <SolidColorBrush x:Key="SurfaceBrush" Color="#FF1A1B20" />
-        <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="#FF212228" />
-        <SolidColorBrush x:Key="StrokeBrush" Color="#FF2A2C33" />
-        <SolidColorBrush x:Key="TextBrush" Color="#FFECEDF0" />
-        <SolidColorBrush x:Key="MutedBrush" Color="#FF9A9DA7" />
-        <SolidColorBrush x:Key="FaintBrush" Color="#FF676A74" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#FF8B7CF6" />
-        <SolidColorBrush x:Key="AccentFaintBrush" Color="#1A8B7CF6" />
+        <Color x:Key="AccentColor">#FF3DDC97</Color>
+        <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF121212" />
+        <SolidColorBrush x:Key="SidebarBrush" Color="#FF171717" />
+        <SolidColorBrush x:Key="SurfaceBrush" Color="#FF1D1D1D" />
+        <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="#FF252525" />
+        <SolidColorBrush x:Key="StrokeBrush" Color="#FF323232" />
+        <SolidColorBrush x:Key="TextBrush" Color="#FFF0F0F0" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#FFA3A3A3" />
+        <SolidColorBrush x:Key="FaintBrush" Color="#FF6E6E6E" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#FF3DDC97" />
+        <SolidColorBrush x:Key="AccentFaintBrush" Color="#1A3DDC97" />
         <SolidColorBrush x:Key="WarningBrush" Color="#FFF2B33D" />
         <SolidColorBrush x:Key="MissingBrush" Color="#FFF0616D" />
         <SolidColorBrush x:Key="MissingSoftBrush" Color="#26F0616D" />
@@ -24,6 +25,21 @@
         <x:Double x:Key="DataGridSortIconMinWidth">0</x:Double>
 
         <local:DawBrush x:Key="DawBrush" />
+        <local:NavLabel x:Key="NavLabel" />
+        <local:NavDock x:Key="NavDock" />
+        <local:DawChipText x:Key="DawChipText" />
+        <local:NotAny x:Key="NotAny" />
+        <local:PercentAngle x:Key="PercentAngle" />
+        <local:Scale x:Key="Scale" />
+        <local:TypeBrush x:Key="TypeBrush" />
+        <local:HexBrush x:Key="HexBrush" />
+        <local:HexStroke x:Key="HexStroke" />
+        <local:Radius x:Key="Radius" />
+        <!-- The font (Solomon's pick): IBM Plex Sans for words and titles, Plex Mono for numbers that should line up, like a
+             hardware display. Space Grotesk and Space Mono are built in too, for the Retro theme. -->
+        <FontFamily x:Key="ContentControlThemeFontFamily">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans</FontFamily>
+        <FontFamily x:Key="NumberFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Mono</FontFamily>
+        <FontFamily x:Key="TitleFont">avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans</FontFamily>
         <local:BoolToStar x:Key="BoolToStar" />
         <local:Stars x:Key="Stars" />
         <local:NonZero x:Key="NonZero" />
@@ -34,14 +50,69 @@
         <local:Zero x:Key="Zero" />
         <SolidColorBrush x:Key="OkBrush" Color="#FF4ACB8B" />
         <SolidColorBrush x:Key="OkSoftBrush" Color="#264ACB8B" />
-        <SolidColorBrush x:Key="HoverBrush" Color="#FF24252C" />
+        <SolidColorBrush x:Key="HoverBrush" Color="#FF2A2A2A" />
+        <SolidColorBrush x:Key="AccentSoftBrush" Color="#333DDC97" />
+        <!-- Text on accent-coloured buttons: white, or dark on a light accent (Settings › Appearance). -->
+        <SolidColorBrush x:Key="OnAccentBrush" Color="#FF06180F" />
+        <!-- Dark text on bright DAW colours and status dots: the same in every theme. -->
+        <SolidColorBrush x:Key="InkBrush" Color="#FF121212" />
+        <SolidColorBrush x:Key="TroubleBorderBrush" Color="#4DF0616D" />
+        <!-- Corners, from Settings › Appearance: round, or square for the hardware-style themes. -->
+        <CornerRadius x:Key="RadiusS">6</CornerRadius>
+        <CornerRadius x:Key="RadiusM">10</CornerRadius>
+        <CornerRadius x:Key="RadiusL">14</CornerRadius>
+        <CornerRadius x:Key="RadiusPill">17</CornerRadius>
+
+        <!-- Tables: no black header bar, soft violet for the selected row and no box around the clicked cell. -->
+        <SolidColorBrush x:Key="DataGridColumnHeaderBackgroundBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="DataGridColumnHeaderForegroundBrush" Color="#FFA3A3A3" />
+        <SolidColorBrush x:Key="DataGridColumnHeaderHoveredBackgroundBrush" Color="#FF2A2A2A" />
+        <SolidColorBrush x:Key="DataGridColumnHeaderPressedBackgroundBrush" Color="#FF323232" />
+        <SolidColorBrush x:Key="DataGridScrollBarsSeparatorBackground" Color="Transparent" />
+        <SolidColorBrush x:Key="DataGridFillerColumnGridLinesBrush" Color="Transparent" />
+        <Color x:Key="DataGridRowHoveredBackgroundColor">#FF1E1E1E</Color>
+        <SolidColorBrush x:Key="DataGridRowSelectedBackgroundBrush" Color="#FF3DDC97" />
+        <SolidColorBrush x:Key="DataGridRowSelectedHoveredBackgroundBrush" Color="#FF3DDC97" />
+        <SolidColorBrush x:Key="DataGridRowSelectedUnfocusedBackgroundBrush" Color="#FF3DDC97" />
+        <SolidColorBrush x:Key="DataGridRowSelectedHoveredUnfocusedBackgroundBrush" Color="#FF3DDC97" />
+        <x:Double x:Key="DataGridRowSelectedBackgroundOpacity">0.16</x:Double>
+        <x:Double x:Key="DataGridRowSelectedHoveredBackgroundOpacity">0.2</x:Double>
+        <x:Double x:Key="DataGridRowSelectedUnfocusedBackgroundOpacity">0.12</x:Double>
+        <x:Double x:Key="DataGridRowSelectedHoveredUnfocusedBackgroundOpacity">0.16</x:Double>
+        <SolidColorBrush x:Key="DataGridCellFocusVisualPrimaryBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="DataGridCellFocusVisualSecondaryBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="DataGridCurrencyVisualPrimaryBrush" Color="Transparent" />
+
+        <!-- Tab headers (Sound Lab, Settings): Fluent's are 24 pt, too loud next to the page title. -->
+        <x:Double x:Key="TabItemHeaderFontSize">16</x:Double>
+
+        <!-- Sidebar icons, drawn as outlines on a 24 × 24 grid. NavIcon picks one by the page's title. -->
+        <StreamGeometry x:Key="NavIcon.Projects">M3,7.5 C3,6.1 4.1,5 5.5,5 L9.5,5 L11.5,7 L18.5,7 C19.9,7 21,8.1 21,9.5 L21,16.5 C21,17.9 19.9,19 18.5,19 L5.5,19 C4.1,19 3,17.9 3,16.5 Z</StreamGeometry>
+        <StreamGeometry x:Key="NavIcon.SoundLab">M4,11 L4,13 M8,8 L8,16 M12,4 L12,20 M16,8.5 L16,15.5 M20,10.5 L20,13.5</StreamGeometry>
+        <StreamGeometry x:Key="NavIcon.Plugins">M9,3 L9,7.5 M15,3 L15,7.5 M6,7.5 L18,7.5 L18,11 C18,14.3 15.3,17 12,17 C8.7,17 6,14.3 6,11 Z M12,17 L12,21</StreamGeometry>
+        <StreamGeometry x:Key="NavIcon.Samples">M9,18 C9,19.7 7.7,21 6,21 C4.3,21 3,19.7 3,18 C3,16.3 4.3,15 6,15 C7.7,15 9,16.3 9,18 Z M9,18 L9,5.5 L20,3.5 L20,16 M20,16 C20,17.7 18.7,19 17,19 C15.3,19 14,17.7 14,16 C14,14.3 15.3,13 17,13 C18.7,13 20,14.3 20,16 Z</StreamGeometry>
+        <StreamGeometry x:Key="NavIcon.Settings">M4,6 L13,6 M17,6 L20,6 M15,4 L15,8 M4,12 L7,12 M11,12 L20,12 M9,10 L9,14 M4,18 L15,18 M19,18 L20,18 M17,16 L17,20</StreamGeometry>
+        <!-- Six dots: "you can drag this row". -->
+        <StreamGeometry x:Key="GripIcon">M0,0 h2 v2 h-2 Z M4,0 h2 v2 h-2 Z M0,4 h2 v2 h-2 Z M4,4 h2 v2 h-2 Z M0,8 h2 v2 h-2 Z M4,8 h2 v2 h-2 Z</StreamGeometry>
+        <StreamGeometry x:Key="RescanIcon">M20,11 A8,8 0 1 0 17.7,16.7 M20,5 L20,11 L14,11</StreamGeometry>
+        <StreamGeometry x:Key="FilterIcon">M4,6 L20,6 M7,12 L17,12 M10,18 L14,18</StreamGeometry>
+        <local:NavIcon x:Key="NavIcon" />
     </Application.Resources>
 
     <Application.Styles>
-        <FluentTheme />
+        <FluentTheme>
+            <!-- Fluent's own blue (or the Windows accent colour) becomes the app's violet: selected items, ticks, main buttons. -->
+            <FluentTheme.Palettes>
+                <ColorPaletteResources x:Key="Dark" Accent="#FF3DDC97" RegionColor="#FF121212" />
+                <ColorPaletteResources x:Key="Light" Accent="#FFD9480F" RegionColor="#FFF4F1EA" />
+            </FluentTheme.Palettes>
+        </FluentTheme>
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+        <StyleInclude Source="/Feedback.axaml" />
+        <StyleInclude Source="/Motion.axaml" />
 
         <Style Selector="TextBlock.pageTitle">
+            <Setter Property="FontFamily" Value="{DynamicResource TitleFont}" />
             <Setter Property="FontSize" Value="26" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -73,12 +144,12 @@
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
             <Setter Property="Padding" Value="16" />
         </Style>
         <!-- A small rounded label: DAW, status, "2 plugins missing". -->
         <Style Selector="Border.pill">
-            <Setter Property="CornerRadius" Value="9" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
             <Setter Property="Padding" Value="8,1,8,2" />
             <Setter Property="HorizontalAlignment" Value="Left" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -92,9 +163,106 @@
         <Style Selector="DataGridColumnHeader">
             <Setter Property="Padding" Value="8,0,0,0" />
         </Style>
+        <!-- Tables -->
+        <Style Selector="DataGrid">
+            <Setter Property="HeadersVisibility" Value="Column" />
+            <Setter Property="RowHeight" Value="34" />
+        </Style>
+        <Style Selector="DataGridColumnHeader">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="MinHeight" Value="34" />
+        </Style>
+
+        <!-- Lists: the same soft violet as the tables for the chosen item, instead of Fluent's solid block. -->
+        <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusS}" />
+        </Style>
+
+        <!-- The "Filters" switch in a page header that shows or hides the filter panel. -->
+        <Style Selector="ToggleButton.filters">
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="ToggleButton.filters:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.filters:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+
+        <!-- The rail: an icon over a short label, a soft violet tile for the page you're on. -->
+        <Style Selector="ListBox.nav ListBoxItem">
+            <Setter Property="DockPanel.Dock" Value="{ReflectionBinding Converter={StaticResource NavDock}}" />
+            <Setter Property="Width" Value="64" />
+            <Setter Property="Height" Value="58" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="10,2" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+        </Style>
+        <!-- Small square buttons on the rail (scan), and the DAW lights above them. -->
+        <Style Selector="Button.railButton">
+            <Setter Property="Width" Value="44" />
+            <Setter Property="Height" Value="44" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
+        <Style Selector="Button.dawLight">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding" Value="6,5" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+        <Style Selector="ListBox.nav ListBoxItem:selected Path.navIcon">
+            <Setter Property="Stroke" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <Style Selector="Path.navIcon">
+            <Setter Property="Width" Value="18" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="StrokeThickness" Value="1.7" />
+            <Setter Property="StrokeLineCap" Value="Round" />
+            <Setter Property="StrokeJoin" Value="Round" />
+            <Setter Property="Stroke" Value="{StaticResource MutedBrush}" />
+        </Style>
+
         <!-- A handle for dragging something out into a DAW, e.g. "Drag kit". -->
         <Style Selector="Border.dragChip">
-            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
             <Setter Property="Padding" Value="12,5,12,6" />
             <Setter Property="Margin" Value="0,0,8,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -107,14 +275,111 @@
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
             <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
         </Style>
+        <!-- The grip on a row that can be dragged into a DAW (presets, MIDI channels): faint until the pointer is on the row. -->
+        <Style Selector="Path.grip">
+            <Setter Property="Data" Value="{StaticResource GripIcon}" />
+            <Setter Property="Fill" Value="{StaticResource MutedBrush}" />
+            <Setter Property="Width" Value="6" />
+            <Setter Property="Height" Value="10" />
+            <Setter Property="Margin" Value="2,0,10,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Opacity" Value="0.25" />
+            <Setter Property="Cursor" Value="SizeAll" />
+            <Setter Property="ToolTip.Tip" Value="Drag into your DAW" />
+        </Style>
+        <Style Selector="ListBoxItem:pointerover Path.grip">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <!-- A long list that scrolls by itself and builds only the rows in view, so a project with thousands of
+             samples opens at once. Give it the space left in a DockPanel or Grid row, not a StackPanel. -->
+        <Style Selector="ItemsControl.longList">
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                        <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}" Margin="{TemplateBinding Padding}" />
+                    </ScrollViewer>
+                </ControlTemplate>
+            </Setter>
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate><VirtualizingStackPanel /></ItemsPanelTemplate>
+            </Setter>
+        </Style>
+        <!-- Chips: small round filters under a search box. A ListBox.chips is a pick-one row; ToggleButton.chip is on/off. -->
+        <Style Selector="ListBox.chips">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem, ToggleButton.chip, Button.chip">
+            <Setter Property="Height" Value="34" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="Margin" Value="0,0,8,6" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusPill}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusPill}" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ListBox.chips ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter, ListBox.chips ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter, ListBox.chips ListBoxItem:selected:focus /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.chip:checked /template/ ContentPresenter#PART_ContentPresenter, ToggleButton.chip:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <!-- The big search box at the top of a page. -->
+        <Style Selector="TextBox.bigSearch">
+            <Setter Property="Height" Value="52" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="6,0,12,0" />
+        </Style>
+        <!-- The song list: rows are the whole card, no column headers, a time heading over each group. -->
+        <Style Selector="DataGrid.songs DataGridRow">
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+        <Style Selector="DataGrid.songs DataGridCell">
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <Style Selector="DataGrid.songs DataGridRowGroupHeader">
+            <Setter Property="IsPropertyNameVisible" Value="False" />
+            <Setter Property="FontFamily" Value="{DynamicResource TitleFont}" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Margin" Value="0,10,0,4" />
+        </Style>
         <!-- Columns can be widened and moved, as in the Windows app (Avalonia's grid allows neither by default). -->
         <Style Selector="DataGrid">
             <Setter Property="CanUserResizeColumns" Value="True" />
             <Setter Property="CanUserReorderColumns" Value="True" />
+            <!-- ...but not squeezed narrower than they were made: the list scrolls sideways instead. -->
+            <Setter Property="views:ColumnFloor.Enabled" Value="True" />
         </Style>
         <!-- Grouped lists show how many are in each group, e.g. "FL Studio 214". -->
         <Style Selector="DataGridRowGroupHeader">
             <Setter Property="IsItemCountVisible" Value="True" />
+        </Style>
+        <Style Selector="Button.accent /template/ ContentPresenter#PART_ContentPresenter, Button.accent:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.accent:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Foreground" Value="{StaticResource OnAccentBrush}" />
         </Style>
         <Style Selector="ComboBox">
             <Setter Property="HorizontalAlignment" Value="Stretch" />

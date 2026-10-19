@@ -193,11 +193,13 @@ public sealed partial class LiveDawsViewModel : ObservableObject
             var path = project.Path;
             await Task.Run(() => _db.Upsert(Scanner.Analyse(path)));
             _main.ScanStatus = $"Re-read {project.Name} after {Short(daw)} saved it · {DateTime.Now:HH:mm}";
-            _main.RefreshAll();
+            _main.Activities.Done($"Updated {project.Name}", $"{Short(daw)} saved it, so the app read it again");
+            await _main.RefreshAllAsync();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             _main.ScanStatus = $"Couldn't re-read {project.Name} after {Short(daw)} saved it: {e.Message}";
+            _main.Activities.Failed($"Couldn't re-read {project.Name}", e.Message);
         }
     }
 

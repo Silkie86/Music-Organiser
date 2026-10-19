@@ -45,6 +45,7 @@
             <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:PresetRow">
                     <DockPanel ToolTip.Tip="{Binding LoadHint}">
+                        <Path DockPanel.Dock="Left" Classes="grip" />
                         <Button DockPanel.Dock="Right" Content="Export" Margin="8,0,0,0" VerticalAlignment="Center"
                                 Command="{Binding ExportCommand}" ToolTip.Tip="Save just this preset" />
                         <StackPanel>

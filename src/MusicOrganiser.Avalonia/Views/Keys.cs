@@ -5,5 +5,7 @@ public static class Keys
 {
     public static string Command { get; } = OperatingSystem.IsMacOS() ? "⌘" : "Ctrl";
 
+    public static string SearchProjects { get; } = $"Search name, plugin, tag, notes, year…  ({Command}+F)";
+
     public static string PickSeveralChannels { get; } = $"Or drag any channel. {Command} or Shift picks several.";
 }

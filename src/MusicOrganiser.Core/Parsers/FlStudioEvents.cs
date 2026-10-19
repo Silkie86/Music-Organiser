@@ -49,11 +49,12 @@ public sealed partial class FlStudioReader
     {
         var flp = Load(raw);
         var events = new List<FlEvent>(flp.Events.Count);
-        for (var i = 0; i < flp.Events.Count; i++)
+        foreach (var e in flp.Events)
         {
-            var e = flp.Events[i];
-            var offset = MemoryMarshal.TryGetArray(e.Payload, out var segment) ? segment.Offset : -1;
-            events.Add(new FlEvent(i, e.Id, offset, e.Payload));
+            // Only what's in the file: the reader adds events of its own (an old FL's step sequencer dots read as notes),
+            // and a writer copying the file between events would go backwards at one (Fix on Solomon's FL 4 "grimey").
+            if (!MemoryMarshal.TryGetArray(e.Payload, out var segment) || segment.Array != raw) continue;
+            events.Add(new FlEvent(events.Count, e.Id, segment.Offset, e.Payload));
         }
         return new FlEventStream(flp.Version, flp.Ppq, flp.Utf16, events);
     }

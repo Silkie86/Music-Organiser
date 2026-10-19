@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #if defined(_WIN32)
 #define VSTCALL __cdecl
@@ -77,7 +78,7 @@ Instance* self(AEffect* e) { return static_cast<Instance*>(e->object); }
 
 void copy(void* ptr, const char* text) { std::strcpy(static_cast<char*>(ptr), text); }
 
-intptr_t VSTCALL dispatch(AEffect* e, int32_t opcode, int32_t index, intptr_t, void* ptr, float)
+intptr_t VSTCALL dispatch(AEffect* e, int32_t opcode, int32_t index, intptr_t value, void* ptr, float)
 {
     Instance* in = self(e);
     switch (opcode)
@@ -88,6 +89,9 @@ intptr_t VSTCALL dispatch(AEffect* e, int32_t opcode, int32_t index, intptr_t, v
         if (index >= 0 && index < 3) std::snprintf(static_cast<char*>(ptr), 8, "%.2f", in->params[index]);
         return 1;
     case 8: if (index >= 0 && index < 3) copy(ptr, kParamNames[index]); return 1;    // effGetParamName
+    case 24:                                                                  // effSetChunk: a bank sets Mix, a program Mode
+        if (ptr && value > 0) in->params[index ? 2 : 1] = float(std::atof(std::string(static_cast<char*>(ptr), size_t(value)).c_str()));
+        return 1;
     case 35: return in->sub ? (in->sub->synth ? 2 : 1) : 10;                  // effGetPlugCategory: synth, effect, shell
     case 45: if (in->sub) { copy(ptr, in->sub->name); return 1; } return 0;   // effGetEffectName
     case 47: copy(ptr, "Fake Vendor"); return 1;                              // effGetVendorString

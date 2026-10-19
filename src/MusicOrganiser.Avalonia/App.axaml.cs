@@ -14,6 +14,9 @@ public partial class App : Application
     SoundLibrary? _soundDb;
     SoundOrganiser? _sounds;
 
+    /// <summary>The app's font: IBM Plex Sans, built into the app (Assets/Fonts).</summary>
+    public const string TextFont = "avares://MusicOrganiser.Avalonia/Assets/Fonts#IBM Plex Sans";
+
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()
@@ -27,7 +30,9 @@ public partial class App : Application
             _soundDb = new SoundLibrary(SoundLibrary.DefaultPath);
             _sounds = new SoundOrganiser(_soundDb);
             var main = new MainViewModel(_db, _sounds);
-            desktop.MainWindow = new MainWindow { DataContext = main };
+            var window = new MainWindow { DataContext = main };
+            desktop.MainWindow = window;
+            Views.Appearance.Follow(main.Settings.Appearance, window.Scaler);
             desktop.Exit += (_, _) =>
             {
                 main.Shutdown();

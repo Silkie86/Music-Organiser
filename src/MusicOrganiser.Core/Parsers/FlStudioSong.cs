@@ -212,9 +212,10 @@ public sealed partial class FlStudioReader
     public const double DefaultVolume = 10000 / LevelsFull;
 
     /// <summary>Reads what's needed to rebuild the song elsewhere: channels, their plugins and notes, and the mixer.</summary>
-    public FlSong ReadSong(string path)
+    public FlSong ReadSong(string path) => ReadSong(Load(path), path);
+
+    FlSong ReadSong(Flp flp, string path)
     {
-        var flp = Load(path);
         var title = "";
         double? tempo = null;
         var order = new List<int>();
