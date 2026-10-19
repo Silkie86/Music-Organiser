@@ -364,6 +364,14 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void Saves_at_a_drives_root_group_with_ones_in_a_folder_of_their_own_name()
+    {
+        ProjectSummary P(string name, string folder) =>
+            new() { Name = name, Path = $@"{folder.TrimEnd('\\')}\{name}.bwproject", Daw = "Bitwig Studio", Folder = folder, Modified = new DateTime(2025, 1, 1) };
+        Assert.Single(SongVersions.Group([P("beat", @"C:\beat"), P("beat_2", @"C:\")]));
+    }
+
+    [Fact]
     public void A_name_ending_in_a_non_English_digit_is_a_name_not_a_crash()
     {
         Assert.Equal(("beat_٢", 1), SongVersions.Split("beat_٢"));

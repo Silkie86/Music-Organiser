@@ -224,8 +224,11 @@ public sealed partial class ProjectDetailViewModel
     async Task KeepFixed()
     {
         if (PendingFix is not { } file) return;
+        var fromNewest = (_pendingFrom ?? Item.Path) == Item.Path;
         ForgetFix();
-        Activities.Done($"Kept {System.IO.Path.GetFileName(file)}", "It's now the newest save of this song, so Open uses it.");
+        Activities.Done($"Kept {System.IO.Path.GetFileName(file)}", fromNewest
+            ? "It's now the newest save of this song, so Open uses it."
+            : "It's listed with the song's saves, next to the older save it was made from.");
         await _main.Projects.ReloadAsync(select: file);
     }
 

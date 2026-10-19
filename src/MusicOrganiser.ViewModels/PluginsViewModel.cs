@@ -191,7 +191,10 @@ public sealed partial class PluginsViewModel : ObservableObject
         }
         else
         {
+            // A fixed copy waiting for Keep isn't a save yet (as on Projects).
+            var pending = _db.PendingFixes();
             _saves = _db.ProjectsWithPlugin(p.Name, p.Own);
+            if (pending.Count > 0) _saves = _saves.Where(x => !pending.Contains(x.Path)).ToList();
             SelectedDetails = string.Join(" · ", new[]
             {
                 p.Format == "Native" && p.Daws.Contains("FL", StringComparison.OrdinalIgnoreCase) ? "FL Studio native" : p.Format,

@@ -239,11 +239,12 @@ public static partial class SongVersions
     /// </summary>
     public static string SongFolder(string folder, string name)
     {
+        // Always without a closing separator, so a drive's root reads "C:" whether a save is in it or in a folder of its own.
         var trimmed = folder.TrimEnd('\\', '/');
         var cut = trimmed.LastIndexOfAny(['\\', '/']);
-        if (cut < 0) return folder;
+        if (cut < 0) return trimmed;
         var own = trimmed[(cut + 1)..];
-        return string.Equals(Split(own).Song, Split(name).Song, StringComparison.OrdinalIgnoreCase) ? trimmed[..cut] : folder;
+        return string.Equals(Split(own).Song, Split(name).Song, StringComparison.OrdinalIgnoreCase) ? trimmed[..cut] : trimmed;
     }
 
     /// <summary>
