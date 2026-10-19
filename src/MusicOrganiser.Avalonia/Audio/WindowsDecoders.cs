@@ -26,7 +26,31 @@ static class WindowsDecoders
     public static bool Handles(string extension) => Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Opens one of those files to play as it goes, rather than decoding it all first.</summary>
-    public static WaveStream Open(string path) => new MediaFoundationReader(path);
+    public static WaveStream Open(string path) => new MtaOnly(new MediaFoundationReader(path));
+
+    /// <summary>
+    /// Media Foundation's reader is made by the first Read, in that thread's COM apartment, and can't be used from
+    /// another: a click plays on the window's thread (single-threaded apartment) and the player reads on from a timer
+    /// (the shared one), which failed with "Unable to cast COM object … IMFSourceReader … E_NOINTERFACE" (Solomon's
+    /// 19 Oct note). So every read and the closing happen on a shared-apartment thread.
+    /// </summary>
+    sealed class MtaOnly(WaveStream inner) : WaveStream
+    {
+        static bool OnSta => Thread.CurrentThread.GetApartmentState() == ApartmentState.STA;
+        static T Shared<T>(Func<T> f) => OnSta ? Task.Run(f).GetAwaiter().GetResult() : f();
+
+        public override WaveFormat WaveFormat => inner.WaveFormat;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override TimeSpan TotalTime => inner.TotalTime;
+        public override int Read(byte[] buffer, int offset, int count) => Shared(() => inner.Read(buffer, offset, count));
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) Shared(() => { inner.Dispose(); return 0; });
+            base.Dispose(disposing);
+        }
+    }
 
     /// <summary>A WAV the Sound Lab can't read: compressed ones are converted to PCM by Windows' codecs.</summary>
     public static AudioData ReadWav(string path, double maxSeconds)
