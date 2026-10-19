@@ -839,7 +839,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (Readers.For(path) is not { } reader) return (null, $"The app can't read the notes of {name} yet.");
         try
         {
-            var target = await UiWork.Run(() => HarmonyTarget.FromChannels(name, reader.ExtractChannels(path)));
+            // Bitwig and Studio One: the parts as they play in the arranger, lined up in time.
+            var target = await UiWork.Run(() => HarmonyTarget.FromChannels(name, PhraseJoiner.ArrangedChannels(path) ?? reader.ExtractChannels(path)));
             return (target, target is null ? $"{name} has too few pitched notes to fit MIDI to." : "");
         }
         catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)

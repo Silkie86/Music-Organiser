@@ -48,6 +48,23 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
+                <!-- The song's parts: fit to, and play with, just the ones picked. -->
+                <DockPanel IsVisible="{Binding HasSongParts}">
+                    <TextBlock DockPanel.Dock="Left" Text="Fit to:" Classes="small" VerticalAlignment="Top" Margin="0,5,8,6" />
+                    <Button DockPanel.Dock="Right" Content="All parts" Padding="8,2" FontSize="12" Margin="6,0,0,6" VerticalAlignment="Top"
+                            Command="{Binding AllSongPartsCommand}" ToolTip.Tip="Fit to every part of the song again" />
+                    <ItemsControl ItemsSource="{Binding SongParts}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:SongPart">
+                                <ToggleButton Classes="chip" FontSize="12" Padding="10,3" Margin="0,0,6,6" Content="{Binding Name}" IsChecked="{Binding IsOn}"
+                                              ToolTip.Tip="{Binding Tip}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </DockPanel>
             </StackPanel>
         </DockPanel>
 
