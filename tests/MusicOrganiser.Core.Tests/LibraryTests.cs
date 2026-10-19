@@ -191,6 +191,33 @@ public class LibraryTests : IDisposable
     [InlineData("Didums_70 (fixed) (fixed)", "Didums", 70)]   // a fixed copy fixed again by an older build
     [InlineData("Proj_5[1]", "Proj_5[1]", 1)]
     [InlineData("Track 2", "Track 2", 1)]   // a number after a space is a save number only for Bitwig
+    // The ways people mark saves by hand count in every DAW.
+    [InlineData("fleck athens FLP19", "fleck athens", 19)]
+    [InlineData("fleck athens flp_15", "fleck athens", 15)]
+    [InlineData("fleckathensFLP19", "fleckathens", 19)]
+    [InlineData("Night Drive v2", "Night Drive", 2)]
+    [InlineData("Night Drive_V3", "Night Drive", 3)]
+    [InlineData("Night Drive v2.1", "Night Drive", 2)]
+    [InlineData("Night DriveV4", "Night Drive", 4)]
+    [InlineData("Night Drive take 4", "Night Drive", 4)]
+    [InlineData("Night Drive - mix 2", "Night Drive", 2)]
+    [InlineData("Night Drive rev7", "Night Drive", 7)]
+    [InlineData("Night Drive final", "Night Drive", 1_000_000)]   // the last save, ahead of any number
+    [InlineData("Night Drive FINAL FINAL", "Night Drive", 1_000_000)]
+    [InlineData("Night Drive final2", "Night Drive", 1_000_002)]
+    [InlineData("Night Drive v2 final v3", "Night Drive", 1_000_003)]
+    [InlineData("Night Drive - Copy", "Night Drive", 1)]
+    [InlineData("Night Drive_12 - Copy (2)", "Night Drive", 12)]
+    [InlineData("Night Drive (2)", "Night Drive", 1)]
+    [InlineData("Night Drive wip", "Night Drive", 1)]
+    [InlineData("Night Drive 2024-03-01", "Night Drive", 1)]
+    [InlineData("Night Drive_20240301", "Night Drive", 1)]
+    [InlineData("Untitled v2", "Untitled v2", 1)]   // stand-ins are songs of their own
+    [InlineData("Track final", "Track final", 1)]
+    [InlineData("Remix2", "Remix2", 1)]   // a word that only ends like a mark stays a name
+    [InlineData("Dev3", "Dev3", 1)]
+    [InlineData("v2", "v2", 1)]
+    [InlineData("Swu oct 2026", "Swu oct 2026", 1)]
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
 
@@ -200,6 +227,8 @@ public class LibraryTests : IDisposable
     [InlineData("Untitled 3", "Untitled 3", 1)]                         // stand-ins are separate songs
     [InlineData("MO Live Test 1", "MO Live Test", 1)]
     [InlineData("bored_57", "bored", 57)]
+    [InlineData("fleck athens FLP19", "fleck athens", 19)]
+    [InlineData("Untitled v4", "Untitled v4", 1)]
     public void Splits_Bitwig_saves_numbered_after_a_space(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name, "Bitwig Studio"));
 
@@ -230,6 +259,19 @@ public class LibraryTests : IDisposable
         Assert.Equal(["bored_58", "bored_57", "bored"], bored.Older.Select(o => o.Name));
         // A folder named otherwise is a song of its own.
         Assert.Contains(groups, g => g.Latest.Name == "bored_2");
+    }
+
+    [Fact]
+    public void Saves_marked_FLP15_to_FLP19_each_in_their_own_Bitwig_folder_are_one_song()
+    {
+        ProjectSummary P(string name, int day) =>
+            new() { Name = name, Path = $@"K:\Bitwig Studio\Projects\{name}\{name}.bwproject", Daw = "Bitwig Studio",
+                    Folder = $@"K:\Bitwig Studio\Projects\{name}", Modified = new DateTime(2025, 3, day) };
+        var groups = SongVersions.Group(Enumerable.Range(15, 5).Select(n => P($"fleck athens FLP{n}", n)).Append(P("fleck athens", 1)));
+        var song = Assert.Single(groups);
+        Assert.Equal("fleck athens", song.Song);
+        Assert.Equal("fleck athens FLP19", song.Latest.Name);
+        Assert.Equal(5, song.Older.Count);
     }
 
     [Fact]
