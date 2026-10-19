@@ -592,9 +592,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         foreach (var c in clips)
         {
             var at = c.RepeatAt(0);
-            var played = c.Notes.Select(n => n with { Key = Math.Clamp(n.Key + c.Shift(0), 0, 127) }).ToList();
+            var played = Inversions.Turn(c.Notes, c.Inversion).Select(n => n with { Key = Math.Clamp(n.Key + c.Shift(0), 0, 127) }).ToList();
             var lane = LaneAt(Harmony.Lane, at, at + c.Loop);
             c.Notes = change(played, c.Loop, lane).Select(n => n with { Key = Math.Clamp(n.Key - c.Shift(0), 0, 127) }).ToList();
+            c.Inversion = 0;
         }
         layer.Render();
     }
@@ -648,13 +649,49 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             from.Changed();
         }
         Reach(clip.End);
+        Refit(to.Layer, clip);
         to.Layer.Render();
         to.Changed();
         SelectedLayer = to;
         SelectedClip = new ClipRow(this, to, clip);
         RefreshGrooveSources();
         Changed();
+        if (clip.Fits.Any(f => f != 0))
+        {
+            static string By(int f) => $"{(f > 0 ? "up" : "down")} {Math.Abs(f)}";
+            var moves = clip.Fits.Count == 1 ? By(clip.Fits[0])
+                : string.Join(", ", clip.Fits.Select((f, i) => (f, i)).Where(x => x.f != 0).Select(x => $"go round {x.i + 1} {By(x.f)}"));
+            Message = $"{clip.Name} moved to fit the chords there: {moves}. Move it by hand to keep it as it is.";
+        }
     }
+
+    /// <summary>
+    /// Shift to fit (Solomon, 2026-10-19: "a clip moved to new chords transposes itself to the best fit"): each go round
+    /// of the clip moved (−6 to +5 semitones) to sit best on the chords the other parts play under it. Left alone when
+    /// it's pinned (changed by hand), written from the chords, drums, or a chord part (chord parts are what the chords
+    /// are heard from). A bassline fits the chord parts only.
+    /// </summary>
+    void Refit(PlaygroundLayer layer, PlaygroundClip clip)
+    {
+        var role = clip.Role == MidiRoles.Other ? layer.Role : clip.Role;
+        if (clip.Pinned || layer.Written.Length > 0 || role is MidiRoles.Chords or MidiRoles.Drums) { if (!clip.Pinned) clip.Fits = []; return; }
+        var leaveOut = role == MidiRoles.Bass ? Section.Layers.Where(l => l.Role != MidiRoles.Chords).ToList() : [layer];
+        var lane = SectionHarmony.Of(Section, _session.Key, _session.Style, leaveOut).Lane;
+        clip.Fits = ClipFit.Repeats(clip, lane, _session.Style);
+    }
+
+    /// <summary>Hands a clip changed by hand back to shift to fit: its octave kept, the rest worked out again.</summary>
+    internal void FitAgain(ClipRow row) =>
+        EditClip(row, c =>
+        {
+            c.Pinned = false;
+            c.Transpose = (int)Math.Round(c.Transpose / 12.0) * 12;
+            c.Inversion = 0;
+            Refit(row.Track.Layer, c);
+        });
+
+    /// <summary>Its chords turned over by hand, up or down: it stays like that until Fit again.</summary>
+    internal void TurnClip(ClipRow row, int steps) => EditClip(row, c => { c.Inversion += steps; c.Pinned = true; });
 
     /// <summary>What a kind of part is called, one of them: Chords, Bassline, Melody, Arp, Drums.</summary>
     static string KindName(string role) => MidiRoles.Plural(role) switch { "Melodies" => "Melody", "Basslines" => "Bassline", "Arps" => "Arp", var p => p };
@@ -691,6 +728,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         EditClip(row, c =>
         {
             c.Notes = notes.Select(n => n with { Key = Math.Clamp(n.Key - c.Shift(0), 0, 127) }).ToList();
+            c.Inversion = 0;   // the notes as shown are already turned
             row.Track.Layer.Written = "";
             row.Track.Layer.GrooveData = "";
         });
@@ -1923,7 +1961,8 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     {
         get
         {
-            var shift = clip.Transpose == 0 ? "" : $" · {(clip.Transpose > 0 ? "+" : "")}{clip.Transpose} by hand";
+            var moved = clip.Pinned ? clip.Shift(0) : clip.Transpose;
+            var shift = moved == 0 ? "" : $" · {(moved > 0 ? "+" : "")}{moved}{(clip.Pinned ? ", set by hand" : " by hand")}";
             var times = clip.Length > clip.Loop ? $", played {clip.Length / (double)clip.Loop:0.#} times" : "";
             return $"{track.Name} · bars {clip.Start / Bar + 1}–{(clip.End + Bar - 1) / Bar} · {Bars(clip.Loop)} round{times}{shift}";
         }
@@ -1935,9 +1974,17 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     long At => clip.RepeatAt(0);
 
     /// <summary>One go round, as it first plays (moved by hand and to fit).</summary>
-    public IReadOnlyList<NoteEvent> Notes => clip.Notes.Select(n => n with { Key = Math.Clamp(n.Key + clip.Shift(0), 0, 127) }).ToList();
+    public IReadOnlyList<NoteEvent> Notes => Inversions.Turn(clip.Notes, clip.Inversion).Select(n => n with { Key = Math.Clamp(n.Key + clip.Shift(0), 0, 127) }).ToList();
     public long Loop => clip.Loop;
     public bool IsChords => clip.Role == MidiRoles.Chords;
+
+    /// <summary>What shift to fit is doing with it, to show beside its tools.</summary>
+    public string FitText => track.IsWritten ? "Written from the chords: follows them"
+        : clip.Role is MidiRoles.Chords or MidiRoles.Drums || track.Role is MidiRoles.Chords or MidiRoles.Drums ? ""
+        : clip.Pinned ? "Set by hand: stays as it is"
+        : clip.Fits.All(f => f == 0) ? "Fits where it is"
+        : "Moved to fit: " + string.Join(" ", clip.Fits.Select(f => f == 0 ? "0" : f > 0 ? $"+{f}" : $"{f}"));
+    public bool CanFitAgain => clip.Pinned && clip.Role != MidiRoles.Drums && track.Role != MidiRoles.Drums;
 
     /// <summary>Every other part playing during that go round, grey behind it on the piano roll.</summary>
     public IReadOnlyList<NoteEvent> Guide
@@ -1974,6 +2021,8 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         OnPropertyChanged(nameof(Notes));
         OnPropertyChanged(nameof(Details));
         OnPropertyChanged(nameof(Loop));
+        OnPropertyChanged(nameof(FitText));
+        OnPropertyChanged(nameof(CanFitAgain));
         GuideChanged();
     }
 
@@ -1989,6 +2038,9 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     [RelayCommand] void OctaveDown() => owner.MoveClip(this, -12);
     [RelayCommand] void Up() => owner.MoveClip(this, 1);
     [RelayCommand] void Down() => owner.MoveClip(this, -1);
+    [RelayCommand] void TurnUp() => owner.TurnClip(this, 1);
+    [RelayCommand] void TurnDown() => owner.TurnClip(this, -1);
+    [RelayCommand] void FitAgain() => owner.FitAgain(this);
     [RelayCommand] void Edited(IReadOnlyList<NoteEvent>? notes) { if (notes is not null) owner.SetClipNotes(this, notes); }
 }
 

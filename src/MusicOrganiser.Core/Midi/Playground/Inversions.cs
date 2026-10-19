@@ -67,6 +67,28 @@ public static class Inversions
                     .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
     }
 
+    /// <summary>
+    /// Every chord turned over <paramref name="steps"/> times: up (its bottom note taken up an octave each time) or down
+    /// (its top note down). A bass note well below the chord stays put; single notes and pairs are left alone.
+    /// </summary>
+    public static List<NoteEvent> Turn(IReadOnlyList<NoteEvent> notes, int steps)
+    {
+        if (steps == 0) return notes.ToList();
+        var moved = new Dictionary<NoteEvent, int>();
+        foreach (var block in Blocks(notes).Where(b => b.Notes.Count >= 3))
+        {
+            var keys = block.Notes.Select(n => n.Key).ToList();
+            for (var i = 0; i < Math.Abs(steps); i++)
+            {
+                if (steps > 0) { keys.Add(keys[0] + 12); keys.RemoveAt(0); }
+                else { keys.Insert(0, keys[^1] - 12); keys.RemoveAt(keys.Count - 1); }
+            }
+            for (var i = 0; i < block.Notes.Count; i++) moved[block.Notes[i]] = keys[i];
+        }
+        return notes.Select(n => moved.TryGetValue(n, out var key) ? n with { Key = Math.Clamp(key, 0, 127) } : n)
+                    .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
+    }
+
     /// <summary>Notes struck together as chords, with a bass note split off when it sits well below the rest.</summary>
     static List<Block> Blocks(IReadOnlyList<NoteEvent> notes)
     {
