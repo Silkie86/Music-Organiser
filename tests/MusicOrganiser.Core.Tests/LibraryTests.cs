@@ -189,11 +189,19 @@ public class LibraryTests : IDisposable
     [InlineData("civil war_5 (fixed)", "civil war", 5)]   // Fix's copy sits with the save it was made from
     [InlineData("Didums (Fixed 2)", "Didums", 1)]
     [InlineData("Didums_70 (fixed) (fixed)", "Didums", 70)]   // a fixed copy fixed again by an older build
-    [InlineData("analog full set nb 36", "analog full set nb", 36)]   // Bitwig saves numbered by hand
-    [InlineData("Swu 10 year oct 2026", "Swu 10 year oct 2026", 1)]   // a year is part of the name
     [InlineData("Proj_5[1]", "Proj_5[1]", 1)]
+    [InlineData("Track 2", "Track 2", 1)]   // a number after a space is a save number only for Bitwig
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
+
+    [Theory]
+    [InlineData("analog full set nb 36", "analog full set nb", 36)]   // numbered by hand
+    [InlineData("Swu 10 year oct 2026", "Swu 10 year oct 2026", 1)]   // a year is part of the name
+    [InlineData("Untitled 3", "Untitled 3", 1)]                         // stand-ins are separate songs
+    [InlineData("MO Live Test 1", "MO Live Test", 1)]
+    [InlineData("bored_57", "bored", 57)]
+    public void Splits_Bitwig_saves_numbered_after_a_space(string name, string song, int number) =>
+        Assert.Equal((song, number), SongVersions.Split(name, "Bitwig Studio"));
 
     [Fact]
     public void GroupsNumberedSavesUnderTheNewest()
@@ -233,8 +241,9 @@ public class LibraryTests : IDisposable
             Name = name, Path = $@"K:\Bitwig Studio\Projects\{name}\{name}.bwproject", Daw = "Bitwig Studio",
             Folder = $@"K:\Bitwig Studio\Projects\{name}", Modified = new DateTime(2026, 10, 2),
         };
-        var groups = SongVersions.Group([.. Enumerable.Range(26, 11).Select(n => P($"analog full set nb {n}")), P("Swu 10 year oct 2026")]);
-        Assert.Equal(2, groups.Count);
+        var groups = SongVersions.Group([.. Enumerable.Range(26, 11).Select(n => P($"analog full set nb {n}")), P("Swu 10 year oct 2026"),
+                                         P("Untitled 1"), P("Untitled 2")]);
+        Assert.Equal(4, groups.Count);
         var song = groups.Single(g => g.Song == "analog full set nb");
         Assert.Equal("analog full set nb 36", song.Latest.Name);
         Assert.Equal(10, song.Older.Count);
