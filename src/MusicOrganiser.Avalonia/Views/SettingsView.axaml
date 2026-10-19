@@ -522,6 +522,43 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
+            <TabItem Header="Shortcuts">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16" DataContext="{Binding Shortcuts}" x:DataType="vm:ShortcutsViewModel">
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" TextWrapping="Wrap"
+                                   Text="The keyboard shortcuts start as Bitwig's. Click a key and press the one you want; press ? on a page to see its keys. Keys without Ctrl don't work while you're typing in a box." />
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,8">
+                                    <Button DockPanel.Dock="Right" Content="Back to Bitwig's" Command="{Binding ResetAllCommand}" IsEnabled="{Binding AnyChanged}"
+                                            ToolTip.Tip="Every key back to the one Bitwig uses" />
+                                    <TextBlock Text="{Binding Message}" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                </DockPanel>
+                                <ItemsControl ItemsSource="{Binding Rows}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ShortcutRow">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Page}" Classes="sectionHeader" IsVisible="{Binding StartsPage}" />
+                                                <DockPanel Margin="0,3">
+                                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                                                        <views:ShortcutBox FontFamily="{DynamicResource NumberFont}" />
+                                                        <Button Content="None" Command="{Binding ClearCommand}" ToolTip.Tip="Take the key off this" />
+                                                        <Button Content="Bitwig's" Command="{Binding ResetCommand}" IsEnabled="{Binding IsChanged}" ToolTip.Tip="{Binding BitwigText}" />
+                                                    </StackPanel>
+                                                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                                        <TextBlock Text="{Binding Name}" TextWrapping="Wrap" />
+                                                        <TextBlock Text="{Binding BitwigText}" FontSize="11.5" Foreground="{StaticResource MutedBrush}" IsVisible="{Binding IsChanged}" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
             <TabItem Header="DAW links">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">

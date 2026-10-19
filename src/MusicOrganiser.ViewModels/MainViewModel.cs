@@ -36,6 +36,8 @@ public sealed partial class MainViewModel : ObservableObject
     public MidiBrowserViewModel Midi { get; }
     /// <summary>The MIDI playground: layer, write and match MIDI parts in sections, then drag them into the DAW.</summary>
     public PlaygroundViewModel Playground { get; }
+    /// <summary>The app's keyboard shortcuts (Settings › Shortcuts).</summary>
+    public ShortcutsViewModel Shortcuts { get; }
     public SettingsViewModel Settings { get; }
 
     /// <summary>Bitwig and FL Studio as they are now, through their links (the sidebar's "In your DAWs").</summary>
@@ -68,6 +70,7 @@ public sealed partial class MainViewModel : ObservableObject
         DataFolder = dataFolder ?? LiveReports.DataFolder;
         SoundLibrary = sounds.Library;
         PluginScanner = pluginScanner ?? new();
+        Shortcuts = new ShortcutsViewModel(db);
         _scanner = new Scanner(db);
         Live = new LiveDawsViewModel(db, this, watch ?? new DawWatch());
         Projects = new ProjectsViewModel(db, this);

@@ -425,6 +425,74 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void Keys_start_as_bitwigs_can_be_changed_and_drive_the_playground()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var keys = main.Shortcuts;
+        const string Pg = ShortcutsViewModel.Playground;
+
+        // Bitwig's keys to start with, however the key is written
+        Assert.Equal("playground.duplicate", keys.Find(Pg, "ctrl+d"));
+        Assert.Equal("playground.octaveUp", keys.Find(Pg, "Alt+Shift+="));
+        Assert.Equal("playground.zoomIn", keys.Find(Pg, "Ctrl++"));
+        Assert.True(ShortcutsViewModel.WorksWhileTyping("Ctrl+Z"));
+        Assert.False(ShortcutsViewModel.WorksWhileTyping("Z"));
+
+        // A key already in use moves over, the other action is left with none, and it says so
+        keys.Set("playground.fitAgain", "Ctrl+D");
+        Assert.Equal("playground.fitAgain", keys.Find(Pg, "Ctrl+D"));
+        Assert.Equal("", keys.KeyOf("playground.duplicate"));
+        Assert.Contains("Duplicate the picked clip", keys.Message);
+        Assert.True(keys.Rows.Single(r => r.Action.Id == "playground.duplicate").IsChanged);
+        // ...and is remembered
+        Assert.Equal("playground.fitAgain", new ShortcutsViewModel(db).Find(Pg, "Ctrl+D"));
+        keys.ResetAll();
+        Assert.Equal("playground.duplicate", keys.Find(Pg, "Ctrl+D"));
+        Assert.False(keys.AnyChanged);
+        Assert.DoesNotContain(keys.For(Pg), r => r.Key.Length == 0);   // the cheat sheet leaves out actions with no key
+
+        // The keys work the playground: duplicate, nudge, transpose, split at the play marker, zoom
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        var bass = Line(Bar, 36, 41);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
+        p.AddFromLibrary(entry, bass, "Bass");
+        var track = p.Layers[1];
+        p.SelectClipCommand.Execute(new ClipPick(track.Layer, track.Clips[0]));
+        var len = track.Clips[0].Length;
+        Assert.True(p.RunShortcut(keys.Find(Pg, "Ctrl+D")!));
+        Assert.Equal([0L, len], track.Clips.Select(c => c.Start).Order());
+        Assert.True(p.RunShortcut(keys.Find(Pg, "Shift+Right")!));
+        Assert.Equal(len + Bar, p.SelectedClip!.Clip.Start);
+        Assert.True(p.RunShortcut(keys.Find(Pg, "Shift+Alt+=")!));
+        Assert.Equal(12, p.SelectedClip!.Clip.Transpose);
+        Assert.True(p.SelectedClip.Clip.Pinned);
+
+        p.SelectClipCommand.Execute(new ClipPick(track.Layer, track.Clips.First(c => c.Start == 0)));
+        p.SetCursorCommand.Execute((long)Bar);
+        Assert.True(p.RunShortcut("playground.split"));
+        var pieces = track.Clips.Where(c => c.End <= len).OrderBy(c => c.Start).ToList();
+        Assert.Equal([(0L, (long)Bar), (Bar, len - Bar)], pieces.Select(c => (c.Start, c.Length)));
+        Assert.Equal([36, 41], track.Notes.Where(n => n.Start < 2L * Bar).Select(n => n.Key));   // still plays as it did
+        p.UndoCommand.Execute(null);
+        Assert.Equal(2, p.Layers[1].Clips.Count);
+
+        Assert.True(p.RunShortcut("playground.zoomIn"));
+        Assert.True(p.ViewLength > 0 && p.ViewLength < p.Length);
+        Assert.True(p.RunShortcut("playground.zoomFit"));
+        Assert.Equal(0, p.ViewLength);
+        Assert.True(p.RunShortcut("playground.help"));
+        Assert.True(p.CheatSheetOpen);
+        p.SelectClipCommand.Execute(null);
+        Assert.False(p.RunShortcut("playground.delete"));   // nothing picked: the key goes on to whatever has it
+    }
+
+    [Fact]
     public async Task Open_in_playground_from_a_song_starts_a_section_with_the_part()
     {
         Ui.Current = new Headless();

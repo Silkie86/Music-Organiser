@@ -42,6 +42,7 @@
         <!-- Header: the idea, saving, undo, and out to the DAW. -->
         <DockPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top">
+                <ToggleButton Content="Keys" IsChecked="{Binding CheatSheetOpen}" ToolTip.Tip="The keyboard shortcuts on this page (or press ?). Change them in Settings › Shortcuts" />
                 <Button Content="Undo" Command="{Binding UndoCommand}" IsEnabled="{Binding CanUndo}" ToolTip.Tip="Take back the last change" />
                 <Button Content="Redo" Command="{Binding RedoCommand}" IsEnabled="{Binding CanRedo}" />
                 <Button Content="Ideas" ToolTip.Tip="Save this idea by name, open one you saved, or start a new one">
@@ -444,5 +445,44 @@
                 </TabControl>
             </Border>
         </Grid>
+        <!-- The ? cheat sheet: this page's keys from Settings › Shortcuts, and what the mouse does. -->
+        <Border Grid.RowSpan="5" IsVisible="{Binding CheatSheetOpen}" Background="#99000000" PointerPressed="OnCheatSheetBackdrop">
+            <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="760" Padding="22,18"
+                    Background="{StaticResource SurfaceBrush}" PointerPressed="OnCheatSheetCard">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                        <Button DockPanel.Dock="Right" Content="Close" Command="{Binding CloseCheatSheetCommand}" />
+                        <StackPanel>
+                            <TextBlock Text="Playground keys" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Bitwig's keys unless you changed them in Settings › Shortcuts. Press ? or Esc to close."
+                                       Classes="small" TextTrimming="None" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </DockPanel>
+                    <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0" Spacing="3">
+                        <TextBlock Text="With the mouse" FontWeight="SemiBold" Margin="0,0,0,2" />
+                        <TextBlock Classes="small" TextTrimming="None" Text="Hold Shift while dragging: no snapping" />
+                        <TextBlock Classes="small" TextTrimming="None" Text="Ctrl + scroll: zoom round the pointer · Shift + scroll or middle-drag: move along" />
+                        <TextBlock Classes="small" TextTrimming="None" Text="Click the bar numbers: play from there · drag them: highlight bars · double-click: show it all" />
+                        <TextBlock Classes="small" TextTrimming="None" Text="Drag a clip's right edge to repeat it, its left edge to trim it, or pull it off the timeline into your DAW" />
+                    </StackPanel>
+                    <ItemsControl ItemsSource="{Binding CheatSheet}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ShortcutRow">
+                                <DockPanel Width="340" Margin="0,2,10,2">
+                                    <Border DockPanel.Dock="Left" Width="104" Margin="0,0,10,0" CornerRadius="4" Padding="6,2"
+                                            Background="{StaticResource StrokeBrush}" HorizontalAlignment="Left">
+                                        <TextBlock Text="{Binding KeyText}" FontFamily="{DynamicResource NumberFont}" FontSize="12" HorizontalAlignment="Center" />
+                                    </Border>
+                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="13" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </DockPanel>
+            </Border>
+        </Border>
     </Grid>
 </UserControl>
