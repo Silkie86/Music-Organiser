@@ -425,6 +425,33 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void Pane_sizes_are_remembered_and_odd_ones_ignored()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F");
+        Assert.Equal(PlaygroundViewModel.DefaultTrackHeight, p.Layers[0].Height);
+        p.TrackHeight = 70;
+        p.ClipPanelHeight = 420;
+        p.SidePanelWidth = 520;
+        p.FoldPianoCommand.Execute(null);
+        Assert.Equal(70, p.Layers[0].Height);
+        Assert.Equal("▸ Show piano roll", p.FoldText);
+
+        var again = new PlaygroundViewModel(db, main);
+        Assert.Equal((70.0, 420.0, 520.0, true), (again.TrackHeight, again.ClipPanelHeight, again.SidePanelWidth, again.PianoFolded));
+        db.SetSetting(PlaygroundViewModel.TrackHeightKey, "5");
+        db.SetSetting(PlaygroundViewModel.SidePanelWidthKey, "lots");
+        var odd = new PlaygroundViewModel(db, main);
+        Assert.Equal((PlaygroundViewModel.DefaultTrackHeight, PlaygroundViewModel.DefaultSidePanelWidth), (odd.TrackHeight, odd.SidePanelWidth));
+    }
+
+    [Fact]
     public void Keys_start_as_bitwigs_can_be_changed_and_drive_the_playground()
     {
         Ui.Current = new Headless();

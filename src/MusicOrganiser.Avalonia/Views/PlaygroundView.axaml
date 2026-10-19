@@ -33,8 +33,22 @@
         <Style Selector="ListBox.tracks > ListBoxItem">
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="0" />
-            <Setter Property="Height" Value="46" />
-            <Setter Property="MinHeight" Value="46" />
+            <Setter Property="MinHeight" Value="0" />
+        </Style>
+        <!-- The dividers: see-through to drag, with a short line in the middle to show where they are. -->
+        <Style Selector="Border.grip">
+            <Setter Property="Background" Value="{StaticResource StrokeBrush}" />
+            <Setter Property="CornerRadius" Value="1" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+        </Style>
+        <Style Selector="Border.trackEdge">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Height" Value="6" />
+            <Setter Property="VerticalAlignment" Value="Bottom" />
+            <Setter Property="Cursor" Value="SizeNorthSouth" />
+        </Style>
+        <Style Selector="Border.trackEdge:pointerover">
+            <Setter Property="Background" Value="{StaticResource StrokeBrush}" />
         </Style>
     </UserControl.Styles>
 
@@ -150,9 +164,9 @@
             <TextBlock Text="Drag across empty bars or the bar numbers to highlight them. Ctrl + scroll zooms, Shift + scroll moves along." Classes="label" Margin="0,0,0,6" IsVisible="{Binding !HasLoop}" />
         </WrapPanel>
 
-        <Grid Grid.Row="4" ColumnDefinitions="*,400" Margin="0,6,0,0">
+        <Grid x:Name="Body" Grid.Row="4" ColumnDefinitions="*,16,400" Margin="0,6,0,0">
             <!-- The timeline: chords heard, energy, tracks of clips, and the piano roll for the clip picked. -->
-            <Grid RowDefinitions="Auto,Auto,Auto">
+            <Grid x:Name="LeftPane" RowDefinitions="Auto,*,Auto,330">
                 <StackPanel Spacing="2" Margin="0,0,0,6">
                     <views:ChordLaneView Height="46" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
                                          ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}" />
@@ -166,7 +180,7 @@
                 </StackPanel>
 
                 <!-- Track names beside their rows, then the clips. -->
-                <ScrollViewer Grid.Row="1" MaxHeight="330" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer Grid.Row="1" MinHeight="80" HorizontalScrollBarVisibility="Disabled">
                     <Grid ColumnDefinitions="210,*">
                         <StackPanel>
                             <Border Height="38" />
@@ -174,7 +188,8 @@
                                      ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:LayerRow">
-                                        <StackPanel Spacing="1" Margin="6,3,8,3">
+                                        <Panel Height="{Binding Height}">
+                                        <StackPanel Spacing="1" Margin="6,3,8,3" VerticalAlignment="Center" ClipToBounds="True">
                                             <DockPanel>
                                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
                                                     <ToggleButton Classes="tiny" Content="M" IsChecked="{Binding Muted, Mode=OneWay}" Command="{Binding MuteCommand}" ToolTip.Tip="Mute" />
@@ -185,6 +200,10 @@
                                             </DockPanel>
                                             <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding Details}" />
                                         </StackPanel>
+                                        <Border Classes="trackEdge" PointerPressed="OnTrackEdgePressed" PointerMoved="OnTrackEdgeMoved"
+                                                PointerReleased="OnTrackEdgeReleased" DoubleTapped="OnTrackEdgeReset"
+                                                ToolTip.Tip="Drag to make the tracks taller or shorter; double-click to put them back" />
+                                        </Panel>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
@@ -198,13 +217,22 @@
                                             ViewStart="{Binding ViewStart}" ViewLength="{Binding ViewLength}" PlayFrom="{Binding Cursor}" CursorCommand="{Binding SetCursorCommand}"
                                             DragSource="{Binding}"
                                             SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
+                                            RowHeight="{Binding TrackHeight}"
                                             ToolTip.Tip="Click a clip to edit it below; drag it to slide it, or onto another track (below the last makes a new one). Drag its right edge to play it round more, its left edge to trim it. Hold Shift to drag off the grid. Drag across empty bars, or along the bar numbers, to highlight them: highlight bars of the clip you picked to get other parts for just those bars. Click a label to pick its bars. Drop suggestions from the right, or .mid files from Explorer, onto a track. Pull a clip or a label right out of the timeline to drag it into your DAW. Click the bar numbers to move where Play starts; Ctrl + scroll zooms, Shift + scroll or the middle button moves along, double-click the bar numbers to see it all. Delete takes the picked clip out." />
                     </Grid>
                 </ScrollViewer>
 
+                <!-- The divider between the timeline and the clip picked. -->
+                <GridSplitter x:Name="ClipDivider" Grid.Row="2" Height="12" Background="Transparent" ResizeDirection="Rows"
+                              DragCompleted="OnClipDividerMoved" DoubleTapped="OnClipDividerReset"
+                              ToolTip.Tip="Drag to give the timeline or the piano roll more room; double-click to put it back" />
+                <Border Grid.Row="2" Classes="grip" Width="48" Height="3" IsVisible="{Binding #ClipDivider.IsVisible}" />
+
                 <!-- The clip picked: its controls and the piano roll, the other parts grey behind. -->
-                <StackPanel Grid.Row="2" Spacing="6" Margin="0,8,0,0" IsVisible="{Binding HasSelectedClip}">
-                    <WrapPanel>
+                <DockPanel Grid.Row="3" IsVisible="{Binding HasSelectedClip}">
+                    <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                        <Button Content="{Binding FoldText}" Classes="tiny" MinWidth="124" Margin="0,0,12,6" Command="{Binding FoldPianoCommand}"
+                                ToolTip.Tip="Fold the piano roll away to give the timeline the room, or bring it back" />
                         <TextBlock Text="{Binding SelectedClip.Details}" Classes="label" FontWeight="SemiBold" Margin="0,0,12,6" />
                         <ComboBox DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" ItemsSource="{x:Static vm:LayerRow.SoundChoices}" SelectedItem="{Binding Sound}"
                                   MinWidth="150" Margin="0,0,10,6" FontSize="12" ToolTip.Tip="The track's sound here (General MIDI)" />
@@ -234,7 +262,7 @@
                         <TextBox DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
                                  Width="160" Margin="0,0,6,6" FontSize="12" ToolTip.Tip="The track's name: its name in your DAW" />
                     </WrapPanel>
-                    <WrapPanel>
+                    <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6" IsVisible="{Binding !PianoFolded}">
                         <TextBlock Text="Note names" Classes="label" Margin="0,0,6,4" />
                         <ListBox Classes="chips" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteLabelChoices}" SelectedItem="{Binding NoteLabelPick}" Margin="0,0,0,4"
                                  ToolTip.Tip="Write each note's name on it and on the keys (C4, F#3), or what it is over the chord heard there (3, ♭7, 9, 13): handy for jazz and gospel tensions">
@@ -243,16 +271,21 @@
                             </ListBox.ItemsPanel>
                         </ListBox>
                     </WrapPanel>
-                    <views:PianoRollEditor Height="230" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}"
+                    <views:PianoRollEditor MinHeight="80" IsVisible="{Binding !PianoFolded}" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}"
                                            NoteLabels="{Binding NoteLabels}" DegreeOf="{Binding SelectedClip.DegreeOf}"
                                            SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
                                            Period="{Binding SelectedClip.Loop}" Length="{Binding SelectedClip.Loop}" Position="{Binding SelectedClip.Position}"
                                            EditedCommand="{Binding SelectedClip.EditedCommand}" ClashTest="{Binding SelectedClip.Clashes}"
                                            ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note (it copies the length and velocity of the last note you clicked), drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Notes snap with the Grid, Relative and Objects switches above; hold Shift to place freely." />
-                </StackPanel>
+                </DockPanel>
             </Grid>
+            <!-- The side panel's edge: drag to make it wider or narrower. -->
+            <GridSplitter Grid.Column="1" Width="16" Background="Transparent" ResizeDirection="Columns"
+                          DragCompleted="OnSideDividerMoved" DoubleTapped="OnSideDividerReset"
+                          ToolTip.Tip="Drag to make the side panel wider or narrower; double-click to put it back" />
+            <Border Grid.Column="1" Classes="grip" Width="3" Height="48" />
             <!-- Getting parts: suggestions, writing from the chords, reharmonising, and songs. -->
-            <Border Grid.Column="1" Classes="card" Margin="16,0,0,0" Padding="12">
+            <Border Grid.Column="2" Classes="card" Padding="12">
                 <TabControl Padding="0,8,0,0" SelectedIndex="{Binding RightTab}">
                     <TabItem Header="Suggest" FontSize="14">
                         <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">

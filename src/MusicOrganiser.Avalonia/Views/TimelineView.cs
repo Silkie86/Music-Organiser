@@ -23,7 +23,11 @@ namespace MusicOrganiser.Avalonia.Views;
 /// </summary>
 public sealed class TimelineView : Control
 {
-    public const double LabelHeight = 20, RulerHeight = 18, Top = LabelHeight + RulerHeight, RowHeight = 46;
+    public const double LabelHeight = 20, RulerHeight = 18, Top = LabelHeight + RulerHeight, DefaultRowHeight = 46;
+
+    /// <summary>How tall each track is (Solomon's design, point 18: dragged by the line under a track's name).</summary>
+    public static readonly StyledProperty<double> RowHeightProperty = AvaloniaProperty.Register<TimelineView, double>(nameof(RowHeight), DefaultRowHeight);
+    public double RowHeight { get => GetValue(RowHeightProperty); set => SetValue(RowHeightProperty, value); }
 
     public static readonly StyledProperty<IReadOnlyList<LayerRow>?> TracksProperty =
         AvaloniaProperty.Register<TimelineView, IReadOnlyList<LayerRow>?>(nameof(Tracks));
@@ -48,9 +52,9 @@ public sealed class TimelineView : Control
 
     static TimelineView()
     {
-        AffectsRender<TimelineView>(TracksProperty, LabelsProperty, LengthProperty, RevisionProperty, PositionProperty, HighlightProperty,
+        AffectsRender<TimelineView>(RowHeightProperty, TracksProperty, LabelsProperty, LengthProperty, RevisionProperty, PositionProperty, HighlightProperty,
                                     SelectedProperty, SelectedLabelProperty, ViewStartProperty, ViewLengthProperty, PlayFromProperty);
-        AffectsMeasure<TimelineView>(TracksProperty, RevisionProperty);
+        AffectsMeasure<TimelineView>(TracksProperty, RevisionProperty, RowHeightProperty);
     }
 
     public IReadOnlyList<LayerRow>? Tracks { get => GetValue(TracksProperty); set => SetValue(TracksProperty, value); }

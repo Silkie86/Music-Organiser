@@ -42,7 +42,7 @@ public sealed class TimelineTests
         return (window, view, done, keys);
     }
 
-    static double RowY(int row) => TimelineView.Top + (row + 0.5) * TimelineView.RowHeight;
+    static double RowY(int row) => TimelineView.Top + (row + 0.5) * TimelineView.DefaultRowHeight;
 
     [AvaloniaFact]
     public void Clicking_a_clip_picks_it()
