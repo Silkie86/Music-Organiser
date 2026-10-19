@@ -17,9 +17,11 @@ public partial class SoundsView : UserControl
         // A click always plays the sound; Autoplay follows the arrow keys. Neither follows every selection
         // change: the grid re-selects rows by itself when you sort or come back to this page.
         SoundGrid.AddHandler(PointerReleasedEvent, OnRowClicked, RoutingStrategies.Bubble, handledEventsToo: true);
+        SoundGrid.AddHandler(PointerPressedEvent, OnPressCounted, RoutingStrategies.Tunnel, handledEventsToo: true);
         // A right-click picks the row under it, so its menu (Play, To Bitwig, Show file) is about that sound.
         SoundGrid.AddHandler(PointerPressedEvent, OnRowRightPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         // Held arrow keys play each sound they pass (after the grid has moved on to it); letting go plays the one you stop on.
+        SoundGrid.AddHandler(KeyDownEvent, OnGridKeyPacing, RoutingStrategies.Tunnel);
         SoundGrid.AddHandler(KeyDownEvent, OnGridKeyMoved, RoutingStrategies.Bubble, handledEventsToo: true);
         SoundGrid.AddHandler(KeyUpEvent, OnGridKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
         // On the way down, before the lists use the keys themselves.
@@ -27,6 +29,7 @@ public partial class SoundsView : UserControl
         TileList.AddHandler(KeyUpEvent, OnTilesKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
         HistoryList.AddHandler(KeyDownEvent, OnHistoryKeyDown, RoutingStrategies.Tunnel);
         HistoryList.AddHandler(PointerReleasedEvent, OnHistoryClicked, RoutingStrategies.Bubble, handledEventsToo: true);
+        HistoryList.AddHandler(PointerPressedEvent, OnPressCounted, RoutingStrategies.Tunnel, handledEventsToo: true);
     }
 
     void OnGridDoubleTapped(object? sender, TappedEventArgs e)
@@ -42,9 +45,18 @@ public partial class SoundsView : UserControl
         e.Handled = true;
     }
 
+    /// <summary>
+    /// The click count of the last press on the list or History: a click on a playing sound stops it, so the second click
+    /// of a double-click is left to the double-click (Audition), which keeps it playing.
+    /// </summary>
+    int _clicks;
+
+    void OnPressCounted(object? sender, PointerPressedEventArgs e) => _clicks = e.ClickCount;
+
     void OnRowClicked(object? sender, PointerReleasedEventArgs e)
     {
         if (DataContext is not SoundsViewModel vm || e.InitialPressMouseButton != MouseButton.Left || e.KeyModifiers != KeyModifiers.None) return;
+        if (_clicks > 1) return;
         if (e.Source is not Visual source || source.FindAncestorOfType<Button>(true) is not null) return;
         if (source.FindAncestorOfType<DataGridRow>(true) is { } row && row.DataContext == vm.Selected) vm.PlayClicked();
     }
@@ -58,13 +70,35 @@ public partial class SoundsView : UserControl
     static bool Moves(KeyEventArgs e) =>
         e.Key is Key.Up or Key.Down or Key.PageUp or Key.PageDown or Key.Home or Key.End && e.KeyModifiers == KeyModifiers.None;
 
+    // The key held down now: its next KeyDowns are repeats. A held key steps no faster than each sound plays.
+    Key? _held;
+
+    bool Held(KeyEventArgs e)
+    {
+        var held = _held == e.Key;
+        _held = e.Key;
+        return held;
+    }
+
+    void OnGridKeyPacing(object? sender, KeyEventArgs e)
+    {
+        if (!Moves(e) || Vm is not { } vm) return;
+        if (!vm.MayStep(Held(e))) e.Handled = true;   // too soon: the grid stays on the sound that's playing
+        else _gridStepped = true;
+    }
+
+    bool _gridStepped;
+
     void OnGridKeyMoved(object? sender, KeyEventArgs e)
     {
-        if (Moves(e)) Vm?.PlayPassing();
+        if (!Moves(e) || !_gridStepped) return;
+        _gridStepped = false;
+        Vm?.PlayPassing();
     }
 
     void OnGridKeyUp(object? sender, KeyEventArgs e)
     {
+        if (e.Key == _held) _held = null;
         if (Moves(e)) Vm?.PlayPicked();
     }
 
@@ -122,7 +156,7 @@ public partial class SoundsView : UserControl
         if (next == int.MinValue) return;
         e.Handled = true;
         next = Math.Clamp(next, 0, shown.Count - 1);
-        if (next == at) return;
+        if (next == at || !vm.MayStep(Held(e))) return;   // held down, it waits until the tile it's on has played
         vm.Selected = shown[next];
         if (vm.RowOf(shown[next]) is { } row) TileList.ScrollIntoView(row);
         vm.PlayPassing();   // held down, each tile it passes plays a little
@@ -130,6 +164,7 @@ public partial class SoundsView : UserControl
 
     void OnTilesKeyUp(object? sender, KeyEventArgs e)
     {
+        if (e.Key == _held) _held = null;
         if (e.KeyModifiers == KeyModifiers.None && e.Key is Key.Left or Key.Right or Key.Up or Key.Down or Key.PageUp or Key.PageDown or Key.Home or Key.End)
             Vm?.PlayPicked();   // the tile you let go on plays
     }
@@ -146,7 +181,7 @@ public partial class SoundsView : UserControl
 
     void OnHistoryClicked(object? sender, PointerReleasedEventArgs e)
     {
-        if (Vm is not { } vm || e.InitialPressMouseButton != MouseButton.Left || e.KeyModifiers != KeyModifiers.None) return;
+        if (Vm is not { } vm || e.InitialPressMouseButton != MouseButton.Left || e.KeyModifiers != KeyModifiers.None || _clicks > 1) return;
         if (e.Source is not Visual source || source.FindAncestorOfType<Button>(true) is not null) return;
         if (source.FindAncestorOfType<ListBoxItem>(true) is { DataContext: HistoryItem h } && h.Sound == vm.Selected) vm.PlayClicked();
     }

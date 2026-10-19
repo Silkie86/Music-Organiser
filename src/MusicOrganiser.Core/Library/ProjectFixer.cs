@@ -139,7 +139,9 @@ public static partial class ProjectFixer
     /// Serum 2 if that's ticked, and checks it reads back. The original file is only read.
     /// </summary>
     /// <param name="serumAudio">Finds Serum's wavetables for the swap; Serum's own folders unless given.</param>
-    public static FixResult Write(string projectPath, IEnumerable<FixLine> use, Func<string, Serum1To2.AudioInfo?>? serumAudio = null)
+    /// <param name="serum2User">Serum 2's user presets folder, where each swapped Serum's own sound is saved; found unless given.</param>
+    public static FixResult Write(string projectPath, IEnumerable<FixLine> use, Func<string, Serum1To2.AudioInfo?>? serumAudio = null,
+                                  string? serum2User = null)
     {
         var lines = use.Where(l => l.CanWrite).ToList();
         var relink = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -177,6 +179,7 @@ public static partial class ProjectFixer
             };
             if (result.Swapped == 0) throw new InvalidDataException(result.Notes.FirstOrDefault() ?? "No Serum was found inside the project file.");
             (data, swapped, notes) = (result.Data, result.Swapped, kind == ".flp" ? [.. result.Notes, .. FlAutomationNote(projectPath)] : result.Notes);
+            if (KeepOriginals(projectPath, result.Originals ?? [], serum2User ?? Serum1To2.Serum2UserFolder()) is { } kept) notes = [.. notes, kept];
         }
         if (cantWrite.Count > 0) notes = [CantWriteNote(cantWrite), .. notes];
 
@@ -193,6 +196,38 @@ public static partial class ProjectFixer
             throw;
         }
         return new FixResult(target, changed, swapped, notes);
+    }
+
+    /// <summary>
+    /// Saves each swapped Serum's own sound as a Serum 1 preset in Serum 2's user folder ("From Serum 1\song"), where
+    /// Serum 2's browser opens it exactly as Serum 1 played it: the way to get the sound back if the translation is off.
+    /// Returns a note saying where, or null when there's nothing to save or nowhere to save it.
+    /// </summary>
+    static string? KeepOriginals(string projectPath, IReadOnlyList<(string Name, byte[] Fxp)> originals, string? userFolder)
+    {
+        if (originals.Count == 0 || userFolder is null) return null;
+        var folder = Path.Combine(userFolder, "From Serum 1", SafeName(Path.GetFileNameWithoutExtension(projectPath)));
+        try
+        {
+            Directory.CreateDirectory(folder);
+            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (name, fxp) in originals)
+            {
+                var file = SafeName(name);
+                for (var n = 2; !used.Add(file); n++) file = $"{SafeName(name)} {n}";
+                File.WriteAllBytes(Path.Combine(folder, file + ".fxp"), fxp);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Serum's own sounds couldn't be saved for Serum 2: {e.Message}"; }
+        return $"Serum's own sound{(originals.Count == 1 ? " is" : "s are")} also saved in Serum 2's browser, under User › From Serum 1 › " +
+               $"{Path.GetFileName(folder)}: load {(originals.Count == 1 ? "it" : "one")} there for the exact Serum 1 sound.";
+    }
+
+    static string SafeName(string name)
+    {
+        var bad = Path.GetInvalidFileNameChars().Concat(['\\', '/', ':', '*', '?', '"', '<', '>', '|']).ToHashSet();
+        var safe = new string(name.Select(c => bad.Contains(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
+        return safe.Length == 0 ? "Serum" : safe;
     }
 
     static string CantWriteNote(IReadOnlyList<string> files) =>

@@ -25,8 +25,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <locale>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -825,6 +827,26 @@ const char* contextName(uint32_t context)
     }
 }
 
+/// A number for the probe's saved state, with a point whatever locale the DAW has set (snprintf writes 0,25 with a decimal comma).
+std::string stateNumber(double v)
+{
+    char buf[40];
+    std::snprintf(buf, sizeof buf, "%.10g", v);
+    for (char* c = buf; *c; c++)
+        if (*c == ',') *c = '.';
+    return buf;
+}
+
+/// Reads a number in the probe's saved state in the C locale, so 0.25 is a quarter whatever locale the DAW has set.
+double readStateNumber(const char* text)
+{
+    std::istringstream in(std::string(text, strnlen(text, 40)));
+    in.imbue(std::locale::classic());
+    double v = 0;
+    in >> v;
+    return v;
+}
+
 bool saveState(const clap_plugin_t* p, const clap_ostream_t* stream, uint32_t context)
 {
     auto s = self(p);
@@ -849,9 +871,8 @@ bool saveState(const clap_plugin_t* p, const clap_ostream_t* stream, uint32_t co
     text += "\",\"params\":{";
     for (int i = 0; i < kParamCount; i++)
     {
-        char buf[64];
-        std::snprintf(buf, sizeof buf, "%s\"%u\":%.10g", i ? "," : "", kParams[i].id, s->values[i].load());
-        text += buf;
+        if (i) text += ',';
+        text += "\"" + std::to_string(kParams[i].id) + "\":" + stateNumber(s->values[i].load());
     }
     text += "}}\n";
 
@@ -906,7 +927,7 @@ bool loadState(const clap_plugin_t* p, const clap_istream_t* stream, uint32_t co
             std::string k = "\"" + std::to_string(kParams[i].id) + "\":";
             auto at = text.find(k);
             if (at == std::string::npos) continue;
-            double v = std::strtod(text.c_str() + at + k.size(), nullptr);
+            double v = readStateNumber(text.c_str() + at + k.size());
             s->values[i] = std::clamp(v, kParams[i].min, kParams[i].max);
             restored++;
         }

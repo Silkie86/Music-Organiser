@@ -57,9 +57,26 @@ public static class FlSetup
             _ => FlLink.NotRunning,
         };
 
-    /// <summary>Whether one of these MIDI inputs is the port for the script.</summary>
-    public static bool HasOurPort(IEnumerable<string> inputs) =>
-        inputs.Any(name => name.Contains(PortName, StringComparison.OrdinalIgnoreCase));
+    /// <summary>Whether one of these MIDI inputs is the port for the script (see <see cref="FindPort"/>).</summary>
+    public static bool HasOurPort(IEnumerable<string> inputs) => FindPort(inputs.ToList(), PortName) >= 0;
+
+    /// <summary>
+    /// Where the port called <paramref name="name"/> is among these MIDI ports (in Windows' order, so the place is the
+    /// number Windows opens it by), or -1: the one called exactly that (whatever the case) if there is one, else the first
+    /// with the name in it, as Windows may add to a port's name. Never the Bitwig link's loopback port (<see
+    /// cref="BitwigLink.LoopbackPort"/>, “Music Organiser Bitwig”), which has Music Organiser in its name too: FL Studio
+    /// must never get what the Bitwig link sends itself, nor the Bitwig link what the app sends FL Studio.
+    /// </summary>
+    public static int FindPort(IReadOnlyList<string> ports, string name)
+    {
+        for (var i = 0; i < ports.Count; i++)
+            if (ports[i].Trim().Equals(name, StringComparison.OrdinalIgnoreCase)) return i;
+        for (var i = 0; i < ports.Count; i++)
+            if (ports[i].Contains(name, StringComparison.OrdinalIgnoreCase) &&
+                !ports[i].Contains(BitwigLink.LoopbackPort, StringComparison.OrdinalIgnoreCase))
+                return i;
+        return -1;
+    }
 
     /// <summary>Whether loopMIDI is installed or running. Null off Windows.</summary>
     public static bool? IsLoopMidiInstalled()

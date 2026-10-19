@@ -25,10 +25,31 @@ public sealed partial class FlStudioReader
                 else if (to.All(c => c <= '\u00ff')) changes[e.Index] = Encoding.Latin1.GetBytes(to + "\0");
                 else if (!cantWrite.Contains(to)) cantWrite.Add(to);
             }
-        return (Rewrite(raw, stream, changes), changes.Count, cantWrite);
+        var data = Rewrite(raw, stream, changes);
+        SameApartFrom(stream, ReadEvents(data), changes);
+        return (data, changes.Count, cantWrite);
 
         string? New(string sample) =>
             relink.TryGetValue(sample, out var to) || relink.TryGetValue(ResolveSamplePath(sample, projectPath), out to) ? to : null;
+    }
+}
+
+public sealed partial class FlStudioReader
+{
+    /// <summary>
+    /// Checks a copy Fix wrote: every event as it was in the original, in the same order, but the ones it meant to change.
+    /// Throws when anything else differs, so a writer bug never reaches FL Studio as a quietly changed project.
+    /// </summary>
+    static void SameApartFrom(FlEventStream original, FlEventStream copy, IReadOnlyDictionary<int, byte[]> changes)
+    {
+        var same = original.Events.Count == copy.Events.Count;
+        for (var i = 0; same && i < original.Events.Count; i++)
+        {
+            var (a, b) = (original.Events[i], copy.Events[i]);
+            same = a.Id == b.Id && (changes.TryGetValue(i, out var to) ? b.Payload.Span.SequenceEqual(to)
+                                                                       : b.Payload.Span.SequenceEqual(a.Payload.Span));
+        }
+        if (!same) throw new InvalidDataException("Fix's copy came out different from the original in more than its sample paths, so it wasn't saved.");
     }
 }
 

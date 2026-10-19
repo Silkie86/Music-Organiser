@@ -142,6 +142,22 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     partial void OnAutoPlayChanged(bool value) => _db.SetSetting(AutoPlayKey, value ? "1" : "0");
 
+    public const string SimilarCountKey = "similar_count", SweepKey = "galaxy_sweep_ms";
+    public static IReadOnlyList<int> SimilarCountChoices { get; } = [6, 12, 24, 48];
+    public static IReadOnlyList<int> SweepChoices { get; } = [60, 90, 150, 250];
+    /// <summary>How many sounds "Sounds like this" shows (Settings › Sounds).</summary>
+    [ObservableProperty] int _similarCount;
+    /// <summary>How long each star plays when the mouse sweeps across the galaxy, in milliseconds (Settings › Sounds).</summary>
+    [ObservableProperty] int _sweepMs;
+
+    partial void OnSimilarCountChanged(int value)
+    {
+        _db.SetSetting(SimilarCountKey, value.ToString());
+        FindSimilar(Selected);
+    }
+
+    partial void OnSweepMsChanged(int value) => _db.SetSetting(SweepKey, value.ToString());
+
     public const string ListenToNewKey = "deep_listen_new";
     /// <summary>
     /// With the sound-understanding model downloaded, CLAP listens to the sounds a scan or the folder watcher finds as
@@ -161,6 +177,9 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Duplicates = new DuplicatesViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
         _listenToNew = db.GetSetting(ListenToNewKey) != "0";
+        _similarCount = int.TryParse(db.GetSetting(SimilarCountKey), out var similar) && similar > 0 ? similar : 12;
+        _sweepMs = int.TryParse(db.GetSetting(SweepKey), out var sweep) && sweep > 0 ? sweep : 90;
+        _stepMs = int.TryParse(db.GetSetting(StepKey), out var step) && step > 0 ? step : 250;
         _viewMode = db.GetSetting(ViewKey) is List or Galaxy ? db.GetSetting(ViewKey)! : Tiles;
         _placedBy = db.GetSetting(GalaxyBasisKey) is { } basis && PlacedByChoices.Contains(basis) ? basis : SoundOrganiser.Both;
         _colourBy = db.GetSetting(GalaxyColourKey) is { } c && ColourChoices.Contains(c) ? c : "Type";
@@ -770,7 +789,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         if (s is null) return;
         try
         {
-            var found = await UiWork.Run(() => Org.Similar(s, 12));
+            var count = SimilarCount;
+            var found = await UiWork.Run(() => Org.Similar(s, count));
             if (version == _similarFor) Similar = found;
         }
         catch (Exception e) { AppLog.Info("Sounds", $"Couldn't find sounds like {s.Name}: {e.Message}"); }
@@ -821,14 +841,19 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     /// <summary>
-    /// A single click on a sound (a row, a tile, a History line): it always plays, Autoplay or not. Clicking it
-    /// again while it plays doesn't restart it. Like Autoplay previews, it doesn't count as a play until you
-    /// double-click it.
+    /// A single click on a sound (a row, a tile, a History line): it plays, Autoplay or not, and clicking it again while
+    /// it plays stops it (Solomon's 19 Oct note). Like Autoplay previews, it doesn't count as a play until you
+    /// double-click it; the views leave a double-click's second click to <see cref="Audition"/>.
     /// </summary>
     public void PlayClicked()
     {
-        _passingNext = null;
-        if (Selected is not { } s || IsPreviewing(s)) return;
+        if (Selected is not { } s) return;
+        if (IsPreviewing(s))
+        {
+            _previews?.Cancel();   // one still opening mustn't start after the click that stopped it
+            StopPlaying();
+            return;
+        }
         StartPreview(s);
     }
 
@@ -838,40 +863,40 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// </summary>
     public void PlayPicked()
     {
-        _passingNext = null;
         if (!AutoPlay || Selected is not { } s || IsPreviewing(s)) return;
         StartPreview(s);
     }
 
     /// <summary>
-    /// An arrow key held down moved onto another sound: with Autoplay on, each sound it passes plays, a short piece
-    /// each (a new one starts at most every <see cref="PassingEveryMs"/> ms, the newest winning), and the sound the key
-    /// is let go on plays in full (<see cref="PlayPicked"/>, from the key coming up).
+    /// An arrow key moved onto another sound: with Autoplay on, it plays at once. Held down, the key moves on no faster
+    /// than <see cref="StepMs"/> (see <see cref="MayStep"/>), so every sound it lands on plays while it's highlighted and
+    /// none is skipped (Solomon's 19 Oct note); the one the key is let go on plays in full (<see cref="PlayPicked"/>).
     /// </summary>
     public void PlayPassing()
     {
         if (!AutoPlay || Selected is not { } s || IsPreviewing(s)) return;
-        if (System.Diagnostics.Stopwatch.GetElapsedTime(_passingStarted).TotalMilliseconds >= PassingEveryMs)
-        {
-            StartPreview(s);
-            return;
-        }
-        _passingNext = s;
-        (_passingTimer ??= Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(PassingEveryMs), PlayNextPassing)).Start();
+        StartPreview(s);
     }
 
-    /// <summary>How often a held arrow key starts the next sound: long enough to hear a little of each.</summary>
-    public const int PassingEveryMs = 150;
+    public const string StepKey = "sound_step_ms";
+    public static IReadOnlyList<int> StepChoices { get; } = [150, 250, 400, 600, 1000];
+    /// <summary>How long each sound plays while a held arrow key steps through them, in milliseconds (Settings › Sounds).</summary>
+    [ObservableProperty] int _stepMs;
 
-    long _passingStarted;
-    Sound? _passingNext;
-    IUiTimer? _passingTimer;
+    partial void OnStepMsChanged(int value) => _db.SetSetting(StepKey, value.ToString());
 
-    void PlayNextPassing()
+    long _steppedAt;
+
+    /// <summary>
+    /// Whether an arrow key may move the highlight now. A press always may; a key held down (its repeats) waits until
+    /// the sound it's on has played for <see cref="StepMs"/>, so what you see and what you hear stay together.
+    /// </summary>
+    public bool MayStep(bool held)
     {
-        _passingTimer?.Stop();
-        if (_passingNext is { } next && next == Selected && !IsPreviewing(next)) StartPreview(next);
-        _passingNext = null;
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (held && System.Diagnostics.Stopwatch.GetElapsedTime(_steppedAt, now).TotalMilliseconds < StepMs) return false;
+        _steppedAt = now;
+        return true;
     }
 
     /// <summary>The sound is playing, or still being opened to play.</summary>
@@ -880,7 +905,6 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>A preview (not a deliberate play): opened off the UI thread, so the arrow keys never wait for the disk.</summary>
     void StartPreview(Sound s)
     {
-        _passingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         _preview = s.Path;
         Previews.Play(s.Path);
         _clock.Start();
@@ -1244,8 +1268,9 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     [ObservableProperty] string _type = "Any type";
     [ObservableProperty] double _adventure = 0.3;
     [ObservableProperty] bool _includeRarelyUsed;
-    /// <summary>How many sounds a shuffle picks.</summary>
-    [ObservableProperty] int _howMany = 60;
+    /// <summary>How many sounds a shuffle picks: the last number picked here or in Settings › Sounds.</summary>
+    [ObservableProperty] int _howMany = int.TryParse(parent.Db.GetSetting(HowManyKey), out var n) && HowManyChoices.Contains(n) ? n : 60;
+    public const string HowManyKey = "rediscover_count";
     public static IReadOnlyList<int> HowManyChoices { get; } = [30, 60, 120, 250];
     [ObservableProperty] IReadOnlyList<Suggestion> _suggestions = [];
     [ObservableProperty] IReadOnlyList<FolderUse> _folders = [];
@@ -1305,7 +1330,11 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     partial void OnTypeChanged(string value) => ShuffleSoon();
     partial void OnAdventureChanged(double value) => ShuffleSoon();
     partial void OnIncludeRarelyUsedChanged(bool value) => ShuffleSoon();
-    partial void OnHowManyChanged(int value) => ShuffleSoon();
+    partial void OnHowManyChanged(int value)
+    {
+        parent.Db.SetSetting(HowManyKey, value.ToString());
+        ShuffleSoon();
+    }
 
     async void ShuffleSoon()
     {

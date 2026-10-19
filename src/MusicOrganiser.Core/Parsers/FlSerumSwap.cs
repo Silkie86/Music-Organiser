@@ -4,8 +4,11 @@ using MusicOrganiser.Core.Plugins.Serum;
 
 namespace MusicOrganiser.Core.Parsers;
 
-/// <summary>What a Serum swap did: the new file, how many Serums it swapped, and notes for the person.</summary>
-public sealed record SerumSwap(byte[] Data, int Swapped, IReadOnlyList<string> Notes);
+/// <summary>
+/// What a Serum swap did: the new file, how many Serums it swapped, and notes for the person; and each swapped
+/// Serum's own sound as a Serum 1 preset, by the channel or track it was on, which Serum 2 opens exactly.
+/// </summary>
+public sealed record SerumSwap(byte[] Data, int Swapped, IReadOnlyList<string> Notes, IReadOnlyList<(string Name, byte[] Fxp)>? Originals = null);
 
 public sealed partial class FlStudioReader
 {
@@ -27,6 +30,7 @@ public sealed partial class FlStudioReader
         var changes = new Dictionary<int, byte[]>();
         var notes = new List<string>();
         var swapped = 0;
+        var originals = new List<(string, byte[])>();
         FlEvent? name = null;
         foreach (var e in stream.Events)
         {
@@ -47,6 +51,7 @@ public sealed partial class FlStudioReader
                 continue;
             }
             var result = Serum1To2.Translate(serum1, audio);
+            originals.Add((channel, serum1.ToFxp(channel)));
             changes[e.Index] = Serum2Wrapper(payload.Span, records, result.State.Write(), serum2Path);
             if (name is { } plugin && channel == "Serum") changes[plugin.Index] = TextPayload(stream, "Serum 2");
             swapped++;
@@ -54,7 +59,7 @@ public sealed partial class FlStudioReader
                 ? $"{channel}: Serum swapped for Serum 2, with its sound translated."
                 : $"{channel}: Serum swapped for Serum 2, with its sound translated (only roughly: {Serum1To2.Describe(result.Rough)}).");
         }
-        return new SerumSwap(swapped > 0 ? Rewrite(raw, stream, changes) : raw, swapped, notes);
+        return new SerumSwap(swapped > 0 ? Rewrite(raw, stream, changes) : raw, swapped, notes, originals);
     }
 
     /// <summary>

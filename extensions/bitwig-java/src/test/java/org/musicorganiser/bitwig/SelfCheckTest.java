@@ -32,7 +32,8 @@ class SelfCheckTest {
     static final List<String> CHECKS = List.of(
         "API version", "application", "project", "transport", "cursor track", "cursor device", "drum pads", "track bank",
         "Sampler and Note Transpose pitch", "track IDs", "popup browser", "settings", "remote controls", "last clicked parameter",
-        "parameter steps, origins and automation", "master recorder", "remote connection", "actions", "reports folder");
+        "parameter steps, origins and automation", "master recorder", "arranger", "files as tracks", "recording into the arranger", "command routes", "remote connection", "actions",
+        "reports folder");
 
     @TempDir
     Path reports;
@@ -64,8 +65,11 @@ class SelfCheckTest {
         assertEquals("The app may make changes.", detail(result, "settings"));
         assertEquals("Waiting for the app on port 19791, with 1 connected now.", detail(result, "remote connection"));
         assertEquals("2 actions.", detail(result, "actions"));
+        assertEquals("Bitwig shows its ARRANGE layout, with the arranger timeline shown and the Arrange layout's clip launcher shown; "
+                     + "no clip is selected in the arranger, and the play start is at beat 0.",
+                     detail(result, "arranger"));
 
-        assertJson(obj("why", "asked", "ok", true, "extension", "3.5", "link", 3, "product", "Bitwig Studio", "bitwig", "6.1.2", "api", 25,
+        assertJson(obj("why", "asked", "ok", true, "extension", MusicOrganiserExtensionDefinition.VERSION, "link", 3, "product", "Bitwig Studio", "bitwig", "6.1.2", "api", 25,
                        "apiUsed", 23, "java", System.getProperty("java.version"), "platform", "WINDOWS", "changes", true, "port", 19791,
                        "connections", 1, "folder", reports.toString()),
                    pick(result, "why", "ok", "extension", "link", "product", "bitwig", "api", "apiUsed", "java", "platform", "changes", "port",
@@ -135,7 +139,10 @@ class SelfCheckTest {
         Map<String, Object> result = map(app.ask(obj("id", 4, "cmd", "selftest")).get("result"));
         List<Object> failed = listAt(result, "checks").stream().filter(c -> !(Boolean) at(c, "ok")).map(c -> at(c, "name"))
                                                       .collect(Collectors.toList());
-        assertEquals(List.of("track bank", "Sampler and Note Transpose pitch", "track IDs"), failed);
+        // Recording into the arranger (extension 3.9) needs the tracks too.
+        assertEquals(List.of("track bank", "Sampler and Note Transpose pitch", "track IDs", "recording into the arranger"), failed);
+        assertEquals("Couldn't set it up: org.musicorganiser.bitwig.LinkError: The track bank wasn't made, so there's no track to record.",
+                     detail(result, "recording into the arranger"));
     }
 
     @Test
