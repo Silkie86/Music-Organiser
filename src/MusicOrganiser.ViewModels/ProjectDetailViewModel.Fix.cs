@@ -204,8 +204,9 @@ public sealed partial class ProjectDetailViewModel
 
     void FixOpened(string file)
     {
-        PendingFixOpened = true;
+        // Saved first: a panel made for this song from now on (leaving it and coming back) reads it from there.
         if (_pendingFrom is { } from) _db.SetSetting(FixOpenedKey(from), file);
+        PendingFixOpened = true;
     }
 
     /// <summary>It loaded fine: keep the copy, stop asking, and list it as the song's newest save.</summary>
