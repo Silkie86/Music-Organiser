@@ -1789,7 +1789,7 @@ public class ViewModelTests : IDisposable
         Assert.Contains("Lead", quick.Layers[1].Name);
         var keys = quick.Layers[0].Layer.Notes;
         Assert.Contains(keys, n => n.Start >= quick.Length / 2);
-        Assert.Single(main.Playground.Sections);   // the Playground's own idea is left alone
+        Assert.True(main.Playground.IsEmpty);   // the Playground's own idea is left alone
 
         // The Playground's settings work on it: longer, and heard as classical.
         quick.Bars = 12;

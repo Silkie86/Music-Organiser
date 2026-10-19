@@ -47,10 +47,7 @@ public sealed class SectionHarmony
         }
         else
         {
-            // Chords and bass say the harmony best; a melody alone is used when that's all there is.
-            var harmony = layers.Where(l => l.Role is MidiRoles.Chords or MidiRoles.Bass).ToList();
-            var source = harmony.Count > 0 && harmony.Any(l => l.Role == MidiRoles.Chords) ? harmony.SelectMany(l => l.Notes).ToList() : notes;
-            lane = ChordLane.Detect(source.Where(n => n.Start < length).ToList(), length);
+            lane = ChordLane.Detect(HarmonySource(layers, notes).Where(n => n.Start < length).ToList(), length);
             typed = false;
         }
 
@@ -76,9 +73,29 @@ public sealed class SectionHarmony
         return new SectionHarmony
         {
             Notes = notes, Lane = lane, Length = length, Key = key, KeyTyped = keyTyped, ChordsTyped = typed, Style = style,
-            Songs = section.Layers.Where(l => l.SourcePath.Length > 0).Select(l => MidiEntry.SongOf(l.SourcePath)).Distinct().ToList(),
-            Hashes = section.Layers.Where(l => l.SourceHash.Length > 0).Select(l => l.SourceHash).ToHashSet(),
+            Songs = section.Layers.Select(l => l.SourcePath).Concat(section.Layers.SelectMany(l => l.Clips).Select(c => c.SourcePath))
+                               .Where(p => p.Length > 0).Select(MidiEntry.SongOf).Distinct().ToList(),
+            Hashes = section.Layers.Select(l => l.SourceHash).Concat(section.Layers.SelectMany(l => l.Clips).Select(c => c.SourceHash))
+                                .Where(h => h.Length > 0).ToHashSet(),
         };
+    }
+
+    /// <summary>
+    /// The notes the chords are heard from (Solomon, 2026-10-19: "only chord and bass clips decide the harmony; where no
+    /// chord or bass clip plays, everything playing there counts"). Under a chord clip, the chord and bass clips there;
+    /// everywhere else, every part that plays. Bass alone doesn't say enough, so it only counts alongside chords.
+    /// </summary>
+    static List<NoteEvent> HarmonySource(IReadOnlyList<PlaygroundLayer> layers, IReadOnlyList<NoteEvent> all)
+    {
+        // Each part's clips with what they play as; a part with no clips counts as one clip the whole length.
+        var pieces = layers.SelectMany(l => l.Clips.Count == 0
+            ? [(Role: l.Role, Start: 0L, End: long.MaxValue, Notes: (IReadOnlyList<NoteEvent>)l.Notes)]
+            : l.Clips.Select(c => (Role: c.Role == MidiRoles.Other ? l.Role : c.Role, c.Start, c.End, Notes: (IReadOnlyList<NoteEvent>)c.Render()))).ToList();
+        var chordSpans = pieces.Where(p => p.Role == MidiRoles.Chords && p.Notes.Count > 0).Select(p => (p.Start, p.End)).ToList();
+        if (chordSpans.Count == 0) return all.ToList();
+        bool UnderChords(NoteEvent n) => chordSpans.Any(s => n.Start >= s.Start && n.Start < s.End);
+        return pieces.Where(p => p.Role is MidiRoles.Chords or MidiRoles.Bass).SelectMany(p => p.Notes).Where(n => !n.Muted && UnderChords(n))
+                     .Concat(all.Where(n => !UnderChords(n))).OrderBy(n => n.Start).ToList();
     }
 
     /// <summary>Just the bars from <paramref name="from"/> to <paramref name="to"/> (ticks), as if they were the whole section.</summary>

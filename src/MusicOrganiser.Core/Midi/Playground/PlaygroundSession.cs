@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
@@ -6,8 +7,9 @@ using MusicOrganiser.Core.Parsers;
 namespace MusicOrganiser.Core.Midi.Playground;
 
 /// <summary>
-/// One part in a playground section: its notes (from the section's first bar, at <see cref="PhraseAnalyser.Ppq"/>),
-/// the sound it plays with, and where it came from, so parts from the same song are never suggested to go with it.
+/// A track on the playground's timeline: its clips, the sound it plays with, and where it came from, so parts from the
+/// same song are never suggested to go with it. <see cref="Notes"/> is every clip as it plays (from bar 1, at
+/// <see cref="PhraseAnalyser.Ppq"/>), worked out again by <see cref="Render"/> after a clip changes.
 /// </summary>
 public sealed class PlaygroundLayer
 {
@@ -48,7 +50,22 @@ public sealed class PlaygroundLayer
         set => Data = Convert.ToBase64String(MidiIndex.EncodeNotes(value.OrderBy(n => n.Start).ThenBy(n => n.Key).ToList()));
     }
 
-    public PlaygroundLayer Copy() => (PlaygroundLayer)MemberwiseClone();
+    /// <summary>The clips on the track. A track saved before the timeline has none until <see cref="PlaygroundSession.Upgrade"/>.</summary>
+    public List<PlaygroundClip> Clips { get; set; } = [];
+
+    /// <summary><see cref="Notes"/> made again from the clips.</summary>
+    public void Render()
+    {
+        Notes = Clips.SelectMany(c => c.Render()).ToList();
+        if (Clips.Count > 0 && SourcePath.Length == 0) SourcePath = Clips.FirstOrDefault(c => c.SourcePath.Length > 0)?.SourcePath ?? "";
+    }
+
+    public PlaygroundLayer Copy()
+    {
+        var l = (PlaygroundLayer)MemberwiseClone();
+        l.Clips = Clips.Select(c => c.Copy()).ToList();
+        return l;
+    }
 }
 
 /// <summary>A section of the idea (A, B, a chorus…): how many bars, its chords if typed, and its parts.</summary>
@@ -61,9 +78,14 @@ public sealed class PlaygroundSection
     /// <summary>What the section is for (a verse, a build, a drop): suggestions are ranked on how well their energy suits it.</summary>
     public SectionFeel Feel { get; set; }
     public List<PlaygroundLayer> Layers { get; set; } = [];
+    /// <summary>Names over stretches of bars (Verse, Build, Drop…) and what each is for.</summary>
+    public List<PlaygroundLabel> Labels { get; set; } = [];
 
     [JsonIgnore]
     public long Length => (long)Math.Max(1, Bars) * ChordLane.Bar;
+
+    /// <summary>The label over <paramref name="tick"/>, if any.</summary>
+    public PlaygroundLabel? LabelAt(long tick) => Labels.LastOrDefault(l => tick >= l.Start && tick < l.End);
 }
 
 /// <summary>
@@ -81,6 +103,12 @@ public sealed class PlaygroundSession
     /// <summary>The order the sections play in, by name: "A A B A". "" plays each once, in order.</summary>
     public string Arrangement { get; set; } = "";
     public int Current { get; set; }
+    /// <summary>2 for an idea on one timeline of clips; 1 (or missing) for one saved as sections, opened by <see cref="Upgrade"/>.</summary>
+    public int Version { get; set; } = 2;
+
+    /// <summary>The timeline: since version 2 an idea is one section, its parts tracks of clips and its old sections labels.</summary>
+    [JsonIgnore]
+    public PlaygroundSection Timeline => Sections[0];
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 
@@ -92,12 +120,69 @@ public sealed class PlaygroundSession
         {
             var s = JsonSerializer.Deserialize<PlaygroundSession>(json, Json);
             if (s is null) return null;
+            // Ideas saved before the timeline have no version.
+            if (JsonNode.Parse(json) is JsonObject o && !o.ContainsKey(nameof(Version))) s.Version = 1;
             if (s.Sections.Count == 0) s.Sections.Add(new PlaygroundSection());
             s.Current = Math.Clamp(s.Current, 0, s.Sections.Count - 1);
+            s.Upgrade();
             return s;
         }
         catch (JsonException) { return null; }
         catch (FormatException) { return null; }
+    }
+
+    /// <summary>
+    /// An idea saved as sections, laid out on one timeline (Solomon, 2026-10-19, "saved ideas open with each old section
+    /// laid end to end as a label, and its parts as clips filling it"): the sections in the order they played, each a
+    /// label over its bars, and parts of the same name joined into one track. A typed chart becomes a chord part, since
+    /// chords are now heard from the parts, never typed.
+    /// </summary>
+    public void Upgrade()
+    {
+        if (Version >= 2 && Sections.Count == 1 && Timeline.Layers.All(l => l.Clips.Count > 0 || l.Data.Length == 0)) return;
+        var order = Order();
+        var labelled = order.Count > 1 || order.Any(s => s.Feel != SectionFeel.Any);
+        var timeline = new PlaygroundSection { Name = "Timeline" };
+        long at = 0;
+        foreach (var section in order)
+        {
+            var length = section.Length;
+            var typed = section.Chart.Trim().Length > 0 ? SectionHarmony.Of(section).Lane : null;
+            foreach (var layer in section.Layers)
+            {
+                var track = timeline.Layers.FirstOrDefault(t => t.Name == layer.Name);
+                if (track is null)
+                {
+                    track = layer.Copy();
+                    track.Clips = [];
+                    timeline.Layers.Add(track);
+                }
+                // Clips already there (an idea saved part way) keep their places, moved along with their section.
+                var clips = layer.Clips.Count > 0
+                    ? layer.Clips.Select(c => { var copy = c.Copy(); copy.Start += at; return copy; }).ToList()
+                    : [PlaygroundClip.Of(layer.Name, layer.Role, layer.Notes.Where(n => n.Start < length).Select(n => n with { Length = Math.Min(n.Length, length - n.Start) }).ToList(),
+                                         length, at, length, layer.SourcePath, layer.SourceHash)];
+                foreach (var c in clips) c.Pinned = true;
+                track.Clips.AddRange(clips);
+                // Parts written from typed chords keep the notes they had: there are no typed chords to follow any more.
+                if (typed is not null) track.Written = "";
+            }
+            if (typed is { Count: > 0 } && section.Layers.All(l => l.Role != MidiRoles.Chords))
+            {
+                var track = timeline.Layers.FirstOrDefault(t => t.Name == "Chords" && t.Written.Length == 0);
+                if (track is null) timeline.Layers.Add(track = new PlaygroundLayer { Name = "Chords", Role = MidiRoles.Chords, Program = 4 });
+                track.Clips.Add(PlaygroundClip.Of("Chords", MidiRoles.Chords, Voicer.Plain(typed), length, at, length));
+            }
+            timeline.Labels.AddRange(section.Labels.Select(l => { var copy = l.Copy(); copy.Start += at; return copy; }));
+            if (labelled) timeline.Labels.Add(new PlaygroundLabel { Name = section.Name, Start = at, Length = length, Feel = section.Feel });
+            at += length;
+        }
+        timeline.Bars = (int)Math.Max(1, at / ChordLane.Bar);
+        foreach (var t in timeline.Layers) t.Render();
+        Sections = [timeline];
+        Current = 0;
+        Arrangement = "";
+        Version = 2;
     }
 
     /// <summary>The sections in the order they play.</summary>

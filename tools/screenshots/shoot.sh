@@ -7,6 +7,7 @@
 #   Env: SCREEN=1600x1000  WAIT=10 (seconds for the first scan)  NO_BUILD=1 (skip dotnet build)
 #        MIDI=<folder of .mid files> (copied in and added as a MIDI library folder, for the MIDI page)
 #        PLAYGROUND=<a playground idea .json> (opened on the Playground page)
+#        PLAYGROUND_STEPS=<file of xdotool and shot lines> (only the Playground page, then those steps)
 set -euo pipefail
 
 OUT=$(realpath -m "${1:?output folder}")
@@ -86,6 +87,14 @@ if [[ -n ${MIDI_FITS:-} ]]; then
   xdotool mousemove 1000 600; for _ in $(seq 15); do xdotool click 5; done; xdotool mousemove 1430 892; shot 5k2-midi-card-end 1
   xdotool mousemove ${FIT_X:-652} ${FIT_Y:-840} click 1 mousemove 1430 892; shot 5l-midi-fitting 4
   xdotool mousemove 1000 600; for _ in $(seq 15); do xdotool click 4; done; xdotool mousemove 1430 892; shot 5m-midi-small-playground 1
+  exit 0
+fi
+# PLAYGROUND_STEPS=<file>: only the Playground page, then the xdotool and shot lines in that file (clicks on the
+# timeline, drags), then stop. The MIDI page is opened first so its parts are read for suggestions.
+if [[ -n ${PLAYGROUND_STEPS:-} ]]; then
+  nav 2; sleep 8
+  nav 3; shot 5b-playground 4
+  source "$PLAYGROUND_STEPS"
   exit 0
 fi
 # The search box has the keyboard when the app opens: typing straight away searches; Down goes into the list.

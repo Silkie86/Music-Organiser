@@ -15,11 +15,12 @@ namespace MusicOrganiser.ViewModels;
 /// <summary>
 /// The MIDI playground: a small DAW for MIDI ideas (Solomon, 2026-10-17: "a midi daw that works with my midi files and
 /// can layer edit suggest and match midi with sections ... knows not to match midi from the same project ... understand
-/// jazz and gospel harmony ... drag the midi into my daw when I'm happy"). An idea has sections (A, B…), each a stack of
-/// parts on top of each other, with a chord lane heard from the parts or typed as a chart. Parts come from your MIDI
-/// library (suggested to fit the section, never from a song already in it), from a stretch of one of your songs, or
-/// are written from the chords (voicings, basslines, guide-tone lines). Every part can be edited on the piano roll
-/// with the rest greyed behind it, and the part, the section or the whole arrangement can be dragged into the DAW.
+/// jazz and gospel harmony ... drag the midi into my daw when I'm happy"; 2026-10-19: "it should work like a mini DAW").
+/// An idea is one timeline: tracks of clips that sit anywhere, with labels (Verse, Build, Drop…) over stretches of bars
+/// and a chord lane heard live from the chord and bass clips. Parts come from your MIDI library (suggested to fit the
+/// bars, never from a song already in it), from a stretch of one of your songs, or are written from the chords
+/// (voicings, basslines, guide-tone lines). A clip is edited on the piano roll with the rest greyed behind it, and a
+/// part or the whole timeline can be dragged into the DAW.
 /// </summary>
 public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSource, IDisposable
 {
@@ -45,39 +46,45 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Show();
     }
 
-    // ---- the idea and its sections ----
+    // ---- the idea: one timeline of tracks and clips ----
 
-    public ObservableCollection<SectionTab> Sections { get; } = [];
+    /// <summary>The tracks, top to bottom.</summary>
     public ObservableCollection<LayerRow> Layers { get; } = [];
     public ObservableCollection<ChordCell> Chords { get; } = [];
+    /// <summary>The names over stretches of bars (Verse, Build…).</summary>
+    public ObservableCollection<PlaygroundLabel> Labels { get; } = [];
 
-    PlaygroundSection Section => _session.Sections[Math.Clamp(_session.Current, 0, _session.Sections.Count - 1)];
+    /// <summary>The timeline: its tracks are <see cref="PlaygroundSection.Layers"/>, its length <see cref="PlaygroundSection.Bars"/>.</summary>
+    PlaygroundSection Section => _session.Timeline;
     internal PlaygroundSection CurrentSection => Section;
-    public string SectionName => Section.Name;
+
+    /// <summary>Goes up after every change, so the timeline draws itself again.</summary>
+    [ObservableProperty] int _revision;
+    /// <summary>The longest the timeline can be.</summary>
+    public const int MaxBars = 128;
 
     [ObservableProperty] string _ideaName = "";
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasMessage))] string _message = "";
     public bool HasMessage => Message.Length > 0;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSelectedLayer))] LayerRow? _selectedLayer;
     public bool HasSelectedLayer => SelectedLayer is not null;
-    [ObservableProperty] SectionTab? _selectedSection;
-    [ObservableProperty] string _chartText = "";
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSelectedClip))] ClipRow? _selectedClip;
+    public bool HasSelectedClip => SelectedClip is not null;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSelectedLabel))] PlaygroundLabel? _selectedLabel;
+    public bool HasSelectedLabel => SelectedLabel is not null;
     [ObservableProperty] string _keyText = "";
     [ObservableProperty] string _keySummary = "";
     [ObservableProperty] string _chordSummary = "";
     [ObservableProperty] int _bars = 4;
     [ObservableProperty] double _tempo = 90;
-    [ObservableProperty] string _arrangement = "";
     [ObservableProperty] bool _isClassical;
     [ObservableProperty] bool _canUndo;
     [ObservableProperty] bool _canRedo;
 
-    /// <summary>The section as one length, in ticks, for the rolls.</summary>
+    /// <summary>The timeline's length, in ticks.</summary>
     public long Length => Section.Length;
     public bool IsEmpty => Layers.Count == 0;
     public string Title => _session.Name;
-    public bool ChordsTyped => Section.Chart.Trim().Length > 0;
-    public string ChartHint => "Type chords like Dm9 G13 | Cmaj9 | %   (bars split by |)";
 
     SectionHarmony? _harmony;
     /// <summary>The current section's harmony, worked out again after each change.</summary>
@@ -85,18 +92,14 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     bool _showing;
 
-    /// <summary>Everything on the page from the idea, after loading it or switching section.</summary>
+    /// <summary>Everything on the page from the idea, after loading it.</summary>
     void Show()
     {
         _showing = true;
         IdeaName = _session.Name;
         Tempo = _session.Tempo;
         KeyText = _session.Key;
-        Arrangement = _session.Arrangement;
         IsClassical = _session.Style == HarmonyStyle.Classical;
-        Sections.Clear();
-        for (var i = 0; i < _session.Sections.Count; i++) Sections.Add(new SectionTab(this, _session.Sections[i], i));
-        SelectedSection = Sections[Math.Clamp(_session.Current, 0, Sections.Count - 1)];
         ShowSection();
         _showing = false;
     }
@@ -106,13 +109,19 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var was = _showing;
         _showing = true;
         var keep = SelectedLayer is { } sel ? Section.Layers.IndexOf(sel.Layer) : -1;
+        var keepClip = SelectedClip is { } sc ? (Section.Layers.IndexOf(sc.Track.Layer), sc.Track.Layer.Clips.IndexOf(sc.Clip)) : (-1, -1);
+        foreach (var l in Section.Layers) l.Render();
         Layers.Clear();
         foreach (var l in Section.Layers) Layers.Add(new LayerRow(this, l));
         SelectedLayer = keep >= 0 && keep < Layers.Count ? Layers[keep] : Layers.FirstOrDefault();
-        foreach (var s in Sections) s.Refresh();
+        SelectedClip = keepClip.Item1 >= 0 && keepClip.Item1 < Layers.Count && keepClip.Item2 >= 0 && keepClip.Item2 < Layers[keepClip.Item1].Layer.Clips.Count
+            ? new ClipRow(this, Layers[keepClip.Item1], Layers[keepClip.Item1].Layer.Clips[keepClip.Item2])
+            : SelectedLayer is { Layer.Clips.Count: > 0 } t ? new ClipRow(this, t, t.Layer.Clips[0]) : null;
+        Labels.Clear();
+        foreach (var l in Section.Labels.OrderBy(l => l.Start)) Labels.Add(l);
+        SelectedLabel = null;
         Bars = Section.Bars;
-        ChartText = Section.Chart;
-        FeelPick = Section.Feel.ToString();
+        FeelPick = FeelHere.ToString();
         _showing = was;
         HarmonyChanged();
         RefreshGrooveSources();
@@ -131,10 +140,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         for (var i = 0; i < h.Lane.Count; i++)
             Chords.Add(new ChordCell(h.Lane[i], funcs?[i], h.Length));
         KeySummary = key is null ? "Key: not sure yet" : $"Key: {key.Name}{(h.KeyTyped ? "" : " (heard)")}";
-        ChordSummary = h.Lane.Count == 0 ? "No chords yet: add a part, or type them"
-            : h.ChordsTyped ? "Chords as typed" : "Chords heard from the parts";
-        OnPropertyChanged(nameof(ChordsTyped));
+        ChordSummary = h.Lane.Count == 0 ? "No chords yet: add a chord or bass part"
+            : "Chords heard live from the chord and bass parts (everything playing, where there are none)";
         foreach (var row in Layers) row.GuideChanged();
+        SelectedClip?.GuideChanged();
         RefreshIdeas();
         RefreshEnergy();
     }
@@ -198,7 +207,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         Tempo = NewTempo,
         Style = NewStyle == Classical ? HarmonyStyle.Classical : HarmonyStyle.JazzGospel,
-        Sections = [new PlaygroundSection { Bars = NewBars }],
+        Sections = [new PlaygroundSection { Name = "Timeline", Bars = NewBars }],
     };
 
     // ---- saving and undo ----
@@ -216,9 +225,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>After every change: saved straight away, so nothing is lost if the app closes.</summary>
     void Changed(bool harmony = true)
     {
-        // Parts written from the chords follow when an edit changed the chords heard (or the length grew), not only the chart.
-        if (harmony && Section.Layers.Any(l => l.Written.Length > 0) && _writtenFor != (Section, ChordLane.ToChart(LaneForWriting(), Section.Length)))
+        // Parts written from the chords follow when an edit changed the chords heard, or moved or stretched a written clip.
+        if (harmony && Section.Layers.Any(l => l.Written.Length > 0) && _writtenFor != WrittenKey(LaneForWriting()))
             RewriteWritten();
+        Revision++;
         // A cut-down playground is a sketch: nothing to keep until Open in Playground takes it over.
         try { if (!IsQuick) _store.SaveCurrent(_session); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save the idea: {e.Message}"; }
@@ -339,166 +349,133 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (Matches.Count > 0) _ = FindMatchesAsync();
     }
 
-    partial void OnArrangementChanged(string value)
-    {
-        if (_showing) return;
-        _session.Arrangement = value;
-        Changed(harmony: false);
-    }
-
     partial void OnBarsChanged(int value)
     {
         if (_showing || value == Section.Bars) return;
         Remember();
-        Section.Bars = Math.Clamp(value, 1, 64);
-        if (Loop is { } loop) SetLoop(loop);   // kept inside the section, or dropped if it's now past the end
-        RewriteWritten();
-        OnPropertyChanged(nameof(Length));
-        foreach (var row in Layers) row.LengthChanged();
+        SetBars(value, follow: true);
         Changed();
     }
 
-    /// <summary>A typed chart: the chords as written, replacing what's heard. Parts written from the chords follow.</summary>
-    partial void OnChartTextChanged(string value)
+    /// <summary>
+    /// The timeline made longer or shorter. With <paramref name="follow"/> (the Bars box), clips that reached the old end
+    /// follow it, playing round again to fill the new bars (or cut shorter); the rest stay where they are.
+    /// </summary>
+    void SetBars(int bars, bool follow = false)
     {
-        if (_showing || value == Section.Chart) return;
-        if (value.Trim().Length > 0 && ChordLane.ParseChart(value, out var why) is not { } lane)
-        {
-            Message = why;
-            return;
-        }
-        Message = "";
-        SetChart(value.Trim());
-    }
-
-    void SetChart(string chart)
-    {
-        Remember();
-        Section.Chart = chart;
-        if (chart.Length > 0 && ChordLane.ParseChart(chart, out _) is { } lane)
-        {
-            // Room for the whole chart.
-            var bars = (int)Math.Ceiling(lane[^1].End / (double)Bar);
-            if (bars > Section.Bars) Section.Bars = Math.Min(64, bars);
-        }
+        var old = Section.Length;
+        Section.Bars = Math.Clamp(bars, 1, MaxBars);
+        var length = Section.Length;
+        if (follow)
+            foreach (var l in Section.Layers)
+            {
+                foreach (var c in l.Clips.Where(c => c.End == old && c.Start < length)) c.Length = length - c.Start;
+                l.Render();
+            }
+        if (Loop is { } loop) SetLoop(loop);   // kept inside the timeline, or dropped if it's now past the end
         _showing = true;
         Bars = Section.Bars;
-        ChartText = chart;
         _showing = false;
-        _harmony = null;
-        RewriteWritten();
-        Changed();
-        foreach (var row in Layers) row.LengthChanged();
+        OnPropertyChanged(nameof(Length));
+        foreach (var row in Layers) row.Changed();
     }
 
-    /// <summary>Back to hearing the chords from the parts.</summary>
+    /// <summary>Makes room for a clip ending at <paramref name="end"/>: the timeline grows (never shrinks) to the bar after it.</summary>
+    void Reach(long end)
+    {
+        var bars = (int)Math.Min(MaxBars, (end + Bar - 1) / Bar);
+        if (bars > Section.Bars) SetBars(bars);
+    }
+
+    // ---- labels ----
+
+    /// <summary>The label over the highlight, or the one picked, or the one at the start: what the bars being worked on are for.</summary>
+    PlaygroundLabel? LabelHere => SelectedLabel ?? Section.LabelAt(Loop?.Start ?? 0);
+    SectionFeel FeelHere => LabelHere?.Feel ?? SectionFeel.Any;
+
+    /// <summary>A label over the highlight, or over the bars after the last label (the whole timeline when there are none).</summary>
     [RelayCommand]
-    void HearChords() => SetChart("");
-
-    /// <summary>The chords heard from the parts, written into the chart box to edit.</summary>
-    [RelayCommand]
-    void TypeHeardChords()
+    void AddLabel()
     {
-        if (Harmony.Lane.Count == 0) return;
-        SetChart(ChordLane.ToChart(Harmony.Lane, Harmony.Length));
-    }
-
-    // ---- sections ----
-
-    internal void PickSection(int index)
-    {
-        if (index == _session.Current || index < 0 || index >= _session.Sections.Count) return;
-        StopPlaying();
-        _session.Current = index;
-        Loop = null;   // loop points belong to the section they were set on
-        SelectedLayer = null;
-        ShowSection();
-        Changed(harmony: false);
-    }
-
-    partial void OnSelectedSectionChanged(SectionTab? value)
-    {
-        if (_showing || value is null) return;
-        PickSection(value.Index);
-    }
-
-    [RelayCommand]
-    void AddSection()
-    {
+        var (start, end) = Loop is { } r ? (r.Start, r.End) : (Section.Labels.Count == 0 ? 0 : Section.Labels.Max(l => l.End), Section.Length);
+        if (end <= start) { start = Section.Length; end = start + 4L * Bar; }
         Remember();
-        var name = NextSectionName();
-        _session.Sections.Add(new PlaygroundSection { Name = name, Bars = Section.Bars, Chart = "" });
-        _session.Current = _session.Sections.Count - 1;
-        Show();
-        Changed(harmony: false);
-        Message = $"Section {name} added. Bring parts in, or type its chords.";
-    }
-
-    [RelayCommand]
-    void DuplicateSection()
-    {
-        Remember();
-        var copy = new PlaygroundSection
+        Reach(end);
+        var names = new[] { "Intro", "Verse", "Build", "Drop", "Breakdown", "Outro" };
+        var label = new PlaygroundLabel
         {
-            Name = NextSectionName(), Bars = Section.Bars, Chart = Section.Chart, Feel = Section.Feel,
-            Layers = Section.Layers.Select(l => l.Copy()).ToList(),
+            Name = names.FirstOrDefault(n => Section.Labels.All(l => l.Name != n)) ?? $"Part {Section.Labels.Count + 1}",
+            Start = start, Length = end - start,
         };
-        _session.Sections.Insert(_session.Current + 1, copy);
-        _session.Current++;
-        Show();
+        label.Feel = Enum.TryParse<SectionFeel>(label.Name, out var f) ? f : SectionFeel.Any;
+        Section.Labels.Add(label);
+        ShowSection();
+        SelectedLabel = label;
         Changed(harmony: false);
+    }
+
+    internal void PickLabel(PlaygroundLabel? label)
+    {
+        SelectedLabel = label;
+        if (label is not null) SetLoop(new RollRange(label.Start, label.End));
+        _showing = true;
+        FeelPick = FeelHere.ToString();
+        _showing = false;
+        OnPropertyChanged(nameof(LabelName));
+    }
+
+    [RelayCommand] void SelectLabel(PlaygroundLabel? label) => PickLabel(label);
+
+    /// <summary>The picked label's name, to change.</summary>
+    public string LabelName
+    {
+        get => SelectedLabel?.Name ?? "";
+        set
+        {
+            if (SelectedLabel is not { } l || value.Trim().Length == 0 || value.Trim() == l.Name) return;
+            Remember();
+            l.Name = value.Trim();
+            Changed(harmony: false);
+        }
     }
 
     [RelayCommand]
-    async Task RemoveSection()
+    void RemoveLabel()
     {
-        if (_session.Sections.Count <= 1) return;
-        if (Section.Layers.Count > 0 && !await Ui.Current.Confirm($"Take section {Section.Name} and its {Section.Layers.Count} parts out of the idea? Undo brings it back.", "Remove section"))
-            return;
+        if (SelectedLabel is not { } l) return;
         Remember();
-        StopPlaying();
-        _session.Sections.RemoveAt(_session.Current);
-        _session.Current = Math.Clamp(_session.Current - 1, 0, _session.Sections.Count - 1);
-        Show();
-        Changed(harmony: false);
-    }
-
-    string NextSectionName()
-    {
-        for (var c = 'A'; c <= 'Z'; c++)
-            if (_session.Sections.All(s => s.Name != c.ToString())) return c.ToString();
-        return "Section " + (_session.Sections.Count + 1);
-    }
-
-    internal void RenameSection(PlaygroundSection section, string name)
-    {
-        name = name.Trim();
-        if (name.Length == 0 || name == section.Name) return;
-        Remember();
-        // The arrangement keeps pointing at it.
-        var order = _session.Arrangement.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(n => n == section.Name ? name : n);
-        section.Name = name;
-        _session.Arrangement = string.Join(' ', order);
-        _showing = true;
-        Arrangement = _session.Arrangement;
-        _showing = false;
+        Section.Labels.Remove(l);
+        ShowSection();
         Changed(harmony: false);
     }
 
     // ---- parts ----
 
-    /// <summary>Adds a part to the current section, picked, and makes room for it.</summary>
-    PlaygroundLayer AddLayer(string name, string role, IReadOnlyList<NoteEvent> notes, string sourcePath = "", string hash = "", string written = "")
+    /// <summary>Where new parts go, and for how long: the highlight, or the whole timeline.</summary>
+    (long Start, long Length) Place => Loop is { } r ? (r.Start, r.End - r.Start) : (0, Section.Length);
+
+    /// <summary>
+    /// Adds a track with one clip, picked, and makes room for it: <paramref name="notes"/> as one go round of
+    /// <paramref name="loop"/> ticks (0: as long as the clip), playing from <paramref name="start"/> for <paramref name="length"/>.
+    /// </summary>
+    PlaygroundLayer AddLayer(string name, string role, IReadOnlyList<NoteEvent> notes, string sourcePath = "", string hash = "", string written = "",
+                             long? start = null, long? length = null, long loop = 0)
     {
+        var at = start ?? Place.Start;
+        var len = length ?? Place.Length;
+        name = UniqueName(name);
         var layer = new PlaygroundLayer
         {
-            Name = UniqueName(name), Role = role, Notes = notes, Program = GmSounds.DefaultFor(role),
-            SourcePath = sourcePath, SourceHash = hash, Written = written,
+            Name = name, Role = role, Program = GmSounds.DefaultFor(role), SourcePath = sourcePath, SourceHash = hash, Written = written,
+            Clips = [PlaygroundClip.Of(name, role, notes, loop > 0 ? loop : len, at, len, sourcePath, hash)],
         };
+        Reach(at + len);
+        layer.Render();
         Section.Layers.Add(layer);
         var row = new LayerRow(this, layer);
         Layers.Add(row);
         SelectedLayer = row;
+        SelectedClip = new ClipRow(this, row, layer.Clips[0]);
         RefreshGrooveSources();
         return layer;
     }
@@ -511,27 +488,32 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             if (Section.Layers.All(l => l.Name != $"{name} {i}")) return $"{name} {i}";
     }
 
-    /// <summary>A part from the MIDI page or the suggestions, as it plays there (moved, octave and all).</summary>
+    /// <summary>
+    /// A part from the MIDI page or the suggestions, as it plays there (moved, octave and all), on a new track over the
+    /// highlight, or from bar 1 for as long as the timeline (and at least once through, up to Settings' longest).
+    /// </summary>
     public void AddFromLibrary(MidiEntry entry, IReadOnlyList<NoteEvent> notes, string? title = null)
     {
         if (notes.Count == 0) return;
         Remember();
         var name = title ?? (entry.Title.Length > 0 ? entry.Title : entry.SourceName);
-        // A part longer than the section grows it (up to 16 bars), so nothing is cut off.
-        var bars = PhraseAnalyser.BarsOf(notes);
-        if (Section.Layers.Count == 0 && Section.Chart.Length == 0) Section.Bars = Math.Clamp(bars, 1, GrowBars);
-        else if (bars > Section.Bars) Section.Bars = Math.Max(Section.Bars, Math.Min(GrowBars, bars));
-        var looped = SectionMatcher.Loop(notes, Math.Max(1, bars) * (long)Bar, Section.Length);
+        var bars = Math.Max(1, PhraseAnalyser.BarsOf(notes));
+        var loop = bars * (long)Bar;
+        var (start, length) = Place;
+        // A part longer than the timeline grows it (up to Settings' longest), so nothing is cut off; an empty timeline takes its length.
+        if (Loop is null)
+        {
+            if (IsEmpty) SetBars(Math.Min(bars, GrowBars));
+            else if (bars > Section.Bars) SetBars(Math.Max(Section.Bars, Math.Min(GrowBars, bars)));
+            length = Section.Length;
+        }
+        var one = notes.Where(n => n.Start < loop).ToList();
         // Chord parts come in turned into their smoothest inversions, sitting with the chords already here.
-        var smoothed = SmoothIncoming && entry.Role == MidiRoles.Chords ? Inversions.Smooth(looped, ChordCentre(null)) : looped;
-        var turned = !smoothed.SequenceEqual(looped);
-        AddLayer(name, entry.Role, smoothed, entry.Phrase.Source.Path, entry.Phrase.Hash);
-        _showing = true;
-        Bars = Section.Bars;
-        _showing = false;
-        foreach (var row in Layers) row.LengthChanged();
+        var smoothed = SmoothIncoming && entry.Role == MidiRoles.Chords ? Inversions.Smooth(one, ChordCentre(null)) : one;
+        var turned = !smoothed.SequenceEqual(one);
+        AddLayer(name, entry.Role, smoothed, entry.Phrase.Source.Path, entry.Phrase.Hash, start: start, length: length, loop: loop);
         Changed();
-        Message = $"Added {name} from {entry.SourceName}{(turned ? ", its chords turned into smooth inversions" : "")}. Parts from {entry.SourceName} won't be suggested for this section now.";
+        Message = $"Added {name} from {entry.SourceName}{(turned ? ", its chords turned into smooth inversions" : "")}. Parts from {entry.SourceName} won't be suggested now.";
     }
 
     internal void RemoveLayer(LayerRow row)
@@ -541,6 +523,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var i = Layers.IndexOf(row);
         Layers.Remove(row);
         if (SelectedLayer == row) SelectedLayer = Layers.Count == 0 ? null : Layers[Math.Clamp(i, 0, Layers.Count - 1)];
+        if (SelectedClip?.Track == row) SelectedClip = null;
         RefreshGrooveSources();
         Changed();
     }
@@ -560,17 +543,126 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     internal void EditLayer(LayerRow row, Action<PlaygroundLayer> change, bool harmony = true)
     {
         Remember();
+        var picked = SelectedClip is { } sc && sc.Track == row ? row.Layer.Clips.IndexOf(sc.Clip) : -1;
         change(row.Layer);
+        if (row.Layer.Clips.Count > 0) row.Layer.Render();
+        row.Changed();
+        // The clips were made again: the same one stays picked.
+        if (picked >= 0 && !row.Layer.Clips.Contains(SelectedClip!.Clip))
+            SelectedClip = row.Layer.Clips.Count == 0 ? null : new ClipRow(this, row, row.Layer.Clips[Math.Min(picked, row.Layer.Clips.Count - 1)]);
+        SelectedClip?.Changed();
+        Changed(harmony);
+    }
+
+    /// <summary>
+    /// A whole track's notes changed by hand (the small playground's piano roll): it becomes one clip of those notes the
+    /// timeline's length, no longer rewritten from the chords.
+    /// </summary>
+    internal void SetNotes(LayerRow row, IReadOnlyList<NoteEvent> notes) =>
+        EditLayer(row, l =>
+        {
+            var first = l.Clips.FirstOrDefault();
+            l.Clips = [new PlaygroundClip
+            {
+                Name = first?.Name ?? l.Name, Role = l.Role, Notes = notes, Loop = Section.Length, Start = 0, Length = Section.Length, Pinned = true,
+                SourcePath = first?.SourcePath ?? l.SourcePath, SourceHash = first?.SourceHash ?? l.SourceHash,
+            }];
+            l.Written = "";
+            l.GrooveData = "";
+        });
+
+    /// <summary>Every clip on the track moved up or down by hand: they stop moving to fit until Fit again.</summary>
+    internal void MoveLayer(LayerRow row, int semitones) =>
+        EditLayer(row, l =>
+        {
+            foreach (var c in l.Clips) { c.Transpose += semitones; c.Pinned = true; }
+        });
+
+    /// <summary>
+    /// Changes the notes of the picked clip when it's on <paramref name="layer"/>, else of every clip on it, one go round
+    /// at a time as it plays: <paramref name="change"/> gets the notes, the go round's length and the chords under it,
+    /// and gives back the new notes. The clip then plays them as they are.
+    /// </summary>
+    /// <param name="like">The track <paramref name="layer"/> is a copy of (to try a change out): its picked clip is the one changed.</param>
+    void MapClips(PlaygroundLayer layer, Func<IReadOnlyList<NoteEvent>, long, IReadOnlyList<TimedChord>, IReadOnlyList<NoteEvent>> change,
+                  PlaygroundLayer? like = null)
+    {
+        var picked = SelectedClip is { } sc && sc.Track.Layer == (like ?? layer) ? sc.Track.Layer.Clips.IndexOf(sc.Clip) : -1;
+        var clips = picked >= 0 && picked < layer.Clips.Count ? [layer.Clips[picked]] : layer.Clips.ToList();
+        foreach (var c in clips)
+        {
+            var at = c.RepeatAt(0);
+            var played = c.Notes.Select(n => n with { Key = Math.Clamp(n.Key + c.Shift(0), 0, 127) }).ToList();
+            var lane = LaneAt(Harmony.Lane, at, at + c.Loop);
+            c.Notes = change(played, c.Loop, lane).Select(n => n with { Key = Math.Clamp(n.Key - c.Shift(0), 0, 127) }).ToList();
+        }
+        layer.Render();
+    }
+
+    /// <summary>The chords from <paramref name="from"/> to <paramref name="to"/>, from 0.</summary>
+    static List<TimedChord> LaneAt(IReadOnlyList<TimedChord> lane, long from, long to) =>
+        lane.Where(c => c.End > from && c.Start < to)
+            .Select(c => new TimedChord(Math.Max(c.Start, from) - from, Math.Min(c.End, to) - Math.Max(c.Start, from), c.Chord)).ToList();
+
+    // ---- clips ----
+
+    internal void PickClip(LayerRow? track, PlaygroundClip? clip)
+    {
+        if (track is null || clip is null) { SelectedClip = null; return; }
+        if (SelectedClip?.Clip == clip) return;
+        SelectedLayer = track;
+        SelectedClip = new ClipRow(this, track, clip);
+    }
+
+    [RelayCommand] void SelectClip(ClipPick? pick) => PickClip(pick is null ? null : Layers.FirstOrDefault(r => r.Layer == pick.Track), pick?.Clip);
+
+    internal void EditClip(ClipRow row, Action<PlaygroundClip> change, bool harmony = true)
+    {
+        Remember();
+        change(row.Clip);
+        row.Track.Layer.Render();
+        Reach(row.Clip.End);
+        row.Track.Changed();
         row.Changed();
         Changed(harmony);
     }
 
-    /// <summary>Notes changed by hand on the piano roll: the part is no longer rewritten from the chords.</summary>
-    internal void SetNotes(LayerRow row, IReadOnlyList<NoteEvent> notes) =>
-        EditLayer(row, l => { l.Notes = notes; l.Written = ""; l.GrooveData = ""; });
+    /// <summary>The clip's notes changed on the piano roll (one go round, as it plays): the track is no longer rewritten from the chords.</summary>
+    internal void SetClipNotes(ClipRow row, IReadOnlyList<NoteEvent> notes) =>
+        EditClip(row, c =>
+        {
+            c.Notes = notes.Select(n => n with { Key = Math.Clamp(n.Key - c.Shift(0), 0, 127) }).ToList();
+            row.Track.Layer.Written = "";
+            row.Track.Layer.GrooveData = "";
+        });
 
-    internal void MoveLayer(LayerRow row, int semitones) =>
-        EditLayer(row, l => l.Notes = l.Notes.Select(n => n with { Key = Math.Clamp(n.Key + semitones, 0, 127) }).ToList());
+    /// <summary>Moved up or down by hand: it stays there instead of moving to fit, until Fit again.</summary>
+    internal void MoveClip(ClipRow row, int semitones) => EditClip(row, c => { c.Transpose += semitones; c.Pinned = true; });
+
+    internal void RemoveClip(ClipRow row)
+    {
+        if (row.Track.Layer.Clips.Count <= 1) { RemoveLayer(row.Track); return; }
+        Remember();
+        row.Track.Layer.Clips.Remove(row.Clip);
+        row.Track.Layer.Render();
+        row.Track.Changed();
+        SelectedClip = null;
+        Changed();
+    }
+
+    /// <summary>A copy of the clip straight after it on the same track.</summary>
+    internal void DuplicateClip(ClipRow row)
+    {
+        Remember();
+        var copy = row.Clip.Copy();
+        copy.Start = row.Clip.End;
+        row.Track.Layer.Clips.Add(copy);
+        Reach(copy.End);
+        row.Track.Layer.Render();
+        row.Track.Changed();
+        SelectedClip = new ClipRow(this, row.Track, copy);
+        Changed();
+    }
 
     /// <summary>
     /// The song's parts switched off in "Fit to" muted, the rest playing, in one Undo step (Solomon, 2026-10-19: "see the
@@ -625,12 +717,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     };
 
     /// <summary>
-    /// The chords for writing parts to: the typed chart, or the chords heard from the parts that weren't written from
-    /// them (so rewriting a written part doesn't feed on itself).
+    /// The chords for writing parts to: the chords heard from the parts that weren't written from them (so rewriting a
+    /// written part doesn't feed on itself).
     /// </summary>
     IReadOnlyList<TimedChord> LaneForWriting()
     {
-        if (ChordsTyped) return Harmony.Lane;
         var written = Section.Layers.Where(l => l.Written.Length > 0).ToList();
         return SectionHarmony.Of(Section, _session.Key, _session.Style, written).Lane;
     }
@@ -649,15 +740,17 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var lane = LaneForWriting();
         if (lane.Count == 0)
         {
-            Message = "There are no chords to write from yet: type some in the chord box, or bring in a chord part.";
+            Message = "There are no chords to write from yet: bring in a chord or bass part first.";
             return;
         }
         Remember();
-        _writtenFor = (Section, ChordLane.ToChart(lane, Section.Length));
-        var layer = AddLayer(name, role, Written(how, lane, Section.Length), written: how);
+        // Over the highlight, or the whole timeline.
+        var (start, length) = Place;
+        var layer = AddLayer(name, role, Written(how, LaneAt(lane, start, start + length), length), written: how, start: start, length: length);
         layer.Program = role == MidiRoles.Melody ? 73 : layer.Program;
+        _writtenFor = WrittenKey(lane);
         Changed();
-        Message = $"Wrote {name} from the chords. Change the chords and it follows; edit its notes and it's yours.";
+        Message = $"Wrote {name} from the chords{(Loop is null ? "" : $", {LoopText.ToLowerInvariant()}")}. Change the chords and it follows; edit its notes and it's yours.";
     }
 
     static IReadOnlyList<NoteEvent> Written(string how, IReadOnlyList<TimedChord> lane, long length)
@@ -672,19 +765,34 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         };
     }
 
-    /// <summary>The section and chords (as a chart) its written parts were last written from.</summary>
-    (PlaygroundSection, string)? _writtenFor;
+    /// <summary>The chords (as a chart) and the written clips' places its written parts were last written for.</summary>
+    string? _writtenFor;
 
-    /// <summary>Parts written from the chords are written again when the chords or the length change.</summary>
+    string WrittenKey(IReadOnlyList<TimedChord> lane) =>
+        ChordLane.ToChart(lane, Section.Length) + "@" +
+        string.Join(",", Section.Layers.Where(l => l.Written.Length > 0).SelectMany(l => l.Clips).Select(c => $"{c.Start}+{c.Length}"));
+
+    /// <summary>Parts written from the chords are written again, clip by clip, when the chords under them change or they're moved.</summary>
     void RewriteWritten()
     {
         if (Section.Layers.All(l => l.Written.Length == 0)) return;
         _harmony = null;
         var lane = LaneForWriting();
-        _writtenFor = (Section, ChordLane.ToChart(lane, Section.Length));
+        _writtenFor = WrittenKey(lane);
         foreach (var l in Section.Layers.Where(l => l.Written.Length > 0))
-            l.Notes = lane.Count == 0 ? [] : WithGroove(l, Written(l.Written, lane, Section.Length), lane, Section.Length);
+        {
+            foreach (var c in l.Clips)
+            {
+                var under = LaneAt(lane, c.Start, c.End);
+                c.Notes = under.Count == 0 ? [] : WithGroove(l, Written(l.Written, under, c.Length), under, c.Length);
+                c.Loop = c.Length;
+                c.Offset = 0;
+                c.Fits = [];
+            }
+            l.Render();
+        }
         foreach (var row in Layers) row.Changed();
+        SelectedClip?.Changed();
     }
 
 
@@ -733,6 +841,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     partial void OnSelectedLayerChanged(LayerRow? value)
     {
+        // Picking a track picks its first clip, unless one of its clips is picked already.
+        if (SelectedClip?.Track != value)
+            SelectedClip = value is { Layer.Clips.Count: > 0 } t ? new ClipRow(this, t, t.Layer.Clips[0]) : null;
         RefreshGrooveSources();
         OnPropertyChanged(nameof(CanCopyGroove));
         OnPropertyChanged(nameof(GrooveTargetText));
@@ -758,24 +869,32 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (value is not null) GrooveMatch = null;
     }
 
-    /// <summary>The picked part with the groove on it, as it would be.</summary>
-    IReadOnlyList<NoteEvent>? Grooved(LayerRow row)
+    /// <summary>
+    /// The picked part (its picked clip, when one is) with the groove on it, as it would be: a copy of the track, so
+    /// nothing changes until it's kept.
+    /// </summary>
+    PlaygroundLayer? Grooved(LayerRow row)
     {
         if (GrooveNotesSource is not { Count: > 2 } src) return null;
         var (depth, amount) = GrooveChoice;
         var l = row.Layer;
-        // A written part is grooved from its plain writing, so copying again replaces the groove instead of piling on.
-        var lane = row.IsWritten ? LaneForWriting() : row.Role == MidiRoles.Chords ? ChordLane.Detect(l.Notes, Section.Length) : Harmony.Lane;
-        var plain = row.IsWritten && lane.Count > 0 ? Written(l.Written, lane, Section.Length) : l.Notes;
-        if (depth == GrooveDepth.Playing && lane.Count == 0) lane = Harmony.Lane;
-        return Groove.Copy(plain, src, depth, Section.Length, lane, amount);
+        var copy = l.Copy();
+        MapClips(copy, (played, length, heard) =>
+        {
+            // A written part is grooved from its plain writing, so copying again replaces the groove instead of piling on.
+            var lane = row.IsWritten ? heard : row.Role == MidiRoles.Chords ? ChordLane.Detect(played.ToList(), length) : heard;
+            var plain = row.IsWritten && lane.Count > 0 ? Written(l.Written, lane, length) : played;
+            if (depth == GrooveDepth.Playing && lane.Count == 0) lane = heard;
+            return Groove.Copy(plain, src, depth, length, lane, amount);
+        }, like: l);
+        return copy;
     }
 
     [RelayCommand]
     void CopyGroove()
     {
-        if (SelectedLayer is not { } row || Grooved(row) is not { } notes) return;
-        if (notes.Count == 0)
+        if (SelectedLayer is not { } row || Grooved(row) is not { } grooved) return;
+        if (grooved.Notes.Count == 0)
         {
             Message = "That gave no notes: the part to copy from needs chords for its whole playing to come across. Try less on the slider.";
             return;
@@ -785,7 +904,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var src = GrooveNotesSource!;
         EditLayer(row, l =>
         {
-            l.Notes = notes;
+            l.Clips = grooved.Clips;
             if (l.Written.Length > 0)
             {
                 // Remembered, so it's put on again when the chords change.
@@ -804,10 +923,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     async Task PreviewGroove()
     {
         if (IsGroovePlaying) { StopPlaying(); return; }
-        if (SelectedLayer is not { } row || Grooved(row) is not { } notes) return;
+        if (SelectedLayer is not { } row || Grooved(row) is not { } grooved) return;
         StopPlaying();
         var channels = PlaygroundSession.Audible(Section).Where(l => l != row.Layer).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
-        channels.Add(Channel(row.Name, row.Layer.Program, notes));
+        channels.Add(Channel(row.Name, row.Layer.Program, grooved.Notes));
         await PlayAsync(instead: channels);
         IsGroovePlaying = _playing;
     }
@@ -838,13 +957,15 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     void SmoothInversions()
     {
         if (SelectedLayer is not { } row) return;
-        var smooth = Inversions.Smooth(row.Layer.Notes, ChordCentre(row.Layer));
-        if (smooth.SequenceEqual(row.Layer.Notes))
+        var centre = ChordCentre(row.Layer);
+        var copy = row.Layer.Copy();
+        MapClips(copy, (played, _, _) => Inversions.Smooth(played, centre), like: row.Layer);
+        if (copy.Notes.SequenceEqual(row.Layer.Notes))
         {
             Message = $"{row.Name}'s chords already move as smoothly as they can.";
             return;
         }
-        EditLayer(row, l => { l.Notes = smooth; l.Written = ""; });
+        EditLayer(row, l => { l.Clips = copy.Clips; l.Written = ""; });
         Message = $"{row.Name}'s chords are turned into the inversions that move least. Undo takes it back.";
     }
 
@@ -856,18 +977,30 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [ObservableProperty] double[]? _energyTarget;
     [ObservableProperty] string _energyText = "";
 
+    /// <summary>
+    /// What the bars being worked on are for: the feel of the label over them. Picking one with no label there puts a
+    /// label over them (the highlight, or the whole timeline) named after it.
+    /// </summary>
     partial void OnFeelPickChanged(string value)
     {
         if (_showing) return;
         var feel = Enum.TryParse<SectionFeel>(value, out var f) ? f : SectionFeel.Any;
-        if (feel == Section.Feel) return;
+        if (feel == FeelHere) return;
         Remember();
-        Section.Feel = feel;
+        if (LabelHere is { } label) label.Feel = feel;
+        else if (feel != SectionFeel.Any)
+        {
+            var (start, length) = Place;
+            Section.Labels.Add(new PlaygroundLabel { Name = feel.ToString(), Start = start, Length = length, Feel = feel });
+            var keep = Loop;
+            ShowSection();
+            Loop = keep;
+        }
         Changed(harmony: false);
         if (Matches.Count > 0) _ = FindMatchesAsync();
     }
 
-    /// <summary>The section's tension curve, bar by bar, and the one its feel asks for.</summary>
+    /// <summary>The timeline's tension curve, bar by bar, and under each label the one its feel asks for.</summary>
     void RefreshEnergy()
     {
         var h = Harmony;
@@ -875,9 +1008,21 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         EnergyCurve = h.Notes.Count == 0 && Section.Layers.All(l => l.Role != MidiRoles.Drums)
             ? []
             : Energy.Curve(PlaygroundSession.Audible(Section).SelectMany(l => l.Notes).ToList(), Section.Length, "", h.Key);
-        EnergyTarget = Section.Feel == SectionFeel.Any ? null : Energy.Target(Section.Feel, bars);
-        EnergyText = EnergyCurve.Length == 0 ? "" :
-            Section.Feel == SectionFeel.Any ? "Energy, bar by bar" : $"Energy, bar by bar · dashed: a {Energy.Name(Section.Feel)}";
+        var asked = Section.Labels.Where(l => l.Feel != SectionFeel.Any).ToList();
+        if (asked.Count == 0) EnergyTarget = null;
+        else
+        {
+            // Bars with no label (or a label that asks for nothing) have no dashed line.
+            var target = Enumerable.Repeat(double.NaN, bars).ToArray();
+            foreach (var l in asked)
+            {
+                int from = (int)(l.Start / Bar), count = (int)Math.Max(1, (l.Length + Bar - 1) / Bar);
+                var curve = Energy.Target(l.Feel, count);
+                for (var i = 0; i < count && from + i < bars; i++) target[from + i] = curve[i];
+            }
+            EnergyTarget = target;
+        }
+        EnergyText = EnergyCurve.Length == 0 ? "" : asked.Count == 0 ? "Energy, bar by bar" : "Energy, bar by bar · dashed: what each label's feel asks for";
     }
 
     // ---- reharmonisation and next-chord ideas ----
@@ -940,17 +1085,92 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     internal void ApplyIdea(Reharm idea)
     {
-        SetChart(ChordLane.ToChart(idea.Lane, Section.Length));
-        Message = $"{idea.Title}: {idea.Before} → {idea.After}. Undo takes it back.";
+        if (Changes(Harmony.Lane, idea.Lane) is not { } range) return;
+        Remember();
+        Rechord(Section, idea.Lane, range.From, range.To);
+        Changed();
+        Message = $"{idea.Title}: {idea.Before} → {idea.After}, played by the chord parts there. Undo takes it back.";
     }
 
+    /// <summary>A plain chord part playing <paramref name="chart"/> ("Dm7 | G7"), from the highlight or bar 1: chords to start from.</summary>
+    internal void PutChords(string chart)
+    {
+        if (ChordLane.ParseChart(chart, out var why) is not { Count: > 0 } lane) { Message = why; return; }
+        Remember();
+        var length = (lane[^1].End + Bar - 1) / Bar * Bar;
+        var start = Loop?.Start ?? 0;
+        if (IsEmpty && Loop is null) SetBars((int)(length / Bar));
+        AddLayer("Chords", MidiRoles.Chords, Voicer.Plain(lane), start: start, length: length);
+        Changed();
+    }
+
+    /// <summary>Where <paramref name="after"/> differs from <paramref name="before"/>, in ticks.</summary>
+    static (long From, long To)? Changes(IReadOnlyList<TimedChord> before, IReadOnlyList<TimedChord> after)
+    {
+        long from = long.MaxValue, to = 0;
+        foreach (var c in after)
+            if (!before.Any(b => b.Start == c.Start && b.Length == c.Length && b.Chord.Name == c.Chord.Name))
+            {
+                from = Math.Min(from, c.Start);
+                to = Math.Max(to, c.End);
+            }
+        return to > from ? (from, to) : null;
+    }
+
+    /// <summary>The chord goes on the end as a new bar, played by the chord parts that reach the end.</summary>
     internal void AddNextChord(ChordSymbol chord)
     {
-        // The chord goes on the end of the chart as a new bar.
-        // Written out bar by bar first, so a chart typed without bar lines ("Dm7 G7") keeps its chords in their own bars.
-        var lane = Harmony.Lane;
-        var chart = lane.Count == 0 ? "" : ChordLane.ToChart(lane, ChordsTyped ? lane[^1].End : Harmony.Length);
-        SetChart((chart.Length == 0 ? "" : chart.TrimEnd(' ', '|') + " | ") + chord.Name + " |");
+        Remember();
+        var end = Section.Length;
+        var lane = Harmony.Lane.Append(new TimedChord(end, Bar, chord)).ToList();
+        SetBars(Section.Bars + 1);
+        // Chord clips reaching the end go round into the new bar, so it's played with their rhythm.
+        foreach (var l in Section.Layers.Where(l => l.Written.Length == 0))
+            foreach (var c in l.Clips.Where(c => c.End == end && (c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords)))
+                c.Length += Bar;
+        Rechord(Section, lane, end, end + Bar);
+        Changed();
+        Message = $"{chord.Name} added as bar {Section.Bars}. Undo takes it back.";
+    }
+
+    /// <summary>
+    /// New chords from <paramref name="from"/> to <paramref name="to"/>, played by the chord clips there (chords are heard,
+    /// never typed: Solomon, 2026-10-19). Each one's notes in those bars are voiced again on the new chords, struck with
+    /// the rhythm they had; a clip changed this way plays its notes as they are from
+    /// then on. With no chord clip there, a plain chord clip is put over those bars.
+    /// </summary>
+    static void Rechord(PlaygroundSection timeline, IReadOnlyList<TimedChord> lane, long from, long to)
+    {
+        var clips = PlaygroundSession.Audible(timeline).Where(l => l.Written.Length == 0)
+            .SelectMany(l => l.Clips.Where(c => (c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords) && c.Start < to && c.End > from)
+                                    .Select(c => (Layer: l, Clip: c))).ToList();
+        if (clips.Count == 0)
+        {
+            var notes = Voicer.Plain(LaneAt(lane, from, to));
+            var track = timeline.Layers.FirstOrDefault(l => l.Name == "Chords" && l.Written.Length == 0);
+            if (track is null) timeline.Layers.Add(track = new PlaygroundLayer { Name = "Chords", Role = MidiRoles.Chords, Program = GmSounds.DefaultFor(MidiRoles.Chords) });
+            track.Clips.Add(PlaygroundClip.Of("Chords", MidiRoles.Chords, notes, to - from, from, to - from));
+            track.Render();
+            return;
+        }
+        foreach (var (layer, c) in clips)
+        {
+            var local = c.Render().Select(n => n with { Start = n.Start - c.Start }).ToList();
+            long a = Math.Max(from, c.Start) - c.Start, b = Math.Min(to, c.End) - c.Start;
+            var old = local.Where(n => n.Start >= a && n.Start < b).Select(n => n with { Start = n.Start - a, Length = Math.Min(n.Length, b - n.Start) }).ToList();
+            var under = LaneAt(lane, c.Start + a, c.Start + b);
+            // Root at the bottom, so the chords are heard as the chords meant (and not as slash chords).
+            var voiced = Voicer.Plain(under);
+            var struck = old.Count > 2 ? Groove.Copy(voiced, old, GrooveDepth.Rhythm, b - a, under, 1) : voiced;
+            if (struck.Count == 0) struck = voiced;
+            c.Notes = local.Where(n => n.Start < a || n.Start >= b).Concat(struck.Select(n => n with { Start = n.Start + a })).ToList();
+            c.Loop = c.Length;
+            c.Offset = 0;
+            c.Transpose = 0;
+            c.Fits = [];
+            c.Pinned = true;
+            layer.Render();
+        }
     }
 
     // ---- suggestions from the library ----
@@ -984,15 +1204,15 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var harmony = MatchHarmony;
             var role = SuggestRole.Role;
             var text = SuggestSearch.Trim();
-            var feel = Section.Feel;
+            var feel = FeelHere;
             var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, text, SuggestCount, cts.Token, feel));
             if (cts.IsCancellationRequested) return;
             Matches.Clear();
             foreach (var m in found) Matches.Add(new PlaygroundMatchRow(this, m));
-            var left = harmony.Songs.Count == 0 ? "" : $" Left out: {string.Join(", ", harmony.Songs.Select(s => Path.GetFileName(s)))}, already in this section.";
+            var left = harmony.Songs.Count == 0 ? "" : $" Left out: {string.Join(", ", harmony.Songs.Select(s => Path.GetFileName(s)))}, already in the idea.";
             MatchStatus = found.Count == 0 ? "Nothing found. Try another kind of part, or fewer words."
                 : (harmony.IsEmpty ? $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()}, newest first: add a part or chords to rank them by fit."
-                                   : $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} that fit {(Loop is null ? "the section" : LoopText.ToLowerInvariant())}, best first, moved into its key.") + left;
+                                   : $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} that fit {(Loop is null ? "the whole idea" : LoopText.ToLowerInvariant())}, best first, moved into its key.") + left;
         }
         catch (OperationCanceledException) { }
         finally
@@ -1020,8 +1240,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     /// <summary>
-    /// Brings in every pitched and drum part of a song from a bar, as long as the section, each as a part of its own:
-    /// a section of a song to build on. Its other parts are then never suggested for this section.
+    /// Brings in every pitched and drum part of a song from a bar, over the highlight (or the whole timeline), each as a
+    /// track of its own: a stretch of a song to build on. Its other parts are then never suggested.
     /// </summary>
     [RelayCommand]
     Task BringSong(ProjectItem? project) => project is null ? Task.CompletedTask : BringSongAsync(project.Path, project.Name);
@@ -1034,19 +1254,19 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         try
         {
             var from = (long)Math.Max(0, FromBar - 1) * Bar;
-            var length = Section.Length;
+            var (start, length) = Place;
             // Read and worked out off the screen's thread, so a big song doesn't freeze the window.
             // Where the parts play in the arranger (as MIDI that fits reads them), so they line up with each other.
             var parts = await UiWork.Run(() => CutParts(PhraseJoiner.ArrangedChannels(path) ?? reader.ExtractChannels(path), from, length, leaveOut));
             if (parts.Count == 0)
             {
-                Message = $"{songName} has no notes from bar {FromBar} for {Section.Bars} bars.";
+                Message = $"{songName} has no notes from bar {FromBar} for {length / Bar} bars.";
                 return false;
             }
             Remember();
-            foreach (var (name, role, notes) in parts) AddLayer(name, role, notes, path);
+            foreach (var (name, role, notes) in parts) AddLayer(name, role, notes, path, start: start, length: length);
             Changed();
-            Message = $"Brought in {parts.Count} parts of {songName}, bars {FromBar}–{FromBar + Section.Bars - 1}. Its parts won't be suggested for this section.";
+            Message = $"Brought in {parts.Count} parts of {songName}, its bars {FromBar}–{FromBar + length / Bar - 1}. Its parts won't be suggested now.";
             SongSearch = "";
             return true;
         }
@@ -1124,7 +1344,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var length = Section.Length;
         var parts = await UiWork.Run(() => CutParts(partners, from, length, period: period));
         if (load != _loads) return;   // another part picked meanwhile
-        foreach (var (part, role, partNotes) in parts) AddLayer(part, role, partNotes, path ?? "");
+        foreach (var (part, role, partNotes) in parts) AddLayer(part, role, partNotes, path ?? "", start: 0, length: length);
         AddFromLibrary(entry, notes, title);
         SelectedLayer = Layers.LastOrDefault();
         _undo.Clear();
@@ -1145,66 +1365,79 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _session = Fresh();
         _session.Name = $"{name} sketch";
         Section.Bars = Math.Clamp(bars, 1, GrowBars);
+        Loop = null;
+        SelectedClip = null;
         Show();
         FromBar = (int)(Math.Max(0, at) / Bar) + 1;
     }
 
-    /// <summary>The cut-down playground's section, taken to the Playground page to work up further.</summary>
+    /// <summary>The cut-down playground's parts, taken to the Playground page to work up further.</summary>
     [RelayCommand]
     void OpenInMain()
     {
         if (Section.Layers.Count == 0) return;
         StopPlaying();
         var copy = PlaygroundSession.FromJson(_session.ToJson())!;
-        _main.Playground.TakeSection(copy.Sections[Math.Clamp(copy.Current, 0, copy.Sections.Count - 1)]);
+        _main.Playground.TakeSketch(copy.Timeline, _session.Name.EndsWith(" sketch") ? _session.Name[..^7] : _session.Name);
     }
 
-    /// <summary>A section from a cut-down playground: into the empty section, or as a new one, then the page is shown.</summary>
-    internal void TakeSection(PlaygroundSection section)
+    /// <summary>
+    /// A cut-down playground's parts: from bar 1 when the timeline is empty, else after its last bar, with a label named
+    /// <paramref name="name"/> over them and highlighted. Tracks of the same name are joined. Then the page is shown.
+    /// </summary>
+    internal void TakeSketch(PlaygroundSection sketch, string name)
     {
         StopPlaying();
         Remember();
-        if (Section.Layers.Count == 0 && !ChordsTyped)
+        var at = IsEmpty ? 0 : Section.Length;
+        if (IsEmpty) Section.Bars = sketch.Bars;
+        Reach(at + sketch.Length);
+        foreach (var t in sketch.Layers)
         {
-            section.Name = Section.Name;
-            _session.Sections[_session.Current] = section;
+            var clips = t.Clips.Select(x => { var c = x.Copy(); c.Start += at; return c; }).ToList();
+            var track = Section.Layers.FirstOrDefault(l => l.Name == t.Name && l.Written == t.Written);
+            if (track is null)
+            {
+                track = t.Copy();
+                track.Clips = clips;
+                Section.Layers.Add(track);
+            }
+            else track.Clips.AddRange(clips);
+            track.Render();
         }
-        else
-        {
-            section.Name = NextSectionName();
-            _session.Sections.Add(section);
-            _session.Current = _session.Sections.Count - 1;
-        }
+        if (at > 0 || Section.Labels.Count > 0)
+            Section.Labels.Add(new PlaygroundLabel { Name = name, Start = at, Length = sketch.Length });
         Show();
-        Changed(harmony: false);
-        Message = $"Section {section.Name} came from a song's MIDI that fits. Undo takes it back out.";
+        Loop = new RollRange(at, at + sketch.Length);
+        Changed(harmony: true);
+        Message = $"{name} came from MIDI that fits{(at > 0 ? $", after bar {at / Bar}" : "")}. Undo takes it back out.";
         if (_main.Nav.FirstOrDefault(n => n.Page == this) is { } page) _main.SelectedNav = page;
     }
 
     /// <summary>
-    /// From a song's "MIDI that fits" tab (Solomon, 2026-10-19: "Open in Playground" to work an idea up): a new section
-    /// named after the song, with the song's bars where the part fits brought in to build on, the part added on top,
-    /// and the Playground page shown.
+    /// From a song's "MIDI that fits" tab (Solomon, 2026-10-19: "Open in Playground" to work an idea up): the song's bars
+    /// where the part fits brought in to build on and the part added on top, from bar 1 when the timeline is empty or
+    /// else after its last bar under a label named after the song, highlighted; then the Playground page is shown.
     /// </summary>
     public async Task OpenFromSongAsync(string path, string songName, MidiEntry? entry = null, IReadOnlyList<NoteEvent>? notes = null,
                                         string? title = null, long at = 0, IReadOnlyCollection<string>? leaveOut = null)
     {
         StopPlaying();
         var bars = notes is { Count: > 0 } ? Math.Clamp(PhraseAnalyser.BarsOf(notes), 1, GrowBars) : NewBars;
-        if (Section.Layers.Count > 0 || ChordsTyped)
+        if (!IsEmpty)
         {
             Remember();
-            _session.Sections.Add(new PlaygroundSection { Name = NextSectionName(), Bars = bars });
-            _session.Current = _session.Sections.Count - 1;
-            Show();
+            var start = Section.Length;
+            SetBars(Section.Bars + bars);
+            Section.Labels.Add(new PlaygroundLabel { Name = songName, Start = start, Length = (long)bars * Bar });
+            ShowSection();
+            Loop = new RollRange(start, start + (long)bars * Bar);
             Changed(harmony: false);
         }
         else
         {
-            Section.Bars = bars;
-            _showing = true;
-            Bars = bars;
-            _showing = false;
+            Loop = null;
+            SetBars(bars);
         }
         FromBar = (int)(Math.Max(0, at) / Bar) + 1;
         if (_main.Nav.FirstOrDefault(n => n.Page == this) is { } page) _main.SelectedNav = page;
@@ -1212,14 +1445,19 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (entry is not null && notes is { Count: > 0 }) AddFromLibrary(entry, notes, title);
         Message = entry is null
             ? Message
-            : $"Section {SectionName}: {title ?? entry.Title} on {(brought ? $"{songName}, bars {FromBar}–{FromBar + Section.Bars - 1}" : "its own")}. Mute the song's parts to hear it alone; Undo takes it out.";
+            : $"{title ?? entry.Title} on {(brought ? $"{songName}, its bars {FromBar}–{FromBar + bars - 1}" : "its own")}{(Loop is { } r ? $", at bar {r.Start / Bar + 1}" : "")}. Mute the song's parts to hear it alone; Undo takes it out.";
     }
 
     // ---- loop points ----
 
-    /// <summary>Loop points dragged along the piano roll's bar numbers: playing goes round them, and suggestions fit just them.</summary>
+    /// <summary>
+    /// The highlight: bars dragged out on the timeline (or along the small playground's piano roll). Playing goes round
+    /// them, suggestions fit just them, and new parts go there.
+    /// </summary>
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasLoop), nameof(LoopText))] RollRange? _loop;
     public bool HasLoop => Loop is not null;
+    partial void OnPositionChanged(double value) => SelectedClip?.PlayheadAt(value);
+    partial void OnLoopChanged(RollRange? value) => Revision++;
     public string LoopText => Loop is { } r ? $"Bars {r.Start / Bar + 1}–{(r.End + Bar - 1) / Bar}" : "";
 
     [RelayCommand]
@@ -1240,7 +1478,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     [ObservableProperty] bool _isPlaying;
     [ObservableProperty] double _position = -1;
-    [ObservableProperty] bool _playArrangement;
     bool _playing;
     IAudioPlayer? _player;
     IUiTimer? _clock;
@@ -1317,12 +1554,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     List<MidiChannel> ChannelsToPlay(out long length)
     {
-        if (PlayArrangement)
-        {
-            length = _session.Order().Sum(s => s.Length);
-            var tracks = _session.ArrangedTracks();
-            return tracks.Select(t => Channel(t.Name, t.Program, t.Notes)).ToList();
-        }
         length = Section.Length;
         var channels = PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
         return Looped(channels, ref length);
@@ -1356,7 +1587,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             return;
         }
         var ticks = MidiRender.SecondsToTicks(seconds, Ppq, _playTempo);
-        Position = PlayArrangement ? -1 : ticks % Math.Max(1, _playLength) + (Loop?.Start ?? 0);
+        Position = ticks % Math.Max(1, _playLength) + (Loop?.Start ?? 0);
     }
 
     public void StopPlaying()
@@ -1372,12 +1603,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         IsGroovePlaying = false;
     }
 
-    partial void OnPlayArrangementChanged(bool value)
-    {
-        if (_playing) _ = PlayAsync();
-    }
-
-    /// <summary>The section with a suggestion playing on top, to hear it before adding it.</summary>
+    /// <summary>The idea with a suggestion playing on top where it would go (the highlight, or from bar 1), to hear it before adding it.</summary>
     internal async Task PreviewMatch(PlaygroundMatchRow row)
     {
         if (row.IsPlaying) { StopPlaying(); return; }
@@ -1385,25 +1611,32 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var channels = ChannelsOf(Section).ToList();
         var notes = row.Match.Notes;
         var period = Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
-        channels.Add(Channel(row.Title, GmSounds.DefaultFor(row.Match.Entry.Role), SectionMatcher.Loop(notes, period, Section.Length)));
+        var (start, length) = Place;
+        channels.Add(Channel(row.Title, GmSounds.DefaultFor(row.Match.Entry.Role),
+                             SectionMatcher.Loop(notes, period, length).Select(n => n with { Start = n.Start + start }).ToList()));
         await PlayAsync(instead: channels);
         row.IsPlaying = _playing;
     }
 
-    /// <summary>The section with a reharmonisation in place: parts written from the chords follow it; with none, the new chords play plainly.</summary>
+    /// <summary>The idea with a reharmonisation in place, as Apply would leave it: the chord parts play the new chords, and parts written from the chords follow.</summary>
     internal async Task PreviewIdea(ReharmRow row)
     {
         if (row.IsPlaying) { StopPlaying(); return; }
         StopPlaying();
-        // What plays now (soloed parts only, when any are), with the written parts playing the idea's chords.
-        var audible = PlaygroundSession.Audible(Section).ToList();
-        var written = audible.Where(l => l.Written.Length > 0).ToList();
-        var channels = audible.Where(l => l.Written.Length == 0).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
-        if (Section.Layers.All(l => l.Written.Length == 0))
-            channels.Add(Channel("Chords", 4, Voicer.Voice(row.Idea.Lane, VoicingStyle.Close, CompRhythm.Held, Section.Length)));
-        else
-            foreach (var l in written)
-                channels.Add(Channel(l.Name, l.Program, WithGroove(l, Written(l.Written, row.Idea.Lane, Section.Length), row.Idea.Lane, Section.Length)));
+        var tried = PlaygroundSession.FromJson(_session.ToJson())!.Timeline;
+        if (Changes(Harmony.Lane, row.Idea.Lane) is { } range) Rechord(tried, row.Idea.Lane, range.From, range.To);
+        // What plays then (soloed parts only, when any are), with the written parts playing the idea's chords.
+        var channels = new List<MidiChannel>();
+        foreach (var l in PlaygroundSession.Audible(tried))
+        {
+            if (l.Written.Length == 0) { channels.Add(Channel(l.Name, l.Program, l.Notes)); continue; }
+            var notes = l.Clips.SelectMany(c =>
+            {
+                var under = LaneAt(row.Idea.Lane, c.Start, c.End);
+                return WithGroove(l, Written(l.Written, under, c.Length), under, c.Length).Select(n => n with { Start = n.Start + c.Start });
+            }).ToList();
+            channels.Add(Channel(l.Name, l.Program, notes));
+        }
         await PlayAsync(instead: channels);
         row.IsPlaying = _playing;
     }
@@ -1423,23 +1656,20 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         return dir;
     }
 
-    /// <summary>What a drag carries: one part, the section ("section"), or the whole arrangement ("arrangement").</summary>
-    /// <summary>A part's notes within the section, cut at its end: a part keeps its notes past the end when the section is
-    /// made shorter (so making it longer again brings them back), but they don't go out to the DAW.</summary>
+    /// <summary>A track's notes within the timeline, cut at its end: clips past the end (after it was made shorter) don't go out to the DAW.</summary>
     List<NoteEvent> InSection(IReadOnlyList<NoteEvent> notes) => MidiBrowserViewModel.Cut(notes, 0, Section.Length);
 
     public DragPayload? MakeDrag(IReadOnlyList<object> items)
     {
         var dir = ExportFolder();
+        // The whole timeline ("arrangement", or "section" from the small playground): a track for each part that plays.
         if (items.FirstOrDefault() is "arrangement" or "section")
         {
-            var whole = items[0] is "arrangement";
-            var tracks = whole ? _session.ArrangedTracks()
-                : PlaygroundSession.Audible(Section).Select(l => (l.Name, l.Program, InSection(l.Notes))).ToList();
+            var tracks = PlaygroundSession.Audible(Section).Select(l => (l.Name, l.Program, Notes: InSection(l.Notes))).Where(t => t.Notes.Count > 0).ToList();
             if (tracks.Count == 0) return null;
             var clip = new MidiClip { Name = _session.Name, Ppq = Ppq };
             foreach (var t in tracks) clip.Track(t.Name).AddRange(t.Notes);
-            var name = whole ? _session.Name : $"{_session.Name} - {Section.Name}";
+            var name = _session.Name;
             var file = Path.Combine(dir, TextScan.SafeFileName(name) + ".mid");
             File.WriteAllBytes(file, MidiWriter.Write(clip, _session.Tempo));
             return new DragPayload([file], tracks.Select(t => new DragCard(t.Name, $"{t.Notes.Count} notes", Glyphs.Midi)).ToList(),
@@ -1506,25 +1736,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 }
 
-/// <summary>A section's tab: its name and how many parts and bars it has.</summary>
-public sealed partial class SectionTab(PlaygroundViewModel owner, PlaygroundSection section, int index) : ObservableObject
-{
-    public PlaygroundSection Section => section;
-    public int Index => index;
-    public string Name
-    {
-        get => section.Name;
-        set { owner.RenameSection(section, value); OnPropertyChanged(); OnPropertyChanged(nameof(Details)); }
-    }
-    public string Details => $"{section.Bars} bars · {section.Layers.Count} part{(section.Layers.Count == 1 ? "" : "s")}";
-    public void Refresh()
-    {
-        OnPropertyChanged(nameof(Name));
-        OnPropertyChanged(nameof(Details));
-    }
-}
-
-/// <summary>One part in the section, as its lane shows it.</summary>
+/// <summary>A track on the timeline, as its header (and the small playground's lane) shows it.</summary>
 public sealed partial class LayerRow : ObservableObject
 {
     readonly PlaygroundViewModel _owner;
@@ -1556,8 +1768,10 @@ public sealed partial class LayerRow : ObservableObject
     public bool Muted => Layer.Muted;
     public bool Solo => Layer.Solo;
 
-    /// <summary>The notes as a channel for the small roll, the section's length wide.</summary>
+    /// <summary>The notes as a channel for the small roll, the timeline's length wide.</summary>
     public MidiChannel Channel => new(Layer.Name, "", PhraseAnalyser.Ppq, Layer.Notes);
+    /// <summary>The track's clips, for the timeline to draw.</summary>
+    public IReadOnlyList<PlaygroundClip> Clips => Layer.Clips;
     public IReadOnlyList<NoteEvent> Notes => Layer.Notes;
     public long Length => _owner.Length;
 
@@ -1604,6 +1818,7 @@ public sealed partial class LayerRow : ObservableObject
         OnPropertyChanged(nameof(Details));
         OnPropertyChanged(nameof(IsWritten));
         OnPropertyChanged(nameof(Sound));
+        OnPropertyChanged(nameof(Clips));
     }
 
     internal void GuideChanged()
@@ -1622,6 +1837,94 @@ public sealed partial class LayerRow : ObservableObject
     [RelayCommand] void Up() => _owner.MoveLayer(this, 1);
     [RelayCommand] void Down() => _owner.MoveLayer(this, -1);
     [RelayCommand] void Edited(IReadOnlyList<NoteEvent>? notes) { if (notes is not null) _owner.SetNotes(this, notes); }
+}
+
+/// <summary>A clip on a track, as the timeline hands it over when it's clicked.</summary>
+public sealed record ClipPick(PlaygroundLayer Track, PlaygroundClip Clip);
+
+/// <summary>
+/// The clip picked on the timeline, as the piano roll under it shows it: one go round of its notes as they first play,
+/// with the other parts playing then grey behind and the notes fighting the chords there marked red.
+/// </summary>
+public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, PlaygroundClip clip) : ObservableObject
+{
+    const int Bar = 4 * PhraseAnalyser.Ppq;
+
+    public LayerRow Track => track;
+    public PlaygroundClip Clip => clip;
+    public string Name => clip.Name;
+
+    public string Details
+    {
+        get
+        {
+            var shift = clip.Transpose == 0 ? "" : $" · {(clip.Transpose > 0 ? "+" : "")}{clip.Transpose} by hand";
+            var times = clip.Length > clip.Loop ? $", played {clip.Length / (double)clip.Loop:0.#} times" : "";
+            return $"{track.Name} · bars {clip.Start / Bar + 1}–{(clip.End + Bar - 1) / Bar} · {Bars(clip.Loop)} round{times}{shift}";
+        }
+    }
+
+    static string Bars(long ticks) => ticks % Bar == 0 ? $"{ticks / Bar} bar{(ticks == Bar ? "" : "s")}" : $"{ticks / (double)Bar:0.##} bars";
+
+    /// <summary>Where its first go round would start on the timeline.</summary>
+    long At => clip.RepeatAt(0);
+
+    /// <summary>One go round, as it first plays (moved by hand and to fit).</summary>
+    public IReadOnlyList<NoteEvent> Notes => clip.Notes.Select(n => n with { Key = Math.Clamp(n.Key + clip.Shift(0), 0, 127) }).ToList();
+    public long Loop => clip.Loop;
+    public bool IsChords => clip.Role == MidiRoles.Chords;
+
+    /// <summary>Every other part playing during that go round, grey behind it on the piano roll.</summary>
+    public IReadOnlyList<NoteEvent> Guide
+    {
+        get
+        {
+            long from = At, to = At + clip.Loop;
+            return PlaygroundSession.Audible(owner.CurrentSection).Where(l => l != track.Layer && l.Role != MidiRoles.Drums)
+                .SelectMany(l => l.Notes).Where(n => n.Start < to && n.Start + n.Length > from)
+                .Select(n => n with { Start = n.Start - from }).Where(n => n.Start >= 0).ToList();
+        }
+    }
+
+    /// <summary>Which notes fight the chords under them, judged as <see cref="LayerRow.Clashes"/> does.</summary>
+    public Func<NoteEvent, bool> Clashes
+    {
+        get
+        {
+            var h = owner.Harmony;
+            var style = h.Style;
+            var at = At;
+            if (clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => false;
+            return n => ChordLane.At(h.Lane, at + n.Start + 1, h.Length) is { } chord && n.Length > PhraseAnalyser.Ppq / 2 &&
+                        ChordScales.Sit(chord, n.Key % 12, style) < 0.05;
+        }
+    }
+
+    /// <summary>The playhead on the piano roll, while it's in the go round shown.</summary>
+    [ObservableProperty] double _position = -1;
+    internal void PlayheadAt(double tick) => Position = tick < 0 ? -1 : tick >= At && tick < At + clip.Loop ? tick - At : -1;
+
+    internal void Changed()
+    {
+        OnPropertyChanged(nameof(Notes));
+        OnPropertyChanged(nameof(Details));
+        OnPropertyChanged(nameof(Loop));
+        GuideChanged();
+    }
+
+    internal void GuideChanged()
+    {
+        OnPropertyChanged(nameof(Guide));
+        OnPropertyChanged(nameof(Clashes));
+    }
+
+    [RelayCommand] void Remove() => owner.RemoveClip(this);
+    [RelayCommand] void Duplicate() => owner.DuplicateClip(this);
+    [RelayCommand] void OctaveUp() => owner.MoveClip(this, 12);
+    [RelayCommand] void OctaveDown() => owner.MoveClip(this, -12);
+    [RelayCommand] void Up() => owner.MoveClip(this, 1);
+    [RelayCommand] void Down() => owner.MoveClip(this, -1);
+    [RelayCommand] void Edited(IReadOnlyList<NoteEvent>? notes) { if (notes is not null) owner.SetClipNotes(this, notes); }
 }
 
 /// <summary>One chord on the chord lane: its name, Roman numeral and what it's doing, as wide as it lasts.</summary>

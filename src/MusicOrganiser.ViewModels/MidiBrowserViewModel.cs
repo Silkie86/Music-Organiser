@@ -501,7 +501,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         if (Selected is not { } row) return;
         _main.Playground.AddFromLibrary(row.Entry, row.BarNotes, row.Title);
-        Message = $"{row.Title} is in the playground, in section {_main.Playground.SectionName}.";
+        Message = $"{row.Title} is in the playground, on a track of its own.";
     }
 
     // ---- the octave of what it's fitted to ----
