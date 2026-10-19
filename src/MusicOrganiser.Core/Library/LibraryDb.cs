@@ -17,6 +17,7 @@ public sealed partial class LibraryDb : IDisposable
         PRAGMA journal_mode = WAL;
         PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS song_choices (kind TEXT, a TEXT, b TEXT, PRIMARY KEY (kind, a));
         CREATE TABLE IF NOT EXISTS roots (path TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY,
@@ -90,6 +91,7 @@ public sealed partial class LibraryDb : IDisposable
         AddColumn("projects", "note_count", "INTEGER");
         AddColumn("projects", "length_bars", "INTEGER");
         AddColumn("projects", "track_count", "INTEGER");
+        AddColumn("samples", "unplayed", "INTEGER NOT NULL DEFAULT 0");
     }
 
     /// <summary>A column added after the first release: libraries made before it get it here.</summary>
@@ -194,6 +196,65 @@ public sealed partial class LibraryDb : IDisposable
 
     public void SetList(string key, IEnumerable<string> values) => SetSetting(key, JsonSerializer.Serialize(values.ToList()));
 
+    /// <summary>Your changes to which saves are one song (see <see cref="Library.SongChoices"/>).</summary>
+    public SongChoices SongChoices() => _songChoices ??= ReadSongChoices(null);
+
+    // Kept until you change them, since a scan asks for every new save.
+    volatile SongChoices? _songChoices;
+
+    SongChoices ReadSongChoices(SqliteTransaction? tx)
+    {
+        var rows = new List<(string Kind, string A, string B)>();
+        using (var cmd = Cmd("SELECT kind, a, b FROM song_choices"))
+        {
+            cmd.Transaction = tx;
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) rows.Add((Str(r, "kind"), Str(r, "a"), Str(r, "b")));
+        }
+        return new SongChoices(rows.Where(r => r.Kind == "join").ToDictionary(r => r.A, r => r.B),
+                               rows.Where(r => r.Kind == "split").Select(r => r.A).ToList(),
+                               rows.Where(r => r.Kind == "apart").Select(r => r.A).ToList());
+    }
+
+    /// <summary>
+    /// Puts the song with key <paramref name="from"/> under the song <paramref name="to"/> (see <see cref="SongVersions.Key"/>);
+    /// false when <paramref name="to"/> is already under <paramref name="from"/>, which would make a loop.
+    /// </summary>
+    public bool JoinSong(string from, string to)
+    {
+        if (from == to || SongChoices().Follow(to) == from) return false;
+        Exec("INSERT INTO song_choices VALUES ('join', $a, $b) ON CONFLICT(kind, a) DO UPDATE SET b = excluded.b", ("$a", from), ("$b", to));
+        Exec("DELETE FROM song_choices WHERE kind = 'apart' AND a = $p", ("$p", Library.SongChoices.Pair(from, to)));
+        _songChoices = null;
+        return true;
+    }
+
+    /// <summary>Takes one save out of its song into a song of its own (<see cref="Library.SongChoices.SplitKey"/>).</summary>
+    public void SplitSave(string path)
+    {
+        Exec("INSERT OR IGNORE INTO song_choices VALUES ('split', $a, '')", ("$a", path.ToLowerInvariant()));
+        _songChoices = null;
+    }
+
+    /// <summary>Remembers that two songs are different, so the app stops asking.</summary>
+    public void KeepApart(string a, string b)
+    {
+        Exec("INSERT OR IGNORE INTO song_choices VALUES ('apart', $a, '')", ("$a", Library.SongChoices.Pair(a, b)));
+        _songChoices = null;
+    }
+
+    /// <summary>Undoes your changes to a song: its joins (either way) and the saves split off from it go back to the app's guess.</summary>
+    public void ForgetSongChoices(string key, IEnumerable<string> paths)
+    {
+        Exec("DELETE FROM song_choices WHERE kind = 'join' AND (a = $k OR b = $k)", ("$k", key));
+        foreach (var p in paths)
+        {
+            Exec("DELETE FROM song_choices WHERE kind = 'split' AND a = $p", ("$p", p.ToLowerInvariant()));
+            Exec("DELETE FROM song_choices WHERE kind = 'join' AND a = $k", ("$k", Library.SongChoices.SplitKey(p)));
+        }
+        _songChoices = null;
+    }
+
     public IReadOnlyList<string> Roots() => Query("SELECT path FROM roots ORDER BY path", r => (string)r["path"]);
     public void AddRoot(string path) => Exec("INSERT OR IGNORE INTO roots VALUES ($p)", ("$p", path));
     public void RemoveRoot(string path) => Exec("DELETE FROM roots WHERE path = $p", ("$p", path));
@@ -294,7 +355,8 @@ public sealed partial class LibraryDb : IDisposable
         }
         foreach (var (path, found) in f.Samples)
         {
-            using var cmd = Cmd("INSERT INTO samples VALUES ($id, $p, $f)", ("$id", id), ("$p", path), ("$f", found ? 1 : 0));
+            using var cmd = Cmd("INSERT INTO samples (project_id, path, found, unplayed) VALUES ($id, $p, $f, $u)",
+                                ("$id", id), ("$p", path), ("$f", found ? 1 : 0), ("$u", (int)(f.Info?.Unplayed.GetValueOrDefault(path) ?? SampleUse.Plays)));
             cmd.Transaction = tx;
             cmd.ExecuteNonQuery();
         }
@@ -308,33 +370,39 @@ public sealed partial class LibraryDb : IDisposable
     }
 
     /// <summary>
-    /// A new numbered save (Song_12 next to Song_11) takes over the status, rating, notes and
-    /// tags you gave the song, so they stay with it as it moves on.
+    /// A new save of a song (Song_12 next to Song_11, or a Bitwig bored_58 in a folder of its own next to bored_57) takes
+    /// over the status, rating, notes and tags you gave the song, so they stay with it as it moves on. It finds the song the
+    /// way the Projects list groups it (<see cref="SongVersions.Key"/> and your <see cref="Library.SongChoices"/>), and copies
+    /// from the save just before it: the highest number below its own, else the last one saved.
     /// </summary>
     void InheritFromEarlierSave(SqliteTransaction tx, long id, string path)
     {
         var name = Path.GetFileNameWithoutExtension(path);
-        var (song, number) = SongVersions.Split(name);
-        var folder = Path.GetDirectoryName(path);
-        long? from = null;
-        string hardware = "";
-        var best = int.MinValue;
-        using (var cmd = Cmd("SELECT id, name, daw, hardware FROM projects WHERE folder = $f AND id != $id",
-                             ("$f", folder), ("$id", id)))
+        var number = SongVersions.Split(name).Number;
+        var folder = Path.GetDirectoryName(path) ?? "";
+        var daw = Readers.For(path)?.Daw;
+        if (daw is null) return;
+        var choices = _songChoices ??= ReadSongChoices(tx);
+        var song = choices.KeyOf(path, folder, daw, name);
+        // The song's saves sit in its folder, or in folders of their own inside it (Bitwig's): the folder's index finds them.
+        var root = SongVersions.SongFolder(folder, name);
+        var candidates = new List<(long Id, int Number, long Mtime, string Hardware)>();
+        using (var cmd = Cmd("""
+            SELECT id, name, path, folder, mtime, hardware FROM projects
+            WHERE daw = $daw AND id != $id AND (folder = $root OR (folder >= $sub AND folder < $end))
+            """, ("$daw", daw), ("$id", id), ("$root", root), ("$sub", root + Path.DirectorySeparatorChar),
+                 ("$end", root + (char)(Path.DirectorySeparatorChar + 1))))
         {
             cmd.Transaction = tx;
             using var r = cmd.ExecuteReader();
-            var daw = Readers.For(path)?.Daw;
             while (r.Read())
-            {
-                var (s, n) = SongVersions.Split((string)r["name"]);
-                if (!s.Equals(song, StringComparison.OrdinalIgnoreCase) || n >= number || n <= best) continue;
-                if (daw is not null && !daw.Equals(Str(r, "daw"), StringComparison.Ordinal)) continue;
-                best = n;
-                from = (long)r["id"];
-                hardware = Str(r, "hardware");
-            }
+                if (choices.KeyOf(Str(r, "path"), Str(r, "folder"), daw, Str(r, "name")) == song)
+                    candidates.Add(((long)r["id"], SongVersions.Split(Str(r, "name")).Number, Long(r, "mtime"), Str(r, "hardware")));
         }
+        var before = candidates.Where(c => c.Number < number).OrderByDescending(c => c.Number).ThenByDescending(c => c.Mtime).ToList();
+        var pick = before.Count > 0 ? before[0] : candidates.OrderByDescending(c => c.Mtime).FirstOrDefault();
+        long? from = pick.Id == 0 ? null : pick.Id;
+        var hardware = pick.Hardware ?? "";
         if (from is null) return;
 
         var autoTags = hardware.Split(", ", StringSplitOptions.RemoveEmptyEntries).Select(h => h.ToLowerInvariant()).ToHashSet();
@@ -707,10 +775,10 @@ public sealed partial class LibraryDb : IDisposable
     /// only that row's ones: a DAW's own device in that DAW's projects, or "" for the plugin rather than a device.
     /// </summary>
     public IReadOnlyList<PluginProject> ProjectsWithPlugin(string name, string? own = null) => Query($"""
-        SELECT DISTINCT p.id, p.name, p.daw, p.mtime, p.folder FROM plugins pl JOIN projects p ON p.id = pl.project_id
+        SELECT DISTINCT p.id, p.name, p.daw, p.mtime, p.folder, p.path FROM plugins pl JOIN projects p ON p.id = pl.project_id
         WHERE pl.name_key = $k AND p.file_missing = 0 {OwnFilter(own)} ORDER BY p.mtime DESC
         """, r => new PluginProject((long)r["id"], Str(r, "name"), Str(r, "daw"), DateTimeOffset.FromUnixTimeSeconds(Long(r, "mtime")).LocalDateTime,
-                                     Str(r, "folder")),
+                                     Str(r, "folder"), Str(r, "path")),
         ("$k", NameKey(name)), ("$own", own ?? ""));
 
     /// <summary>The part of a query on <c>plugins pl JOIN projects p</c> that keeps one Plugins page row's uses.</summary>
@@ -730,17 +798,46 @@ public sealed partial class LibraryDb : IDisposable
 
     /// <summary>
     /// Each sample's projects, how many of them were saved since <paramref name="recentSince"/>, and the years those
-    /// projects were last saved in.
+    /// projects were last saved in. <paramref name="rules"/> leave out saves that hold a sample without playing it.
     /// </summary>
-    public IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> SampleUsageByAge(DateTime recentSince) => Query("""
-        SELECT s.path, COUNT(DISTINCT s.project_id) AS n, COUNT(DISTINCT CASE WHEN p.mtime >= $c THEN s.project_id END) AS recent,
-               GROUP_CONCAT(DISTINCT strftime('%Y', p.mtime, 'unixepoch', 'localtime')) AS years
-        FROM samples s JOIN projects p ON p.id = s.project_id
-        WHERE p.file_missing = 0
-        GROUP BY s.path COLLATE NOCASE
-        """, r => (Str(r, "path"), (int)Long(r, "n"), (int)Long(r, "recent"),
-                   Str(r, "years").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).Order().ToArray()),
-        ("$c", new DateTimeOffset(recentSince).ToUnixTimeSeconds()));
+    public IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> SampleUsageByAge(DateTime recentSince, UsageRules rules = default)
+    {
+        var since = new DateTimeOffset(recentSince).ToUnixTimeSeconds();
+        if (!rules.NotMutedInNewest)
+            return Query("""
+                SELECT s.path, COUNT(DISTINCT s.project_id) AS n, COUNT(DISTINCT CASE WHEN p.mtime >= $c THEN s.project_id END) AS recent,
+                       GROUP_CONCAT(DISTINCT strftime('%Y', p.mtime, 'unixepoch', 'localtime')) AS years
+                FROM samples s JOIN projects p ON p.id = s.project_id
+                WHERE p.file_missing = 0 AND ($notes = 0 OR s.unplayed <> 1)
+                GROUP BY s.path COLLATE NOCASE
+                """, r => (Str(r, "path"), (int)Long(r, "n"), (int)Long(r, "recent"),
+                           Str(r, "years").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).Order().ToArray()),
+                ("$c", since), ("$notes", rules.NeedsNotes ? 1 : 0));
+
+        // A sound muted in a song's newest save doesn't count for that song at all: its older saves are left out too.
+        var newest = new Dictionary<long, long>();
+        foreach (var g in SongVersions.Group(Projects(), SongChoices()))
+            foreach (var p in g.Older.Append(g.Latest))
+                newest[p.Id] = g.Latest.Id;
+        var muted = Query("SELECT project_id, path FROM samples WHERE unplayed = 2", r => ((long)r["project_id"], Str(r, "path")))
+            .Where(m => newest.GetValueOrDefault(m.Item1) == m.Item1)
+            .Select(m => (m.Item1, m.Item2.ToLowerInvariant()))
+            .ToHashSet();
+        var rows = Query("""
+            SELECT s.path, s.project_id, p.mtime FROM samples s JOIN projects p ON p.id = s.project_id
+            WHERE p.file_missing = 0 AND ($notes = 0 OR s.unplayed <> 1)
+            """, r => (Path: Str(r, "path"), Project: (long)r["project_id"], Mtime: Long(r, "mtime")), ("$notes", rules.NeedsNotes ? 1 : 0));
+        return rows
+            .Where(r => !muted.Contains((newest.GetValueOrDefault(r.Project, r.Project), r.Path.ToLowerInvariant())))
+            .GroupBy(r => r.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var saves = g.DistinctBy(r => r.Project).ToList();
+                return (g.First().Path, saves.Count, saves.Count(r => r.Mtime >= since),
+                        saves.Select(r => DateTimeOffset.FromUnixTimeSeconds(r.Mtime).LocalDateTime.Year).Distinct().Order().ToArray());
+            })
+            .ToList();
+    }
 
     /// <summary>Projects using a plugin (by name) or a sample (by path).</summary>
     public IReadOnlyList<long> ProjectsUsingPlugin(string name, string? own = null) =>
@@ -750,6 +847,11 @@ public sealed partial class LibraryDb : IDisposable
     public IReadOnlyList<long> ProjectsUsingSample(string path) =>
         Query("SELECT DISTINCT project_id FROM samples WHERE path = $p COLLATE NOCASE", r => (long)r["project_id"], ("$p", path));
 }
+
+/// <summary>Which projects count as using a sound (Settings › Sounds), for projects whose reader can tell (FL Studio so far).</summary>
+/// <param name="NeedsNotes">Only where the sound's channel has notes or clips.</param>
+/// <param name="NotMutedInNewest">Not in a song whose newest save has it muted.</param>
+public readonly record struct UsageRules(bool NeedsNotes = false, bool NotMutedInNewest = false);
 
 /// <summary>Your fields on a song (see <see cref="LibraryDb.SaveOrganisation(ProjectSummary, IEnumerable{long}, OrganisationField)"/>).</summary>
 [Flags]

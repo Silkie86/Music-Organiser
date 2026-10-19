@@ -80,7 +80,7 @@ public sealed record PluginUsage(string Name, string Vendor, string Format, int 
 }
 
 /// <summary>A project that uses a plugin, for the Plugins page's side panel.</summary>
-public sealed record PluginProject(long Id, string Name, string Daw, DateTime Saved, string Folder = "");
+public sealed record PluginProject(long Id, string Name, string Daw, DateTime Saved, string Folder = "", string Path = "");
 
 /// <summary>A song in a list of saves (see <see cref="SongVersions.Songs"/>): its newest listed save and how many are listed.</summary>
 public sealed record SongUse(string Song, PluginProject Latest, int Saves)

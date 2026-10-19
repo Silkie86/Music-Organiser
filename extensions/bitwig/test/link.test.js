@@ -465,14 +465,19 @@ test("puts samples in place of the empty Samplers a default Drum Machine has on 
                      taken: [{ note: 36, name: "Kick", devices: 2, first: "Sampler", sample: "Kick.wav" }] });
   assert.equal(pads[36].devices[0].sample, "C:\\Kit\\Kick.wav");
 
-  // Nor is one whose empty Sampler has an instrument after it, which plays; effects after it don't.
+  // Nor is one whose empty Sampler has an instrument after it, which plays; effects after it don't. Bitwig 6.1.5
+  // calls an instrument "instrument", and (most likely) an audio effect "audio-effect".
   pads[42].devices.push({ name: "Polymer", kind: "note_to_audio" });
   pads[44].devices.push({ name: "Delay+" });
+  pads[46].devices.push({ name: "EQ+", kind: "audio-effect" });
+  pads[48].devices.push({ name: "Polymer", kind: "instrument" });
   bitwig.clock.advance(100);
   assert.deepEqual(app.wait({ id: 5, cmd: "pads", track: 1, device: 0,
-                              pads: [{ note: 42, path: "C:\\Kit\\Hat.wav" }, { note: 44, path: "C:\\Kit\\Clap.wav" }] }).result,
-                   { filled: [44], replaced: [44], skipped: [42], failed: [],
-                     taken: [{ note: 42, name: "Sampler", devices: 3, first: "Sampler", sample: "" }] });
+                              pads: [{ note: 42, path: "C:\\Kit\\Hat.wav" }, { note: 44, path: "C:\\Kit\\Clap.wav" },
+                                     { note: 46, path: "C:\\Kit\\Tom.wav" }, { note: 48, path: "C:\\Kit\\Ride.wav" }] }).result,
+                   { filled: [44, 46], replaced: [44, 46], skipped: [42, 48], failed: [],
+                     taken: [{ note: 42, name: "Sampler", devices: 3, first: "Sampler", sample: "" },
+                             { note: 48, name: "Sampler", devices: 3, first: "Sampler", sample: "" }] });
   assert.deepEqual(pads[42].devices.map((d) => d.name), ["Sampler", "Compressor", "Polymer"]);
   assert.equal(pads[42].devices[0].sample, undefined);
 });

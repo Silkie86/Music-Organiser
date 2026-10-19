@@ -27,6 +27,27 @@ public class LibraryTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     [Fact]
+    public void Used_in_can_leave_out_samples_without_notes_and_songs_whose_newest_save_mutes_them()
+    {
+        // Two saves of one song: the hat plays in the first and is muted in the newest. The kick never has notes.
+        var folder = Path.Combine(_root, "Beat");
+        var first = Fixtures.FlStudio25Unplayed(folder, "Beat_1", hatPlays: true);
+        var newest = Fixtures.FlStudio25Unplayed(folder, "Beat_2");
+        File.SetLastWriteTime(first, DateTime.Now.AddHours(-2));
+        foreach (var f in new[] { first, newest }) _db.Upsert(Scanner.Analyse(f));
+        int Used(string name, UsageRules rules) =>
+            _db.SampleUsageByAge(DateTime.Now.AddYears(-1), rules).Where(u => u.Path.EndsWith(name, StringComparison.Ordinal)).Sum(u => u.Projects);
+
+        Assert.Equal((2, 2, 2), (Used("Snare 01.wav", default), Used("Kick 01.wav", default), Used("Hat 01.wav", default)));
+        Assert.Equal((2, 0, 2), (Used("Snare 01.wav", new(NeedsNotes: true)), Used("Kick 01.wav", new(NeedsNotes: true)), Used("Hat 01.wav", new(NeedsNotes: true))));
+        Assert.Equal((2, 2, 0), (Used("Snare 01.wav", new(NotMutedInNewest: true)), Used("Kick 01.wav", new(NotMutedInNewest: true)),
+                                 Used("Hat 01.wav", new(NotMutedInNewest: true))));
+        // The years still come through when the newest save is looked at.
+        Assert.Equal([DateTime.Now.Year], _db.SampleUsageByAge(DateTime.Now.AddYears(-1), new(NotMutedInNewest: true))
+                                            .Single(u => u.Path.EndsWith("Snare 01.wav", StringComparison.Ordinal)).Years.Distinct());
+    }
+
+    [Fact]
     public void ScansEveryProjectOnceAndSkipsAutosaves()
     {
         new Scanner(_db).ScanProjects();
@@ -290,6 +311,133 @@ public class LibraryTests : IDisposable
         Assert.Equal(["track1"], track.Older.Select(o => o.Name));
     }
 
+    static ProjectSummary Song(string name, string folder, int day) =>
+        new() { Name = name, Path = $@"{folder}\{name}.flp", Daw = "FL Studio", Folder = folder, Modified = new DateTime(2025, 3, day) };
+
+    [Fact]
+    public void Songs_whose_names_are_close_are_asked_about_but_not_ones_you_said_are_different()
+    {
+        // Solomon, 19 Oct 2026: "if there is a doubt the app should let you choose".
+        var songs = SongVersions.Group([Song("track nd 1", @"C:\beats", 1), Song("track 2", @"C:\beats", 2), Song("Sunrise", @"C:\beats", 3),
+                                        Song("Sunrize", @"C:\beats", 4), Song("Sunrise", @"C:\other", 5), Song("bass", @"C:\beats", 6),
+                                        Song("bossa", @"C:\beats", 7), Song("Untitled", @"C:\beats", 8), Song("Untitled 2", @"C:\beats", 9)]);
+        var doubts = SongVersions.Doubts(songs);
+        Assert.Equal(2, doubts.Count);
+        Assert.Equal(("Sunrize", "Sunrise"), (doubts[0].A.Song, doubts[0].B.Song));   // newest first
+        Assert.Equal("The names are one letter apart", doubts[0].Why);
+        Assert.Equal(("track", "track nd"), (doubts[1].A.Song, doubts[1].B.Song));
+        Assert.Equal("The names differ only by \"nd\"", doubts[1].Why);
+
+        // Across folders only when asked for.
+        Assert.Contains(SongVersions.Doubts(songs, acrossFolders: true), d => d.Why == "Same name in different folders");
+
+        _db.KeepApart(doubts[1].A.Key, doubts[1].B.Key);
+        Assert.Equal(["Sunrize"], SongVersions.Doubts(songs, _db.SongChoices()).Select(d => d.A.Song));
+    }
+
+    [Fact]
+    public void An_old_final_save_doesnt_open_over_newer_saves_and_the_app_asks_about_it()
+    {
+        // Code review U1 (19 Oct): "Night Drive final" from 2023 next to Night Drive_2 … _14 from 2025.
+        ProjectSummary P(string name, DateTime saved) =>
+            new() { Name = name, Path = $@"C:\beats\{name}.flp", Daw = "FL Studio", Folder = @"C:\beats", Modified = saved };
+        var saves = new List<ProjectSummary> { P("Night Drive final", new(2023, 5, 1)), P("Night Drive_70 - Copy", new(2025, 6, 1)) };
+        saves.AddRange(Enumerable.Range(2, 13).Select(n => P($"Night Drive_{n}", new DateTime(2025, 1, 1).AddDays(n))));
+        saves.Add(P("Night Drive_70", new(2025, 6, 1)));
+        var song = Assert.Single(SongVersions.Group(saves));
+        Assert.Equal("Night Drive_70", song.Latest.Name);   // the newest by date; its copy, saved with it, comes after
+
+        var asked = SongVersions.Doubts([song]);
+        Assert.Equal(["Night Drive final", "Night Drive_70 - Copy"], asked.Select(d => d.B.Song).Order());
+        Assert.All(asked, d => Assert.True(d.OneSave));
+        Assert.Contains(asked, d => d.Why == "It was put with Night Drive because its name adds \"final\"");
+
+        // Answered: final is a save of the song (not asked again); the copy is its own song.
+        _db.KeepApart(song.Key, asked.Single(d => d.B.Song == "Night Drive final").B.Key);
+        _db.SplitSave(saves[1].Path);
+        var choices = _db.SongChoices();
+        Assert.Empty(SongVersions.Doubts(SongVersions.Group(saves, choices), choices));
+        Assert.Equal(2, SongVersions.Group(saves, choices).Count);
+
+        // Saves that all carry the same mark have nothing to ask.
+        Assert.Empty(SongVersions.Doubts(SongVersions.Group([P("Dub v2", new(2025, 1, 1)), P("Dub v3", new(2025, 2, 1))])));
+    }
+
+    [Fact]
+    public void Saves_at_a_drives_root_group_with_ones_in_a_folder_of_their_own_name()
+    {
+        ProjectSummary P(string name, string folder) =>
+            new() { Name = name, Path = $@"{folder.TrimEnd('\\')}\{name}.bwproject", Daw = "Bitwig Studio", Folder = folder, Modified = new DateTime(2025, 1, 1) };
+        Assert.Single(SongVersions.Group([P("beat", @"C:\beat"), P("beat_2", @"C:\")]));
+    }
+
+    [Fact]
+    public void A_name_ending_in_a_non_English_digit_is_a_name_not_a_crash()
+    {
+        Assert.Equal(("beat_٢", 1), SongVersions.Split("beat_٢"));
+        Assert.Equal(("曲１", 1), SongVersions.Split("曲１"));
+    }
+
+    [Fact]
+    public void A_new_Bitwig_save_in_a_folder_of_its_own_keeps_the_songs_rating_notes_and_tags()
+    {
+        // Code review U4 (19 Oct): Projects\bored_57\bored_57.bwproject, then Bitwig saves Projects\bored_58\bored_58.bwproject.
+        string Save(string name)
+        {
+            var folder = Path.Combine(_root, "Projects", name);
+            Directory.CreateDirectory(folder);
+            var file = Path.Combine(folder, name + ".bwproject");
+            File.WriteAllBytes(file, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(file, 1, 100, new ProjectInfo { Daw = "Bitwig Studio" }, null, [], []));
+            return file;
+        }
+        Save("bored_57");
+        var first = _db.Projects().Single();
+        first.Rating = 4;
+        first.Notes = "needs a drop";
+        _db.SaveOrganisation(first);
+        _db.SetTags(first.Id, ["techno"]);
+        Save("other_3");   // another song beside it isn't a save of it
+
+        Save("bored_58");
+        var newer = _db.Projects().Single(p => p.Name == "bored_58");
+        Assert.Equal((4, "needs a drop"), (newer.Rating, newer.Notes));
+        Assert.Contains("techno", newer.Tags);
+        Assert.Equal((0, ""), (_db.Projects().Single(p => p.Name == "other_3").Rating, _db.Projects().Single(p => p.Name == "other_3").Notes));
+    }
+
+    [Fact]
+    public void You_can_join_songs_split_a_save_off_and_move_a_save_and_Reset_undoes_it()
+    {
+        var saves = new[] { Song("track nd 1", @"C:\beats", 1), Song("track 2", @"C:\beats", 2), Song("track 3", @"C:\beats", 3),
+                            Song("bossa", @"C:\beats", 4) };
+        IReadOnlyList<SongGroup> Groups() => SongVersions.Group(saves, _db.SongChoices());
+        var track = Groups().Single(g => g.Song == "track");
+        var nd = Groups().Single(g => g.Song == "track nd");
+
+        // "track nd" goes under "track": one song, called track, newest track 3.
+        Assert.True(_db.JoinSong(nd.Key, track.Key));
+        var joined = Assert.Single(Groups(), g => g.Song == "track");
+        Assert.Equal(["track 2", "track nd 1"], joined.Older.Select(o => o.Name));
+        Assert.Equal(2, Groups().Count);
+        Assert.False(_db.JoinSong(track.Key, nd.Key));   // a loop
+        Assert.True(_db.SongChoices().Changed(joined.Key, joined.Older.Append(joined.Latest).Select(p => p.Path)));
+
+        // track 2 split off into a song of its own, then moved under bossa.
+        _db.SplitSave(saves[1].Path);
+        Assert.Equal(3, Groups().Count);
+        Assert.True(_db.JoinSong(SongChoices.SplitKey(saves[1].Path), Groups().Single(g => g.Song == "bossa").Key));
+        var bossa = Groups().Single(g => g.Song == "bossa");
+        Assert.Equal(("bossa", "track 2"), (bossa.Latest.Name, bossa.Older.Single().Name));   // saved last, whatever the numbers
+
+        // Reset on track puts its join back; Reset on bossa takes track 2 back to track.
+        _db.ForgetSongChoices(joined.Key, [saves[0].Path, saves[2].Path]);
+        _db.ForgetSongChoices(bossa.Key, [saves[1].Path, saves[3].Path]);
+        Assert.Equal(3, Groups().Count);
+        Assert.Equal(["track 2"], Groups().Single(g => g.Song == "track").Older.Select(o => o.Name));
+        Assert.True(_db.SongChoices().IsEmpty);
+    }
+
     [Fact]
     public void Bitwig_saves_numbered_with_a_space_are_one_song()
     {
@@ -489,7 +637,7 @@ public class LibraryTests : IDisposable
     {
         var scanner = new Scanner(_db);
         scanner.ScanProjects();
-        Assert.Equal("3", _db.GetSetting("reader_version:FL Studio"));
+        Assert.Equal("4", _db.GetSetting("reader_version:FL Studio"));
         Directory.CreateDirectory(Path.Combine(_root, "bounce"));
         File.WriteAllBytes(Path.Combine(_root, "bounce", "Kick 01.wav"), [0]);
 
@@ -499,7 +647,7 @@ public class LibraryTests : IDisposable
         _db.SetSetting("reader_version:FL Studio", "1");   // as a library last read with the older FL reader
         scanner.ScanProjects();
         Assert.Equal(0, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
-        Assert.Equal("3", _db.GetSetting("reader_version:FL Studio"));
+        Assert.Equal("4", _db.GetSetting("reader_version:FL Studio"));
     }
 
     [Fact]

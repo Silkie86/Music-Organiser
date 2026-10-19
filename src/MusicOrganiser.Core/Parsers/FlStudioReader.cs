@@ -16,7 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
-    public int Version => 3;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist
+    public int Version => 4;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
@@ -316,7 +316,25 @@ public sealed partial class FlStudioReader : IProjectReader
         info.Details["Channels"] = info.Tracks.Count.ToString();
         info.Details["Patterns"] = patterns.ToString();
         info.Details["Notes"] = notes.ToString();
+        try { NoteUnplayed(ReadSong(flp, path), info); }
+        catch (Exception e) when (e is not OutOfMemoryException) { }   // the rest is still worth listing
         return info.Dedupe();
+    }
+
+    /// <summary>
+    /// The samples this save holds but doesn't play (<see cref="ProjectInfo.Unplayed"/>): on a channel with nothing in the
+    /// playlist, or muted (the channel switched off, or every clip of it muted or on a muted playlist track). A sample on
+    /// several channels plays when any of them does.
+    /// </summary>
+    static void NoteUnplayed(FlSong song, ProjectInfo info)
+    {
+        foreach (var bySample in song.Channels.Where(c => c.Sample.Length > 0).GroupBy(c => c.Sample, StringComparer.OrdinalIgnoreCase))
+        {
+            static bool Placed(FlChannel c) => c.Clips.Any(clip => clip.Notes.Count > 0) || c.AudioClips.Count > 0;
+            static bool Plays(FlChannel c) => c.Enabled && (c.Notes.Count > 0 || c.AudioClips.Any(a => !a.Muted && !a.OnMutedTrack));
+            if (bySample.Any(Plays)) continue;
+            info.Unplayed[bySample.Key] = bySample.Any(Placed) ? SampleUse.Muted : SampleUse.NoNotes;
+        }
     }
 
     /// <summary>

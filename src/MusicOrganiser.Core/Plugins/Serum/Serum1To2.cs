@@ -82,6 +82,49 @@ public static class Serum1To2
         return Directory.Exists(user) || !Directory.Exists(Path.Combine(presets, "User")) ? user : Path.Combine(presets, "User");
     }
 
+    /// <summary>
+    /// Saves each swapped Serum's own sound as a Serum 1 preset in Serum 2's user folder ("From Serum 1\song"), where
+    /// Serum 2's browser opens it exactly as Serum 1 played it: the way to get the sound back if the translation is off.
+    /// Returns a note saying where, or null when there's nothing to save or nowhere to save it.
+    /// </summary>
+    public static string? KeepOriginals(string song, IReadOnlyList<(string Name, byte[] Fxp)> originals, string? userFolder)
+    {
+        if (originals.Count == 0 || userFolder is null) return null;
+        // Each sound's file name: a second "Serum" is "Serum (2)", not "Serum 2", which reads like a Serum 2 preset.
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var files = originals.Select(o =>
+        {
+            var file = SafeName(o.Name);
+            for (var n = 2; !used.Add(file); n++) file = $"{SafeName(o.Name)} ({n})";
+            return (File: file + ".fxp", o.Fxp);
+        }).ToList();
+        try
+        {
+            // Two songs with one file name (two "beat" projects in different folders) mustn't overwrite each other's
+            // sounds: a folder already holding other presets gets the next number, unless it holds exactly these.
+            var root = Path.Combine(userFolder, "From Serum 1");
+            var folder = Path.Combine(root, SafeName(song));
+            for (var n = 2; Directory.Exists(folder) && Directory.EnumerateFiles(folder).Any() && !Holds(folder, files); n++)
+                folder = Path.Combine(root, $"{SafeName(song)} ({n})");
+            Directory.CreateDirectory(folder);
+            foreach (var (file, fxp) in files) File.WriteAllBytes(Path.Combine(folder, file), fxp);
+            return $"Serum's own sound{(originals.Count == 1 ? " is" : "s are")} also saved in Serum 2's browser, under User › From Serum 1 › " +
+                   $"{Path.GetFileName(folder)}: load {(originals.Count == 1 ? "it" : "one")} there for the exact Serum 1 sound.";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Serum's own sounds couldn't be saved for Serum 2: {e.Message}"; }
+
+        static bool Holds(string folder, List<(string File, byte[] Fxp)> files) =>
+            Directory.EnumerateFiles(folder).Count() == files.Count &&
+            files.All(f => File.Exists(Path.Combine(folder, f.File)) && File.ReadAllBytes(Path.Combine(folder, f.File)).AsSpan().SequenceEqual(f.Fxp));
+    }
+
+    static string SafeName(string name)
+    {
+        var bad = Path.GetInvalidFileNameChars().Concat(['\\', '/', ':', '*', '?', '"', '<', '>', '|']).ToHashSet();
+        var safe = new string(name.Select(c => bad.Contains(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
+        return safe.Length == 0 ? "Serum" : safe;
+    }
+
     static (JsonObject Header, JsonObject Settings) Template()
     {
         using var s = typeof(Serum1To2).Assembly.GetManifestResourceStream("MusicOrganiser.Serum.Serum2FromSerum1.json")
