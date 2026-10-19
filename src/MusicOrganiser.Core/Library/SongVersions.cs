@@ -3,7 +3,15 @@ using System.Text.RegularExpressions;
 namespace MusicOrganiser.Core.Library;
 
 /// <summary>One song and its numbered saves: Song.flp, Song_2.flp … Song_77.flp in one folder.</summary>
-public sealed record SongGroup(string Song, ProjectSummary Latest, IReadOnlyList<ProjectSummary> Older);
+public sealed record SongGroup(string Song, ProjectSummary Latest, IReadOnlyList<ProjectSummary> Older)
+{
+    /// <summary>The song's key (see <see cref="SongVersions.Key"/> and <see cref="SongChoices"/>), for joining it to another.</summary>
+    public string Key { get; init; } = "";
+    public int SaveCount => Older.Count + 1;
+}
+
+/// <summary>Two songs that may be saves of one: their names are close but not close enough to be sure (see <see cref="SongVersions.Doubts"/>).</summary>
+public sealed record SongDoubt(SongGroup A, SongGroup B, string Why);
 
 /// <summary>
 /// One working period on a song: saves less than <see cref="SongVersions.RunGapMonths"/> months apart. <see cref="Last"/> is the save
@@ -205,30 +213,137 @@ public static partial class SongVersions
     /// One group per song. The latest save is the highest-numbered file that is still on disk
     /// (ties go to the most recently modified); folder copies reset dates, numbers survive.
     /// </summary>
-    public static IReadOnlyList<SongGroup> Group(IEnumerable<ProjectSummary> projects) =>
-        projects.GroupBy(p => Key(p.Folder, p.Daw, p.Name))
+    /// <param name="choices">Your changes to the grouping (see <see cref="SongChoices"/>), which win over the guess.</param>
+    public static IReadOnlyList<SongGroup> Group(IEnumerable<ProjectSummary> projects, SongChoices? choices = null)
+    {
+        choices ??= SongChoices.None;
+        return projects.GroupBy(p => choices.KeyOf(p.Path, p.Folder, p.Daw, p.Name))
             .Select(g =>
             {
+                var mixed = Mixed(g.Select(p => p.Name));
                 var ordered = g.OrderBy(p => p.FileMissing)
-                               .ThenByDescending(p => Split(p.Name).Number)
+                               .ThenByDescending(p => mixed ? 0 : Split(p.Name).Number)
                                .ThenByDescending(p => p.Modified)
+                               .ThenByDescending(p => Split(p.Name).Number)
                                .ThenByDescending(p => FixedTail().IsMatch(p.Name))   // saved the same second: the fix came after
                                .ToList();
-                return new SongGroup(Split(ordered[0].Name).Song, ordered[0], ordered.Skip(1).ToList());
+                return new SongGroup(SongName(g.Key, ordered, p => (p.Folder, p.Daw, p.Name)), ordered[0], ordered.Skip(1).ToList()) { Key = g.Key };
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// Songs that may be saves of one song, for you to say (Solomon, 19 Oct: "if there is a doubt the app should let you
+    /// choose"): in the same folder and DAW, names that differ by a short word or a letter or two once numbers, spaces and
+    /// marks are left out ("track nd 1" and "track 2", "Sunrise" and "Sunrize"); with <paramref name="acrossFolders"/>
+    /// also the same name in different folders. Pairs you said are different (<see cref="SongChoices.Apart"/>) aren't asked
+    /// again. Newest first.
+    /// </summary>
+    public static IReadOnlyList<SongDoubt> Doubts(IReadOnlyList<SongGroup> songs, SongChoices? choices = null, bool acrossFolders = false, int most = 200)
+    {
+        choices ??= SongChoices.None;
+        var named = songs.Where(g => !DawDefaults.Contains(g.Song.Trim()) && Skeleton(g.Song).Length >= 3).ToList();
+        var doubts = new List<SongDoubt>();
+        void Add(SongGroup a, SongGroup b, string why)
+        {
+            if (a.Key != b.Key && !choices.Apart(a.Key, b.Key)) doubts.Add(First(a, b) ? new(a, b, why) : new(b, a, why));
+        }
+        // The newer song first (its name is the first offered), or the one with more saves.
+        static bool First(SongGroup a, SongGroup b) =>
+            a.Latest.Modified != b.Latest.Modified ? a.Latest.Modified > b.Latest.Modified : a.SaveCount >= b.SaveCount;
+        foreach (var bucket in named.GroupBy(g => (Folder: SongFolder(g.Latest.Folder, g.Latest.Name).ToLowerInvariant(), g.Latest.Daw)))
+        {
+            var list = bucket.Select(g => (Song: g, Skeleton: Skeleton(g.Song))).ToList();
+            for (var i = 0; i < list.Count; i++)
+                for (var j = i + 1; j < list.Count; j++)
+                    if (Close(list[i].Skeleton, list[j].Skeleton) is { } why) Add(list[i].Song, list[j].Song, why);
+        }
+        if (acrossFolders)
+            foreach (var same in named.GroupBy(g => (g.Latest.Daw, Skeleton(g.Song))))
+            {
+                var list = same.ToList();
+                for (var i = 0; i < list.Count; i++)
+                    for (var j = i + 1; j < list.Count; j++)
+                        if (!string.Equals(SongFolder(list[i].Latest.Folder, list[i].Latest.Name), SongFolder(list[j].Latest.Folder, list[j].Latest.Name),
+                                           StringComparison.OrdinalIgnoreCase))
+                            Add(list[i], list[j], "Same name in different folders");
+            }
+        return doubts.OrderByDescending(d => d.A.Latest.Modified).Take(most).ToList();
+    }
+
+    /// <summary>
+    /// Whether a song holds saves of differently named songs (you joined them): their numbers don't count against each
+    /// other ("bossa" saved after "track 2" is newer), so the newest is the one saved last.
+    /// </summary>
+    static bool Mixed(IEnumerable<string> names) =>
+        names.Select(n => Split(n).Song).Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any();
+
+    /// <summary>A song's name with only its letters, lower case: "Track nd" is "tracknd".</summary>
+    static string Skeleton(string song) => new(song.Where(char.IsLetter).Select(char.ToLowerInvariant).ToArray());
+
+    /// <summary>Why two names (as <see cref="Skeleton"/>s) may be one song, or null when they're plainly different or the same.</summary>
+    static string? Close(string a, string b)
+    {
+        if (a == b) return null;   // the same name, numbered differently: the rules already decided
+        var (shorter, longer) = a.Length <= b.Length ? (a, b) : (b, a);
+        if (longer.StartsWith(shorter, StringComparison.Ordinal) && longer.Length - shorter.Length <= 3)
+            return $"The names differ only by \"{longer[shorter.Length..]}\"";
+        if (longer.EndsWith(shorter, StringComparison.Ordinal) && longer.Length - shorter.Length <= 3)
+            return $"The names differ only by \"{longer[..^shorter.Length]}\"";
+        var most = longer.Length >= 8 ? 2 : 1;
+        return shorter.Length >= 4 && longer.Length - shorter.Length <= most && Distance(a, b, most) <= most
+            ? (Distance(a, b, most) == 1 ? "The names are one letter apart" : "The names are two letters apart")
+            : null;
+    }
+
+    /// <summary>How many letters to change, add or remove to turn one into the other, up to <paramref name="most"/> + 1.</summary>
+    static int Distance(string a, string b, int most)
+    {
+        var previous = new int[b.Length + 1];
+        var current = new int[b.Length + 1];
+        for (var j = 0; j <= b.Length; j++) previous[j] = j;
+        for (var i = 1; i <= a.Length; i++)
+        {
+            current[0] = i;
+            var best = i;
+            for (var j = 1; j <= b.Length; j++)
+            {
+                current[j] = Math.Min(Math.Min(current[j - 1] + 1, previous[j] + 1), previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
+                best = Math.Min(best, current[j]);
+            }
+            if (best > most) return most + 1;
+            (previous, current) = (current, previous);
+        }
+        return previous[b.Length];
+    }
+
+    /// <summary>
+    /// A group's name: the name of the song the others were joined to (one of its own saves names it), else the newest's.
+    /// Mixed numbering ("track 2" newer than "track nd 1") picks a later save's number first, so the newest isn't always it.
+    /// </summary>
+    static string SongName<T>(string key, IReadOnlyList<T> ordered, Func<T, (string Folder, string Daw, string Name)> of)
+    {
+        foreach (var p in ordered)
+            if (of(p) is var (folder, daw, name) && Key(folder, daw, name) == key) return Split(name).Song;
+        return Split(of(ordered[0]).Name).Song;
+    }
 
     /// <summary>
     /// Saves grouped into songs the way <see cref="Group"/> does, newest song first. Each keeps its highest-numbered save
     /// in the list (ties go to the most recent), so a plugin's song shows the last save that still used it.
     /// </summary>
-    public static IReadOnlyList<SongUse> Songs(IEnumerable<PluginProject> saves) =>
-        saves.GroupBy(p => Key(p.Folder, p.Daw, p.Name))
+    public static IReadOnlyList<SongUse> Songs(IEnumerable<PluginProject> saves, SongChoices? choices = null)
+    {
+        choices ??= SongChoices.None;
+        return saves.GroupBy(p => choices.KeyOf(p.Path, p.Folder, p.Daw, p.Name))
             .Select(g =>
             {
-                var latest = g.OrderByDescending(p => Split(p.Name).Number).ThenByDescending(p => p.Saved).First();
-                return new SongUse(Split(latest.Name).Song, latest, g.Count());
+                var mixed = Mixed(g.Select(p => p.Name));
+                var ordered = g.OrderByDescending(p => mixed ? 0 : Split(p.Name).Number).ThenByDescending(p => p.Saved)
+                               .ThenByDescending(p => Split(p.Name).Number).ToList();
+                return new SongUse(SongName(g.Key, ordered, p => (p.Folder, p.Daw, p.Name)), ordered[0], g.Count());
             })
             .OrderByDescending(s => s.Latest.Saved).ThenBy(s => s.Song, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
 }

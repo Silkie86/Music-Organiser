@@ -267,6 +267,14 @@
                                     </ComboBox>
                                     <TextBlock Text="A new version starts after a gap of" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
                                 </DockPanel>
+                                <TextBlock Text="Which saves are one song" FontWeight="SemiBold" Margin="0,8,0,4" />
+                                <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap"
+                                           Text="Saves in one folder whose names differ only by a number at the end are one song (track1, track 2, track_3). If the app got one wrong, change it on the song's Saves tab: move a save to another song, make it a song of its own, or Reset." />
+                                <CheckBox Content="Ask when two songs may be saves of one" IsChecked="{Binding ProjectsPage.AskDoubts}" Margin="0,8,0,0"
+                                          ToolTip.Tip="For names a letter or a short word apart, like 'track nd 1' and 'track 2'. The Projects page asks, with options." />
+                                <CheckBox Content="Also ask about the same name in different folders" IsChecked="{Binding ProjectsPage.DoubtsAcrossFolders}" Margin="0,4,0,0"
+                                          IsEnabled="{Binding ProjectsPage.AskDoubts}"
+                                          ToolTip.Tip="Off: a song in another folder is always another song" />
                             </StackPanel>
                         </Border>
 

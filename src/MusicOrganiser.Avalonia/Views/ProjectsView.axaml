@@ -103,6 +103,40 @@
                 </DockPanel>
             </Border>
 
+            <!-- Songs whose names are close enough that they may be saves of one: the app asks rather than guessing. -->
+            <Border DockPanel.Dock="Top" Padding="12,8" Margin="0,0,0,8" CornerRadius="{DynamicResource RadiusM}"
+                    Background="{StaticResource AccentFaintBrush}" IsVisible="{Binding ShowDoubtsBanner}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Check" Command="{Binding CheckDoubtsCommand}"
+                            ToolTip.Tip="Go through them one pair at a time: one song or two?" />
+                    <TextBlock Text="{Binding DoubtsText}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                </DockPanel>
+            </Border>
+            <Border DockPanel.Dock="Top" Padding="14,12" Margin="0,0,0,8" CornerRadius="{DynamicResource RadiusM}"
+                    Background="{StaticResource SurfaceRaisedBrush}" IsVisible="{Binding CheckingDoubts}">
+                <StackPanel Spacing="6">
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Close" Classes="row" Command="{Binding CloseDoubtsCommand}" />
+                        <TextBlock Text="Are these saves of one song?" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </DockPanel>
+                    <TextBlock Text="{Binding Doubt.Why}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding DoubtA}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding DoubtB}" TextWrapping="Wrap" />
+                    <WrapPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <Button Content="{Binding KeepAText}" Classes="accent" Margin="0,0,6,6" Command="{Binding SameSongCommand}" CommandParameter="A"
+                                ToolTip.Tip="Put both under this name" />
+                        <Button Content="{Binding KeepBText}" Margin="0,0,6,6" Command="{Binding SameSongCommand}" CommandParameter="B"
+                                ToolTip.Tip="Put both under this name" />
+                        <Button Content="Different songs" Margin="0,0,6,6" Command="{Binding DifferentSongsCommand}"
+                                ToolTip.Tip="Keep them apart and don't ask about these two again" />
+                        <Button Content="Skip" Margin="0,0,6,6" Command="{Binding SkipDoubtCommand}"
+                                ToolTip.Tip="Ask again next time the app starts" />
+                    </WrapPanel>
+                    <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap"
+                               Text="You can change this later on a song's Saves tab. Settings › Projects turns these questions off." />
+                </StackPanel>
+            </Border>
+
             <DataGrid x:Name="Grid" Classes="songs" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="None"
                       CanUserSortColumns="False" CanUserResizeColumns="False" CanUserReorderColumns="False"
