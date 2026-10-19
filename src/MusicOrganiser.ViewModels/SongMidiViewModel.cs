@@ -122,8 +122,12 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     /// <summary>The picked part on the Playground, on top of the bars of this song it fits, to work the idea up there.</summary>
     [RelayCommand]
     Task OpenInPlayground() => Selected is { } row
-        ? main.Playground.OpenFromSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0)
-        : main.Playground.OpenFromSongAsync(path, name);
+        ? main.Playground.OpenFromSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0, PartsOff())
+        : main.Playground.OpenFromSongAsync(path, name, leaveOut: PartsOff());
+
+    /// <summary>The song's parts switched off in "Fit to", left out of the Playground too (drums have no chip, so they stay).</summary>
+    IReadOnlyCollection<string>? PartsOff() =>
+        SongParts.Any(p => !p.IsOn) ? SongParts.Where(p => !p.IsOn).Select(p => p.Name).ToHashSet() : null;
 
     // ---- which of the song's parts to fit against ----
 
@@ -216,7 +220,7 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     {
         if (Open is not { } row) return;
         Quick ??= main.Playground.Quick();
-        await Quick.LoadSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0);
+        await Quick.LoadSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0, PartsOff());
     }
 
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>

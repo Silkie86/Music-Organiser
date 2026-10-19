@@ -1001,7 +1001,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     Task BringSong(ProjectItem? project) => project is null ? Task.CompletedTask : BringSongAsync(project.Path, project.Name);
 
-    async Task<bool> BringSongAsync(string path, string songName, IReadOnlyCollection<string>? only = null)
+    async Task<bool> BringSongAsync(string path, string songName, IReadOnlyCollection<string>? leaveOut = null)
     {
         if (Readers.For(path) is not { } reader) return false;
         SongChoicesOpen = false;
@@ -1014,9 +1014,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var parts = await UiWork.Run(() =>
             {
                 var found = new List<(string Name, string Role, List<NoteEvent> Notes)>();
-                foreach (var c in reader.ExtractChannels(path))
+                // Where the parts play in the arranger (as MIDI that fits reads them), so they line up with each other.
+                foreach (var c in PhraseJoiner.ArrangedChannels(path) ?? reader.ExtractChannels(path))
                 {
-                    if (only is not null && !only.Contains(c.Name)) continue;   // just the song's parts picked
+                    if (leaveOut is not null && leaveOut.Contains(c.Name)) continue;   // a part switched off in "Fit to"
                     // Notes held into the first bar (a pushed chord, a tie) come in too, cut to start there.
                     var notes = MidiBrowserViewModel.Cut(PhraseAnalyser.Normalise(c.Notes, c.Ppq, keepPlace: true), from, from + length);
                     if (notes.Count == 0) continue;
@@ -1057,10 +1058,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     public PlaygroundViewModel Quick() =>
         new(_db, _main, new PlaygroundStore(Path.Combine(_main.DataFolder, "playground-quick")), quick: true);
 
-    /// <summary>Starts again with the song's bars where the part fits (only the song's parts named in <paramref name="parts"/>
-    /// when given) and the part on top.</summary>
+    /// <summary>Starts again with the song's bars where the part fits (less the song's parts named in <paramref name="leaveOut"/>)
+    /// and the part on top.</summary>
     public async Task LoadSongAsync(string path, string songName, MidiEntry? entry, IReadOnlyList<NoteEvent>? notes, string? title,
-                                    long at = 0, IReadOnlyCollection<string>? parts = null)
+                                    long at = 0, IReadOnlyCollection<string>? leaveOut = null)
     {
         StopPlaying();
         _undo.Clear();
@@ -1072,7 +1073,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Section.Bars = bars;
         Show();
         FromBar = (int)(Math.Max(0, at) / Bar) + 1;
-        if (parts is not { Count: 0 }) await BringSongAsync(path, songName, parts);
+        await BringSongAsync(path, songName, leaveOut);
         if (entry is not null && notes is { Count: > 0 }) AddFromLibrary(entry, notes, title);
         SelectedLayer = Layers.LastOrDefault();
         Message = "";
@@ -1116,7 +1117,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// and the Playground page shown.
     /// </summary>
     public async Task OpenFromSongAsync(string path, string songName, MidiEntry? entry = null, IReadOnlyList<NoteEvent>? notes = null,
-                                        string? title = null, long at = 0)
+                                        string? title = null, long at = 0, IReadOnlyCollection<string>? leaveOut = null)
     {
         StopPlaying();
         var bars = notes is { Count: > 0 } ? Math.Clamp(PhraseAnalyser.BarsOf(notes), 1, GrowBars) : NewBars;
@@ -1137,7 +1138,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         }
         FromBar = (int)(Math.Max(0, at) / Bar) + 1;
         if (_main.Nav.FirstOrDefault(n => n.Page == this) is { } page) _main.SelectedNav = page;
-        var brought = await BringSongAsync(path, songName);
+        var brought = await BringSongAsync(path, songName, leaveOut);
         if (entry is not null && notes is { Count: > 0 }) AddFromLibrary(entry, notes, title);
         Message = entry is null
             ? Message

@@ -2193,6 +2193,40 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task The_small_playground_brings_in_just_the_song_parts_picked()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Same", Ppq = 96 };
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k + 12, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Same Am.mid"), Core.Export.MidiWriter.Write(chords));
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        var project = MidiBrowserTests.FlProjectWithChordsAndLead(songs);
+        _db.Upsert(Core.Library.Scanner.Analyse(project));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var tab = new SongMidiViewModel(main.Midi, main, project, "Two Parts");
+        await tab.LoadAsync();
+        tab.OpenPartCommand.Execute(tab.Rows.Single(r => r.Title == "Same Am"));
+
+        // Every part on: the song's keys and lead come in under the part.
+        await tab.WorkHereCommand.ExecuteAsync(null);
+        Assert.Contains(tab.Quick!.Layers, l => l.Name == "Lead");
+        Assert.Contains(tab.Quick.Layers, l => l.Name == "Keys");
+
+        // The lead switched off in "Fit to": it stays out of the small playground too.
+        tab.SongParts.Single(p => p.Name == "Lead").IsOn = false;
+        for (var i = 0; i < 100 && tab.Rows.FirstOrDefault()?.With?.Parts.Count != 1; i++) await Task.Delay(10);
+        await tab.WorkHereCommand.ExecuteAsync(null);
+        Assert.DoesNotContain(tab.Quick.Layers, l => l.Name == "Lead");
+        Assert.Contains(tab.Quick.Layers, l => l.Name == "Keys");
+    }
+
+    [Fact]
     public async Task A_songs_midi_tab_fits_to_just_the_song_parts_picked()
     {
         const int bar = 4 * 96;
