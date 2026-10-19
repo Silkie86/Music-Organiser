@@ -76,17 +76,33 @@ public sealed record Arrangement(string View, double Tempo, int BeatsPerBar, IRe
 /// <summary>Reads a project's arrangement for the preview, in every layout its DAW has.</summary>
 public static class ArrangementReader
 {
-    /// <summary>The project's arrangement views (FL Studio has two: its playlist, and the tracks it becomes in Bitwig). Empty when the format has none.</summary>
-    public static IReadOnlyList<Arrangement> Read(string path)
+    [ThreadStatic] static Dictionary<string, string?>? _located;
+    [ThreadStatic] static bool _noLooking;
+
+    /// <summary>
+    /// The project's arrangement views (FL Studio has two: its playlist, and the tracks it becomes in Bitwig). Empty when
+    /// the format has none. <paramref name="findAudio"/> false: audio clips aren't looked for on disk (the MIDI page only
+    /// wants the notes), so they all count as missing.
+    /// </summary>
+    public static IReadOnlyList<Arrangement> Read(string path, bool findAudio = true)
     {
-        var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
-        return ext switch
+        // Each audio file is looked for once per read, however many clips play it: Solomon's "TEKA TEK dubstep new drums 21"
+        // has 2,594 audio clips of 31 files, and looking on disk up to seven times for each clip took seconds on his PC.
+        var (located, noLooking) = (_located, _noLooking);
+        _located = new(StringComparer.OrdinalIgnoreCase);
+        _noLooking = !findAudio;
+        try
         {
-            ".flp" => FlArrangement.Read(path),
-            ".bwproject" => [new BitwigReader().ReadArrangement(path)],
-            ".song" => [new StudioOneReader().ReadArrangement(path)],
-            _ => [],
-        };
+            var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+            return ext switch
+            {
+                ".flp" => FlArrangement.Read(path),
+                ".bwproject" => [new BitwigReader().ReadArrangement(path)],
+                ".song" => [new StudioOneReader().ReadArrangement(path)],
+                _ => [],
+            };
+        }
+        finally { (_located, _noLooking) = (located, noLooking); }
     }
 
     /// <summary>
@@ -95,7 +111,14 @@ public static class ArrangementReader
     /// </summary>
     public static string? Locate(string saved, string projectPath)
     {
-        if (saved.Length == 0) return null;
+        if (saved.Length == 0 || _noLooking) return null;
+        if (_located is not { } cache) return Look(saved, projectPath);
+        if (!cache.TryGetValue(saved, out var found)) cache[saved] = found = Look(saved, projectPath);
+        return found;
+    }
+
+    static string? Look(string saved, string projectPath)
+    {
         try
         {
             if (File.Exists(saved)) return saved;
