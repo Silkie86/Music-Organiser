@@ -150,7 +150,9 @@ public sealed class FlLink
         await One.WaitAsync(ct);
         try
         {
-            var midi = _midi ?? Port() ?? throw new DawLinkException(Explain ? FlSetup.WhyNotAnswering() : NotRunning);
+            // Off the caller's thread: after a send times out (FL Studio busy loading a project) the port is closed and
+            // opened again, which waits on Windows' MIDI driver for seconds, and the caller is often the window's own thread.
+            var midi = _midi ?? await Task.Run(Port, ct) ?? throw new DawLinkException(Explain ? FlSetup.WhyNotAnswering() : NotRunning);
             var id = Interlocked.Increment(ref _lastId) & (FlMessages.Ids - 1);
             request["id"] = id;
             request["sent"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;

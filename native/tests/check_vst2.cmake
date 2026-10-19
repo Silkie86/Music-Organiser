@@ -40,7 +40,28 @@ expect("${one}" "\"id\":\"MoB2\"" "\"kind\":\"effect\"" "\"audioIn\":2" "\"name\
        "\"text\":\"0.25\"")
 expect_not("${one}" "Fake Synth")
 
+# Each knob's text at even steps, for matching one plugin's knobs to another's. The knob is put back after.
+# (No "[" in what's expected: it would stop CMake splitting the list.)
+scan(curve --only MoB2 --curve 4)
+expect("${curve}" "{\"x\":0,\"value\":0,\"text\":\"0.00\"}" "{\"x\":0.75,\"value\":0.75,\"text\":\"0.75\"}"
+       "\"value\":0.5,\"text\":\"0.50\",\"curve\"")
+
+# A saved state handed over first: the knobs are read after it, and the state printed back.
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/fake-state.txt" "0.75")
+scan(load --only MoB2 --load "${CMAKE_CURRENT_BINARY_DIR}/fake-state.txt")
+expect("${load}" "\"loaded\":4,\"loadResult\":1" "\"name\":\"Mix\",\"units\":\"%\",\"value\":0.75" "\"state\":")
+scan(program --only MoB2 --load "${CMAKE_CURRENT_BINARY_DIR}/fake-state.txt" --load-program)
+expect("${program}" "\"name\":\"Mode\",\"units\":\"\",\"value\":0.75")
+
 # Everything.
 scan(all)
 expect("${all}" "\"kind\":\"instrument\"" "\"kind\":\"effect\"" "\"name\":\"Mode\"" "\"version\":\"1200\"")
+# A plugin that sets a locale with a decimal comma as it loads still gets its numbers written with a point, so the
+# line stays JSON. (Where the system has no such locale, this reads as above.)
+set(ENV{FAKE_VST2_LOCALE} "de_DE.UTF-8")
+scan(comma --only MoB2)
+unset(ENV{FAKE_VST2_LOCALE})
+expect("${comma}" "\"value\":0.25")
+expect_not("${comma}" "\"value\":0,25")
+
 message(STATUS "mo-scan read the fake VST2 shell")

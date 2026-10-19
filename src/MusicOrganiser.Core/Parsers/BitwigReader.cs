@@ -21,6 +21,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class BitwigReader : IProjectReader
 {
     public string Daw => "Bitwig Studio";
+    public int Version => 2;   // 2: Bitwig 6.1 Sampler analysis (value type 0x18) decoded, collected samples counted once
     public IReadOnlyList<string> Extensions { get; } = [".bwproject"];
 
     // Classes.
@@ -97,7 +98,8 @@ public sealed partial class BitwigReader : IProjectReader
         if (doc?.Root is not null && doc.BodyError is null)
             ReadDecoded(doc, path, info);
         else
-            ReadByTextScan(file.Bytes, info, doc?.BodyError);
+            ReadByTextScan(file.Bytes, Path.GetDirectoryName(path) ?? ".", info, doc?.BodyError,
+                           doc?.MetaList("used_files").SelectMany(CollectedNames).ToHashSet(StringComparer.OrdinalIgnoreCase));
 
         if (doc is not null)
         {
@@ -159,10 +161,10 @@ public sealed partial class BitwigReader : IProjectReader
         // file it collected into the project folder; those copies are listed in used_files,
         // so an original is only counted when the project has no copy of that file. Copies
         // can carry a "-2" style suffix ("Snare - c1.wav" is collected as "Snare - c1-2.wav").
-        var collected = doc.MetaList("used_files").Select(CollectedKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var collected = doc.MetaList("used_files").SelectMany(CollectedNames).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var o in doc.Objects.Where(o => o.Class == ClsFileRef))
             if (o.Str(FFilePath) is { Length: > 0 } f && TextScan.IsAudioPath(f) && IsAbsolute(f) &&
-                !collected.Contains(CollectedKey(f)))
+                !collected.Contains(FileName(f)))
                 info.Samples.Add(f);
 
         var notes = doc.Objects.Count(o => o.Class == ClsNote);
@@ -175,19 +177,30 @@ public sealed partial class BitwigReader : IProjectReader
         info.CanExtractPresets = states > 0;
     }
 
-    static string CollectedKey(string path)
+    /// <summary>
+    /// The names a file collected into the project can have had before: its own, and its name without each "-2" style
+    /// suffix Bitwig adds when the name is taken. Only the copy's suffixes are taken off, so collecting "Kick-01.wav"
+    /// doesn't hide an original "Kick-02.wav".
+    /// </summary>
+    static IEnumerable<string> CollectedNames(string copy)
     {
-        var name = path.Split('\\', '/')[^1];
+        var name = FileName(copy);
         var ext = Path.GetExtension(name);
-        return CopySuffix().Replace(name[..^ext.Length], "") + ext;
+        var stem = name[..^ext.Length];
+        yield return name;
+        while (CopySuffix().Match(stem) is { Success: true } m)
+            yield return (stem = stem[..m.Index]) + ext;
     }
 
-    [GeneratedRegex(@"(-\d+)+$")]
+    static string FileName(string path) => path.Split('\\', '/')[^1];
+
+    [GeneratedRegex(@"-\d+$")]
     private static partial Regex CopySuffix();
 
-    /// <summary>Rooted on this OS, or a Windows drive path (the files come from Windows).</summary>
+    /// <summary>Rooted on this OS, or a Windows drive or network path (the files come from Windows).</summary>
     static bool IsAbsolute(string p) =>
-        Path.IsPathRooted(p) || (p.Length > 2 && char.IsAsciiLetter(p[0]) && p[1] == ':' && p[2] is '\\' or '/');
+        Path.IsPathRooted(p) || p.StartsWith(@"\\", StringComparison.Ordinal) ||
+        (p.Length > 2 && char.IsAsciiLetter(p[0]) && p[1] == ':' && p[2] is '\\' or '/');
 
     static PluginKind BitwigKind(string name, string category)
     {
@@ -392,7 +405,7 @@ public sealed partial class BitwigReader : IProjectReader
 
     // ---- Fallback: text scan ----------------------------------------------------------
 
-    void ReadByTextScan(byte[] raw, ProjectInfo info, string? why)
+    void ReadByTextScan(byte[] raw, string dir, ProjectInfo info, string? why, HashSet<string>? collected)
     {
         info.Confidence = Confidence.Heuristic;
         if (!IsBitwig(raw))
@@ -404,7 +417,7 @@ public sealed partial class BitwigReader : IProjectReader
         foreach (var blob in Blobs(raw))
         {
             var expectVersion = false;
-            foreach (var str in TextScan.Strings(blob))
+            foreach (var str in ScanStrings(blob))
             {
                 var s = str.Trim('\0', ' ');
                 // The version follows its key, either in the same text run or as the next one.
@@ -414,10 +427,14 @@ public sealed partial class BitwigReader : IProjectReader
                     info.Version = s;
                 expectVersion = s.EndsWith("application_version_name", StringComparison.Ordinal);
                 if (TextScan.IsAudioPath(s))
-                    info.Samples.Add(s);
+                {
+                    // As in a full read, an original that was collected into the project counts once, as its copy.
+                    if (ScannedPath(s) is { } p && !(IsAbsolute(p) && collected?.Contains(FileName(p)) == true))
+                        info.Samples.Add(IsAbsolute(p) ? p : Path.GetFullPath(Path.Combine(dir, p)));
+                }
                 else if (TextScan.IsPluginPath(s))
                 {
-                    var p = PathStart().Match(s) is { Success: true } m ? s[m.Index..] : s;
+                    var p = ScannedPath(s) ?? s;
                     info.Plugins.Add(new PluginRef(TextScan.PluginNameFromPath(p), "", PluginKind.Unknown,
                                                    TextScan.PluginFormatFromPath(p), p));
                 }
@@ -432,6 +449,47 @@ public sealed partial class BitwigReader : IProjectReader
             }
         }
     }
+
+    /// <summary>
+    /// A path the text scan found, without what was read along with it: Bitwig writes a string's length just before
+    /// it, and a length that happens to be a readable character ("D" for 68) joins the text ("DF:\Samples\..."). Null for
+    /// a bare file name: those name the sounds inside a multisample or a Grid's sample list, not files on disk.
+    /// </summary>
+    internal static string? ScannedPath(string s)
+    {
+        if (DrivePath().Match(s) is { Success: true, Index: > 0 } m)
+            s = s[m.Index..];
+        else if (s.Length > 2 && s[0] == (char)((s.Length - 1) & 0xff) &&
+                 (s[1] == '/' || s.AsSpan(1).StartsWith(@"\\") || ProjectFolders.Any(f => s.AsSpan(1).StartsWith(f + "/", StringComparison.OrdinalIgnoreCase))))
+            s = s[1..];
+        return s.Contains('/') || s.Contains('\\') ? s : null;
+    }
+
+    /// <summary>
+    /// The text in a blob. Bitwig writes a string with a character outside ASCII ("Beyoncé") as UTF-16BE, with the top
+    /// bit of its length set; those are read whole first and blanked out, so the plain scan doesn't find pieces of them.
+    /// </summary>
+    static IEnumerable<string> ScanStrings(ReadOnlyMemory<byte> blob)
+    {
+        var bytes = blob.ToArray();
+        var wide = new List<string>();
+        for (var i = 0; i + 4 <= bytes.Length; i++)
+        {
+            if (bytes[i] != 0x80 || bytes[i + 1] != 0) continue;
+            var chars = bytes[i + 2] << 8 | bytes[i + 3];
+            if (chars < 4 || chars > 4096 || i + 4 + 2 * chars > bytes.Length) continue;
+            var s = Encoding.BigEndianUnicode.GetString(bytes, i + 4, 2 * chars);
+            if (s.Any(c => char.IsControl(c) || c == '\uFFFD') ||
+                s.Count(char.IsAscii) * 2 < s.Length && !TextScan.IsAudioPath(s) && !TextScan.IsPluginPath(s)) continue;
+            wide.Add(s);
+            Array.Clear(bytes, i, 4 + 2 * chars);
+            i += 3 + 2 * chars;
+        }
+        return TextScan.Strings(bytes).Concat(wide);
+    }
+
+    /// <summary>The folders Bitwig keeps a project's own files in, next to the .bwproject.</summary>
+    static readonly string[] ProjectFolders = ["samples", "recordings", "bounce", "audio", "multi-samples", "wavetables"];
 
     /// <summary>The raw file plus any zlib streams embedded in it.</summary>
     static IEnumerable<ReadOnlyMemory<byte>> Blobs(byte[] raw)
@@ -465,6 +523,6 @@ public sealed partial class BitwigReader : IProjectReader
     [GeneratedRegex(@"^\d+(?:\.\d+)+$")]
     private static partial Regex VersionOnly();
 
-    [GeneratedRegex(@"[A-Za-z]:[\\/]|/")]
-    private static partial Regex PathStart();
+    [GeneratedRegex(@"[A-Za-z]:[\\/]")]
+    private static partial Regex DrivePath();
 }

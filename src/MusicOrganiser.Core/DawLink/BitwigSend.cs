@@ -349,9 +349,9 @@ public static class BitwigSend
     /// <summary>
     /// The project's settings as files Bitwig can load, best first: a Bitwig preset (when a template for the plugin
     /// was found), then the plugin's own format. A VST2 program goes in as a one-program bank, the form Bitwig
-    /// restores.
+    /// restores, naming the program the plugin had selected (<see cref="PresetBlob.Program"/>), which Bitwig selects.
     /// </summary>
-    static List<string> PresetFiles(PresetBlob preset, Files files)
+    public static List<string> PresetFiles(PresetBlob preset, Files files)
     {
         var written = Exporter.Presets([preset], files.Project, files.ExportRoot, files.Templates);
         var paths = written.Files.Select(f => Path.Combine(written.Folder, f)).ToList();
@@ -363,7 +363,7 @@ public static class BitwigSend
                 case ".vstpreset":
                     best.Add(p);
                     break;
-                case ".fxp" when Fxp.ToBank(preset.Data) is var bank && !ReferenceEquals(bank, preset.Data):
+                case ".fxp" when Fxp.ToBank(preset.Data, preset.Program) is var bank && !ReferenceEquals(bank, preset.Data):
                     var fxb = Path.ChangeExtension(p, ".fxb");
                     File.WriteAllBytes(fxb, bank);
                     best.Add(fxb);
@@ -508,6 +508,26 @@ public static class BitwigSend
             f => f.EndsWith(".bwpreset", StringComparison.OrdinalIgnoreCase), (name, _) => name.StartsWith('.'), ct: ct);
         foreach (var file in found.OrderBy(f => f.Contains(DrumMachine, StringComparison.OrdinalIgnoreCase) ? 0 : 1))
             yield return file;
+    }
+
+    /// <summary>What went into Bitwig for one sound: its new track, and anything that didn't go to plan.</summary>
+    public sealed record SentSound(string Name, int Track, string? Problem);
+
+    /// <summary>
+    /// Puts one sound into the project open in Bitwig: a new track named after it, with the sound in a Sampler, as if
+    /// it were dropped there.
+    /// </summary>
+    public static async Task<SentSound> SoundAsync(BitwigLink link, string path, string name, CancellationToken ct = default)
+    {
+        CheckChanges(link);
+        if (!File.Exists(path)) throw new DawLinkException($"{Path.GetFileName(path)} isn't at {path} any more.");
+        var track = await link.NewTrackAsync(name, ct: ct);
+        var added = await link.InsertFileAsync(track, path, ct: ct);
+        var problem = !added.Added ? $"Bitwig didn't load {Path.GetFileName(path)}"
+            : added.Device?.Name is { Length: > 0 } device && !device.Contains("Sampler", StringComparison.OrdinalIgnoreCase)
+                ? $"Bitwig put it on {device} rather than a Sampler"
+                : null;
+        return new SentSound(name, track, problem);
     }
 
     static void CheckChanges(BitwigLink link)

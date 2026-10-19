@@ -135,6 +135,12 @@ public sealed record KnobCheckLine(int Knob, KnobWay Way, double Sent, double Ex
     /// <summary>Why it didn't arrive, when that's known.</summary>
     public string? Note { get; init; }
 
+    /// <summary>
+    /// The probe turned it and the DAW shows the probe's new value, but didn't tell the app the value as a number
+    /// (<see cref="BitwigParam.Stale"/>), so <see cref="Got"/> is null.
+    /// </summary>
+    public bool Untold { get; init; }
+
     public string Name => MoProbe.KnobName(Knob);
     public string Mark => Matched ? "✓" : "✗";
     /// <summary>"Bitwig → probe" or "probe → Bitwig".</summary>
@@ -178,10 +184,14 @@ public sealed record KnobCheck(string Probe, IReadOnlyList<KnobCheckLine> Lines,
         get
         {
             if (Lines.Count == 0) return $"{Probe}: nothing was checked" + (Stopped is null ? "." : $": {Stopped}");
+            var missed = Lines.Where(l => !l.Matched && !l.Untold).ToList();
+            var untold = Lines.Count(l => l.Untold);
             var text = Matched == Lines.Count ? $"{Probe}: all {Checks.Count(Lines.Count, "check")} matched."
-                : $"{Probe}: {Matched} of {Checks.Count(Lines.Count, "check")} matched. Not matching: " +
-                  string.Join(", ", Lines.Where(l => !l.Matched).GroupBy(l => (l.Name, l.Direction))
-                                         .Select(g => $"{g.Key.Name}, {g.Key.Direction}" + (g.Count() > 1 ? $" ({g.Count()})" : ""))) + ".";
+                : $"{Probe}: {Matched} of {Checks.Count(Lines.Count, "check")} matched" +
+                  (untold > 0 ? $", and {Lines[0].Daw} showed {untold} more without telling the app the value" : "") +
+                  (missed.Count == 0 ? "." : ". Not matching: " +
+                      string.Join(", ", missed.GroupBy(l => (l.Name, l.Direction))
+                                              .Select(g => $"{g.Key.Name}, {g.Key.Direction}" + (g.Count() > 1 ? $" ({g.Count()})" : ""))) + ".");
             return Stopped is null ? text : $"{text} It stopped part way: {Stopped}";
         }
     }
@@ -329,6 +339,7 @@ public static class ProbeKnobCheck
     {
         var plain = ProbeKnobs.Plain(knob, value);
         var expected = ProbeKnobs.Normalized(knob, plain);
+        var text = ProbeKnobs.Text(knob, plain);
         var took = Stopwatch.StartNew();
         var answer = await MoProbeLive.SendAsync(probe.Instance, ProbeCommand.Set(knob, plain), probe.ReportFolder, timing.Wait, ct);
         if (answer.Event != "app-set")
@@ -339,14 +350,20 @@ public static class ProbeKnobCheck
         var until = took.Elapsed + timing.Wait;
         BitwigParam? now;
         bool Arrived() => now?.Value is { } v && Math.Abs(v - expected) <= ProbeKnobs.Tolerance;
+        // The DAW shows the probe's value but won't tell its number: waiting longer won't bring it.
+        bool Untold() => now is { Value: null, Stale: true } && now.Display == text;
         while (true)
         {
             now = (await daw.KnobsAsync(ct)).FirstOrDefault(p => p.Id == param.Id);
-            if (Arrived() || took.Elapsed >= until) break;
+            if (Arrived() || Untold() || took.Elapsed >= until) break;
             await Task.Delay(Poll, ct);
         }
         took.Stop();
-        return new KnobCheckLine(knob, KnobWay.ToDaw, plain, expected, now?.Value, now?.Display, took.Elapsed, Arrived(), daw.Daw);
+        return new KnobCheckLine(knob, KnobWay.ToDaw, plain, expected, now?.Value, now?.Display, took.Elapsed, Arrived(), daw.Daw)
+        {
+            Untold = Untold(),
+            Note = Untold() ? $"{daw.Daw} shows it, but didn't tell the app its value" : null,
+        };
     }
 
     /// <summary>

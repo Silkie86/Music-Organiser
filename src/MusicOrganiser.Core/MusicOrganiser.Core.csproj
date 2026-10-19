@@ -9,6 +9,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />
+    <!-- zstd, which Serum 2 packs its settings with (MIT). -->
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
     <PackageReference Include="MeltySynth" Version="2.4.1" />
   </ItemGroup>
 
@@ -21,6 +23,8 @@
   <ItemGroup>
     <!-- The field registry: what the app knows about each DAW's file format (see Formats/FormatRegistry.cs). -->
     <EmbeddedResource Include="Formats\Registry\*.json" LogicalName="MusicOrganiser.Formats.%(Filename)%(Extension)" />
+    <!-- The Serum 2 sound a translated Serum 1 sound starts from (see Plugins/Serum/Serum1To2.cs). -->
+    <EmbeddedResource Include="Plugins\Serum\Serum2FromSerum1.json" LogicalName="MusicOrganiser.Serum.Serum2FromSerum1.json" />
   </ItemGroup>
 
   <ItemGroup>

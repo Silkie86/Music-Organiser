@@ -70,7 +70,14 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         OnGroupByChanged(GroupBy);
     }
 
-    public void Reload() => Show(Load(GroupSaves));
+    public void Reload()
+    {
+        _loads++;
+        Show(Load(GroupSaves));
+    }
+
+    // Counts reloads, so one that finishes after a newer one (a scan's, say) doesn't put older rows back.
+    int _loads;
 
     /// <summary>Reload with the database work done in the background, so the window keeps answering.</summary>
     public Task ReloadAsync() => ReloadAsync(null);
@@ -79,13 +86,21 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     public async Task ReloadAsync(string? select)
     {
         var group = GroupSaves;
-        Show(await UiWork.Run(() => Load(group)), select);
+        var load = ++_loads;
+        var loaded = await UiWork.Run(() => Load(group));
+        if (load != _loads) return;   // a newer reload is on its way
+        Show(loaded, select);
     }
 
     /// <summary>The rows, read from the database and grouped into songs (on any thread).</summary>
     (int Saves, List<ProjectItem> Items, List<string> Tags) Load(bool group)
     {
+        // A fixed copy waiting for Keep isn't a save yet: the song still opens its original, and Older saves leave it out.
+        // The saves are read first: Fix marks its copy pending before reading it into the library, so a copy in this list
+        // is always in the pending list read after it, even when a reload runs while Fix is saving.
         var projects = _db.Projects();
+        var pending = _db.PendingFixes();
+        if (pending.Count > 0) projects = projects.Where(p => !pending.Contains(p.Path)).ToList();
         var items = group
             ? SongVersions.Group(projects).Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older)).ToList()
             : projects.Select(p => new ProjectItem(_db, p)).ToList();
@@ -96,6 +111,10 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     {
         var selectedId = Selected?.Id;
         _saveCount = loaded.Saves;
+        // The song you have open keeps its row (and so its panel, with Fix's choices and Check's results) when none of
+        // its saves changed: a DAW saving some other project reloads the list.
+        if (Selected is { } open && loaded.Items.FindIndex(i => i.Id == open.Id) is >= 0 and var at && Same(open, loaded.Items[at]))
+            loaded.Items[at] = open;
         Items.ReplaceAll(loaded.Items);
 
         Refill(DawFilters, Items.Select(i => i.Daw), DawFilter, v => DawFilter = v);
@@ -170,6 +189,14 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
             _ => null,
         };
         View.GroupBy(prop);
+    }
+
+    /// <summary>The same song with the same saves, each as it was read.</summary>
+    static bool Same(ProjectItem a, ProjectItem b)
+    {
+        static IEnumerable<(long, string, long, long, bool, int, int)> Saves(ProjectItem i) =>
+            i.OlderSaves.Prepend(i.Summary).Select(p => (p.Id, p.Path, p.Mtime, p.Size, p.FileMissing, p.MissingSamples, p.MissingPlugins));
+        return a.Name == b.Name && Saves(a).SequenceEqual(Saves(b));
     }
 
     partial void OnSelectedChanged(ProjectItem? value)

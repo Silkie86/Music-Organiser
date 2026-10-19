@@ -27,7 +27,8 @@ public static partial class BitwigFormat
 {
     public sealed class BwObject
     {
-        public required int Class { get; init; }
+        /// <summary>The object's kind. Settable for the few kinds laid out the same, such as a VST2 and a VST3 plugin device.</summary>
+        public required int Class { get; set; }
         public List<(int Id, object? Value)> Fields { get; init; } = new();
         /// <summary>Each field's type byte, in step with <see cref="Fields"/>, so the object can be written back.</summary>
         public List<byte> Types { get; init; } = new();
@@ -380,6 +381,16 @@ public static partial class BitwigFormat
                     if (n < 0 || p + 4L * n > d.Length) throw new InvalidDataException("float list too long");
                     var f = new float[n];
                     for (var i = 0; i < n; i++, p += 4) f[i] = BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(p));
+                    return f;
+                }
+                case 0x18:
+                {
+                    // A list of doubles: u32 count, then f64s (Bitwig 6.1 keeps a Sampler sample's analysis, such as where its hits are, this way).
+                    var n = U32(p);
+                    p += 4;
+                    if (n < 0 || p + 8L * n > d.Length) throw new InvalidDataException("double list too long");
+                    var f = new double[n];
+                    for (var i = 0; i < n; i++, p += 8) f[i] = BinaryPrimitives.ReadDoubleBigEndian(d.AsSpan(p));
                     return f;
                 }
                 case 0x19:

@@ -1,6 +1,8 @@
+using System.Buffers.Binary;
 using System.IO.Compression;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 using static MusicOrganiser.Core.Parsers.BitwigFormat;
 
 namespace MusicOrganiser.Core.Tests;
@@ -145,6 +147,43 @@ public class BitwigProjectTests
                                            n.Contains("\"Serum (Serum)\""));
         var (channel, sound) = Assert.Single(result.Upgraded!);
         Assert.Equal(("Serum", serum1.State!.Data), (channel, sound.Data));
+
+        // A newer version than the template's is left as it is, not swapped for the older one.
+        var channels = song.Channels.ToList();
+        channels[1] = channels[1] with { Instrument = serum1 with { Name = "Serum 3" } };
+        var newer = BitwigProject.FromFl(song with { Channels = channels }, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        Assert.Empty(newer.Upgraded!);
+        Assert.Equal("Serum 3", Def(Chain(Decode(newer.Bytes).Root!.Obj(0x4dd)!.List(0x4de).Single(t => t.Str(0x15b) == "Serum")).Last()).Str(0x9a));
+    }
+
+    [Fact]
+    public void A_swapped_Serum_gets_its_sound_translated_for_Serum_2()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var channels = song.Channels.ToList();
+        var serum1 = channels[1].Instrument! with { State = new PresetBlob("Serum", "Serum", ".fxp", Fxp.WrapChunk(SerumTests.Serum1(), "Serum")) };
+        channels[1] = channels[1] with { Instrument = serum1 };
+        var result = BitwigProject.FromFl(song with { Channels = channels }, Fixtures.BitwigTemplate(), Snare, upgrade: true, serumAudio: _ => null);
+        var doc = Decode(result.Bytes);
+
+        // Serum 2 gets a VST3 preset whose component state is the translated sound.
+        var track = doc.Root!.Obj(0x4dd)!.List(0x4de).Single(t => t.Str(0x15b) == "Serum");
+        var serum2 = Def(Chain(track).Last());
+        Assert.EndsWith(".vstpreset", serum2.Str(0xbe5));
+        using var zip = doc.OpenZip()!;
+        using var file = new MemoryStream();
+        using (var entry = zip.GetEntry($"plugin-states/{serum2.Str(0xbe5)}")!.Open()) entry.CopyTo(file);
+        var preset = file.ToArray();
+        Assert.Equal("VST3" + serum2[0xce4], System.Text.Encoding.ASCII.GetString(preset, 0, 4) + System.Text.Encoding.ASCII.GetString(preset, 8, 32));
+        var listAt = (int)BitConverter.ToInt64(preset, 40);   // the component state, then an empty controller state
+        var sound = Serum2State.Read(preset.AsSpan(48, listAt - 48))!;
+        Assert.Equal(1.0, sound.Settings["Global0"]!["plainParams"]!["kParamS1Compatibility"]!.GetValue<double>());
+        Assert.Equal(0.4809 * 0.4809, sound.Settings["Oscillator0"]!["plainParams"]!["kParamVolume"]!.GetValue<double>(), 4);
+
+        Assert.Contains(result.Notes, n => n.StartsWith("Serum: Serum swapped for Serum 2, with its sound translated") &&
+                                           n.Contains("\"Serum (Serum)\""));
+        // The original is still saved beside the project.
+        Assert.Equal(serum1.State!.Data, Assert.Single(result.Upgraded!).Sound.Data);
     }
 
     [Fact]
@@ -156,6 +195,13 @@ public class BitwigProjectTests
         var saved = Assert.Single(Directory.GetFiles(Path.Combine(Path.GetDirectoryName(file)!, BitwigProject.UpgradedFolder)));
         Assert.Equal("Serum (Serum).fxp", Path.GetFileName(saved));
         Assert.Equal("CcnK", System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(saved), 0, 4));
+
+        // Two channels with the same name each keep their sound.
+        var song = Readers.FlStudio.ReadSong(project);
+        var twice = song with { Channels = [.. song.Channels, song.Channels[1] with { Index = song.Channels.Max(c => c.Index) + 1 }] };
+        var result = BitwigProject.FromFl(twice, Fixtures.BitwigTemplate(), Snare, upgrade: true);
+        Assert.Equal(["Serum", "Serum (2)"], result.Upgraded!.Select(u => u.Channel));
+        Assert.Contains(result.Notes, n => n.Contains("\"Serum (2) (Serum)\""));
 
         // Without it, Serum stays Serum and nothing extra is saved.
         var (plain, _) = Exporter.BitwigFromFl(project, Path.Combine(dir, "Plain"), Fixtures.BitwigTemplate());
@@ -258,6 +304,47 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void AVst2KeepsTheProgramItHadSelectedSoBitwigSelectsItAgain()
+    {
+        // Solomon's M1 in funk step had program 50 selected; with program 0 in the bank, Bitwig brought it up on its first one.
+        var state = new PresetBlob("M1", "M1", ".fxp", Fxp.WrapChunk([1, 2, 3], "M1", 0x4b4c4d31)) { Program = 50 };
+        var m1 = new FlChannel(0, "M1", new FlPlugin("M1", "KORG", "VST2", "1263291697", state), "", 0, [new NoteEvent(0, 96, 60, 100)]);
+        var doc = Decode(BitwigProject.FromFl(new FlSong("", 96, 120, [m1], [], []), Fixtures.BitwigTemplate(), Snare).Bytes);
+        using var zip = doc.OpenZip()!;
+        using var ms = new MemoryStream();
+        using (var s = zip.Entries.Single().Open()) s.CopyTo(ms);
+        var bank = ms.ToArray();
+        Assert.Equal(("FBCh", 51, 50), (System.Text.Encoding.ASCII.GetString(bank, 8, 4),
+                                        BinaryPrimitives.ReadInt32BigEndian(bank.AsSpan(24)), BinaryPrimitives.ReadInt32BigEndian(bank.AsSpan(28))));
+        Assert.Equal([1, 2, 3], bank[160..]);
+        // A bank of parameters holds just the one program, so it's the selected one.
+        var parameters = Fxp.ToBank(Fxp.WrapParams([0.25f, 1f], "arp", 0x32647250), 50);
+        Assert.Equal((1, 0), (BinaryPrimitives.ReadInt32BigEndian(parameters.AsSpan(24)), BinaryPrimitives.ReadInt32BigEndian(parameters.AsSpan(28))));
+    }
+
+    [Fact]
+    public void ChannelsThePlaylistNeverPlaysComeAcrossWithTheirSoundButNoClips()
+    {
+        // As in Solomon's funk step: a second M1 and a sample the playlist never plays, and a channel with nothing to make a sound.
+        var notes = new NoteEvent[] { new(0, 96, 60, 100) };
+        var m1 = new FlPlugin("M1", "KORG", "VST2", "1263359281", null);
+        var song = new FlSong("", 96, 120,
+        [
+            new FlChannel(0, "M1", m1, "", 0, notes) { Clips = [new FlClip("A", 0, 384, notes)] },
+            new FlChannel(1, "M1 #2", m1, "", 0, []),
+            new FlChannel(2, "Synth ld 87", null, @"C:\Samples\Synth ld 87.wav", 0, []),
+            new FlChannel(3, "Layer", null, "", 0, []),
+        ], [], []);
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), Snare);
+        var tracks = Decode(result.Bytes).Root!.Obj(0x4dd)!.List(0x4de);
+        Assert.Equal(["M1", "M1 #2", "Synth ld 87"], tracks.Select(t => t.Str(0x15b)));
+        Assert.Equal([1, 0, 0], tracks.Select(t => Clips(t).Count()));
+        Assert.Contains("M1 #2: the FL Studio playlist never plays it, so its track is here with its sound but no clips", result.Notes);
+        Assert.Contains("Synth ld 87: the FL Studio playlist never plays it, so its track is here with its sound but no clips", result.Notes);
+        Assert.DoesNotContain(result.Notes, n => n.StartsWith("M1:") && n.Contains("never plays") || n.StartsWith("Layer"));
+    }
+
+    [Fact]
     public void TransposesByOctavesAndSemitonesTheSameWay()
     {
         int[] roots = [57, 64, 74, 48, 72, 12];   // A4, E5, D6, C4, C6 and C0 (four octaves up: three on the octave knob)
@@ -323,14 +410,15 @@ public class BitwigProjectTests
              Clip("Bend", 0, FlControl.Pitch, (0, 0.5)),
              Setting("Keys - Brightness", 2, (0, 0.25), (2, 0.75)),
              Setting("Keys - Unknown", 3, (0, 1)),
-             Clip("Elsewhere", 7, FlControl.Volume, (0, 1))]);
+             Clip("Elsewhere", 7, FlControl.Volume, (0, 1)),
+             Setting("Keys - Warmth", 0, (0, 0.5))]);
 
         var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => null);
         var doc = Decode(result.Bytes);
         Assert.Null(doc.BodyError);
         var track = doc.Root!.Obj(0x4dd)!.List(0x4de).Single();
         var lanes = track.Obj(0x2dc9)!.List(0x4ba).ToList();
-        Assert.Equal(["Volume", "Pan", "Brightness"], lanes.Select(l => l.Obj(0x2a3)!.Str(0x133a)));
+        Assert.Equal(["Volume", "Pan", "Brightness", "Warmth"], lanes.Select(l => l.Obj(0x2a3)!.Str(0x133a)));
         Assert.Same(track.Obj(0x165)!.Obj(0x1a5), lanes[1].Obj(0x2a3)!.Obj(0x41));
         IEnumerable<(double, double)> Points(BwObject lane) =>
             lane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, Math.Round(p.Num(0x28f)!.Value, 4)));
@@ -339,6 +427,11 @@ public class BitwigProjectTests
         // FL's VST3 setting 2 is the plugin's id 2000003, which Bitwig writes in hex.
         Assert.Equal("CONTENTS/ROOT_GENERIC_MODULE/PID1e8483", lanes[2].Obj(0x2a3)!.Str(0xed));
         Assert.Equal([(0, 0.25), (2, 0.75)], Points(lanes[2]));
+        // Two lanes on one plugin: the second points back at it with a bare reference, the only kind Bitwig reads in a
+        // field holding one object (Solomon's requiem_80 wouldn't open with a "class 1" reference there).
+        Assert.Same(lanes[2].Obj(0x2a3)!.Obj(0xec), lanes[3].Obj(0x2a3)!.Obj(0xec));
+        Assert.Equal("CONTENTS/ROOT_GENERIC_MODULE/PIDa", lanes[3].Obj(0x2a3)!.Str(0xed));
+        Assert.DoesNotContain(doc.Objects, o => o.Fields.Where((f, i) => o.Types[i] == 0x09 && f.Value is BwRef).Any());
 
         Assert.Equal(["Bend: automation left out (pitch has no equivalent here)",
                       "Keys - Unknown: automation left out (FL didn't save which of the plugin's settings it moves)",
@@ -363,6 +456,94 @@ public class BitwigProjectTests
         return (clip.Num(0x2af)!.Value, clip.Num(0x26)!.Value, audio.Num(0x26)!.Value, markers[1],
                 play.Obj(0xc33)?.List(0x21f).Single().Num(0x28f) ?? 0,
                 range.Obj(0x98c)!.Num(0x2af)!.Value, range.Obj(0x98d)!.Num(0x2af)!.Value);
+    }
+
+    [Fact]
+    public void MutesWhatAnAutomatedChannelPlaysWhileItsOffAndCarriesItsInsertsEffects()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir()));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 2));
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+        var tracks = doc.Root!.Obj(0x4dd)!.List(0x4de).ToList();
+        Assert.Equal(["Bass", "Vox"], tracks.Select(t => t.Str(0x15b)));
+
+        // The bass is switched off in FL's Channel Rack, but automation switches it on and off, so its track isn't muted:
+        // the clip it's off all through is, and so is the note that starts while it's off in the clip at beats 10-14.
+        var bass = tracks[0];
+        Assert.Equal([0.0, 0.0], tracks.Select(t => t.Obj(0x165)!.Obj(0x1a6)!.Num(0xd2)!.Value));
+        var clips = Clips(bass);
+        Assert.Equal([1.0, 0.0, 0.0], clips.Select(c => c.Num(0x10f8) ?? 0));
+        Assert.Equal([1.0, 0.0], Notes(clips[2]).Select(n => n.Num(0x10f8) ?? 0));
+        Assert.Equal([0.0, 1.0], Clips(tracks[1]).Select(c => c.Num(0x10f8) ?? 0));
+
+        // Insert 1's effects follow Serum, WOW2 switched off as it is in FL, and Pro-Q 3's setting is automated on the copy
+        // on the bass's track.
+        var chain = Chain(bass).ToList();
+        Assert.Equal([("Serum", 1.0), ("Pro-Q 3", 1.0), ("WOW2", 0.0)], chain.Select(d => (Def(d).Str(0x9a), Def(d).Num(0xa3)!.Value)));
+        var lane = bass.Obj(0x2dc9)!.List(0x4ba).Single();
+        var target = lane.Obj(0x2a3)!;
+        Assert.Same(chain[1], target.Obj(0xec));
+        Assert.Equal(("CONTENTS/ROOT_GENERIC_MODULE/PARAM3", "Gain"), (target.Str(0xed), target.Str(0x133a)));
+        Assert.Equal([(0.0, 0.25), (4.0, 0.75)], lane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, p.Num(0x28f)!.Value)));
+
+        Assert.Equal([
+            "Bass: switched on and off by \"Bass - Mute / solo\" in FL Studio, so what it plays while it's off is muted",
+            "Vox: switched on and off by \"Vox - Mute / solo\" in FL Studio, so what it plays while it's off is muted; " +
+            "one audio clip it switches off part of the way through plays whole",
+            "Mixer: the fader or pan of insert 1 isn't at FL Studio's default, and mixer faders and pans aren't carried over yet",
+            "Tempo: automation left out (tempo automation isn't carried over yet; the project is set to 120 BPM)",
+            "Insert 1 - Volume: automation left out (the fader of insert 1 isn't automated here yet)",
+        ], result.Notes);
+
+        // A template whose plugins have no power switch can't switch the effect off, and says so.
+        var plain = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(devicePower: false), _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 2));
+        Assert.Contains("WOW2 on Insert 1: switched off in FL Studio, but on here (the Bitwig template's plugin has no on/off to copy)", plain.Notes);
+    }
+
+    [Fact]
+    public void FollowsEveryClipThatSwitchesAChannelAndKeepsAutomatedEffectsOn()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25SwitchedAndMixer(Fixtures.TempDir(), more: true));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => new BitwigProject.SampleFile(1234, Md5, 48000, 2, 2));
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+        var bass = doc.Root!.Obj(0x4dd)!.List(0x4de).First();
+        Assert.Equal([1.0, 0.0, 0.0, 1.0, 0.0], Clips(bass).Select(c => c.Num(0x10f8) ?? 0));
+        Assert.Equal([("Serum", 1.0), ("Pro-Q 3", 1.0), ("WOW2", 1.0)], Chain(bass).Select(d => (Def(d).Str(0x9a), Def(d).Num(0xa3)!.Value)));
+        Assert.Contains("Bass: switched on and off by \"Bass - Mute / solo\" and \"Bass - Mute / solo #2\" in FL Studio, so what it plays while it's off is muted",
+                        result.Notes);
+        // The vox's clips are on a muted playlist track, so the one it switches off part of the way through doesn't play at all.
+        Assert.Contains("Vox: switched on and off by \"Vox - Mute / solo\" in FL Studio, so what it plays while it's off is muted", result.Notes);
+        Assert.Contains("WOW2 - On: automation left out (switching an effect on insert 1 on and off isn't carried over yet, so it stays on)", result.Notes);
+    }
+
+    [Fact]
+    public void MutesSwitchedOffChannelsAndClipsOnMutedPlaylistTracks()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutedTracks(Fixtures.TempDir()));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
+            p => new BitwigProject.SampleFile(1234, Md5, 48000, 2, p.EndsWith("Acapella.wav") ? 8 : 0.25));
+        var doc = Decode(result.Bytes);
+        Assert.Null(doc.BodyError);
+        var tracks = doc.Root!.Obj(0x4dd)!.List(0x4de).ToList();
+        Assert.Equal(["Snare", "Hat", "Acapella", "Vox", "Vox 2", "Pad"], tracks.Select(t => t.Str(0x15b)));
+
+        // The hat and the vox are switched off in FL, so their tracks' mute buttons are on, on both of the vox's tracks.
+        // The Acapella's and the Pad's clips are all on muted playlist tracks, so their tracks are muted, not their clips.
+        Assert.Equal([0.0, 1.0, 1.0, 1.0, 1.0, 1.0], tracks.Select(t => t.Obj(0x165)!.Obj(0x1a6)!.Num(0xd2)!.Value));
+        Assert.Equal([0.0, 0.0], Clips(tracks[2]).Select(c => c.Num(0x10f8) ?? 0));
+        Assert.All(tracks.Skip(3), t => Assert.Equal([0.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
+        // The snare and the hat also play on track 1, so only their clip from muted track 2 is muted.
+        Assert.All(tracks.Take(2), t => Assert.Equal([0.0, 1.0], Clips(t).Select(c => c.Num(0x10f8) ?? 0)));
+        Assert.Equal(["Snare: its clips on a muted playlist track in FL Studio (Acapellas, playlist track 2) are muted, as it also has clips from other playlist tracks",
+                      "Hat: its clips on a muted playlist track in FL Studio (Acapellas, playlist track 2) are muted, as it also has clips from other playlist tracks",
+                      "Hat: switched off in FL Studio's Channel Rack, so its track is muted",
+                      "Acapella: muted, because its clips are all on muted playlist tracks in FL Studio (Acapellas, playlist track 2; playlist track 4)",
+                      "Vox: its audio clips overlap in FL Studio, so they're on 2 tracks",
+                      "Vox: switched off in FL Studio's Channel Rack, so its tracks are muted",
+                      "Pad: muted, because its clips are all on a muted playlist track in FL Studio (playlist track 4)"],
+                     result.Notes);
     }
 
     [Fact]
@@ -437,6 +618,39 @@ public class BitwigProjectTests
         Assert.Contains("Drop stretched: its audio clips are left out (the Bitwig template has no audio track with an audio clip on it " +
                         "that can be copied; it can't be in a group)", result.Notes);
         Assert.Contains("Drop - Volume: automation left out (what it moves isn't converted)", result.Notes);
+    }
+
+    [Fact]
+    public void SwitchedChannelsLeftOutAudioClipsArentSaidToPlayWhole()
+    {
+        // The template has no audio track, so the vox's audio clips are left out, even the one switched off part of the way.
+        var vox = new FlChannel(0, "Vox", null, @"C:\Samples\Vox.wav", 0, [new NoteEvent(0, 96, 60, 100)])
+        {
+            Clips = [new FlClip("Verse", 0, 384, [new NoteEvent(0, 96, 60, 100)])],
+            AudioClips = [new FlAudioClip(0, 384) { Track = 2, PartlyOff = true }],
+            SwitchedBy = ["Vox - Mute / solo"],
+        };
+        var song = new FlSong("", 96, 120, [vox], [], [new FlAutomation("Vox - Mute / solo", 0, FlControl.OnOff, 0, [new(0, 1), new(2, 0)])]);
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(audioTrack: false), _ => null);
+        Assert.Contains("Vox: its audio clips are left out (the Bitwig template has no audio track with an audio clip on it " +
+                        "that can be copied; it can't be in a group)", result.Notes);
+        Assert.Contains("Vox: switched on and off by \"Vox - Mute / solo\" in FL Studio, so what it plays while it's off is muted", result.Notes);
+    }
+
+    [Fact]
+    public void WhereTwoClipsMovingASettingMeetTheLaneGoesOnFromTheOneStartingThere()
+    {
+        // FL lists the later clip first. The earlier one pans right and jumps back to the centre at its end, at beat 4,
+        // where the later one starts half right and stays there.
+        var song = new FlSong("", 96, 120,
+            [new FlChannel(0, "Keys", null, @"C:\Samples\Keys.wav", 0, [new(0, 96, 60, 100)])],
+            [],
+            [new FlAutomation("Pan later", 0, FlControl.Pan, 0, [new(4, 0.75), new(8, 0.75)]) { Starts = [4] },
+             new FlAutomation("Pan earlier", 0, FlControl.Pan, 0, [new(0, 0.5), new(4, 1), new(4, 0.5)]) { Starts = [0] }]);
+        var doc = Decode(BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => null).Bytes);
+        var lane = doc.Root!.Obj(0x4dd)!.List(0x4de).Single().Obj(0x2dc9)!.List(0x4ba).Single();
+        Assert.Equal([(0.0, 0.0), (4.0, 1.0), (4.0, 0.0), (4.0, 0.5), (8.0, 0.5)],
+                     lane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, p.Num(0x28f)!.Value)));
     }
 
     [Fact]

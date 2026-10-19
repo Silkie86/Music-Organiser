@@ -40,9 +40,10 @@ public sealed partial class FlStudioReader
     const int EvTrackName = Text + 47;          // 239: the track's name, after its data (only when it was named)
 
     /// <summary>Reads the playlist (the first arrangement) as FL Studio lays it out, for drawing it.</summary>
-    public FlPlaylist ReadPlaylist(string path)
+    public FlPlaylist ReadPlaylist(string path) => ReadPlaylist(Load(path));
+
+    FlPlaylist ReadPlaylist(Flp flp)
     {
-        var flp = Load(path);
         var beatsPerBar = 4;
         var channels = new List<int>();
         var channelColours = new Dictionary<int, int>();

@@ -48,7 +48,7 @@ public class MidiBrowserTests
 
         Assert.Equal(["Keys", "Bass"], parts.Select(p => p.Name));
         Assert.All(parts, p => Assert.Equal(480, p.Ppq));
-        Assert.Equal(128, parts[0].Tempo);
+        Assert.Null(parts[0].Tempo);   // the app's MIDI files carry no tempo, so a DAW never asks to import one
         Assert.Equal(12, parts[0].Notes.Count);
         Assert.Equal(new NoteEvent(0, 480, 45, 100), parts[1].Notes[0]);
     }

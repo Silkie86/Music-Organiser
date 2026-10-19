@@ -9,6 +9,7 @@
 #include <pluginterfaces/vst/ivsteditcontroller.h>
 #include <pluginterfaces/vst/ivsthostapplication.h>
 #include <pluginterfaces/vst/ivstmessage.h>
+#include <pluginterfaces/vst/ivstparameterchanges.h>
 #include <pluginterfaces/vst/ivstunits.h>
 
 #include <cstdio>
@@ -138,7 +139,7 @@ int busChannels(Vst::IComponent* c, Vst::BusDirection dir)
     return channels;
 }
 
-void writeParams(Json& j, Vst::IEditController* ctrl)
+void writeParams(Json& j, Vst::IEditController* ctrl, int curve)
 {
     j.beginArray("params");
     for (int32 i = 0, n = ctrl->getParameterCount(); i < n; i++)
@@ -159,6 +160,19 @@ void writeParams(Json& j, Vst::IEditController* ctrl)
             .num("plainDefault", ctrl->normalizedParamToPlain(info.id, info.defaultNormalizedValue));
         Vst::String128 text{};
         if (ctrl->getParamStringByValue(info.id, value, text) == kResultOk) j.str("text", str128(text));
+        if (curve > 0)
+        {
+            j.beginArray("curve");
+            for (int k = 0; k <= curve; k++)
+            {
+                double x = double(k) / curve;
+                Vst::String128 at{};
+                j.item().num("x", x).num("plain", ctrl->normalizedParamToPlain(info.id, x));
+                if (ctrl->getParamStringByValue(info.id, x, at) == kResultOk) j.str("text", str128(at));
+                j.end();
+            }
+            j.endArray();
+        }
         j.integer("unit", info.unitId)
             .boolean("automatable", info.flags & Vst::ParameterInfo::kCanAutomate)
             .boolean("readOnly", info.flags & Vst::ParameterInfo::kIsReadOnly)
@@ -169,6 +183,165 @@ void writeParams(Json& j, Vst::IEditController* ctrl)
             .end();
     }
     j.endArray();
+}
+
+/// One parameter change at the start of a block, the way a DAW sends a point of automation.
+class OneChange : public Vst::IParamValueQueue, public Vst::IParameterChanges
+{
+public:
+    Vst::ParamID id = 0;
+    Vst::ParamValue value = 0;
+    bool active = false;
+
+    // IParameterChanges
+    int32 PLUGIN_API getParameterCount() override { return active ? 1 : 0; }
+    Vst::IParamValueQueue* PLUGIN_API getParameterData(int32 index) override { return active && index == 0 ? this : nullptr; }
+    Vst::IParamValueQueue* PLUGIN_API addParameterData(const Vst::ParamID&, int32&) override { return nullptr; }
+
+    // IParamValueQueue
+    Vst::ParamID PLUGIN_API getParameterId() override { return id; }
+    int32 PLUGIN_API getPointCount() override { return 1; }
+    tresult PLUGIN_API getPoint(int32 index, int32& offset, Vst::ParamValue& v) override
+    {
+        if (index != 0) return kResultFalse;
+        offset = 0;
+        v = value;
+        return kResultOk;
+    }
+    tresult PLUGIN_API addPoint(int32, Vst::ParamValue, int32&) override { return kResultFalse; }
+
+    tresult PLUGIN_API queryInterface(const TUID iid, void** obj) override
+    {
+        if (sameIid(iid, Vst::IParamValueQueue_iid)) { *obj = static_cast<Vst::IParamValueQueue*>(this); return kResultOk; }
+        if (sameIid(iid, Vst::IParameterChanges_iid)) { *obj = static_cast<Vst::IParameterChanges*>(this); return kResultOk; }
+        *obj = nullptr;
+        return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return 1; }
+    uint32 PLUGIN_API release() override { return 1; }
+};
+
+/// Runs the plugin's audio a block at a time, with nothing playing, so parameter changes reach it as they
+/// would in a DAW.
+class Runner
+{
+public:
+    static constexpr int32 kBlock = 256;
+
+    bool start(Vst::IComponent* comp, std::string& error)
+    {
+        comp_ = comp;
+        if (comp->queryInterface(Vst::IAudioProcessor_iid, reinterpret_cast<void**>(&proc_)) != kResultOk || !proc_)
+        {
+            error = "no audio processor";
+            return false;
+        }
+        Vst::ProcessSetup setup{ Vst::kOffline, Vst::kSample32, kBlock, 48000.0 };
+        if (proc_->setupProcessing(setup) != kResultOk) { error = "setupProcessing failed"; return false; }
+        for (auto dir : { Vst::kInput, Vst::kOutput })
+        {
+            auto& buses = dir == Vst::kInput ? in_ : out_;
+            for (int32 i = 0, n = comp->getBusCount(Vst::kAudio, dir); i < n; i++)
+            {
+                Vst::BusInfo info{};
+                comp->getBusInfo(Vst::kAudio, dir, i, info);
+                Vst::AudioBusBuffers bus{};
+                bus.numChannels = info.channelCount;
+                buses.push_back(bus);
+            }
+        }
+        size_t channels = 0;
+        for (auto& b : in_) channels += b.numChannels;
+        for (auto& b : out_) channels += b.numChannels;
+        samples_.assign(channels * kBlock, 0.0f);
+        pointers_.resize(channels);
+        for (size_t c = 0; c < channels; c++) pointers_[c] = samples_.data() + c * kBlock;
+        size_t next = 0;
+        for (auto* buses : { &in_, &out_ })
+            for (auto& b : *buses) { b.channelBuffers32 = pointers_.data() + next; next += b.numChannels; }
+        if (comp->setActive(true) != kResultOk) { error = "setActive failed"; return false; }
+        active_ = true;
+        proc_->setProcessing(true);
+        return true;
+    }
+
+    void block(Vst::IParameterChanges* changes)
+    {
+        Vst::ProcessData data{};
+        data.processMode = Vst::kOffline;
+        data.symbolicSampleSize = Vst::kSample32;
+        data.numSamples = kBlock;
+        data.numInputs = static_cast<int32>(in_.size());
+        data.numOutputs = static_cast<int32>(out_.size());
+        data.inputs = in_.empty() ? nullptr : in_.data();
+        data.outputs = out_.empty() ? nullptr : out_.data();
+        data.inputParameterChanges = changes;
+        std::fill(samples_.begin(), samples_.end(), 0.0f);
+        proc_->process(data);
+    }
+
+    ~Runner()
+    {
+        if (proc_)
+        {
+            if (active_) { proc_->setProcessing(false); comp_->setActive(false); }
+            proc_->release();
+        }
+    }
+
+private:
+    Vst::IComponent* comp_ = nullptr;
+    Vst::IAudioProcessor* proc_ = nullptr;
+    bool active_ = false;
+    std::vector<Vst::AudioBusBuffers> in_, out_;
+    std::vector<float> samples_;
+    std::vector<float*> pointers_;
+};
+
+/// --calibrate: each parameter set to even steps through the audio processor, with the state saved at each.
+/// One line per parameter, so a big plugin's output can be read a line at a time.
+void calibrate(Vst::IComponent* comp, Vst::IEditController* ctrl, const Options& opt)
+{
+    Json head;
+    head.begin().str("calibrate", "start");
+    Runner run;
+    std::string error;
+    if (!ctrl) { emit(head.str("error", "no edit controller to list the parameters").end()); return; }
+    if (!run.start(comp, error)) { emit(head.str("error", error).end()); return; }
+    run.block(nullptr);
+    MemoryStream base;
+    comp->getState(&base);
+    emit(head.str("state", base64(base.data)).end());
+
+    OneChange change;
+    for (int32 i = 0, n = ctrl->getParameterCount(); i < n; i++)
+    {
+        Vst::ParameterInfo info{};
+        if (ctrl->getParameterInfo(i, info) != kResultOk) continue;
+        if (info.id < opt.idsFrom || info.id > opt.idsTo) continue;
+        if (info.flags & (Vst::ParameterInfo::kIsReadOnly | Vst::ParameterInfo::kIsProgramChange)) continue;
+        Json j;
+        j.begin().integer("calibrate", info.id).str("name", str128(info.title)).integer("stepCount", info.stepCount)
+            .num("default", info.defaultNormalizedValue);
+        j.beginArray("steps");
+        change.id = info.id;
+        change.active = true;
+        // A switch or a list (a filter type, say) is stepped through every choice, up to 256 of them.
+        int steps = info.stepCount > 0 && info.stepCount <= 256 ? info.stepCount : opt.calibrate;
+        for (int k = 0; k <= steps; k++)
+        {
+            change.value = double(k) / steps;
+            run.block(&change);
+            MemoryStream state;
+            comp->getState(&state);
+            j.item().num("x", change.value).str("state", base64(state.data)).end();
+        }
+        j.endArray();
+        change.value = info.defaultNormalizedValue;   // put it back before the next one
+        run.block(&change);
+        change.active = false;
+        emit(j.end());
+    }
 }
 
 void scanClass(Json& j, IPluginFactory* factory, const TUID cid, const Options& opt)
@@ -215,22 +388,47 @@ void scanClass(Json& j, IPluginFactory* factory, const TUID cid, const Options& 
         if (compCp && ctrlCp) { compCp->connect(ctrlCp); ctrlCp->connect(compCp); }
     }
 
+    if (!opt.load.empty())
+    {
+        // The state is handed to the component, then to the controller, as a DAW does when it opens a project.
+        MemoryStream given;
+        std::string error;
+        if (!readLoad(opt, given.data, error)) j.str("loadError", error);
+        else
+        {
+            j.integer("loaded", static_cast<int64_t>(given.data.size()))
+                .integer("loadResult", comp->setState(&given));
+            // Only when the knobs are wanted: Serum 2's controller crashed here on a state of its own.
+            if (ctrl && opt.params)
+            {
+                given.seek(0, IBStream::kIBSeekSet, nullptr);
+                j.integer("controllerLoadResult", ctrl->setComponentState(&given));
+            }
+        }
+    }
+
     MemoryStream state;
     bool haveState = comp->getState(&state) == kResultOk;
     if (ctrl)
     {
         ctrl->setComponentHandler(&g_handler);
-        if (haveState) { state.seek(0, IBStream::kIBSeekSet, nullptr); ctrl->setComponentState(&state); }
-        if (opt.params) writeParams(j, ctrl);
+        if (haveState && (opt.load.empty() || opt.params)) { state.seek(0, IBStream::kIBSeekSet, nullptr); ctrl->setComponentState(&state); }
+        if (opt.params) writeParams(j, ctrl, opt.curve);
     }
     else if (opt.params) j.str("paramsError", "no edit controller");
 
-    if (opt.state)
+    if (opt.state || !opt.load.empty())
     {
         if (haveState) j.str("state", base64(state.data));
+    }
+    // Serum 2 crashed in its controller's getState here, so the controller's state is only read when asked.
+    if (opt.state)
+    {
         MemoryStream ctrlState;
         if (ctrl && ctrl->getState(&ctrlState) == kResultOk) j.str("controllerState", base64(ctrlState.data));
     }
+
+    if (opt.calibrate > 0) calibrate(comp, ctrl, opt);
 
     if (compCp && ctrlCp) { compCp->disconnect(ctrlCp); ctrlCp->disconnect(compCp); }
     if (compCp) compCp->release();
@@ -362,7 +560,7 @@ bool scanVst3(const std::filesystem::path& path, const Options& opt, std::string
             .str("version", version)
             .str("kind", instrument ? "instrument" : "effect")
             .strings("features", features);
-        if (opt.params || opt.state) scanClass(j, factory, cid, opt);
+        if (opt.params || opt.state || !opt.load.empty() || opt.calibrate > 0) scanClass(j, factory, cid, opt);
         emit(j.end());
     }
 

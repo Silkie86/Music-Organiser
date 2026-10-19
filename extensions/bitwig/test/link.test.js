@@ -237,9 +237,28 @@ test("lists and runs Bitwig's actions", () => {
     { id: "toggle_metronome", name: "Toggle Metronome", category: "Transport", menu: "Toggle Metronome" },
   ]);
   bitwig.allowChanges(true);
-  assert.equal(app.ask({ id: 2, cmd: "action", action: "Save" }).ok, true);
+  // The answer names the project Bitwig had in front as the action ran, and that it ran straight away (as the Java extension 3.7 says).
+  assert.deepEqual(app.ask({ id: 2, cmd: "action", action: "Save" }), {
+    id: 2,
+    ok: true,
+    result: { project: "Night Drive", via: "direct", ran: true },
+  });
   assert.deepEqual(bitwig.calls, [["invoke", "Save"]]);
   assert.match(app.ask({ id: 3, cmd: "action", action: "Format C:" }).error, /no action Format C:/);
+  bitwig.app.name.v = "My Song";
+  assert.deepEqual(app.ask({ id: 4, cmd: "action", action: "toggle_metronome" }).result, { project: "My Song", via: "direct", ran: true });
+});
+
+test("runs an action straight away only, and says the other routes need the Java extension", () => {
+  const bitwig = startBitwig(song);
+  bitwig.allowChanges(true);
+  const app = bitwig.connect();
+  app.take();
+  for (const via of [null, "direct"])
+    assert.deepEqual(app.ask({ id: 1, cmd: "action", action: "Save", via }).result, { project: "Night Drive", via: "direct", ran: true });
+  for (const via of ["flush", "midi", "button", "buttonCode", "Direct", 5])
+    assert.equal(app.ask({ id: 2, cmd: "action", action: "Save", via }).error, "This needs the Java extension 3.7.");
+  assert.deepEqual(bitwig.calls, [["invoke", "Save"], ["invoke", "Save"]]);
 });
 
 test("selects a track and one of its devices", () => {

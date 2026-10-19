@@ -99,10 +99,11 @@ public sealed partial class StudioOneReader
                         {
                             var transpose = (int)(Num(Attr(ev, "transpose")) ?? 0);
                             var all = music.TryGetValue(id, out var file) ? MusicxNotes(zip, file) : InlineNotes(ev);
+                            // No length saved: the part runs to the end of its last note.
+                            if (length <= 0) length = all.Where(n => n.Start >= offset - 1e-9).Select(n => n.Start + n.Length - offset).DefaultIfEmpty(4).Max();
                             var notes = all.Where(n => n.Start >= offset - 1e-9 && n.Start < offset + length)
                                            .Select(n => n with { Start = n.Start - offset, Length = Math.Min(n.Length, offset + length - n.Start), Key = Math.Clamp(n.Key + transpose, 0, 127) })
                                            .ToList();
-                            if (length <= 0) length = notes.Select(n => n.Start + n.Length).DefaultIfEmpty(4).Max();
                             clips.Add(new PreviewClip(name.Length > 0 ? name : Attr(track, "name"), start, length, muted) { Notes = notes });
                             break;
                         }
@@ -197,23 +198,27 @@ public sealed partial class StudioOneReader
         public static object? Read(byte[] data)
         {
             var at = 0;
-            try { return Value(data, ref at); }
+            try { return Value(data, ref at, 0); }
             catch (Exception e) when (e is IndexOutOfRangeException or ArgumentOutOfRangeException or FormatException) { return null; }
         }
 
-        static object? Value(byte[] d, ref int at)
+        /// <summary>How deep objects and lists may nest: a damaged file mustn't recurse until the app runs out of stack.</summary>
+        const int MaxDepth = 64;
+
+        static object? Value(byte[] d, ref int at, int depth)
         {
+            if (depth > MaxDepth) throw new FormatException("UBJSON nested too deeply.");
             var type = (char)d[at++];
             switch (type)
             {
                 case '{':
                     var obj = new Dictionary<string, object?>();
-                    while (d[at] != '}') { var key = Text(d, ref at); obj[key] = Value(d, ref at); }
+                    while (d[at] != '}') { var key = Text(d, ref at); obj[key] = Value(d, ref at, depth + 1); }
                     at++;
                     return obj;
                 case '[':
                     var list = new List<object?>();
-                    while (d[at] != ']') list.Add(Value(d, ref at));
+                    while (d[at] != ']') list.Add(Value(d, ref at, depth + 1));
                     at++;
                     return list;
                 case 'S': return Text(d, ref at);

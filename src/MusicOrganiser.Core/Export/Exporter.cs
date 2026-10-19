@@ -7,6 +7,9 @@ public sealed record ExportResult(string Folder, IReadOnlyList<string> Files);
 /// <summary>Writes a project's MIDI (one file per channel) and plugin presets into an export folder.</summary>
 public static class Exporter
 {
+    /// <summary>Heads the list of sounds <see cref="LostSounds"/> took from older saves, in the notes saved with an export.</summary>
+    internal const string TakenHeader = "Sounds this save lost (the plugin gave FL Studio none), taken from an older save of the song:";
+
     static string OutDir(string exportRoot, string project, string kind)
     {
         var dir = Path.Combine(exportRoot, TextScan.SafeFileName(Path.GetFileNameWithoutExtension(project)), kind);
@@ -22,19 +25,22 @@ public static class Exporter
     public static (string File, IReadOnlyList<string> LeftOut, IReadOnlyList<string> Setup) DawProjectFromFl(string project, string exportRoot)
     {
         var name = Path.GetFileNameWithoutExtension(project);
-        var result = DawProject.FromFl(Readers.FlStudio.ReadSong(project), name);
+        var (song, taken) = LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(project), project);
+        var result = DawProject.FromFl(song, name);
         var dir = OutDir(exportRoot, project, "DAWproject");
         var file = Path.Combine(dir, TextScan.SafeFileName(name) + ".dawproject");
         File.WriteAllBytes(file, result.Bytes);
         var setupFile = Path.Combine(dir, TextScan.SafeFileName(name) + " - Bitwig setup.txt");
-        if (result.Setup.Count > 0 || result.Notes.Count > 0)
+        if (result.Setup.Count > 0 || result.Notes.Count > 0 || taken.Count > 0)
         {
             var lines = new List<string> { $"Finishing {name} in Bitwig", "" };
             if (result.Setup.Count > 0)
                 lines.AddRange(["DAWproject can't carry a Sampler's sample or root key, or FL's root key on plugins, so set them here.",
                                 .. result.Setup.Select(s => "  " + s), ""]);
             if (result.Notes.Count > 0)
-                lines.AddRange(["Not carried over:", .. result.Notes.Select(n => "  " + n)]);
+                lines.AddRange(["Not carried over:", .. result.Notes.Select(n => "  " + n), ""]);
+            if (taken.Count > 0)
+                lines.AddRange([TakenHeader, .. taken.Select(t => "  " + t)]);
             File.WriteAllLines(setupFile, lines);
         }
         else if (File.Exists(setupFile)) File.Delete(setupFile);
@@ -55,7 +61,8 @@ public static class Exporter
                                                                             string? saveAs = null)
     {
         var name = TextScan.SafeFileName(saveAs ?? Path.GetFileNameWithoutExtension(project));
-        var result = BitwigProject.FromFl(Readers.FlStudio.ReadSong(project), template, stepsUntilNextNote: stepsUntilNextNote, upgrade: upgrade);
+        var (song, taken) = LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(project), project);
+        var result = BitwigProject.FromFl(song, template, stepsUntilNextNote: stepsUntilNextNote, upgrade: upgrade);
         var dir = Path.Combine(OutDir(exportRoot, project, "Bitwig"), name);
         Directory.CreateDirectory(dir);
         var file = Path.Combine(dir, name + ".bwproject");
@@ -70,8 +77,12 @@ public static class Exporter
                 File.WriteAllBytes(Path.Combine(sounds, $"{TextScan.SafeFileName(channel)} ({TextScan.SafeFileName(sound.Plugin)}){sound.Extension}"), sound.Data);
         }
         var notesFile = Path.Combine(dir, name + " - not carried over.txt");
+        var lines = new List<string>();
         if (result.Notes.Count > 0)
-            File.WriteAllLines(notesFile, [$"What didn't come across from FL Studio to Bitwig for {name}", "", .. result.Notes.Select(n => "  " + n)]);
+            lines.AddRange([$"What didn't come across from FL Studio to Bitwig for {name}", "", .. result.Notes.Select(n => "  " + n), ""]);
+        if (taken.Count > 0)
+            lines.AddRange([TakenHeader, .. taken.Select(t => "  " + t)]);
+        if (lines.Count > 0) File.WriteAllLines(notesFile, lines);
         else if (File.Exists(notesFile)) File.Delete(notesFile);
         return (file, result.Notes);
     }

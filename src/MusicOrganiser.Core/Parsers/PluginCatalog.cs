@@ -75,6 +75,15 @@ public static partial class PluginCatalog
         return new string(n.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
     }
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"v?(\d+(\.\d+)*)\s*(x64|x86|vst3?|\(.*\))?$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex VersionNumber();
+
+    /// <summary>A plugin's version from its name: "Kontakt 8" is 8, "Mini V4" 4, "Serum 2" 2; none ("Serum") is 0.</summary>
+    public static Version VersionOf(string name) =>
+        VersionNumber().Match(name.Trim()) is { Success: true } m && Version.TryParse(m.Groups[1].Value.Contains('.') ? m.Groups[1].Value : m.Groups[1].Value + ".0", out var v)
+            ? v : new Version(0, 0);
+
     /// <summary>
     /// For a plugin that isn't installed, another version of it that is ("Ozone 12" for "Ozone 8").
     /// It won't load in place of the old one by itself, but it's what to swap in.
