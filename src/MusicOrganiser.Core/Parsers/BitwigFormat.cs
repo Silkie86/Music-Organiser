@@ -96,6 +96,9 @@ public static partial class BitwigFormat
     public sealed class Document
     {
         public required byte[] Raw { get; init; }
+        /// <summary>How much of <see cref="Raw"/> is the file: less than its length when read into a borrowed buffer.</summary>
+        public int Length { get => _length < 0 ? Raw.Length : _length; init => _length = value; }
+        readonly int _length = -1;
         public Dictionary<string, object?> Meta { get; } = new(StringComparer.Ordinal);
         /// <summary>Each metadata value's type byte, in the order the keys were read.</summary>
         public List<(string Key, byte Type)> MetaTypes { get; } = new();
@@ -114,17 +117,20 @@ public static partial class BitwigFormat
         /// <summary>The embedded zip (plugin states), or null if there isn't one.</summary>
         public ZipArchive? OpenZip()
         {
-            if (ZipOffset <= 0 || ZipOffset + 4 > Raw.Length || Raw[ZipOffset] != 'P' || Raw[ZipOffset + 1] != 'K') return null;
-            try { return new ZipArchive(new MemoryStream(Raw, ZipOffset, Raw.Length - ZipOffset, false), ZipArchiveMode.Read); }
+            if (ZipOffset <= 0 || ZipOffset + 4 > Length || Raw[ZipOffset] != 'P' || Raw[ZipOffset + 1] != 'K') return null;
+            try { return new ZipArchive(new MemoryStream(Raw, ZipOffset, Length - ZipOffset, false), ZipArchiveMode.Read); }
             catch (InvalidDataException) { return null; }
         }
     }
 
     public static bool IsBitwig(ReadOnlySpan<byte> raw) => raw.Length >= 42 && raw[..4].SequenceEqual("BtWg"u8);
 
-    public static Document Decode(byte[] raw)
+    public static Document Decode(byte[] raw) => Decode(raw, raw.Length);
+
+    /// <summary>The file in the first <paramref name="length"/> bytes of <paramref name="raw"/> (a borrowed buffer can be longer).</summary>
+    public static Document Decode(byte[] raw, int length)
     {
-        if (!IsBitwig(raw)) throw new InvalidDataException("Not a Bitwig file (missing BtWg header)");
+        if (!IsBitwig(raw.AsSpan(0, length))) throw new InvalidDataException("Not a Bitwig file (missing BtWg header)");
         var hex = Encoding.ASCII.GetString(raw, 4, 38);
         int body = 0, zip = 0;
         try
@@ -133,9 +139,9 @@ public static partial class BitwigFormat
             zip = (int)Convert.ToInt64(hex[20..36], 16);
         }
         catch (FormatException) { }
-        if (zip <= 0 || zip > raw.Length) zip = raw.Length;
+        if (zip <= 0 || zip > length) zip = length;
 
-        var doc = new Document { Raw = raw, BodyOffset = body, ZipOffset = zip };
+        var doc = new Document { Raw = raw, Length = length, BodyOffset = body, ZipOffset = zip };
         var r = new Reader(raw, doc);
         try { r.ReadMeta(42); }
         catch (Exception e) when (e is IndexOutOfRangeException or ArgumentException or InvalidDataException or DecoderFallbackException or OverflowException)

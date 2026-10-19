@@ -12,6 +12,19 @@
             <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
             <Setter Property="HorizontalAlignment" Value="Right" />
         </Style>
+        <!-- A part open in the quick view: the list narrows, so its little rolls make way. -->
+        <Style Selector="ListBox.open views|NoteRoll">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <Style Selector="StackPanel.fitColumn">
+            <Setter Property="Width" Value="110" />
+        </Style>
+        <Style Selector="ListBox.open StackPanel.fitColumn">
+            <Setter Property="Width" Value="52" />
+        </Style>
+        <Style Selector="ListBox.open TextBlock.move">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
         <Style Selector="TextBlock.small">
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
@@ -38,19 +51,20 @@
             </StackPanel>
         </DockPanel>
 
-        <Panel>
+        <!-- The list, and a part opened from it beside it, two thirds wide. -->
+        <Grid x:Name="Body" ColumnDefinitions="*,0">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" IsVisible="{Binding IsLoading}">
                 <Arc Classes="spinner" Width="22" Height="22" HorizontalAlignment="Center" />
                 <TextBlock Text="Finding MIDI that fits…" Classes="small" HorizontalAlignment="Center" />
             </StackPanel>
             <TextBlock Text="Nothing to show yet." Classes="small" HorizontalAlignment="Center" VerticalAlignment="Center"
                        IsVisible="{Binding IsEmpty}" />
-            <ListBox ItemsSource="{Binding Rows}" SelectedItem="{Binding Selected}" Background="Transparent"
+            <ListBox x:Name="Parts" ItemsSource="{Binding Rows}" SelectedItem="{Binding Selected}" Background="Transparent"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}"
-                     DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">
+                     Tapped="OnTapped" DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:MidiRow">
-                        <Grid ColumnDefinitions="Auto,*,160,Auto" Margin="0,2">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,2">
                             <Button Command="{Binding PlayCommand}" Padding="9,5" Margin="0,0,10,0" VerticalAlignment="Center"
                                     ToolTip.Tip="Listen, already moved into this song's key (with a stand-in sound)">
                                 <Panel>
@@ -63,16 +77,113 @@
                                 <TextBlock Text="{Binding From}" Classes="small" ToolTip.Tip="{Binding Entry.Phrase.Source.Path}" />
                                 <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding ChordsText}" />
                             </StackPanel>
-                            <views:NoteRoll Grid.Column="2" Height="40" Channel="{Binding Channel}" Position="{Binding Position}"
+                            <views:NoteRoll Grid.Column="2" Height="40" Width="160" Channel="{Binding Channel}" Position="{Binding Position}"
                                             SeekCommand="{Binding SeekCommand}" />
-                            <StackPanel Grid.Column="3" Width="110" Margin="10,0,4,0" VerticalAlignment="Center" ToolTip.Tip="{Binding FitWhy}">
+                            <StackPanel Grid.Column="3" Classes="fitColumn" Margin="10,0,4,0" VerticalAlignment="Center" ToolTip.Tip="{Binding FitWhy}">
                                 <TextBlock Classes="fitScore" Text="{Binding FitText}" />
-                                <TextBlock Classes="small" HorizontalAlignment="Right" Text="{Binding MoveText}" />
+                                <TextBlock Classes="small move" HorizontalAlignment="Right" Text="{Binding MoveText}" />
                             </StackPanel>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
-        </Panel>
+
+            <!-- The quick view: a slim mini playground to try a part with the song before dragging it out. The Playground
+                 (the button at the top) is for working an idea up further. -->
+            <Border Grid.Column="1" Classes="card" Margin="14,0,0,0" VerticalAlignment="Top" IsVisible="{Binding IsOpen}">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="10" DataContext="{Binding Open}" x:DataType="vm:MidiRow">
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="✕" Padding="8,2" VerticalAlignment="Top" Background="Transparent"
+                                Command="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).CloseCommand}" ToolTip.Tip="Close (Esc)" />
+                        <StackPanel DockPanel.Dock="Right" Margin="10,0" VerticalAlignment="Top" ToolTip.Tip="{Binding FitWhy}">
+                            <TextBlock Classes="fitScore" Text="{Binding FitText}" />
+                            <TextBlock Classes="small" HorizontalAlignment="Right" Text="{Binding MoveText}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding From}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                        </StackPanel>
+                    </DockPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="12" IsVisible="{Binding CanPlayTogether}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Border Width="10" Height="10" CornerRadius="2" Background="{StaticResource MutedBrush}" Opacity="0.6" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding PairText}" Classes="small" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Border Width="10" Height="10" CornerRadius="2" Background="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="This part" Classes="small" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </StackPanel>
+                    <views:PianoRollEditor Height="240" Notes="{Binding BarNotes}" Guide="{Binding EditorGuide}" Period="{Binding LoopLength}"
+                                           Length="{Binding PairLength}" Position="{Binding PairPosition}"
+                                           PartStart="{Binding PartStart}" PartEnd="{Binding PartEnd}"
+                                           EditedCommand="{Binding EditCommand}" SeekCommand="{Binding PairSeekCommand}"
+                                           ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Alt to place without snapping. Click the bar numbers to play from there." />
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                            <Button Content="Undo" Padding="8,2" FontSize="12" Command="{Binding UndoEditCommand}" IsEnabled="{Binding CanUndoEdit}"
+                                    ToolTip.Tip="Take back the last edit" />
+                            <Button Content="Back to as it was" Padding="8,2" FontSize="12" Command="{Binding ResetEditsCommand}" IsVisible="{Binding IsEdited}"
+                                    ToolTip.Tip="Undo every edit to this part. The file it came from is never changed." />
+                        </StackPanel>
+                        <TextBlock Text="{Binding TogetherText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" VerticalAlignment="Center" />
+                    </DockPanel>
+                    <!-- One-click changes, each undone like any edit. The file it came from is never changed. -->
+                    <WrapPanel>
+                        <TextBlock Text="Change it:" Classes="small" VerticalAlignment="Center" Margin="0,0,8,6" />
+                        <Button Content="▼ Semitone" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="down"
+                                ToolTip.Tip="Every note down a semitone" />
+                        <Button Content="▲ Semitone" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="up"
+                                ToolTip.Tip="Every note up a semitone" />
+                        <Button Content="Quantise" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="quantise"
+                                ToolTip.Tip="Every note onto the grid, for a tight feel: 16ths, or what Settings › MIDI says" />
+                        <Button Content="Play it twice" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="twice"
+                                ToolTip.Tip="The part again straight after itself: twice as long, to change the second time round" />
+                        <Button Content="First half" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="half"
+                                ToolTip.Tip="Just its first half: for a part that plays the same idea twice" />
+                        <Button Content="Reverse" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="reverse"
+                                ToolTip.Tip="Back to front: the last note first" />
+                    </WrapPanel>
+                    <!-- Listening, its sound and octave, and taking it out to the DAW. -->
+                    <WrapPanel>
+                        <Button Command="{Binding PlayTogetherCommand}" Margin="0,0,6,6" Padding="12,6" Classes="accent" IsVisible="{Binding CanPlayTogether}"
+                                ToolTip.Tip="This part on top of the song's own MIDI, so you can hear if they go together">
+                            <Panel>
+                                <TextBlock Text="▶  Play with the song" IsVisible="{Binding !IsPlayingTogether}" />
+                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingTogether}" />
+                            </Panel>
+                        </Button>
+                        <Button Command="{Binding PlayAloneCommand}" Margin="0,0,6,6" Padding="12,6" ToolTip.Tip="This part on its own">
+                            <Panel>
+                                <TextBlock Text="▶  On its own" IsVisible="{Binding !IsPlayingAlone}" />
+                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAlone}" />
+                            </Panel>
+                        </Button>
+                        <ToggleButton Classes="chip" Margin="0,0,6,6" VerticalAlignment="Center"
+                                      IsChecked="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).Midi.Loop}"
+                                      ToolTip.Tip="Play round and round until you stop it">
+                            <TextBlock Text="↻  Loop" />
+                        </ToggleButton>
+                        <Border Classes="dragChip" Margin="0,0,6,6" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
+                                ToolTip.Tip="Drag into your DAW as a MIDI clip: in this song's key and octave, with your edits">
+                            <TextBlock Text="Drag into your DAW" />
+                        </Border>
+                    </WrapPanel>
+                    <WrapPanel ToolTip.Tip="{Binding OctaveWhy}">
+                        <ComboBox ItemsSource="{x:Static vm:MidiBrowserViewModel.SoundChoices}" SelectedItem="{Binding Sound}" Margin="0,0,6,6"
+                                  FontSize="12" MinWidth="150" ToolTip.Tip="The sound this kind of part plays with" />
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,0,6" IsVisible="{Binding CanChangeOctave}">
+                            <Button Content="−" Padding="10,3" Command="{Binding OctaveDownCommand}" ToolTip.Tip="An octave down (remembered)" />
+                            <TextBlock Text="{Binding OctaveText}" Classes="small" VerticalAlignment="Center" MinWidth="96" TextAlignment="Center" />
+                            <Button Content="+" Padding="10,3" Command="{Binding OctaveUpCommand}" ToolTip.Tip="An octave up (remembered)" />
+                            <Button Content="Reset" Padding="8,3" FontSize="12" Command="{Binding ResetOctaveCommand}" IsVisible="{Binding IsYourOctave}"
+                                    ToolTip.Tip="Let the app pick the octave again" />
+                        </StackPanel>
+                    </WrapPanel>
+                </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
     </DockPanel>
 </UserControl>

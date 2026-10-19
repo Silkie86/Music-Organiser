@@ -2139,6 +2139,59 @@ public class ViewModelTests : IDisposable
         Assert.Equal("Chords Song", main.Midi.Fit!.Name);
     }
 
+    [Fact]
+    public async Task A_part_clicked_on_a_songs_midi_tab_opens_in_a_quick_view_to_try_with_the_song()
+    {
+        const int bar = 4 * 96;
+        int[][] cMinor = [[60, 63, 67], [56, 60, 63], [51, 55, 58], [58, 62, 65]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Moody", Ppq = 96 };
+        chords.Track("Piano").AddRange(cMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Moody Cm.mid"), Core.Export.MidiWriter.Write(chords));
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        var project = MidiBrowserTests.FlProjectWithChords(songs);
+        _db.Upsert(Core.Library.Scanner.Analyse(project));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        ((HeadlessUi)Ui.Current).Player = () => new Recorder([]);
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var tab = new SongMidiViewModel(main.Midi, main, project, "Chords Song");
+        await tab.LoadAsync();
+
+        // Picked by itself when the list shows, but only a click opens it.
+        var row = Assert.Single(tab.Rows);
+        Assert.Same(row, tab.Selected);
+        Assert.False(tab.IsOpen);
+        tab.OpenPartCommand.Execute(row);
+        Assert.True(tab.IsOpen);
+        Assert.Same(row, tab.Open);
+        Assert.True(row.CanPlayTogether);
+        Assert.NotEmpty(row.EditorGuide!);   // the song's own chords, grey behind it
+
+        // With the song, then on its own, then stopped.
+        await row.PlayTogetherCommand.ExecuteAsync(null);
+        Assert.True(row.IsPlayingTogether);
+        await row.PlayAloneCommand.ExecuteAsync(null);
+        Assert.True(row.IsPlayingAlone);
+        Assert.False(row.IsPlayingTogether);
+        await row.PlayAloneCommand.ExecuteAsync(null);
+        Assert.False(row.IsPlaying);
+
+        // A one-click change, undone like any edit; the file is never changed.
+        var before = row.BarNotes.Select(n => n.Key).ToList();
+        await row.ToolCommand.ExecuteAsync("up");
+        Assert.Equal(before.Select(k => k + 1), row.BarNotes.Select(n => n.Key));
+        Assert.True(row.IsEdited);
+        await row.UndoEditCommand.ExecuteAsync(null);
+        Assert.Equal(before, row.BarNotes.Select(n => n.Key));
+
+        tab.CloseCommand.Execute(null);
+        Assert.False(tab.IsOpen);
+        main.Midi.Left();
+    }
+
     sealed class HeadlessUi : IPlatformUi
     {
         // Sweep previews and the Sounds list are worked out straight away here, so a test can check them at once.

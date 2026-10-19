@@ -521,6 +521,68 @@ public class MidiBrowserTests
     }
 
     [Fact]
+    public void A_bitwig_song_read_into_a_borrowed_buffer_reads_the_same()
+    {
+        // While MIDI is read, a Bitwig song goes into a buffer borrowed from a pool, which is longer than the file and
+        // holds whatever the song before left in it.
+        var dir = Fixtures.TempDir();
+        var song = Readers.FlStudio.ReadSong(FlProjectWithPhrases(dir));
+        var path = Path.Combine(dir, "Song", "Song.bwproject");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, Export.BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => null).Bytes);
+        Assert.NotEqual(0, new FileInfo(path).Length & (new FileInfo(path).Length - 1));   // not a power of two: the buffer is longer
+
+        var reader = new BitwigReader();
+        var alone = reader.ExtractMidi(path);
+        var aloneInfo = reader.Read(path);
+        var aloneLanes = reader.ReadArrangement(path).Lanes.Count;
+        var junk = System.Buffers.ArrayPool<byte>.Shared.Rent((int)new FileInfo(path).Length);
+        Array.Fill(junk, (byte)0x78);
+        System.Buffers.ArrayPool<byte>.Shared.Return(junk);
+        using (ReadOnce.Scope())
+        {
+            var borrowed = reader.ExtractMidi(path);
+            Assert.Equal(alone.Count, borrowed.Count);
+            Assert.Equal(alone.SelectMany(c => c.Tracks.SelectMany(t => t.Value)), borrowed.SelectMany(c => c.Tracks.SelectMany(t => t.Value)));
+            Assert.Equal(aloneLanes, reader.ReadArrangement(path).Lanes.Count);
+            var info = reader.Read(path);
+            Assert.Equal(aloneInfo.Plugins.Count, info.Plugins.Count);
+            Assert.Equal(aloneInfo.Version, info.Version);
+        }
+    }
+
+    [Fact]
+    public void A_parts_notes_never_wait_behind_a_long_read_of_every_part()
+    {
+        // The window asks for a row's notes as it comes into view; a read of the whole list (after a song is read again)
+        // held the same lock, and Projects froze for 5 s (Solomon's log, 2026-10-19).
+        var dir = Fixtures.TempDir();
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.Upsert(Scanner.Analyse(FlProjectWithChords(dir)));
+        using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));
+        new MidiIndexer(index, db).Run();
+        var part = index.All().First();
+
+        var readLock = typeof(MidiIndex).GetField("_readLock", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(index)!;
+        using var holding = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var longRead = Task.Run(() =>
+        {
+            lock (readLock)
+            {
+                holding.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+            }
+        });
+        holding.Wait();
+        var notes = Task.Run(() => index.Notes(part.Id, part.Hash));
+        Assert.True(notes.Wait(TimeSpan.FromSeconds(2)), "a part's notes waited for the long read");
+        Assert.NotEmpty(notes.Result);
+        release.Set();
+        longRead.Wait();
+    }
+
+    [Fact]
     public void A_midi_db_from_before_phrases_were_joined_gets_the_new_column()
     {
         var path = Path.Combine(Fixtures.TempDir(), "midi.db");
