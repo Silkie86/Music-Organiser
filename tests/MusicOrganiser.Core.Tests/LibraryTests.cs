@@ -189,6 +189,9 @@ public class LibraryTests : IDisposable
     [InlineData("civil war_5 (fixed)", "civil war", 5)]   // Fix's copy sits with the save it was made from
     [InlineData("Didums (Fixed 2)", "Didums", 1)]
     [InlineData("Didums_70 (fixed) (fixed)", "Didums", 70)]   // a fixed copy fixed again by an older build
+    [InlineData("analog full set nb 36", "analog full set nb", 36)]   // Bitwig saves numbered by hand
+    [InlineData("Swu 10 year oct 2026", "Swu 10 year oct 2026", 1)]   // a year is part of the name
+    [InlineData("Proj_5[1]", "Proj_5[1]", 1)]
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
 
@@ -203,6 +206,38 @@ public class LibraryTests : IDisposable
         var didums = groups.Single(g => g.Song == "Didums" && g.Latest.Folder == @"C:\dub");
         Assert.Equal("Didums_10", didums.Latest.Name);
         Assert.Equal(["Didums_2", "Didums"], didums.Older.Select(o => o.Name));
+    }
+
+    [Fact]
+    public void Bitwig_saves_each_in_a_folder_of_its_own_name_are_one_song()
+    {
+        ProjectSummary P(string name, string folder) =>
+            new() { Name = name, Path = $@"{folder}\{name}.bwproject", Daw = "Bitwig Studio", Folder = folder, Modified = new DateTime(2020, 1, 1) };
+        const string projects = @"K:\Bitwig Studio\Projects";
+        var groups = SongVersions.Group([P("bored_57", $@"{projects}\bored_57"), P("bored_58", $@"{projects}\bored_58"),
+                                         P("bored", $@"{projects}\bored"), P("bored_59", $@"{projects}\bored"),
+                                         P("MO Live Test 1", $@"{projects}\MO Live Test 1"), P("bored_2", $@"{projects}\Old\bored stuff")]);
+        Assert.Equal(3, groups.Count);
+        var bored = groups.Single(g => g.Latest.Name == "bored_59");
+        Assert.Equal(["bored_58", "bored_57", "bored"], bored.Older.Select(o => o.Name));
+        // A folder named otherwise is a song of its own.
+        Assert.Contains(groups, g => g.Latest.Name == "bored_2");
+    }
+
+    [Fact]
+    public void Bitwig_saves_numbered_with_a_space_are_one_song()
+    {
+        // Solomon's "analog full set nb 26" … "nb 36", each in its own Bitwig project folder (F12 note, 19 Oct 2026).
+        ProjectSummary P(string name) => new()
+        {
+            Name = name, Path = $@"K:\Bitwig Studio\Projects\{name}\{name}.bwproject", Daw = "Bitwig Studio",
+            Folder = $@"K:\Bitwig Studio\Projects\{name}", Modified = new DateTime(2026, 10, 2),
+        };
+        var groups = SongVersions.Group([.. Enumerable.Range(26, 11).Select(n => P($"analog full set nb {n}")), P("Swu 10 year oct 2026")]);
+        Assert.Equal(2, groups.Count);
+        var song = groups.Single(g => g.Song == "analog full set nb");
+        Assert.Equal("analog full set nb 36", song.Latest.Name);
+        Assert.Equal(10, song.Older.Count);
     }
 
     static ProjectSummary Save(string name, DateTime saved, int notes = 100, int bars = 32, int tracks = 6, string[]? plugins = null,

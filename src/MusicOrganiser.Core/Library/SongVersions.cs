@@ -27,7 +27,8 @@ public sealed record SaveRun(ProjectSummary Last, DateTime Start, DateTime End, 
 /// </summary>
 public static partial class SongVersions
 {
-    [GeneratedRegex(@"^(.+?)_(\d{1,4})$")]
+    /// <summary>"Song_12", or "Song 12" as Bitwig saves are often numbered by hand (up to three digits, so "Swu oct 2026" stays a name).</summary>
+    [GeneratedRegex(@"^(.+?)(?:_(\d{1,4})|\s+(\d{1,3}))$")]
     private static partial Regex Numbered();
 
     /// <summary>Fix's copies: "Didums_70 (fixed)", "Didums_70 (fixed 2)".</summary>
@@ -35,15 +36,15 @@ public static partial class SongVersions
     private static partial Regex FixedTail();
 
     /// <summary>
-    /// "Didums_70" → ("Didums", 70); "Didums" → ("Didums", 1). A fixed copy counts as the save it was made from:
-    /// "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves.
+    /// "Didums_70" → ("Didums", 70); "analog full set nb 36" → ("analog full set nb", 36); "Didums" → ("Didums", 1).
+    /// A fixed copy counts as the save it was made from: "Didums_70 (fixed)" → ("Didums", 70), so it sits with the song's saves.
     /// </summary>
     public static (string Song, int Number) Split(string name)
     {
         name = FixedTail().Replace(name, "");
         var m = Numbered().Match(name);
         return m.Success && m.Groups[1].Value.Trim().Length > 0
-            ? (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Value))
+            ? (m.Groups[1].Value.TrimEnd(), int.Parse(m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value))
             : (name, 1);
     }
 
@@ -109,9 +110,24 @@ public static partial class SongVersions
         return n.ToLowerInvariant();
     }
 
-    /// <summary>Saves of the same song share a key: same folder, same DAW, same name before the number.</summary>
+    /// <summary>Saves of the same song share a key: same folder (see <see cref="SongFolder"/>), same DAW, same name before the number.</summary>
     public static string Key(string folder, string daw, string name) =>
-        $"{folder}\u001f{daw}\u001f{Split(name).Song}".ToLowerInvariant();
+        $"{SongFolder(folder, name)}\u001f{daw}\u001f{Split(name).Song}".ToLowerInvariant();
+
+    /// <summary>
+    /// The folder a song's saves sit in. Bitwig keeps each project in a folder named after it, so saving bored_58 as a new
+    /// project makes Projects\bored_58\bored_58.bwproject next to Projects\bored_57\bored_57.bwproject (Solomon,
+    /// 2026-10-18: "midi from multiple save versions of bitwig are listed as different"): a folder named like the song
+    /// counts as the folder it's in, so those saves are one song, and so are saves made into the same folder.
+    /// </summary>
+    public static string SongFolder(string folder, string name)
+    {
+        var trimmed = folder.TrimEnd('\\', '/');
+        var cut = trimmed.LastIndexOfAny(['\\', '/']);
+        if (cut < 0) return folder;
+        var own = trimmed[(cut + 1)..];
+        return string.Equals(Split(own).Song, Split(name).Song, StringComparison.OrdinalIgnoreCase) ? trimmed[..cut] : folder;
+    }
 
     /// <summary>
     /// One group per song. The latest save is the highest-numbered file that is still on disk

@@ -95,7 +95,9 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     /// <summary>The rows, read from the database and grouped into songs (on any thread).</summary>
     (int Saves, List<ProjectItem> Items, List<string> Tags) Load(bool group)
     {
-        var projects = _db.Projects();
+        // A fixed copy waiting for Keep isn't a save yet: the song still opens its original, and Older saves leave it out.
+        var pending = _db.PendingFixes();
+        var projects = pending.Count == 0 ? _db.Projects() : _db.Projects().Where(p => !pending.Contains(p.Path)).ToList();
         var items = group
             ? SongVersions.Group(projects).Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older)).ToList()
             : projects.Select(p => new ProjectItem(_db, p)).ToList();

@@ -131,7 +131,7 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task A_fixed_copy_is_listed_with_its_song_and_still_asks_whether_it_loaded_after_leaving_it()
+    public async Task A_fixed_copy_waits_out_of_the_songs_saves_until_kept_and_still_asks_whether_it_loaded_after_leaving_it()
     {
         // The sample library sits outside the projects' folder: a kick inside it would count as found (SampleLocator).
         var libRoot = Fixtures.TempDir();
@@ -152,10 +152,10 @@ public class ViewModelTests : IDisposable
         Assert.Equal(@"FL Studio looked for: C:\Samples\Drums\Kick 01.wav", kick.LookedFor);
         await detail.SaveFixedCommand.ExecuteAsync(null);
 
-        // Listed straight away as the song's newest save, still picked, still asking.
+        // Until it's kept, the song still opens the original and Older saves leave the copy out; still picked, still asking.
         var song = projects.Items.Single(i => i.Daw == "FL Studio");
-        Assert.Equal("Night Drive (fixed)", song.FileName);
-        Assert.Equal(["Night Drive"], song.OlderSaves.Select(o => o.Name));
+        Assert.Equal("Night Drive", song.FileName);
+        Assert.Empty(song.OlderSaves);
         Assert.Same(song, projects.Selected);
         Assert.True(projects.Detail!.HasPendingFix);
 
@@ -172,7 +172,13 @@ public class ViewModelTests : IDisposable
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.True(projects.Detail!.HasPendingFix);
-        projects.Detail.KeepFixedCommand.Execute(null);
+        await projects.Detail.KeepFixedCommand.ExecuteAsync(null);
+
+        // Kept: now it's the song's newest save, the one Open uses, with the original under Older saves.
+        song = projects.Items.Single(i => i.Daw == "FL Studio");
+        Assert.Equal("Night Drive (fixed)", song.FileName);
+        Assert.Equal(["Night Drive"], song.OlderSaves.Select(o => o.Name));
+        Assert.Same(song, projects.Selected);
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.False(projects.Detail!.HasPendingFix);
