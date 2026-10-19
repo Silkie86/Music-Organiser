@@ -240,6 +240,11 @@ public static partial class BitwigFormat
                 U32(id);
                 var type = TypeAt(o, i);
                 if (type == 0x0b && v is not null && !Written(v)) type = 0x09;   // first reached here, so written in full, as Bitwig does
+                // and one already written is a bare reference: Bitwig can't read a reference in a field that holds one
+                // object ("Unknown class ID 1"), only in lists and maps. Solomon's requiem_80 had two automation lanes on
+                // one Reaktor, and the second lane's reference to it stopped the whole project opening. (A reference read
+                // from the file stays as it was, so an untouched document still comes back byte for byte.)
+                else if (type == 0x09 && v is not (null or BwRef) && Written(v)) type = 0x0b;
                 Out.WriteByte(type);
                 Value(type, v);
             }
