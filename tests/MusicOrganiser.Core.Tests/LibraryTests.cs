@@ -190,8 +190,18 @@ public class LibraryTests : IDisposable
     [InlineData("Didums (Fixed 2)", "Didums", 1)]
     [InlineData("Didums_70 (fixed) (fixed)", "Didums", 70)]   // a fixed copy fixed again by an older build
     [InlineData("Proj_5[1]", "Proj_5[1]", 1)]
-    [InlineData("Track 2", "Track 2", 1)]   // a number after a space is a save number only for Bitwig
-    // The ways people mark saves by hand count in every DAW.
+    // Solomon's rule, every DAW: the same name with a number on the end, glued on or after a space or a dash.
+    [InlineData("Track 2", "Track", 2)]
+    [InlineData("track2", "track", 2)]
+    [InlineData("track nd 1", "track nd", 1)]
+    [InlineData("song-3", "song", 3)]
+    [InlineData("song - 3", "song", 3)]
+    [InlineData("analog full set nb 36", "analog full set nb", 36)]
+    [InlineData("MO Live Test 1", "MO Live Test", 1)]
+    [InlineData("Swu 10 year oct 2026", "Swu 10 year oct 2026", 1)]   // a year is part of the name
+    [InlineData("Untitled 3", "Untitled 3", 1)]   // a DAW's name for a new project: songs of their own
+    [InlineData("Untitled_2", "Untitled", 2)]     // but FL Studio's "Save new version" of it is a save
+    // The usual marks count too.
     [InlineData("fleck athens FLP19", "fleck athens", 19)]
     [InlineData("fleck athens flp_15", "fleck athens", 15)]
     [InlineData("fleckathensFLP19", "fleckathens", 19)]
@@ -212,25 +222,11 @@ public class LibraryTests : IDisposable
     [InlineData("Night Drive wip", "Night Drive", 1)]
     [InlineData("Night Drive 2024-03-01", "Night Drive", 1)]
     [InlineData("Night Drive_20240301", "Night Drive", 1)]
-    [InlineData("Untitled v2", "Untitled v2", 1)]   // stand-ins are songs of their own
-    [InlineData("Track final", "Track final", 1)]
-    [InlineData("Remix2", "Remix2", 1)]   // a word that only ends like a mark stays a name
-    [InlineData("Dev3", "Dev3", 1)]
-    [InlineData("v2", "v2", 1)]
+    [InlineData("Track final", "Track", 1_000_000)]
+    [InlineData("Untitled final", "Untitled final", 1)]
     [InlineData("Swu oct 2026", "Swu oct 2026", 1)]
     public void SplitsNumberedSaves(string name, string song, int number) =>
         Assert.Equal((song, number), SongVersions.Split(name));
-
-    [Theory]
-    [InlineData("analog full set nb 36", "analog full set nb", 36)]   // numbered by hand
-    [InlineData("Swu 10 year oct 2026", "Swu 10 year oct 2026", 1)]   // a year is part of the name
-    [InlineData("Untitled 3", "Untitled 3", 1)]                         // stand-ins are separate songs
-    [InlineData("MO Live Test 1", "MO Live Test", 1)]
-    [InlineData("bored_57", "bored", 57)]
-    [InlineData("fleck athens FLP19", "fleck athens", 19)]
-    [InlineData("Untitled v4", "Untitled v4", 1)]
-    public void Splits_Bitwig_saves_numbered_after_a_space(string name, string song, int number) =>
-        Assert.Equal((song, number), SongVersions.Split(name, "Bitwig Studio"));
 
     [Fact]
     public void GroupsNumberedSavesUnderTheNewest()
@@ -272,6 +268,21 @@ public class LibraryTests : IDisposable
         Assert.Equal("fleck athens", song.Song);
         Assert.Equal("fleck athens FLP19", song.Latest.Name);
         Assert.Equal(5, song.Older.Count);
+    }
+
+    [Fact]
+    public void Saves_named_alike_apart_from_their_number_are_one_song_only_in_the_same_folder()
+    {
+        // Solomon, 19 Oct 2026: "track1" and "track2" go together, "track nd 1" and "track 2" don't, and in another folder
+        // they're another song.
+        ProjectSummary P(string name, string folder, int day) =>
+            new() { Name = name, Path = $@"{folder}\{name}.flp", Daw = "FL Studio", Folder = folder, Modified = new DateTime(2025, 3, day) };
+        var groups = SongVersions.Group([P("track1", @"C:\beats", 1), P("track2", @"C:\beats", 2), P("track nd 1", @"C:\beats", 3),
+                                         P("track3", @"C:\other", 4)]);
+        Assert.Equal(3, groups.Count);
+        var track = groups.Single(g => g.Latest.Folder == @"C:\beats" && g.Song == "track");
+        Assert.Equal("track2", track.Latest.Name);
+        Assert.Equal(["track1"], track.Older.Select(o => o.Name));
     }
 
     [Fact]
