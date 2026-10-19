@@ -24,18 +24,34 @@ public static class NoteForClaude
     /// <summary>notes\ in the app's data folder.</summary>
     public static string DefaultFolder => Path.Combine(LiveReports.DataFolder, "notes");
 
+    /// <summary>
+    /// Says a note is being written (it holds the app's process id). The run-latest launcher waits for it to go before it
+    /// restarts the app for a new build, so a note isn't lost half-way through.
+    /// </summary>
+    public const string WritingFile = "writing.lock";
+
+    /// <summary>What's typed so far, kept as it's typed: if the app closes anyway, the next F12 offers it back.</summary>
+    public const string DraftFile = "draft.txt";
+
     public static async Task AskAsync(Window owner, MainViewModel main)
     {
         // The picture is taken first, so it shows the app as it was, without the note window over it.
         var picture = Picture(owner);
         var page = main.SelectedNav?.Title ?? "";
-        var dialog = new NoteWindow(picture is not null);
-        if (await dialog.ShowDialog<bool>(owner) != true) return;
+        var folder = DefaultFolder;
+        var dialog = new NoteWindow(picture is not null, ReadDraft(folder), text => KeepDraft(folder, text));
+        bool saved;
+        Writing(folder, true);
+        try { saved = await dialog.ShowDialog<bool>(owner); }
+        finally { Writing(folder, false); }
+        // Saved or cancelled on purpose: either way the draft has done its job.
+        ClearDraft(folder);
+        if (!saved) return;
         try
         {
-            var saved = Save(DefaultFolder, dialog.Text, page, dialog.IncludePicture ? picture : null, DateTime.Now);
-            SessionLog.Current?.Info("Note", $"Note for Claude saved: {saved}");
-            main.Activities.Done("Note saved for Claude", "Claude can read it from the app's folder now.", "Show", () => Shell.Reveal(saved));
+            var note = Save(folder, dialog.Text, page, dialog.IncludePicture ? picture : null, DateTime.Now);
+            SessionLog.Current?.Info("Note", $"Note for Claude saved: {note}");
+            main.Activities.Done("Note saved for Claude", "Claude can read it from the app's folder now.", "Show", () => Shell.Reveal(note));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -76,6 +92,46 @@ public static class NoteForClaude
         return path;
     }
 
+    /// <summary>The note typed so far that was never saved (the app closed with the note open), or null.</summary>
+    public static string? ReadDraft(string folder)
+    {
+        try
+        {
+            var path = Path.Combine(folder, DraftFile);
+            return File.Exists(path) && File.ReadAllText(path) is { Length: > 0 } text ? text : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    public static void KeepDraft(string folder, string text)
+    {
+        try
+        {
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, DraftFile), text);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // the note itself still saves
+    }
+
+    public static void ClearDraft(string folder)
+    {
+        try { File.Delete(Path.Combine(folder, DraftFile)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
+
+    /// <summary>Puts up or takes down <see cref="WritingFile"/>.</summary>
+    public static void Writing(string folder, bool writing)
+    {
+        var path = Path.Combine(folder, WritingFile);
+        try
+        {
+            if (!writing) { File.Delete(path); return; }
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(path, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
+
     /// <summary>The window as it looks now, as a PNG; null if it can't be drawn.</summary>
     static byte[]? Picture(Window window)
     {
@@ -104,7 +160,7 @@ public static class NoteForClaude
         public string Text => _text.Text ?? "";
         public bool IncludePicture => _picture.IsChecked == true;
 
-        public NoteWindow(bool canPicture)
+        public NoteWindow(bool canPicture, string? draft, Action<string> typed)
         {
             Title = "Note for Claude";
             Width = 480;
@@ -118,7 +174,9 @@ public static class NoteForClaude
                 TextWrapping = TextWrapping.Wrap,
                 Height = 130,
                 PlaceholderText = "What did you try, and what happened? (Ctrl+Enter saves)",
+                Text = draft,
             };
+            _text.TextChanged += (_, _) => typed(_text.Text ?? "");
             _picture = new CheckBox { Content = "Add a picture of the app as it was", IsChecked = canPicture, IsEnabled = canPicture };
 
             var save = new Button { Content = "Save note", IsDefault = false, MinWidth = 90, Classes = { "accent" } };
@@ -134,7 +192,9 @@ public static class NoteForClaude
                 {
                     new TextBlock
                     {
-                        Text = "Saved in the app's folder with the app's recent log, where Claude can read it. Nothing is sent anywhere.",
+                        Text = draft is null
+                            ? "Saved in the app's folder with the app's recent log, where Claude can read it. Nothing is sent anywhere."
+                            : "Here's the note you were writing when the app closed. Carry on, or Cancel to drop it.",
                         TextWrapping = TextWrapping.Wrap,
                     },
                     _text,
