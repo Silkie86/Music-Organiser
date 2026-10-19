@@ -949,6 +949,17 @@ public class ViewModelTests : IDisposable
         page.Needed[0].PickCommand.Execute(null);
         Assert.Equal("Used in 3 songs", page.ProjectsTitle);
         Assert.Equal(["A", "B", "C"], page.Projects.Select(p => p.Song).Order());
+
+        // Fewer cards come from what the page already read: a song added since only shows after a reload.
+        Song("F", "New Synth");
+        page.NeededCount = 1;
+        Assert.Equal(["Bass Master"], page.Needed.Select(n => n.Name));
+        Assert.Contains("this one and 2 of them open", page.NeededSummary);
+        Assert.Equal("1", _db.GetSetting(PluginsViewModel.NeededCountKey));
+        page.NeededCount = 6;
+        Assert.DoesNotContain(page.Needed, n => n.Name == "New Synth");
+        page.Reload();
+        Assert.Contains(page.Needed, n => n.Name == "New Synth");
     }
 
     [Fact]
