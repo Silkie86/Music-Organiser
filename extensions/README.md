@@ -552,51 +552,72 @@ live tests (above) check many of them in one go.
 Bitwig:
 
 - [ ] Its remote connection puts the length in front of what the script sends (the app reads either way).
-- [ ] Bitwig loads `MusicOrganiser.bwextension` from `Extensions` as the same controller as the script (same
-      ID), keeping *Let the app make changes*, and says something sensible when both are installed.
-- [ ] The extension's remote connection, observers and insertion points behave as the script's did (the
-      extension makes the selected track's insertion point in init, where the script made it when asked).
-- [ ] The extension's first self-check, a second after Bitwig starts it, is all `ok`, and its reports land in
-      `%LOCALAPPDATA%\MusicOrganiser\reports\bitwig`.
-- [ ] A remote control's `name` matches its parameter's name from `device` (how `device` tells which
-      parameter has which steps, origin and automation), and `discreteValueNames` gives the names Bitwig shows.
+- [x] Bitwig loads `MusicOrganiser.bwextension` from `Extensions` as the same controller as the script (same
+      ID), keeping *Let the app make changes*, and says something sensible when both are installed. Bitwig 6.1.3
+      and 6.1.5 load it and keep *Let the app make changes* (every live run since 2026-10-15); both installed
+      together isn't tried, as Install removes the script.
+- [x] The extension's remote connection, observers and insertion points behave as the script's did (the
+      extension makes the selected track's insertion point in init, where the script made it when asked). Every
+      change in the 2026-10-19 live run (Bitwig 6.1.5, extension 3.13) went in as asked.
+- [x] The extension's first self-check, a second after Bitwig starts it, is all `ok`, and its reports land in
+      `%LOCALAPPDATA%\MusicOrganiser\reports\bitwig`. All 23 passed in the 2026-10-19 run, with the report in
+      `reports\bitwig`.
+- [ ] A remote control's `name` matches its parameter's name from `device` (how `device` tells which parameter
+      has which steps, origin and automation), and `discreteValueNames` gives the names Bitwig shows. Not always
+      (2026-10-19): MO Probe's (CLAP) seven knobs all matched, which is how the knob check read 60 of 60, but
+      only 3 of the Sampler's 8 did (Speed, Pan and Output; Pitch, Start, Glide time and Vel Sens. didn't).
 - [ ] `clicked` follows clicks on any parameter, and creating the last clicked parameter adds nothing unwanted
       to Bitwig's menus.
-- [ ] The master recorder starts and stops from `recorder`, and `duration` is in milliseconds.
-- [ ] `arrange` (an experiment): Bitwig selects a launcher clip, copies it, shows and focuses the arranger
+- [ ] The master recorder starts and stops from `recorder`, and `duration` is in milliseconds. Reading whether
+      it records works (2026-10-19); the live tests never start it.
+- [x] `arrange` (an experiment): Bitwig selects a launcher clip, copies it, shows and focuses the arranger
       timeline and pastes the clip there at the play start when the extension asks (the live tests' *Changes ›
       Clip to arranger*); whether its window has to be in front for that; whether the arranger cursor clip
       follows the pasted clip, as the link expects; whether Bitwig has `focus_or_toggle_clip_launcher`, and
       whether selecting a launcher slot from the API gives the launcher the focus without it; whether a launcher
       clip's colour set from the API shows as asked (`exact`) or rounded to Bitwig's palette, and whether the
-      pasted clip keeps it, which `sameAsSource` relies on.
-- [ ] Parameter IDs from `device` look like `CONTENTS/PID3e8`, and `set` takes them back.
-- [ ] `insert` takes the scanner's VST3 class ID as Bitwig wants it, and a UUID for its own devices.
-- [ ] The words `type` and `kind` use (e.g. `Instrument`, `note_to_audio`).
-- [ ] `project` names the project as its file is named (Check with Bitwig relies on it, and so does
-      finding the open project in the library).
-- [ ] `modified` clears when the project is saved, and stays clear after Save As (the app re-reads the
-      file then).
-- [ ] One Save (`action`) saves the project Bitwig has in front, and by which route. On 6.1.3 Bitwig ignored
+      pasted clip keeps it, which `sameAsSource` relies on. It can't work: Bitwig's Copy and Paste act on its
+      own selection, not the API's (the 3.8 run, 2026-10-15), so from 3.9 the extension records the clip into
+      the arranger instead.
+- [x] Parameter IDs from `device` look like `CONTENTS/PID3e8`, and `set` takes them back. Bitwig's own devices'
+      look like `CONTENTS/OUTPUT`, and `set` takes them back; a plugin's, set by ID, reach it (*Knob check*, all
+      60 Bitwig-to-probe turns, 2026-10-19).
+- [x] `insert` takes the scanner's VST3 class ID as Bitwig wants it, and a UUID for its own devices. MO Probe's
+      VST3 class ID, and the Sampler, Note Transpose and Drum Machine by UUID (2026-10-19).
+- [x] The words `type` and `kind` use (e.g. `Instrument`, `note_to_audio`). Bitwig 6.1.5 (2026-10-19): a track's
+      `type` is `Instrument`, `Effect` or `Master`; a device's `kind` is `instrument` (the Sampler, the Drum
+      Machine, plugins) or `note-effect` (Note Transpose), not `note_to_audio`. No audio effect's has been seen
+      yet; from 3.14 the link takes `audio-effect` or `audio_to_audio` for one.
+- [x] `project` names the project as its file is named (Check with Bitwig relies on it, and so does finding the
+      open project in the library). “MO Live Test 1” for `MO Live Test 1.bwproject` (2026-10-19).
+- [ ] `modified` clears when the project is saved, and stays clear after Save As (the app re-reads the file
+      then). It clears 240 ms after Save (2026-10-19); Save As isn't tried.
+- [x] One Save (`action`) saves the project Bitwig has in front, and by which route. On 6.1.3 Bitwig ignored
       Save, copy and paste run straight away, from a request or a task the extension scheduled; the live tests'
-      *Changes › Save* now tries each route in turn and names the one that works, recording the project in
-      front as Save ran (`project` in the answer). The 3.7 run saved from the flush, which 3.8 makes the
-      default, and the 3.8 run saved with no route named (2026-10-15).
+      *Changes › Save* now tries each route in turn and names the one that works, recording the project in front
+      as Save ran (`project` in the answer). The 3.7 run saved from the flush, which 3.8 makes the default, and
+      the 3.8 run saved with no route named (2026-10-15). Save from the flush has saved the project in front in
+      every run since 2026-10-15.
 - [x] Arrange's checks (3.8, Bitwig 6.1.3, 2026-10-15): by all five routes, a paste into an empty launcher slot
       put nothing there and Duplicate changed nothing, while the clip took every mark colour and the play start
       moved: Bitwig's Copy, Paste and Duplicate act on its own selection, not the one the API makes ([what the
       runs found](#clips-in-the-arranger-an-experiment)).
 - [x] `filetrack` (3.8, 2026-10-15): a MIDI file inserted after a track made nothing, no track and no clip.
-- [ ] Recording into the arranger (3.9): whether Bitwig records a launched clip into the arranger when the
+- [x] Recording into the arranger (3.9): whether Bitwig records a launched clip into the arranger when the
       extension turns arranger record on, with the track unarmed (the guide says disarmed tracks avoid empty
       clips, not that they record nothing) or only armed; whether the master's mute leaves the recording alone;
       whether `playingNotes` says what a track with an empty Sampler plays, and what the arranger plays back;
-      whether stopping the track lands on the bar line; whether Bitwig's “Write automation when recording”
-      turns automation write on (the answer says `automationWriteSeenOn`); whether recordings at double the
-      tempo come out the same; and whether they still play once the launcher clip is deleted (they won't if
-      Bitwig records alias clips, Play menu › Record to Arranger as Alias Clips).
-- [ ] Whether Bitwig carries out `toggle_arranger` and the focus actions for the extension (*Panel commands*),
-      from the flush or straight away.
+      whether stopping the track lands on the bar line; whether Bitwig's “Write automation when recording” turns
+      automation write on (the answer says `automationWriteSeenOn`); whether recordings at double the tempo come
+      out the same; and whether they still play once the launcher clip is deleted (they won't if Bitwig records
+      alias clips, Play menu › Record to Arranger as Alias Clips). Bitwig 6.1.5 (2026-10-17 to 19): it records
+      the launched clip with the track unarmed or armed, the muted master leaves the recording alone,
+      `playingNotes` hears the empty Sampler's track and the arranger playing back, a take at double the tempo
+      comes out the same, and deleting the launcher clip leaves earlier takes playing, so they aren't alias
+      clips. Automation write stayed off. Its play position lags as it starts, which 3.12 allows for.
+- [x] Whether Bitwig carries out `toggle_arranger` and the focus actions for the extension (*Panel commands*),
+      from the flush or straight away. `toggle_arranger` works from the flush and straight away; the clip
+      launcher's and the arranger's focus actions are ignored either way (2026-10-19).
 - [x] The MIDI loopback's ports (Bitwig 6.1.3, 2026-10-15): Bitwig starts the extension, and the link answers,
       with its MIDI in and out unassigned. Save has only worked for the link once they were set: from its flush
       (twice) and straight away (once in two). Without them only straight away was tried (3.3 and 3.6), and it
@@ -608,20 +629,23 @@ Bitwig:
       Organiser Bitwig” by itself; the extension's SysEx message comes back whole on its MIDI in (*Link › MIDI
       loopback*); a note-on on channel 16 presses the extension's buttons; and Bitwig carries out Copy, Paste
       and the focus actions run from its flush, on the SysEx message, or for a button press, and Save run on the
-      SysEx message or for a button press (which routes work, if any, decides how the app arranges).
+      SysEx message or for a button press (which routes work, if any, decides how the app arranges). So far: the
+      extension's SysEx message comes back whole (*Link › MIDI loopback* passes since 2026-10-18).
 - [ ] Two connections at once (the app's look every 2 seconds, and a send or a check) work side by side.
 - [ ] A plugin's parameter names in Bitwig match FL Studio's for the same plugin (VST3 or CLAP in Bitwig,
       often VST2 in FL Studio), which is how knobs are copied.
 - [ ] It listens on 127.0.0.1 or ::1 (the app tries both), and what Windows' firewall asks the first time.
-- [ ] A clip slot's `insertFile` makes a clip from a MIDI file.
+- [x] A clip slot's `insertFile` makes a clip from a MIDI file. (`Live Clip.mid`, 2026-10-19.)
 - [ ] A device chain's `insertFile` loads `.bwpreset`, `.vstpreset` and `.fxb` files with their settings.
 - [ ] A sample dropped in a new Sampler plays at its own pitch on C3 (the app tunes from there), even when
       the file says its own root key.
-- [ ] The Sampler's `TRANSPOSE` and the Note Transpose's `COARSE` are known by those IDs, and their raw
-      values are semitones.
+- [x] The Sampler's `TRANSPOSE` and the Note Transpose's `COARSE` are known by those IDs, and their raw values
+      are semitones. -3.5 and +5 semitones set and read back as asked (2026-10-19).
 - [ ] Whether adding a track opens the browser for an instrument (the script closes it if so).
-- [ ] A Drum Machine pad's device list is empty until something is on it, and its insertion point takes a
-      sample as dropping one on the pad does.
+- [ ] A Drum Machine pad's device list is empty until something is on it, and its insertion point takes a sample
+      as dropping one on the pad does. Its insertion point takes a sample in place of an empty Sampler
+      (2026-10-19); Solomon's default Drum Machine has an empty Sampler on every pad, so an empty pad's list
+      isn't seen.
 - [ ] Bitwig saves the Drum Machine with its name and ID as it does the Sampler (how the app finds the ID),
       and keeps its installed sound packages where the app looks (`installed-packages` under
       `%LOCALAPPDATA%\Bitwig Studio`, `~/Library/Application Support/Bitwig/Bitwig Studio` or
@@ -643,8 +667,10 @@ FL Studio:
       lasts until a restart, and the app says so).
 - [ ] FL Studio runs as `FL64.exe` (or `FL.exe`), which is how Check connection tells whether it's open.
 - [x] Scripts can't open files (FL Studio 25, 2026-10-14), so the link talks over MIDI instead.
-- [ ] `OnSysEx` gets the app's messages whole, `device.midiOutSysex` sends answers out of the output with
-      the input's Port number, and `device.isAssigned()` says whether there is one.
-- [ ] loopMIDI and Windows' MIDI system pass SysEx messages of about 525 bytes, 8 at a time, intact, and
-      let the app and FL Studio have the port open together.
+- [x] `OnSysEx` gets the app's messages whole, `device.midiOutSysex` sends answers out of the output with the
+      input's Port number, and `device.isAssigned()` says whether there is one. The link answers through
+      loopMIDI in Solomon's FL Studio 25, and sending a channel to Bitwig works (2026-10-15).
+- [ ] loopMIDI and Windows' MIDI system pass SysEx messages of about 525 bytes, 8 at a time, intact, and let the
+      app and FL Studio have the port open together. loopMIDI does (2026-10-15); Windows' MIDI system isn't
+      tried yet.
 - [ ] Every user data folder has Settings, Presets and Projects in it (how the app finds them).
