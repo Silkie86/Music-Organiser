@@ -361,6 +361,19 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- Used in: which projects count as using a sound (the Used in column, the year filter, Never used, Most liked). -->
+                        <Border Classes="card settingsCard">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Used in" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="Which projects count as using a sound, for Used in, the year filter, Never used and Most liked. FL Studio projects so far: other DAWs' projects count every sound they hold." />
+                                <CheckBox Content="Only where the sound's channel has notes or clips" IsChecked="{Binding SoundLab.UsedNeedsNotes}"
+                                          ToolTip.Tip="A sample loaded on a channel that never plays in the playlist doesn't count" />
+                                <CheckBox Content="Not in a song whose newest save has it muted" IsChecked="{Binding SoundLab.UsedNotMutedInNewest}"
+                                          ToolTip.Tip="Its channel switched off, or all its clips muted or on muted playlist tracks, in the song's newest save: none of that song's saves count" />
+                            </StackPanel>
+                        </Border>
+
                         <!-- Most liked: what puts a sound at the top of Sounds › Most liked. -->
                         <Border Classes="card settingsCard" DataContext="{Binding Liked}" x:DataType="vm:LikedSettingsViewModel">
                             <StackPanel Spacing="4">

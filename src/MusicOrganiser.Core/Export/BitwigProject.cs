@@ -36,7 +36,9 @@ public static class BitwigProject
     /// The synths swapped for newer versions: the name to save each under (its channel's, numbered when channels share
     /// one) and the older synth's own settings.
     /// </param>
-    public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<(string Channel, PresetBlob Sound)>? Upgraded = null);
+    /// <param name="Serum1">Each Serum 1 sound swapped for Serum 2, as a Serum 1 preset (<see cref="Serum1To2.KeepOriginals"/>).</param>
+    public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<(string Channel, PresetBlob Sound)>? Upgraded = null,
+                                IReadOnlyList<(string Name, byte[] Fxp)>? Serum1 = null);
 
     const string SamplerId = "468bc14b-b2e7-45a1-9666-e83117fe404e";
     const string NoteTransposeId = "0815cd9e-3a31-4429-a268-dabd952a3b68";
@@ -114,6 +116,7 @@ public static class BitwigProject
         var states = new List<(string Name, byte[] Data)>();
         var upgraded = new HashSet<int>();
         var sounds = new List<(string Channel, PresetBlob Sound)>();
+        var serum1Sounds = new List<(string Name, byte[] Fxp)>();
 
         // A plugin as a Bitwig device: a copy of the template's VST3 or VST2 device with this plugin's identity and settings.
         BwObject? Plugin(FlPlugin p, int kind, List<string> skipped, bool fresh = false)
@@ -247,9 +250,10 @@ public static class BitwigProject
                     sounds.Add((saveAs, c.Instrument.State!));
                     var backup = $"The original is saved as \"{saveAs} ({c.Instrument.Name})\" in the \"{UpgradedFolder}\" folder next to this project, " +
                                  $"to load in {instrument.Name}'s preset browser";
-                    if (Translate(c.Instrument, instrument, serumAudio) is var (state, rough))
+                    if (Translate(c.Instrument, instrument, serumAudio) is var (state, rough, serum1))
                     {
                         instrument = instrument with { State = state };
+                        serum1Sounds.Add((saveAs, serum1.ToFxp(saveAs)));
                         notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, with its sound translated" +
                                   (rough.Count > 0 ? $" (only roughly: {Serum1To2.Describe(rough)})" : "") + $". {backup}");
                     }
@@ -420,7 +424,7 @@ public static class BitwigProject
         }
 
         // A channel's notes about its insert or sample can come from each of its tracks.
-        return new Result(t.Finish(tracks, song.Tempo, states), notes.Distinct().ToList(), sounds);
+        return new Result(t.Finish(tracks, song.Tempo, states), notes.Distinct().ToList(), sounds, serum1Sounds);
     }
 
     /// <summary>Where the original synths' sounds are saved, next to a converted project, when they were swapped for newer versions.</summary>
@@ -453,14 +457,15 @@ public static class BitwigProject
 
     /// <summary>
     /// The older synth's sound for the newer one, when the app can translate it (Serum 1's for Serum 2, which won't
-    /// take Serum 1's as its own), as a VST3 preset; and what came across only roughly. Null otherwise.
+    /// take Serum 1's as its own), as a VST3 preset; what came across only roughly; and the Serum 1 sound it came from.
+    /// Null otherwise.
     /// </summary>
-    static (PresetBlob State, IReadOnlyList<string> Rough)? Translate(FlPlugin older, FlPlugin newer, Func<string, Serum1To2.AudioInfo?>? audio)
+    static (PresetBlob State, IReadOnlyList<string> Rough, Serum1State Original)? Translate(FlPlugin older, FlPlugin newer, Func<string, Serum1To2.AudioInfo?>? audio)
     {
         if (!newer.Name.Contains('2') || older.State is not { } state || Serum1State.Read(state.Data) is not { } serum1) return null;
         var result = Serum1To2.Translate(serum1, audio);
         // Bitwig hands Serum 2 the component state; its controller rebuilds its own from that.
-        return (new PresetBlob(state.Name, newer.Name, ".vstpreset", VstPreset.Build(newer.DeviceId, result.State.Write(), [])), result.Rough);
+        return (new PresetBlob(state.Name, newer.Name, ".vstpreset", VstPreset.Build(newer.DeviceId, result.State.Write(), [])), result.Rough, serum1);
     }
 
     /// <summary>

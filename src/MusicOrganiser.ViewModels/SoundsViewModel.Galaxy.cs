@@ -108,7 +108,7 @@ public sealed partial class SoundsViewModel
     int _starsVersion;
 
     sealed record StarsBuilt(Dictionary<long, StarPoint> Map, List<GalaxyStar> Stars, IReadOnlyList<GalaxyRegion> Regions,
-                             string Space, bool HasDeepListening, int NotDeepListened);
+                             (List<LegendItem> Items, string Note) Legend, string Space, bool HasDeepListening, int NotDeepListened);
 
     /// <summary>
     /// The stars, with this colour scheme and the current filters (sounds filtered out stay as faint dust). Worked out
@@ -141,14 +141,14 @@ public sealed partial class SoundsViewModel
                     };
                     stars.Add(new GalaxyStar(s, p.X, p.Y, colour, keep(s)));
                 }
-                return new StarsBuilt(map, stars, FindRegions(stars, colourBy), Org.GalaxySpace(placedBy),
+                return new StarsBuilt(map, stars, FindRegions(stars, colourBy), MakeLegend(stars, colourBy), Org.GalaxySpace(placedBy),
                                       Org.HasDeepListening, Org.NotDeepListened);
             });
             if (version != _starsVersion) return;   // something changed meanwhile: newer stars are on their way
             if (_map is null || ReferenceEquals(_map, known)) _map = built.Map;
             Stars = built.Stars;
             Regions = built.Regions;
-            BuildLegend(built.Stars);
+            (Legend, LegendNote) = built.Legend;
             OnPropertyChanged(nameof(ShownStars));
             ShowGalaxyNotes(built);
         }
@@ -177,39 +177,29 @@ public sealed partial class SoundsViewModel
             : ("", "");
     }
 
-    void BuildLegend(IReadOnlyList<GalaxyStar> stars)
+    /// <summary>The key under the galaxy for this colour scheme (on any thread: a big library's types are counted).</summary>
+    static (List<LegendItem> Items, string Note) MakeLegend(IReadOnlyList<GalaxyStar> stars, string colourBy)
     {
-        var shown = stars.Where(s => s.Shown).ToList();
-        switch (ColourBy)
+        var shown = stars.Where(s => s.Shown);
+        switch (colourBy)
         {
             case "Key":
-                Legend = Enumerable.Range(1, 12).Select(n => new LegendItem($"{n}", StarColours.Hex(StarColours.Camelot(n, true)))).ToList();
-                LegendNote = "Camelot wheel: neighbouring colours mix well";
-                break;
+                return (Enumerable.Range(1, 12).Select(n => new LegendItem($"{n}", StarColours.Hex(StarColours.Camelot(n, true)))).ToList(),
+                        "Camelot wheel: neighbouring colours mix well");
             case "Pack":
-                Legend = shown.GroupBy(s => s.Sound.Folder).OrderByDescending(g => g.Count()).Take(8)
-                    .Select(g => new LegendItem(g.Key, StarColours.Hex(StarColours.Pack(g.Key)))).ToList();
-                LegendNote = "The biggest packs";
-                break;
+                return (shown.GroupBy(s => s.Sound.Folder).OrderByDescending(g => g.Count()).Take(8)
+                    .Select(g => new LegendItem(g.Key, StarColours.Hex(StarColours.Pack(g.Key)))).ToList(), "The biggest packs");
             case "Liked":
-                Legend = [new("Not yet", StarColours.Hex(StarColours.Liked(0))), new("A little", StarColours.Hex(StarColours.Liked(0.15))),
-                          new("Most liked", StarColours.Hex(StarColours.Liked(1)))];
-                LegendNote = "Bigger stars are more liked";
-                break;
+                return ([new("Not yet", StarColours.Hex(StarColours.Liked(0))), new("A little", StarColours.Hex(StarColours.Liked(0.15))),
+                         new("Most liked", StarColours.Hex(StarColours.Liked(1)))], "Bigger stars are more liked");
             case "Used":
-                Legend = [new("Never used", StarColours.Hex(StarColours.Used(0))), new("In a project", StarColours.Hex(StarColours.Used(1))),
-                          new("In many", StarColours.Hex(StarColours.Used(8)))];
-                LegendNote = "Lavender stars are waiting to be found";
-                break;
+                return ([new("Never used", StarColours.Hex(StarColours.Used(0))), new("In a project", StarColours.Hex(StarColours.Used(1))),
+                         new("In many", StarColours.Hex(StarColours.Used(8)))], "Lavender stars are waiting to be found");
             case "Age":
-                Legend = [new("Oldest", StarColours.Hex(StarColours.Age(0))), new("Newest", StarColours.Hex(StarColours.Age(1)))];
-                LegendNote = "When the file was added";
-                break;
+                return ([new("Oldest", StarColours.Hex(StarColours.Age(0))), new("Newest", StarColours.Hex(StarColours.Age(1)))], "When the file was added");
             default:
-                Legend = shown.GroupBy(s => s.Sound.Type).OrderByDescending(g => g.Count()).Take(10)
-                    .Select(g => new LegendItem(g.Key, StarColours.Hex(StarColours.Type(g.Key)))).ToList();
-                LegendNote = "";
-                break;
+                return (shown.GroupBy(s => s.Sound.Type).OrderByDescending(g => g.Count()).Take(10)
+                    .Select(g => new LegendItem(g.Key, StarColours.Hex(StarColours.Type(g.Key)))).ToList(), "");
         }
     }
 

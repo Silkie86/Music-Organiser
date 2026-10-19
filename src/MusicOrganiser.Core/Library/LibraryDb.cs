@@ -90,6 +90,7 @@ public sealed partial class LibraryDb : IDisposable
         AddColumn("projects", "note_count", "INTEGER");
         AddColumn("projects", "length_bars", "INTEGER");
         AddColumn("projects", "track_count", "INTEGER");
+        AddColumn("samples", "unplayed", "INTEGER NOT NULL DEFAULT 0");
     }
 
     /// <summary>A column added after the first release: libraries made before it get it here.</summary>
@@ -294,7 +295,8 @@ public sealed partial class LibraryDb : IDisposable
         }
         foreach (var (path, found) in f.Samples)
         {
-            using var cmd = Cmd("INSERT INTO samples VALUES ($id, $p, $f)", ("$id", id), ("$p", path), ("$f", found ? 1 : 0));
+            using var cmd = Cmd("INSERT INTO samples (project_id, path, found, unplayed) VALUES ($id, $p, $f, $u)",
+                                ("$id", id), ("$p", path), ("$f", found ? 1 : 0), ("$u", (int)(f.Info?.Unplayed.GetValueOrDefault(path) ?? SampleUse.Plays)));
             cmd.Transaction = tx;
             cmd.ExecuteNonQuery();
         }
@@ -745,17 +747,46 @@ public sealed partial class LibraryDb : IDisposable
 
     /// <summary>
     /// Each sample's projects, how many of them were saved since <paramref name="recentSince"/>, and the years those
-    /// projects were last saved in.
+    /// projects were last saved in. <paramref name="rules"/> leave out saves that hold a sample without playing it.
     /// </summary>
-    public IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> SampleUsageByAge(DateTime recentSince) => Query("""
-        SELECT s.path, COUNT(DISTINCT s.project_id) AS n, COUNT(DISTINCT CASE WHEN p.mtime >= $c THEN s.project_id END) AS recent,
-               GROUP_CONCAT(DISTINCT strftime('%Y', p.mtime, 'unixepoch', 'localtime')) AS years
-        FROM samples s JOIN projects p ON p.id = s.project_id
-        WHERE p.file_missing = 0
-        GROUP BY s.path COLLATE NOCASE
-        """, r => (Str(r, "path"), (int)Long(r, "n"), (int)Long(r, "recent"),
-                   Str(r, "years").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).Order().ToArray()),
-        ("$c", new DateTimeOffset(recentSince).ToUnixTimeSeconds()));
+    public IReadOnlyList<(string Path, int Projects, int Recent, int[] Years)> SampleUsageByAge(DateTime recentSince, UsageRules rules = default)
+    {
+        var since = new DateTimeOffset(recentSince).ToUnixTimeSeconds();
+        if (!rules.NotMutedInNewest)
+            return Query("""
+                SELECT s.path, COUNT(DISTINCT s.project_id) AS n, COUNT(DISTINCT CASE WHEN p.mtime >= $c THEN s.project_id END) AS recent,
+                       GROUP_CONCAT(DISTINCT strftime('%Y', p.mtime, 'unixepoch', 'localtime')) AS years
+                FROM samples s JOIN projects p ON p.id = s.project_id
+                WHERE p.file_missing = 0 AND ($notes = 0 OR s.unplayed <> 1)
+                GROUP BY s.path COLLATE NOCASE
+                """, r => (Str(r, "path"), (int)Long(r, "n"), (int)Long(r, "recent"),
+                           Str(r, "years").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).Order().ToArray()),
+                ("$c", since), ("$notes", rules.NeedsNotes ? 1 : 0));
+
+        // A sound muted in a song's newest save doesn't count for that song at all: its older saves are left out too.
+        var newest = new Dictionary<long, long>();
+        foreach (var g in SongVersions.Group(Projects()))
+            foreach (var p in g.Older.Append(g.Latest))
+                newest[p.Id] = g.Latest.Id;
+        var muted = Query("SELECT project_id, path FROM samples WHERE unplayed = 2", r => ((long)r["project_id"], Str(r, "path")))
+            .Where(m => newest.GetValueOrDefault(m.Item1) == m.Item1)
+            .Select(m => (m.Item1, m.Item2.ToLowerInvariant()))
+            .ToHashSet();
+        var rows = Query("""
+            SELECT s.path, s.project_id, p.mtime FROM samples s JOIN projects p ON p.id = s.project_id
+            WHERE p.file_missing = 0 AND ($notes = 0 OR s.unplayed <> 1)
+            """, r => (Path: Str(r, "path"), Project: (long)r["project_id"], Mtime: Long(r, "mtime")), ("$notes", rules.NeedsNotes ? 1 : 0));
+        return rows
+            .Where(r => !muted.Contains((newest.GetValueOrDefault(r.Project, r.Project), r.Path.ToLowerInvariant())))
+            .GroupBy(r => r.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var saves = g.DistinctBy(r => r.Project).ToList();
+                return (g.First().Path, saves.Count, saves.Count(r => r.Mtime >= since),
+                        saves.Select(r => DateTimeOffset.FromUnixTimeSeconds(r.Mtime).LocalDateTime.Year).Distinct().Order().ToArray());
+            })
+            .ToList();
+    }
 
     /// <summary>Projects using a plugin (by name) or a sample (by path).</summary>
     public IReadOnlyList<long> ProjectsUsingPlugin(string name, string? own = null) =>
@@ -765,6 +796,11 @@ public sealed partial class LibraryDb : IDisposable
     public IReadOnlyList<long> ProjectsUsingSample(string path) =>
         Query("SELECT DISTINCT project_id FROM samples WHERE path = $p COLLATE NOCASE", r => (long)r["project_id"], ("$p", path));
 }
+
+/// <summary>Which projects count as using a sound (Settings › Sounds), for projects whose reader can tell (FL Studio so far).</summary>
+/// <param name="NeedsNotes">Only where the sound's channel has notes or clips.</param>
+/// <param name="NotMutedInNewest">Not in a song whose newest save has it muted.</param>
+public readonly record struct UsageRules(bool NeedsNotes = false, bool NotMutedInNewest = false);
 
 /// <summary>Your fields on a song (see <see cref="LibraryDb.SaveOrganisation(ProjectSummary, IEnumerable{long}, OrganisationField)"/>).</summary>
 [Flags]

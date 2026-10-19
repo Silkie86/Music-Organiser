@@ -167,6 +167,29 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     partial void OnListenToNewChanged(bool value) => _db.SetSetting(ListenToNewKey, value ? "1" : "0");
 
+    public const string UsedNeedsNotesKey = "used_in_needs_notes", UsedNotMutedKey = "used_in_not_muted_newest";
+    /// <summary>
+    /// Used in (and the year filter, Most liked and Never used, which go by it) counts a project only where the sound's
+    /// channel has notes (Solomon's 18 Oct note). FL Studio projects so far; other DAWs' projects count as before.
+    /// </summary>
+    [ObservableProperty] bool _usedNeedsNotes;
+    /// <summary>...and not in a song whose newest save has the sound's channel muted.</summary>
+    [ObservableProperty] bool _usedNotMutedInNewest;
+
+    partial void OnUsedNeedsNotesChanged(bool value)
+    {
+        _db.SetSetting(UsedNeedsNotesKey, value ? "1" : "0");
+        _ = RefreshUsageAsync();
+    }
+
+    partial void OnUsedNotMutedInNewestChanged(bool value)
+    {
+        _db.SetSetting(UsedNotMutedKey, value ? "1" : "0");
+        _ = RefreshUsageAsync();
+    }
+
+    UsageRules Rules => new(UsedNeedsNotes, UsedNotMutedInNewest);
+
     public SoundsViewModel(LibraryDb db, SoundOrganiser org, MainViewModel main)
     {
         _db = db;
@@ -177,6 +200,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Duplicates = new DuplicatesViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
         _listenToNew = db.GetSetting(ListenToNewKey) != "0";
+        _usedNeedsNotes = db.GetSetting(UsedNeedsNotesKey) == "1";
+        _usedNotMutedInNewest = db.GetSetting(UsedNotMutedKey) == "1";
         _similarCount = int.TryParse(db.GetSetting(SimilarCountKey), out var similar) && similar > 0 ? similar : 12;
         _sweepMs = int.TryParse(db.GetSetting(SweepKey), out var sweep) && sweep > 0 ? sweep : 90;
         _stepMs = int.TryParse(db.GetSetting(StepKey), out var step) && step > 0 ? step : 250;
@@ -313,7 +338,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>Everything the page shows about the sounds, worked out on any thread. Changes nothing the window shows.</summary>
     Loaded LoadAll(IReadOnlyList<Sound> items)
     {
-        Org.ApplyUsage(_db.SampleUsageByAge(DateTime.Now.AddYears(-1)));
+        Org.ApplyUsage(_db.SampleUsageByAge(DateTime.Now.AddYears(-1), Rules));
         var weights = _weights;
         var liked = items.Select(weights.Score).ToArray();
         IReadOnlyList<TypeCount> types =
@@ -359,11 +384,12 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             return;
         }
         var since = DateTime.Now.AddYears(-1);
+        var rules = Rules;
         var weights = _weights;
         var (changed, years, liked) = await Task.Run(() =>
         {
             var before = items.Select(s => (s.UsedIn, s.UsedInRecently, s.UsedInYears)).ToArray();
-            Org.ApplyUsage(_db.SampleUsageByAge(since));
+            Org.ApplyUsage(_db.SampleUsageByAge(since, rules));
             var changed = items.Where((s, i) => (s.UsedIn, s.UsedInRecently) != (before[i].UsedIn, before[i].UsedInRecently)).Any();
             // A project re-saved in a new year changes only the years its sounds are used in, which the year filter goes by.
             var years = changed || items.Where((s, i) => !s.UsedInYears.AsSpan().SequenceEqual(before[i].UsedInYears)).Any();

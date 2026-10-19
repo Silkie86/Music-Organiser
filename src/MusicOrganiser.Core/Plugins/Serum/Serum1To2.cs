@@ -82,6 +82,38 @@ public static class Serum1To2
         return Directory.Exists(user) || !Directory.Exists(Path.Combine(presets, "User")) ? user : Path.Combine(presets, "User");
     }
 
+    /// <summary>
+    /// Saves each swapped Serum's own sound as a Serum 1 preset in Serum 2's user folder ("From Serum 1\song"), where
+    /// Serum 2's browser opens it exactly as Serum 1 played it: the way to get the sound back if the translation is off.
+    /// Returns a note saying where, or null when there's nothing to save or nowhere to save it.
+    /// </summary>
+    public static string? KeepOriginals(string song, IReadOnlyList<(string Name, byte[] Fxp)> originals, string? userFolder)
+    {
+        if (originals.Count == 0 || userFolder is null) return null;
+        var folder = Path.Combine(userFolder, "From Serum 1", SafeName(song));
+        try
+        {
+            Directory.CreateDirectory(folder);
+            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (name, fxp) in originals)
+            {
+                var file = SafeName(name);
+                for (var n = 2; !used.Add(file); n++) file = $"{SafeName(name)} {n}";
+                File.WriteAllBytes(Path.Combine(folder, file + ".fxp"), fxp);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return $"Serum's own sounds couldn't be saved for Serum 2: {e.Message}"; }
+        return $"Serum's own sound{(originals.Count == 1 ? " is" : "s are")} also saved in Serum 2's browser, under User › From Serum 1 › " +
+               $"{Path.GetFileName(folder)}: load {(originals.Count == 1 ? "it" : "one")} there for the exact Serum 1 sound.";
+    }
+
+    static string SafeName(string name)
+    {
+        var bad = Path.GetInvalidFileNameChars().Concat(['\\', '/', ':', '*', '?', '"', '<', '>', '|']).ToHashSet();
+        var safe = new string(name.Select(c => bad.Contains(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
+        return safe.Length == 0 ? "Serum" : safe;
+    }
+
     static (JsonObject Header, JsonObject Settings) Template()
     {
         using var s = typeof(Serum1To2).Assembly.GetManifestResourceStream("MusicOrganiser.Serum.Serum2FromSerum1.json")

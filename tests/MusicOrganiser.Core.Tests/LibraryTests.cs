@@ -27,6 +27,27 @@ public class LibraryTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     [Fact]
+    public void Used_in_can_leave_out_samples_without_notes_and_songs_whose_newest_save_mutes_them()
+    {
+        // Two saves of one song: the hat plays in the first and is muted in the newest. The kick never has notes.
+        var folder = Path.Combine(_root, "Beat");
+        var first = Fixtures.FlStudio25Unplayed(folder, "Beat_1", hatPlays: true);
+        var newest = Fixtures.FlStudio25Unplayed(folder, "Beat_2");
+        File.SetLastWriteTime(first, DateTime.Now.AddHours(-2));
+        foreach (var f in new[] { first, newest }) _db.Upsert(Scanner.Analyse(f));
+        int Used(string name, UsageRules rules) =>
+            _db.SampleUsageByAge(DateTime.Now.AddYears(-1), rules).Where(u => u.Path.EndsWith(name, StringComparison.Ordinal)).Sum(u => u.Projects);
+
+        Assert.Equal((2, 2, 2), (Used("Snare 01.wav", default), Used("Kick 01.wav", default), Used("Hat 01.wav", default)));
+        Assert.Equal((2, 0, 2), (Used("Snare 01.wav", new(NeedsNotes: true)), Used("Kick 01.wav", new(NeedsNotes: true)), Used("Hat 01.wav", new(NeedsNotes: true))));
+        Assert.Equal((2, 2, 0), (Used("Snare 01.wav", new(NotMutedInNewest: true)), Used("Kick 01.wav", new(NotMutedInNewest: true)),
+                                 Used("Hat 01.wav", new(NotMutedInNewest: true))));
+        // The years still come through when the newest save is looked at.
+        Assert.Equal([DateTime.Now.Year], _db.SampleUsageByAge(DateTime.Now.AddYears(-1), new(NotMutedInNewest: true))
+                                            .Single(u => u.Path.EndsWith("Snare 01.wav", StringComparison.Ordinal)).Years.Distinct());
+    }
+
+    [Fact]
     public void ScansEveryProjectOnceAndSkipsAutosaves()
     {
         new Scanner(_db).ScanProjects();
@@ -499,7 +520,7 @@ public class LibraryTests : IDisposable
     {
         var scanner = new Scanner(_db);
         scanner.ScanProjects();
-        Assert.Equal("3", _db.GetSetting("reader_version:FL Studio"));
+        Assert.Equal("4", _db.GetSetting("reader_version:FL Studio"));
         Directory.CreateDirectory(Path.Combine(_root, "bounce"));
         File.WriteAllBytes(Path.Combine(_root, "bounce", "Kick 01.wav"), [0]);
 
@@ -509,7 +530,7 @@ public class LibraryTests : IDisposable
         _db.SetSetting("reader_version:FL Studio", "1");   // as a library last read with the older FL reader
         scanner.ScanProjects();
         Assert.Equal(0, _db.Projects().Single(x => x.Daw == "FL Studio").MissingSamples);
-        Assert.Equal("3", _db.GetSetting("reader_version:FL Studio"));
+        Assert.Equal("4", _db.GetSetting("reader_version:FL Studio"));
     }
 
     [Fact]
