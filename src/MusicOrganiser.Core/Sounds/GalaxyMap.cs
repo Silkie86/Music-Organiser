@@ -139,8 +139,9 @@ public static class GalaxyMap
         if (mappedIds.Count == 0 || newIds.Count == 0) return new();
         var sample = mappedIds.Count <= 10_000 ? mappedIds.ToArray() : mappedIds.OrderBy(id => Hash(id)).Take(10_000).ToArray();
         var sampleVectors = sample.Select(vector).ToArray();
-        Parallel.ForEach(newIds, id =>
+        For(newIds.Count, default, i =>
         {
+            var id = newIds[i];
             var v = vector(id);
             var best = new (double S, long Id)[3];
             for (var b = 0; b < 3; b++) best[b] = (double.MinValue, -1);
@@ -159,6 +160,22 @@ public static class GalaxyMap
                                        (float)Math.Clamp(y + (jitter.NextDouble() - 0.5) * 0.004, 0, 1));
         });
         return new Dictionary<long, StarPoint>(placed);
+    }
+
+    /// <summary>
+    /// A parallel loop that keeps to the app's rule for background work (<see cref="Parallelism"/>): at most
+    /// <see cref="Parallelism.Workers"/> threads, below normal priority, so the window and the galaxy itself stay
+    /// smooth while the map is worked out. The work goes in chunks, so setting the priority costs nothing much.
+    /// </summary>
+    static void For(int n, CancellationToken ct, Action<int> body)
+    {
+        if (n <= 0) return;
+        var chunk = Math.Max(1, n / Math.Max(1, Parallelism.Workers * 8));
+        Parallel.ForEach(System.Collections.Concurrent.Partitioner.Create(0, n, chunk), Parallelism.Options(ct), r =>
+            Parallelism.Background(() =>
+            {
+                for (var i = r.Item1; i < r.Item2; i++) body(i);
+            }));
     }
 
     static double Dot(float[] a, float[] b)
@@ -196,14 +213,14 @@ public static class GalaxyMap
 
         // The covariance matrix. Each measurement's centred values sit in one row so a pair is a straight dot product.
         var cols = new float[d][];
-        Parallel.For(0, d, a =>
+        For(d, ct, a =>
         {
             var col = new float[x.Length];
             for (var i = 0; i < x.Length; i++) col[i] = (float)(At(x[i], a) - mean[a]);
             cols[a] = col;
         });
         var cov = new double[d, d];
-        Parallel.For(0, d, new ParallelOptions { CancellationToken = ct }, a =>
+        For(d, ct, a =>
         {
             for (var b = a; b < d; b++) cov[a, b] = cov[b, a] = Dot(cols[a], cols[b]) / x.Length;
         });
@@ -217,7 +234,7 @@ public static class GalaxyMap
             for (var it = 0; it < 60; it++)
             {
                 var next = new double[d];
-                Parallel.For(0, d, a =>
+                For(d, ct, a =>
                 {
                     double s = 0;
                     for (var b = 0; b < d; b++) s += cov[a, b] * w[b];
@@ -240,7 +257,7 @@ public static class GalaxyMap
 
         var reduced = new float[n][];
         var init = new double[2 * n];
-        Parallel.For(0, n, new ParallelOptions { CancellationToken = ct }, i =>
+        For(n, ct, i =>
         {
             var v = vector(ids[i]);
             var r = new float[comps.Count];
@@ -279,7 +296,7 @@ public static class GalaxyMap
         var n = x.Length;
         var nbr = new int[n][];
         var dist = new float[n][];
-        Parallel.For(0, n, new ParallelOptions { CancellationToken = ct }, i =>
+        For(n, ct, i =>
         {
             var best = new KBest(k);
             for (var j = 0; j < n; j++)
@@ -307,7 +324,7 @@ public static class GalaxyMap
             ct.ThrowIfCancellationRequested();
             var dir = Enumerable.Range(0, x[0].Length).Select(_ => (float)(rng.NextDouble() - 0.5)).ToArray();
             var keys = new float[n];
-            Parallel.For(0, n, i =>
+            For(n, ct, i =>
             {
                 float s = 0;
                 for (var c = 0; c < dir.Length; c++) s += x[i][c] * dir[c];
@@ -316,7 +333,7 @@ public static class GalaxyMap
             var idx = Enumerable.Range(0, n).ToArray();
             Array.Sort(keys, idx);
             var window = Math.Max(2, k / 2);
-            Parallel.For(0, n, r =>
+            For(n, ct, r =>
             {
                 var i = idx[r];
                 for (var o = -window; o <= window; o++)
@@ -338,19 +355,20 @@ public static class GalaxyMap
             for (var i = 0; i < n; i++) cands[i] = lists[i].Concat(reverse[i]).Distinct().ToArray();
 
             var changed = 0;
-            Parallel.For(0, n, new ParallelOptions { CancellationToken = ct }, () => 0, (i, _, local) =>
+            For(n, ct, i =>
             {
+                var local = 0;
                 foreach (var u in cands[i])
                     foreach (var v in cands[u])
                         if (v != i && best[i].Offer(v, Distance2(x[i], x[v]))) local++;
-                return local;
-            }, local => Interlocked.Add(ref changed, local));
+                if (local > 0) Interlocked.Add(ref changed, local);
+            });
             if (changed < n * k / 500) break;
         }
 
         var nbr = new int[n][];
         var dist = new float[n][];
-        Parallel.For(0, n, i => (nbr[i], dist[i]) = best[i].Sorted());
+        For(n, ct, i => (nbr[i], dist[i]) = best[i].Sorted());
         return (nbr, dist);
     }
 
@@ -404,7 +422,7 @@ public static class GalaxyMap
         var offsets = new int[n + 1];
         for (var i = 0; i < n; i++) offsets[i + 1] = offsets[i] + nbr[i].Length;
         var target = Math.Log2(Math.Max(2, nbr.Max(a => a.Length)));
-        Parallel.For(0, n, i =>
+        For(n, default, i =>
         {
             var rho = dist[i].Length > 0 ? dist[i][0] : 0;
             // Find the width that makes the weights add up to log2(k), by halving.
@@ -456,14 +474,14 @@ public static class GalaxyMap
     static void OptimiseParallel(double[] pos, Edge[] edges, int n, int epochs, int seed, CancellationToken ct)
     {
         var maxW = MaxWeight(edges);
-        var slices = Math.Max(1, Environment.ProcessorCount * 4);
+        var slices = Math.Max(1, Parallelism.Workers * 4);
         var size = (edges.Length + slices - 1) / slices;
         for (var epoch = 0; epoch < epochs; epoch++)
         {
             ct.ThrowIfCancellationRequested();
             var alpha = 1.0 - (double)epoch / epochs;
             var e = epoch;
-            Parallel.For(0, slices, s =>
+            For(slices, ct, s =>
                 Epoch(pos, edges, s * size, Math.Min(edges.Length, (s + 1) * size), n, alpha, maxW, new Random(seed + e * 7919 + s)));
         }
     }

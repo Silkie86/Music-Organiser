@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 using MusicOrganiser.Core.Sounds;
 using static MusicOrganiser.Core.Parsers.BitwigFormat;
 
@@ -31,7 +32,10 @@ public static class BitwigProject
     public sealed record SampleFile(long Bytes, byte[] Md5, int Rate, int Channels, double Seconds);
 
     /// <param name="Notes">What couldn't come across.</param>
-    /// <param name="Upgraded">The synths swapped for newer versions: each channel's name and the older synth's own settings.</param>
+    /// <param name="Upgraded">
+    /// The synths swapped for newer versions: the name to save each under (its channel's, numbered when channels share
+    /// one) and the older synth's own settings.
+    /// </param>
     public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<(string Channel, PresetBlob Sound)>? Upgraded = null);
 
     const string SamplerId = "468bc14b-b2e7-45a1-9666-e83117fe404e";
@@ -94,12 +98,16 @@ public static class BitwigProject
     /// clip, as on a plugin track. Otherwise they also end when their sample does.
     /// </param>
     /// <param name="upgrade">
-    /// An older version of the template's VST3 synth (Serum for the template's Serum 2) is swapped for the template's,
-    /// with the old one's settings handed to it. Whether the newer version takes them is up to the plugin.
+    /// An older version of the template's VST3 synth (Serum for the template's Serum 2) is swapped for the template's.
+    /// Serum 1's sounds are translated for Serum 2 (<see cref="Serum1To2"/>); others open at the newer one's default.
+    /// </param>
+    /// <param name="serumAudio">
+    /// Finds Serum 1's wavetables for the translation; Serum's own folders (<see cref="Serum1To2.XferAudio"/>) unless given.
     /// </param>
     public static Result FromFl(FlSong song, byte[] template, Func<string, SampleFile?>? readSample = null, bool stepsUntilNextNote = false,
-                                bool upgrade = false)
+                                bool upgrade = false, Func<string, Serum1To2.AudioInfo?>? serumAudio = null)
     {
+        serumAudio ??= Serum1To2.XferAudio();
         readSample ??= ReadSample;
         var t = new Template(template);
         var notes = new List<string>();
@@ -149,23 +157,45 @@ public static class BitwigProject
             var state = "";
             if (p.State is { } s)
             {
-                var (data, extension) = !vst3 && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data), ".fxb") : (s.Data, s.Extension);
+                var (data, extension) = !vst3 && s.Extension == ".fxp" ? (Fxp.ToBank(s.Data, s.Program), ".fxb") : (s.Data, s.Extension);
                 state = $"{Guid.NewGuid()}{extension}";
                 states.Add((state, data));
             }
+            else if (p.NothingSaved) skipped.Add($"{p.Name}'s sound (FL Studio saved none in this file, so it opens at its default)");
             else if (!fresh) skipped.Add($"{p.Name}'s settings (opens at its defaults)");
             def.Set(0xbe5, state);
             return device;
         }
 
-        // FL inserts' VST effects as devices; an insert's effects are copied onto every track that feeds it.
-        List<BwObject> Effects(FlInsert? insert, List<string> skipped) =>
-            (insert?.Effects ?? []).Select(e => Plugin(e, AudioEffect, skipped)).OfType<BwObject>().ToList();
+        // Each copy of an insert's effect, by insert and slot, with the track it's on, for automating its settings.
+        var effectCopies = new Dictionary<(int Insert, int Slot), List<(BwObject Track, BwObject Device, FlPlugin Plugin)>>();
 
-        var automated = song.Automation.Select(a => a.Channel).ToHashSet();
-        // Audio clip channels play their clips on audio tracks; one automated, with no notes, needs no instrument track too.
+        // FL inserts' VST effects as devices on a track; an insert's effects are copied onto every track that feeds it.
+        // One switched off in FL is switched off here too.
+        List<BwObject> Effects(FlInsert? insert, BwObject track, List<string> skipped)
+        {
+            var made = new List<BwObject>();
+            foreach (var effect in insert?.Effects ?? [])
+            {
+                if (Plugin(effect, AudioEffect, skipped) is not { } device) continue;
+                made.Add(device);
+                if (!effect.Enabled)
+                {
+                    if (Def(device)!.Has(0xa3)) Def(device)!.Set(0xa3, (byte)0, 0x05);
+                    else notes.Add($"{effect.Name} on {InsertName(insert!)}: switched off in FL Studio, but on here (the Bitwig template's plugin has no on/off to copy)");
+                }
+                if (effect.Slot < 0) continue;
+                if (!effectCopies.TryGetValue((insert!.Index, effect.Slot), out var copies)) effectCopies[(insert.Index, effect.Slot)] = copies = [];
+                copies.Add((track, device, effect));
+            }
+            return made;
+        }
+
+        // Audio clip channels play their clips on audio tracks; one with no notes needs no instrument track too.
         var audio = song.Channels.Where(c => c.AudioClips.Count > 0 && c.Sample.Length > 0).ToHashSet();
-        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || automated.Contains(c.Index) && !audio.Contains(c)) &&
+        // Every other channel with a plugin or sample gets an instrument track, as in FL's Channel Rack, even
+        // one the playlist never plays, so its sound comes over.
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || !audio.Contains(c)) &&
                                                (c.Instrument is not null || c.Sample.Length > 0)).ToHashSet();
         var inserts = song.Inserts.ToDictionary(i => i.Index);
         var shared = song.Channels.Where(c => (playing.Contains(c) || audio.Contains(c) && t.AudioTrack is not null) && c.Insert > 0)
@@ -175,16 +205,16 @@ public static class BitwigProject
         var placed = new Dictionary<int, (FlChannel Channel, List<BwObject> Tracks)>();
         var instruments = new Dictionary<int, (BwObject Device, FlPlugin Plugin)>();
         // How many of each channel's tracks have their own copy of its insert's effects.
-        var effectCopies = new Dictionary<int, int>();
+        var tracksWithEffects = new Dictionary<int, int>();
 
         // The VST effects of the FL insert a channel feeds, after what's on its track.
-        void InsertEffects(FlChannel c, List<BwObject> devices, List<string> skipped)
+        void InsertEffects(FlChannel c, BwObject track, List<BwObject> devices, List<string> skipped)
         {
             if (c.Insert <= 0 || !inserts.TryGetValue(c.Insert, out var insert)) return;
-            var effects = Effects(insert, skipped);
+            var effects = Effects(insert, track, skipped);
             devices.AddRange(effects);
             if (effects.Count == 0) return;
-            effectCopies[c.Index] = effectCopies.GetValueOrDefault(c.Index) + 1;
+            tracksWithEffects[c.Index] = tracksWithEffects.GetValueOrDefault(c.Index) + 1;
             if (shared.Contains(c.Insert))
                 notes.Add($"{c.Name}: has its own copy of {InsertName(insert)}'s effects, which other channels also feed in FL Studio");
         }
@@ -207,15 +237,26 @@ public static class BitwigProject
             else
             {
                 var instrument = upgrade && Upgrade(c.Instrument, t) is { } newer ? newer : c.Instrument;
-                if (instrument != c.Instrument)
+                var swapped = instrument != c.Instrument;
+                if (swapped)
                 {
                     upgraded.Add(c.Index);
-                    sounds.Add((c.Name, c.Instrument.State!));
-                    notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, which opens with its default sound. To get the old sound back, " +
-                              $"load \"{c.Name} ({c.Instrument.Name})\" in {instrument.Name}'s preset browser, from the \"{UpgradedFolder}\" folder saved next to this project");
+                    // Channels often share a name ("Serum" twice): each gets its own file, numbered.
+                    var saveAs = c.Name;
+                    for (var n = 2; sounds.Any(s => s.Channel.Equals(saveAs, StringComparison.OrdinalIgnoreCase)); n++) saveAs = $"{c.Name} ({n})";
+                    sounds.Add((saveAs, c.Instrument.State!));
+                    var backup = $"The original is saved as \"{saveAs} ({c.Instrument.Name})\" in the \"{UpgradedFolder}\" folder next to this project, " +
+                                 $"to load in {instrument.Name}'s preset browser";
+                    if (Translate(c.Instrument, instrument, serumAudio) is var (state, rough))
+                    {
+                        instrument = instrument with { State = state };
+                        notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, with its sound translated" +
+                                  (rough.Count > 0 ? $" (only roughly: {Serum1To2.Describe(rough)})" : "") + $". {backup}");
+                    }
+                    else notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, which opens with its default sound. {backup}");
                 }
                 track = t.Copy(instrument.Format == "VST2" ? t.Vst2Track : t.Vst3Track);
-                if (Plugin(instrument, Instrument, skipped, fresh: instrument != c.Instrument) is { } plugin)
+                if (Plugin(instrument, Instrument, skipped, fresh: swapped) is { } plugin)
                 {
                     instruments[c.Index] = (plugin, instrument);
                     // FL plays a plugin's root key as C5, so a moved root key transposes it, as does the pitch knob.
@@ -226,12 +267,16 @@ public static class BitwigProject
                     devices.Add(plugin);
                 }
             }
-            InsertEffects(c, devices, skipped);
+            InsertEffects(c, track, devices, skipped);
             Chain(track, devices);
             track.Set(0x15b, c.Name);
-            Mixer(track, c);
-            foreach (var clip in FlClips.Of(c, song.Ppq))
+            // When all its clips are on muted FL playlist tracks, the track is muted rather than its clips.
+            var trackMuted = FlClips.AllOnMutedTracks(c.Clips);
+            Mixer(track, c, trackMuted);
+            foreach (var clip in FlClips.Of(c with { Clips = FlClips.OnMutedTracks(c.Clips, trackMuted) }, song.Ppq))
                 t.AddClip(track, clip with { Notes = FlClips.Lengthen(clip.Notes, clip.Length, sampleLength) }, song.Ppq);
+            if (DawProject.OnMutedTracks(c.Name, c.Clips.Where(x => x.OnMutedTrack).Select(x => x.Track), song.MutedTracks, trackMuted) is { } onMuted)
+                notes.Add(onMuted);
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
             if (c.VolumeEnvelope is not null) notes.Add($"{c.Name}: {DawProject.EnvelopeLeftOut}");
             return track;
@@ -243,23 +288,29 @@ public static class BitwigProject
         {
             var skipped = new List<string>();
             var info = readSample(c.Sample);
-            var lanes = new List<(BwObject Track, long End)>();
+            var lanes = new List<List<FlAudioClip>>();
             foreach (var clip in c.AudioClips.OrderBy(x => x.Start))
             {
-                var lane = lanes.FindIndex(l => l.End <= clip.Start);
-                if (lane < 0)
-                {
-                    var track = t.NewAudioTrack();
-                    var devices = new List<BwObject>();
-                    InsertEffects(c, devices, lanes.Count == 0 ? skipped : []);
-                    Chain(track, devices);
-                    track.Set(0x15b, lanes.Count == 0 ? c.Name : $"{c.Name} {lanes.Count + 1}");
-                    Mixer(track, c);
-                    lanes.Add((track, 0));
-                    lane = lanes.Count - 1;
-                }
-                t.AddAudioClip(lanes[lane].Track, c, clip, info, song.Tempo, song.Ppq);
-                lanes[lane] = (lanes[lane].Track, clip.Start + clip.Length);
+                var lane = lanes.FindIndex(l => l[^1].Start + l[^1].Length <= clip.Start);
+                if (lane < 0) lanes.Add([clip]);
+                else lanes[lane].Add(clip);
+            }
+            var made = new List<BwObject>();
+            foreach (var clips in lanes)
+            {
+                var track = t.NewAudioTrack();
+                var devices = new List<BwObject>();
+                InsertEffects(c, track, devices, made.Count == 0 ? skipped : []);
+                Chain(track, devices);
+                var name = made.Count == 0 ? c.Name : $"{c.Name} {made.Count + 1}";
+                track.Set(0x15b, name);
+                // When all its clips are on muted FL playlist tracks, the track is muted rather than its clips.
+                var trackMuted = FlClips.AllOnMutedTracks(clips);
+                Mixer(track, c, trackMuted);
+                foreach (var clip in FlClips.OnMutedTracks(clips, trackMuted)) t.AddAudioClip(track, c, clip, info, song.Tempo, song.Ppq);
+                if (DawProject.OnMutedTracks(name, clips.Where(x => x.OnMutedTrack).Select(x => x.Track), song.MutedTracks, trackMuted) is { } onMuted)
+                    notes.Add(onMuted);
+                made.Add(track);
             }
             if (lanes.Count > 1) notes.Add($"{c.Name}: its audio clips overlap in FL Studio, so they're on {lanes.Count} tracks");
             if (info is null)
@@ -271,13 +322,14 @@ public static class BitwigProject
                 notes.Add($"{c.Name}: its channel pitch knob ({c.PitchCents / 100.0:+0.##;-0.##} semitones) isn't carried over to its audio clips; " +
                           "the pitch in its time stretching is");
             if (skipped.Count > 0) notes.Add($"{c.Name}: left out {string.Join(", ", skipped)}");
-            return lanes.Select(l => l.Track).ToList();
+            return made;
         }
 
         foreach (var c in song.Channels)
         {
             var own = new List<BwObject>();
             if (playing.Contains(c)) own.Add(InstrumentTrack(c));
+            if (playing.Contains(c) && c.Clips.Count == 0 && !audio.Contains(c)) notes.Add($"{c.Name}: {DawProject.PlaysNothing}");
             if (c.AudioClips.Count > 0 && c.Sample.Length == 0)
                 notes.Add($"{c.Name}: its audio clips are left out (FL Studio didn't save which sample they play)");
             else if (audio.Contains(c) && t.AudioTrack is null)
@@ -285,28 +337,54 @@ public static class BitwigProject
                           "that can be copied; it can't be in a group)");
             else if (audio.Contains(c)) own.AddRange(AudioClipTracks(c));
             if (own.Count == 0) continue;
-            if (effectCopies.GetValueOrDefault(c.Index) is var copies and > 1)
+            if (tracksWithEffects.GetValueOrDefault(c.Index) is var copies and > 1)
                 notes.Add($"{c.Name}: each of its {copies} tracks has its own copy of {InsertName(inserts[c.Insert])}'s effects, " +
                           "which FL Studio runs once on all of them");
+            if (!c.Enabled) notes.Add($"{c.Name}: {DawProject.SwitchedOff(own.Count)}");
+            if (c.SwitchedBy.Count > 0) notes.Add($"{c.Name}: {DawProject.SwitchedOnAndOff(c, audio.Contains(c) && t.AudioTrack is not null)}");
             tracks.AddRange(own);
             placed[c.Index] = (c, own);
         }
 
+
         // The master insert's effects on Bitwig's master.
         var masterSkipped = new List<string>();
-        var masterEffects = Effects(inserts.GetValueOrDefault(0), masterSkipped);
+        var masterEffects = Effects(inserts.GetValueOrDefault(0), t.Master, masterSkipped);
         if (masterEffects.Count > 0) Chain(t.Master, [.. Chain(t.Master), .. masterEffects]);
         if (masterSkipped.Count > 0) notes.Add($"Master: left out {string.Join(", ", masterSkipped)}");
 
-        // Automation clips as automation lanes on the track they move: its volume, pan or a setting of its plugin.
+        // FL's insert faders and pans aren't carried yet (how FL's fader maps to gain isn't worked out).
+        if (DawProject.MovedInserts(placed.Values.Select(p => p.Channel.Insert).Append(0).Distinct().Order()
+                                          .Select(inserts.GetValueOrDefault).OfType<FlInsert>()) is { } moved)
+            notes.Add(moved);
+
+        // Automation clips as automation lanes on the track they move: its volume, pan or a setting of its plugin, or a
+        // setting of an effect on a mixer insert, on each track that has a copy of it.
+        const string noLane = "the Bitwig template has no automation lane to copy";
         foreach (var a in song.Automation)
         {
+            if (a.Control == FlControl.InsertEffect)
+            {
+                string? left = null;
+                if (!effectCopies.TryGetValue((a.Insert, a.Slot), out var copies)) left = "its effect isn't converted";
+                else if (SettingPath(copies[0].Plugin, a.Parameter) is not { } setting) left = "FL didn't save which of the effect's settings it moves";
+                else
+                    foreach (var (track, device, effect) in copies)
+                        if (!t.AddPluginAutomation(track, device, setting.Path, setting.Id, SettingName(a.Name, effect.Name), Lane(a)))
+                            left = noLane;
+                if (left is not null) notes.Add($"{a.Name}: automation left out ({left})");
+                continue;
+            }
+            if (a.Channel < 0 || a.Control is FlControl.Pitch or FlControl.Other)
+            {
+                notes.Add($"{a.Name}: automation left out ({DawProject.NotCarried(a, song)})");
+                continue;
+            }
             if (!placed.TryGetValue(a.Channel, out var on))
             {
                 notes.Add($"{a.Name}: automation left out (what it moves isn't converted)");
                 continue;
             }
-            const string noLane = "the Bitwig template has no automation lane to copy";
             string? why = null;
             switch (a.Control)
             {
@@ -317,7 +395,7 @@ public static class BitwigProject
                     foreach (var track in on.Tracks)
                     {
                         if (track.Obj(0x165)?.Obj(pan ? 0x1a5 : 0x1a4) is not { } param) why = "this track has no fader";
-                        else if (!t.AddMixerAutomation(track, param, pan ? "Pan" : "Volume", a.Points.Select(p => (p.Beat, value(p.Value)))))
+                        else if (!t.AddMixerAutomation(track, param, pan ? "Pan" : "Volume", Lane(a, value)))
                             why = noLane;
                     }
                     break;
@@ -328,15 +406,14 @@ public static class BitwigProject
                 case FlControl.PluginParameter when instruments.TryGetValue(a.Channel, out var instrument):
                     if (SettingPath(instrument.Plugin, a.Parameter) is not { } setting)
                         why = "FL didn't save which of the plugin's settings it moves";
-                    else if (!t.AddPluginAutomation(on.Tracks[0], instrument.Device, setting.Path, setting.Id, SettingName(a.Name, on.Channel.Name),
-                                                    a.Points.Select(p => (p.Beat, p.Value))))
+                    else if (!t.AddPluginAutomation(on.Tracks[0], instrument.Device, setting.Path, setting.Id, SettingName(a.Name, on.Channel.Name), Lane(a)))
                         why = noLane;
                     break;
                 case FlControl.PluginParameter:
                     why = "its plugin isn't converted";
                     break;
-                default:
-                    why = a.Control == FlControl.Pitch ? "pitch has no equivalent here" : "this control has no equivalent here";
+                // Carried by muting what the channel plays while it's off (see FlChannel.SwitchedBy).
+                case FlControl.OnOff:
                     break;
             }
             if (why is not null) notes.Add($"{a.Name}: automation left out ({why})");
@@ -351,21 +428,40 @@ public static class BitwigProject
 
     /// <summary>
     /// The template's VST3 synth in place of an older version of it (Serum 2 for Serum, by name with the version left
-    /// off), at its default sound. The older one's settings aren't handed to it: Serum 2 refuses Serum's as its own
-    /// state and then won't load at all (seen on Solomon's PC), but its browser opens Serum's presets, so the old
-    /// sound is saved as one beside the project instead. Null when it isn't an older version, or has no sound to save.
+    /// off), with no settings yet. The older one's settings can't be handed to it as they are: Serum 2 refuses Serum's
+    /// as its own state and then won't load at all (seen on Solomon's PC). So the old sound is translated where the
+    /// app can (<see cref="Translate"/>), and also saved beside the project, since Serum 2's browser opens Serum's
+    /// presets. Null when it isn't an older version (a project's Kontakt 8 stays, beside a template's Kontakt 7), or has
+    /// no sound to save.
     /// </summary>
     static FlPlugin? Upgrade(FlPlugin p, Template t)
     {
         var newer = Def(t.Vst3Device)!;
         var name = newer.Str(0x9a);
         if (p.Native || p.State is null || name.Length == 0 || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
-            PluginCatalog.Family(p.Name) != PluginCatalog.Family(name) || newer[0xce4] is not string classId || classId.Length != 32)
+            PluginCatalog.Family(p.Name) != PluginCatalog.Family(name) || PluginCatalog.VersionOf(name) <= PluginCatalog.VersionOf(p.Name) ||
+            newer[0xce4] is not string classId || classId.Length != 32)
             return null;
         var path = newer.Obj(0xc5a)?[0xc5b] is List<object?> { Count: > 0 } location && newer.Obj(0xc5a)!.Resolve(location[0]) is { } file
             ? file.Str(0x3b) : "";
         return new FlPlugin(name, newer.Str(0x9b), "VST3", classId, null, path);
     }
+
+    /// <summary>
+    /// The older synth's sound for the newer one, when the app can translate it (Serum 1's for Serum 2, which won't
+    /// take Serum 1's as its own), as a VST3 preset; and what came across only roughly. Null otherwise.
+    /// </summary>
+    static (PresetBlob State, IReadOnlyList<string> Rough)? Translate(FlPlugin older, FlPlugin newer, Func<string, Serum1To2.AudioInfo?>? audio)
+    {
+        if (!newer.Name.Contains('2') || older.State is not { } state || Serum1State.Read(state.Data) is not { } serum1) return null;
+        var result = Serum1To2.Translate(serum1, audio);
+        // Bitwig hands Serum 2 the component state; its controller rebuilds its own from that.
+        return (new PresetBlob(state.Name, newer.Name, ".vstpreset", VstPreset.Build(newer.DeviceId, result.State.Write(), [])), result.Rough);
+    }
+
+    /// <summary>An automation clip's points for a lane, with where the FL clip each one belongs to starts (see <see cref="FlAutomation.StartOf"/>).</summary>
+    static IEnumerable<(double Beat, double Value, double From)> Lane(FlAutomation a, Func<double, double>? value = null) =>
+        a.Points.Select(p => (p.Beat, value is null ? p.Value : value(p.Value), a.StartOf(p)));
 
     /// <summary>
     /// How Bitwig names a plugin's setting: a VST2 setting by its number, which FL uses too; a VST3 one by
@@ -422,9 +518,12 @@ public static class BitwigProject
         sample.Set(0x129f, fileName);
         file.Set(0x512, fileName);
         file.Obj(0xd3b)?.Set(0x3b, path);
-        var known = info is { Seconds: > 0 };
-        file.Obj(0x513)?.Set(0x16, known ? info!.Md5 : new byte[16], 0x0d);
-        if (!known) return true;
+        if (info is not { Seconds: > 0 })
+        {
+            file.Obj(0x513)?.Set(0x16, new byte[16], 0x0d);
+            return true;
+        }
+        file.Obj(0x513)?.Set(0x16, info.Md5, 0x0d);
         file.Set(0x17, info.Bytes, IntType(info.Bytes));
         sample.Set(0x94, info.Rate, IntType(info.Rate));
         sample.Set(0x95, info.Seconds);
@@ -450,12 +549,17 @@ public static class BitwigProject
     static long SampleTicks(double seconds, double semitones, double tempo, int ppq) =>
         (long)Math.Ceiling(seconds / Math.Pow(2, semitones / 12) * tempo / 60 * ppq - 1e-6);
 
-    /// <summary>Channel volume and pan on the track's mixer. Bitwig's fader holds the cube root of the gain.</summary>
-    static void Mixer(BwObject track, FlChannel c)
+    /// <summary>
+    /// Channel volume and pan on the track's mixer, and its mute when the channel is switched off or the track is
+    /// <paramref name="muted"/>. Bitwig's fader holds the cube root of the gain; its mute button is on when MUTE's value (0xd2) is 1.
+    /// </summary>
+    static void Mixer(BwObject track, FlChannel c, bool muted)
     {
         var mixer = track.Obj(0x165);
         mixer?.Obj(0x1a4)?.Set(0x2c8, Math.Cbrt(DawProject.Gain(c.Volume)));
         mixer?.Obj(0x1a5)?.Set(0x2c8, Math.Clamp((c.Pan - 0.5) * 2, -1, 1));
+        muted |= !c.Enabled;
+        if (mixer?.Obj(0x1a6) is { } mute && (muted || mute.Has(0xd2))) mute.Set(0xd2, (byte)(muted ? 1 : 0), 0x05);
     }
 
     static BwObject? Def(BwObject device) => device.Obj(0x197);
@@ -489,6 +593,8 @@ public static class BitwigProject
         readonly BwObject _group;
         readonly BwObject _clip, _keyLane, _note;
         readonly BwObject? _mixerLane, _pluginLane, _point, _setting, _audioClip;
+        /// <summary>Where the FL clip each automation point came from starts (see <see cref="AddLane"/>).</summary>
+        readonly Dictionary<BwObject, double> _from = new(ReferenceEqualityComparer.Instance);
         readonly HashSet<BwObject> _audioTracks = new(ReferenceEqualityComparer.Instance);
         readonly Copier _copier;
         public BwObject SamplerTrack { get; }
@@ -746,7 +852,7 @@ public static class BitwigProject
         }
 
         /// <summary>Automates the track's volume or pan fader (<paramref name="param"/>), with values in Bitwig's units.</summary>
-        public bool AddMixerAutomation(BwObject track, BwObject param, string name, IEnumerable<(double Beat, double Value)> points) =>
+        public bool AddMixerAutomation(BwObject track, BwObject param, string name, IEnumerable<(double Beat, double Value, double From)> points) =>
             AddLane(track, _mixerLane, target => ReferenceEquals(target.Obj(0x41), param), target =>
             {
                 target.Set(0x41, new BwLink(param), 0x09);
@@ -758,7 +864,7 @@ public static class BitwigProject
         /// from 0 to 1. The plugin also lists the setting, as Bitwig saves an automated one.
         /// </summary>
         public bool AddPluginAutomation(BwObject track, BwObject device, string path, long id, string name,
-                                        IEnumerable<(double Beat, double Value)> points)
+                                        IEnumerable<(double Beat, double Value, double From)> points)
         {
             var list = points.ToList();
             var added = AddLane(track, _pluginLane, target => ReferenceEquals(target.Obj(0xec), device) && target.Str(0xed) == path, target =>
@@ -781,11 +887,12 @@ public static class BitwigProject
 
         /// <summary>
         /// Adds points, joined by straight lines, to the track's lane for a setting, making the lane from
-        /// <paramref name="pattern"/> if the track has none yet; several FL clips moving one setting share it.
+        /// <paramref name="pattern"/> if the track has none yet; several FL clips moving one setting share it, in time
+        /// order, and where two meet on a beat the one starting there goes last (From is where its clip starts).
         /// False when the template has no lane to copy.
         /// </summary>
         bool AddLane(BwObject track, BwObject? pattern, Func<BwObject, bool> moves, Action<BwObject> setUp,
-                     IEnumerable<(double Beat, double Value)> points)
+                     IEnumerable<(double Beat, double Value, double From)> points)
         {
             if (pattern is null || _point is null || track.Obj(0x2dc9)?[0x4ba] is not List<object?> lanes) return false;
             var lane = lanes.Select(track.Resolve).OfType<BwObject>().FirstOrDefault(l => l.Obj(0x2a3) is { } target && moves(target));
@@ -803,9 +910,11 @@ public static class BitwigProject
                 point.Set(0x28f, p.Value);
                 if (point.Has(0x359e)) point.Set(0x359e, (byte)1, 0x01);
                 if (point.Has(0xba6)) point.Set(0xba6, 0.0);   // a straight line to the next point
+                _from[point] = p.From;
                 return (object?)point;
             }));
-            var sorted = list.OrderBy(x => lane.Resolve(x)!.Num(0x2af)).ToList();
+            var sorted = list.OrderBy(x => Math.Round((lane.Resolve(x)?.Num(0x2af) ?? 0) * 1e4))
+                             .ThenBy(x => lane.Resolve(x) is { } o ? _from.GetValueOrDefault(o) : 0).ToList();
             list.Clear();
             list.AddRange(sorted);
             return true;

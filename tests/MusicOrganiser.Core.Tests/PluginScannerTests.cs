@@ -209,6 +209,29 @@ public class PluginScannerTests : IDisposable
     }
 
     [Fact]
+    public async Task RunsTheScannerBelowNormalPriority()
+    {
+        // A stand-in that waits a moment, then gives its own niceness and the app's (10 is below normal) as its plugin's
+        // name. On Windows a script can't read its priority class, and the app sets it the same way there.
+        if (OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(_root, "nice.sh");
+        File.WriteAllLines(path, [
+            "#!/bin/sh",
+            "sleep 1",
+            """printf '{"format":"CLAP","path":"/p/Nice.clap","id":"nice","name":"%s %s"}\n' "$(ps -o ni= -p $$ | tr -d ' ')" "$(ps -o ni= -p $PPID | tr -d ' ')" """.TrimEnd(),
+        ]);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var scan = await new PluginScanner(path).ScanAsync(Path.Combine(_root, "Nice.clap"));
+        Assert.Equal("", scan.Error);
+        var seen = scan.Plugins.Single().Name;
+        // At least 10 below the app, which is where nice starts it, or below normal (10): on macOS CI, setting the
+        // priority after the scanner started left it reading -10.
+        var nice = seen.Split(' ').Select(n => int.TryParse(n, out var v) ? v : (int?)null).ToList();
+        Assert.True(nice is [{ } mine, { } app] && (mine >= 10 || mine >= Math.Min(app + 10, 19)),
+                    $"the scanner ran at niceness “{seen.Split(' ')[0]}”, with the app at “{seen.Split(' ').ElementAtOrDefault(1)}”");
+    }
+
+    [Fact]
     public async Task StopsAScanThatHangs()
     {
         var scanner = new PluginScanner(FakeScanner("hang", [], hang: true)) { Timeout = TimeSpan.FromSeconds(1) };

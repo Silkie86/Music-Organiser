@@ -90,9 +90,9 @@ jobs:
         shell: bash
         run: |
           cat "$RUNNER_TEMP/memory.log" || true
-          echo "--- Programs macOS stopped for lack of memory in the last 20 minutes:"
+          echo "--- Programs macOS stopped for lack of memory in the last 20 minutes (the kernel's own lines):"
           sudo -n log show --last 20m --style compact \
-            --predicate 'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus_kill"' | tail -40 || true
+            --predicate 'process == "kernel" AND (eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus")' | tail -40 || true
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

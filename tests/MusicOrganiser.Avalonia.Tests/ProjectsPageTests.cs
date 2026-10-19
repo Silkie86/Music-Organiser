@@ -182,4 +182,90 @@ public sealed class ProjectsPageTests : IDisposable
         Assert.True(toolbar.Bounds.Height > Labelled("Open in Bitwig").Bounds.Height * 1.5, "The toolbar didn't wrap");
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void The_search_box_shows_an_X_that_clears_it_whenever_there_is_something_to_clear()
+    {
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = main.Projects;
+        var window = new Window { Content = new ProjectsView { DataContext = page }, Width = 1400, Height = 900 };
+        window.Show();
+        Settle();
+        var search = window.GetVisualDescendants().OfType<TextBox>().Single(t => t.Name == "Search");
+        Button Clear() => search.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "ClearSearch");
+        Assert.False(Clear().IsVisible);
+
+        // Typed, then the focus moved on to the list: the X is still there.
+        page.SearchText = "serum";
+        window.GetVisualDescendants().OfType<DataGrid>().First().Focus();
+        Settle();
+        Assert.False(search.IsFocused);
+        Assert.True(Clear().IsVisible);
+        Clear().RaiseEvent(new global::Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Settle();
+        Assert.Equal("", page.SearchText);
+        Assert.False(Clear().IsVisible);
+    }
+
+    [AvaloniaFact]
+    public void The_plugins_side_panel_lists_songs_and_its_DAW_chips_keep_to_one_DAW()
+    {
+        void Save(string file, string daw)
+        {
+            var info = new ProjectInfo { Daw = daw };
+            info.Plugins.Add(new PluginRef("Serum", "Xfer Records", PluginKind.Instrument, "VST3"));
+            var path = Path.Combine(_root, file);
+            File.WriteAllBytes(path, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(path, 1, 100, info, null, [], []));
+        }
+        foreach (var n in new[] { "", "_2", "_3" }) Save($"Teka{n}.flp", "FL Studio");
+        Save("Heel_4.bwproject", "Bitwig Studio");
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = main.Plugins;
+        var window = new Window { Content = new PluginsView { DataContext = page }, Width = 1600, Height = 900 };
+        window.Show();
+        page.Selected = page.Items.Single(u => u.Name == "Serum");
+        Settle();
+
+        var songs = window.GetVisualDescendants().OfType<ListBox>().Single(l => l.Name == "PluginSongs");
+        Assert.Equal(["Heel", "Teka"], songs.Items.Cast<SongUse>().Select(s => s.Song).Order());
+        var chips = window.GetVisualDescendants().OfType<ListBox>().Single(l => l.Name == "ProjectDawChips");
+        Assert.True(chips.IsVisible);
+        chips.SelectedItem = "Bitwig Studio";
+        Settle();
+        Assert.Equal(["Heel"], songs.Items.Cast<SongUse>().Select(s => s.Song));
+        Assert.Equal("Used in 1 song in Bitwig Studio", page.ProjectsTitle);
+    }
+
+    [AvaloniaFact]
+    public void Settings_are_in_tabs_and_their_numbers_reach_the_pages()
+    {
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var window = new Window { Content = new SettingsView { DataContext = main.Settings }, Width = 1400, Height = 900 };
+        window.Show();
+        Settle();
+        var tabs = window.GetVisualDescendants().OfType<TabControl>().Single(t => t.Name == "Tabs");
+        Assert.Equal(["General", "Projects", "Sounds", "Plugins", "DAW links", "Developer"],
+                     tabs.Items.Cast<TabItem>().Select(t => (string)t.Header!));
+        tabs.SelectedIndex = 5;
+        Settle();
+        var headers = window.GetVisualDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("sectionHeader") && t.IsEffectivelyVisible)
+                            .Select(t => t.Text).ToList();
+        Assert.Contains("Live tests with Bitwig", headers);
+        Assert.Contains("MO Probe", headers);
+        // Settings opens on the tab last used, after a restart too.
+        window.Close();
+        var reopened = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        Assert.Equal("Developer", reopened.Settings.Tab);
+        var view = new SettingsView { DataContext = reopened.Settings };
+        Assert.Equal("Developer", (string)((TabItem)view.FindControl<TabControl>("Tabs")!.SelectedItem!).Header!);
+
+        // Each number is stored, and the page uses it.
+        main.Settings.SoundLab.Rediscover.HowMany = 250;
+        main.Settings.SoundLab.SimilarCount = 24;
+        main.Settings.PluginsPage.NeededCount = 9;
+        var again = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        Assert.Equal((250, 24, 9), (again.Sounds.Rediscover.HowMany, again.Sounds.SimilarCount, again.Plugins.NeededCount));
+        Assert.Equal(SongVersions.DefaultRunGapMonths, again.Settings.RunGapMonths);
+    }
 }

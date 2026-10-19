@@ -140,6 +140,22 @@ public sealed class AudioTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Plays_from_two_threads_at_once_leave_one_sound_playing()
+    {
+        NeedSilentOutput();
+        var a = Wav("a.wav", 2, new WaveFormat(8000, 16, 1));
+        var b = Wav("b.wav", 2, new WaveFormat(8000, 16, 1));
+        using var player = new OpenAlPlayer();
+
+        // A sweep preview opening on a background thread while a click plays on the window's.
+        Parallel.For(0, 200, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i => player.Play(i % 2 == 0 ? a : b));
+
+        Assert.Contains(player.Playing, new[] { a, b });
+        player.Stop();
+        Assert.Null(player.Playing);
+    }
+
+    [AvaloniaFact]
     public void A_long_file_starts_at_once_and_plays_past_ten_minutes()
     {
         NeedSilentOutput();

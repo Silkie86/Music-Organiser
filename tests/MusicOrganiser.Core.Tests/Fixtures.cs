@@ -132,6 +132,20 @@ public static class Fixtures
     }
 
     /// <summary>
+    /// An FL 25 playlist track's settings (event 238, 70 bytes): its number (1 at the top), colour, icon, then 1 at
+    /// byte 12 when it plays, 0 when it's muted.
+    /// </summary>
+    public static byte[] PlaylistTrack(int number, bool muted = false)
+    {
+        var b = new byte[70];
+        BinaryPrimitives.WriteInt32LittleEndian(b, number);
+        BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(4), 0x485156);
+        b[12] = (byte)(muted ? 0 : 1);
+        BinaryPrimitives.WriteSingleLittleEndian(b.AsSpan(13), 1);
+        return b;
+    }
+
+    /// <summary>
     /// A channel's sampler settings (event 215, 168 bytes) as FL 25 writes them for an audio clip, with its time
     /// stretching: Time at 96, pitch in cents at 100, the multiplier at 104 (10000 = twice as long), the mode at 108.
     /// </summary>
@@ -180,6 +194,18 @@ public static class Fixtures
         {
             BinaryPrimitives.WriteDoubleLittleEndian(b.AsSpan(21 + 24 * k), points[k].Step);
             BinaryPrimitives.WriteDoubleLittleEndian(b.AsSpan(29 + 24 * k), points[k].Value);
+        }
+        return b;
+    }
+
+    /// <summary>The mixer's settings (event 225): u32 0, u32 target, i32 value for each.</summary>
+    public static byte[] MixerSettings(params (uint Target, int Value)[] settings)
+    {
+        var b = new byte[12 * settings.Length];
+        for (var k = 0; k < settings.Length; k++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(12 * k + 4), settings[k].Target);
+            BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(12 * k + 8), settings[k].Value);
         }
         return b;
     }
@@ -240,13 +266,14 @@ public static class Fixtures
     }
 
     /// <summary>FL's VST2 state: a 21-byte header in front of the plugin's own chunk.</summary>
-    public static byte[] FlVst2State(byte[] chunk)
+    public static byte[] FlVst2State(byte[] chunk, uint program = 0)
     {
         var b = new byte[21 + chunk.Length];
         BinaryPrimitives.WriteInt32LittleEndian(b, -9);
         b[4] = 0x0d;
         BinaryPrimitives.WriteInt32LittleEndian(b.AsSpan(5), -2);
         BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(9), (uint)chunk.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(17), program);
         chunk.CopyTo(b, 21);
         return b;
     }
@@ -272,6 +299,101 @@ public static class Fixtures
         return ms.ToArray();
     }
 
+    /// <summary>
+    /// FL 9's VST2 state: a 13-byte header (i32 -9, flags, u32 chunk length, u32 program) in front of the plugin's
+    /// chunk, or, for a plugin without chunks, chunk length 0 and its parameters as in <see cref="FlVst2ParamState"/>.
+    /// </summary>
+    public static byte[] FlVst2StateFl9(byte[] chunk, uint program, float[]? values = null, string name = "")
+    {
+        using var ms = new MemoryStream();
+        ms.Write(BitConverter.GetBytes(-9));
+        ms.WriteByte(values is null ? (byte)0x0d : (byte)0x05);
+        ms.Write(BitConverter.GetBytes((uint)chunk.Length));
+        ms.Write(BitConverter.GetBytes(program));
+        ms.Write(chunk);
+        if (values is not null)
+        {
+            ms.Write(BitConverter.GetBytes((uint)values.Length));
+            foreach (var v in values) ms.Write(BitConverter.GetBytes(v));
+            ms.Write(BitConverter.GetBytes(1u));
+            var text = new byte[24];
+            Encoding.ASCII.GetBytes(name).CopyTo(text, 0);
+            ms.Write(text);
+        }
+        return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Like Solomon's funk step_8 (FL 9.0.0, 2010): channel "Cell" plays KORG LegacyCell, whose 300-byte chunk sits
+    /// behind FL 9's shorter header with program 42, and the mixer has Fruity Compressor saved as parameters.
+    /// FL 9 keeps no plugin path or vendor, and its text is ASCII.
+    /// </summary>
+    public static string FlStudio9Project(string dir, byte[] chunk)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "9.0.0")
+            .Dword(156, 98_000)
+            .Word(64, 0).Byte(21, 2)
+            .Ascii(201, "Fruity Wrapper").Ascii(203, "Cell")
+            .Data(213, WrapperBlob("LegacyCell", "", "", FlVst2StateFl9(chunk, 42), version: 6, kind: 0, fourCc: "VCLK"))
+            .Data(236, [0, 0, 0, 0])
+            .Ascii(201, "Fruity Wrapper")
+            .Data(213, WrapperBlob("Fruity Compressor", "", "", FlVst2StateFl9([], 0, [0.5f, 0.02f, 0.5f], "Full Reset"),
+                                   version: 6, kind: 0, fourCc: "CFfU"))
+            .Word(98, 0);
+        var path = Path.Combine(dir, "funk step_8.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// Like funk step_8's drums (FL 9.0.0): shuffle 36, and sampler "Kick" with step sequencer dots in pattern 1 kept in
+    /// its channel events: steps 0, 5 (volume 52) and 7 (shifted 24). The playlist (FL 9's 32-byte items, row 999 - n
+    /// for pattern n) plays pattern 1 from beat 8, one bar long.
+    /// </summary>
+    public static string FlStudio9Steps(string dir, bool pattern4AtStart = false)
+    {
+        // Pattern 1 (row 998) at beat 8; with pattern4AtStart, pattern 4 (row 995) at the start too.
+        var item = new byte[pattern4AtStart ? 64 : 32];
+        for (var off = 0; off < item.Length; off += 32)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(item.AsSpan(off), off == 0 ? 768u : 0);
+            BinaryPrimitives.WriteUInt16LittleEndian(item.AsSpan(off + 6), 0x6000);
+            BinaryPrimitives.WriteUInt32LittleEndian(item.AsSpan(off + 8), 384);
+            BinaryPrimitives.WriteUInt16LittleEndian(item.AsSpan(off + 12), (ushort)(off == 0 ? 998 : 995));
+            BinaryPrimitives.WriteSingleLittleEndian(item.AsSpan(off + 24), -1);
+            BinaryPrimitives.WriteSingleLittleEndian(item.AsSpan(off + 28), -1);
+        }
+        var b = new FlpBuilder()
+            .Ascii(199, "9.0.0").Byte(11, 36).Dword(156, 140_000)
+            .Word(64, 0).Byte(21, 0).Ascii(192, "Kick").Ascii(196, @"C:\Samples\Kick.wav")
+            .Word(65, 1).Word(72, 5 | 52 << 8).Word(91, 0x100).Word(91, 0x105).Word(92, 7 | 24 << 8).Word(91, 0x107)
+            .Data(233, item);
+        var path = Path.Combine(dir, "funk step_8.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// Like Solomon's funk step_9 (funk step_8 saved again in FL 25.2.5): KORG LegacyCell on "Cell" gave FL an empty
+    /// chunk, so its state is FL's 21-byte header with chunk length 0, then 8 zero bytes. A pattern plays it in bar 1.
+    /// </summary>
+    public static string FlStudio25NothingSaved(string dir)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 98_000)
+            .Word(65, 1).Data(224, Note(0, 0, 96, 60, 100))
+            .Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Cell")
+            .Data(213, WrapperBlob("LegacyCell", @"C:\Program Files\VstPlugins\KORG\LegacyCell.dll", "KORG",
+                                   [.. FlVst2State([]), .. new byte[8]], version: 12, kind: 4, fourCc: "VCLK"))
+            .Data(233, PlaylistItem25(0, 20481, 384));
+        var path = Path.Combine(dir, "funk step_9.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
     /// <summary>FL's VST3 state: version 1, then records 1 (settings), 3 (component), 2 (controller).</summary>
     public static byte[] FlVst3State(byte[] component, byte[] controller, uint[]? parameterIds = null)
     {
@@ -294,7 +416,8 @@ public static class Fixtures
     /// An FL Studio 25 project inside "FL Studio/Projects": wrapper state version 12 with a
     /// VST2 (Serum) and a VST3 (Arcade), and a sample under %FLStudioUserData%.
     /// </summary>
-    public static string FlStudio25Project(string dir, bool withNotes = false)
+    /// <param name="serumChunk">Serum's own state (a Serum 1 chunk) in place of three placeholder bytes.</param>
+    public static string FlStudio25Project(string dir, bool withNotes = false, byte[]? serumChunk = null)
     {
         var projects = Path.Combine(dir, "FL Studio", "Projects");
         Directory.CreateDirectory(projects);
@@ -308,7 +431,7 @@ public static class Fixtures
             .Word(64, 1).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Lead")
             .Data(213, WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Xfer\Serum_x64.dll", "Xfer Records",
-                                   FlVst2State([1, 2, 3]), version: 12, kind: 4, fourCc: "XsfX"))
+                                   FlVst2State(serumChunk ?? [1, 2, 3]), version: 12, kind: 4, fourCc: "XsfX"))
             .Word(64, 2).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Keys")
             .Data(213, WrapperBlob("Arcade", @"C:\Program Files\Common Files\VST3\Arcade.vst3", "Output",
@@ -351,9 +474,10 @@ public static class Fixtures
     /// <summary>
     /// An FL 25 song laid out like FL writes it, at 132 bpm: a sampler "Snare" (root key A4, pitch -2 semitones,
     /// pan 25%, volume 100%) with an automation clip on its volume in bar 2, and a Serum VST (root
-    /// key E5) with an automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2.
+    /// key E5) with an automation clip on parameter 205 (three points) in bar 1. The pattern sits in bar 2. The volume's
+    /// automation clip can be switched off in the Channel Rack.
     /// </summary>
-    public static string FlStudio25Automation(string dir, bool volumePlacedTwice = false)
+    public static string FlStudio25Automation(string dir, bool volumePlacedTwice = false, bool volumeOff = false)
     {
         var b = new FlpBuilder()
             .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1)
@@ -365,7 +489,7 @@ public static class Fixtures
             .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare")
             .Dword(135, 57).Data(219, Levels(3200, 12800, -200))
             .Text(196, @"C:\Samples\Snare 01.wav")
-            .Word(64, 1).Byte(21, 5).Text(201, "").Text(203, "Snare - Channel volume")
+            .Word(64, 1).Byte(21, 5).Text(201, "").Text(203, "Snare - Channel volume").Byte(0, (byte)(volumeOff ? 0 : 1))
             .Data(219, Levels(0, 12800, 0)).Data(234, AutomationPoints((0, 0), (4, 1)))
             .Word(64, 2).Byte(21, 2)
             .Text(201, "Fruity Wrapper").Text(203, "Serum")
@@ -411,6 +535,142 @@ public static class Fixtures
                      .. PlaylistItem25(6144, 2, 12288), .. PlaylistItem25(18432, 3, 12288),
                      .. PlaylistItem25(30720, 4, 3072, from: 16000, to: 32000), .. PlaylistItem25(33792, 5, 3072, muted: true)]);
         var path = Path.Combine(dir, "Audio clips.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// Like Solomon's civil_18 and its Serum: an FL 25 song at 120 bpm whose "Bass" (Serum, routed to insert 1) is switched
+    /// off in the Channel Rack, but an automation clip switches it on and off: off for beats 0-4, on 4-8, off 8-12, then on,
+    /// its last points a few millionths of a beat past the clip's end as FL saves them. Pattern "Bass" (notes on beats 1
+    /// and 3) plays at beats 0, 4 and 10. The "Vox" audio clip channel is switched off from beat 2 by another, and plays
+    /// clips at beats 0-4 and 4-6. Insert 1 has Pro-Q 3 in slot 0 and WOW2, switched off, in slot 1; its fader is moved.
+    /// Automation clips also move Pro-Q 3's fourth setting, the tempo and insert 1's fader. FL 25 numbers its mixer
+    /// settings from 0x7000. With <paramref name="more"/>: a second clip switches the bass off at beat 16 and on at 20
+    /// (the pattern plays at 16 and 20 too), another switches WOW2 on and off, and the bass volume rises 0 to 1 over
+    /// beats 0-4 and jumps back to 0 at the clip's end, placed twice in a row; and playlist track 3, the vox's, is muted.
+    /// </summary>
+    public static string FlStudio25SwitchedAndMixer(string dir, bool more = false)
+    {
+        const uint insert1 = 0x7040u << 16;
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 120_000)
+            .Word(65, 1).Text(193, "Bass").Data(224, [.. Note(0, 0, 48, 36, 100), .. Note(192, 0, 48, 38, 100)])
+            .Data(227, AutomationLink(1, 0u << 16 | 7))
+            .Data(227, AutomationLink(3, 2u << 16 | 7))
+            .Data(227, AutomationLink(4, insert1 | 0x8003))
+            .Data(227, AutomationLink(5, 0x40000005))
+            .Data(227, AutomationLink(6, insert1 | 0x1fc0));
+        if (more)
+            b.Data(227, AutomationLink(7, 0u << 16 | 7)).Data(227, AutomationLink(8, 0x7041u << 16 | 0x1f00)).Data(227, AutomationLink(9, 0u << 16 | 0));
+        b
+            .Word(64, 0).Byte(21, 2).Byte(0, 0).Word(104, 1)
+            .Text(201, "Fruity Wrapper").Text(203, "Bass")
+            .Data(213, WrapperBlob("Serum", @"C:\VstPlugins\Serum_x64.dll", "Xfer Records", FlVst2State([1, 2, 3]), version: 12, kind: 4, fourCc: "XfsX"))
+            .Word(64, 1).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Bass - Mute / solo")
+            .Data(234, AutomationPoints((0, 0), (4, 1), (4, 0), (4.000008, 0), (0, 0.97)))
+            .Word(64, 2).Byte(21, 4).Byte(0, 1).Data(215, ChannelParams()).Text(203, "Vox").Text(196, @"C:\Samples\Vox.wav")
+            .Word(64, 3).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Vox - Mute / solo")
+            .Data(234, AutomationPoints((0, 1), (2, 0)))
+            .Word(64, 4).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Pro-Q 3 - Gain").Data(234, AutomationPoints((0, 0.25), (4, 0.75)))
+            .Word(64, 5).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Tempo").Data(234, AutomationPoints((0, 0.5), (4, 1)))
+            .Word(64, 6).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Insert 1 - Volume").Data(234, AutomationPoints((0, 0.8), (4, 0.2)));
+        if (more)
+            b.Word(64, 7).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Bass - Mute / solo #2").Data(234, AutomationPoints((0, 0), (4, 1)))
+             .Word(64, 8).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "WOW2 - On").Data(234, AutomationPoints((0, 1), (8, 0)))
+             .Word(64, 9).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Bass - Volume").Data(234, AutomationPoints((0, 0), (4, 1), (0, 0)));
+        b
+            .Data(236, [0, 0, 0, 0])
+            .Data(236, [0, 0, 0, 0])
+            .Text(201, "Fruity Wrapper")
+            .Data(213, WrapperBlob("Pro-Q 3", @"C:\VstPlugins\FabFilter Pro-Q 3.dll", "FabFilter", FlVst2State([4]), version: 12, kind: 4, fourCc: "FQ3p"))
+            .Word(98, 0)
+            .Text(201, "Fruity Wrapper")
+            .Data(213, WrapperBlob("WOW2", @"C:\VstPlugins\WOW2.dll", "Sugar Bytes", FlVst2State([5]), version: 12, kind: 4, fourCc: "SBw2"))
+            .Word(98, 1)
+            .Data(236, [0, 0, 0, 0])
+            .Data(225, MixerSettings((0x40000000, 12800),
+                                     (0x7000u << 16 | 0x1fc0, 12800), (0x7000u << 16 | 0x1fc1, 0),
+                                     (insert1 | 0x1fc0, 9600), (insert1 | 0x1fc1, 0), (insert1 | 0x1f00, 1), (0x7041u << 16 | 0x1f00, 0),
+                                     (0x7080u << 16 | 0x1fc0, 12800), (0x7080u << 16 | 0x1fc1, 0)))
+            .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(960, 20481, 384),
+                        .. PlaylistItem25(0, 1, 1152, track: 498), .. PlaylistItem25(0, 2, 384, track: 497), .. PlaylistItem25(384, 2, 192, track: 497),
+                        .. PlaylistItem25(0, 3, 768, track: 496), .. PlaylistItem25(0, 4, 384, track: 495), .. PlaylistItem25(0, 5, 384, track: 494),
+                        .. PlaylistItem25(0, 6, 384, track: 493),
+                        .. more ? [.. PlaylistItem25(1536, 20481, 384), .. PlaylistItem25(1920, 20481, 384), .. PlaylistItem25(1536, 7, 768, track: 492),
+                                   .. PlaylistItem25(0, 8, 1536, track: 491), .. PlaylistItem25(0, 9, 384, track: 490), .. PlaylistItem25(384, 9, 384, track: 490)]
+                                : Array.Empty<byte>()]);
+        if (more)
+            for (var n = 1; n <= 500; n++) b.Data(238, PlaylistTrack(n, muted: n == 3));
+        var path = Path.Combine(dir, "Switched.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// An FL 25 song whose "Kick" pattern plays in bars 1, 2 and 3 while two clips switch the kick, back to back: "Kick off"
+    /// (off throughout) in bars 1 and 3, "Kick on" (on throughout) in bar 2. <paramref name="onLinkedFirst"/> swaps the order
+    /// of their links in the file. "Kick - Volume" (a rise from 0 to 1 over 8 beats) is placed at beat 0 and again at beat 4,
+    /// over the first one's second half. "Kick - Pan" (the same rise) is placed at beats 0-8, then again at 2-4 inside it;
+    /// "Kick - Pitch" (the same rise) at 0-8, then again at 0-4.
+    /// </summary>
+    public static string FlStudio25BackToBack(string dir, bool onLinkedFirst)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 120_000)
+            .Word(65, 1).Text(193, "Kick").Data(224, Note(0, 0, 48, 36, 100));
+        var (off, on) = (AutomationLink(1, 0u << 16 | 7), AutomationLink(2, 0u << 16 | 7));
+        b.Data(227, onLinkedFirst ? on : off).Data(227, onLinkedFirst ? off : on).Data(227, AutomationLink(3, 0u << 16 | 0))
+            .Data(227, AutomationLink(4, 0u << 16 | 1)).Data(227, AutomationLink(5, 0u << 16 | 4))
+            .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Kick").Byte(0, 1).Text(196, @"C:\Samples\Kick.wav")
+            .Word(64, 1).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick off").Data(234, AutomationPoints((0, 0), (4, 0)))
+            .Word(64, 2).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick on").Data(234, AutomationPoints((0, 1), (4, 1)))
+            .Word(64, 3).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick - Volume").Data(234, AutomationPoints((0, 0), (8, 1)))
+            .Word(64, 4).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick - Pan").Data(234, AutomationPoints((0, 0), (8, 1)))
+            .Word(64, 5).Byte(21, 5).Byte(0, 1).Text(201, "").Text(203, "Kick - Pitch").Data(234, AutomationPoints((0, 0), (8, 1)))
+            .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384), .. PlaylistItem25(768, 20481, 384),
+                        .. PlaylistItem25(0, 1, 384, track: 498), .. PlaylistItem25(384, 2, 384, track: 498), .. PlaylistItem25(768, 1, 384, track: 498),
+                        .. PlaylistItem25(0, 3, 768, track: 497), .. PlaylistItem25(384, 3, 768, track: 496),
+                        .. PlaylistItem25(0, 4, 768, track: 495), .. PlaylistItem25(192, 4, 192, track: 494),
+                        .. PlaylistItem25(0, 5, 768, track: 493), .. PlaylistItem25(0, 5, 384, track: 492)]);
+        var path = Path.Combine(dir, "Back to back.flp");
+        File.WriteAllBytes(path, b.Build());
+        return path;
+    }
+
+    /// <summary>
+    /// Like Solomon's civil_18: an FL 25 song whose playlist tracks 2 ("Acapellas") and 4 are muted, and whose "Hat" and
+    /// "Vox" channels are switched off in the Channel Rack. Pattern "Verse" (a snare note and a hat note) is on track 1
+    /// in bar 1 and on track 2 in bar 2. "Acapella" audio clips are on track 2 (bars 1 and 2) and track 4 (bar 3); "Vox"
+    /// clips on tracks 1 and 3 overlap. Pattern "Pad" is only on track 4 (bar 3). A second arrangement mutes its own
+    /// track 1. As FL 25 does, the project has an event 0 of its own (0) before the first channel.
+    /// </summary>
+    public static string FlStudio25MutedTracks(string dir)
+    {
+        var b = new FlpBuilder()
+            .Ascii(199, "25.2.5.5319").Dword(159, 5319).Byte(28, 1).Raw(172, 1, 1, 0)
+            .Text(192, "FL Studio 25.2.5.5319").Dword(156, 120_000).Byte(0, 0)
+            .Word(65, 1).Text(193, "Verse").Data(224, [.. Note(0, 0, 96, 60, 100), .. Note(0, 1, 48, 66, 100)])
+            .Word(65, 2).Text(193, "Pad").Data(224, Note(0, 4, 192, 64, 100))
+            .Word(64, 0).Byte(21, 0).Text(201, "").Text(203, "Snare").Byte(0, 1).Text(196, @"C:\Samples\Snare 01.wav")
+            .Word(64, 1).Byte(21, 0).Text(201, "").Text(203, "Hat").Byte(0, 0).Text(196, @"C:\Samples\Hat 01.wav")
+            .Word(64, 2).Byte(21, 4).Byte(0, 1).Data(215, ChannelParams()).Text(203, "Acapella").Text(196, @"C:\Samples\Acapella.wav")
+            .Word(64, 3).Byte(21, 4).Byte(0, 0).Data(215, ChannelParams()).Text(203, "Vox").Text(196, @"C:\Samples\Vox.wav")
+            .Word(64, 4).Byte(21, 0).Text(201, "").Text(203, "Pad").Byte(0, 1).Text(196, @"C:\Samples\Pad.wav")
+            .Word(99, 0).Text(241, "Arrangement")
+            .Data(233, [.. PlaylistItem25(0, 20481, 384), .. PlaylistItem25(384, 20481, 384, track: 498),
+                        .. PlaylistItem25(0, 2, 768, track: 498), .. PlaylistItem25(768, 2, 384, track: 496),
+                        .. PlaylistItem25(0, 3, 384), .. PlaylistItem25(192, 3, 384, track: 497), .. PlaylistItem25(768, 20482, 384, track: 496)]);
+        for (var n = 1; n <= 500; n++)
+        {
+            b.Data(238, PlaylistTrack(n, muted: n is 2 or 4));
+            if (n == 2) b.Text(239, "Acapellas");
+        }
+        b.Word(99, 1).Text(241, "Arrangement 2").Data(233, PlaylistItem25(0, 20481, 384));
+        for (var n = 1; n <= 500; n++) b.Data(238, PlaylistTrack(n, muted: n == 1));
+        var path = Path.Combine(dir, "civil_18.flp");
         File.WriteAllBytes(path, b.Build());
         return path;
     }
@@ -505,6 +765,16 @@ public static class Fixtures
         ms.Write([0, 0, 0x05]);
         ms.Write(Encoding.ASCII.GetBytes("Serum"));
         ms.Write([0, 0]);
+        // Bitwig writes a string's length just before it, and a length that is a readable character
+        // joins the text: ">" (62) before this drive path, "-" (45) before the path in the project folder.
+        // A bare name is a sound inside a multisample or a Grid's sample list.
+        foreach (var text in new[] { $@"F:\Bitwig Studio\Projects\{name}\recordings\Syntakt 2-1.wav", "recordings/Untitled Project [0m27s-1m22s].wav",
+                                     "BASSDRUM_0002 from the Kick Selector.wav" })
+        {
+            ms.Write([0, 0, 0, (byte)text.Length]);
+            ms.Write(Encoding.ASCII.GetBytes(text));
+        }
+        ms.Write([0, 0]);
         // A compressed section, as some Bitwig versions store parts of the project that way.
         using (var z = new MemoryStream())
         {
@@ -574,6 +844,14 @@ public static class Fixtures
             U32(v.Length);
             Span<byte> b = stackalloc byte[4];
             foreach (var f in v) { BinaryPrimitives.WriteSingleBigEndian(b, f); S.Write(b); }
+        }
+        /// <summary>A list of doubles (type 0x18), as Bitwig 6.1 saves a Sampler sample's analysis.</summary>
+        public void Doubles(int fid, params double[] v)
+        {
+            Type(fid, 0x18);
+            U32(v.Length);
+            Span<byte> b = stackalloc byte[8];
+            foreach (var f in v) { BinaryPrimitives.WriteDoubleBigEndian(b, f); S.Write(b); }
         }
 
         public static byte[] File(Action<BwWriter> meta, Action<BwWriter> body, byte[]? zip)
@@ -753,7 +1031,7 @@ public static class Fixtures
     /// view state and referenced from the mixer, and the project's view state and clip selection
     /// point into the tracks.
     /// </summary>
-    public static byte[] BitwigTemplate(bool automationLane = true, bool audioTrack = true)
+    public static byte[] BitwigTemplate(bool automationLane = true, bool audioTrack = true, bool devicePower = true)
     {
         const string sampler = "468bc14b-b2e7-45a1-9666-e83117fe404e", noteTranspose = "0815cd9e-3a31-4429-a268-dabd952a3b68",
                      amp = "41be8f3a-6d24-4442-9508-8548dbe62d47";
@@ -836,6 +1114,7 @@ public static class Fixtures
                 b.Obj(0x165); b.Begin(0xab);
                 b.BareRef(0x1a4, volume);
                 b.Obj(0x1a5); Param(0x4c3, "PANORAMA", 0.0);
+                b.Obj(0x1a6); b.Begin(0x4ce); b.Str(0x2bd, "MUTE"); b.Bool(0xd2, false); b.End();
                 b.List(0xa5); sends(); b.EndList();
                 b.End();
                 b.Obj(0x897); b.Begin(0x241); b.Named(0x89b); output(); b.StrVal("361"); b.End();
@@ -1013,6 +1292,7 @@ public static class Fixtures
                     b.Begin(0x729); b.Id(0xf);
                     b.Obj(0x197); b.Begin(ClsVst3);
                     b.Str(0x12de, ""); b.Str(0x9a, "Serum 2"); b.Str(0x9b, "Xfer Records"); b.Str(0x9c, "Synth"); b.U8(0x9d, 2);
+                    if (devicePower) b.Bool(0xa3, true);   // the device's power switch
                     b.Obj(0xc5a); b.Begin(0x2b4); b.List(0xc5b); FileRef(@"C:\Program Files\Common Files\VST3\Serum2.vst3"); b.EndList(); b.End();
                     b.Str(0xbe5, "serum.vstpreset");
                     b.List(0x1318); b.Begin(0x4e0); b.I32(0x1319, 2000003); b.F64(0x131a, 0.42); b.End(); b.EndList();
@@ -1051,6 +1331,7 @@ public static class Fixtures
                     var d = b.Begin(0x1a6); b.Id(0xf);
                     b.Obj(0x197); b.Begin(0x1a5);
                     b.Str(0x12de, ""); b.Str(0x9a, "Drumazon"); b.Str(0x9b, "D16 Group Audio Software"); b.Str(0x9c, "Synth"); b.U8(0x9d, 2);
+                    if (devicePower) b.Bool(0xa3, true);
                     b.Obj(0x1b75); b.Begin(0x7b1); b.Str(0x1b72, "Bass Drum"); b.End();
                     b.Obj(0xc5a); b.Begin(0x2b4); b.List(0xc5b); FileRef(@"C:\Program Files\Vstplugins\Drumazon.dll"); b.EndList(); b.End();
                     b.Str(0xbe5, "drumazon.fxb");

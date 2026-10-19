@@ -352,6 +352,8 @@
                     <WrapPanel Classes="actions">
                         <Button Content="{Binding Item.Daw, StringFormat='Open in {0}'}" Command="{Binding OpenFixedCommand}"
                                 Classes.accent="{Binding !PendingFixOpened}" />
+                        <Button Content="Open fix in Bitwig" Command="{Binding OpenFixedInBitwigCommand}" IsVisible="{Binding IsFlStudio}"
+                                ToolTip.Tip="Convert the fixed copy for Bitwig and open it there" />
                         <Button Content="Keep" Classes="accent" Command="{Binding KeepFixedCommand}" IsVisible="{Binding PendingFixOpened}" />
                         <Button Content="Delete fixed copy" Command="{Binding DeleteFixedCommand}" IsVisible="{Binding PendingFixOpened}" />
                     </WrapPanel>

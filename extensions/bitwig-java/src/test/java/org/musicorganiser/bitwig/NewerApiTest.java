@@ -76,6 +76,66 @@ class NewerApiTest {
     }
 
     @Test
+    @DisplayName("reads a plugin's knob from its remote control, and says a value is out of date, when Bitwig doesn't tell its new value")
+    void pluginKnobsBitwigDoesntTell() {
+        Model m = LinkTest.song();
+        m.pluginValuesUntold = true;
+        start(m);
+        bitwig.cursorDevice.show(device("MO Probe Instrument").plugin().page("MO Probe", "CONTENTS/PID3e9"),
+                                 knob("CONTENTS/PID3e9", "MO Knob A", 0.25, "0.250"),
+                                 knob("CONTENTS/PID3ea", "MO Gain", 0.833, "0.0 dB"));
+        assertJson(list(obj("id", "CONTENTS/PID3e9", "value", 0.25, "display", "0.250"), obj("id", "CONTENTS/PID3ea", "value", 0.833, "display", "0.0 dB")),
+                   knobs(selected()));
+
+        // The probe turns both: Bitwig's texts and its remote control follow, but it never tells the link the values.
+        bitwig.cursorDevice.turnByPlugin("CONTENTS/PID3e9", 1, "1.000");
+        bitwig.cursorDevice.turnByPlugin("CONTENTS/PID3ea", 0, "-60.0 dB");
+        bitwig.clock.advance(50);
+        List<Object> turned = knobs(selected());
+        assertJson(list(obj("id", "CONTENTS/PID3e9", "value", 1, "display", "1.000"),
+                        obj("id", "CONTENTS/PID3ea", "value", null, "display", "-60.0 dB", "stale", true)), turned);
+        assertJson(list(obj("id", "CONTENTS/PID3e9", "value", 1, "display", "1.000"),
+                        obj("id", "CONTENTS/PID3ea", "value", null, "display", "-60.0 dB", "stale", true)), knobs(selected()),
+                   "still out of date, though its text hasn't changed since");
+
+        // Once Bitwig tells the values again (selecting the device again, say), they're good.
+        bitwig.cursorDevice.show(device("MO Probe Instrument").plugin().page("MO Probe", "CONTENTS/PID3e9"),
+                                 knob("CONTENTS/PID3e9", "MO Knob A", 1, "1.000"),
+                                 knob("CONTENTS/PID3ea", "MO Gain", 0, "-60.0 dB"));
+        assertJson(list(obj("id", "CONTENTS/PID3e9", "value", 1, "display", "1.000"), obj("id", "CONTENTS/PID3ea", "value", 0, "display", "-60.0 dB")),
+                   knobs(selected()));
+    }
+
+    @Test
+    @DisplayName("doesn't call a value out of date when Bitwig has told it")
+    void toldValuesArentStale() {
+        start(LinkTest.song());
+        bitwig.cursorDevice.show(device("Serum").plugin(), knob("CONTENTS/PID1", "Cutoff", 0.5, "50%"));
+        knobs(selected());
+        bitwig.cursorDevice.turnByPlugin("CONTENTS/PID1", 0.75, "75%");
+        bitwig.clock.advance(50);
+        assertJson(list(obj("id", "CONTENTS/PID1", "value", 0.75, "display", "75%")), knobs(selected()));
+    }
+
+    /** The selected device, as the link answers `device`. */
+    Object selected() {
+        app.send(obj("id", 1, "cmd", "device"));
+        bitwig.clock.advance(100);
+        return app.take().get(0).get("result");
+    }
+
+    /** Each parameter's ID, value and text, and whether its value is out of date. */
+    static List<Object> knobs(Object device) {
+        return listAt(device, "params").stream().map(p -> {
+            Map<?, ?> m = (Map<?, ?>) p;
+            Map<String, Object> k = new java.util.LinkedHashMap<>();
+            for (String key : List.of("id", "value", "display", "stale"))
+                if (m.containsKey(key)) k.put(key, m.get(key));
+            return (Object) k;
+        }).collect(Collectors.toList());
+    }
+
+    @Test
     @DisplayName("doesn't guess which parameter a remote control is when two look the same")
     void remoteControlsThatCouldBeEitherParameter() {
         start(LinkTest.song());
