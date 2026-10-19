@@ -720,8 +720,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             {
                 started = clock.Elapsed;
                 var all = _index.All();
+                var heard = _index.Embeddings(Clamp3Model.Version);
                 read = clock.Elapsed;
-                var c = new MidiCatalogue(all, _index.Embeddings(Clamp3Model.Version));
+                var c = new MidiCatalogue(all, heard);
                 var r = (c, c.RoleCounts(), c.Entries.Select(e => e.Phrase.Source.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count());
                 sorted = clock.Elapsed;
                 return r;
