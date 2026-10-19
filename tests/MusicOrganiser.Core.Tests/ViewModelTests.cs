@@ -169,7 +169,7 @@ public class ViewModelTests : IDisposable
         _db.SetSetting(ProjectDetailViewModel.DawExeKey("FL Studio"),
                        OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, "where.exe") : "/usr/bin/true");
         main.Activities.Items.First(a => a.Title.StartsWith("Saved Night Drive (fixed)")).RunActionCommand.Execute(null);
-        Assert.True(projects.Detail.PendingFixOpened);
+        await Until(() => projects.Detail.PendingFixOpened);
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.True(projects.Detail!.PendingFixOpened);

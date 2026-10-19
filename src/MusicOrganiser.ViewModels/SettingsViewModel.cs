@@ -457,11 +457,11 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     /// <summary>Opens the app's copy of the template in Bitwig, to change it there and save.</summary>
     [RelayCommand(CanExecute = nameof(HasBitwigTemplate))]
-    void EditBitwigTemplate()
+    async Task EditBitwigTemplate()
     {
         try
         {
-            ProjectDetailViewModel.OpenWithBitwig(_db, BitwigTemplate);
+            await ProjectDetailViewModel.OpenWithBitwig(_db, BitwigTemplate);
             // What's missing stays in view while it's added; it's checked again when the app is back in front.
             BitwigTemplateNote = Problem(BitwigTemplate) is { } problem
                 ? $"{problem}. Opening the template in Bitwig: add that there and save it."
