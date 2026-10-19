@@ -87,6 +87,23 @@ public class BitwigWriterTests
     }
 
     [Fact]
+    public void AFieldPointingAtAnObjectWrittenEarlierIsABareReference()
+    {
+        // Two automation lanes on one plugin both point at it; the second is written after the plugin.
+        var doc = BitwigFormat.Decode(File.ReadAllBytes(Fixtures.BitwigProject(Fixtures.TempDir())));
+        var group = doc.Root!.Obj(0x4dd)!;
+        var fx = group.List(0x4df).Single();
+        group.Set(0x4e0, new BitwigFormat.BwLink(fx), 0x09);
+        Assert.True(group.Fields.FindIndex(f => f.Id == 0x4df) < group.Fields.FindIndex(f => f.Id == 0x4e0));
+
+        var back = BitwigFormat.Decode(BitwigFormat.Encode(doc));
+        Assert.Null(back.BodyError);
+        var backGroup = back.Root!.Obj(0x4dd)!;
+        Assert.Same(backGroup.List(0x4df).Single(), backGroup.Obj(0x4e0));
+        Assert.Equal(0x0b, backGroup.Types[backGroup.Fields.FindIndex(f => f.Id == 0x4e0)]);
+    }
+
+    [Fact]
     public void ACopiedTrackSharesTheMasterItRoutesToAndGetsItsOwnIds()
     {
         var doc = BitwigFormat.Decode(File.ReadAllBytes(Fixtures.BitwigProject(Fixtures.TempDir())));

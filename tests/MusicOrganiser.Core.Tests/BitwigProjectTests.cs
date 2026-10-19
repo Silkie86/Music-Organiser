@@ -301,14 +301,15 @@ public class BitwigProjectTests
              Clip("Bend", 0, FlControl.Pitch, (0, 0.5)),
              Setting("Keys - Brightness", 2, (0, 0.25), (2, 0.75)),
              Setting("Keys - Unknown", 3, (0, 1)),
-             Clip("Elsewhere", 7, FlControl.Volume, (0, 1))]);
+             Clip("Elsewhere", 7, FlControl.Volume, (0, 1)),
+             Setting("Keys - Warmth", 0, (0, 0.5))]);
 
         var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(), _ => null);
         var doc = Decode(result.Bytes);
         Assert.Null(doc.BodyError);
         var track = doc.Root!.Obj(0x4dd)!.List(0x4de).Single();
         var lanes = track.Obj(0x2dc9)!.List(0x4ba).ToList();
-        Assert.Equal(["Volume", "Pan", "Brightness"], lanes.Select(l => l.Obj(0x2a3)!.Str(0x133a)));
+        Assert.Equal(["Volume", "Pan", "Brightness", "Warmth"], lanes.Select(l => l.Obj(0x2a3)!.Str(0x133a)));
         Assert.Same(track.Obj(0x165)!.Obj(0x1a5), lanes[1].Obj(0x2a3)!.Obj(0x41));
         IEnumerable<(double, double)> Points(BwObject lane) =>
             lane.Obj(0x2d8c)!.Obj(0x35ac)!.List(0x21f).Select(p => (p.Num(0x2af)!.Value, Math.Round(p.Num(0x28f)!.Value, 4)));
@@ -317,6 +318,11 @@ public class BitwigProjectTests
         // FL's VST3 setting 2 is the plugin's id 2000003, which Bitwig writes in hex.
         Assert.Equal("CONTENTS/ROOT_GENERIC_MODULE/PID1e8483", lanes[2].Obj(0x2a3)!.Str(0xed));
         Assert.Equal([(0, 0.25), (2, 0.75)], Points(lanes[2]));
+        // Two lanes on one plugin: the second points back at it with a bare reference, the only kind Bitwig reads in a
+        // field holding one object (Solomon's requiem_80 wouldn't open with a "class 1" reference there).
+        Assert.Same(lanes[2].Obj(0x2a3)!.Obj(0xec), lanes[3].Obj(0x2a3)!.Obj(0xec));
+        Assert.Equal("CONTENTS/ROOT_GENERIC_MODULE/PIDa", lanes[3].Obj(0x2a3)!.Str(0xed));
+        Assert.DoesNotContain(doc.Objects, o => o.Fields.Where((f, i) => o.Types[i] == 0x09 && f.Value is BwRef).Any());
 
         Assert.Equal(["Bend: automation left out (pitch has no equivalent here)",
                       "Keys - Unknown: automation left out (FL didn't save which of the plugin's settings it moves)",
