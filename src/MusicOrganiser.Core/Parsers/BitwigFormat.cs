@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace MusicOrganiser.Core.Parsers;
@@ -27,9 +28,9 @@ public static partial class BitwigFormat
     public sealed class BwObject
     {
         public required int Class { get; init; }
-        public List<(int Id, object? Value)> Fields { get; } = new();
+        public List<(int Id, object? Value)> Fields { get; init; } = new();
         /// <summary>Each field's type byte, in step with <see cref="Fields"/>, so the object can be written back.</summary>
-        public List<byte> Types { get; } = new();
+        public List<byte> Types { get; init; } = new();
         public BwObject? Parent { get; internal set; }
         public int ParentField { get; internal set; }
         /// <summary>Every object in the document, for resolving references.</summary>
@@ -167,10 +168,33 @@ public static partial class BitwigFormat
         return doc;
     }
 
+    /// <summary>
+    /// A big project holds millions of small values; most are the same few (a byte flag, 0, 1, a name used thousands of
+    /// times), so those are shared rather than made again each time. Solomon's 53 MB "TEKA TEK dubstep new drums 21" made
+    /// 391 MB of memory to clean up, which on his PC paused the app and made reading his songs' MIDI crawl.
+    /// </summary>
+    static readonly object[] BoxedBytes = Enumerable.Range(0, 256).Select(b => (object)(byte)b).ToArray();
+    static readonly object Zero = 0.0, One = 1.0, MinusOne = -1.0, Half = 0.5, Quarter = 0.25;
+
+    static object Boxed(double v) => BitConverter.DoubleToInt64Bits(v) switch
+    {
+        0 => Zero,   // +0 only: -0 keeps its own box, so it is written back as it was
+        0x3FF0_0000_0000_0000 => One,
+        unchecked((long)0xBFF0_0000_0000_0000) => MinusOne,
+        0x3FE0_0000_0000_0000 => Half,
+        0x3FD0_0000_0000_0000 => Quarter,
+        _ => v,
+    };
+
     sealed class Reader(byte[] d, Document doc)
     {
         const int MaxDepth = 512;
+        const int ShortString = 64;
         int _depth;
+        // Fields gather here while an object is read, then go into lists of just the right size.
+        readonly List<(int Id, object? Value)> _fields = new(256);
+        readonly List<byte> _types = new(256);
+        readonly Dictionary<string, string> _strings = new(StringComparer.Ordinal);
 
         int U32(int p) => (int)BinaryPrimitives.ReadUInt32BigEndian(d.AsSpan(p, 4));
 
@@ -184,6 +208,20 @@ public static partial class BitwigFormat
                 var chars = (int)(n & 0x7FFF_FFFF);
                 s = Encoding.BigEndianUnicode.GetString(d, p, checked(chars * 2));
                 p += chars * 2;
+            }
+            else if (n == 0) s = "";
+            else if (n <= ShortString)
+            {
+                // A short name: the same one is used again and again, so it's looked up before a new one is made.
+                Span<char> chars = stackalloc char[ShortString];
+                var count = Encoding.UTF8.GetChars(d.AsSpan(p, (int)n), chars);
+                var lookup = _strings.GetAlternateLookup<ReadOnlySpan<char>>();
+                if (!lookup.TryGetValue(chars[..count], out s!))
+                {
+                    s = new string(chars[..count]);
+                    _strings[s] = s;
+                }
+                p += (int)n;
             }
             else
             {
@@ -217,7 +255,10 @@ public static partial class BitwigFormat
             if (cls == 0) return null;
             if (cls == 1) throw new InvalidDataException("unexpected reference");
             if (++_depth > MaxDepth) throw new InvalidDataException("objects nested too deeply");
-            var o = new BwObject { Class = cls, Table = doc.Objects };
+            var start = _fields.Count;
+            var fields = new List<(int Id, object? Value)>(0);
+            var types = new List<byte>(0);
+            var o = new BwObject { Class = cls, Table = doc.Objects, Fields = fields, Types = types };
             doc.Objects.Add(o);
             while (true)
             {
@@ -225,11 +266,19 @@ public static partial class BitwigFormat
                 p += 4;
                 if (fid == 0) break;
                 var type = d[p++];
+                // An object inside this one gathers its own fields above these and takes them away again when it ends.
                 var v = Value(ref p, type);
-                o.Fields.Add((fid, v));
-                o.Types.Add(type);
+                _fields.Add((fid, v));
+                _types.Add(type);
                 Adopt(o, fid, v);
             }
+            var count = _fields.Count - start;
+            fields.Capacity = count;
+            fields.AddRange(CollectionsMarshal.AsSpan(_fields).Slice(start, count));
+            types.Capacity = count;
+            types.AddRange(CollectionsMarshal.AsSpan(_types).Slice(start, count));
+            _fields.RemoveRange(start, count);
+            _types.RemoveRange(start, count);
             _depth--;
             return o;
         }
@@ -267,12 +316,12 @@ public static partial class BitwigFormat
         {
             switch (type)
             {
-                case 0x01: case 0x05: return d[p++];
+                case 0x01: case 0x05: return BoxedBytes[d[p++]];
                 case 0x02: { var v = BinaryPrimitives.ReadInt16BigEndian(d.AsSpan(p)); p += 2; return v; }
                 case 0x03: { var v = BinaryPrimitives.ReadInt32BigEndian(d.AsSpan(p)); p += 4; return v; }
                 case 0x04: { var v = BinaryPrimitives.ReadInt64BigEndian(d.AsSpan(p)); p += 8; return v; }
                 case 0x06: { var v = BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(p)); p += 4; return v; }
-                case 0x07: { var v = BinaryPrimitives.ReadDoubleBigEndian(d.AsSpan(p)); p += 8; return v; }
+                case 0x07: { var v = BinaryPrimitives.ReadDoubleBigEndian(d.AsSpan(p)); p += 8; return Boxed(v); }
                 case 0x08: return Str(ref p);
                 case 0x09: return ObjectOrRef(ref p);
                 case 0x0a: return null;
