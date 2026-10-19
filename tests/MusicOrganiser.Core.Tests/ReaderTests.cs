@@ -534,6 +534,21 @@ public class FlStudio9Tests
         var alone = Fixtures.FlStudio25NothingSaved(Fixtures.TempDir());
         Assert.Empty(LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(alone), alone).Taken);
     }
+
+    [Theory]
+    [InlineData("4.0.1", 64, 70, 0.5, 70 / 128.0)]
+    [InlineData("5.0.0", 20, 128, 20 / 128.0, 1.0)]
+    [InlineData("6.0.4", 6400, 10000, 0.5, 10000 / 12800.0)]
+    public void ReadsChannelPanAndVolumeOnTheScaleOfTheFlVersionThatSavedIt(string version, int pan, int volume, double panKnob, double volumeKnob)
+    {
+        // FL 4 and 5 count to 128, FL 6 on to 12800: Solomon's FL 4 grimey came into Bitwig panned hard left and silent.
+        var path = Path.Combine(Fixtures.TempDir(), "grimey.flp");
+        File.WriteAllBytes(path, new Fixtures.FlpBuilder().Ascii(199, version).Word(64, 0).Byte(21, 0).Ascii(192, "snr7")
+                                                          .Data(219, Fixtures.Levels(pan, volume, 0)).Build());
+        var channel = Readers.FlStudio.ReadSong(path).Channels.Single();
+        Assert.Equal(panKnob, channel.Pan, 9);
+        Assert.Equal(volumeKnob, channel.Volume, 9);
+    }
 }
 
 public class BitwigTests
