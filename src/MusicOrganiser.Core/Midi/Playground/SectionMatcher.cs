@@ -94,7 +94,14 @@ public sealed class SectionHarmony
         var chordSpans = pieces.Where(p => p.Role == MidiRoles.Chords && p.Notes.Count > 0).Select(p => (p.Start, p.End)).ToList();
         if (chordSpans.Count == 0) return all.ToList();
         bool UnderChords(NoteEvent n) => chordSpans.Any(s => n.Start >= s.Start && n.Start < s.End);
-        return pieces.Where(p => p.Role is MidiRoles.Chords or MidiRoles.Bass).SelectMany(p => p.Notes).Where(n => !n.Muted && UnderChords(n))
+        // Under chords, a bassline says the harmony with the notes it strikes with them: the ones between are a walking
+        // bass's passing notes, which would colour the chords heard (Dm7 heard as D7#9).
+        const int Near = PhraseAnalyser.Ppq / 8;
+        var chordNotes = pieces.Where(p => p.Role == MidiRoles.Chords).SelectMany(p => p.Notes).ToList();
+        var struck = chordNotes.Select(n => (n.Start + Near / 2) / Near).ToHashSet();
+        bool WithTheChords(NoteEvent n) => struck.Contains((n.Start + Near / 2) / Near);
+        return chordNotes.Concat(pieces.Where(p => p.Role == MidiRoles.Bass).SelectMany(p => p.Notes).Where(WithTheChords))
+                     .Where(n => !n.Muted && UnderChords(n))
                      .Concat(all.Where(n => !UnderChords(n))).OrderBy(n => n.Start).ToList();
     }
 

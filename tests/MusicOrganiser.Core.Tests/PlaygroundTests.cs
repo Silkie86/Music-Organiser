@@ -256,6 +256,46 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void Clips_slide_onto_new_tracks_repeat_when_stretched_and_written_ones_follow_their_bars()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("Dm7 | G7");
+        p.WriteBassCommand.Execute(null);
+        var chords = p.Layers[0];
+        var bass = p.Layers[1];
+        Assert.Equal(2, p.Bars);
+
+        // The chords pulled out to 4 bars: the timeline grows and they play round again.
+        p.ChangeClipCommand.Execute(new ClipEdit(chords.Layer, chords.Clips[0], 0, 0, 4L * Bar, 0));
+        Assert.Equal(4, p.Bars);
+        Assert.Equal(["Dm7", "G7", "Dm7", "G7"], p.Chords.Select(c => c.Name));
+
+        // The written bass slid to bar 3, below the last track: a new track, written again for the chords there.
+        p.ChangeClipCommand.Execute(new ClipEdit(bass.Layer, bass.Clips[0], 2, 2L * Bar, 2L * Bar, 0));
+        Assert.Equal(["Chords", "Bass · Walking", "Bassline"], p.Layers.Select(l => l.Name));
+        Assert.Empty(p.Layers[1].Clips);
+        var moved = p.Layers[2];
+        Assert.Same(moved, p.SelectedLayer);
+        Assert.All(moved.Notes, n => Assert.True(n.Start >= 2L * Bar));
+        Assert.Equal(2, moved.Notes.First().Key % 12);   // D, the root of bar 3's Dm7
+
+        // Trimmed by a bar: it starts on G7, its go round starting a bar in.
+        p.ChangeClipCommand.Execute(new ClipEdit(chords.Layer, chords.Clips[0], 0, Bar, 3L * Bar, Bar));
+        Assert.Equal(7, chords.Notes.Where(n => n.Start == Bar).Min(n => n.Key) % 12);
+
+        p.UndoCommand.Execute(null);
+        p.UndoCommand.Execute(null);
+        Assert.Equal(["Chords", "Bass · Walking"], p.Layers.Select(l => l.Name));
+        Assert.Equal(0L, p.Layers[1].Clips[0].Start);
+    }
+
+    [Fact]
     public async Task Open_in_playground_from_a_song_starts_a_section_with_the_part()
     {
         Ui.Current = new Headless();
