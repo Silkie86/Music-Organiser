@@ -198,6 +198,28 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public async Task Open_in_playground_from_a_song_starts_a_section_with_the_part()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.ChartText = "Dm7 | G7 | Cmaj7 | %";
+
+        var lead = Line(2 * Beat, 65, 69, 65, 64, 64, 67, 71, 74);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", lead)]).Entries[0];
+        // A song the app can't read (no reader for it): the part still comes in, in its own new section.
+        await p.OpenFromSongAsync(Path.Combine(_root, "song.txt"), "Song", entry, lead, "Lead");
+        Assert.Equal(2, p.Sections.Count);
+        Assert.Equal("B", p.SectionName);
+        Assert.Equal(["Lead"], p.Layers.Select(l => l.Name));
+        Assert.Same(p, main.SelectedNav.Page);
+    }
+
+    [Fact]
     public void Settings_options_are_kept_and_start_new_ideas()
     {
         Ui.Current = new Headless();
