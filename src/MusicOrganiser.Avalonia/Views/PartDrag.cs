@@ -48,6 +48,7 @@ public static class PartDrag
     static async void Moved(object? sender, PointerEventArgs e)
     {
         if (sender is not Control c || c.GetValue(PressProperty) is not { } press || GetPart(c) is not { } part) return;
+        if (!e.GetCurrentPoint(c).Properties.IsLeftButtonPressed) { c.SetValue(PressProperty, null); return; }   // let go somewhere else
         var d = e.GetPosition(c) - press.GetPosition(c);
         if (Math.Abs(d.X) < 4 && Math.Abs(d.Y) < 4) return;
         c.SetValue(PressProperty, null);

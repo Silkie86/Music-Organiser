@@ -382,6 +382,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         foreach (var r in Results.Where(r => Same(r.Entry, e))) r.EditsChanged();
         if (!Results.Contains(row)) row.EditsChanged();
         await RefreshPlayingAsync();
+        QuickFollow();   // and the small playground plays the part as it now is
     }
 
     internal async Task UndoAsync(MidiRow row)
@@ -393,6 +394,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         foreach (var r in Results.Where(r => Same(r.Entry, row.Entry))) r.EditsChanged();
         if (!Results.Contains(row)) row.EditsChanged();
         await RefreshPlayingAsync();
+        QuickFollow();
     }
 
     /// <summary>The tempo to try parts at, or null for each part's own (the tempo its song or file has).</summary>
@@ -414,6 +416,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     partial void OnTempoChanged(double? value)
     {
         OnPropertyChanged(nameof(TempoValue));
+        if (Quick is { } quick) quick.Tempo = TempoValue;   // the small playground follows the slider
         _ = RefreshAtNewTempoAsync();
     }
 
@@ -537,6 +540,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         }
         foreach (var r in Results) r.PartnerChanged();
         await RefreshPlayingAsync();
+        QuickFollow();   // the small playground hears the partner where it now sits
     }
 
     partial void OnFitChanged(HarmonyTarget? value)
@@ -666,6 +670,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (Tempo is null) OnPropertyChanged(nameof(TempoValue));
         QuickFollow();
     }
+
+    /// <summary>A small playground started playing: what the page plays stops, so two loops never play at once.</summary>
+    internal void StopForQuick() => StopPlaying();
 
     /// <summary>Another page is showing: nothing keeps playing behind it.</summary>
     public void Left()
@@ -1255,6 +1262,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         // Hear it straight away where it now sits.
         // Heard straight away where it now sits, without stopping.
         if (Same(_playing?.Entry, row.Entry)) await RefreshPlayingAsync();
+        QuickFollow();
     }
 
     /// <summary>Shows the project on the Projects page, or the file in its folder.</summary>
@@ -1287,6 +1295,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var both = (together ?? row.CanPlayTogether) && row.CanPlayTogether;
         if (row.IsPlaying && fromTicks <= 0 && pairTicks is null && (together is null || row.IsPlayingTogether == both)) { StopPlaying(); return; }
         StopPlaying();
+        // one sound at a time: the small playgrounds (here and on a song's "MIDI that fits") stop
+        Quick?.StopPlaying();
+        _main.Projects.Detail?.LeftSongMidi(closed: false);
         var request = _listenRequest;
         var tempo = TempoOf(row);
         if (PlanFor(row, both, tempo) is not { } plan) return;

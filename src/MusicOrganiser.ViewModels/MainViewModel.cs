@@ -182,6 +182,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (value.Page == Playground) Playground.Opened();
         if (value.Page != Midi) Midi.Left();
         if (value.Page != Playground) Playground.Left();
+        if (value.Page != Projects) Projects.Detail?.LeftSongMidi(closed: false);
         // The MO Probes running now are followed only while Settings shows them.
         if (value.Page != Settings)
         {

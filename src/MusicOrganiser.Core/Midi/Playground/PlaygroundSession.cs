@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
@@ -24,6 +23,8 @@ public sealed class PlaygroundLayer
     public string SourcePath { get; set; } = "";
     /// <summary>The library part's note hash, so the same part isn't suggested again.</summary>
     public string SourceHash { get; set; } = "";
+    /// <summary>In a small playground, the song part this track is (its name in the song, which the track's own name may not keep).</summary>
+    public string SongPart { get; set; } = "";
     /// <summary>For a part the playground wrote from the chords ("chords:Gospel:Held", "bass:Walking"): written again when the chords change.</summary>
     public string Written { get; set; } = "";
     /// <summary>
@@ -114,6 +115,20 @@ public sealed class PlaygroundSession
 
     public string ToJson() => JsonSerializer.Serialize(this, Json);
 
+    /// <summary>Whether the idea's JSON names its version at the top level, read without building the whole tree a second time.</summary>
+    static bool HasVersion(string json)
+    {
+        var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(json));
+        while (reader.Read())
+            if (reader.TokenType == JsonTokenType.PropertyName && reader.CurrentDepth == 1)
+            {
+                if (reader.ValueTextEquals(nameof(Version))) return true;
+                reader.Read();
+                reader.TrySkip();
+            }
+        return false;
+    }
+
     public static PlaygroundSession? FromJson(string json)
     {
         try
@@ -121,7 +136,7 @@ public sealed class PlaygroundSession
             var s = JsonSerializer.Deserialize<PlaygroundSession>(json, Json);
             if (s is null) return null;
             // Ideas saved before the timeline have no version.
-            if (JsonNode.Parse(json) is JsonObject o && !o.ContainsKey(nameof(Version))) s.Version = 1;
+            if (!HasVersion(json)) s.Version = 1;
             if (s.Sections.Count == 0) s.Sections.Add(new PlaygroundSection());
             s.Current = Math.Clamp(s.Current, 0, s.Sections.Count - 1);
             s.Upgrade();
@@ -162,7 +177,8 @@ public sealed class PlaygroundSession
                     ? layer.Clips.Select(c => { var copy = c.Copy(); copy.Start += at; return copy; }).ToList()
                     : [PlaygroundClip.Of(layer.Name, layer.Role, layer.Notes.Where(n => n.Start < length).Select(n => n with { Length = Math.Min(n.Length, length - n.Start) }).ToList(),
                                          length, at, length, layer.SourcePath, layer.SourceHash)];
-                foreach (var c in clips) c.Pinned = true;
+                // only parts that were moved by hand stay put; the rest fit the chords when moved, as new parts do
+                foreach (var c in clips) c.Pinned = c.Transpose != 0 || c.Inversion != 0;
                 track.Clips.AddRange(clips);
                 // Parts written from typed chords keep the notes they had: there are no typed chords to follow any more.
                 if (typed is not null) track.Written = "";

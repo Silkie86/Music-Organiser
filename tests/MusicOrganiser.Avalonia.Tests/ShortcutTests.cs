@@ -41,6 +41,37 @@ public sealed class ShortcutTests
     }
 
     [AvaloniaFact]
+    public void A_tab_strip_never_keeps_the_page_keys_but_a_list_keeps_its_arrows()
+    {
+        var inTab = new Button { Content = "Find" };
+        var list = new ListBox { ItemsSource = new[] { "a", "b" }, Height = 60 };
+        var box = new TextBox { Width = 100 };
+        var tabs = new TabControl { ItemsSource = new[] { new TabItem { Header = "Suggest", Content = new StackPanel { Children = { inTab, list, box } } } } };
+        var window = new Window { Content = tabs, Width = 400, Height = 300 };
+        var seen = new List<(string Key, bool Used, bool Typing)>();
+        window.AddHandler(InputElement.KeyDownEvent, (object? _, KeyEventArgs e) =>
+        {
+            if (ShortcutKeys.Of(e) is { } k) seen.Add((k, ShortcutKeys.UsedByControl(e, k), ShortcutKeys.InTextBox(e)));
+        }, RoutingStrategies.Tunnel);
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        inTab.Focus();
+        window.KeyPress(Key.Space, RawInputModifiers.None, PhysicalKey.Space, " ");
+        window.KeyPress(Key.Left, RawInputModifiers.None, PhysicalKey.ArrowLeft, null);
+        list.SelectedIndex = 0;
+        Dispatcher.UIThread.RunJobs();
+        list.ContainerFromIndex(0)!.Focus();
+        window.KeyPress(Key.Down, RawInputModifiers.None, PhysicalKey.ArrowDown, null);
+        window.KeyPress(Key.Space, RawInputModifiers.None, PhysicalKey.Space, " ");
+        box.Focus();
+        window.KeyPress(Key.Z, RawInputModifiers.Control, PhysicalKey.Z, "z");
+        Assert.Equal([("Space", false, false), ("Left", false, false), ("Down", true, false), ("Space", false, false), ("Ctrl+Z", false, true)], seen);
+        Assert.True(ShortcutKeys.IsTextKey("Ctrl+Z"));   // so the box undoes its typing, not the idea
+        Assert.False(ShortcutKeys.IsTextKey("Ctrl+S"));
+    }
+
+    [AvaloniaFact]
     public void The_key_button_listens_for_the_next_key_and_esc_leaves_it_alone()
     {
         var keys = new ShortcutsViewModel(null);

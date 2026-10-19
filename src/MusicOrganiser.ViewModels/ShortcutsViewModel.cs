@@ -82,8 +82,18 @@ public sealed partial class ShortcutsViewModel : ObservableObject
     {
         if (key.Length == 0) return null;
         key = Normalise(key);
-        return Actions.FirstOrDefault(a => a.Page == page && KeyOf(a.Id) == key)?.Id;
+        string? Look(string k) => Actions.FirstOrDefault(a => a.Page == page && KeyOf(a.Id) == k)?.Id;
+        // ? where the keyboard doesn't say what it types, and Ctrl and the + key with Shift held (Bitwig's "Ctrl++")
+        return Look(key) ?? key switch
+        {
+            "Shift+/" => Look("?"),
+            "Ctrl+Shift+=" => Look("Ctrl+="),
+            _ => null,
+        };
     }
+
+    /// <summary>A key as shown: Cmd for Ctrl on a Mac, where Cmd does Ctrl's jobs.</summary>
+    public static string Display(string key) => OperatingSystem.IsMacOS() ? key.Replace("Ctrl+", "Cmd+") : key;
 
     /// <summary>The shortcuts on <paramref name="page"/> that have a key, for the ? cheat sheet.</summary>
     public IReadOnlyList<ShortcutRow> For(string page) => Rows.Where(r => r.Action.Page == page && r.Key.Length > 0).ToList();
@@ -165,9 +175,9 @@ public sealed partial class ShortcutRow(ShortcutsViewModel owner, ShortcutAction
     public string Page => Action.Page;
     public string Key => owner.KeyOf(Action.Id);
     /// <summary>The key as shown: "None" when it has none.</summary>
-    public string KeyText => Key.Length == 0 ? "None" : Key;
+    public string KeyText => Key.Length == 0 ? "None" : ShortcutsViewModel.Display(Key);
     public bool IsChanged => Key != Action.Bitwig;
-    public string BitwigText => Action.Bitwig.Length == 0 ? "Bitwig has no key for this" : $"Bitwig's key: {Action.Bitwig}";
+    public string BitwigText => Action.Bitwig.Length == 0 ? "Bitwig has no key for this" : $"Bitwig's key: {ShortcutsViewModel.Display(Action.Bitwig)}";
     /// <summary>The first row of a page, which shows the page's name above it.</summary>
     public bool StartsPage => owner.Rows.FirstOrDefault(r => r.Page == Page) == this;
 

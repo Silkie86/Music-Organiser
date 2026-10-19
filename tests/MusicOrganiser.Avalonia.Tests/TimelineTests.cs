@@ -95,6 +95,17 @@ public sealed class TimelineTests
     }
 
     [AvaloniaFact]
+    public void Trimming_a_clip_shorter_than_a_grid_step_keeps_it_rather_than_failing()
+    {
+        var (window, view, done, keys) = Timeline();
+        keys.Clips[0].Length = Bar / 4;   // a quarter of a bar, snapping to bars
+        view.Revision++;
+        Dispatcher.UIThread.RunJobs();
+        Drag(window, new Point(2, RowY(0)), new Point(20, RowY(0)));   // used to throw: the clamp's top fell below 0
+        Assert.All(done.Edits, e => Assert.Equal((0L, Bar / 4L), (e.Start, e.Length)));
+    }
+
+    [AvaloniaFact]
     public void Pulling_the_right_edge_repeats_and_the_left_edge_trims()
     {
         var (window, _, done, _) = Timeline();
