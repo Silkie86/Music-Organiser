@@ -31,6 +31,11 @@ final class Messages {
         assertEquals(Json.parse(Json.write(expected)), Json.parse(Json.write(actual)));
     }
 
+    /** As {@link #assertJson(Object, Object)}, saying `what` was compared when they differ. */
+    static void assertJson(Object expected, Object actual, String what) {
+        assertEquals(Json.parse(Json.write(expected)), Json.parse(Json.write(actual)), what);
+    }
+
     /** What's at a path in a message: names for objects, numbers for lists. at(reply, "result", "tracks", 1, "name") */
     static Object at(Object value, Object... path) {
         Object here = value;

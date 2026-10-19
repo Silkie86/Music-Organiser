@@ -15,12 +15,15 @@
 // It prints "ok" at once, when the line is read.
 //
 // Like Bitwig, the project has unsaved changes once anything in it changes, until the Save action runs.
+// {"ignoreSaves": 2} makes the stand-in ignore the next 2 Saves, leaving the unsaved changes, as Bitwig
+// 6.1.3 once did with the test project.
 //
 //   node serve.js [--raw] [--events]
 //     --raw: send without the length in front, to check the app copes either way
 //     --events: say on stderr, one JSON line each, when an MO Probe is added to a track ({"event": "probe",
 //       "track", "format"}) and when one of its knobs is set from the app ({"event": "set", "track", "id",
-//       "value"}), so a stand-in probe can follow, as the real one does inside Bitwig
+//       "value"}), so a stand-in probe can follow, as the real one does inside Bitwig, and each time Save
+//       runs ({"event": "save", "ignored"}), so a test can count them
 "use strict";
 
 const net = require("node:net");
@@ -87,12 +90,19 @@ function tell(event) {
   if (events) process.stderr.write(JSON.stringify(event) + "\n");
 }
 
-// Saving clears the unsaved changes, a moment after, as in Bitwig.
+// Saving clears the unsaved changes, a moment after, as in Bitwig, unless it's one of the Saves to ignore.
 let saved = JSON.stringify(bitwig.state.tracks);
+let ignoreSaves = 0;
 const save = bitwig.app.getAction("Save");
 const invokeSave = save.invoke;
 save.invoke = () => {
   invokeSave();
+  const ignored = ignoreSaves > 0;
+  tell({ event: "save", ignored });
+  if (ignored) {
+    ignoreSaves--;
+    return;
+  }
   bitwig.clock.schedule(() => {
     saved = JSON.stringify(bitwig.state.tracks);
     bitwig.project.modified.v = false;
@@ -183,6 +193,7 @@ process.stdin.on("data", (chunk) => {
     if ("modified" in change) bitwig.project.modified.v = !!change.modified;
     if ("presets" in change) model.presets = change.presets;
     if ("changes" in change) bitwig.allowChanges(!!change.changes);
+    if ("ignoreSaves" in change) ignoreSaves = Number(change.ignoreSaves) || 0;
     if ("turn" in change) turn(change.turn);
     console.log("ok");
   }

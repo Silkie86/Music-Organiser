@@ -30,6 +30,25 @@ public class BitwigWriterTests
     }
 
     [Fact]
+    public void ReadsAndWritesListsOfDoubles()
+    {
+        // Bitwig 6.1 keeps a Sampler sample's analysis as counted lists of doubles (type 0x18).
+        // Not knowing the type stopped Solomon's "analog full set" from being read at all.
+        var raw = Fixtures.BwWriter.File(meta: _ => { }, body: b =>
+        {
+            b.Begin(0x2e);
+            b.Obj(0x40fe); b.Begin(0x15df); b.Doubles(0x40fd, 28.074285715, 31.502857142, 34.931519273); b.End();
+            b.Str(0x15b, "after");
+            b.End();
+        }, zip: null);
+        var doc = BitwigFormat.Decode(raw);
+        Assert.Null(doc.BodyError);
+        Assert.Equal([28.074285715, 31.502857142, 34.931519273], (double[])doc.Root!.Obj(0x40fe)![0x40fd]!);
+        Assert.Equal("after", doc.Root.Str(0x15b));
+        Assert.Equal(raw, BitwigFormat.Encode(doc));
+    }
+
+    [Fact]
     public void EditsKeepReferencesPointingAtTheRightObjects()
     {
         var doc = BitwigFormat.Decode(File.ReadAllBytes(Fixtures.BitwigProject(Fixtures.TempDir())));
@@ -65,6 +84,23 @@ public class BitwigWriterTests
         var back = BitwigFormat.Decode(BitwigFormat.Encode(doc));
         var backGroup = back.Root!.Obj(0x4dd)!;
         Assert.Same(backGroup.List(0x4df).Single(), backGroup.Obj(0x4e0));
+    }
+
+    [Fact]
+    public void AFieldPointingAtAnObjectWrittenEarlierIsABareReference()
+    {
+        // Two automation lanes on one plugin both point at it; the second is written after the plugin.
+        var doc = BitwigFormat.Decode(File.ReadAllBytes(Fixtures.BitwigProject(Fixtures.TempDir())));
+        var group = doc.Root!.Obj(0x4dd)!;
+        var fx = group.List(0x4df).Single();
+        group.Set(0x4e0, new BitwigFormat.BwLink(fx), 0x09);
+        Assert.True(group.Fields.FindIndex(f => f.Id == 0x4df) < group.Fields.FindIndex(f => f.Id == 0x4e0));
+
+        var back = BitwigFormat.Decode(BitwigFormat.Encode(doc));
+        Assert.Null(back.BodyError);
+        var backGroup = back.Root!.Obj(0x4dd)!;
+        Assert.Same(backGroup.List(0x4df).Single(), backGroup.Obj(0x4e0));
+        Assert.Equal(0x0b, backGroup.Types[backGroup.Fields.FindIndex(f => f.Id == 0x4e0)]);
     }
 
     [Fact]
