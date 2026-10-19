@@ -154,7 +154,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     public const string SuggestCountKey = "playground_suggestions", GrowBarsKey = "playground_grow_bars", SmoothKey = "playground_smooth",
                         NewTempoKey = "playground_new_tempo", NewBarsKey = "playground_new_bars", NewStyleKey = "playground_new_style",
-                        UndoStepsKey = "playground_undo_steps", LoopKey = "playground_loop";
+                        UndoStepsKey = "playground_undo_steps", LoopKey = "playground_loop",
+                        SnapGridKey = "playground_snap_grid", SnapRelativeKey = "playground_snap_relative", SnapObjectsKey = "playground_snap_objects";
     public const string JazzGospel = "Jazz and gospel", Classical = "Classical";
     public static IReadOnlyList<int> SuggestCountChoices { get; } = [30, 60, 100, 200];
     public static IReadOnlyList<int> GrowBarsChoices { get; } = [4, 8, 16, 32, 64];
@@ -189,6 +190,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         NewStyle = _db.GetSetting(NewStyleKey) == Classical ? Classical : JazzGospel;
         SmoothIncoming = _db.GetSetting(SmoothKey) != "0";
         LoopOn = _db.GetSetting(LoopKey) != "0";
+        SnapGrid = _db.GetSetting(SnapGridKey) != "0";
+        SnapRelative = _db.GetSetting(SnapRelativeKey) != "0";
+        SnapObjects = _db.GetSetting(SnapObjectsKey) != "0";
         _loadingOptions = false;
     }
 
@@ -902,6 +906,18 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>What clips snap to when dragged (hold Alt to drag freely).</summary>
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(Grid))] string _gridPick = "Bar";
     public long Grid => GridPick switch { "Beat" => Ppq, "Half bar" => Bar / 2, _ => Bar };
+
+    /// <summary>
+    /// Snapping like Bitwig (Solomon, 2026-10-19): Grid lands a dragged clip on grid lines; Relative (Bitwig's "grid
+    /// offset") moves it in whole grid steps keeping how far off the grid it was; Objects (Bitwig's "events") catches the
+    /// edges of other clips, the highlight, labels and the play marker. With more than one on, the nearest wins.
+    /// </summary>
+    [ObservableProperty] bool _snapGrid = true;
+    [ObservableProperty] bool _snapRelative = true;
+    [ObservableProperty] bool _snapObjects = true;
+    partial void OnSnapGridChanged(bool value) => SaveOption(SnapGridKey, value ? "1" : "0");
+    partial void OnSnapRelativeChanged(bool value) => SaveOption(SnapRelativeKey, value ? "1" : "0");
+    partial void OnSnapObjectsChanged(bool value) => SaveOption(SnapObjectsKey, value ? "1" : "0");
 
     [RelayCommand] void SelectClip(ClipPick? pick) => PickClip(pick is null ? null : Layers.FirstOrDefault(r => r.Layer == pick.Track), pick?.Clip);
 
