@@ -14,10 +14,18 @@ var profilesAt = Array.IndexOf(args, "--profiles");
 if (profilesAt >= 0 && profilesAt + 1 < args.Length) KeyLab.Load(args[profilesAt + 1]);
 var saveAt = Array.IndexOf(args, "--save-profile");
 if (saveAt >= 0 && saveAt + 1 < args.Length) KeyLab.SaveTo = args[saveAt + 1];
+if (args is ["--learn", var learnFrom, ..] && Directory.Exists(learnFrom))
+{
+    LearnBench.Run(learnFrom);
+    return;
+}
 if (args is ["--library", var library, ..] && Directory.Exists(library))
 {
     LibraryBench.Verbose = args.Contains("--verbose");
     LibraryBench.KeyLabToo = args.Contains("--keylab");
+    LibraryBench.EarToo = args.Contains("--ear");
+    var saveEarAt = Array.IndexOf(args, "--save-ear");
+    if (saveEarAt >= 0 && saveEarAt + 1 < args.Length) LibraryBench.SaveEar = args[saveEarAt + 1];
     LibraryBench.Run(library);
     return;
 }
@@ -28,6 +36,8 @@ if (args.Length == 0 || !Directory.Exists(args[0]))
     return;
 }
 var rootDir = args[0];
+var earAt = Array.IndexOf(args, "--ear-table");
+var earTable = earAt >= 0 && earAt + 1 < args.Length ? EarTable.Load(args[earAt + 1]) : null;
 var songs = new List<Song>();
 int skipped = 0, misaligned = 0;
 var meters = new Dictionary<int, int>();
@@ -395,6 +405,9 @@ if (!args.Contains("--keysonly"))
         ("half directional together + half (5th + held + x0.6)", (i, m) => 0.5 * Together.Score(m, cases[i].Acc, cases[i].Len, Together.Directional) + 0.5 * Fit.Score(m, lanes[i], cases[i].Len, fifth: true, split: true, worst: false, strong: 0.6)),
         ("half MIDI page together + half (5th + held + x0.6)", (i, m) => 0.5 * (HarmonyMatcher.SitsTogether(m, cases[i].Acc) ?? 0) + 0.5 * Fit.Score(m, lanes[i], cases[i].Len, fifth: true, split: true, worst: false, strong: 0.6)),
     };
+    if (earTable is not null)
+        scorers = [.. scorers, .. EarFit.Grid.Select(g => ($"learned from the library: {EarFit.Name(g)}", (Func<int, List<NoteEvent>, double>)((i, m) =>
+            EarFit.Score(m, lanes[i], cases[i].Len, EarTable.Sit(earTable, g.Blend, g.Slope), g.Strong))))];
     Console.WriteLine("score | right melody avg | other song's melody, same key: avg, AUC | own melody a bar late: avg, AUC");
     foreach (var (name, score) in scorers)
     {

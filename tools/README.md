@@ -146,6 +146,21 @@ dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop9
 dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" --keylab --profiles pop.txt
 ```
 
+`--ear` (with `--library`) counts which notes over which chords the melodies play, against other files' melodies moved
+into the key, next to how the app's ear rates them (`ChordScales.Sit`). It then scores each pack with an ear learned
+from the other packs only. `--save-ear ear.txt` saves the learned table, and `--ear-table ear.txt` tries it on POP909
+(with `--fitonly`).
+
+`--learn <folder>` looks at the chord parts of a pack library, each pack tested against what the other packs teach:
+how often "what chord next?" names the chord the player went to, how close each voicing style comes to the notes
+players put in a chord typed plainly (Cm7), the groove of the parts (swing, pushes into the bar), and how well each comp
+rhythm matches the bars they played.
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" --ear
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --learn "path/to/New Midi"
+```
+
 Things to know:
 
 - Only songs whose MIDI beats line up with the labelled beats are used (387 of them). The chord, key and beat labels

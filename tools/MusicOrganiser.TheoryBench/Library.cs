@@ -72,6 +72,7 @@ static class LibraryBench
         Console.WriteLine($"MIDI files: {files}; with a melody and parts to play it over: {files - noMelody}; 8-bar windows: {pieces.Count}");
 
         Keys();
+        if (EarToo) { Ear(pieces); EarTest(pieces); return; }
         if (KeyLabToo) { KeyLab.Run("your library", LabItems, LabItems.Where(i => !i.Group.EndsWith(" 8 bars")).ToList()); return; }
         foreach (var group in pieces.GroupBy(p => p.Style).Where(g => g.Count() >= 20).OrderBy(g => g.Key))
             Fits(group.Key, group.ToList());
@@ -79,7 +80,7 @@ static class LibraryBench
     }
 
     static readonly List<(string Style, string Name, (int Tonic, bool Minor) Label, List<NoteEvent> All)> KeyRows = [];
-    public static bool Verbose, KeyLabToo;
+    public static bool Verbose, KeyLabToo, EarToo;
     static readonly List<KeyLab.Item> LabItems = [];
 
     /// <summary>The share of notes that start with another note (a chord part is near 1, a tune near 0).</summary>
@@ -160,11 +161,10 @@ static class LibraryBench
         }
     }
 
-    static void Fits(string style, List<Piece> cases)
+    /// <summary>For each window, another file's melody moved into its key and register: what a wrong pick sounds like.</summary>
+    static List<List<NoteEvent>> Negatives(List<Piece> cases, int seed = 909)
     {
-        Console.WriteLine();
-        Console.WriteLine($"=== {style}: {cases.Count} windows from {cases.Select(c => c.Name).Distinct().Count()} files ===");
-        var rng = new Random(909);
+        var rng = new Random(seed);
         var negOther = new List<List<NoteEvent>>();
         for (var i = 0; i < cases.Count; i++)
         {
@@ -178,6 +178,104 @@ static class LibraryBench
             var oct = (int)Math.Round((HarmonyMatcher.Centre(a.Mel) - HarmonyMatcher.Centre(moved)) / 12);
             negOther.Add(moved.Select(n => n with { Key = Math.Clamp(n.Key + 12 * oct, 0, 127) }).ToList());
         }
+        return negOther;
+    }
+
+    /// <summary>
+    /// --ear: which notes over which chords the right melodies play, against other songs' melodies moved into the key,
+    /// next to how the app's ear rates them (ChordScales.Sit). Time-weighted, strong beats counting more, as SectionFit does.
+    /// </summary>
+    static void Ear(List<Piece> cases)
+    {
+        const long len = 8 * Bar;
+        var lanes = cases.Select(c => ChordLane.Detect(c.Acc, len)).ToList();
+        var neg = Negatives(cases);
+        var right = new Dictionary<(ChordFamily, int), double>();
+        var wrong = new Dictionary<(ChordFamily, int), double>();
+        var famRight = new Dictionary<ChordFamily, double>();
+        var famWrong = new Dictionary<ChordFamily, double>();
+        void Count(List<NoteEvent> mel, IReadOnlyList<TimedChord> lane, Dictionary<(ChordFamily, int), double> cells, Dictionary<ChordFamily, double> fams)
+        {
+            foreach (var n in mel)
+                foreach (var (chord, start, l, _) in ChordLane.Under(lane, n.Start, Math.Min(n.Length, len - n.Start)))
+                {
+                    var inBar = start % Bar;
+                    var w = Math.Clamp(l / (double)Beat, 0.25, 2) * (inBar == 0 ? 1.5 : inBar == 2 * Beat ? 1.25 : 1);
+                    var i = Mod(n.Key - chord.Root);
+                    cells[(chord.Family, i)] = cells.GetValueOrDefault((chord.Family, i)) + w;
+                    fams[chord.Family] = fams.GetValueOrDefault(chord.Family) + w;
+                }
+        }
+        for (var c = 0; c < cases.Count; c++)
+        {
+            Count(cases[c].Mel, lanes[c], right, famRight);
+            Count(neg[c], lanes[c], wrong, famWrong);
+        }
+        Console.WriteLine();
+        Console.WriteLine($"=== EAR: {cases.Count} windows. Per chord family: interval above the root, the app's Sit (on a plain chord of that family), share of melody time in the right melodies, in other songs' melodies, and right/other ===");
+        foreach (var fam in famRight.Keys.OrderByDescending(f => famRight[f]))
+        {
+            var plain = fam switch
+            {
+                ChordFamily.Major => ChordSymbol.Parse("C")!.Value, ChordFamily.Minor => ChordSymbol.Parse("Cm7")!.Value,
+                ChordFamily.Dominant => ChordSymbol.Parse("C7")!.Value, ChordFamily.HalfDiminished => ChordSymbol.Parse("Cm7b5")!.Value,
+                ChordFamily.Diminished => ChordSymbol.Parse("Cdim7")!.Value, ChordFamily.Augmented => ChordSymbol.Parse("Caug")!.Value,
+                ChordFamily.Sus => ChordSymbol.Parse("C7sus4")!.Value, _ => ChordSymbol.Parse("C5")!.Value,
+            };
+            Console.WriteLine($"  {fam} ({100 * famRight[fam] / famRight.Values.Sum():0}% of melody time, {plain}):");
+            for (var i = 0; i < 12; i++)
+            {
+                var r = right.GetValueOrDefault((fam, i)) / famRight[fam];
+                var w = famWrong.TryGetValue(fam, out var fw) ? wrong.GetValueOrDefault((fam, i)) / fw : 0;
+                Console.WriteLine($"    {ChordScales.Degree(plain, i),-3} sit {ChordScales.Sit(plain, i),5:0.00}   right {100 * r,5:0.0}%   other {100 * w,5:0.0}%   x{(w > 0 ? r / w : 0),4:0.00}");
+            }
+        }
+    }
+
+    public static string? SaveEar;
+
+    /// <summary>The learned ears on these windows, each pack scored with an ear learned from the other packs only.</summary>
+    static void EarTest(List<Piece> cases)
+    {
+        const long len = 8 * Bar;
+        var lanes = cases.Select(c => ChordLane.Detect(c.Acc, len)).ToList();
+        var neg = Negatives(cases);
+        string PackOf(Piece p) { var s = p.Name.Split(Path.DirectorySeparatorChar); return s.Length > 2 ? s[1] : s[0]; }
+        var packs = cases.Select(PackOf).ToList();
+        var full = EarTable.Lift(EarTable.Count(cases.Select((c, i) => ((IReadOnlyList<NoteEvent>)c.Mel, (IReadOnlyList<TimedChord>)lanes[i], len))),
+                                 EarTable.Count(neg.Select((m, i) => ((IReadOnlyList<NoteEvent>)m, (IReadOnlyList<TimedChord>)lanes[i], len))));
+        if (SaveEar is not null) EarTable.Save(SaveEar, full);
+        var held = new Dictionary<string, double[]?[]>();
+        foreach (var pack in packs.Distinct())
+        {
+            var idx = Enumerable.Range(0, cases.Count).Where(i => packs[i] != pack).ToList();
+            held[pack] = EarTable.Lift(EarTable.Count(idx.Select(i => ((IReadOnlyList<NoteEvent>)cases[i].Mel, (IReadOnlyList<TimedChord>)lanes[i], len))),
+                                       EarTable.Count(idx.Select(i => ((IReadOnlyList<NoteEvent>)neg[i], (IReadOnlyList<TimedChord>)lanes[i], len))));
+        }
+        // A second set of wrong melodies, drawn differently, so the score isn't judged on the same draw it learned from.
+        var test = Negatives(cases, 2026);
+        var styles = cases.Select(c => c.Style).Distinct().Order().ToList();
+        Console.WriteLine();
+        Console.WriteLine($"=== EAR TEST: {cases.Count} windows, {packs.Distinct().Count()} packs; each pack scored with an ear learned without it. Times in 100 the right melody beats another ===");
+        Console.WriteLine($"{"",-58} " + string.Join(" ", styles.Select(st => $"{st,9}")) + $" {"ALL",9}");
+        foreach (var g in EarFit.Grid)
+        {
+            var pos = cases.Select((c, i) => EarFit.Score(c.Mel, lanes[i], len, EarTable.Sit(held[packs[i]], g.Blend, g.Slope), g.Strong)).ToList();
+            var other = test.Select((m, i) => EarFit.Score(m, lanes[i], len, EarTable.Sit(held[packs[i]], g.Blend, g.Slope), g.Strong)).ToList();
+            string Cell(Func<int, bool> pick)
+            {
+                var ids = Enumerable.Range(0, cases.Count).Where(pick).ToList();
+                return ids.Count == 0 ? "-" : $"{100 * Auc(ids.Select(i => pos[i]).ToList(), ids.Select(i => other[i]).ToList()),9:0.0}";
+            }
+            Console.WriteLine($"{EarFit.Name(g),-58} " + string.Join(" ", styles.Select(st => Cell(i => cases[i].Style == st))) + $" {Cell(_ => true)}");
+        }
+    }
+
+    static void Fits(string style, List<Piece> cases)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"=== {style}: {cases.Count} windows from {cases.Select(c => c.Name).Distinct().Count()} files ===");
+        var negOther = Negatives(cases);
         const long len = 8 * Bar;
         var lanes = cases.Select(c => ChordLane.Detect(c.Acc, len)).ToList();
         var parts = new Dictionary<(int, bool), (double Score, double Together, double Move)>();

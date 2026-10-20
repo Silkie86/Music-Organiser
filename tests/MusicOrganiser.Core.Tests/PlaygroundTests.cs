@@ -202,6 +202,26 @@ public class PlaygroundTests : IDisposable
         Assert.Equal("Cmaj7", next[0].Chord.Name);
     }
 
+    [Fact]
+    public void What_followed_two_chords_counts_even_when_seen_only_a_few_times()
+    {
+        // Five ii–V–Is, and six chains of dominants (C7 – F7 – Bb7 – Eb7) where a 7 chord goes on to another 7 a 4th up.
+        // After Dm7 – G7 the two-chord count has only seen five, but they all went to Cmaj7: that wins over the
+        // one-chord count's "a 7 goes to another 7".
+        var entries = new List<StoredPhrase>();
+        // Each in its own key: the same notes twice would be one part with two copies.
+        for (var t = 0; t < 5; t++)
+            entries.Add(Stored(t + 1, $@"K:\Two{t}\Song.flp", "Keys", Chords([50 + t, 53 + t, 57 + t, 60 + t], [43 + t, 53 + t, 59 + t, 62 + t], [48 + t, 52 + t, 55 + t, 59 + t])));
+        for (var t = 0; t < 6; t++)
+            entries.Add(Stored(t + 10, $@"K:\Chain{t}\Song.flp", "Keys", Chords([48 + t, 52 + t, 55 + t, 58 + t], [53 + t, 57 + t, 60 + t, 63 + t], [46 + t, 50 + t, 53 + t, 56 + t], [51 + t, 55 + t, 58 + t, 61 + t])));
+        var model = ProgressionModel.Learn(new MidiCatalogue(entries).Entries, []);
+        var next = model.Next(ChordSymbol.Parse("G7")!.Value, ChordSymbol.Parse("Dm7")!.Value);
+        Assert.Equal("Cmaj7", next[0].Chord.Name);
+        Assert.Equal("C7", next[1].Chord.Name);
+        // With nothing before it, a 7 chord goes on to the next 7.
+        Assert.Equal("C7", model.Next(ChordSymbol.Parse("G7")!.Value, null)[0].Chord.Name);
+    }
+
     // ---- the page ----
 
     [Fact]
