@@ -382,6 +382,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         foreach (var r in Results.Where(r => Same(r.Entry, e))) r.EditsChanged();
         if (!Results.Contains(row)) row.EditsChanged();
         await RefreshPlayingAsync();
+        QuickFollow();   // and the small playground plays the part as it now is
     }
 
     internal async Task UndoAsync(MidiRow row)
@@ -393,6 +394,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         foreach (var r in Results.Where(r => Same(r.Entry, row.Entry))) r.EditsChanged();
         if (!Results.Contains(row)) row.EditsChanged();
         await RefreshPlayingAsync();
+        QuickFollow();
     }
 
     /// <summary>The tempo to try parts at, or null for each part's own (the tempo its song or file has).</summary>
@@ -414,6 +416,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     partial void OnTempoChanged(double? value)
     {
         OnPropertyChanged(nameof(TempoValue));
+        if (Quick is { } quick) quick.Tempo = TempoValue;   // the small playground follows the slider
         _ = RefreshAtNewTempoAsync();
     }
 
@@ -492,6 +495,18 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     bool CanSend() => !IsSending;
 
+    /// <summary>
+    /// The part picked, as it plays here (moved, in its octave, with your edits), into the section being built in the
+    /// MIDI playground (Solomon, 2026-10-17: building parts together "like lego").
+    /// </summary>
+    [RelayCommand]
+    void SendToPlayground()
+    {
+        if (Selected is not { } row) return;
+        _main.Playground.AddFromLibrary(row.Entry, row.BarNotes, row.Title);
+        Message = $"{row.Title} is in the playground, on a track of its own.";
+    }
+
     // ---- the octave of what it's fitted to ----
 
     /// <summary>
@@ -525,12 +540,14 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         }
         foreach (var r in Results) r.PartnerChanged();
         await RefreshPlayingAsync();
+        QuickFollow();   // the small playground hears the partner where it now sits
     }
 
     partial void OnFitChanged(HarmonyTarget? value)
     {
         OnPropertyChanged(nameof(WithSound));
         OnPropertyChanged(nameof(OrderText));
+        QuickFollow();
     }
 
     /// <summary>Showing a random pick in a random order (Shuffle), until the search changes.</summary>
@@ -651,10 +668,18 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         if (_playing is { } playing && !Same(playing.Entry, value?.Entry)) StopPlaying();
         if (Tempo is null) OnPropertyChanged(nameof(TempoValue));
+        QuickFollow();
     }
 
+    /// <summary>A small playground started playing: what the page plays stops, so two loops never play at once.</summary>
+    internal void StopForQuick() => StopPlaying();
+
     /// <summary>Another page is showing: nothing keeps playing behind it.</summary>
-    public void Left() => StopPlaying();
+    public void Left()
+    {
+        StopPlaying();
+        Quick?.StopPlaying();
+    }
 
     partial void OnSearchChanged(string value)
     {
@@ -1108,6 +1133,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         }
     }
 
+    /// <summary>Every part, if they've been read already; null before that, and asking never starts the reading.</summary>
+    public MidiCatalogue? LoadedCatalogue => _catalogue;
+
     /// <summary>
     /// Bitwig and Studio One: the parts as they play in the arranger, lined up in time. Null, so the clips are used
     /// instead, when there's no arranger to go by or it can't be read.
@@ -1234,6 +1262,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         // Hear it straight away where it now sits.
         // Heard straight away where it now sits, without stopping.
         if (Same(_playing?.Entry, row.Entry)) await RefreshPlayingAsync();
+        QuickFollow();
     }
 
     /// <summary>Shows the project on the Projects page, or the file in its folder.</summary>
@@ -1266,6 +1295,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var both = (together ?? row.CanPlayTogether) && row.CanPlayTogether;
         if (row.IsPlaying && fromTicks <= 0 && pairTicks is null && (together is null || row.IsPlayingTogether == both)) { StopPlaying(); return; }
         StopPlaying();
+        // one sound at a time: the small playgrounds (here and on a song's "MIDI that fits") stop
+        Quick?.StopPlaying();
+        _main.Projects.Detail?.LeftSongMidi(closed: false);
         var request = _listenRequest;
         var tempo = TempoOf(row);
         if (PlanFor(row, both, tempo) is not { } plan) return;

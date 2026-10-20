@@ -304,8 +304,14 @@
                         <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding From}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                     </StackPanel>
-                    <!-- The mini playground: a piano roll to edit the part on, with simple changes a click away. Fitting, what
-                         it's fitted to plays grey behind it, to edit and play together. -->
+                    <!-- Fitting: a cut-down Playground, the part and what it's fitted to as lanes, with the Playground's piano
+                         roll, bars, loop and harmony style, so what's added to the Playground turns up here too. -->
+                    <views:PlaygroundMiniView DataContext="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Quick}"
+                                              IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}" />
+                    <!-- The part's own piano roll, with simple changes a click away and loop points to find parts for some
+                         bars. Folded away under the small playground while fitting. -->
+                    <Expander HorizontalAlignment="Stretch" IsExpanded="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing, Mode=OneWay}"
+                              Header="This part's piano roll, loop points and quick changes">
                     <StackPanel Spacing="6">
                         <DockPanel IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
@@ -327,7 +333,7 @@
                                                Section="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Section}"
                                                SectionCommand="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SetSectionCommand}"
                                                EditedCommand="{Binding EditCommand}" SeekCommand="{Binding PairSeekCommand}"
-                                               ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Alt to place without snapping. Click the bar numbers to play from there; drag along them to set loop points." />
+                                               ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Shift to place without snapping. Click the bar numbers to play from there; drag along them to set loop points." />
                         <!-- Loop points: what's looping, parts for just those bars, or how to set them. -->
                         <WrapPanel>
                             <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SectionHint}" Classes="small"
@@ -388,16 +394,10 @@
                                     ToolTip.Tip="Back to front: the last note first" />
                         </WrapPanel>
                     </StackPanel>
+                    </Expander>
                     <!-- Listening: on its own or together, looping, at a tempo to try it at. -->
                     <WrapPanel>
-                        <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedTogetherCommand}" Margin="0,0,6,6" Padding="12,6" Classes="accent"
-                                IsVisible="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}"
-                                ToolTip.Tip="Both at once, so you can hear if they go together. Click the bar numbers on the piano roll to jump.">
-                            <Panel>
-                                <TextBlock Text="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PairButtonText, StringFormat='▶  {0}'}" IsVisible="{Binding !IsPlayingTogether}" />
-                                <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingTogether}" />
-                            </Panel>
-                        </Button>
+                        <!-- Playing it with what it's fitted to: the small playground's Play, above. -->
                         <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedAloneCommand}" Margin="0,0,6,6" Padding="12,6"
                                 ToolTip.Tip="Listen to this part on its own. Click along the notes to jump.">
                             <Panel>
@@ -420,6 +420,9 @@
                                 ToolTip.Tip="Drag into your DAW as a MIDI clip: moved into key and octave, with your edits">
                             <TextBlock Text="Drag into your DAW" />
                         </Border>
+                        <Button Content="To the playground" Margin="0,0,6,6" Classes="accent"
+                                Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SendToPlaygroundCommand}"
+                                ToolTip.Tip="Add this part, as it plays here (moved, octave and edits), to the section you're building in the playground" />
                         <Button Content="Send to Bitwig" Margin="0,0,6,6" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).SendBothToBitwigCommand}"
                                 ToolTip.Tip="This part, and what it's fitted to, each on a new track in Bitwig as a clip, to carry on with the idea there" />
                         <Button Content="Get better sounds" Margin="0,0,6,6" Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).GetSoundsCommand}"

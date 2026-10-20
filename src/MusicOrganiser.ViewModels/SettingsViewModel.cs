@@ -101,6 +101,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     public SoundsViewModel SoundLab => _main.Sounds;
     public PluginsViewModel PluginsPage => _main.Plugins;
     public ProjectsViewModel ProjectsPage => _main.Projects;
+    /// <summary>The Playground, whose numbers (how many suggestions, how a new idea starts) Settings can change.</summary>
+    public PlaygroundViewModel PlaygroundPage => _main.Playground;
+    public ShortcutsViewModel Shortcuts => _main.Shortcuts;
     /// <summary>The live tests with Bitwig, on the Developer tab.</summary>
     public LiveTestsViewModel LiveTests { get; }
 

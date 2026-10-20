@@ -83,7 +83,14 @@ public sealed class MidiEntry
 public sealed record MidiQuery(string Text = "", string? Role = null, string? From = null, HarmonyTarget? Fit = null,
                                MidiEntry? Like = null, int Limit = 500, string? Leave = null, float[]? Words = null,
                                MidiEntry? Within = null, float NameWeight = 1,
-                               Func<MidiEntry, IReadOnlyList<NoteEvent>>? Notes = null, int? Shuffle = null);
+                               Func<MidiEntry, IReadOnlyList<NoteEvent>>? Notes = null, int? Shuffle = null)
+{
+    /// <summary>
+    /// Leave out every part in these songs too (each worked out with <see cref="MidiEntry.SongOf"/>): the MIDI playground
+    /// mixes parts from several songs, and a song's own parts always fit each other, which says nothing.
+    /// </summary>
+    public IReadOnlyCollection<string>? LeaveSongs { get; init; }
+}
 
 /// <summary>A part found, with how it fits (when matching a harmony) or how alike it is (for "more like this").</summary>
 public sealed record MidiHit(MidiEntry Entry, HarmonyFit? Fit = null, double? Likeness = null);
@@ -214,6 +221,7 @@ public sealed class MidiCatalogue
             (q.From is null || (q.From == "projects") == e.IsProject) &&
             !ReferenceEquals(e, q.Like) &&
             (leave is null || !e.IsInSong(leave)) &&
+            (q.LeaveSongs is not { Count: > 0 } songs || !songs.Any(e.IsInSong)) &&
             words.All(w => e.SearchText.Contains(w, StringComparison.Ordinal))).ToList();
         matching = pool.Count;
         ct.ThrowIfCancellationRequested();
@@ -279,7 +287,7 @@ public sealed class MidiCatalogue
         foreach (var e in Entries)
         {
             if ((q.Role is not null && e.Role != q.Role) || (q.From is not null && (q.From == "projects") != e.IsProject) ||
-                (leave is not null && e.IsInSong(leave))) continue;
+                (leave is not null && e.IsInSong(leave)) || (q.LeaveSongs is { Count: > 0 } songs && songs.Any(e.IsInSong))) continue;
             var found = q.NameWeight > 0 ? words.Count(w => e.SearchText.Contains(w, StringComparison.Ordinal)) : 0;
             var lift = WordBonus * q.NameWeight * found;
             var named = namesLead && found == words.Length;

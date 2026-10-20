@@ -316,6 +316,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
 
     partial void OnSelectedChanged(ProjectItem? value)
     {
+        Detail?.LeftSongMidi(closed: true);   // its small playground mustn't keep playing with nothing to stop it
         Detail = value is null ? null : new ProjectDetailViewModel(_db, value, _main);
         _main.Live.ShowOn(Detail);
     }

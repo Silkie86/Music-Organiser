@@ -34,8 +34,8 @@
 
     <DockPanel>
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-            <Button DockPanel.Dock="Right" Content="Open on the MIDI page" Command="{Binding OpenInMidiPageCommand}" VerticalAlignment="Center"
-                    ToolTip.Tip="The same list with search, every kind, and What goes with this?" />
+            <Button DockPanel.Dock="Right" Content="Open in Playground" Command="{Binding OpenInPlaygroundCommand}" VerticalAlignment="Center"
+                    ToolTip.Tip="Work the idea up on the Playground: the picked part on top of the bars of this song it fits, in a new section" />
             <StackPanel Spacing="6">
                 <TextBlock Text="{Binding Status}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                 <ListBox Classes="chips" ItemsSource="{x:Static vm:SongMidiViewModel.Kinds}" SelectedItem="{Binding Kind}">
@@ -122,6 +122,19 @@
                             <TextBlock Text="{Binding From}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                         </StackPanel>
                     </DockPanel>
+                    <!-- A cut-down Playground: this part layered with the song's own parts, to work on here. Fit to's chips
+                         mute and unmute the song's lanes. -->
+                    <views:PlaygroundMiniView DataContext="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).Quick}"
+                                              IsVisible="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).HasQuick}" />
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Start again" Padding="8,2" FontSize="12"
+                                Command="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).StartAgainCommand}"
+                                ToolTip.Tip="This part as it first came, with every one of the song's parts" />
+                        <Separator />
+                    </DockPanel>
+                    <!-- The part on its own: its piano roll, quick changes, listening and dragging out. -->
+                    <Expander HorizontalAlignment="Stretch" Header="This part on its own: piano roll, quick changes and dragging out">
+                    <StackPanel Spacing="10">
                     <StackPanel Orientation="Horizontal" Spacing="12" IsVisible="{Binding CanPlayTogether}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <Border Width="10" Height="10" CornerRadius="2" Background="{StaticResource MutedBrush}" Opacity="0.6" VerticalAlignment="Center" />
@@ -136,7 +149,7 @@
                                            Length="{Binding PairLength}" Position="{Binding PairPosition}"
                                            PartStart="{Binding PartStart}" PartEnd="{Binding PartEnd}"
                                            EditedCommand="{Binding EditCommand}" SeekCommand="{Binding PairSeekCommand}"
-                                           ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Alt to place without snapping. Click the bar numbers to play from there." />
+                                           ToolTip.Tip="Click to add a note, drag a note to move it, drag its end to stretch it, right-click to take it away. Hold Shift to place without snapping. Click the bar numbers to play from there." />
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
                             <Button Content="Undo" Padding="8,2" FontSize="12" Command="{Binding UndoEditCommand}" IsEnabled="{Binding CanUndoEdit}"
@@ -198,6 +211,8 @@
                                     ToolTip.Tip="Let the app pick the octave again" />
                         </StackPanel>
                     </WrapPanel>
+                    </StackPanel>
+                    </Expander>
                 </StackPanel>
                 </ScrollViewer>
             </Border>

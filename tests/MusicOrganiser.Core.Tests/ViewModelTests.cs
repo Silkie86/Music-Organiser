@@ -15,6 +15,7 @@ using Xunit;
 namespace MusicOrganiser.Core.Tests;
 
 /// <summary>The screens' logic runs without any UI framework, which is what lets WPF and Avalonia share it.</summary>
+[Collection("Global UI")]
 public class ViewModelTests : IDisposable
 {
     readonly string _root = Fixtures.TempDir();
@@ -1806,6 +1807,70 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task The_playground_lists_suggestions_as_soon_as_it_opens()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Keys", Ppq = 96 };
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Keys Am.mid"), Core.Export.MidiWriter.Write(chords));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var playground = main.Playground;
+        Assert.Equal(Core.Midi.MidiRoles.Chords, playground.SuggestRole.Role);
+        main.SelectedNav = main.Nav.First(n => n.Page == playground);
+        for (var i = 0; i < 300 && playground.Matches.Count == 0; i++) await Task.Delay(10);
+        Assert.True(playground.Matches.Count > 0, playground.MatchStatus);
+        Assert.Contains(playground.Matches, m => m.Match.Entry.Title.Contains("Keys"));
+    }
+
+    [Fact]
+    public async Task What_goes_with_this_works_in_a_small_playground_as_long_as_the_longer_part()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        int[][] tune = [[69, 72, 76, 72], [65, 69, 72, 69], [67, 72, 76, 72], [67, 71, 74, 71]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Keys", Ppq = 96 };
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Keys Am.mid"), Core.Export.MidiWriter.Write(chords));
+        var lead = new Core.Parsers.MidiClip { Name = "Lead", Ppq = 96 };
+        lead.Track("Lead").AddRange(tune.Concat(tune).SelectMany((b, i) => b.Select((k, j) => new Core.Parsers.NoteEvent(i * bar + j * 96, 96, k, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Lead melody.mid"), Core.Export.MidiWriter.Write(lead));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+
+        var main = Main();
+        var midi = main.Midi;
+        midi.Opened();
+        await midi.IndexAsync();
+        midi.Selected = midi.Results.Single(r => r.Title.Contains("Keys"));
+        Assert.Null(midi.Quick);   // not fitting: no small playground
+        midi.FitToSelectedCommand.Execute(null);
+        midi.Selected = midi.Results.Single(r => r.Title.Contains("Lead"));
+        for (var i = 0; i < 100 && midi.Quick?.Layers.Count != 2; i++) await Task.Delay(10);
+
+        // 4 bars of chords under an 8-bar tune: the sketch runs all 8 bars, the chords going round again to fill them.
+        var quick = midi.Quick!;
+        Assert.True(quick.IsQuick);
+        Assert.Equal(8, quick.Bars);
+        Assert.Contains("Lead", quick.Layers[1].Name);
+        var keys = quick.Layers[0].Layer.Notes;
+        Assert.Contains(keys, n => n.Start >= quick.Length / 2);
+        Assert.True(main.Playground.IsEmpty);   // the Playground's own idea is left alone
+
+        // The Playground's settings work on it: longer, and heard as classical.
+        quick.Bars = 12;
+        Assert.Equal(12, quick.Bars);
+        quick.IsClassical = true;
+        Assert.True(quick.CanUndo);
+    }
+
+    [Fact]
     public async Task What_goes_with_this_plays_a_suggestion_on_top_looping_and_octaves_and_kinds_are_remembered()
     {
         const int bar = 4 * 96;
@@ -2278,6 +2343,49 @@ public class ViewModelTests : IDisposable
         tab.CloseCommand.Execute(null);
         Assert.False(tab.IsOpen);
         main.Midi.Left();
+    }
+
+    [Fact]
+    public async Task The_small_playground_mutes_the_song_parts_switched_off()
+    {
+        const int bar = 4 * 96;
+        int[][] aMinor = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var chords = new Core.Parsers.MidiClip { Name = "Same", Ppq = 96 };
+        chords.Track("Piano").AddRange(aMinor.SelectMany((c, i) => c.Select(k => new Core.Parsers.NoteEvent(i * bar, bar, k + 12, 100))));
+        File.WriteAllBytes(Path.Combine(pack, "Same Am.mid"), Core.Export.MidiWriter.Write(chords));
+        var songs = Path.Combine(_root, "Songs");
+        Directory.CreateDirectory(songs);
+        var project = MidiBrowserTests.FlProjectWithChordsAndLead(songs);
+        _db.Upsert(Core.Library.Scanner.Analyse(project));
+        _db.SetList(Core.Midi.MidiIndexer.FoldersKey, [pack]);
+        var main = Main();
+        await main.Midi.IndexAsync();
+        var tab = new SongMidiViewModel(main.Midi, main, project, "Two Parts");
+        await tab.LoadAsync();
+        tab.OpenPartCommand.Execute(tab.Rows.Single(r => r.Title == "Same Am"));
+
+        // Opening a part opens the small playground: every part on, the song's keys and lead come in under it.
+        for (var i = 0; i < 100 && tab.Quick?.Layers.Count != 3; i++) await Task.Delay(10);
+        Assert.Contains(tab.Quick!.Layers, l => l.Name == "Lead");
+        Assert.Contains(tab.Quick.Layers, l => l.Name == "Keys");
+
+        // The lead switched off in "Fit to": muted in the small playground at once, still there to see and turn back on.
+        tab.SongParts.Single(p => p.Name == "Lead").IsOn = false;
+        Assert.True(tab.Quick.Layers.Single(l => l.Name == "Lead").Muted);
+        Assert.False(tab.Quick.Layers.Single(l => l.Name == "Keys").Muted);
+        for (var i = 0; i < 100 && tab.Rows.FirstOrDefault()?.With?.Parts.Count != 1; i++) await Task.Delay(10);
+        Assert.NotNull(tab.Quick);   // a refit keeps the small playground
+
+        // The same part opened again after the refit keeps what's been done; started again with the lead still off, it comes in muted.
+        tab.Quick.Layers.Single(l => l.Name == "Keys").MuteCommand.Execute(null);
+        Assert.True(tab.Quick.Layers.Single(l => l.Name == "Keys").Muted);
+        await tab.StartAgainCommand.ExecuteAsync(null);
+        Assert.False(tab.Quick.Layers.Single(l => l.Name == "Keys").Muted);
+        Assert.True(tab.Quick.Layers.Single(l => l.Name == "Lead").Muted);
+        tab.AllSongPartsCommand.Execute(null);
+        Assert.False(tab.Quick.Layers.Single(l => l.Name == "Lead").Muted);
     }
 
     [Fact]

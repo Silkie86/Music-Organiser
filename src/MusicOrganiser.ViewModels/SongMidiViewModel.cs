@@ -12,7 +12,7 @@ namespace MusicOrganiser.ViewModels;
 /// project tab add way to see recommended midi files"). It's worked out the first time the tab is opened, from the
 /// same index and matching as the MIDI page.
 /// </summary>
-public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainViewModel main, string path, string name)
+public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainViewModel main, string path, string name, double? tempo = null)
     : ObservableObject, IFileDragSource
 {
     /// <summary>How many parts each kind shows, unless Settings › MIDI says otherwise.</summary>
@@ -132,6 +132,16 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
         await midi.FitToProjectAsync(path, name);
     }
 
+    /// <summary>The picked part on the Playground, on top of the bars of this song it fits, to work the idea up there.</summary>
+    [RelayCommand]
+    Task OpenInPlayground() => Selected is { } row
+        ? main.Playground.OpenFromSongAsync(path, name, row.Entry, row.BarNotes, row.Title, row.Fit?.At ?? 0, PartsOff())
+        : main.Playground.OpenFromSongAsync(path, name, leaveOut: PartsOff());
+
+    /// <summary>The song's parts switched off in "Fit to", left out of the Playground too (drums have no chip, so they stay).</summary>
+    IReadOnlyCollection<string>? PartsOff() =>
+        SongParts.Any(p => !p.IsOn) ? SongParts.Where(p => !p.IsOn).Select(p => p.Name).ToHashSet() : null;
+
     // ---- which of the song's parts to fit against ----
 
     HarmonyTarget? _whole;
@@ -150,7 +160,15 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     }
 
     // A few clicks on the chips in a row make one new fit, once they rest.
-    void PartsChanged() => _ = RefitAsync();
+    void PartsChanged()
+    {
+        MuteInQuick();
+        _ = RefitAsync();
+    }
+
+    // The small playground follows the chips at once: a part switched off is muted there, not taken away.
+    void MuteInQuick() =>
+        Quick?.MuteSongParts(SongParts.Select(p => p.Name).ToHashSet(), PartsOff() ?? new HashSet<string>());
 
     async Task RefitAsync()
     {
@@ -211,7 +229,61 @@ public sealed partial class SongMidiViewModel(MidiBrowserViewModel midi, MainVie
     }
 
     [RelayCommand]
-    void Close() => Open = null;
+    void Close()
+    {
+        Open = null;
+        Quick?.StopPlaying();
+    }
+
+    // ---- the cut-down playground in the quick view ----
+
+    /// <summary>
+    /// The open part layered with the song's own parts, to work on here: a small Playground of its own, the quick view's
+    /// main view (Solomon, 2026-10-19: "this should all be based off of playground").
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasQuick))] PlaygroundViewModel? _quick;
+    public bool HasQuick => Quick is not null;
+    MidiEntry? _quickEntry;
+    int _quickRequest;
+
+    // Another part opened: the small playground starts again with it. The same part opened again (the list re-fitted
+    // after a Fit to chip) keeps what you've done to it.
+    partial void OnOpenChanged(MidiRow? value) => _ = QuickFollowAsync(value);
+
+    async Task QuickFollowAsync(MidiRow? row)
+    {
+        var request = ++_quickRequest;
+        if (row is null || _whole is not { } whole || row.BarNotes.Count == 0) return;
+        if (Quick is not null && _quickEntry is not null && MidiBrowserViewModel.Same(_quickEntry, row.Entry)) return;
+        if (UiWork.InBackground) await Task.Delay(150);
+        if (request != _quickRequest) return;
+        _quickEntry = row.Entry;
+        Quick ??= main.Playground.Quick();
+        // The song's parts as read for fitting, where they play: nothing read from disk again.
+        // at the song's tempo, with the parts switched off in "Fit to" muted from the start
+        await Quick.LoadPairAsync(name, whole.Parts, 0, path, row.Fit?.At ?? 0, row.Entry, row.BarNotes, row.Title, tempo, PartsOff());
+    }
+
+    /// <summary>The open part again as it first came, with every song part.</summary>
+    [RelayCommand]
+    Task StartAgain()
+    {
+        _quickEntry = null;
+        return QuickFollowAsync(Open);
+    }
+
+    /// <summary>Another page shown: the small playground stops playing (and keeps what's been done in it).</summary>
+    public void Left() => Quick?.StopPlaying();
+
+    /// <summary>Another song picked: this song's small playground stops and lets go of its player.</summary>
+    public void Closed()
+    {
+        _quickRequest++;
+        Quick?.StopPlaying();
+        Quick?.Dispose();
+        Quick = null;
+        _quickEntry = null;
+    }
 
     public DragPayload? MakeDrag(IReadOnlyList<object> items) =>
         midi.MakeDrag(items.Count > 0 ? items : Selected is { } s ? [s] : []);
