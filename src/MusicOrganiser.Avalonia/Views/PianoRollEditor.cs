@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using MusicOrganiser.Core.Midi;
+using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.ViewModels;
 
@@ -551,7 +552,7 @@ public sealed class PianoRollEditor : Control
             foreach (var n in guide)
                 Note(dc, muted, null, n.Start, n.Length, n.Key, low, high);
 
-        // The part: its own go full strength, repeats faint; red where it rubs a semitone against the guide.
+        // The part: its own go full strength, repeats faint; red where it rubs a half step above the guide.
         var notes = Current;
         for (long from = From; from < To; from += loop)
         {
@@ -599,9 +600,22 @@ public sealed class PianoRollEditor : Control
         _ => null,
     };
 
-    /// <summary>A semitone (or a major seventh) from a guide note that sounds at the same time.</summary>
-    static bool Rubs(NoteEvent n, long from, IReadOnlyList<NoteEvent> guide) =>
-        HarmonyMatcher.Rubs(from + n.Start, n.Length, n.Key, guide);
+    IReadOnlyList<NoteEvent>? _laneOf;
+    List<TimedChord> _lane = [];
+
+    /// <summary>
+    /// A half step above a guide note that sounds at the same time, and not a note of the chord the guide plays then
+    /// (the chords are worked out once per guide).
+    /// </summary>
+    bool Rubs(NoteEvent n, long from, IReadOnlyList<NoteEvent> guide)
+    {
+        if (!ReferenceEquals(guide, _laneOf))
+        {
+            _laneOf = guide;
+            _lane = guide.Count == 0 ? [] : ChordLane.Detect(guide, guide.Max(g => g.Start + g.Length));
+        }
+        return HarmonyMatcher.Rubs(from + n.Start, n.Length, n.Key, guide, _lane);
+    }
 
     protected override void OnKeyDown(KeyEventArgs e)
     {

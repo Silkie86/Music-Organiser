@@ -83,6 +83,51 @@ public static class ChordLane
     }
 
     /// <summary>
+    /// Every chord a note sounds over, one piece per chord, in order: a note held from C7 into F7 is heard against both.
+    /// Struck is true for the piece where the note starts; the others are held over. Gaps with no chord are skipped.
+    /// </summary>
+    public static IEnumerable<(ChordSymbol Chord, long Start, long Length, bool Struck)> Under(
+        IReadOnlyList<TimedChord> lane, long start, long length, long loop = 0)
+    {
+        if (lane.Count == 0) yield break;
+        long at = start, end = start + Math.Max(1, length);
+        while (at < end)
+        {
+            var tick = loop > 0 ? at % loop : at;
+            long next;
+            TimedChord? hit = null;
+            foreach (var c in lane)
+                if (tick >= c.Start && tick < c.End) { hit = c; break; }
+            if (hit is not null) next = at + (hit.End - tick);
+            else
+            {
+                // A gap: on to the next chord to start, or the loop's end.
+                var later = long.MaxValue;
+                foreach (var c in lane)
+                    if (c.Start > tick) later = Math.Min(later, c.Start);
+                next = later != long.MaxValue ? at + (later - tick) : loop > 0 ? at + (loop - tick) : end;
+            }
+            if (loop > 0 && next - at > loop - tick) next = at + (loop - tick);   // a chord running past the loop's end
+            next = Math.Min(Math.Max(next, at + 1), end);
+            if (hit is not null) yield return (hit.Chord, at, next - at, at == start);
+            at = next;
+        }
+    }
+
+    /// <summary>
+    /// Whether a note fights the chords under it, for marking it red: true when it sounds for longer than an eighth
+    /// over a chord it doesn't sit on (<see cref="ChordScales.Sit"/> under 0.05). Shorter notes are passing notes.
+    /// </summary>
+    public static bool Fights(IReadOnlyList<TimedChord> lane, long start, long length, int pc,
+                              HarmonyStyle style = HarmonyStyle.JazzGospel, long loop = 0)
+    {
+        if (length <= Ppq / 2) return false;
+        foreach (var (chord, _, len, _) in Under(lane, start, length, loop))
+            if (len > Ppq / 2 && ChordScales.Sit(chord, pc, style) < 0.05) return true;
+        return false;
+    }
+
+    /// <summary>
     /// A typed chart as chords in time, or null with why when it can't be read. Bar lines split bars; chords between
     /// two bar lines share the bar evenly; without bar lines each chord gets a bar. "%" repeats the bar before, and
     /// "/" or "-" inside a bar holds the chord before for another share of it.

@@ -7,6 +7,7 @@ using MusicOrganiser.Core;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Midi;
+using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
 using Microsoft.ML.OnnxRuntime;
@@ -1728,8 +1729,9 @@ public sealed partial class MidiRow : ObservableObject
     }
     public string FitWhy => Fit is not { } f ? "" : string.Join(" ", new[]
     {
-        $"{f.Percent}% fit, {MoveText}.",
-        f.Together is { } t ? $"Played together, {Math.Round(t * 100)}% of its notes sit with what sounds at the same moment." : "",
+        // With the notes played together, that is the fit itself, so it's said once.
+        f.Together is not null ? $"{f.Percent}% fit, {MoveText}: played together, that share of its notes sit with what sounds at the same moment."
+                               : $"{f.Percent}% fit, {MoveText}.",
         With is { Loops: false } && f.Together is not null && Frame is null ? $"Fits best from bar {f.At / Bar + 1} of the song." : "",
         f.ChordScore is { } c ? $"Its chords follow {(With is { Loops: true } ? "the part's" : "the song's")} {Math.Round(c * 100)}%." : "",
         f.Clash > 0.02 ? $"{Math.Round(f.Clash * 100)}% of its notes are on notes the other hardly plays." : "Its notes are all ones the other plays too.",
@@ -1883,11 +1885,12 @@ public sealed partial class MidiRow : ObservableObject
             var theirs = MidiBrowserViewModel.Cut(guide, range.Start, range.End);
             var where = LoopPoints is null ? "" : $"Looping {range.Describe()}: ";
             if (HarmonyMatcher.SitsWithin(mine, theirs, range.Length) is not { } sits) return where + "they hardly play at the same time.";
-            var rubs = mine.Count(n => HarmonyMatcher.Rubs(n.Start, n.Length, n.Key, theirs));
+            var lane = ChordLane.Detect(theirs, range.Length);
+            var rubs = mine.Count(n => HarmonyMatcher.Rubs(n.Start, n.Length, n.Key, theirs, lane));
             // Two different checks: the score is per half bar (the harmony around a note), the red is note against note.
             return where + $"{Math.Round(sits * 100)}% of its notes fit the other part's harmony" +
-                   (rubs == 0 ? "." : rubs == 1 ? ". 1 note rubs a semitone against the chord playing with it (red)."
-                                                : $". {rubs} notes rub a semitone against the chord playing with them (red).");
+                   (rubs == 0 ? "." : rubs == 1 ? ". 1 note sits a half step above a note of the chord playing with it (red)."
+                                                : $". {rubs} notes sit a half step above a note of the chord playing with them (red).");
         }
     }
 

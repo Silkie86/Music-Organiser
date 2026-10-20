@@ -97,3 +97,39 @@ the launcher's automatic restarts until it's saved, so a new build never loses i
 Settings › Self-check runs the app's checks against the real library (folders there, every project opens, how fast
 the sound library loads, the plugin scanner, sound output, how the galaxy draws) and writes a report to
 `reports\checks` in the data folder, for Claude to read the same way. It only reads.
+
+## Theory bench
+
+`theorybench` measures the app's harmony code on real music: its key finder, chord readers, the MIDI page's fit
+and red marks, and the Playground's fit and red marks, run over the POP909 songs (909 Chinese pop songs as MIDI, with
+melody, bridge and piano parts plus chord, key and beat labels; MIT licence). Use it to check a change to how the app
+hears harmony before shipping it: run it before and after, and compare.
+
+Get the songs once, outside the repository (about 76 MB; they are never committed):
+
+```
+git clone --filter=blob:none --sparse https://github.com/music-x-lab/POP909-Dataset.git pop909
+cd pop909 && git sparse-checkout set --no-cone '/POP909/*/*.mid' '/POP909/*/*.txt'
+```
+
+Then, from the repository folder:
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909             # everything
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --fitonly   # fit scores and red marks
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --keysonly  # keys
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --clips     # keys on 8-bar clips
+```
+
+Things to know:
+
+- Only songs whose MIDI beats line up with the labelled beats are used (387 of them). The chord, key and beat labels
+  were made by software, so the absolute chord and key numbers are rough; comparing two versions of the app is the
+  reliable part.
+- Ranking numbers are "times in 100 a song's own melody scores higher than another song's melody over the same
+  chords" (AUC). Red-mark numbers are the share of a song's own melody notes the app would mark red: lower is better,
+  since those notes are what the song really plays.
+- Lines saying "as it is" call the app's own code, so they show what the app does now. `Together` and `Fit` in
+  `Program.cs` are copies of the app's scores as they were before the 2026-10-20 fixes, with a switch for each idea
+  measured then; they stay as a fixed point to compare against.
+- The 2026-10-20 check-up and its numbers: https://claude.ai/artifact/5Rr3Y59gLCo9Q3Xh3Cohqp

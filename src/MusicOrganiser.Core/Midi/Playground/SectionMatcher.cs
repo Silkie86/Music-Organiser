@@ -186,31 +186,40 @@ public static class SectionFit
         if (notes.Count == 0 || lane.Count == 0) return null;
         var sorted = notes.Where(n => n.Start < length).OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
         var bass = role == MidiRoles.Bass;
+        var melody = role == MidiRoles.Melody;
         var jazz = style == HarmonyStyle.JazzGospel;
         double sum = 0, total = 0;
         for (var i = 0; i < sorted.Count; i++)
         {
             var n = sorted[i];
-            if (ChordLane.At(lane, n.Start + 1) is not { } chord) continue;
             var pc = n.Key % 12;
-            var metric = Metric(n.Start);
-            var w = Math.Clamp(n.Length / (double)Beat, 0.25, 2) * metric;
-            var v = ChordScales.Sit(chord, pc, style);
-            if (bass && metric >= 1.25)
-                v = pc == chord.Bass ? 1 : pc == chord.Root ? 0.9 : v * 0.75;
-            if (v < 0.55 && n.Length <= Beat / 2 && metric < 1.25)
+            // A held note is heard against every chord it sounds over, not just the one it starts on: an E held from
+            // C7 into F7 rubs on the F7. The pieces held over count a little less than where the note is struck.
+            foreach (var (chord, start, len, struck) in ChordLane.Under(lane, n.Start, Math.Min(n.Length, length - n.Start)))
             {
-                // A short note between beats: a passing or approach note if the next note steps to one that sits.
-                var next = sorted.Skip(i + 1).FirstOrDefault(m => m.Start > n.Start);
-                if (next.Length > 0 && Math.Abs(next.Key - n.Key) <= 2 && ChordLane.At(lane, next.Start + 1) is { } then &&
-                    ChordScales.Sit(then, next.Key % 12, style) >= 0.75)
-                    v = Math.Max(v, jazz ? 0.65 : 0.55);
-                else v = Math.Max(v, 0.15);
+                var metric = Metric(start);
+                var w = Math.Clamp(len / (double)Beat, 0.25, 2) * metric * (struck ? 1 : 0.8);
+                var v = ChordScales.Sit(chord, pc, style);
+                // A tension on beat 1 or 3 of a tune counts less than a chord note there: melodies land on chord
+                // notes on the strong beats and colour the weak ones.
+                if (melody && jazz && metric >= 1.25 && v > 0 && v < 1) v *= 0.6;
+                if (bass && metric >= 1.25)
+                    v = pc == chord.Bass ? 1 : pc == chord.Root ? 0.9 : v * 0.75;
+                if (struck && v < 0.55 && n.Length <= Beat / 2 && metric < 1.25)
+                {
+                    // A short note between beats: a passing or approach note if the next note steps to one that sits.
+                    var next = sorted.Skip(i + 1).FirstOrDefault(m => m.Start > n.Start);
+                    if (next.Length > 0 && Math.Abs(next.Key - n.Key) <= 2 && ChordLane.At(lane, next.Start + 1) is { } then &&
+                        ChordScales.Sit(then, next.Key % 12, style) >= 0.75)
+                        v = Math.Max(v, jazz ? 0.65 : 0.55);
+                    else v = Math.Max(v, 0.15);
+                }
+                // Classical ears want the chord's own notes on the strong beats; a dissonance there must be prepared
+                // (a note held over from the chord before is prepared, a suspension).
+                if (!jazz && struck && metric >= 1.25 && v < 1) v -= 0.2;
+                sum += w * v;
+                total += w;
             }
-            // Classical ears want the chord's own notes on the strong beats; a dissonance there must be prepared.
-            if (!jazz && metric >= 1.25 && v < 1) v -= 0.2;
-            sum += w * v;
-            total += w;
         }
         return total <= 0 ? null : Math.Clamp(sum / total, 0, 1);
     }

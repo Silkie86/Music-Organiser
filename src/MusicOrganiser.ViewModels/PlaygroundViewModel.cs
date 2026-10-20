@@ -2391,9 +2391,9 @@ public sealed partial class LayerRow : ObservableObject
         PlaygroundSession.Audible(_owner.CurrentSection).Where(l => l != Layer && l.Role != MidiRoles.Drums).SelectMany(l => l.Notes).ToList();
 
     /// <summary>
-    /// Which notes fight the chords, for the piano roll to mark red: judged by chord-scale theory against the chord
-    /// lane with the section's ears, so jazz tensions and blue notes aren't marked; a short note stepping into a good
-    /// one is let off as a passing note.
+    /// Which notes fight the chords, for the piano roll to mark red: judged by chord-scale theory against every chord
+    /// each note sounds over, with the section's ears, so jazz tensions and blue notes aren't marked and a note held
+    /// into a chord it fights is; notes an eighth or shorter are let off as passing notes.
     /// </summary>
     public Func<NoteEvent, bool> Clashes
     {
@@ -2402,8 +2402,7 @@ public sealed partial class LayerRow : ObservableObject
             var h = _owner.Harmony;
             var style = h.Style;
             if (Layer.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => false;
-            return n => ChordLane.At(h.Lane, n.Start + 1, h.Length) is { } chord && n.Length > PhraseAnalyser.Ppq / 2 &&
-                        ChordScales.Sit(chord, n.Key % 12, style) < 0.05;
+            return n => ChordLane.Fights(h.Lane, n.Start, n.Length, n.Key % 12, style, h.Length);
         }
     }
 
@@ -2528,8 +2527,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
             var style = h.Style;
             var at = At;
             if (clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => false;
-            return n => ChordLane.At(h.Lane, at + n.Start + 1, h.Length) is { } chord && n.Length > PhraseAnalyser.Ppq / 2 &&
-                        ChordScales.Sit(chord, n.Key % 12, style) < 0.05;
+            return n => ChordLane.Fights(h.Lane, at + n.Start, n.Length, n.Key % 12, style, h.Length);
         }
     }
 
