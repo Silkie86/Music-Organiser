@@ -559,6 +559,26 @@
                             </StackPanel>
                         </Border>
 
+                        <Border Classes="card settingsCard" DataContext="{Binding SelfCheck}">
+                            <StackPanel x:DataType="vm:LiveTestsViewModel">
+                                <TextBlock Text="Self-check" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="The app checks itself with your real library: that your folders are there, every project opens, how fast your sounds load, that the plugin scanner and sound output work, and how the galaxy draws. It only reads, and writes a report Claude can read from this computer (reports/checks in the app's data folder)." />
+                                <WrapPanel Classes="buttons">
+                                    <Button Content="Run self-check" Command="{Binding RunCommand}"
+                                            ToolTip.Tip="Opening every project can take a few minutes with a big library." />
+                                    <Button Content="Stop" Command="{Binding StopCommand}" IsVisible="{Binding Running}"
+                                            ToolTip.Tip="Stops after the check running now. The report is still written." />
+                                    <Button Content="Open report" Command="{Binding OpenReportCommand}" />
+                                </WrapPanel>
+                                <TextBlock Text="{Binding ProgressLine}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           IsVisible="{Binding ProgressLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                <TextBlock Text="{Binding Summary}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                           IsVisible="{Binding Summary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            </StackPanel>
+                        </Border>
+
                         <Border Classes="card settingsCard" DataContext="{Binding Probe}">
                             <StackPanel x:DataType="vm:ProbeReportsViewModel">
                                 <TextBlock Text="MO Probe" Classes="sectionHeader" />

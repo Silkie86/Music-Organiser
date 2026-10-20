@@ -144,7 +144,7 @@ public static class LiveReports
     public static string ToMarkdown(LiveRun run)
     {
         var md = new StringBuilder();
-        md.AppendLine($"# {run.Daw} live tests, {run.Started.UtcDateTime.ToString("d MMMM yyyy HH:mm:ss", CultureInfo.InvariantCulture)} UTC");
+        md.AppendLine($"# {run.Daw}{(run.Key == SelfCheck.Key ? "" : " live tests")}, {run.Started.UtcDateTime.ToString("d MMMM yyyy HH:mm:ss", CultureInfo.InvariantCulture)} UTC");
         md.AppendLine();
         if (run.Setup.Length > 0) md.AppendLine(run.Setup + "  ");
         md.AppendLine($"App {(run.AppVersion.Length > 0 ? run.AppVersion : "(version unknown)")} · run {run.Stamp}  ");

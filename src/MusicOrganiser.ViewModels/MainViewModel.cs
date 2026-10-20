@@ -22,6 +22,12 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The app's data folder (tests use one of their own), where it also keeps its Bitwig template.</summary>
     public string DataFolder { get; }
 
+    /// <summary>The sound library, for Settings' self-check to time loading it.</summary>
+    public SoundLibrary SoundLibrary { get; }
+
+    /// <summary>Self-checks only the app's window side can make (sound output, graphics): the app adds them when it starts.</summary>
+    public IReadOnlyList<(string Area, string Name, Func<CancellationToken, Task<LiveVerdict>> Test)> AppChecks { get; set; } = [];
+
     public ProjectsViewModel Projects { get; }
     public PluginsViewModel Plugins { get; }
     public SamplesViewModel Samples { get; }
@@ -58,6 +64,7 @@ public sealed partial class MainViewModel : ObservableObject
         _db = db;
         Parallelism.Mode = Parallelism.ParsePace(db.GetSetting(SettingsViewModel.PerformanceKey));
         DataFolder = dataFolder ?? LiveReports.DataFolder;
+        SoundLibrary = sounds.Library;
         PluginScanner = pluginScanner ?? new();
         _scanner = new Scanner(db);
         Live = new LiveDawsViewModel(db, this, watch ?? new DawWatch());
