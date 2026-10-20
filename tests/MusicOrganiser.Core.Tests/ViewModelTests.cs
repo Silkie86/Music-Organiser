@@ -105,6 +105,71 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Projects_asks_when_two_songs_may_be_one_and_the_Saves_tab_moves_saves()
+    {
+        // Solomon, 19 Oct 2026: versions under one song, a save movable to another song, and a question when the app is unsure.
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        Save("track nd 1", 1);
+        Save("track 2", 2);
+        Save("track 3", 3);
+        Save("bossa", 4);
+        var main = Main();
+        var projects = main.Projects;
+        Assert.True(projects.AskDoubts);
+        var doubt = Assert.Single(projects.Doubts);
+        Assert.Equal(("One song, called track", "One song, called track nd"), (projects.KeepAText, projects.KeepBText));
+        projects.CheckDoubtsCommand.Execute(null);
+        Assert.True(projects.CheckingDoubts);
+
+        // One song, called track: three saves, and nothing left to ask.
+        await projects.SameSongCommand.ExecuteAsync("A");
+        var track = projects.Items.Single(i => i.Name == "track");
+        Assert.Equal(3, track.SaveCount);
+        Assert.Empty(projects.Doubts);
+        Assert.False(projects.CheckingDoubts);
+
+        // Move "track 2" to bossa from track's Saves tab; bossa then has it, and Reset there puts it back.
+        projects.Selected = track;
+        var panel = projects.Detail!;
+        Assert.True(panel.HasSongChanges);
+        Assert.Contains(panel.SongMatches, s => s.Name == "bossa");   // a song in the same folder, before anything's typed
+        panel.MoveSaveCommand.Execute(panel.AllSaves.Single(s => s.Name == "track 2"));
+        Assert.Equal("Move track 2 to another song", panel.MoveTitle);
+        await panel.JoinSongCommand.ExecuteAsync(panel.SongMatches.Single(s => s.Name == "bossa"));
+        var bossa = projects.Items.Single(i => i.Name == "bossa");
+        Assert.Same(bossa, projects.Selected);
+        Assert.Equal(["bossa", "track 2"], projects.Detail!.AllSaves.Select(s => s.Name).Order());
+        Assert.Equal(2, projects.Items.Single(i => i.Name == "track").SaveCount);
+
+        await projects.Detail!.ResetSongCommand.ExecuteAsync(null);
+        Assert.Equal(1, projects.Items.Single(i => i.Name == "bossa").SaveCount);
+        Assert.Equal(3, projects.Items.Single(i => i.Name == "track").SaveCount);
+
+        // Different songs: not asked again, even after the app restarts.
+        Save("Sunrise", 5);
+        Save("Sunrize", 6);
+        projects = Main().Projects;
+        Assert.Equal(["Sunrise", "Sunrize"], new[] { projects.Doubt!.A.Song, projects.Doubt.B.Song }.Order());
+        await projects.DifferentSongsCommand.ExecuteAsync(null);
+        Assert.Empty(Main().Projects.Doubts);
+
+        // Turned off in Settings, nothing is asked.
+        Save("Moonrise", 7);
+        Save("Moonrize", 8);
+        projects = Main().Projects;
+        Assert.NotEmpty(projects.Doubts);
+        projects.AskDoubts = false;
+        await Until(() => projects.Doubts.Count == 0);
+        Assert.Equal("0", _db.GetSetting(ProjectsViewModel.AskDoubtsKey));
+    }
+
+    [Fact]
     public void A_song_sits_under_the_year_it_was_first_made_and_shows_its_rework()
     {
         ProjectSummary Save(string name, DateTime saved, int notes, string[] plugins) => new()
@@ -1125,6 +1190,13 @@ public class ViewModelTests : IDisposable
         lab.PlayPassing();
         Assert.Equal(["kick.wav", "snare.wav", "hat.wav"], played);
         Assert.Equal(0, hat.Plays);   // still only a preview
+
+        // With Autoplay off nothing plays, so a held key isn't slowed down.
+        lab.StepMs = 1000;
+        lab.AutoPlay = false;
+        Assert.True(lab.MayStep(held: false));
+        Assert.True(lab.MayStep(held: true));
+        lab.AutoPlay = true;
         lab.StepMs = 600;
         Assert.Equal(600, new MainViewModel(_db, _sounds).Sounds.StepMs);   // kept
     }

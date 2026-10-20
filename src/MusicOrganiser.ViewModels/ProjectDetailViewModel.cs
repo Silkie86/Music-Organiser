@@ -116,6 +116,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         if (item.Error is { } err) facts.Add(new("Couldn't read", err));
         Facts = facts;
         if (item.Daw == "FL Studio" && CanExtractMidi) _ = FindSilentSynthsAsync();
+        FindSongs();
         LoadPendingFix();
     }
 
@@ -166,6 +167,91 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     void RevealSave(ProjectSummary? save)
     {
         if (save is not null) Shell.Reveal(save.Path);
+    }
+
+    // ---- Which song the saves go under (Solomon, 19 Oct: "you should be able to change what list they go under") -------
+
+    /// <summary>Every save of the song, newest first, for the Saves tab.</summary>
+    public IReadOnlyList<ProjectSummary> AllSaves => [Item.Summary, .. Item.OlderSaves];
+    public string AllSavesHeader => Item.SaveCount == 1 ? "1 save" : $"{Item.SaveCount} saves, newest first";
+
+    /// <summary>Whether you changed how this song's saves are grouped, so Reset has something to undo.</summary>
+    public bool HasSongChanges => _main.Projects.Choices.Changed(Item.SongKey, AllSaves.Select(s => s.Path));
+
+    /// <summary>The save being moved to another song, or null to put the whole song under another.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MoveTitle), nameof(IsMovingSave))]
+    ProjectSummary? _moving;
+    public bool IsMovingSave => Moving is not null;
+    public string MoveTitle => Moving is { } save ? $"Move {save.Name} to another song" : $"Put {Item.Name} under another song";
+
+    /// <summary>What you typed to find the song to put this under.</summary>
+    [ObservableProperty] string _songSearch = "";
+    /// <summary>Songs to put this under: ones in the same folder and DAW first, then the rest whose name matches.</summary>
+    [ObservableProperty] IReadOnlyList<ProjectItem> _songMatches = [];
+    public bool HasSongMatches => SongMatches.Count > 0;
+    partial void OnSongMatchesChanged(IReadOnlyList<ProjectItem> value) => OnPropertyChanged(nameof(HasSongMatches));
+    partial void OnSongSearchChanged(string value) => FindSongs();
+
+    /// <summary>Fills <see cref="SongMatches"/>: with nothing typed, the songs beside this one; else any song whose name has the words.</summary>
+    public void FindSongs()
+    {
+        var words = SongSearch.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        bool Near(ProjectItem s) => s.Daw == Item.Daw && string.Equals(s.Folder, Item.Folder, StringComparison.OrdinalIgnoreCase);
+        SongMatches = _main.Projects.Items
+            .Where(s => s.SongKey != Item.SongKey && (words.Length == 0 ? Near(s) : words.All(w => s.Name.Contains(w, StringComparison.OrdinalIgnoreCase))))
+            .OrderByDescending(Near).ThenByDescending(s => s.Modified)
+            .Take(8).ToList();
+    }
+
+    /// <summary>The row's Move button: pick the song to move this one save to.</summary>
+    [RelayCommand]
+    void MoveSave(ProjectSummary? save)
+    {
+        Moving = save;
+        FindSongs();
+    }
+
+    [RelayCommand]
+    void CancelMove() => Moving = null;
+
+    /// <summary>Puts the song (or the save being moved) under <paramref name="target"/>; the list then opens that song.</summary>
+    [RelayCommand]
+    async Task JoinSong(ProjectItem? target)
+    {
+        if (target is null || Item.SongKey.Length == 0) return;
+        var from = Item.SongKey;
+        if (Moving is { } save)
+        {
+            _db.SplitSave(save.Path);
+            from = SongChoices.SplitKey(save.Path);
+        }
+        if (!_db.JoinSong(from, target.SongKey))
+        {
+            Activities.Failed("Can't put it there", $"{target.Name} is already under {Item.Name}. Use Reset on {target.Name} first.");
+            return;
+        }
+        Activities.Done(Moving is { } moved ? $"Moved {moved.Name}" : $"Put {Item.Name} under {target.Name}",
+                        "Reset on the song's Saves tab puts it back.");
+        await _main.Projects.ReloadAsync(target.Path);
+    }
+
+    /// <summary>Takes one save out of this song, into a song of its own.</summary>
+    [RelayCommand]
+    async Task SplitOff(ProjectSummary? save)
+    {
+        if (save is null || Item.SaveCount == 1) return;
+        _db.SplitSave(save.Path);
+        Activities.Done($"{save.Name} is its own song now", "Reset on the song's Saves tab puts it back.");
+        await _main.Projects.ReloadAsync(save == Item.Summary ? Item.OlderSaves[0].Path : Item.Path);
+    }
+
+    /// <summary>Undoes your changes to this song: it goes back to the app's guess from the names and folder.</summary>
+    [RelayCommand]
+    async Task ResetSong()
+    {
+        _db.ForgetSongChoices(Item.SongKey, AllSaves.Select(s => s.Path));
+        await _main.Projects.ReloadAsync(Item.Path);
     }
 
     /// <summary>The window's activity cards.</summary>
@@ -242,14 +328,14 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     /// </summary>
     static readonly HashSet<string> OpenedInBitwig = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Converts one save (the newest, or the last of an older run) and opens it in Bitwig.</summary>
-    internal async Task ConvertForBitwig(ProjectSummary save, string name)
+    /// <summary>Converts one save (the newest, or the last of an older run) and opens it in Bitwig; false when it couldn't.</summary>
+    internal async Task<bool> ConvertForBitwig(ProjectSummary save, string name)
     {
         if (!File.Exists(save.Path))
         {
             Message = "This project file isn't where it used to be. Rescan to update the library.";
             Activities.Failed("Can't find the project file", "It has moved or been deleted. Rescan to update the library.");
-            return;
+            return false;
         }
         var template = BitwigTemplateStore.Find(_db, _main.DataFolder);
         if (template is null)
@@ -260,7 +346,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
                 Message = problem ?? "Converting needs a Bitwig template: a project saved in Bitwig with a Sampler track, a VST3 synth " +
                                      "with a Note Transpose before it and a clip of notes, and a VST2 synth (and an audio track with an audio clip on it, " +
                                      "for FL Studio's audio clips). Pick it in Settings or try again.";
-                return;
+                return false;
             }
             _main.Settings.TemplateChanged(template);
         }
@@ -289,16 +375,19 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
             card.Finish($"Opening {Path.GetFileNameWithoutExtension(file)} in Bitwig",
                         leftOut.Count == 0 ? "Converted. Everything carried over." : $"Converted. {Things(leftOut.Count)} not carried over (see the project panel).",
                         "Show file", () => Shell.Reveal(file));
+            return true;
         }
         catch (InvalidDataException e) when (e.Message.StartsWith("The Bitwig template", StringComparison.Ordinal))
         {
             Message = $"{e.Message}. Pick another template in Settings.";
             card.Fail("Converting for Bitwig failed", "The Bitwig template needs changing (see the project panel).");
+            return false;
         }
         catch (Exception e)
         {
             Message = $"Converting for Bitwig failed: {e.Message}";
             card.Fail("Converting for Bitwig failed", e.Message);
+            return false;
         }
     }
 

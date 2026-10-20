@@ -1,0 +1,212 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
+             x:Class="MusicOrganiser.Avalonia.Views.DuplicatesView"
+             x:DataType="vm:DuplicatesViewModel">
+    <UserControl.Styles>
+        <Style Selector="ListBox.groups ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+        <Style Selector="ListBox.groups ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.copy">
+            <Setter Property="Padding" Value="6,6,8,6" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusS}" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.copy:pointerover">
+            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+        </Style>
+        <Style Selector="Border.copy.keep">
+            <Setter Property="Background" Value="{StaticResource OkSoftBrush}" />
+        </Style>
+        <Style Selector="Border.copy.hidden">
+            <Setter Property="Opacity" Value="0.55" />
+        </Style>
+        <Style Selector="Border.badge.hiddenBadge">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+        </Style>
+        <Style Selector="Border.badge.hiddenBadge TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
+        <!-- How each file is a copy: green to keep, accent for exact, plain for the same sound in another file, amber outline for very similar or trimmed (never hidden). -->
+        <Style Selector="Border.badge">
+            <Setter Property="Width" Value="92" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.badge.keep">
+            <Setter Property="Background" Value="{StaticResource OkBrush}" />
+        </Style>
+        <Style Selector="Border.badge.keep TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource OnAccentBrush}" />
+        </Style>
+        <Style Selector="Border.badge.exact">
+            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+        </Style>
+        <Style Selector="Border.badge.converted">
+            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
+        </Style>
+        <Style Selector="Border.badge.similar">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource WarningBrush}" />
+        </Style>
+        <Style Selector="Border.badge.similar TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+        </Style>
+        <Style Selector="Button.playCopy">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="15" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,Auto,*">
+        <DockPanel Margin="0,0,0,10">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                <TextBox Classes="clearButton" Width="300" PlaceholderText="Search names and folders…" Text="{Binding SearchText}" Margin="0,0,10,0" />
+                <Button Content="Find duplicates" Classes="accent" Command="{Binding FindCommand}" IsEnabled="{Binding !Parent.IsBusy}"
+                        ToolTip.Tip="Listens to new and changed sounds and finds their copies. Your files are never moved or deleted." />
+            </StackPanel>
+            <StackPanel Margin="0,0,16,0">
+                <TextBlock Text="Copies of the same sound" Classes="sectionHeader" />
+                <TextBlock Text="{Binding Summary}" Classes="muted" TextWrapping="Wrap" />
+                <!-- Hidden copies whose group has gone can't be reached from the list, so they're offered back here. -->
+                <Button Classes="link" Content="{Binding StrayHiddenText}" Command="{Binding ShowAllHiddenCommand}" IsVisible="{Binding HasStrayHidden}"
+                        Padding="0" Margin="0,4,0,0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource AccentBrush}" FontSize="12.5" />
+                <CheckBox Content="Look for copies of new sounds after each scan" IsChecked="{Binding AfterScan}" Margin="0,6,0,0"
+                          ToolTip.Tip="When a scan finds new or changed sounds, check them for copies straight away" />
+            </StackPanel>
+        </DockPanel>
+
+        <DockPanel Grid.Row="1" IsVisible="{Binding !IsEmpty}">
+            <TextBlock DockPanel.Dock="Right" Text="{Binding ShownText}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+            <ListBox Classes="chips" ItemsSource="{Binding Source={x:Static vm:DuplicatesViewModel.KindChoices}}" SelectedItem="{Binding Kind}">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+            </ListBox>
+        </DockPanel>
+
+        <!-- Batch: tick groups, then hide their extra copies from the app (the files stay put). -->
+        <Border Grid.Row="2" Classes="card" Padding="12,8" Margin="0,2,0,8" IsVisible="{Binding !IsEmpty}">
+            <StackPanel Spacing="6">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button Content="Select all" Command="{Binding SelectAllCommand}" ToolTip.Tip="Tick every group showing (use the filters first to pick, say, only exact copies)" />
+                        <Button Content="Select none" Command="{Binding SelectNoneCommand}" />
+                        <Button Content="Hide extra copies" Classes="accent" Command="{Binding HideCopiesCommand}"
+                                ToolTip.Tip="Hides the copies that are the same sound as the one to keep from the app's lists. Very similar ones stay. Your files are not moved or deleted." />
+                    </StackPanel>
+                    <TextBlock Text="{Binding SelectionText}" Classes="muted" VerticalAlignment="Center" Margin="0,0,12,0" />
+                </DockPanel>
+                <DockPanel IsVisible="{Binding HasBatchMessage}">
+                    <TextBlock Text="{Binding BatchMessage}" FontSize="12.5" Foreground="{StaticResource OkBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                </DockPanel>
+                <Button Classes="link" Content="{Binding UndoText}" Command="{Binding UndoCommand}" IsVisible="{Binding CanUndo}"
+                        Padding="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource AccentBrush}" FontSize="12.5" />
+            </StackPanel>
+        </Border>
+
+        <Panel Grid.Row="3" Margin="0,4,0,0">
+            <!-- Nothing to show yet: what this does, and the job's progress while it runs. -->
+            <Border Classes="card" IsVisible="{Binding IsEmpty}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32" MaxWidth="520">
+                    <TextBlock Text="⧉" FontSize="40" Foreground="{StaticResource FaintBrush}" HorizontalAlignment="Center" />
+                    <TextBlock Text="{Binding EmptyTitle}" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,4" />
+                    <TextBlock Text="{Binding EmptyText}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap" />
+                    <!-- Hiding everything showing empties the list, and the batch bar with its undo, so undo is offered here too. -->
+                    <Button Content="{Binding UndoText}" Command="{Binding UndoCommand}" Classes="accent" HorizontalAlignment="Center" Margin="0,14,0,0">
+                        <Button.IsVisible>
+                            <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                <Binding Path="CanUndo" />
+                                <Binding Path="OnlyHiddenLeft" />
+                            </MultiBinding>
+                        </Button.IsVisible>
+                    </Button>
+                    <StackPanel Margin="0,18,0,0" IsVisible="{Binding Parent.IsBusy}" Width="360">
+                        <TextBlock Text="{Binding Parent.BusyText}" Foreground="{StaticResource MutedBrush}" FontSize="12" HorizontalAlignment="Center" />
+                        <ProgressBar Height="6" MinHeight="6" Margin="0,8,0,0" Maximum="100" Value="{Binding Parent.BusyPercent}"
+                                     IsIndeterminate="{Binding StepUnknown}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <ListBox Classes="groups" ItemsSource="{Binding Groups}" Background="Transparent" IsVisible="{Binding !IsEmpty}">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DuplicateGroupItem">
+                        <Border Classes="card" Padding="12,10,12,8">
+                            <StackPanel>
+                                <DockPanel Margin="6,0,0,6">
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsTicked}" IsEnabled="{Binding CanTick}" Margin="0,0,4,0" MinWidth="0"
+                                              ToolTip.Tip="Tick to hide this group's copies that are the same sound (very similar ones stay)" />
+                                    <Ellipse DockPanel.Dock="Left" Width="9" Height="9" Margin="0,0,10,0" VerticalAlignment="Center"
+                                             Fill="{Binding Type, Converter={StaticResource TypeBrush}}" />
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </DockPanel>
+                                <ItemsControl ItemsSource="{Binding Members}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DuplicateMemberItem">
+                                            <Border Classes="copy" Classes.keep="{Binding IsKeep}" Classes.hidden="{Binding IsHidden}">
+                                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12">
+                                                    <Button Classes="playCopy" Content="▶" ToolTip.Tip="Play / stop"
+                                                            Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).PlayCommand}"
+                                                            CommandParameter="{Binding}" />
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Sound.Path}" />
+                                                        <TextBlock Text="{Binding Folder}" Classes="muted" FontSize="11.5" TextWrapping="NoWrap"
+                                                                   TextTrimming="{x:Static TextTrimming.PrefixCharacterEllipsis}" ToolTip.Tip="{Binding Folder}" />
+                                                    </StackPanel>
+                                                    <!-- The waveform saved when the sound was scanned: nothing is read or worked out to draw it, and
+                                                         only the groups on screen are drawn. Shows a sound that starts with silence. -->
+                                                    <Border Grid.Column="2" Width="150" Height="30" VerticalAlignment="Center" ToolTip.Tip="The sound's waveform, start to end">
+                                                        <views:MiniWave Peaks="{Binding Sound.Analysis.Waveform}" Fill="{StaticResource AccentBrush}" />
+                                                    </Border>
+                                                    <StackPanel Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                                        <TextBlock Text="{Binding Facts}" FontSize="12" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" />
+                                                        <TextBlock Text="{Binding Why}" FontSize="11.5" HorizontalAlignment="Right" Foreground="{StaticResource FaintBrush}" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="4" VerticalAlignment="Center" Width="92">
+                                                        <Border Classes="pill badge" Classes.keep="{Binding IsKeep}" Classes.hiddenBadge="{Binding IsHidden}" Classes.exact="{Binding IsExact}"
+                                                                Classes.converted="{Binding IsConverted}" Classes.similar="{Binding IsSimilar}">
+                                                            <TextBlock Text="{Binding Badge}" Classes="pillText" HorizontalAlignment="Center" />
+                                                        </Border>
+                                                        <TextBlock Text="{Binding UsedText}" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,0"
+                                                                   Foreground="{StaticResource MutedBrush}" IsVisible="{Binding UsedText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                                    </StackPanel>
+                                                    <Panel Grid.Column="5" Width="96" VerticalAlignment="Center">
+                                                        <Button Content="Keep this" Padding="10,3" HorizontalAlignment="Stretch" IsVisible="{Binding CanKeep}"
+                                                                ToolTip.Tip="Keep this copy instead, so the others are the extra ones"
+                                                                Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).KeepThisCommand}"
+                                                                CommandParameter="{Binding}" />
+                                                        <Button Content="Show again" Padding="10,3" HorizontalAlignment="Stretch" IsVisible="{Binding IsHidden}"
+                                                                ToolTip.Tip="List this sound in the app again"
+                                                                Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).UnhideCommand}"
+                                                                CommandParameter="{Binding}" />
+                                                    </Panel>
+                                                    <Button Grid.Column="6" Content="Folder" Padding="10,3" VerticalAlignment="Center" ToolTip.Tip="Open the folder this file is in"
+                                                            Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).RevealCommand}"
+                                                            CommandParameter="{Binding}" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Panel>
+    </Grid>
+</UserControl>

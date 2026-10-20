@@ -191,7 +191,10 @@ public sealed partial class PluginsViewModel : ObservableObject
         }
         else
         {
+            // A fixed copy waiting for Keep isn't a save yet (as on Projects).
+            var pending = _db.PendingFixes();
             _saves = _db.ProjectsWithPlugin(p.Name, p.Own);
+            if (pending.Count > 0) _saves = _saves.Where(x => !pending.Contains(x.Path)).ToList();
             SelectedDetails = string.Join(" · ", new[]
             {
                 p.Format == "Native" && p.Daws.Contains("FL", StringComparison.OrdinalIgnoreCase) ? "FL Studio native" : p.Format,
@@ -219,16 +222,39 @@ public sealed partial class PluginsViewModel : ObservableObject
         else ShowSaves();
     }
 
-    /// <summary>The side panel's list: the picked plugin's saves in the picked DAW, as songs or every save.</summary>
+    /// <summary>
+    /// The side panel's list: the picked plugin's saves in the picked DAW, as songs or every save. A plugin in thousands of
+    /// saves (one in the default template) is sorted into songs in the background, so the click doesn't stall the window.
+    /// </summary>
     void ShowSaves()
     {
         var saves = ShownSaves();
-        var songs = SongVersions.Songs(saves);
-        Projects = EverySave ? saves.Select(x => new SongUse(x.Name, x, 1)).ToList() : songs;
-        var where = ProjectsDaw == ProjectsViewModel.Any ? "" : $" in {ProjectsDaw}";
+        var (every, daw, choices, show) = (EverySave, ProjectsDaw, _main.Projects.Choices, ++_shows);
+        if (saves.Count < BackgroundSongsAt)
+        {
+            Apply(saves, SongVersions.Songs(saves, choices), every, daw);
+            return;
+        }
+        _ = Later();
+
+        async Task Later()
+        {
+            var songs = await UiWork.Run(() => SongVersions.Songs(saves, choices));
+            if (show == _shows) Apply(saves, songs, every, daw);   // not if another plugin was picked meanwhile
+        }
+    }
+
+    // Counts ShowSaves calls, so a slow one that finishes late doesn't replace a newer list.
+    int _shows;
+    internal const int BackgroundSongsAt = 2_000;
+
+    void Apply(IReadOnlyList<PluginProject> saves, IReadOnlyList<SongUse> songs, bool every, string daw)
+    {
+        Projects = every ? saves.Select(x => new SongUse(x.Name, x, 1)).ToList() : songs;
+        var where = daw == ProjectsViewModel.Any ? "" : $" in {daw}";
         ProjectsTitle = songs.Count == 1 ? $"Used in 1 song{where}" : $"Used in {songs.Count} songs{where}";
         ProjectsNote = saves.Count == songs.Count ? ""
-            : EverySave ? $"Every one of its {saves.Count} saves, newest first."
+            : every ? $"Every one of its {saves.Count} saves, newest first."
             : $"{saves.Count} saves in all. Each song shows its newest save that uses it.";
     }
 

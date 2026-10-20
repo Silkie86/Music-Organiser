@@ -26,6 +26,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     public SoundOrganiser Org { get; }
     public RediscoverViewModel Rediscover { get; }
     public KitViewModel Kit { get; }
+    /// <summary>The Duplicates tab: copies of the same sound across your sample folders.</summary>
+    public DuplicatesViewModel Duplicates { get; }
 
     public static IReadOnlyList<string> AllTypes { get; } = [.. SoundTypes.All, SoundTypes.Unknown];
     public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. MusicTheory.NoteNames.Select(n => n), .. MusicTheory.NoteNames.Select(n => n + "m")];
@@ -165,6 +167,29 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     partial void OnListenToNewChanged(bool value) => _db.SetSetting(ListenToNewKey, value ? "1" : "0");
 
+    public const string UsedNeedsNotesKey = "used_in_needs_notes", UsedNotMutedKey = "used_in_not_muted_newest";
+    /// <summary>
+    /// Used in (and the year filter, Most liked and Never used, which go by it) counts a project only where the sound's
+    /// channel has notes (Solomon's 18 Oct note). FL Studio projects so far; other DAWs' projects count as before.
+    /// </summary>
+    [ObservableProperty] bool _usedNeedsNotes;
+    /// <summary>...and not in a song whose newest save has the sound's channel muted.</summary>
+    [ObservableProperty] bool _usedNotMutedInNewest;
+
+    partial void OnUsedNeedsNotesChanged(bool value)
+    {
+        _db.SetSetting(UsedNeedsNotesKey, value ? "1" : "0");
+        _ = RefreshUsageAsync();
+    }
+
+    partial void OnUsedNotMutedInNewestChanged(bool value)
+    {
+        _db.SetSetting(UsedNotMutedKey, value ? "1" : "0");
+        _ = RefreshUsageAsync();
+    }
+
+    UsageRules Rules => new(UsedNeedsNotes, UsedNotMutedInNewest);
+
     public SoundsViewModel(LibraryDb db, SoundOrganiser org, MainViewModel main)
     {
         _db = db;
@@ -172,8 +197,11 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Org = org;
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
+        Duplicates = new DuplicatesViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
         _listenToNew = db.GetSetting(ListenToNewKey) != "0";
+        _usedNeedsNotes = db.GetSetting(UsedNeedsNotesKey) == "1";
+        _usedNotMutedInNewest = db.GetSetting(UsedNotMutedKey) == "1";
         _similarCount = int.TryParse(db.GetSetting(SimilarCountKey), out var similar) && similar > 0 ? similar : 12;
         _sweepMs = int.TryParse(db.GetSetting(SweepKey), out var sweep) && sweep > 0 ? sweep : 90;
         _stepMs = int.TryParse(db.GetSetting(StepKey), out var step) && step > 0 ? step : 250;
@@ -310,7 +338,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <summary>Everything the page shows about the sounds, worked out on any thread. Changes nothing the window shows.</summary>
     Loaded LoadAll(IReadOnlyList<Sound> items)
     {
-        Org.ApplyUsage(_db.SampleUsageByAge(DateTime.Now.AddYears(-1)));
+        Org.ApplyUsage(_db.SampleUsageByAge(DateTime.Now.AddYears(-1), Rules));
         var weights = _weights;
         var liked = items.Select(weights.Score).ToArray();
         IReadOnlyList<TypeCount> types =
@@ -356,11 +384,12 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             return;
         }
         var since = DateTime.Now.AddYears(-1);
+        var rules = Rules;
         var weights = _weights;
         var (changed, years, liked) = await Task.Run(() =>
         {
             var before = items.Select(s => (s.UsedIn, s.UsedInRecently, s.UsedInYears)).ToArray();
-            Org.ApplyUsage(_db.SampleUsageByAge(since));
+            Org.ApplyUsage(_db.SampleUsageByAge(since, rules));
             var changed = items.Where((s, i) => (s.UsedIn, s.UsedInRecently) != (before[i].UsedIn, before[i].UsedInRecently)).Any();
             // A project re-saved in a new year changes only the years its sounds are used in, which the year filter goes by.
             var years = changed || items.Where((s, i) => !s.UsedInYears.AsSpan().SequenceEqual(before[i].UsedInYears)).Any();
@@ -397,13 +426,14 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         var installed = ClapModel.IsInstalled();
         var withClap = Org.Library.CountWithClap();
+        var everything = Org.Everything.Count;   // deep listening covers hidden copies too, so count them as well
         var clap = !installed
             ? "Not installed. Download it once (about 205 MB) to search by describing a sound, and for sharper sound-alikes and type guesses. It runs on this PC; nothing is uploaded."
             : count == 0
                 ? $"Installed in {ClapModel.DefaultFolder}. Scan your sample folders, then Deep listen."
-            : withClap >= count && count > 0
+            : withClap >= everything && everything > 0
                 ? $"Installed. Every sound has been deep-listened ({withClap:N0})."
-                : $"Installed. {withClap:N0} of {count:N0} sounds deep-listened so far; run Deep listen to do the rest.";
+                : $"Installed. {withClap:N0} of {everything:N0} sounds deep-listened so far; run Deep listen to do the rest.";
         var m = Org.TypeModel;
         var summary = m is null
             ? "Not trained yet: it needs at least 20 sounds whose folder or file names say what they are (or that you've labelled)."
@@ -885,10 +915,12 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     /// <summary>
     /// Whether an arrow key may move the highlight now. A press always may; a key held down (its repeats) waits until
-    /// the sound it's on has played for <see cref="StepMs"/>, so what you see and what you hear stay together.
+    /// the sound it's on has played for <see cref="StepMs"/>, so what you see and what you hear stay together. With
+    /// Autoplay off nothing plays, so a held key runs through the list at the keyboard's own speed.
     /// </summary>
     public bool MayStep(bool held)
     {
+        if (!AutoPlay) return true;
         var now = System.Diagnostics.Stopwatch.GetTimestamp();
         if (held && System.Diagnostics.Stopwatch.GetElapsedTime(_steppedAt, now).TotalMilliseconds < StepMs) return false;
         _steppedAt = now;
@@ -1076,8 +1108,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     /// <param name="done">The card's words once the job has finished, worked out then.</param>
     /// <param name="always">False: the page reloads only if the job read the sounds in again (a scan that found nothing new doesn't).</param>
-    async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null,
-                        bool always = true)
+    internal async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null,
+                                 bool always = true)
     {
         if (IsBusy) return;
         IsBusy = true;
@@ -1128,6 +1160,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         },
                        () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"Analysed {count:N0} new or changed sounds"), always: false);
         if (count > 0) Message = $"Analysed {count:N0} new or changed sounds.";
+        if (count > 0 && Duplicates.AfterScan) await Duplicates.FindAsync();
         if (count > 0) await ListenToArrivals(arrived);
         if (count > 0 || IsGalaxy) await MapGalaxyIfNeeded();
     }

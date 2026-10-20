@@ -40,10 +40,13 @@ public sealed partial class ProjectDetailViewModel
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(PendingFixText), nameof(PendingFixDetail))] bool _pendingFixOpened;
     public bool HasPendingFix => PendingFix is not null;
     public string PendingFixText => PendingFixOpened
-        ? $"Did {System.IO.Path.GetFileNameWithoutExtension(PendingFix)} load correctly?"
+        ? $"Did {System.IO.Path.GetFileNameWithoutExtension(PendingFix)} load correctly{(_checkedInBitwig ? " in Bitwig" : "")}?"
         : $"{System.IO.Path.GetFileName(PendingFix)} is saved next to the original.";
     public string PendingFixDetail => PendingFixOpened
-        ? "Keep it if it plays right. If it didn't load right, delete it: the original was never changed."
+        ? "Keep it if it plays right. If it didn't load right, delete it: the original was never changed." +
+          (_checkedInBitwig && Item.Daw != "Bitwig Studio"
+              ? $" Bitwig opened the app's convert of it, which doesn't prove {Item.Daw} opens the fixed file: open it there too if you'll work on it there."
+              : "")
         : $"Open it in {Item.Daw}{(IsFlStudio ? " or Bitwig" : "")} to check it, then say whether it loaded correctly. " +
           "Until you keep it, the song still opens the original.";
 
@@ -198,14 +201,22 @@ public sealed partial class ProjectDetailViewModel
             return;
         }
         var name = System.IO.Path.GetFileNameWithoutExtension(file);
-        await ConvertForBitwig(_db.ProjectAt(file) ?? new ProjectSummary { Path = file, Name = name, Daw = Item.Daw }, name);
-        if (PendingFix == file) FixOpened(file);
+        // Asked about only when the convert opened: a failed one has nothing to look at.
+        if (await ConvertForBitwig(_db.ProjectAt(file) ?? new ProjectSummary { Path = file, Name = name, Daw = Item.Daw }, name) &&
+            PendingFix == file) FixOpened(file, inBitwig: true);
     }
 
-    void FixOpened(string file)
+    // The last check was Bitwig's convert of the copy, not its own DAW opening it (said beside Keep).
+    bool _checkedInBitwig;
+
+    void FixOpened(string file, bool inBitwig = false)
     {
-        PendingFixOpened = true;
+        _checkedInBitwig = inBitwig;
+        // Saved first: a panel made for this song from now on (leaving it and coming back) reads it from there.
         if (_pendingFrom is { } from) _db.SetSetting(FixOpenedKey(from), file);
+        PendingFixOpened = true;
+        OnPropertyChanged(nameof(PendingFixText));
+        OnPropertyChanged(nameof(PendingFixDetail));
     }
 
     /// <summary>It loaded fine: keep the copy, stop asking, and list it as the song's newest save.</summary>
@@ -213,8 +224,11 @@ public sealed partial class ProjectDetailViewModel
     async Task KeepFixed()
     {
         if (PendingFix is not { } file) return;
+        var fromNewest = (_pendingFrom ?? Item.Path) == Item.Path;
         ForgetFix();
-        Activities.Done($"Kept {System.IO.Path.GetFileName(file)}", "It's now the newest save of this song, so Open uses it.");
+        Activities.Done($"Kept {System.IO.Path.GetFileName(file)}", fromNewest
+            ? "It's now the newest save of this song, so Open uses it."
+            : "It's listed with the song's saves, next to the older save it was made from.");
         await _main.Projects.ReloadAsync(select: file);
     }
 

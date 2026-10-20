@@ -1871,9 +1871,18 @@ final class Link {
         if (count > PAD_DEVICES) return false;
         for (int d = 1; d < count; d++) {
             Device after = (Device) padDevices[note].getItemAt(d);
-            if (after.exists().get() && !"audio_to_audio".equals(str(after.deviceType().get()))) return false;
+            if (after.exists().get() && !audioEffect(str(after.deviceType().get()))) return false;
         }
         return true;
+    }
+
+    /**
+     * Whether Bitwig's word for a device's type is an audio effect's. Bitwig 6.1.5 says "instrument" and "note-effect"
+     * (the 2026-10-19 live run), so most likely "audio-effect"; "audio_to_audio", the word the link was first written
+     * for, still counts.
+     */
+    static boolean audioEffect(String type) {
+        return type.equals("audio-effect") || type.equals("audio_to_audio");
     }
 
     /** What's on a pad: its name, how many devices, the first one's name and its sample, as Bitwig shows them. */
