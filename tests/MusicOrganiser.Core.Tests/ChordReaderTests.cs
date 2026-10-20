@@ -155,6 +155,28 @@ public class ChordReaderTests
     }
 
     [Fact]
+    public void Bars_where_the_chord_part_rests_get_no_chords_from_the_bass_alone()
+    {
+        // F12 note, 20 Oct: an 808 line on its own in bars 2 and 3, where the chord clip rests, was read as Cm(b9)/Eb.
+        var section = new PlaygroundSection
+        {
+            Bars = 4,
+            Layers =
+            [
+                new PlaygroundLayer { Name = "Keys", Role = MidiRoles.Chords, Notes = Held(0, Bar, 53, 58, 61, 65).Concat(Held(3 * Bar, Bar, 51, 55, 58, 60)).ToList() },
+                new PlaygroundLayer
+                {
+                    Name = "808", Role = MidiRoles.Bass,
+                    Notes = new[] { 34, 34, 41, 39, 39, 37, 36, 39, 36, 34, 32, 31, 36, 36, 43, 39 }.Select((k, i) => new NoteEvent(i * (long)Beat, Beat, k, 100)).ToList(),
+                },
+            ],
+        };
+        var lane = SectionHarmony.Of(section).Lane;
+        Assert.Equal(["Bbm", "Cm7"], lane.Select(c => c.Chord.Name));
+        Assert.Equal(3L * Bar, lane[1].Start);
+    }
+
+    [Fact]
     public void A_chord_keeps_its_bass_in_the_index_and_reads_older_entries()
     {
         var chords = PhraseChord.Decode("9:291 0:091/4");

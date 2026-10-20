@@ -1,0 +1,114 @@
+using System.Collections;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
+using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Midi.Playground;
+using MusicOrganiser.Core.Sounds;
+using MusicOrganiser.ViewModels;
+using MusicOrganiser.Avalonia.Views;
+using Xunit;
+
+namespace MusicOrganiser.Avalonia.Tests;
+
+/// <summary>The real Playground page on the headless screen, with a library of its own in a temp folder and no sound.</summary>
+public sealed class PlaygroundPageTests : IDisposable
+{
+    readonly string _root = Directory.CreateTempSubdirectory("mo-playground-page-").FullName;
+    readonly LibraryDb _db;
+    readonly SoundLibrary _soundDb;
+    readonly SoundOrganiser _sounds;
+
+    public PlaygroundPageTests()
+    {
+        Ui.Current = new SilentUi();
+        UiWork.InBackground = false;
+        _db = new LibraryDb(Path.Combine(_root, "library.db"));
+        _soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        _sounds = new SoundOrganiser(_soundDb);
+    }
+
+    public void Dispose()
+    {
+        _sounds.Dispose();
+        _soundDb.Dispose();
+        _db.Dispose();
+        UiWork.InBackground = true;
+    }
+
+    static void Settle()
+    {
+        for (var i = 0; i < 5; i++) Dispatcher.UIThread.RunJobs();
+    }
+
+    [AvaloniaFact]
+    public void Space_plays_after_a_clip_button_is_clicked_and_never_clicks_it_again()
+    {
+        // F12 note, 20 Oct: after Octave + was clicked, every Space moved the clip up another octave.
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F |");
+        p.WriteChordsCommand.Execute(null);
+        var track = p.Layers[^1].Layer;
+        p.SelectClipCommand.Execute(new ClipPick(track, track.Clips[0]));
+        var window = new Window { Content = new PlaygroundView { DataContext = p }, Width = 1400, Height = 900 };
+        window.Show();
+        Settle();
+
+        var clip = p.SelectedClip!.Clip;
+        var up = window.GetVisualDescendants().OfType<Button>().Single(b => b.Command == p.SelectedClip.OctaveUpCommand);
+        var at = up.TranslatePoint(new Point(up.Bounds.Width / 2, up.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Settle();
+        Assert.Equal(12, clip.Transpose);
+        Assert.True(up.IsFocused);   // the button keeps the keyboard, as a clicked button does
+
+        void Space()
+        {
+            window.KeyPress(Key.Space, RawInputModifiers.None, PhysicalKey.Space, " ");
+            window.KeyRelease(Key.Space, RawInputModifiers.None, PhysicalKey.Space, " ");
+            Settle();
+        }
+
+        Space();
+        Assert.True(p.IsPlaying);
+        Assert.Equal(12, clip.Transpose);
+        Space();
+        Assert.False(p.IsPlaying);
+        Assert.Equal(12, clip.Transpose);
+    }
+
+    /// <summary>The app's Avalonia screens, with a player that makes no sound.</summary>
+    sealed class SilentUi : IPlatformUi
+    {
+        readonly AvaloniaUi _ui = new();
+        public IItemsView CreateView(IList items) => _ui.CreateView(items);
+        public IUiTimer CreateTimer(TimeSpan interval, Action tick) => _ui.CreateTimer(interval, tick);
+        public IAudioPlayer CreateAudioPlayer() => new Silence();
+        public Task<string?> PickFolder(string title) => Task.FromResult<string?>(null);
+        public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult<string?>(null);
+        public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);
+        public Task<string?> PickSaveFile(string fileName, string filterName, string extension, string? initialFolder) => Task.FromResult<string?>(null);
+        public Task<bool> Confirm(string message, string title) => Task.FromResult(true);
+        public void CopyText(string text) { }
+        public void ShowMidi(MidiPreviewViewModel vm) { }
+        public void ShowPresets(PresetsViewModel vm) { }
+    }
+
+    sealed class Silence : IAudioPlayer
+    {
+        public event Action? Stopped { add { } remove { } }
+        public string? Playing { get; private set; }
+        public double? Position => Playing is null ? null : 0;
+        public void Seek(double seconds) { }
+        public void Play(string path, double startSeconds = 0) => Playing = path;
+        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) => Playing = key;
+        public void Stop() => Playing = null;
+        public void Dispose() { }
+    }
+}

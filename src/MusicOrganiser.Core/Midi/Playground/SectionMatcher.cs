@@ -88,7 +88,7 @@ public sealed class SectionHarmony
     /// <summary>
     /// The notes the chords are heard from (Solomon, 2026-10-19: "only chord and bass clips decide the harmony; where no
     /// chord or bass clip plays, everything playing there counts"). Under a chord clip, the chord and bass clips there;
-    /// everywhere else, every part that plays. Bass alone doesn't say enough, so it only counts alongside chords. The
+    /// everywhere else, every part that plays. Bass alone doesn't say enough, so it only counts while chords sound. The
     /// cuts are where chord clips start and end: a chord heard under one doesn't run on outside it.
     /// </summary>
     static (List<NoteEvent> Notes, List<long> Cuts) HarmonySource(IReadOnlyList<PlaygroundLayer> layers, IReadOnlyList<NoteEvent> all)
@@ -100,12 +100,43 @@ public sealed class SectionHarmony
         var chordSpans = pieces.Where(p => p.Role == MidiRoles.Chords && p.Notes.Count > 0).Select(p => (p.Start, p.End)).ToList();
         if (chordSpans.Count == 0) return (all.ToList(), []);
         bool UnderChords(NoteEvent n) => chordSpans.Any(s => n.Start >= s.Start && n.Start < s.End);
-        // The whole bassline counts: the chord reader hears a walking bass's passing and approach notes as passing (Dm7
-        // stays Dm7, not D7#9), and a bass on the one under chords pushed onto the and of four still names them.
-        var notes = pieces.Where(p => p.Role is MidiRoles.Chords or MidiRoles.Bass).SelectMany(p => p.Notes)
-                          .Where(n => !n.Muted && UnderChords(n))
-                          .Concat(all.Where(n => !UnderChords(n))).OrderBy(n => n.Start).ToList();
+        var chordNotes = pieces.Where(p => p.Role == MidiRoles.Chords).SelectMany(p => p.Notes).Where(n => !n.Muted).ToList();
+        // The bassline counts while the chords sound, passing notes and all: the chord reader hears a walking bass's
+        // passing and approach notes as passing (Dm7 stays Dm7, not D7#9), and a bass on the one under chords pushed onto
+        // the and of four still names them. Where the chord part rests, an 808 line on its own isn't read as chords.
+        var sounding = Sounding(chordNotes);
+        var notes = chordNotes.Concat(pieces.Where(p => p.Role == MidiRoles.Bass).SelectMany(p => p.Notes)
+                                            .Where(n => !n.Muted && Sounds(sounding, n.Start, n.Start + Math.Max(1, n.Length))))
+                              .Where(UnderChords)
+                              .Concat(all.Where(n => !UnderChords(n))).OrderBy(n => n.Start).ToList();
         return (notes, chordSpans.SelectMany(s => new[] { s.Start, s.End }).Distinct().ToList());
+    }
+
+    /// <summary>Where at least one of the notes sounds: stretches in order, none touching the next.</summary>
+    static List<(long Start, long End)> Sounding(IEnumerable<NoteEvent> notes)
+    {
+        var spans = new List<(long Start, long End)>();
+        foreach (var n in notes.OrderBy(n => n.Start))
+        {
+            var end = n.Start + Math.Max(1, n.Length);
+            if (spans.Count > 0 && n.Start <= spans[^1].End) spans[^1] = (spans[^1].Start, Math.Max(spans[^1].End, end));
+            else spans.Add((n.Start, end));
+        }
+        return spans;
+    }
+
+    /// <summary>Whether anything in <paramref name="spans"/> (from <see cref="Sounding"/>) sounds between start and end.</summary>
+    static bool Sounds(List<(long Start, long End)> spans, long start, long end)
+    {
+        // The last stretch to start before the end is the only one that can reach past the start.
+        int lo = 0, hi = spans.Count - 1, last = -1;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) / 2;
+            if (spans[mid].Start < end) { last = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return last >= 0 && spans[last].End > start;
     }
 
     /// <summary>Just the bars from <paramref name="from"/> to <paramref name="to"/> (ticks), as if they were the whole section.</summary>
