@@ -178,6 +178,8 @@ public sealed record FlSong(string Title, int Ppq, double Tempo, IReadOnlyList<F
 {
     /// <summary>The playlist tracks that are muted and have something on them: their clips are <see cref="FlClip.OnMutedTrack"/>, and their automation is left out.</summary>
     public IReadOnlyList<FlTrack> MutedTracks { get; init; } = [];
+    /// <summary>Each automation clip's own curve by its channel, in beats from the clip's start, before it's placed in the playlist.</summary>
+    public IReadOnlyDictionary<int, IReadOnlyList<FlPoint>> Curves { get; init; } = new Dictionary<int, IReadOnlyList<FlPoint>>();
 }
 
 public sealed partial class FlStudioReader
@@ -213,6 +215,13 @@ public sealed partial class FlStudioReader
 
     /// <summary>Reads what's needed to rebuild the song elsewhere: channels, their plugins and notes, and the mixer.</summary>
     public FlSong ReadSong(string path) => ReadSong(Load(path), path);
+
+    /// <summary>The song and its playlist from one read of the file.</summary>
+    public (FlSong Song, FlPlaylist Playlist) ReadSongAndPlaylist(string path)
+    {
+        var flp = Load(path);
+        return (ReadSong(flp, path), ReadPlaylist(flp));
+    }
 
     FlSong ReadSong(Flp flp, string path)
     {
@@ -388,7 +397,11 @@ public sealed partial class FlStudioReader
                 Pan = mixer.Value(i, 0, TargetInsertPan),
             })
             .ToList();
-        return new FlSong(title, flp.Ppq, tempo ?? 140, channels, inserts, automation) { MutedTracks = mutedTracks };
+        return new FlSong(title, flp.Ppq, tempo ?? 140, channels, inserts, automation)
+        {
+            MutedTracks = mutedTracks,
+            Curves = curves.ToDictionary(c => c.Key, c => (IReadOnlyList<FlPoint>)c.Value),
+        };
     }
 
     /// <summary>A channel's levels (event 219): pan and volume as 0..1 knob positions, and pitch in cents.</summary>
