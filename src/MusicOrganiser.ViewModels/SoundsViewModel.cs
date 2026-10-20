@@ -26,6 +26,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     public SoundOrganiser Org { get; }
     public RediscoverViewModel Rediscover { get; }
     public KitViewModel Kit { get; }
+    /// <summary>The Duplicates tab: copies of the same sound across your sample folders.</summary>
+    public DuplicatesViewModel Duplicates { get; }
 
     public static IReadOnlyList<string> AllTypes { get; } = [.. SoundTypes.All, SoundTypes.Unknown];
     public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. MusicTheory.NoteNames.Select(n => n), .. MusicTheory.NoteNames.Select(n => n + "m")];
@@ -195,6 +197,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         Org = org;
         Rediscover = new RediscoverViewModel(this);
         Kit = new KitViewModel(this);
+        Duplicates = new DuplicatesViewModel(this);
         _autoPlay = db.GetSetting(AutoPlayKey) == "1";
         _listenToNew = db.GetSetting(ListenToNewKey) != "0";
         _usedNeedsNotes = db.GetSetting(UsedNeedsNotesKey) == "1";
@@ -423,13 +426,14 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         var installed = ClapModel.IsInstalled();
         var withClap = Org.Library.CountWithClap();
+        var everything = Org.Everything.Count;   // deep listening covers hidden copies too, so count them as well
         var clap = !installed
             ? "Not installed. Download it once (about 205 MB) to search by describing a sound, and for sharper sound-alikes and type guesses. It runs on this PC; nothing is uploaded."
             : count == 0
                 ? $"Installed in {ClapModel.DefaultFolder}. Scan your sample folders, then Deep listen."
-            : withClap >= count && count > 0
+            : withClap >= everything && everything > 0
                 ? $"Installed. Every sound has been deep-listened ({withClap:N0})."
-                : $"Installed. {withClap:N0} of {count:N0} sounds deep-listened so far; run Deep listen to do the rest.";
+                : $"Installed. {withClap:N0} of {everything:N0} sounds deep-listened so far; run Deep listen to do the rest.";
         var m = Org.TypeModel;
         var summary = m is null
             ? "Not trained yet: it needs at least 20 sounds whose folder or file names say what they are (or that you've labelled)."
@@ -1104,8 +1108,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     /// <param name="done">The card's words once the job has finished, worked out then.</param>
     /// <param name="always">False: the page reloads only if the job read the sounds in again (a scan that found nothing new doesn't).</param>
-    async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null,
-                        bool always = true)
+    internal async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null,
+                                 bool always = true)
     {
         if (IsBusy) return;
         IsBusy = true;
@@ -1156,6 +1160,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         },
                        () => ("Sample folders up to date", count == 0 ? "Nothing new" : $"Analysed {count:N0} new or changed sounds"), always: false);
         if (count > 0) Message = $"Analysed {count:N0} new or changed sounds.";
+        if (count > 0 && Duplicates.AfterScan) await Duplicates.FindAsync();
         if (count > 0) await ListenToArrivals(arrived);
         if (count > 0 || IsGalaxy) await MapGalaxyIfNeeded();
     }
