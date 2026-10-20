@@ -73,6 +73,16 @@ public static class Parallelism
         ThreadPool.SetMinThreads(Math.Max(worker, 3 * Cores), io);
     }
 
+    /// <summary>
+    /// Called once on the window's thread: puts it above normal priority. Some libraries (SoundFingerprinting) spread
+    /// their own work over every core at normal priority, beyond the slots above; this way the window still comes first.
+    /// </summary>
+    public static void FavourThisThread()
+    {
+        try { Thread.CurrentThread.Priority = ThreadPriority.AboveNormal; }
+        catch (Exception) { }   // not allowed on some systems; the slots still apply
+    }
+
     public static ParallelOptions Options(CancellationToken ct = default) =>
         new() { CancellationToken = ct, MaxDegreeOfParallelism = Workers };
 
