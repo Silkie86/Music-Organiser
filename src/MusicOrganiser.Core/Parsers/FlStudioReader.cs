@@ -787,7 +787,8 @@ public sealed partial class FlStudioReader : IProjectReader
     /// <summary>
     /// A clip in the playlist, in ticks. <see cref="Index"/> above 20480 is a pattern (index - 20480); otherwise a
     /// channel's clip. A muted clip has bit 0x2000 set in the flags at 18. <see cref="Offset"/> is where the clip
-    /// starts in what it plays: ticks into a pattern, milliseconds into an audio clip's sample.
+    /// starts in what it plays: ticks into a pattern, milliseconds into an audio clip's sample. <see cref="Slot"/> is the
+    /// playlist track it sits on as FL saves it, counting down from the first track (see <see cref="TopSlot"/>).
     /// </summary>
     readonly record struct PlaylistItem(int Index, long At, long Length, double Offset, bool Muted, int Slot = 0)
     {
