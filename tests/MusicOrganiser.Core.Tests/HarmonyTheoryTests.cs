@@ -2,6 +2,7 @@ using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Midi.Playground;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Sounds;
 
 namespace MusicOrganiser.Core.Tests;
 
@@ -136,5 +137,63 @@ public class HarmonyTheoryTests
         var a = SectionFit.Score(landing, lane, Bar, MidiRoles.Melody)!.Value;
         var b = SectionFit.Score(leaning, lane, Bar, MidiRoles.Melody)!.Value;
         Assert.True(a > b + 0.05, $"{a:0.00} vs {b:0.00}");
+    }
+
+    // ---- keys ----
+
+    static double[] ChromaOf(IEnumerable<NoteEvent> notes)
+    {
+        var c = new double[12];
+        foreach (var n in notes) c[n.Key % 12] += n.Length / (double)Bar;
+        return c;
+    }
+
+    [Fact]
+    public void Flat_keys_are_written_with_flats()
+    {
+        Assert.Equal("Eb major", MusicTheory.KeyName(3, false));
+        Assert.Equal("Bbm", MusicTheory.KeyName(10, true, true));
+        Assert.Equal("Gb", MusicTheory.KeyName(6, false, true));
+        Assert.Equal("F#m", MusicTheory.KeyName(6, true, true));
+        Assert.Equal("C#m", MusicTheory.KeyName(1, true, true));
+        Assert.Equal("Db", new KeyEstimate(1, false, 1).Short);
+        // A key stored the old way is shown the new way.
+        Assert.Equal("Eb minor", MusicTheory.Respell("D# minor"));
+        Assert.Equal("Bb", MusicTheory.Respell("A#"));
+        Assert.Equal("", MusicTheory.Respell(""));
+    }
+
+    [Fact]
+    public void A_gospel_vamp_in_Ab_is_heard_in_Ab()
+    {
+        // Ab – Db/Ab – Eb/Ab – Ab, over an Ab pedal: the kind of 8 bars a gospel keys pack opens with.
+        int[][] vamp = [[56, 60, 63, 68], [56, 61, 65, 68], [56, 58, 63, 67], [56, 60, 63, 68]];
+        var notes = vamp.SelectMany((c, i) => Held(i * 2L * Bar, 2 * Bar, c)).ToList();
+        var key = MusicTheory.EstimateMidiKey(ChromaOf(notes))!;
+        Assert.Equal((8, false), (key.Tonic, key.Minor));
+        Assert.Equal("Ab", PhraseAnalyser.Analyse(notes).Key!.Short);
+    }
+
+    [Fact]
+    public void The_first_chord_only_settles_a_toss_up_between_a_key_and_its_relative()
+    {
+        // Am – Dm – G – C: C major by a hair on the notes alone, so the opening Am decides.
+        int[][] tossUp = [[57, 60, 64], [50, 53, 57], [55, 59, 62], [48, 52, 55]];
+        var even = ChromaOf(tossUp.SelectMany((c, i) => Held(i * Bar, Bar, c)));
+        Assert.Equal((0, false), MusicTheory.EstimateMidiKey(even) is { } k0 ? (k0.Tonic, k0.Minor) : default);
+        Assert.Equal((9, true), MusicTheory.EstimateMidiKey(even, 9) is { } k1 ? (k1.Tonic, k1.Minor) : default);
+        // C – G – C – F – C, leaning hard on C, E and G: starting on an Am chord doesn't make it A minor.
+        int[][] home = [[57, 60, 64], [48, 52, 55], [55, 59, 62], [48, 52, 55], [53, 57, 60], [48, 52, 55], [48, 52, 55]];
+        var major = ChromaOf(home.SelectMany((c, i) => Held(i * Bar, Bar, c)));
+        Assert.Equal((0, false), MusicTheory.EstimateMidiKey(major, 9) is { } k2 ? (k2.Tonic, k2.Minor) : default);
+    }
+
+    [Fact]
+    public void Notes_that_point_at_no_key_are_too_unsure_for_the_playground()
+    {
+        // The whole-tone scale, every note as long: each of its keys fits as well as the next, so there's no key to give.
+        var notes = new[] { 60, 62, 64, 66, 68, 70 }.SelectMany((k, i) => Held(i * Bar, Bar, k)).ToList();
+        var key = MusicTheory.EstimateMidiKey(ChromaOf(notes));
+        Assert.True(key is null || key.Confidence < SectionHarmony.MinKeyConfidence, $"{key?.Short} at {key?.Confidence}");
     }
 }

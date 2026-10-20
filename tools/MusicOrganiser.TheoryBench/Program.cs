@@ -10,9 +10,14 @@ using MusicOrganiser.Core.Sounds;
 using static Measure;
 
 const int Beat = 96, Bar = 4 * Beat;
+var profilesAt = Array.IndexOf(args, "--profiles");
+if (profilesAt >= 0 && profilesAt + 1 < args.Length) KeyLab.Load(args[profilesAt + 1]);
+var saveAt = Array.IndexOf(args, "--save-profile");
+if (saveAt >= 0 && saveAt + 1 < args.Length) KeyLab.SaveTo = args[saveAt + 1];
 if (args is ["--library", var library, ..] && Directory.Exists(library))
 {
     LibraryBench.Verbose = args.Contains("--verbose");
+    LibraryBench.KeyLabToo = args.Contains("--keylab");
     LibraryBench.Run(library);
     return;
 }
@@ -40,6 +45,26 @@ foreach (var dir in Directory.GetDirectories(rootDir).OrderBy(d => d))
 }
 Console.WriteLine($"songs used: {songs.Count} (skipped {skipped}, MIDI beats not lined up with the annotated beats: {misaligned})");
 Console.WriteLine("beats per bar (from the downbeat annotations): " + string.Join(", ", meters.OrderBy(m => m.Key).Select(m => $"{m.Key}: {m.Value}")));
+
+// ======================================================================= key finders side by side (KeyLab.cs)
+if (args.Contains("--keylab"))
+{
+    var whole = songs.Where(s => s.Keys.Count == 1).Select(s => new KeyLab.Item("pop whole", s.Id,
+        s.Melody.Concat(s.Bridge).Concat(s.Piano).OrderBy(n => n.Start).ToList(), (s.MainKey.Tonic, s.MainKey.Minor))).ToList();
+    var clips = new List<KeyLab.Item>();
+    foreach (var s in songs)
+    {
+        var all = s.Melody.Concat(s.Bridge).Concat(s.Piano).OrderBy(n => n.Start).ToList();
+        for (long at = 0; at + 8 * Bar <= s.Length; at += 8 * Bar)
+        {
+            var refKey = s.Keys.FirstOrDefault(k => k.Start <= at + 4 * Bar && k.End > at + 4 * Bar);
+            var clip = Cut(all, at, 8 * Bar);
+            if (refKey.End != 0 && clip.Count >= 8) clips.Add(new KeyLab.Item("pop 8 bars", s.Id, clip, (refKey.Tonic, refKey.Minor)));
+        }
+    }
+    KeyLab.Run("POP909", [.. whole, .. clips], whole);
+    return;
+}
 
 // ======================================================================= keys on 8-bar clips (what the MIDI page sees)
 if (args.Contains("--clips"))

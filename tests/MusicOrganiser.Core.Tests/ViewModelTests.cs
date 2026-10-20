@@ -1734,14 +1734,14 @@ public class ViewModelTests : IDisposable
         await midi.RefreshAsync();
         var row = Assert.Single(midi.Results);
         var key = row.KeyText;   // C minor or its relative, E flat major: the same notes
-        Assert.Contains(key, new[] { "Cm", "D#" });
+        Assert.Contains(key, new[] { "Cm", "Eb" });
 
         // Fitted to the A minor song: moved down 3, and shown, played and dragged out that way.
         midi.FitToHarmony(Core.Midi.HarmonyTarget.FromChannels("Fit me", [song])!);
         await midi.RefreshAsync();
         row = Assert.Single(midi.Results);
         Assert.Equal("down 3 semitones", row.MoveText);
-        Assert.Equal(key == "Cm" ? "Cm → Am" : "D# → C", row.KeyText);
+        Assert.Equal(key == "Cm" ? "Cm → Am" : "Eb → C", row.KeyText);
         Assert.Equal(51 - 3, row.Channel.Notes.Min(n => n.Key));
         var drag = midi.MakeDrag([row])!;
         var written = Core.Midi.MidiFileReader.Read(drag.Files.Single());

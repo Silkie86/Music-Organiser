@@ -325,17 +325,11 @@ public static partial class PhraseAnalyser
         if (total > 0) for (var i = 0; i < 12; i++) chroma[i] /= total;
 
         var pitched = role is not MidiRoles.Drums;
-        var key = pitched && notes.Count >= 4 && chroma.Count(c => c > 0) >= 3
-            ? MusicTheory.EstimateKey(chroma.Select(c => (double)c).ToArray())
-            : null;
         var chords = pitched ? Progression(notes, role == MidiRoles.Chords) : [];
-        // A key and its relative major or minor share every note; a progression that starts on the other one's root
-        // (Cm – Ab – Eb – Bb) is in that one.
-        if (key is not null && chords.Count > 0)
-        {
-            var relative = key.Minor ? (key.Tonic + 3) % 12 : (key.Tonic + 9) % 12;
-            if (chords[0].Root == relative) key = key with { Tonic = relative, Minor = !key.Minor };
-        }
+        // A key and its relative major or minor share every note; when they fit about the same, the first chord decides.
+        var key = pitched && notes.Count >= 4 && chroma.Count(c => c > 0) >= 3
+            ? MusicTheory.EstimateMidiKey(chroma.Select(c => (double)c).ToArray(), chords.Count > 0 ? chords[0].Root : null)
+            : null;
         return new PhraseAnalysis(role, why, BarsOf(notes), notes.Count == 0 ? 0 : notes.Min(n => n.Key),
                                   notes.Count == 0 ? 0 : notes.Max(n => n.Key), key, chroma, chords,
                                   Features(shape, notes, chroma, key), HashOf(notes));

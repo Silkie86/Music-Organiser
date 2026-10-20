@@ -133,6 +133,19 @@ dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "p
 
 `--verbose` lists each file whose key the app got wrong.
 
+`--keylab` (with either the POP909 folder or `--library`) puts key finders side by side: the app's, three published key
+profiles, ways of counting the bass, and profiles learned from the other songs or packs (never the one being tested). It
+prints the exact share and the MIREX score per style, then how often each confidence cut shows a key and how often
+that key is right. `--save-profile file.txt` writes the profile learned from that run's labelled files, and
+`--profiles a.txt,b.txt` tries saved profiles (and their average) on another set. The app's MIDI key profile
+(`MusicTheory.EstimateMidiKey`) is the average of a POP909 profile and a gospel, jazz, neo soul and soul pack profile
+made this way; only those 24 averages are in the code, never the files.
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --keylab --save-profile pop.txt
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" --keylab --profiles pop.txt
+```
+
 Things to know:
 
 - Only songs whose MIDI beats line up with the labelled beats are used (387 of them). The chord, key and beat labels

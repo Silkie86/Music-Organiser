@@ -60,17 +60,27 @@ static class LibraryBench
                 if (m.Count >= 8 && a.Count >= 8) pieces.Add(new Piece(style, rel, m, a, key, label is not null));
             }
             if (label is not null) KeyRows.Add((style, rel, label.Value, all));
+            if (label is not null)
+            {
+                var parts2 = rel.Split(Path.DirectorySeparatorChar);
+                var pack = parts2.Length > 2 ? parts2[1] : parts2[0];
+                LabItems.Add(new KeyLab.Item(style, pack, all, label.Value));
+                var cut = Cut(all, first, 8 * Bar);
+                if (cut.Count >= 8) LabItems.Add(new KeyLab.Item(style + " 8 bars", pack, cut, label.Value));
+            }
         }
         Console.WriteLine($"MIDI files: {files}; with a melody and parts to play it over: {files - noMelody}; 8-bar windows: {pieces.Count}");
 
         Keys();
+        if (KeyLabToo) { KeyLab.Run("your library", LabItems, LabItems.Where(i => !i.Group.EndsWith(" 8 bars")).ToList()); return; }
         foreach (var group in pieces.GroupBy(p => p.Style).Where(g => g.Count() >= 20).OrderBy(g => g.Key))
             Fits(group.Key, group.ToList());
         Fits("ALL", pieces);
     }
 
     static readonly List<(string Style, string Name, (int Tonic, bool Minor) Label, List<NoteEvent> All)> KeyRows = [];
-    public static bool Verbose;
+    public static bool Verbose, KeyLabToo;
+    static readonly List<KeyLab.Item> LabItems = [];
 
     /// <summary>The share of notes that start with another note (a chord part is near 1, a tune near 0).</summary>
     static double Chordal(List<NoteEvent> notes)
