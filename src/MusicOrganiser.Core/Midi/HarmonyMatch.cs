@@ -39,9 +39,9 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
     internal HarmonyTimeline? Timeline => Notes.Count == 0 ? null
         : _timeline ??= Span is { } span ? HarmonyTimeline.Of(Notes, HarmonyTimeline.SlotsIn(span)) : HarmonyTimeline.Of(Notes);
 
-    /// <summary>The chords as names, a few at most: "Am – F – C – G".</summary>
+    /// <summary>The chords as names, spelled in its key, a few at most: "Am – F – C – G".</summary>
     public string ChordText(int most = 8) =>
-        string.Join(" – ", Chords.Take(most).Select(c => c.Name)) + (Chords.Count > most ? " …" : "");
+        string.Join(" – ", Chords.Take(most).Select(c => c.NameIn(Key))) + (Chords.Count > most ? " …" : "");
 
     /// <summary>
     /// A project's harmony from its channels: the pitched ones (no drums, slices or samples at their own pitch), or, when
@@ -58,15 +58,21 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
         var key = ProjectKey.Estimate(pitched);
         // Where its bassline, chords and melody sit, so parts fitted to it are offered in the octave they'd play in there.
         var registers = new Dictionary<string, List<double>>();
+        var melodies = new HashSet<MidiChannel>(ReferenceEqualityComparer.Instance);
         foreach (var c in pitched)
         {
             var own = PhraseAnalyser.Normalise(c.Notes, c.Ppq);
             if (own.Count < 3) continue;
-            var role = PhraseAnalyser.Analyse(own.Take(PhraseAnalyser.MaxNotes).ToList(), c.Name).Role;
+            var role = PhraseAnalyser.RoleOf(own.Take(PhraseAnalyser.MaxNotes).ToList(), c.Name);
             if (role is MidiRoles.Drums) continue;
+            if (role is MidiRoles.Melody) melodies.Add(c);
             (registers.TryGetValue(role, out var list) ? list : registers[role] = []).Add(HarmonyMatcher.Centre(own));
         }
-        return new HarmonyTarget(name, Strongest(chroma), PhraseAnalyser.Progression(notes), key)
+        // The chords are read from everything but the tune: a melody's notes would colour them (C heard as Cadd9).
+        var harmony = melodies.Count == 0 ? notes
+            : pitched.Where(c => !melodies.Contains(c)).SelectMany(c => c.Notes.Where(n => !n.Muted).Select(n => Scale(n, c.Ppq))).OrderBy(n => n.Start).ToList();
+        if (harmony.Count < 3) harmony = notes;
+        return new HarmonyTarget(name, Strongest(chroma), PhraseAnalyser.Progression(harmony), key)
         {
             Notes = notes,
             Parts = pitched,

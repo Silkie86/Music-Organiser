@@ -9,67 +9,17 @@ public sealed record TimedChord(long Start, long Length, ChordSymbol Chord)
 }
 
 /// <summary>
-/// The chord track: which chord sounds when. Worked out from notes (half a bar at a time, the lowest note as the bass,
-/// so a bassline under rootless chords names them right), or read from a chart typed like a lead sheet:
-/// "Dm9 G13 | Cmaj9 | %" (two chords share a bar between bar lines; % repeats the bar before).
+/// The chord track: which chord sounds when. Worked out from notes by the app's chord reader (<see cref="ChordReader"/>:
+/// beat by beat, pushes and walking basses heard as a player hears them, a bassline under rootless chords naming
+/// them), or read from a chart typed like a lead sheet: "Dm9 G13 | Cmaj9 | %" (two chords share a bar between bar
+/// lines; % repeats the bar before).
 /// </summary>
 public static class ChordLane
 {
     public const int Ppq = PhraseAnalyser.Ppq, Bar = 4 * Ppq;
 
-    /// <summary>The chords in these notes, a half bar at a time, the same chord running on as one.</summary>
-    public static List<TimedChord> Detect(IReadOnlyList<NoteEvent> notes, long length, int slot = 2 * Ppq)
-    {
-        var lane = new List<TimedChord>();
-        if (notes.Count == 0 || length <= 0) return lane;
-        var sorted = notes.Where(n => !n.Muted).OrderBy(n => n.Start).ToList();
-        var weights = new float[12];
-        for (long at = 0; at < length; at += slot)
-        {
-            Array.Clear(weights);
-            var lowest = int.MaxValue;
-            long end = Math.Min(length, at + slot), lowestHeld = 0;
-            foreach (var n in sorted)
-            {
-                if (n.Start >= end) break;
-                var overlap = Math.Min(n.Start + n.Length, end) - Math.Max(n.Start, at);
-                if (overlap < slot / 8) continue;   // a grace note or the tail of the chord before
-                weights[n.Key % 12] += overlap;
-                // The bass: the lowest note that sounds for a good part of the slot.
-                if (overlap >= slot / 4 && (n.Key < lowest || (n.Key == lowest && overlap > lowestHeld)))
-                {
-                    lowest = n.Key;
-                    lowestHeld = overlap;
-                }
-            }
-            var max = weights.Max();
-            ChordSymbol? chord = null;
-            if (max > 0)
-            {
-                var mask = 0;
-                for (var p = 0; p < 12; p++)
-                {
-                    weights[p] /= max;
-                    if (weights[p] >= 0.2f) mask |= 1 << p;
-                }
-                chord = ChordSpeller.Spell(mask, lowest == int.MaxValue ? -1 : lowest % 12, weights);
-                // Too few notes to say (a melody alone, a bass note): the chord before carries on if these notes fit it.
-                if (chord is null && lane.Count > 0 && Fits(lane[^1].Chord, mask)) chord = lane[^1].Chord;
-            }
-            if (chord is not { } c) continue;
-            if (lane.Count > 0 && lane[^1].End == at && lane[^1].Chord.Name == c.Name)
-                lane[^1] = lane[^1] with { Length = lane[^1].Length + (end - at) };
-            else lane.Add(new TimedChord(at, end - at, c));
-        }
-        return lane;
-    }
-
-    static bool Fits(ChordSymbol chord, int mask)
-    {
-        for (var p = 0; p < 12; p++)
-            if ((mask >> p & 1) != 0 && ChordScales.Sit(chord, p) < 0.3) return false;
-        return true;
-    }
+    /// <summary>The chords in these notes, beat by beat, the same chord running on as one (<see cref="ChordReader"/>).</summary>
+    public static List<TimedChord> Detect(IReadOnlyList<NoteEvent> notes, long length) => ChordReader.Read(notes, length);
 
     /// <summary>The chord sounding at a tick, the lane going round when it's shorter; null where none is.</summary>
     public static ChordSymbol? At(IReadOnlyList<TimedChord> lane, long tick, long loop = 0)

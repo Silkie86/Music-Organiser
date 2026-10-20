@@ -15,6 +15,14 @@ static class LearnBench
 
     public sealed record Part(string Style, string Pack, string Name, List<NoteEvent> Notes, List<ChordSymbol> Chords, List<int[]> Voicings, int Tonic, bool Minor);
 
+    /// <summary>
+    /// Where the chord moves are read from (--chords-from): "struck", the notes struck each half bar (the default); "app",
+    /// the chords the app's index keeps now (PhraseAnalyser.Progression, the one chord reader) as "what chord next?"
+    /// learns them; "before", the index's chords before the one chord reader, respelled as ProgressionModel did then.
+    /// With app or before, only the chord moves are measured.
+    /// </summary>
+    public static string ChordsFrom = "struck";
+
     public static List<Part> Load(string root)
     {
         var parts = new List<Part>();
@@ -44,6 +52,9 @@ static class LearnBench
                     chords.Add(c);
                     voicings.Add(struck);
                 }
+                if (ChordsFrom == "app") chords = PhraseAnalyser.Progression(notes).Select(c => c.Symbol).ToList();
+                else if (ChordsFrom == "before")
+                    chords = Before.Progression(notes, twoNoteChords: true).Select(c => ChordSpeller.Spell(c.Mask, c.Root)).OfType<ChordSymbol>().ToList();
                 var chroma = new double[12];
                 foreach (var n in notes) chroma[n.Key % 12] += Math.Clamp(n.Length / (double)Bar, 1 / 16.0, 2);
                 var key = chords.Count == 0 ? null : MusicOrganiser.Core.Sounds.MusicTheory.EstimateMidiKey(chroma, chords[0].Root);
@@ -58,6 +69,7 @@ static class LearnBench
         var parts = Load(root);
         Console.WriteLine($"chord parts: {parts.Count} from {parts.Select(p => p.Pack).Distinct().Count()} packs ({string.Join(", ", parts.GroupBy(p => p.Style).Select(g => $"{g.Key} {g.Count()}"))})");
         Moves(parts);
+        if (ChordsFrom != "struck") return;
         Voicings(parts);
         Grooves(parts);
     }

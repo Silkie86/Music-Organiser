@@ -71,6 +71,7 @@ static class LibraryBench
         }
         Console.WriteLine($"MIDI files: {files}; with a melody and parts to play it over: {files - noMelody}; 8-bar windows: {pieces.Count}");
 
+        if (ChordReaders is not null) { Chords(pieces, ChordReaders); return; }
         Keys();
         if (EarToo) { Ear(pieces); EarTest(pieces); return; }
         if (KeyLabToo) { KeyLab.Run("your library", LabItems, LabItems.Where(i => !i.Group.EndsWith(" 8 bars")).ToList()); return; }
@@ -80,6 +81,40 @@ static class LibraryBench
     }
 
     static readonly List<(string Style, string Name, (int Tonic, bool Minor) Label, List<NoteEvent> All)> KeyRows = [];
+    public static IReadOnlyList<(string Name, Func<IReadOnlyList<NoteEvent>, long, List<TimedChord>> Read)>? ChordReaders;
+
+    /// <summary>
+    /// --chords with --library: no chord labels here, so each reader is judged by what sits on top of it: how well the
+    /// Playground's fit tells each file's own melody from another file's (over the chords read from the other parts),
+    /// how many of the own melody's notes it marks red, and how often the chord changes.
+    /// </summary>
+    static void Chords(List<Piece> cases, IReadOnlyList<(string Name, Func<IReadOnlyList<NoteEvent>, long, List<TimedChord>> Read)> readers)
+    {
+        const long len = 8 * Bar;
+        var neg = Negatives(cases);
+        var styles = cases.Select(c => c.Style).Distinct().Order().ToList();
+        Console.WriteLine();
+        Console.WriteLine($"=== CHORD READERS on {cases.Count} 8-bar windows: Playground fit, times in 100 the own melody beats another (by style, then all) | own melody notes marked red | chord changes per bar | ms per window ===");
+        Console.WriteLine($"{"",-44} " + string.Join(" ", styles.Select(st => $"{st,8}")) + $" {"ALL",6} | {"red",5} | {"chg",5} | {"ms",5}");
+        foreach (var (name, read) in readers)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var lanes = cases.Select(c => read(c.Acc, len)).ToList();
+            var ms = sw.Elapsed.TotalMilliseconds / cases.Count;
+            var pos = cases.Select((c, i) => SectionFit.Score(c.Mel, lanes[i], len, MidiRoles.Melody) ?? 0).ToList();
+            var other = neg.Select((m, i) => SectionFit.Score(m, lanes[i], len, MidiRoles.Melody) ?? 0).ToList();
+            string Cell(Func<int, bool> pick)
+            {
+                var ids = Enumerable.Range(0, cases.Count).Where(pick).ToList();
+                return ids.Count == 0 ? "-" : $"{100 * Auc(ids.Select(i => pos[i]).ToList(), ids.Select(i => other[i]).ToList()),8:0.0}";
+            }
+            double red = 0, notes = 0;
+            for (var i = 0; i < cases.Count; i++)
+                foreach (var n in cases[i].Mel) { notes++; if (ChordLane.Fights(lanes[i], n.Start, n.Length, n.Key % 12)) red++; }
+            var changes = lanes.Average(l => l.Count) / 8.0;
+            Console.WriteLine($"{name,-44} " + string.Join(" ", styles.Select(st => Cell(i => cases[i].Style == st))) + $" {Cell(_ => true),6} | {100 * red / notes,4:0.0}% | {changes,5:0.00} | {ms,5:0.00}");
+        }
+    }
     public static bool Verbose, KeyLabToo, EarToo;
     static readonly List<KeyLab.Item> LabItems = [];
 

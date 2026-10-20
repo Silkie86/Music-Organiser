@@ -50,7 +50,8 @@ public sealed class SectionHarmony
         }
         else
         {
-            lane = ChordLane.Detect(HarmonySource(layers, notes).Where(n => n.Start < length).ToList(), length);
+            var (source, cuts) = HarmonySource(layers, notes);
+            lane = ChordReader.Read(source.Where(n => n.Start < length).ToList(), length, cuts);
             typed = false;
         }
 
@@ -87,26 +88,24 @@ public sealed class SectionHarmony
     /// <summary>
     /// The notes the chords are heard from (Solomon, 2026-10-19: "only chord and bass clips decide the harmony; where no
     /// chord or bass clip plays, everything playing there counts"). Under a chord clip, the chord and bass clips there;
-    /// everywhere else, every part that plays. Bass alone doesn't say enough, so it only counts alongside chords.
+    /// everywhere else, every part that plays. Bass alone doesn't say enough, so it only counts alongside chords. The
+    /// cuts are where chord clips start and end: a chord heard under one doesn't run on outside it.
     /// </summary>
-    static List<NoteEvent> HarmonySource(IReadOnlyList<PlaygroundLayer> layers, IReadOnlyList<NoteEvent> all)
+    static (List<NoteEvent> Notes, List<long> Cuts) HarmonySource(IReadOnlyList<PlaygroundLayer> layers, IReadOnlyList<NoteEvent> all)
     {
         // Each part's clips with what they play as; a part with no clips counts as one clip the whole length.
         var pieces = layers.SelectMany(l => l.Clips.Count == 0
             ? [(Role: l.Role, Start: 0L, End: long.MaxValue, Notes: (IReadOnlyList<NoteEvent>)l.Notes)]
             : l.Clips.Select(c => (Role: c.Role == MidiRoles.Other ? l.Role : c.Role, c.Start, c.End, Notes: (IReadOnlyList<NoteEvent>)c.Render()))).ToList();
         var chordSpans = pieces.Where(p => p.Role == MidiRoles.Chords && p.Notes.Count > 0).Select(p => (p.Start, p.End)).ToList();
-        if (chordSpans.Count == 0) return all.ToList();
+        if (chordSpans.Count == 0) return (all.ToList(), []);
         bool UnderChords(NoteEvent n) => chordSpans.Any(s => n.Start >= s.Start && n.Start < s.End);
-        // Under chords, a bassline says the harmony with the notes it strikes with them: the ones between are a walking
-        // bass's passing notes, which would colour the chords heard (Dm7 heard as D7#9).
-        const int Near = PhraseAnalyser.Ppq / 8;
-        var chordNotes = pieces.Where(p => p.Role == MidiRoles.Chords).SelectMany(p => p.Notes).ToList();
-        var struck = chordNotes.Select(n => (n.Start + Near / 2) / Near).ToHashSet();
-        bool WithTheChords(NoteEvent n) => struck.Contains((n.Start + Near / 2) / Near);
-        return chordNotes.Concat(pieces.Where(p => p.Role == MidiRoles.Bass).SelectMany(p => p.Notes).Where(WithTheChords))
-                     .Where(n => !n.Muted && UnderChords(n))
-                     .Concat(all.Where(n => !UnderChords(n))).OrderBy(n => n.Start).ToList();
+        // The whole bassline counts: the chord reader hears a walking bass's passing and approach notes as passing (Dm7
+        // stays Dm7, not D7#9), and a bass on the one under chords pushed onto the and of four still names them.
+        var notes = pieces.Where(p => p.Role is MidiRoles.Chords or MidiRoles.Bass).SelectMany(p => p.Notes)
+                          .Where(n => !n.Muted && UnderChords(n))
+                          .Concat(all.Where(n => !UnderChords(n))).OrderBy(n => n.Start).ToList();
+        return (notes, chordSpans.SelectMany(s => new[] { s.Start, s.End }).Distinct().ToList());
     }
 
     /// <summary>Just the bars from <paramref name="from"/> to <paramref name="to"/> (ticks), as if they were the whole section.</summary>
@@ -159,7 +158,11 @@ public sealed class SectionHarmony
         var padded = notes.ToList();
         var bars = PhraseAnalyser.BarsOf(padded);
         if (bars * ChordLane.Bar < Length) padded.Add(new NoteEvent(Length - 1, 1, notes[^1].Key, 1));
-        return HarmonyTarget.FromPart(name, MidiRoles.Chords, padded, chroma, PhraseAnalyser.Progression(notes), Key);
+        // The chords are the lane's (typed, or heard from the chord and bass parts), so the tune doesn't colour them.
+        var chords = new List<PhraseChord>();
+        foreach (var c in Lane)
+            if (chords.Count == 0 || chords[^1] != PhraseChord.Of(c.Chord)) chords.Add(PhraseChord.Of(c.Chord));
+        return HarmonyTarget.FromPart(name, MidiRoles.Chords, padded, chroma, chords, Key);
     }
 }
 
@@ -437,7 +440,7 @@ public sealed class ProgressionModel
             if (++n % 4096 == 0) ct.ThrowIfCancellationRequested();
             if (e.Role != MidiRoles.Chords || e.Chords.Count < 3) continue;
             if (leaveSongs.Count > 0 && leaveSongs.Any(e.IsInSong)) continue;
-            var chords = e.Chords.Select(c => ChordSpeller.Spell(c.Mask, c.Root)).OfType<ChordSymbol>().ToList();
+            var chords = e.Chords.Select(c => c.Symbol).ToList();
             for (var i = 1; i < chords.Count; i++)
             {
                 if (chords[i].Root == chords[i - 1].Root && Kind(chords[i]) == Kind(chords[i - 1])) continue;

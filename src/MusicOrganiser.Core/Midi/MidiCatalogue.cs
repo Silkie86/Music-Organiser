@@ -189,7 +189,7 @@ public sealed class MidiCatalogue
         // The folders it's in (the last few): MIDI packs are sorted into folders like "Chords" and "Trap Melodies".
         parts.AddRange((Path.GetDirectoryName(p.Source.Path) ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).TakeLast(4));
         if (p.Key is { Confidence: >= 0.05 } k) parts.AddRange([k.Name, k.Short]);
-        parts.AddRange(chords.Select(c => c.Name).Distinct());
+        parts.AddRange(chords.SelectMany(c => c.Symbol.Spellings).Distinct());
         if (role == MidiRoles.Bass) parts.Add("bassline");
         if (role == MidiRoles.Chords) parts.Add("progression");
         return string.Join(' ', parts).ToLowerInvariant();

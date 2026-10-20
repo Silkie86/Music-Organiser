@@ -16,11 +16,19 @@ var saveAt = Array.IndexOf(args, "--save-profile");
 if (saveAt >= 0 && saveAt + 1 < args.Length) KeyLab.SaveTo = args[saveAt + 1];
 if (args is ["--learn", var learnFrom, ..] && Directory.Exists(learnFrom))
 {
+    var fromAt = Array.IndexOf(args, "--chords-from");
+    if (fromAt >= 0 && fromAt + 1 < args.Length) LearnBench.ChordsFrom = args[fromAt + 1];
     LearnBench.Run(learnFrom);
     return;
 }
 if (args is ["--library", var library, ..] && Directory.Exists(library))
 {
+    if (args.Contains("--chords"))
+    {
+        var knobsAt0 = Array.IndexOf(args, "--knobs");
+        if (knobsAt0 >= 0 && knobsAt0 + 1 < args.Length) ChordLab.Parse(args[knobsAt0 + 1]);
+        LibraryBench.ChordReaders = args.Contains("--labonly") ? ChordLab.Readers().Skip(3).ToList() : ChordLab.Readers();
+    }
     LibraryBench.Verbose = args.Contains("--verbose");
     LibraryBench.KeyLabToo = args.Contains("--keylab");
     LibraryBench.EarToo = args.Contains("--ear");
@@ -55,6 +63,36 @@ foreach (var dir in Directory.GetDirectories(rootDir).OrderBy(d => d))
 }
 Console.WriteLine($"songs used: {songs.Count} (skipped {skipped}, MIDI beats not lined up with the annotated beats: {misaligned})");
 Console.WriteLine("beats per bar (from the downbeat annotations): " + string.Join(", ", meters.OrderBy(m => m.Key).Select(m => $"{m.Key}: {m.Value}")));
+
+// ======================================================================= chord readers side by side (ChordLab.cs)
+if (args.Contains("--chords"))
+{
+    var knobsAt = Array.IndexOf(args, "--knobs");
+    if (knobsAt >= 0 && knobsAt + 1 < args.Length) ChordLab.Parse(args[knobsAt + 1]);
+    var readers = ChordLab.Readers();
+    if (args.Contains("--labonly")) readers = readers.Skip(3).ToList();
+    if (!args.Contains("--popsonly")) ChordLab.Cases(readers);
+    if (args.Contains("--show")) { ChordLab.Show(songs.Skip(5).ToList(), readers); return; }
+    if (args.Contains("--speed"))
+    {
+        // How long each reader takes over a 16-bar phrase (the most the MIDI index keeps in one), the piano part.
+        var phrases = songs.SelectMany(s => Enumerable.Range(0, (int)(s.Length / (16 * Bar))).Select(i => Cut(s.Piano, i * 16L * Bar, 16 * Bar)))
+                           .Where(p => p.Count > 0).ToList();
+        foreach (var (name, read) in readers)
+        {
+            for (var i = 0; i < 20; i++) read(phrases[i], 16 * Bar);   // warm up
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var p in phrases) read(p, 16 * Bar);
+            Console.WriteLine($"{name,-44} {sw.Elapsed.TotalMilliseconds / phrases.Count,6:0.000} ms per 16-bar phrase ({phrases.Count} phrases)");
+        }
+        var sw2 = System.Diagnostics.Stopwatch.StartNew();
+        foreach (var p in phrases) Before.Progression(p);
+        Console.WriteLine($"{"MIDI page before, chords only (Progression)",-44} {sw2.Elapsed.TotalMilliseconds / phrases.Count,6:0.000} ms per 16-bar phrase");
+        return;
+    }
+    ChordLab.Pop(songs, readers);
+    return;
+}
 
 // ======================================================================= key finders side by side (KeyLab.cs)
 if (args.Contains("--keylab"))
@@ -291,7 +329,7 @@ if (!args.Contains("--fitonly") && !args.Contains("--keysonly"))
 {
     Console.WriteLine();
     Console.WriteLine("=== CHORDS (time-weighted, 16th-note samples inside each annotated chord, N skipped) ===");
-    // How often the true harmony changes off the half-bar grid the readers use.
+    // How often the true harmony changes off the half-bar grid the readers before the one chord reader used.
     long inside = 0, offGrid = 0;
     foreach (var s in songs)
         foreach (var c in s.Chords.Where(c => c.Root >= 0))
@@ -306,19 +344,21 @@ if (!args.Contains("--fitonly") && !args.Contains("--keysonly"))
         }
     Console.WriteLine($"Share of chord time in a half bar that holds two different annotated chords: {100.0 * offGrid / Math.Max(1, inside):0.0}%");
 
+    // The MIDI page and the Playground share one chord reader now (ChordReader); the two half-bar readers before it
+    // (Before.cs) stay as a fixed point. --chords compares them in more detail (ChordLab.cs).
     var readers = new (string Name, Func<Song, Func<long, (int Root, string Cls, int Bass)?>> Make)[]
     {
-        ("MIDI page reader, every part (melody too)", s => PageReader(s.Melody.Concat(s.Bridge).Concat(s.Piano).OrderBy(n => n.Start).ToList(), s.Length)),
-        ("MIDI page reader, accompaniment only", s => PageReader(s.Piano, s.Length)),
-        ("Playground reader, every part (melody too)", s => LaneReader(s.Melody.Concat(s.Bridge).Concat(s.Piano).OrderBy(n => n.Start).ToList(), s.Length)),
-        ("Playground reader, accompaniment only", s => LaneReader(s.Piano, s.Length)),
+        ("App's chord reader, every part (melody too)", s => LaneReader(ChordReader.Read(s.Melody.Concat(s.Bridge).Concat(s.Piano).OrderBy(n => n.Start).ToList(), s.Length))),
+        ("App's chord reader, accompaniment only", s => LaneReader(ChordReader.Read(s.Piano, s.Length))),
+        ("MIDI page reader before, accompaniment only", s => LaneReader(Before.PageLane(s.Piano, s.Length))),
+        ("Playground reader before, accompaniment only", s => LaneReader(Before.Detect(s.Piano, s.Length))),
     };
     foreach (var off in new long[] { -96, -48, 0, 48, 96 })
     {
         double tot = 0, ok = 0;
         foreach (var s in songs)
         {
-            var at = LaneReader(s.Piano, s.Length);
+            var at = LaneReader(ChordReader.Read(s.Piano, s.Length));
             foreach (var c in s.Chords.Where(c => c.Root >= 0))
                 for (var t = c.Start; t < c.End; t += 24) { tot++; if (at(t + off) is { } g && g.Item1 == c.Root) ok++; }
         }
@@ -471,31 +511,8 @@ if (!args.Contains("--keysonly"))
 
 // ======================================================================= helpers
 // The MIDI page's chord reading, half a bar at a time (what PhraseAnalyser.Progression does), with times kept.
-static Func<long, (int, string, int)?> PageReader(List<NoteEvent> notes, long length)
+static Func<long, (int, string, int)?> LaneReader(List<TimedChord> lane)
 {
-    var slots = new List<(int, string, int)?>();
-    (int, string, int)? last = null;
-    var sorted = notes.OrderBy(n => n.Start).ToList();
-    for (long w = 0; w < length; w += 192)
-    {
-        var win = sorted.Where(n => n.Start < w + 192 && n.Start + n.Length > w)
-                        .Select(n => n with { Start = Math.Max(n.Start, w) - w, Length = Math.Min(n.Start + n.Length, w + 192) - Math.Max(n.Start, w) }).ToList();
-        var prog = win.Count == 0 ? [] : PhraseAnalyser.Progression(win);
-        if (prog.Count > 0)
-        {
-            var c = prog[0];
-            var cls = (c.Mask >> ((c.Root + 4) % 12) & 1) != 0 ? "maj" : (c.Mask >> ((c.Root + 3) % 12) & 1) != 0 ? "min" : "other";
-            var low = win.Where(n => n.Length >= 24).Select(n => n.Key).DefaultIfEmpty(-1).Min();
-            last = (c.Root, cls, low < 0 ? c.Root : low % 12);
-        }
-        slots.Add(last);
-    }
-    return t => t < 0 ? null : slots.ElementAtOrDefault((int)(t / 192));
-}
-
-static Func<long, (int, string, int)?> LaneReader(List<NoteEvent> notes, long length)
-{
-    var lane = ChordLane.Detect(notes, length);
     return t =>
     {
         if (ChordLane.At(lane, t) is not { } c)

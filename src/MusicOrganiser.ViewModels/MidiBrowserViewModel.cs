@@ -1736,9 +1736,18 @@ public sealed partial class MidiRow : ObservableObject
         f.ChordScore is { } c ? $"Its chords follow {(With is { Loops: true } ? "the part's" : "the song's")} {Math.Round(c * 100)}%." : "",
         f.Clash > 0.02 ? $"{Math.Round(f.Clash * 100)}% of its notes are on notes the other hardly plays." : "Its notes are all ones the other plays too.",
     }.Where(s => s.Length > 0));
-    public string ChordsText => Entry.Chords.Count == 0 ? ""
-        : string.Join(" – ", Entry.Chords.Take(8).Select(c => (Fit is { Semitones: var s and not 0 } ? c.Transposed(s) : c).Name)) +
-          (Entry.Chords.Count > 8 ? " …" : "");
+    /// <summary>Its chords, spelled in its key (moved with it when fitting): "C#m7 – A – E – B" in E major.</summary>
+    public string ChordsText
+    {
+        get
+        {
+            if (Entry.Chords.Count == 0) return "";
+            var shift = Fit?.Semitones ?? 0;
+            var key = Entry.Phrase.Key is { } k && shift != 0 ? k with { Tonic = ((k.Tonic + shift) % 12 + 12) % 12 } : Entry.Phrase.Key;
+            return string.Join(" – ", Entry.Chords.Take(8).Select(c => (shift != 0 ? c.Transposed(shift) : c).NameIn(key))) +
+                   (Entry.Chords.Count > 8 ? " …" : "");
+        }
+    }
 
     /// <summary>Its notes, moved into the fitted key when fitting; read when first shown.</summary>
     /// <summary>

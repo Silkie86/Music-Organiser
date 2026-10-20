@@ -161,6 +161,28 @@ dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "p
 dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --learn "path/to/New Midi"
 ```
 
+`--learn` also takes `--chords-from app` (the chords the app's MIDI index keeps now, which "what chord next?" learns
+from) or `--chords-from before` (the index's chords before the one chord reader). Without it, the chord moves are read
+from the notes struck each half bar. With either, only the chord moves are measured.
+
+`--chords` puts chord readers side by side: the MIDI page's and the Playground's half-bar readers as they were before
+2026-10-20 (`Before.cs`), the app's one chord reader (`ChordReader`), and a lab copy of it with a knob for each of its
+ideas (`ChordLab.cs`). With the POP909 folder it first reads a few hand-made cases (walk-ups, pushed chords, jazz and
+gospel voicings), then scores each reader against the songs' chord labels: root, root and major/minor, bass note, how
+well its chord changes line up with the labelled ones, and changes per bar. With `--library` it scores them on the pack
+files instead: how well the Playground's fit tells a file's own melody from another over the chords each reader hears,
+red marks, and changes per bar. `--knobs "name:Knob=value,Knob=value;name2:..."` adds lab variants (each starts from
+what the app does; the knobs are the properties of `ChordLab.Knobs`), `--labonly` leaves out the first three readers,
+`--popsonly` skips the hand-made cases, `--show` prints the first bars of a few songs as each reader hears them next to
+the labels, and `--speed` times each reader on 16-bar phrases.
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --chords
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --chords --labonly --knobs "nodim:DimByNext=false"
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" --chords
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --learn "path/to/New Midi" --chords-from app
+```
+
 Things to know:
 
 - Only songs whose MIDI beats line up with the labelled beats are used (387 of them). The chord, key and beat labels
@@ -172,4 +194,5 @@ Things to know:
 - Lines saying "as it is" call the app's own code, so they show what the app does now. `Together` and `Fit` in
   `Program.cs` are copies of the app's scores as they were before the 2026-10-20 fixes, with a switch for each idea
   measured then; they stay as a fixed point to compare against.
+- `Before.cs` keeps the two chord readers the app had before the one chord reader (2026-10-20) the same way.
 - The 2026-10-20 check-up and its numbers: https://claude.ai/artifact/5Rr3Y59gLCo9Q3Xh3Cohqp

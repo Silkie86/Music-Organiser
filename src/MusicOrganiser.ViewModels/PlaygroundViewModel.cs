@@ -2600,7 +2600,7 @@ public sealed partial class PlaygroundMatchRow(PlaygroundViewModel owner, Playgr
     public string From => match.Entry.IsProject ? $"{match.Entry.SourceName} · {match.Entry.Phrase.Source.Daw}" : match.Entry.SourceName;
     public string FitText => match.Score > 0 ? $"{match.Percent}%" : "";
     public string Why => match.Why;
-    public string Chords => string.Join(" ", match.Entry.Chords.Take(6).Select(c => ChordSpeller.Spell(c.Mask, c.Root)?.Transposed(match.Fit?.Semitones ?? 0).Name).OfType<string>());
+    public string Chords => string.Join(" ", match.Entry.Chords.Take(6).Select(c => c.Symbol.Transposed(match.Fit?.Semitones ?? 0).Name));
     public MidiChannel Channel => new(Title, "", PhraseAnalyser.Ppq, match.Notes);
     [ObservableProperty] bool _isPlaying;
     [RelayCommand] void Add() => owner.AddMatch(this);
