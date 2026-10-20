@@ -83,6 +83,49 @@ public sealed class PlaygroundPageTests : IDisposable
         Assert.Equal(12, clip.Transpose);
     }
 
+    [AvaloniaFact]
+    public void Dragging_along_the_piano_rolls_bar_numbers_picks_those_bars_of_the_clip()
+    {
+        // F12 note, 20 Oct: "should be able to select a part of a clip and have suggestions to replace that".
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        p.WriteChordsCommand.Execute(null);
+        var track = p.Layers.Single(l => !l.IsWritten).Layer;   // the chords themselves: a written part follows them, so isn't swapped
+        p.SelectClipCommand.Execute(new ClipPick(track, track.Clips[0]));
+        p.RightTab = 2;
+        var window = new Window { Content = new PlaygroundView { DataContext = p }, Width = 1400, Height = 900 };
+        window.Show();
+        Settle();
+
+        var roll = window.GetVisualDescendants().OfType<PianoRollEditor>().Single();
+        Assert.NotNull(roll.StrengthOf);   // the notes are coloured by how well they fit
+        Assert.NotNull(roll.FitGuide);
+        var drawing = new global::Avalonia.Media.DrawingGroup();
+        using (var dc = drawing.Open()) roll.Render(dc);   // and draw so
+        Assert.NotEmpty(drawing.Children);
+        // The roll shows the clip's 4 bars after its keyboard (34 px): along the bar numbers from bar 2 to bar 3.
+        double BarX(double bar) => 34 + (roll.Bounds.Width - 34) * bar / 4;
+        Point At(double bar) => roll.TranslatePoint(new Point(BarX(bar), 8), window)!.Value;
+        window.MouseDown(At(1.05), MouseButton.Left);
+        window.MouseMove(At(1.5), RawInputModifiers.LeftMouseButton);
+        window.MouseMove(At(2.95), RawInputModifiers.LeftMouseButton);
+        window.MouseUp(At(2.95), MouseButton.Left);
+        Settle();
+        const long Bar = 384;
+        Assert.Equal(new RollRange(Bar, 3 * Bar), p.Loop);
+        Assert.Equal(new RollRange(Bar, 3 * Bar), roll.Section);
+        Assert.Same(track.Clips[0], p.SwapTarget!.Clip);
+        Assert.Equal(0, p.RightTab);   // Suggest, to fill them
+
+        // A right-click there lets go.
+        window.MouseDown(At(2), MouseButton.Right);
+        window.MouseUp(At(2), MouseButton.Right);
+        Settle();
+        Assert.Null(p.Loop);
+        Assert.Null(roll.Section);
+    }
+
     /// <summary>The app's Avalonia screens, with a player that makes no sound.</summary>
     sealed class SilentUi : IPlatformUi
     {

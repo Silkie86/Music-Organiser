@@ -158,7 +158,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
                         NewTempoKey = "playground_new_tempo", NewBarsKey = "playground_new_bars", NewStyleKey = "playground_new_style",
                         UndoStepsKey = "playground_undo_steps", LoopKey = "playground_loop",
                         SnapGridKey = "playground_snap_grid", SnapRelativeKey = "playground_snap_relative", SnapObjectsKey = "playground_snap_objects",
-                        NoteLabelsKey = "playground_note_labels",
+                        NoteLabelsKey = "playground_note_labels", NoteColoursKey = "playground_note_colours",
                         TrackHeightKey = "playground_track_height", ClipPanelHeightKey = "playground_clip_panel_height",
                         SidePanelWidthKey = "playground_side_width", PianoFoldedKey = "playground_piano_folded";
     public const string JazzGospel = "Jazz and gospel", Classical = "Classical";
@@ -199,6 +199,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         SnapRelative = _db.GetSetting(SnapRelativeKey) != "0";
         SnapObjects = _db.GetSetting(SnapObjectsKey) != "0";
         NoteLabelPick = NoteLabelChoices.Contains(_db.GetSetting(NoteLabelsKey) ?? "") ? _db.GetSetting(NoteLabelsKey)! : "Off";
+        NoteColourPick = NoteColourChoices.Contains(_db.GetSetting(NoteColoursKey) ?? "") ? _db.GetSetting(NoteColoursKey)! : ByFit;
         double Size(string key, double fallback, double min, double max) =>
             double.TryParse(_db.GetSetting(key), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= min && v <= max ? v : fallback;
         TrackHeight = Size(TrackHeightKey, DefaultTrackHeight, MinTrackHeight, MaxTrackHeight);
@@ -773,6 +774,39 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     static string RoleOf(ClipRow row) => row.Clip.Role == MidiRoles.Other ? row.Track.Role : row.Clip.Role;
 
+    /// <summary>What the picked clip's track plays in the bar either side of the bars being swapped, for stretches of other parts to join on to.</summary>
+    static SwapAround AroundOf(ClipRow target, (long Start, long End) bars)
+    {
+        var notes = target.Track.Layer.Notes.Where(n => !n.Muted).ToList();
+        var own = target.Notes;
+        return new SwapAround(
+            notes.Where(n => n.Start < bars.Start && n.Start >= bars.Start - Bar).Select(n => n with { Start = n.Start - bars.Start }).ToList(),
+            notes.Where(n => n.Start >= bars.End && n.Start < bars.End + Bar).Select(n => n with { Start = n.Start - bars.End }).ToList(),
+            bars.Start % Bar,
+            own.Count == 0 ? null : own.Average(n => n.Key),
+            own.Count / Math.Max(0.25, target.Clip.Loop / (double)Bar));
+    }
+
+    /// <summary>
+    /// Bars of the picked clip dragged out along the piano roll's bar numbers (Solomon, 2026-10-20: "select a part of a
+    /// clip and have suggestions to replace that"): the same bars are highlighted on the timeline, so Suggest finds the
+    /// bit of each part that fits there and Swap in puts one in. Null lets go.
+    /// </summary>
+    internal void HighlightInClip(ClipRow row, RollRange? range)
+    {
+        if (range is not { } r)
+        {
+            SetLoop(null);
+            return;
+        }
+        long a = Math.Max(row.At + r.Start, row.Clip.Start), b = Math.Min(row.At + r.End, row.Clip.End);
+        if (b <= a) return;
+        SetLoop(new RollRange(a, b));
+        if (SwapTarget is null) return;
+        RightTab = SuggestTab;
+        Message = $"{LoopText} of {row.Clip.Name} picked: Suggest finds the bit of each part that fits there, and Swap in puts one in. Right-click the bar numbers to let go.";
+    }
+
     PlaygroundClip? _swapFor;
 
     /// <summary>
@@ -856,10 +890,13 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         return to;
     }
 
-    /// <summary>A library part as a clip: one go round of its bars (chord parts turned into smooth inversions when that's on).</summary>
-    PlaygroundClip LibraryClip(MidiEntry entry, IReadOnlyList<NoteEvent> notes, long start, long? length = null)
+    /// <summary>
+    /// A library part as a clip: one go round of its bars, or of <paramref name="period"/> for a stretch cut from it (chord
+    /// parts turned into smooth inversions when that's on).
+    /// </summary>
+    PlaygroundClip LibraryClip(MidiEntry entry, IReadOnlyList<NoteEvent> notes, long start, long? length = null, long period = 0)
     {
-        var loop = Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
+        var loop = period > 0 ? period : Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
         var one = notes.Where(n => n.Start < loop).ToList();
         if (SmoothIncoming && entry.Role == MidiRoles.Chords) one = Inversions.Smooth(one, ChordCentre(null));
         return PlaygroundClip.Of(entry.Title.Length > 0 ? entry.Title : entry.SourceName, entry.Role, one, loop, start, length ?? loop,
@@ -867,12 +904,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     /// <summary>A suggestion picked for bars of a clip: it takes their place, and the rest of the clip stays either side.</summary>
-    internal void SwapIn(ClipRow target, (long Start, long End) bars, MidiEntry entry, IReadOnlyList<NoteEvent> notes)
+    internal void SwapIn(ClipRow target, (long Start, long End) bars, MidiEntry entry, IReadOnlyList<NoteEvent> notes, long period = 0)
     {
         if (notes.Count == 0) return;
         Remember();
         var was = target.Clip.Name;
-        var clip = LibraryClip(entry, notes, bars.Start, bars.End - bars.Start);
+        var clip = LibraryClip(entry, notes, bars.Start, bars.End - bars.Start, period);
         PlaceClip(clip, Layers.IndexOf(target.Track), clip.Name);
         Changed();
         Message = $"Bars {bars.Start / Bar + 1}–{(bars.End + Bar - 1) / Bar} of {was} swapped for {clip.Name} from {entry.SourceName}. Undo puts them back.";
@@ -889,7 +926,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         {
             case PlaygroundMatchRow m when m.Match.Notes.Count > 0:
                 Remember();
-                var clip = LibraryClip(m.Match.Entry, m.Match.Notes, drop.Start);
+                var clip = LibraryClip(m.Match.Entry, m.Match.Notes, drop.Start, period: m.Match.Period);
                 PlaceClip(clip, drop.Row, clip.Name);
                 Changed();
                 Message = $"Added {clip.Name} from {m.Match.Entry.SourceName} at bar {drop.Start / Bar + 1}. Parts from {m.Match.Entry.SourceName} won't be suggested now.";
@@ -982,6 +1019,20 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(NoteLabels))] string _noteLabelPick = "Off";
     public NoteLabelKind NoteLabels => NoteLabelPick switch { "Names" => NoteLabelKind.Names, "Over the chord" => NoteLabelKind.Degrees, _ => NoteLabelKind.Off };
     partial void OnNoteLabelPickChanged(string value) => SaveOption(NoteLabelsKey, value);
+
+    /// <summary>
+    /// How the piano roll colours the notes: all alike, or by how strongly each fits the chord under it (Solomon,
+    /// 2026-10-20: "maybe the colour should show the strength"), brightest for the strongest and red where it fights.
+    /// </summary>
+    public const string ByFit = "By fit";
+    public static IReadOnlyList<string> NoteColourChoices { get; } = ["Plain", ByFit];
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(FitColours))] string _noteColourPick = ByFit;
+    public bool FitColours => NoteColourPick == ByFit;
+    partial void OnNoteColourPickChanged(string value)
+    {
+        SaveOption(NoteColoursKey, value);
+        SelectedClip?.GuideChanged();
+    }
 
     [ObservableProperty] bool _snapGrid = true;
     [ObservableProperty] bool _snapRelative = true;
@@ -1329,7 +1380,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     /// <summary>The tab showing on the right: Suggest, Write, Groove, Reharm, Song.</summary>
     [ObservableProperty] int _rightTab;
-    const int GrooveTab = 2;
+    const int SuggestTab = 0, GrooveTab = 2;
 
     // ---- smooth inversions ----
 
@@ -1599,7 +1650,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var text = SuggestSearch.Trim();
             // nothing highlighted or picked: the whole timeline, whatever its labels' feels
             var feel = Loop is null && SelectedLabel is null ? SectionFeel.Any : FeelHere;
-            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, text, SuggestCount, cts.Token, feel));
+            var around = SwapTarget is { } swapping && SwapRange is { } swapped ? AroundOf(swapping, swapped) : null;
+            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, text, SuggestCount, cts.Token, feel, around));
             if (cts.IsCancellationRequested) return;
             Matches.Clear();
             foreach (var m in found) Matches.Add(new PlaygroundMatchRow(this, m));
@@ -1607,7 +1659,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var target = SwapTarget;
             MatchStatus = found.Count == 0 ? "Nothing found. Try another kind of part, or fewer words."
                 : target is not null && SwapRange is { } bars
-                    ? $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} for bars {bars.Start / Bar + 1}–{(bars.End + Bar - 1) / Bar} of {target.Clip.Name}, best first: Swap in puts one there instead." + left
+                    ? $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} for bars {bars.Start / Bar + 1}–{(bars.End + Bar - 1) / Bar} of {target.Clip.Name}, best first: the bit of each that fits there and joins on best. Swap in puts one there instead." + left
                 : (harmony.IsEmpty ? $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()}, newest first: add a part or chords to rank them by fit."
                                    : $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} that fit {(Loop is null ? "the whole idea" : LoopText.ToLowerInvariant())}, best first, moved into its key.") + left;
         }
@@ -1620,7 +1672,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     internal void AddMatch(PlaygroundMatchRow row)
     {
-        if (SwapTarget is { } target && SwapRange is { } bars) SwapIn(target, bars, row.Match.Entry, row.Match.Notes);
+        if (SwapTarget is { } target && SwapRange is { } bars) SwapIn(target, bars, row.Match.Entry, row.Match.Notes, row.Match.Period);
         else AddFromLibrary(row.Match.Entry, row.Match.Notes);
     }
 
@@ -1881,7 +1933,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasLoop), nameof(LoopText))] RollRange? _loop;
     public bool HasLoop => Loop is not null;
     partial void OnPositionChanged(double value) => SelectedClip?.PlayheadAt(value);
-    partial void OnLoopChanged(RollRange? value) => Revision++;
+    partial void OnLoopChanged(RollRange? value)
+    {
+        Revision++;
+        SelectedClip?.HighlightMoved();
+    }
     public string LoopText => Loop is { } r ? $"Bars {r.Start / Bar + 1}–{(r.End + Bar - 1) / Bar}" : "";
 
     [RelayCommand]
@@ -2183,7 +2239,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var tried = PlaygroundSession.FromJson(_session.ToJson())!.Timeline;
             var layer = tried.Layers[Section.Layers.IndexOf(target.Track.Layer)];
             CutOut(layer, bars.Start, bars.End);
-            layer.Clips.Add(LibraryClip(row.Match.Entry, row.Match.Notes, bars.Start, bars.End - bars.Start));
+            layer.Clips.Add(LibraryClip(row.Match.Entry, row.Match.Notes, bars.Start, bars.End - bars.Start, row.Match.Period));
             layer.Render();
             await PlayAsync(instead: ChannelsOf(tried).ToList());
             row.IsPlaying = _playing;
@@ -2490,7 +2546,11 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     static string Bars(long ticks) => ticks % Bar == 0 ? $"{ticks / Bar} bar{(ticks == Bar ? "" : "s")}" : $"{ticks / (double)Bar:0.##} bars";
 
     /// <summary>Where its first go round would start on the timeline.</summary>
-    long At => clip.RepeatAt(0);
+    internal long At => clip.RepeatAt(0);
+
+    /// <summary>What it plays as: its own kind, or its track's when it has none.</summary>
+    string Role => clip.Role == MidiRoles.Other ? track.Role : clip.Role;
+    bool IsDrums => clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums;
 
     /// <summary>One go round, as it first plays (moved by hand and to fit).</summary>
     public IReadOnlyList<NoteEvent> Notes => Inversions.Turn(clip.Notes, clip.Inversion).Select(n => n with { Key = Math.Clamp(n.Key + clip.Shift(0), 0, 127) }).ToList();
@@ -2543,6 +2603,60 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         }
     }
 
+    /// <summary>
+    /// How strongly each note fits the chord under it (<see cref="NoteStrength"/>), for the piano roll to colour the notes
+    /// by; null when they're shown plain. A note that fights the chords there (<see cref="Clashes"/>) stays red, and one
+    /// that only looks wrong on paper (a quick passing note) is weak.
+    /// </summary>
+    public Func<NoteEvent, FitStrength?>? StrengthOf
+    {
+        get
+        {
+            var h = owner.Harmony;
+            if (!owner.FitColours || IsDrums || h.Lane.Count == 0) return null;
+            var at = At;
+            var role = Role;
+            var fights = Clashes;
+            return n =>
+            {
+                if (ChordLane.At(h.Lane, at + n.Start + 1, h.Length) is not { } chord) return null;
+                if (fights(n)) return FitStrength.Fights;
+                var strength = NoteStrength.Of(chord, n.Key % 12, role, h.Style);
+                return strength == FitStrength.Fights ? FitStrength.Weak : strength;
+            };
+        }
+    }
+
+    /// <summary>The chords under this go round, each with how strongly each note would fit it: the piano roll lights the strongest rows behind.</summary>
+    public IReadOnlyList<FitSpan>? FitGuide
+    {
+        get
+        {
+            var h = owner.Harmony;
+            if (!owner.FitColours || IsDrums || h.Lane.Count == 0) return null;
+            long from = At, to = At + clip.Loop;
+            var role = Role;
+            return h.Lane.Where(c => c.Start < to && c.End > from)
+                .Select(c => new FitSpan(Math.Max(c.Start, from) - from, Math.Min(c.End, to) - Math.Max(c.Start, from), NoteStrength.All(c.Chord, role, h.Style)))
+                .ToList();
+        }
+    }
+
+    /// <summary>Whether it's a bassline, whose strongest notes are the root and 5th (the colours' key says so).</summary>
+    public bool IsBass => Role == MidiRoles.Bass;
+
+    /// <summary>The highlight, where it's over the go round shown: bars picked along the piano roll's bar numbers.</summary>
+    public RollRange? Highlight => owner.Loop is { } r && r.Start < At + clip.Loop && r.End > At
+        ? new RollRange(Math.Max(r.Start, At) - At, Math.Min(r.End, At + clip.Loop) - At) : null;
+
+    internal void HighlightMoved() => OnPropertyChanged(nameof(Highlight));
+
+    /// <summary>Bars dragged out along the piano roll's bar numbers (null: let go): Suggest offers bits of parts to swap in there.</summary>
+    [RelayCommand] void PickBars(RollRange? range) => owner.HighlightInClip(this, range);
+
+    /// <summary>A click on the piano roll's bar numbers: the play marker goes there.</summary>
+    [RelayCommand] void Seek(double tick) => owner.SetCursorCommand.Execute(At + (long)tick);
+
     /// <summary>The playhead on the piano roll, while it's in the go round shown.</summary>
     [ObservableProperty] double _position = -1;
     internal void PlayheadAt(double tick) => Position = tick < 0 ? -1 : tick >= At && tick < At + clip.Loop ? tick - At : -1;
@@ -2554,6 +2668,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         OnPropertyChanged(nameof(Loop));
         OnPropertyChanged(nameof(FitText));
         OnPropertyChanged(nameof(CanFitAgain));
+        OnPropertyChanged(nameof(Highlight));
         GuideChanged();
     }
 
@@ -2562,6 +2677,8 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         OnPropertyChanged(nameof(Guide));
         OnPropertyChanged(nameof(Clashes));
         OnPropertyChanged(nameof(DegreeOf));
+        OnPropertyChanged(nameof(StrengthOf));
+        OnPropertyChanged(nameof(FitGuide));
     }
 
     [RelayCommand] void Remove() => owner.RemoveClip(this);
@@ -2600,7 +2717,10 @@ public sealed partial class PlaygroundMatchRow(PlaygroundViewModel owner, Playgr
     public string From => match.Entry.IsProject ? $"{match.Entry.SourceName} · {match.Entry.Phrase.Source.Daw}" : match.Entry.SourceName;
     public string FitText => match.Score > 0 ? $"{match.Percent}%" : "";
     public string Why => match.Why;
-    public string Chords => string.Join(" ", match.Entry.Chords.Take(6).Select(c => c.Symbol.Transposed(match.Fit?.Semitones ?? 0).Name));
+    /// <summary>Its chords as they'd go in: a stretch cut from a chord part reads its own (moved as it is).</summary>
+    public string Chords => match.Period > 0
+        ? match.Entry.Role == MidiRoles.Chords ? string.Join(" ", ChordLane.Detect(match.Notes, match.Period).Take(6).Select(c => c.Chord.Name)) : ""
+        : string.Join(" ", match.Entry.Chords.Take(6).Select(c => c.Symbol.Transposed(match.Fit?.Semitones ?? 0).Name));
     public MidiChannel Channel => new(Title, "", PhraseAnalyser.Ppq, match.Notes);
     [ObservableProperty] bool _isPlaying;
     [RelayCommand] void Add() => owner.AddMatch(this);

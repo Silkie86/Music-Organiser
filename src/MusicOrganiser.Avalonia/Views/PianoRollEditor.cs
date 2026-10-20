@@ -74,9 +74,22 @@ public sealed class PianoRollEditor : Control
     public NoteLabelKind NoteLabels { get => GetValue(NoteLabelsProperty); set => SetValue(NoteLabelsProperty, value); }
     public Func<NoteEvent, string?>? DegreeOf { get => GetValue(DegreeOfProperty); set => SetValue(DegreeOfProperty, value); }
 
+    /// <summary>
+    /// When set, how strongly a note (placed at its time on the roll) fits the chord under it: the notes are coloured by
+    /// it, brightest for the strongest and red where it fights, and so is the note a click would put down.
+    /// </summary>
+    public static readonly StyledProperty<Func<NoteEvent, FitStrength?>?> StrengthOfProperty =
+        AvaloniaProperty.Register<PianoRollEditor, Func<NoteEvent, FitStrength?>?>(nameof(StrengthOf));
+    /// <summary>The chords under the roll, each with how strongly each note fits it: the rows of the strongest notes are lit faintly behind.</summary>
+    public static readonly StyledProperty<IReadOnlyList<FitSpan>?> FitGuideProperty =
+        AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<FitSpan>?>(nameof(FitGuide));
+    public Func<NoteEvent, FitStrength?>? StrengthOf { get => GetValue(StrengthOfProperty); set => SetValue(StrengthOfProperty, value); }
+    public IReadOnlyList<FitSpan>? FitGuide { get => GetValue(FitGuideProperty); set => SetValue(FitGuideProperty, value); }
+
     static PianoRollEditor() =>
         AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty,
-                                       PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty, NoteLabelsProperty, DegreeOfProperty);
+                                       PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty, NoteLabelsProperty, DegreeOfProperty,
+                                       StrengthOfProperty, FitGuideProperty);
 
     public Func<NoteEvent, bool>? ClashTest { get => GetValue(ClashTestProperty); set => SetValue(ClashTestProperty, value); }
 
@@ -468,6 +481,23 @@ public sealed class PianoRollEditor : Control
 
     IBrush Res(string key, IBrush fallback) => this.TryFindResource(key, ActualThemeVariant, out var v) && v is IBrush b ? b : fallback;
 
+    /// <summary>
+    /// The colours notes take by how strongly they fit, weakest first (by <see cref="FitStrength"/>): the theme's accent at
+    /// full strength for the strongest, fading towards the background for weaker ones, and the theme's red where a note
+    /// fights the chord. <see cref="FitLegend"/> uses them too.
+    /// </summary>
+    internal static IBrush[] FitBrushes(Control c)
+    {
+        Color Of(string key, Color fallback) =>
+            c.TryFindResource(key, c.ActualThemeVariant, out var v) && v is ISolidColorBrush b ? b.Color : fallback;
+        var accent = Of("AccentBrush", Colors.DodgerBlue);
+        var back = Of("SurfaceRaisedBrush", Colors.Black);
+        IBrush Faded(double by) => new SolidColorBrush(Color.FromRgb((byte)(accent.R + (back.R - accent.R) * by),
+                                                                     (byte)(accent.G + (back.G - accent.G) * by),
+                                                                     (byte)(accent.B + (back.B - accent.B) * by)));
+        return [new SolidColorBrush(Of("MissingBrush", Colors.IndianRed)), Faded(0.62), Faded(0.45), Faded(0.25), new SolidColorBrush(accent)];
+    }
+
     static readonly bool[] Black = [false, true, false, true, false, false, true, false, true, false, true, false];
 
     public override void Render(DrawingContext dc)
@@ -506,6 +536,23 @@ public sealed class PianoRollEditor : Control
 
         // Everything from here on stays right of the keyboard, however far it's zoomed and moved along.
         using var noteArea = dc.PushClip(new Rect(Keys, 0, w - Keys, h));
+
+        // Under each chord, the rows of its strongest notes lit faintly (Solomon, 2026-10-20: "a system to visually tell
+        // which notes are the strongest fit"), so it shows where a note would go best.
+        var fit = StrengthOf is null ? null : FitBrushes(this);
+        if (fit is not null && FitGuide is { } spans)
+            foreach (var span in spans)
+            {
+                double a = X(span.Start), b = X(span.Start + span.Length);
+                if (b <= Keys || a >= w) continue;
+                for (var k = low; k <= high; k++)
+                {
+                    var strength = span.Strengths[k % 12];
+                    if (strength < FitStrength.Strong) continue;
+                    using (dc.PushOpacity(strength == FitStrength.Strongest ? 0.16 : 0.08))
+                        dc.FillRectangle(fit[(int)FitStrength.Strongest], new Rect(a, Y(k, low, high), b - a, rowH));
+                }
+            }
 
         // Beats and bars, and the bar numbers along the top.
         var shown = Shown;
@@ -561,16 +608,24 @@ public sealed class PianoRollEditor : Control
             {
                 var n = notes[i];
                 if (from + n.Start >= To) continue;
-                var rubs = ClashTest is { } test ? test(n with { Start = from + n.Start }) : Rubs(n, from, guide);
+                var strength = fit is null ? null : StrengthOf!(n with { Start = from + n.Start });
+                var rubs = strength is null && (ClashTest is { } test ? test(n with { Start = from + n.Start }) : Rubs(n, from, guide));
                 var picked = _working is not null && i == _index;
-                Note(dc, rubs ? clash : accent, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high,
-                     LabelOf(n, from + n.Start));
+                var fill = strength is { } s ? fit![(int)s] : rubs ? clash : accent;
+                // Names stay readable: dark on the bright notes, the page's text colour on the faded ones.
+                var ink = strength is FitStrength.Colour or FitStrength.Weak ? text : Brushes.Black;
+                Note(dc, fill, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high,
+                     LabelOf(n, from + n.Start), ink);
             }
         }
 
         // Where a click would put a note.
         if (_working is null && _hover is { } hov)
-            using (dc.PushOpacity(0.25)) Note(dc, accent, null, hov.Tick, _lastLength, hov.Key, low, high);
+        {
+            // Coloured by how well it would fit there, when the notes are.
+            var would = fit is null ? null : StrengthOf!(new NoteEvent(hov.Tick, _lastLength, hov.Key, _lastVelocity));
+            using (dc.PushOpacity(would is null ? 0.25 : 0.55)) Note(dc, would is { } s ? fit![(int)s] : accent, null, hov.Tick, _lastLength, hov.Key, low, high);
+        }
 
         if (Position >= 0)
         {
@@ -579,7 +634,7 @@ public sealed class PianoRollEditor : Control
         }
     }
 
-    void Note(DrawingContext dc, IBrush fill, IPen? pen, long start, long length, int key, int low, int high, string? label = null)
+    void Note(DrawingContext dc, IBrush fill, IPen? pen, long start, long length, int key, int low, int high, string? label = null, IBrush? ink = null)
     {
         if (key < low || key > high) return;
         var x0 = X(start);
@@ -589,7 +644,7 @@ public sealed class PianoRollEditor : Control
         dc.DrawRectangle(fill, pen, new RoundedRect(new Rect(x0, y + 0.5, x1 - x0, Math.Max(1.5, rowH - 1)), 2));
         // Its name (or what it is over the chord), when it fits.
         if (label is null || rowH < 8) return;
-        var text = new FormattedText(label, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, Math.Min(10, rowH), Brushes.Black);
+        var text = new FormattedText(label, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, Math.Min(10, rowH), ink ?? Brushes.Black);
         if (text.Width + 4 <= x1 - x0) using (dc.PushOpacity(0.8)) dc.DrawText(text, new Point(x0 + 2, y + (rowH - text.Height) / 2));
     }
 
