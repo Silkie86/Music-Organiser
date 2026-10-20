@@ -19,6 +19,14 @@ public sealed class ActivityFeed
     /// <summary>How long a card takes to fade out, so the view's animation finishes before it goes.</summary>
     public TimeSpan FadeOut { get; set; } = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>
+    /// A job started (the state is null) or ended (Done, Failed or Stopped). The app's run log listens, so a report says
+    /// which job was running when something went wrong.
+    /// </summary>
+    public event Action<Activity, ActivityState?>? Changed;
+
+    internal void Raise(Activity a, ActivityState? ended) => Changed?.Invoke(a, ended);
+
     /// <summary>The cards showing now, oldest first.</summary>
     public ObservableCollection<Activity> Items { get; } = [];
 
@@ -31,7 +39,9 @@ public sealed class ActivityFeed
 
     /// <summary>A job is starting: its card shows a spinner until it is finished, stopped or failed.</summary>
     /// <param name="cancel">What Stop does, if the job can be stopped.</param>
-    public Activity Start(string title, string detail = "", Action? cancel = null)
+    public Activity Start(string title, string detail = "", Action? cancel = null) => Start(title, detail, cancel, raise: true);
+
+    Activity Start(string title, string detail, Action? cancel, bool raise)
     {
         var a = new Activity(this, title, detail, cancel);
         lock (_lock)
@@ -39,15 +49,16 @@ public sealed class ActivityFeed
             Items.Add(a);
             while (Items.Count > MaxCards && Items.FirstOrDefault(i => !i.IsRunning) is { } old) Items.Remove(old);
         }
+        if (raise) Raise(a, null);
         return a;
     }
 
     /// <summary>Something happened at once (a file saved, a project sent to a DAW): a card that is already done.</summary>
     public Activity Done(string title, string detail = "", string? actionLabel = null, Action? action = null) =>
-        Start(title).Finish(title, detail, actionLabel, action);
+        Start(title, "", null, raise: false).Finish(title, detail, actionLabel, action);
 
     /// <summary>Something couldn't be done.</summary>
-    public Activity Failed(string title, string detail = "") => Start(title).Fail(title, detail);
+    public Activity Failed(string title, string detail = "") => Start(title, "", null, raise: false).Fail(title, detail);
 
     // async void: nothing may escape it, or it takes the whole app down. Two cards retiring at once off the window's
     // thread (a job finished in the background; in tests, which have no window) once removed at the same moment and did.
@@ -89,6 +100,10 @@ public sealed partial class Activity : ObservableObject
     readonly Action? _cancel;
     Action? _action;
     internal int Version;
+    long _started = System.Diagnostics.Stopwatch.GetTimestamp();
+
+    /// <summary>How long the job has run, or ran: from its start (or restart) until now.</summary>
+    public TimeSpan Elapsed => System.Diagnostics.Stopwatch.GetElapsedTime(_started);
 
     internal Activity(ActivityFeed feed, string title, string detail, Action? cancel)
     {
@@ -164,14 +179,18 @@ public sealed partial class Activity : ObservableObject
         Detail = detail;
         Percent = -1;
         State = ActivityState.Running;
+        _started = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!_feed.Items.Contains(this)) _feed.Items.Add(this);
+        _feed.Raise(this, null);
         return this;
     }
 
     Activity End(ActivityState state, TimeSpan linger)
     {
         Version++;
+        var wasRunning = IsRunning;
         State = state;
+        if (wasRunning) _feed.Raise(this, state);
         _feed.Retire(this, linger);
         return this;
     }

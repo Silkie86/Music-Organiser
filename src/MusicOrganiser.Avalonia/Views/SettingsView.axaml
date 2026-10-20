@@ -268,6 +268,14 @@
                                     </ComboBox>
                                     <TextBlock Text="A new version starts after a gap of" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
                                 </DockPanel>
+                                <TextBlock Text="Which saves are one song" FontWeight="SemiBold" Margin="0,8,0,4" />
+                                <TextBlock Classes="muted" FontSize="12.5" TextWrapping="Wrap"
+                                           Text="Saves in one folder whose names differ only by a number at the end are one song (track1, track 2, track_3). If the app got one wrong, change it on the song's Saves tab: move a save to another song, make it a song of its own, or Reset." />
+                                <CheckBox Content="Ask when two songs may be saves of one" IsChecked="{Binding ProjectsPage.AskDoubts}" Margin="0,8,0,0"
+                                          ToolTip.Tip="For names a letter or a short word apart, like 'track nd 1' and 'track 2'. The Projects page asks, with options." />
+                                <CheckBox Content="Also ask about the same name in different folders" IsChecked="{Binding ProjectsPage.DoubtsAcrossFolders}" Margin="0,4,0,0"
+                                          IsEnabled="{Binding ProjectsPage.AskDoubts}"
+                                          ToolTip.Tip="Off: a song in another folder is always another song" />
                             </StackPanel>
                         </Border>
 
@@ -358,6 +366,19 @@
                                 </DockPanel>
                                 <CheckBox Content="Deep listen to new sounds as they arrive" IsChecked="{Binding SoundLab.ListenToNew}"
                                           ToolTip.Tip="Needs the sound-understanding model (Sound Lab › Teach). Sounds it has already heard are skipped." />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Used in: which projects count as using a sound (the Used in column, the year filter, Never used, Most liked). -->
+                        <Border Classes="card settingsCard">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Used in" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="Which projects count as using a sound, for Used in, the year filter, Never used and Most liked. FL Studio projects so far: other DAWs' projects count every sound they hold." />
+                                <CheckBox Content="Only where the sound's channel has notes or clips" IsChecked="{Binding SoundLab.UsedNeedsNotes}"
+                                          ToolTip.Tip="A sample loaded on a channel that never plays in the playlist doesn't count" />
+                                <CheckBox Content="Not in a song whose newest save has it muted" IsChecked="{Binding SoundLab.UsedNotMutedInNewest}"
+                                          ToolTip.Tip="Its channel switched off, or all its clips muted or on muted playlist tracks, in the song's newest save: none of that song's saves count" />
                             </StackPanel>
                         </Border>
 
@@ -529,6 +550,26 @@
                                             ToolTip.Tip="Stops after the test running now, which puts back anything it was in the middle of. The report is still written." />
                                     <Button Content="Open report" Command="{Binding OpenReportCommand}"
                                             ToolTip.Tip="Opens the newest run's report. The reports are kept in reports/live in the app's data folder." />
+                                </WrapPanel>
+                                <TextBlock Text="{Binding ProgressLine}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                           Foreground="{StaticResource MutedBrush}"
+                                           IsVisible="{Binding ProgressLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                <TextBlock Text="{Binding Summary}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
+                                           IsVisible="{Binding Summary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard" DataContext="{Binding SelfCheck}">
+                            <StackPanel x:DataType="vm:LiveTestsViewModel">
+                                <TextBlock Text="Self-check" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="The app checks itself with your real library: that your folders are there, every project opens, how fast your sounds load, that the plugin scanner and sound output work, and how the galaxy draws. It only reads, and writes a report Claude can read from this computer (reports/checks in the app's data folder)." />
+                                <WrapPanel Classes="buttons">
+                                    <Button Content="Run self-check" Command="{Binding RunCommand}"
+                                            ToolTip.Tip="Opening every project can take a few minutes with a big library." />
+                                    <Button Content="Stop" Command="{Binding StopCommand}" IsVisible="{Binding Running}"
+                                            ToolTip.Tip="Stops after the check running now. The report is still written." />
+                                    <Button Content="Open report" Command="{Binding OpenReportCommand}" />
                                 </WrapPanel>
                                 <TextBlock Text="{Binding ProgressLine}" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12.5"
                                            Foreground="{StaticResource MutedBrush}"

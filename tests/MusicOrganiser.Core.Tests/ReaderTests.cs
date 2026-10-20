@@ -387,6 +387,18 @@ public class FlStudio25Tests
     }
 
     [Fact]
+    public void Says_which_samples_a_save_holds_without_playing()
+    {
+        var info = new FlStudioReader().Read(Fixtures.FlStudio25Unplayed(Fixtures.TempDir(), "Beat"));
+        Assert.Equal(3, info.Samples.Count);
+        Assert.Equal([("Hat 01.wav", SampleUse.Muted), ("Kick 01.wav", SampleUse.NoNotes)],
+                     info.Unplayed.Select(u => (Path.GetFileName(u.Key.Replace('\\', '/')), u.Value)).Order());
+
+        var playing = new FlStudioReader().Read(Fixtures.FlStudio25Unplayed(Fixtures.TempDir(), "Beat", hatPlays: true));
+        Assert.Equal([SampleUse.NoNotes], playing.Unplayed.Values);
+    }
+
+    [Fact]
     public void ResolvesTheUserDataFolderFromTheProjectsLocation()
     {
         var sample = Assert.Single(new FlStudioReader().Read(_path).Samples);

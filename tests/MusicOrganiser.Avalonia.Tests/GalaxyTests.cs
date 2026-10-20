@@ -59,6 +59,33 @@ public sealed class GalaxyTests
     }
 
     [AvaloniaFact]
+    public void A_big_librarys_stars_are_sorted_in_the_background_and_then_answer_the_mouse()
+    {
+        var played = new List<string>();
+        // 30,000 stars: sorting them waits off the window's thread, so setting them returns at once.
+        var stars = Enumerable.Range(0, 30_000)
+            .Select(i => new GalaxyStar(new Sound { Id = i, Path = $"/lib/Star {i}.wav" }, i < 10 ? 0.05f + i * 0.1f : 0.02f + i % 97 * 0.01f,
+                                        i < 10 ? 0.5f : 0.95f, 0xFF8080FF, true))
+            .ToList();
+        var canvas = new GalaxyCanvas { SweepCommand = new Record(played) };
+        var window = new Window { Content = canvas, Width = 600, Height = 400 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        canvas.Stars = stars;
+        var until = DateTime.UtcNow.AddSeconds(10);
+        var at = canvas.TranslatePoint(canvas.ToScreen(stars[4].X, stars[4].Y), window)!.Value;
+        while (played.Count == 0 && DateTime.UtcNow < until)
+        {
+            Thread.Sleep(20);
+            Dispatcher.UIThread.RunJobs();
+            window.MouseDown(at, MouseButton.Left);
+            window.MouseUp(at, MouseButton.Left);
+        }
+        Assert.Equal("Star 4", Assert.Single(played.Distinct()));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_galaxy_taken_off_screen_lets_go_of_the_graphics_cards_notices()
     {
         static int Listeners() =>

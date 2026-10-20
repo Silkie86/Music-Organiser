@@ -889,6 +889,10 @@
             <TabItem Header="In your projects">
                 <views:SamplesView DataContext="{Binding Samples}" Margin="0,8,0,0" />
             </TabItem>
+            <!-- ============ Copies of the same sound ============ -->
+            <TabItem Header="Duplicates">
+                <views:DuplicatesView DataContext="{Binding Duplicates}" Margin="0,8,0,0" />
+            </TabItem>
         </TabControl>
     </Grid>
 </UserControl>

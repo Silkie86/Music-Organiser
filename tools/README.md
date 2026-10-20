@@ -78,3 +78,22 @@ FL events can describe their data: `layout` names numbers at fixed offsets (`"pa
 with types `u8` to `u64`, `i8` to `i64`, `f32` and `f64`), and `record` with `recordLayout` splits data
 into equal records (`recordByVersion` when the size changed with FL's version). `tree` then shows each
 named number.
+
+## Run latest (testing at home)
+
+`tools/dev/Run latest.cmd` runs the newest app straight from GitHub without Visual Studio, and keeps it up to
+date while it runs: pick an open pull request (or main), and it builds and starts the app with `dotnet watch`.
+Every 20 seconds it checks GitHub, so a change pushed to that pull request shows in the open app by itself:
+screens (.axaml) reload in place through HotAvalonia, and C# changes apply live or restart the app.
+
+The first run copies itself to `%LOCALAPPDATA%\MusicOrganiser\run-latest`, with its own clone of the code (so it
+never touches Visual Studio's), and puts a "Music Organiser (latest)" shortcut on the Desktop.
+
+While testing, the app keeps a diary of each run in `logs\` in its data folder (the build, the pages opened,
+every warning and error), and F12 saves a note for Claude with a picture of the window in `notes\`. Claude reads
+both folders from the PC, so nothing needs copying out. A note being written is kept as it's typed and holds off
+the launcher's automatic restarts until it's saved, so a new build never loses it.
+
+Settings › Self-check runs the app's checks against the real library (folders there, every project opens, how fast
+the sound library loads, the plugin scanner, sound output, how the galaxy draws) and writes a report to
+`reports\checks` in the data folder, for Claude to read the same way. It only reads.

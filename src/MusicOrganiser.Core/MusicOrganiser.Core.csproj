@@ -9,6 +9,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />
+    <!-- Audio fingerprinting (MIT) for finding the same sound inside another one: the duplicate finder. -->
+    <PackageReference Include="SoundFingerprinting" Version="15.16.0" />
     <!-- zstd, which Serum 2 packs its settings with (MIT). -->
     <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
     <PackageReference Include="MeltySynth" Version="2.4.1" />
