@@ -31,7 +31,7 @@ param(
 )
 
 # Raised whenever this script changes, so an older branch's copy never replaces a newer installed one.
-$LauncherVersion = 6
+$LauncherVersion = 7
 
 $ErrorActionPreference = 'Continue'   # git writes progress to stderr, which Windows PowerShell would treat as failure
 $GitHubRepo = 'Silkie86/Music-Organiser'
@@ -89,6 +89,18 @@ if ($PSCommandPath -ne $Installed) {
         catch { Say "Set up in $Home_ (couldn't put a shortcut on the Desktop: $($_.Exception.Message))." 'Yellow' }
     }
 }
+
+# --- One launcher per copy of the code ---------------------------------------------------------------------------
+# Two launcher windows on the same folder fight: each one's update and clean-up closes the other's app (it exits
+# with -1 straight after starting). So a second one stops and says why.
+$LockFile = "$Repo.launcher.lock"
+$other = 0
+if ((Test-Path $LockFile) -and [int]::TryParse(((Get-Content $LockFile -Raw -ErrorAction SilentlyContinue) + '').Trim(), [ref]$other) -and
+    $other -ne $PID -and (Get-Process -Id $other -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(powershell|pwsh)$' })) {
+    Stop-WithMessage ("Another Music Organiser launcher window is already running (it may be behind other windows). " +
+        "Close that one first, or keep using it: two at once close each other's app.")
+}
+Set-Content -Path $LockFile -Value $PID -ErrorAction SilentlyContinue
 
 if (-not (Test-Path (Join-Path $Repo '.git'))) {
     Say "Downloading the code from GitHub into $Repo (only the first time)..." 'Cyan'
@@ -337,4 +349,5 @@ try {
 }
 finally {
     Stop-Watch $watch
+    Remove-Item $LockFile -ErrorAction SilentlyContinue
 }
