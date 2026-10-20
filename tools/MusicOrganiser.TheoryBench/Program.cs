@@ -1,16 +1,24 @@
-// Theory bench: runs the app's own key finder, chord readers and fit scores over POP909
-// (909 pop songs: MIDI with MELODY / BRIDGE / PIANO tracks, plus chord, key and beat annotations).
+// Theory bench: runs the app's own key finder, chord readers and fit scores over POP909 (909 pop songs: MIDI with
+// MELODY / BRIDGE / PIANO tracks, plus chord, key and beat annotations), or over a folder of whole-song MIDI files
+// (--library, see Library.cs).
 using System.Globalization;
 using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Midi.Playground;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
+using static Measure;
 
 const int Beat = 96, Bar = 4 * Beat;
+if (args is ["--library", var library, ..] && Directory.Exists(library))
+{
+    LibraryBench.Verbose = args.Contains("--verbose");
+    LibraryBench.Run(library);
+    return;
+}
 if (args.Length == 0 || !Directory.Exists(args[0]))
 {
-    Console.Error.WriteLine("Usage: theorybench <POP909 folder> [--keysonly | --fitonly | --clips]. See tools/README.md for getting the songs.");
+    Console.Error.WriteLine("Usage: theorybench <POP909 folder> [--keysonly | --fitonly | --clips], or theorybench --library <folder of whole-song .mid files>. See tools/README.md.");
     Environment.ExitCode = 2;
     return;
 }
@@ -424,47 +432,6 @@ if (!args.Contains("--keysonly"))
 }
 
 // ======================================================================= helpers
-static List<NoteEvent> Cut(IReadOnlyList<NoteEvent> notes, long from, long len) =>
-    notes.Where(n => n.Start >= from && n.Start < from + len)
-         .Select(n => n with { Start = n.Start - from, Length = Math.Max(1, Math.Min(n.Length, from + len - n.Start)) })
-         .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
-
-static double Auc(List<double> pos, List<double> neg)
-{
-    double wins = 0;
-    var sorted = neg.OrderBy(x => x).ToArray();
-    foreach (var p in pos)
-    {
-        var below = LowerBound(sorted, p - 1e-12);
-        var notAbove = LowerBound(sorted, p + 1e-12);
-        wins += below + 0.5 * (notAbove - below);
-    }
-    return wins / ((double)pos.Count * neg.Count);
-    static int LowerBound(double[] a, double x) { int lo = 0, hi = a.Length; while (lo < hi) { var mid = (lo + hi) / 2; if (a[mid] < x) lo = mid + 1; else hi = mid; } return lo; }
-}
-
-static float[] Chroma(IReadOnlyList<NoteEvent> ns)
-{
-    var ch = new float[12];
-    foreach (var n in ns) ch[n.Key % 12] += (float)Math.Clamp(n.Length / 384.0, 1 / 16.0, 2);
-    var t = ch.Sum();
-    return t <= 0 ? ch : ch.Select(x => x / t).ToArray();
-}
-
-static double PageFull(List<NoteEvent> mel, List<NoteEvent> acc)
-{
-    var target = HarmonyTarget.FromPart("t", MidiRoles.Chords, acc, Chroma(acc), PhraseAnalyser.Progression(acc), null);
-    return HarmonyMatcher.Refine(Chroma(mel), PhraseAnalyser.Progression(mel), mel, MidiRoles.Melody, target).Score;
-}
-
-static (double Score, double Together, double Move) PageParts(List<NoteEvent> mel, List<NoteEvent> acc)
-{
-    var target = HarmonyTarget.FromPart("t", MidiRoles.Chords, acc, Chroma(acc), PhraseAnalyser.Progression(acc), null);
-    var f = HarmonyMatcher.Refine(Chroma(mel), PhraseAnalyser.Progression(mel), mel, MidiRoles.Melody, target);
-    if (f.Together is not { } t) return (f.Score, f.Score, f.Score);
-    return (f.Score, t, Math.Clamp((f.Score - 0.6 * t) / 0.4, 0, 1));
-}
-
 // The MIDI page's chord reading, half a bar at a time (what PhraseAnalyser.Progression does), with times kept.
 static Func<long, (int, string, int)?> PageReader(List<NoteEvent> notes, long length)
 {
@@ -769,13 +736,16 @@ static class Fit
         return 0.6;
     }
 
+    /// <summary>The app's ChordScales.Sit, or with <paramref name="fifth"/> false, as it was before 2026-10-20: a 5th the
+    /// voicing leaves out scored as a foreign note (the family's default in ChordScales.Colour).</summary>
     public static double Sit(ChordSymbol chord, int pc, bool fifth)
     {
-        if (fifth && ChordSymbol.Mod(pc - chord.Root) == 7 &&
-            chord.Family is not (ChordFamily.Diminished or ChordFamily.HalfDiminished or ChordFamily.Augmented) &&
-            !(chord.Family == ChordFamily.Dominant && (chord.Has(6) || chord.Has(8)) && !chord.Has(7)))
-            return 1;
-        return ChordScales.Sit(chord, pc);
+        var now = ChordScales.Sit(chord, pc);
+        if (fifth || ChordSymbol.Mod(pc - chord.Root) != 7 || chord.Has(7) || now < 1) return now;
+        return chord.Family switch
+        {
+            ChordFamily.Major => -0.4, ChordFamily.Minor => -0.45, ChordFamily.Dominant => -0.5, ChordFamily.Sus => -0.3, _ => -0.2,
+        };
     }
 
     public static double Score(IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length, bool fifth, bool split, bool worst, double strong = 1)

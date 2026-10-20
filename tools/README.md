@@ -121,6 +121,18 @@ dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop9
 dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --clips     # keys on 8-bar clips
 ```
 
+It can also read a folder of whole-song MIDI files, one track per instrument, such as the construction kits in gospel,
+jazz and soul MIDI packs. In each file, the melody is a Lead, Flute, Sax or Talk Box track, or another part the app calls
+a melody. It is tested against the file's other parts, and the key written in the file or folder name ("Ebmin",
+"F#maj") is checked against the app's key. Subfolders at the first level are reported as styles. The files are only
+read; keep bought packs out of the repository.
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" [--verbose]
+```
+
+`--verbose` lists each file whose key the app got wrong.
+
 Things to know:
 
 - Only songs whose MIDI beats line up with the labelled beats are used (387 of them). The chord, key and beat labels
