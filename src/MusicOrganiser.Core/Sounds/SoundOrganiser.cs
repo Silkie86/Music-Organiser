@@ -68,7 +68,7 @@ public sealed class SoundOrganiser : IDisposable
         var clapIndex = clap.Count > 0 ? VectorIndex.Build(clap, standardise: false) : null;
         var deep = clapIndex is { Count: > 0 } c && c.Count >= sounds.Count(s => s.Analysis is not null) * 0.9;
         ApplyUsage(sounds, _lastUsage);
-        (_sounds, _visible, _byId, _features, _clapIndex, HasDeepListening) = (sounds, visible, byId, features, clapIndex, deep);
+        (_sounds, _byId, _visible, _features, _clapIndex, HasDeepListening) = (sounds, byId, visible, features, clapIndex, deep);
     }
 
     /// <summary>

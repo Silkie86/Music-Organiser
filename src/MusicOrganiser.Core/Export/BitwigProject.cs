@@ -451,10 +451,6 @@ public static class BitwigProject
         return new FlPlugin(name, newer.Str(0x9b), "VST3", classId, null, path);
     }
 
-    /// <summary>An automation clip's points for a lane, with where the FL clip each one belongs to starts (see <see cref="FlAutomation.StartOf"/>).</summary>
-    static IEnumerable<(double Beat, double Value, double From)> Lane(FlAutomation a, Func<double, double>? value = null) =>
-        a.Points.Select(p => (p.Beat, value is null ? p.Value : value(p.Value), a.StartOf(p)));
-
     /// <summary>
     /// The older synth's sound for the newer one, when the app can translate it (Serum 1's for Serum 2, which won't
     /// take Serum 1's as its own), as a VST3 preset; what came across only roughly; and the Serum 1 sound it came from.
@@ -467,6 +463,10 @@ public static class BitwigProject
         // Bitwig hands Serum 2 the component state; its controller rebuilds its own from that.
         return (new PresetBlob(state.Name, newer.Name, ".vstpreset", VstPreset.Build(newer.DeviceId, result.State.Write(), [])), result.Rough, serum1);
     }
+
+    /// <summary>An automation clip's points for a lane, with where the FL clip each one belongs to starts (see <see cref="FlAutomation.StartOf"/>).</summary>
+    static IEnumerable<(double Beat, double Value, double From)> Lane(FlAutomation a, Func<double, double>? value = null) =>
+        a.Points.Select(p => (p.Beat, value is null ? p.Value : value(p.Value), a.StartOf(p)));
 
     /// <summary>
     /// How Bitwig names a plugin's setting: a VST2 setting by its number, which FL uses too; a VST3 one by

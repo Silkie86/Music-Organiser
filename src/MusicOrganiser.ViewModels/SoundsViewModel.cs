@@ -1109,7 +1109,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     /// <param name="done">The card's words once the job has finished, worked out then.</param>
     /// <param name="always">False: the page reloads only if the job read the sounds in again (a scan that found nothing new doesn't).</param>
     internal async Task RunAsync(string label, Action<IProgress<SoundProgress>, CancellationToken> job, Func<(string Title, string Detail)>? done = null,
-                        bool always = true)
+                                 bool always = true)
     {
         if (IsBusy) return;
         IsBusy = true;

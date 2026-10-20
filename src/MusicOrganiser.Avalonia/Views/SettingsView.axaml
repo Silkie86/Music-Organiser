@@ -462,7 +462,7 @@
             <TabItem Header="MIDI">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
-                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="The MIDI page: how much it lists, the piano roll, and a song's MIDI that fits." />
+                        <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" Text="How the MIDI page reads, ranks and plays your MIDI." />
                         <views:MidiSettingsView DataContext="{Binding MidiPage}" />
                     </StackPanel>
                 </ScrollViewer>
