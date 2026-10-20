@@ -112,6 +112,18 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void Suggestions_say_how_many_parts_they_were_picked_from()
+    {
+        var keys = Chords(TwoFiveOne);
+        var notes = Enumerable.Range(1, 5).ToDictionary(i => (long)i, i => Line(2 * Beat, 65 + i, 69, 65, 64));
+        var catalogue = new MidiCatalogue([.. notes.Select(n => Stored(n.Key, $@"K:\Song{n.Key}\Song.flp", "Lead", n.Value))]);
+        var section = SectionWith(("Keys", MidiRoles.Chords, keys, @"K:\Mine\Idea.flp"));
+        var found = SectionMatcher.Rank(catalogue, SectionHarmony.Of(section), MidiRoles.Melody, e => notes[e.Id], out var matching, limit: 2);
+        Assert.Equal(2, found.Count);   // the best two, as the Settings number asks
+        Assert.Equal(5, matching);      // of the five leads there were, so the page can offer Show more
+    }
+
+    [Fact]
     public void An_idea_saved_as_sections_opens_on_one_timeline()
     {
         // As saved before the timeline: no version, sections played A B A, a typed chart in B.

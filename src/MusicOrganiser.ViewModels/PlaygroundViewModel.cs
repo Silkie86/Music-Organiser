@@ -1575,14 +1575,26 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [ObservableProperty] bool _isMatching;
     [ObservableProperty] string _matchStatus = "Pick a kind of part and press Find to get parts from your library that fit this section.";
     CancellationTokenSource? _matchCts;
+    /// <summary>How many suggestions the list holds now: the Settings number, grown by Show more.</summary>
+    int _shown;
+    /// <summary>The most Show more goes to, so ranking stays quick.</summary>
+    public const int MaxShown = 1000;
+    /// <summary>Whether more parts could fit than the list shows, so Show more has something to add.</summary>
+    [ObservableProperty] bool _canShowMore;
 
     partial void OnSuggestRoleChanged(RoleChip value) => _ = FindMatchesAsync();
 
     [RelayCommand]
     Task FindMatches() => FindMatchesAsync();
 
-    public async Task FindMatchesAsync()
+    /// <summary>The next lot of suggestions under the ones showing, best first as before.</summary>
+    [RelayCommand]
+    Task ShowMore() => FindMatchesAsync(more: true);
+
+    public async Task FindMatchesAsync(bool more = false)
     {
+        _shown = more ? Math.Min(MaxShown, Math.Max(_shown, SuggestCount) + SuggestCount) : SuggestCount;
+        var limit = _shown;
         _matchCts?.Cancel();
         var cts = _matchCts = new CancellationTokenSource();
         IsMatching = true;
@@ -1599,17 +1611,21 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var text = SuggestSearch.Trim();
             // nothing highlighted or picked: the whole timeline, whatever its labels' feels
             var feel = Loop is null && SelectedLabel is null ? SectionFeel.Any : FeelHere;
-            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, text, SuggestCount, cts.Token, feel));
+            var matching = 0;
+            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, out matching, text, limit, cts.Token, feel));
             if (cts.IsCancellationRequested) return;
             Matches.Clear();
             foreach (var m in found) Matches.Add(new PlaygroundMatchRow(this, m));
+            CanShowMore = found.Count >= limit && matching > found.Count && limit < MaxShown;
+            // The list is the best few of everything of that kind, so say how many there were to pick from.
+            var count = matching > found.Count ? $"{found.Count} of {matching:N0}" : $"{found.Count}";
             var left = harmony.Songs.Count == 0 ? "" : $" Left out: {string.Join(", ", harmony.Songs.Select(s => Path.GetFileName(s)))}, already in the idea.";
             var target = SwapTarget;
             MatchStatus = found.Count == 0 ? "Nothing found. Try another kind of part, or fewer words."
                 : target is not null && SwapRange is { } bars
-                    ? $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} for bars {bars.Start / Bar + 1}–{(bars.End + Bar - 1) / Bar} of {target.Clip.Name}, best first: Swap in puts one there instead." + left
-                : (harmony.IsEmpty ? $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()}, newest first: add a part or chords to rank them by fit."
-                                   : $"{found.Count} {MidiRoles.Plural(role).ToLowerInvariant()} that fit {(Loop is null ? "the whole idea" : LoopText.ToLowerInvariant())}, best first, moved into its key.") + left;
+                    ? $"{count} {MidiRoles.Plural(role).ToLowerInvariant()} for bars {bars.Start / Bar + 1}–{(bars.End + Bar - 1) / Bar} of {target.Clip.Name}, best first: Swap in puts one there instead." + left
+                : (harmony.IsEmpty ? $"{count} {MidiRoles.Plural(role).ToLowerInvariant()}, newest first: add a part or chords to rank them by fit."
+                                   : $"{count} {MidiRoles.Plural(role).ToLowerInvariant()} that fit {(Loop is null ? "the whole idea" : LoopText.ToLowerInvariant())}, best first, moved into its key.") + left;
         }
         catch (OperationCanceledException) { }
         finally

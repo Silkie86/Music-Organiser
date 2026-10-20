@@ -310,7 +310,12 @@
                                 <CheckBox Content="Smooth inversions" IsChecked="{Binding SmoothIncoming}" Margin="0,0,0,4"
                                           ToolTip.Tip="Chord parts you add are turned into the inversions that move least, sitting with the chords already here" />
                             </WrapPanel>
-                            <TextBlock Grid.Row="3" Text="{Binding MatchStatus}" Classes="small" TextWrapping="Wrap" TextTrimming="None" Margin="0,6" />
+                            <DockPanel Grid.Row="3" Margin="0,6">
+                                <Button DockPanel.Dock="Right" Content="Show more" Classes="tiny" Margin="6,0,0,0" VerticalAlignment="Top"
+                                        IsVisible="{Binding CanShowMore}" Command="{Binding ShowMoreCommand}"
+                                        ToolTip.Tip="The next lot under these, best first. How many come at a time is in Settings › Playground." />
+                                <TextBlock Text="{Binding MatchStatus}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                            </DockPanel>
                             <ListBox Grid.Row="4" ItemsSource="{Binding Matches}" Background="Transparent" Classes="longList"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
