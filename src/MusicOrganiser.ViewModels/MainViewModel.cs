@@ -32,6 +32,8 @@ public sealed partial class MainViewModel : ObservableObject
     public PluginsViewModel Plugins { get; }
     public SamplesViewModel Samples { get; }
     public SoundsViewModel Sounds { get; }
+    /// <summary>The MIDI page: every MIDI part in your projects and MIDI libraries.</summary>
+    public MidiBrowserViewModel Midi { get; }
     public SettingsViewModel Settings { get; }
 
     /// <summary>Bitwig and FL Studio as they are now, through their links (the sidebar's "In your DAWs").</summary>
@@ -47,6 +49,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] string _scanStatus = "";
     [ObservableProperty] double _scanPercent;
     Activity? _scanCard;
+    readonly bool _midiPage;
 
     /// <param name="watch">How the DAWs are reached: their usual links unless given (tests use stand-ins).</param>
     /// <param name="pluginScanner">The plugin scanner: mo-scan where the build put it unless given (tests use a stand-in).</param>
@@ -54,8 +57,9 @@ public sealed partial class MainViewModel : ObservableObject
     /// Where Settings finds MO Probe's reports and puts the live tests' reports: the app's data folder unless given (tests
     /// use a folder of their own).
     /// </param>
+    /// <param name="midiPage">Shows the MIDI page: the old WPF app has no view for it, so it leaves it out (and its reading).</param>
     public MainViewModel(LibraryDb db, SoundOrganiser sounds, DawWatch? watch = null, PluginScanner? pluginScanner = null,
-                         string? dataFolder = null)
+                         string? dataFolder = null, bool midiPage = true)
     {
         _db = db;
         Parallelism.Mode = Parallelism.ParsePace(db.GetSetting(SettingsViewModel.PerformanceKey));
@@ -69,15 +73,20 @@ public sealed partial class MainViewModel : ObservableObject
         Samples = new SamplesViewModel(db, this);
         Settings = new SettingsViewModel(db, this, dataFolder);
         Sounds = new SoundsViewModel(db, sounds, this);
+        Midi = new MidiBrowserViewModel(db, this);
         Settings.Liked.Changed += Sounds.WeightsChanged;
         Nav =
         [
             new("Projects", "", Projects),
             new("Sound Lab", "\uE8D6", Sounds),
+            new("MIDI", "", Midi),
             new("Plugins", "", Plugins),
             new("Settings", "", Settings),
         ];
+        _midiPage = midiPage;
+        if (!midiPage) Nav = Nav.Where(n => n.Page != Midi).ToList();
         _selectedNav = StartPage();
+        if (_selectedNav.Page == Midi) Midi.Opened();
         _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
         _projectsShown = _soundsShown = db.ProjectsRevision;   // those two pages read the library as they open
 
@@ -117,6 +126,7 @@ public sealed partial class MainViewModel : ObservableObject
             var (read, gone) = await Task.Run(() => _scanner.Update(changes.Files));
             if (read + gone == 0) return;
             await RefreshAllAsync();
+            if (_midiPage) _ = Midi.AfterScanAsync();   // a saved song's MIDI is read again too
             // Named after a file the scan reads: not a DAW's backup copy saved beside it (Bitwig's auto-backups).
             var roots = _db.Roots();
             var name = Path.GetFileNameWithoutExtension(changes.Files.FirstOrDefault(f => Scanner.IsProjectFile(f) && !Scanner.IsIgnored(f, roots))
@@ -160,6 +170,8 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnSelectedNavChanged(NavItem value)
     {
         _db.SetSetting(LastPageKey, value.Title);
+        if (value.Page == Midi) Midi.Opened();
+        else Midi.Left();
         // The MO Probes running now are followed only while Settings shows them.
         if (value.Page != Settings)
         {
@@ -247,6 +259,7 @@ public sealed partial class MainViewModel : ObservableObject
         _projectWatch?.Dispose();
         Sounds.StopWatching();
         CancelScan();
+        Midi.Dispose();
         PluginScanner.StopAll();
     }
 
@@ -424,6 +437,8 @@ public sealed partial class MainViewModel : ObservableObject
             _scanCard.Finish("Library up to date",
                 added > 0 ? $"{added} new project file{(added == 1 ? "" : "s")} · {Projects.Items.Count} songs in all" : $"{Projects.Items.Count} songs, nothing new");
         }
+        // The MIDI browser reads new and changed projects' MIDI on its own, at the lowest priority.
+        if (_midiPage) _ = Midi.AfterScanAsync();
         await RunQueuedScanAsync();
     }
 }

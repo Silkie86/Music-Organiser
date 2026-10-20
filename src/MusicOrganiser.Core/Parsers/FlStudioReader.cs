@@ -81,24 +81,27 @@ public sealed partial class FlStudioReader : IProjectReader
         }
     }
 
-    static Flp Load(string path) => Load(File.ReadAllBytes(path));
+    static Flp Load(string path) => ReadOnce.Get(path, p => ReadOnce.Bytes(p, out var length) is { } raw ? Load(raw, length) : Load(File.ReadAllBytes(p)));
 
-    static Flp Load(byte[] raw)
+    static Flp Load(byte[] raw) => Load(raw, raw.Length);
+
+    /// <param name="length">How much of <paramref name="raw"/> is the file (a borrowed buffer can be longer).</param>
+    static Flp Load(byte[] raw, int length)
     {
-        if (raw.Length < 22 || Encoding.ASCII.GetString(raw, 0, 4) != "FLhd") throw new InvalidDataException(Damaged);
+        if (length < 22 || Encoding.ASCII.GetString(raw, 0, 4) != "FLhd") throw new InvalidDataException(Damaged);
         var headerLen = BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(4));
-        if (headerLen < 0 || headerLen > raw.Length - 16) throw new InvalidDataException(Damaged);
+        if (headerLen < 0 || headerLen > length - 16) throw new InvalidDataException(Damaged);
         var flp = new Flp { Ppq = BinaryPrimitives.ReadUInt16LittleEndian(raw.AsSpan(12)) };
         var dt = 8 + headerLen;
         var pos = dt + 8;
         int end;
         if (Encoding.ASCII.GetString(raw, dt, 4) == "FLdt")
-            end = (int)Math.Min(raw.Length, (long)pos + BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(dt + 4)));
+            end = (int)Math.Min(length, (long)pos + BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(dt + 4)));
         else
         {
             // Some FL Studio 4 to 7 saves have junk (what looks like a leftover memory address and a size) where the
             // FLdt chunk's name and length belong. Their events follow it as usual, to the end of the file.
-            end = raw.Length;
+            end = length;
             flp.Warning = "Saved by an old FL Studio that garbled the start of its data; everything after it was read as usual.";
         }
 

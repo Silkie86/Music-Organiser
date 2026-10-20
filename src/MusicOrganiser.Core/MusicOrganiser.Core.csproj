@@ -13,6 +13,7 @@
     <PackageReference Include="SoundFingerprinting" Version="15.16.0" />
     <!-- zstd, which Serum 2 packs its settings with (MIT). -->
     <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
+    <PackageReference Include="MeltySynth" Version="2.4.1" />
   </ItemGroup>
 
   <ItemGroup>

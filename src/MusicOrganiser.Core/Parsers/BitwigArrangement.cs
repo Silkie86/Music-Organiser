@@ -20,7 +20,7 @@ public sealed partial class BitwigReader
     /// <summary>The project's arrangement as Bitwig shows it: tracks (groups indented) and the clips on their timelines.</summary>
     public Arrangement ReadArrangement(string path)
     {
-        var doc = TryDecode(path, out _);
+        var doc = TryDecode(path);
         if (doc?.Root is null || doc.BodyError is not null)
             return new Arrangement("Bitwig arranger", 120, 4, []) { Notes = ["This project couldn't be read in enough detail to draw."] };
 

@@ -57,6 +57,16 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void The_file_list_has_the_same_projects_and_details_as_the_full_list()
+    {
+        new Scanner(_db).ScanProjects();
+        var full = _db.Projects();
+        var files = _db.ProjectFiles();
+        Assert.Equal(full.Select(p => (p.Id, p.Path, p.Name, p.Daw, p.Folder, p.Size, p.Mtime, p.Modified, p.Tempo, p.FileMissing, p.Error)),
+                     files.Select(p => (p.Id, p.Path, p.Name, p.Daw, p.Folder, p.Size, p.Mtime, p.Modified, p.Tempo, p.FileMissing, p.Error)));
+    }
+
+    [Fact]
     public void ScansManyProjectsAcrossCoresInOneGo()
     {
         // Enough projects to fill several save batches, spread over nested folders.

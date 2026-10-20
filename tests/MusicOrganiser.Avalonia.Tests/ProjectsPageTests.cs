@@ -245,9 +245,9 @@ public sealed class ProjectsPageTests : IDisposable
         window.Show();
         Settle();
         var tabs = window.GetVisualDescendants().OfType<TabControl>().Single(t => t.Name == "Tabs");
-        Assert.Equal(["General", "Projects", "Sounds", "Plugins", "DAW links", "Developer"],
+        Assert.Equal(["General", "Projects", "Sounds", "Plugins", "MIDI", "DAW links", "Developer"],
                      tabs.Items.Cast<TabItem>().Select(t => (string)t.Header!));
-        tabs.SelectedIndex = 5;
+        tabs.SelectedIndex = tabs.Items.Count - 1;   // Developer
         Settle();
         var headers = window.GetVisualDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("sectionHeader") && t.IsEffectivelyVisible)
                             .Select(t => t.Text).ToList();

@@ -1,0 +1,231 @@
+using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Sounds;
+
+namespace MusicOrganiser.Core.Midi;
+
+/// <summary>
+/// One MIDI part as the browser shows it: the newest copy of some notes, with how many other places have the same
+/// notes (a pattern kept through 20 saves of a song is one entry, "in 20 files").
+/// </summary>
+public sealed class MidiEntry
+{
+    public required StoredPhrase Phrase { get; init; }
+    public int Copies => 1 + (OtherSources?.Count ?? 0);
+    /// <summary>The other files with the same notes (older saves of the song, or the same pattern in another project).</summary>
+    public List<string>? OtherSources { get; set; }
+    public string SearchText { get; set; } = "";
+    /// <summary>What you said it is, which wins over the app's guess; null for the guess.</summary>
+    public string? YourRole { get; set; }
+    /// <summary>The octave you moved it to (−3 to +3 from how it was saved), remembered for every copy; null: the app picks.</summary>
+    public int? YourOctave { get; set; }
+    public IReadOnlyList<PhraseChord> Chords { get; init; } = [];
+    public float[] Chroma { get; init; } = new float[12];
+
+    public long Id => Phrase.Id;
+
+    IReadOnlyList<PhraseMember>? _members;
+    /// <summary>For a phrase joined from clips that play back to back: those clips, and where each sits in it.</summary>
+    public IReadOnlyList<PhraseMember> Members => _members ??= PhraseMember.Decode(Phrase.Members);
+    public bool IsJoined => Phrase.Members.Length > 0;
+    /// <summary>How many different clips the phrase was joined from.</summary>
+    public int ClipCount => Members.Select(m => m.Hash).Distinct().Count();
+    /// <summary>The longer phrases these notes are part of, longest first; null when none.</summary>
+    public List<MidiEntry>? Within { get; set; }
+
+    /// <summary>
+    /// Whether this song has these notes, in this save or any other save of it (Song_2 … Song_36 in the same folder),
+    /// as the newest copy or one of the others.
+    /// </summary>
+    public bool IsIn(string path) => IsInSong(SongOf(path));
+
+    string[]? _songs;
+    /// <summary><see cref="IsIn"/> for a song already worked out with <see cref="SongOf"/>.</summary>
+    public bool IsInSong(string song) =>
+        Array.IndexOf(_songs ??= [SongOf(Phrase.Source.Path), .. OtherSources?.Select(SongOf) ?? []], song) >= 0;
+
+    /// <summary>The song a file is a save of: its folder (a Bitwig project's own folder counts as the one it's in) and its
+    /// name without the save number.</summary>
+    public static string SongOf(string path)
+    {
+        var name = Path.GetFileNameWithoutExtension(path);
+        return Path.Combine(SongVersions.SongFolder(Path.GetDirectoryName(path) ?? "", name), SongVersions.Split(name).Song).ToLowerInvariant();
+    }
+    public string Role => YourRole ?? Phrase.Role;
+    public bool IsProject => Phrase.Source.Kind == MidiSource.Project;
+    public string SourceName => Path.GetFileNameWithoutExtension(Phrase.Source.Path);
+
+    /// <summary>"Bass · Pattern 3" for a project's part; "Dark keys 01" (or "Dark keys 01 · Piano") for a file.</summary>
+    public string Title => IsProject
+        ? string.Join(" · ", new[] { Phrase.Part, Phrase.Clip }.Where(s => s.Length > 0))
+        : string.Join(" · ", new[] { Phrase.Clip, Phrase.Part }.Where(s => s.Length > 0));
+
+    public string KeyText => Phrase.Key is { Confidence: >= 0.05 } k ? k.Short : "";
+}
+
+/// <summary>What to look for.</summary>
+/// <param name="Role">Only this kind of part (<see cref="MidiRoles"/>), or null for every kind.</param>
+/// <param name="From">"projects", "files" or null for both.</param>
+/// <param name="Fit">Rank by how well each part fits this harmony, moved to fit it.</param>
+/// <param name="Like">Rank by how alike each part is to this one.</param>
+/// <param name="Leave">Leave out the parts in this file: the project being fitted to fits itself, which says nothing.</param>
+/// <param name="Within">Only the longer phrases this part is in.</param>
+/// <param name="Notes">Reads a part's notes, for the closer look at the best fits (played against the harmony in time).</param>
+/// <param name="Shuffle">A random pick from everything that matches, in a random order (this seed), instead of newest or best first.</param>
+public sealed record MidiQuery(string Text = "", string? Role = null, string? From = null, HarmonyTarget? Fit = null,
+                               MidiEntry? Like = null, int Limit = 500, string? Leave = null, MidiEntry? Within = null,
+                               Func<MidiEntry, IReadOnlyList<NoteEvent>>? Notes = null, int? Shuffle = null);
+
+/// <summary>A part found, with how it fits (when matching a harmony) or how alike it is (for "more like this").</summary>
+public sealed record MidiHit(MidiEntry Entry, HarmonyFit? Fit = null, double? Likeness = null);
+
+/// <summary>
+/// Every MIDI part in the index, held in memory for instant searching. Search words must all appear in a part's names,
+/// file, folders, kind, key or chords. A harmony to fit ranks every part by how well it fits once transposed; "more like
+/// this" ranks by shape. Each is a pass over the list, quick even for hundreds of thousands of parts.
+/// </summary>
+public sealed class MidiCatalogue
+{
+    public IReadOnlyList<MidiEntry> Entries { get; }
+    public int PhraseCount { get; }
+    readonly Dictionary<string, MidiEntry> _byHash;
+
+    /// <summary>The part with these notes in this catalogue: entries are new objects on every reload, so the page holds
+    /// on to its picks by their notes and finds them again here.</summary>
+    public MidiEntry? Find(string hash) => _byHash.GetValueOrDefault(hash);
+
+    public MidiCatalogue(IReadOnlyList<StoredPhrase> phrases)
+    {
+        PhraseCount = phrases.Count;
+        // Phrases come newest file first, so the first of each set of notes is the newest copy.
+        var byHash = _byHash = new Dictionary<string, MidiEntry>(phrases.Count);
+        var entries = new List<MidiEntry>();
+        foreach (var p in phrases)
+        {
+            if (byHash.TryGetValue(p.Hash, out var seen))
+            {
+                (seen.OtherSources ??= []).Add(p.Source.Path);
+                continue;
+            }
+            var chords = PhraseChord.Decode(p.Chords);
+            var entry = new MidiEntry
+            {
+                Phrase = p, Chords = chords, Chroma = MidiIndex.Floats(p.Chroma), YourRole = p.YourRole, YourOctave = p.YourOctave,
+                SearchText = SearchTextOf(p, p.YourRole ?? p.Role, chords),
+            };
+            byHash[p.Hash] = entry;
+            entries.Add(entry);
+        }
+        Entries = entries;
+
+        // Each clip learns which longer phrases it's part of.
+        foreach (var phrase in entries.Where(e => e.IsJoined))
+            foreach (var hash in phrase.Members.Select(m => m.Hash).Distinct())
+                if (byHash.TryGetValue(hash, out var member) && member != phrase)
+                    (member.Within ??= []).Add(phrase);
+        foreach (var e in entries)
+            e.Within?.Sort((a, b) => b.Phrase.Bars.CompareTo(a.Phrase.Bars));
+    }
+
+    /// <summary>Changes what kind of part this is (null: back to the app's guess), for searching and the chips too.</summary>
+    public static void Relabel(MidiEntry e, string? role)
+    {
+        e.YourRole = role;
+        e.SearchText = SearchTextOf(e.Phrase, e.Role, e.Chords);
+    }
+
+    static string SearchTextOf(StoredPhrase p, string role, IReadOnlyList<PhraseChord> chords)
+    {
+        var parts = new List<string> { p.Part, p.Clip, Path.GetFileNameWithoutExtension(p.Source.Path), role, MidiRoles.Plural(role), p.Source.Daw };
+        // The folders it's in (the last few): MIDI packs are sorted into folders like "Chords" and "Trap Melodies".
+        parts.AddRange((Path.GetDirectoryName(p.Source.Path) ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).TakeLast(4));
+        if (p.Key is { Confidence: >= 0.05 } k) parts.AddRange([k.Name, k.Short]);
+        parts.AddRange(chords.Select(c => c.Name).Distinct());
+        if (role == MidiRoles.Bass) parts.Add("bassline");
+        if (role == MidiRoles.Chords) parts.Add("progression");
+        return string.Join(' ', parts).ToLowerInvariant();
+    }
+
+    public IReadOnlyList<MidiHit> Search(MidiQuery q, out int matching, CancellationToken ct = default)
+    {
+        if (q.Within is { } part)
+        {
+            var phrases = part.Within ?? [];
+            matching = phrases.Count;
+            // Still moved into the song's key when fitting.
+            return phrases.Take(q.Limit).Select(e => q.Fit is { } song ? new MidiHit(e, FitOf(e, song, q.Notes)) : new MidiHit(e)).ToList();
+        }
+        var words = q.Text.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var leave = q.Leave is null ? null : MidiEntry.SongOf(q.Leave);
+        var pool = Entries.Where(e =>
+            (q.Role is null ? q.Fit is null || e.Role != MidiRoles.Drums : e.Role == q.Role) &&   // drums have no harmony to fit
+            (q.From is null || (q.From == "projects") == e.IsProject) &&
+            !ReferenceEquals(e, q.Like) &&
+            (leave is null || !e.IsInSong(leave)) &&
+            words.All(w => e.SearchText.Contains(w, StringComparison.Ordinal))).ToList();
+        matching = pool.Count;
+        ct.ThrowIfCancellationRequested();
+
+        if (q.Fit is { } target)
+        {
+            // A quick look at the notes alone picks the likeliest few thousand; those get the full look, chords and all.
+            var shortlist = pool.Select(e => (e, Quick: HarmonyMatcher.QuickScore(e.Chroma, target)))
+                                .OrderByDescending(x => x.Quick).Take(Math.Max(q.Limit * 4, 2000)).Select(x => x.e).ToList();
+            ct.ThrowIfCancellationRequested();
+            var best = shortlist.Select(e => (Entry: e, Fit: HarmonyMatcher.Fit(e.Chroma, e.Chords, target)))
+                                .OrderByDescending(h => h.Fit.Score).ThenByDescending(h => h.Entry.Copies)
+                                .Take(q.Limit).ToList();
+            ct.ThrowIfCancellationRequested();
+            // The ones shown get the closer look: their notes against the harmony's, at the same time.
+            var hits = best.Select(h => new MidiHit(h.Entry, FitOf(h.Entry, target, q.Notes, ct)))
+                           .OrderByDescending(h => h.Fit!.Score).ThenByDescending(h => h.Entry.Copies).ToList();
+            return q.Shuffle is { } seed ? Shuffled(hits, seed) : hits;
+        }
+        if (q.Like is { } like)
+        {
+            var mine = MidiIndex.Floats(like.Phrase.Features);
+            var alike = pool.Select(e => new MidiHit(e, Likeness: PhraseAnalyser.Likeness(mine, MidiIndex.Floats(e.Phrase.Features))))
+                            .OrderByDescending(h => h.Likeness).Take(q.Limit).ToList();
+            return q.Shuffle is { } seed ? Shuffled(alike, seed) : alike;
+        }
+        if (q.Shuffle is { } pick)
+        {
+            // A random few hundred from everything that matches, not just the newest.
+            var random = new Random(pick);
+            var all = pool.ToArray();
+            var n = Math.Min(q.Limit, all.Length);
+            for (var i = 0; i < n; i++)
+            {
+                var j = random.Next(i, all.Length);
+                (all[i], all[j]) = (all[j], all[i]);
+            }
+            return all.Take(n).Select(e => new MidiHit(e)).ToList();
+        }
+        return pool.Take(q.Limit).Select(e => new MidiHit(e)).ToList();
+    }
+
+    static List<MidiHit> Shuffled(List<MidiHit> hits, int seed)
+    {
+        var random = new Random(seed);
+        var list = hits.ToList();
+        for (var i = list.Count - 1; i > 0; i--)
+        {
+            var j = random.Next(i + 1);
+            (list[i], list[j]) = (list[j], list[i]);
+        }
+        return list;
+    }
+
+    /// <summary>How a part fits, with the closer look when its notes can be read, and the octave it plays in there.</summary>
+    static HarmonyFit FitOf(MidiEntry e, HarmonyTarget target, Func<MidiEntry, IReadOnlyList<NoteEvent>>? notesOf, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (notesOf is not null && target.Notes.Count > 0 && notesOf(e) is { Count: > 0 } notes)
+            return HarmonyMatcher.Refine(e.Chroma, e.Chords, notes, e.Role, target);
+        return HarmonyMatcher.WithOctaves(HarmonyMatcher.Fit(e.Chroma, e.Chords, target), e.Role, e.Phrase.Lowest, e.Phrase.Highest, target);
+    }
+
+    /// <summary>How many parts of each kind there are, for the chips.</summary>
+    public IReadOnlyDictionary<string, int> RoleCounts() =>
+        Entries.GroupBy(e => e.Role).ToDictionary(g => g.Key, g => g.Count());
+}

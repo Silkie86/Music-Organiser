@@ -24,7 +24,7 @@ public partial class App : Application
         AudioPlayer.RegisterDecoders();
         _soundDb = new SoundLibrary(SoundLibrary.DefaultPath);
         _sounds = new SoundOrganiser(_soundDb);
-        var window = new MainWindow { DataContext = _main = new MainViewModel(_db, _sounds) };
+        var window = new MainWindow { DataContext = _main = new MainViewModel(_db, _sounds, midiPage: false) };   // no MIDI page in the WPF app (Avalonia only)
         MainWindow = window;
         window.Show();
     }
