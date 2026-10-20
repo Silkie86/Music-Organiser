@@ -657,14 +657,19 @@ class LinkTest {
                                    "pads", list(obj("note", 36, "path", "C:\\Kit\\Kick 2.wav"), obj("note", 40, "path", "C:\\Kit\\Rim.wav")))).get("result"));
         assertEquals("C:\\Kit\\Kick.wav", pads.get(36).devices.get(0).sample);
 
-        // Nor is one whose empty Sampler has an instrument after it, which plays; effects after it don't.
+        // Nor is one whose empty Sampler has an instrument after it, which plays; effects after it don't. Bitwig 6.1.5
+        // calls an instrument "instrument", and (most likely) an audio effect "audio-effect".
         pads.get(42).devices.add(device("Polymer").kind("note_to_audio"));
         pads.get(44).devices.add(device("Delay+"));
+        pads.get(46).devices.add(device("EQ+").kind("audio-effect"));
+        pads.get(48).devices.add(device("Polymer").kind("instrument"));
         bitwig.clock.advance(100);
-        assertJson(obj("filled", list(44), "replaced", list(44), "skipped", list(42), "failed", list(),
-                       "taken", list(obj("note", 42, "name", "Sampler", "devices", 3, "first", "Sampler", "sample", ""))),
+        assertJson(obj("filled", list(44, 46), "replaced", list(44, 46), "skipped", list(42, 48), "failed", list(),
+                       "taken", list(obj("note", 42, "name", "Sampler", "devices", 3, "first", "Sampler", "sample", ""),
+                                     obj("note", 48, "name", "Sampler", "devices", 3, "first", "Sampler", "sample", ""))),
                    app.waitFor(obj("id", 5, "cmd", "pads", "track", 1, "device", 0,
-                                   "pads", list(obj("note", 42, "path", "C:\\Kit\\Hat.wav"), obj("note", 44, "path", "C:\\Kit\\Clap.wav")))).get("result"));
+                                   "pads", list(obj("note", 42, "path", "C:\\Kit\\Hat.wav"), obj("note", 44, "path", "C:\\Kit\\Clap.wav"),
+                                                obj("note", 46, "path", "C:\\Kit\\Tom.wav"), obj("note", 48, "path", "C:\\Kit\\Ride.wav")))).get("result"));
         assertEquals(List.of("Sampler", "Compressor", "Polymer"), pads.get(42).devices.stream().map(d -> d.name).collect(Collectors.toList()));
         assertNull(pads.get(42).devices.get(0).sample);
     }
