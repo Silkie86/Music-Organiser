@@ -120,10 +120,15 @@ static class FlArrangement
     {
         double Beats(long ticks) => ticks / Ppq(song.Ppq);
         var lanes = new List<PreviewLane>();
+        // As BitwigProject.FromFl makes them: every channel with a plugin or sample gets a track, even one the playlist
+        // never plays, except an audio clip channel with no notes, whose clips go on audio tracks.
+        var audio = song.Channels.Where(c => c.AudioClips.Count > 0 && c.Sample.Length > 0).ToHashSet();
+        var playing = song.Channels.Where(c => (c.Notes.Count > 0 || c.Clips.Count > 0 || !audio.Contains(c)) &&
+                                               (c.Instrument is not null || c.Sample.Length > 0)).ToHashSet();
         foreach (var c in song.Channels)
         {
             var colour = Colour(pl.ChannelColours, c.Index);
-            if (c.Clips.Count > 0)
+            if (c.Clips.Count > 0 || playing.Contains(c))
                 lanes.Add(new PreviewLane(c.Name, LaneKind.Instrument)
                 {
                     Detail = c.Instrument?.Name ?? (c.Sample.Length > 0 ? "Sampler · " + c.Sample.Split('\\', '/')[^1] : ""),
