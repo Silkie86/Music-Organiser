@@ -1,0 +1,65 @@
+name: MIDI model (CLaMP 3 to ONNX)
+
+# Builds the MIDI page's model files and puts them on a GitHub release of this repository, where the app downloads them
+# on first use (Clamp3Model.DownloadBase). It downloads CLaMP 3's symbolic checkpoint and XLM-RoBERTa's tokenizer from
+# Hugging Face, exports both encoders with tools/clamp3/export_onnx.py, checks them against PyTorch, and quantises them
+# to int8. Run it by hand from the Actions tab (once this file is on main); until then a push to the MIDI search
+# branch that changes the export runs it. A release that already exists is left as it is: raise Clamp3Model.Version
+# (and the tag below with it) for a new export.
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/midi-word-search-haqohr]
+    paths: [.github/workflows/clamp3-onnx.yml, tools/clamp3/export_onnx.py]
+
+permissions:
+  contents: write
+
+env:
+  TAG: clamp3-c2-onnx-v1
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Release already there?
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "found=true" >> "$GITHUB_OUTPUT"; else echo "found=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Install PyTorch (CPU) and ONNX tools
+        if: steps.existing.outputs.found == 'false'
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install transformers==4.46.3 tokenizers onnx onnx_ir onnxruntime mido numpy
+      - name: Export, check and quantise
+        if: steps.existing.outputs.found == 'false'
+        # pipefail: a failed export or check fails this step, so nothing below publishes it.
+        run: |
+          set -o pipefail
+          python tools/clamp3/export_onnx.py --out out | tee export.log
+      - name: Publish the release
+        if: steps.existing.outputs.found == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir release
+          cp out/symbolic.onnx release/clamp3_symbolic_int8.onnx
+          cp out/text.onnx release/clamp3_text_int8.onnx
+          cp out/tokenizer.json release/tokenizer.json
+          cp tools/clamp3/LICENSE-clamp3.txt release/LICENSE-clamp3.txt
+          {
+            echo "The MIDI page's model: CLaMP 3 (MIT licence) exported to ONNX and quantised to int8 by tools/clamp3/export_onnx.py."
+            echo "The app downloads these files itself on first use."
+            echo
+            echo '```'
+            grep -E "cosine|correlation|Checkpoint|tensors loaded" export.log
+            echo '```'
+          } > notes.md
+          gh release create "$TAG" release/* --title "MIDI model (CLaMP 3, ONNX)" --notes-file notes.md --target "$GITHUB_SHA"
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"

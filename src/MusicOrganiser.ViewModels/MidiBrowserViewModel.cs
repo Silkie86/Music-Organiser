@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -8,6 +9,7 @@ using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
+using Microsoft.ML.OnnxRuntime;
 
 namespace MusicOrganiser.ViewModels;
 
@@ -44,6 +46,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     CancellationTokenSource? _indexCts;
     Task? _indexing;
     int _searchRequest, _listenRequest;
+    (MidiQuery, float[]?)? _lastAsked;
+
+    /// <summary>Results for a different search than last time are in: the list goes back to the top.</summary>
+    public event EventHandler? NewSearchShown;
     bool _loading, _indexAgain, _retryFailed;
 
     public MidiBrowserViewModel(LibraryDb db, MainViewModel main, MidiIndex? index = null)
@@ -56,6 +62,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         RoleChips = MidiRoles.All.Prepend("All").Select(r => new RoleChip(r == "All" ? "All" : MidiRoles.Plural(r), r)).ToList();
         _selectedRole = RoleChips[0];
         _includeOlderSaves = db.GetSetting(MidiIndexer.OlderSavesKey) == "1";
+        if (double.TryParse(db.GetSetting(NameWeightKey), NumberStyles.Float, CultureInfo.InvariantCulture, out var weight))
+            _nameWeight = Math.Clamp(weight, 0, 3);
         _loop = db.GetSetting(LoopKey) == "1";
         GmSounds.ChosenFile = db.GetSetting(SoundFontKey) is { Length: > 0 } chosen ? chosen : null;
         _hasGoodSounds = GmSounds.IsInstalled;
@@ -532,7 +540,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// The order the list is in when it isn't shuffled, as a choice next to Shuffle (Solomon, 2026-10-17: "should be an
     /// option to list the matches by highest match").
     /// </summary>
-    public string OrderText => Fit is not null ? "Best match first" : Like is not null ? "Most alike first" : PhrasesOf is not null ? "Longest first" : "Newest first";
+    public string OrderText => Fit is not null ? "Best match first" : Like is not null ? "Most alike first" : PhrasesOf is not null ? "Longest first"
+        : _describing ? "Closest to your words first" : "Newest first";
+
+    // The list shown is a search by description (closest first), not newest first.
+    bool _describing;
 
     [RelayCommand]
     async Task Shuffle()
@@ -562,6 +574,52 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsLiking))] MidiEntry? _like;
     public bool IsLiking => Like is not null;
     public string LikeText => Like is null ? "" : $"Parts shaped like {Like.Title}";
+
+    // ---- search by description (CLaMP 3) ----
+
+    Clamp3Model? _clamp;
+    readonly object _clampLock = new();
+    bool _clampFailed;
+    Task? _hearing;
+    // The listening itself, on a background thread: waited for on quit before the model is freed.
+    Task? _hearWork;
+    // Asked to listen again while listening (new parts were read meanwhile): it goes round once more when done.
+    bool _hearAgain;
+    CancellationTokenSource? _hearCts;
+    (string Text, float[] Vector)? _lastWords;
+
+    /// <summary>Whether the MIDI model is on this computer: then the search box takes descriptions too.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(SearchHint))] [NotifyPropertyChangedFor(nameof(CanDownloadMeaning))]
+    bool _meaningInstalled = Clamp3Model.IsInstalled();
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanDownloadMeaning))] bool _isDownloadingMeaning;
+    [ObservableProperty] double _meaningPercent;
+    [ObservableProperty] string _meaningText = "";
+    /// <summary>The model is listening to parts it hasn't heard yet.</summary>
+    [ObservableProperty] bool _isHearing;
+
+    public const string NameWeightKey = "midi_name_weight";
+
+    /// <summary>
+    /// How much names, folders and kinds count against what the model hears, when searching by description: 0 is the
+    /// model only, 1 as it comes, 3 lets names lead. Saved, so it stays as you set it.
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(NameWeightText))] double _nameWeight = 1;
+
+    public string NameWeightText => NameWeight <= 0 ? "Notes only: names are ignored"
+        : NameWeight < 1 ? "Mostly the notes, names help a little"
+        : NameWeight == 1 ? "Matching names first, then by how the notes play"
+        : NameWeight < 3 ? "Names count more than the notes" : "Names lead, the notes sort them";
+
+    partial void OnNameWeightChanged(double value)
+    {
+        _db.SetSetting(NameWeightKey, value.ToString(CultureInfo.InvariantCulture));
+        if (Search.Trim().Length > 0) _ = RefreshAsync(delayMs: 150);
+    }
+
+    public bool CanDownloadMeaning => !MeaningInstalled && !IsDownloadingMeaning;
+    public string SearchHint => MeaningInstalled
+        ? "Describe it: dark pad chords, bouncy funk bassline… or a name, key or chord"
+        : "Search MIDI: dark, Cm, trap, piano, Am7…";
 
     // ---- longer phrases ----
 
@@ -601,7 +659,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     partial void OnSearchChanged(string value)
     {
         if (_shuffle is not null) { _shuffle = null; OnPropertyChanged(nameof(IsShuffled)); }
-        _ = RefreshAsync(delayMs: 150);
+        _ = RefreshAsync(delayMs: MeaningInstalled ? 300 : 150);
     }
     partial void OnSelectedRoleChanged(RoleChip value) => _ = RefreshAsync();
     partial void OnFromChanged(string value) => _ = RefreshAsync();
@@ -644,8 +702,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             {
                 started = clock.Elapsed;
                 var all = _index.All();
+                var heard = _index.Embeddings(Clamp3Model.Version);
                 read = clock.Elapsed;
-                var c = new MidiCatalogue(all);
+                var c = new MidiCatalogue(all, heard);
                 var r = (c, c.RoleCounts(), c.Entries.Select(e => e.Phrase.Source.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count());
                 sorted = clock.Elapsed;
                 return r;
@@ -693,9 +752,12 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var request = ++_searchRequest;
         if (delayMs > 0 && UiWork.InBackground) await Task.Delay(delayMs);
         if (request != _searchRequest || _catalogue is not { } catalogue) return;
-        var query = new MidiQuery(Search.Trim(), SelectedRole.Role == "All" ? null : SelectedRole.Role,
+        var text = Search.Trim();
+        var words = text.Length > 0 && (_sectionTarget ?? Fit) is null && Like is null && PhrasesOf is null ? await WordsAsync(text) : null;
+        if (request != _searchRequest) return;
+        var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
                                   From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, _sectionTarget ?? Fit, Like, Leave: _fitPath,
-                                  Within: PhrasesOf, Notes: NotesOf, Shuffle: _shuffle);
+                                  Words: words, Within: PhrasesOf, NameWeight: (float)NameWeight, Notes: NotesOf, Shuffle: _shuffle);
         query = query with { Limit = ListLimit };
         // A new search stops the one before: scoring every part against a harmony is the heavy part, and only the
         // newest is shown.
@@ -708,6 +770,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         catch (OperationCanceledException) { return; }
         if (request != _searchRequest) return;
         var keep = Selected?.Entry;
+        var asked = (query with { Words = null }, words);
+        var newSearch = !Equals(asked, _lastAsked);
+        _lastAsked = asked;
         Results = hits.Select(h => new MidiRow(h, this)).ToList();
         // What's playing carries on, its playhead moved to its row in the new list.
         if (_playing is { } playing && Results.FirstOrDefault(r => Same(r.Entry, playing.Entry)) is { } again && again != playing)
@@ -719,13 +784,22 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             _playing = again;
         }
         Selected = Results.FirstOrDefault(r => Same(r.Entry, keep)) ?? Results.FirstOrDefault();
+        if (_describing != words is not null)
+        {
+            _describing = words is not null;
+            OnPropertyChanged(nameof(OrderText));
+        }
         if (PhrasesOf is not null) Message = "";
+        // The part picked stays picked, but a new search shows its best match first rather than scrolling to it.
+        if (newSearch) NewSearchShown?.Invoke(this, EventArgs.Empty);
         ResultText = matching == 0 ? (HasParts ? "Nothing matches. Try fewer words, or another kind." : "")
             : PhrasesOf is not null ? (matching == 1 ? "1 longer phrase" : $"{matching:N0} longer phrases") + ", longest first. The part you picked is lit up in each."
             : _shuffle is not null ? $"Shuffled · {hits.Count:N0} picked at random from {matching:N0}" + (Fit is not null ? " of the best fits" : "")
             : _sectionTarget is not null ? $"Best match first for {Section?.Describe()} · {Math.Min(matching, hits.Count):N0} shown of {matching:N0}, each played in those bars"
             : Fit is not null ? $"Best match first · {Math.Min(matching, hits.Count):N0} shown of {matching:N0}, each moved into the right key and octave"
             : Like is not null ? $"Most alike first · {hits.Count:N0} of {matching:N0}"
+            : words is not null ? $"Closest to “{text}” first · {hits.Count:N0} of {matching:N0}" +
+                                  (catalogue.HeardCount < catalogue.Entries.Count ? $" · {catalogue.Entries.Count - catalogue.HeardCount:N0} not heard yet" : "")
             : hits.Count < matching ? $"{hits.Count:N0} of {matching:N0}, newest first. Search to narrow it down." : $"{matching:N0}, newest first";
     }
 
@@ -786,6 +860,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             var result = await Task.Run(() => _indexer.Run(progress, token, retryFailed), token);
             if (result.Read > 0 || result.Forgotten > 0 || _catalogue is null) await LoadAsync();
             else Failures = await UiWork.Run(_index.Failures);
+            _ = HearAsync();
             card.Finish(result.Read == 0 ? "MIDI up to date" : "MIDI read",
                         result.Read == 0 ? $"{_catalogue?.Entries.Count ?? 0:N0} parts" :
                         $"{result.Read:N0} file{(result.Read == 1 ? "" : "s")}, {result.Phrases:N0} parts" +
@@ -810,6 +885,168 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             IsIndexing = false;
             IndexText = "";
         }
+    }
+
+    // ---- the MIDI model ----
+
+    /// <summary>The model, loaded the first time it's needed; null when it isn't installed or won't load.</summary>
+    Clamp3Model? Clamp()
+    {
+        if (_clamp is not null || _clampFailed || !Clamp3Model.IsInstalled()) return _clamp;
+        lock (_clampLock)
+        {
+            if (_clamp is not null || _clampFailed) return _clamp;
+            try { _clamp = new Clamp3Model(); }
+            catch (Exception e)
+            {
+                _clampFailed = true;
+                AppLog.Info("MIDI", $"The MIDI model wouldn't load: {e}");
+            }
+            return _clamp;
+        }
+    }
+
+    /// <summary>What the model makes of the search words (the last one is kept, so changing the kind doesn't ask again).</summary>
+    async Task<float[]?> WordsAsync(string text)
+    {
+        if (!MeaningInstalled) return null;
+        if (_lastWords is { } last && last.Text == text) return last.Vector;
+        try
+        {
+            var vector = await UiWork.Run(() => Clamp()?.EmbedText(text));
+            if (vector is not null) _lastWords = (text, vector);
+            return vector;
+        }
+        catch (Exception e) when (e is OnnxRuntimeException or InvalidOperationException)
+        {
+            AppLog.Info("MIDI", $"Describing \"{text}\" failed: {e.Message}");
+            return null;
+        }
+    }
+
+    [RelayCommand]
+    async Task DownloadMeaning()
+    {
+        if (IsDownloadingMeaning) return;
+        IsDownloadingMeaning = true;
+        MeaningPercent = 0;
+        MeaningText = "Connecting…";
+        var cts = new CancellationTokenSource();
+        var card = _main.Activities.Start("Downloading the MIDI model", "Connecting…", cts.Cancel);
+        try
+        {
+            var progress = new Progress<(string File, long Done, long? Total)>(p =>
+            {
+                var index = Array.FindIndex(Clamp3Model.Files, f => f.Local == p.File) + 1;
+                var size = $"{p.Done / 1048576.0:N1} MB" + (p.Total is { } t ? $" of {t / 1048576.0:N1} MB" : "");
+                MeaningPercent = p.Total is > 0 ? 100.0 * p.Done / p.Total.Value : 0;
+                MeaningText = $"File {index} of {Clamp3Model.Files.Length}: {size}";
+                card.Report(p.Total is > 0 ? MeaningPercent : -1, MeaningText);
+            });
+            await Clamp3Model.DownloadAsync(progress, ct: cts.Token);
+            _clampFailed = false;
+            MeaningInstalled = true;
+            card.Finish("MIDI model installed", "It's listening to your MIDI now; search by description as it goes");
+            Message = "The MIDI model is installed. It's listening to your MIDI in the background; describe what you're after in the search box.";
+            _ = HearAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            card.Stop("Download stopped", "It carries on from the file it was on");
+        }
+        catch (Exception e)
+        {
+            card.Fail("Downloading the MIDI model failed", e.Message);
+            Message = $"Downloading the MIDI model failed: {e.Message}. Check the internet connection and try again.";
+        }
+        finally
+        {
+            IsDownloadingMeaning = false;
+            MeaningText = "";
+        }
+    }
+
+    /// <summary>Lets the model hear the parts it hasn't heard yet, then searches again so they show up.</summary>
+    public Task HearAsync()
+    {
+        if (!MeaningInstalled || _catalogue is null) return Task.CompletedTask;
+        if (_hearing is { IsCompleted: false })
+        {
+            _hearAgain = true;
+            return _hearing;
+        }
+        return _hearing = RunHearAsync();
+    }
+
+    [RelayCommand]
+    void StopHearing() => _hearCts?.Cancel();
+
+    async Task RunHearAsync()
+    {
+        if (await UiWork.Run(Clamp) is not { } model)
+        {
+            Message = "The MIDI model is installed but wouldn't load, so search matches names only. Details are in the log.";
+            return;
+        }
+        var cts = _hearCts = new CancellationTokenSource();
+        Activity? card = null;
+        var progress = new ThrottledProgress<ScanProgress>(p =>
+        {
+            card ??= _main.Activities.Start("Listening to your MIDI", "So you can search it by description", cts.Cancel);
+            if (p.Total > 0) card.Report(100.0 * p.Done / p.Total, $"{p.Done:N0} of {p.Total:N0} parts");
+        }, 500);
+        IsHearing = true;
+        // Each batch heard joins the catalogue as it's saved, so description search uses it during a long first listen;
+        // the list is searched again now and then while a description is showing.
+        var catalogue = _catalogue;
+        var ui = SynchronizationContext.Current;
+        long lastShown = Environment.TickCount64;
+        void Heard(IReadOnlyDictionary<string, sbyte[]> batch)
+        {
+            catalogue?.AddMeanings(batch);
+            if (ui is null || Environment.TickCount64 - lastShown < 20_000) return;
+            lastShown = Environment.TickCount64;
+            ui.Post(_ => { if (!_disposed && (Search.Trim().Length > 0 || Like is not null)) _ = RefreshAsync(); }, null);
+        }
+        try
+        {
+            int heard = 0, failed = 0;
+            do
+            {
+                _hearAgain = false;
+                var work = Task.Run(() => MidiEmbedder.Run(_index, model, progress, cts.Token, Heard), cts.Token);
+                _hearWork = work;
+                var result = await work;
+                heard += result.Heard;
+                failed += result.Failed;
+            }
+            while (_hearAgain && !cts.IsCancellationRequested);   // parts read while it listened are heard now, not next time
+            if (heard > 0) await AddMeaningsAsync();
+            card?.Finish("Heard your MIDI", $"{heard:N0} parts can be found by description" +
+                                            (failed > 0 ? $"; {failed:N0} couldn't be heard" : ""));
+        }
+        catch (OperationCanceledException)
+        {
+            if (!_disposed) await AddMeaningsAsync();
+            card?.Stop("Stopped listening to MIDI", "It carries on from there next time");
+        }
+        catch (Exception e)
+        {
+            card?.Fail("Listening to MIDI failed", e.Message);
+            AppLog.Info("MIDI", $"Listening failed: {e}");
+        }
+        finally
+        {
+            progress.Close();
+            IsHearing = false;
+        }
+    }
+
+    async Task AddMeaningsAsync()
+    {
+        if (_catalogue is not { } catalogue) return;
+        await UiWork.Run(() => { catalogue.AddMeanings(_index.Embeddings(Clamp3Model.Version)); return 0; });
+        if (Search.Trim().Length > 0 || Like is not null) await RefreshAsync();
     }
 
     [RelayCommand]
@@ -1286,10 +1523,20 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         catch (Exception ex) when (ex is Microsoft.Data.Sqlite.SqliteException or InvalidOperationException) { return []; }
     }
 
+    bool _disposed;
+
     public void Dispose()
     {
+        _disposed = true;
         _indexCts?.Cancel();
         _searchCts?.Cancel();
+        _hearCts?.Cancel();
+        // The model is only freed once nothing is using it: a part being heard finishes within a second or so. If it's
+        // still going after that, it's left to the end of the app rather than freed under it.
+        var stopped = true;
+        try { stopped = _hearWork?.Wait(TimeSpan.FromSeconds(3)) ?? true; }
+        catch (AggregateException) { }
+        if (stopped) _clamp?.Dispose();
         StopPlaying();
         _player?.Dispose();
     }
@@ -1423,7 +1670,15 @@ public sealed partial class MidiRow : ObservableObject
             return Entry.Members.Select(m => new RollSpan(m.Start - lead, m.Length, m.Hash == lit)).ToList();
         }
     }
-    public string Details => string.Join(" · ", new[] { RoleLabel, KeyText, BarsText, $"{Entry.Phrase.NoteCount:N0} notes" }.Where(s => s.Length > 0));
+    public string Details => string.Join(" · ", new[] { InstrumentText, RoleLabel, KeyText, BarsText, $"{Entry.Phrase.NoteCount:N0} notes" }.Where(s => s.Length > 0));
+
+    /// <summary>The instrument, when something attached to the part says ("Piano"), else "".</summary>
+    /// <summary>Left out where it would only repeat the kind ("Drums · Drums").</summary>
+    public string InstrumentText => Entry.Instrument is { } i && !i.Name.Equals(RoleLabel, StringComparison.OrdinalIgnoreCase) ? i.Name : "";
+    public bool ShowsInstrument => InstrumentText.Length > 0;
+    public bool HasInstrument => Entry.Instrument is not null;
+    /// <summary>How the app knows the instrument: "“Keyscape” is a piano plugin".</summary>
+    public string InstrumentWhy => Entry.Instrument?.Why ?? "";
 
     public bool HasFit => Fit is not null;
     public string FitText => Fit is { } f ? $"{f.Percent}%" : Likeness is { } l ? $"{Math.Round(l * 100)}%" : "";
@@ -1705,6 +1960,9 @@ public sealed partial class MidiRow : ObservableObject
         OnPropertyChanged(nameof(RoleLabel));
         OnPropertyChanged(nameof(RoleWhy));
         OnPropertyChanged(nameof(Details));
+        // The instrument pill hides when it would only repeat the kind, so it changes with it.
+        OnPropertyChanged(nameof(InstrumentText));
+        OnPropertyChanged(nameof(ShowsInstrument));
         OnPropertyChanged(nameof(CanChangeOctave));
         OnPropertyChanged(nameof(Sound));
         if (_roleOptions is not null) foreach (var o in _roleOptions) o.Changed();

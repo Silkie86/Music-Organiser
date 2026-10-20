@@ -26,6 +26,15 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
 
     /// <summary>Raised when the analysis changes, so every file is read again once.</summary>
     public const int Version = 5;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes; 4: low basslines and chords no longer taken for GM drums (2026-10-17); 5: parts named after a drum sound ("Tamb") are drums (2026-10-18)
+    /// <summary>
+    /// .mid files have their own changes on top, counted here: 1 keeps the General MIDI sound each part's channel is set
+    /// to and a file's only track's name (which the part leaves out, but may say "Keyscape"), 2026-10-16. Raising either
+    /// this or <see cref="Version"/> reads library files again; projects, which have no such things, only follow Version.
+    /// </summary>
+    public const int FileRevision = 1;
+    public const int FileVersion = Version + FileRevision;
+
+    static int VersionFor(MidiSource s) => s.Kind == MidiSource.File ? FileVersion : Version;
 
     /// <summary>At most this many files are read at once: a quarter of the cores, and never more than 3.</summary>
     public static int Workers => Math.Clamp(Environment.ProcessorCount / 4, 1, 3);
@@ -60,7 +69,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         var forget = known.Keys.Where(k => !wanted.ContainsKey(k)).ToList();
         if (forget.Count > 0) index.Forget(forget);
         var todo = new ConcurrentQueue<MidiSource>(wanted.Values
-            .Where(s => !known.TryGetValue(s.Path, out var k) || k.Mtime != s.Mtime || k.Size != s.Size || k.Version != Version ||
+            .Where(s => !known.TryGetValue(s.Path, out var k) || k.Mtime != s.Mtime || k.Size != s.Size || k.Version != VersionFor(s) ||
                         failedBefore.Contains(s.Path))
             .OrderByDescending(s => s.Mtime));   // newest first: what you made lately shows up first
         var total = todo.Count;
@@ -99,14 +108,14 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                         });
                         LogIfSlow(source, found.Count, Stopwatch.GetElapsedTime(asked, began), Stopwatch.GetElapsedTime(began),
                                   GC.GetTotalPauseDuration() - paused);
-                        results.Add((source, Version, found, null), ct);
+                        results.Add((source, VersionFor(source), found, null), ct);
                     }
                     catch (OperationCanceledException) { break; }
                     catch (Exception e)   // one unreadable file never stops the rest
                     {
                         Interlocked.Increment(ref failed);
                         AppLog.Info("MIDI", $"Couldn't read {source.Path}: {e}");
-                        try { results.Add((source, Version, [], Why(e)), ct); }
+                        try { results.Add((source, VersionFor(source), [], Why(e)), ct); }
                         catch (OperationCanceledException) { break; }
                     }
                 }
@@ -233,19 +242,26 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         var phrases = new List<IndexedPhrase>();
         var seen = new HashSet<string>();
         foreach (var part in MidiFileReader.Read(path))
+        {
+            // The General MIDI sound it's set to is a hint too ("Synth Bass 1"), unless it's the default piano.
+            var sound = part.Program is > 0 and < 128 && !part.Drums ? " " + Instruments.GeneralMidi[part.Program.Value] : "";
             Add(phrases, seen, PhraseAnalyser.Normalise(part.Notes, part.Ppq), part.Name, name,
-                $"{part.Name} {name} {string.Join(' ', folders)}", part.Drums);
+                $"{part.Name} {name} {string.Join(' ', folders)}{sound}", part.Drums, part.Program,
+                part.Name.Length == 0 ? part.TrackName.Trim() : "");
+        }
         return phrases;
     }
 
-    static void Add(List<IndexedPhrase> phrases, HashSet<string> seen, List<NoteEvent> notes, string part, string clip, string hints, bool drums)
+    static void Add(List<IndexedPhrase> phrases, HashSet<string> seen, List<NoteEvent> notes, string part, string clip, string hints, bool drums,
+                    int? program = null, string trackName = "")
     {
         if (notes.Count < 3) return;
         foreach (var (where, piece, _) in PhraseAnalyser.Split(notes))
         {
             var analysis = PhraseAnalyser.Analyse(piece, hints, drums);
             if (!seen.Add(analysis.Hash)) continue;   // the same notes again in this file
-            phrases.Add(new IndexedPhrase(part, where.Length == 0 ? clip : clip.Length == 0 ? where : $"{clip} · {where}", piece, analysis, drums));
+            phrases.Add(new IndexedPhrase(part, where.Length == 0 ? clip : clip.Length == 0 ? where : $"{clip} · {where}", piece, analysis, drums)
+                        { Program = program, TrackName = trackName });
         }
     }
 }

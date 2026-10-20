@@ -21,6 +21,10 @@ public sealed record IndexedPhrase(string Part, string Clip, IReadOnlyList<NoteE
 {
     /// <summary>For a phrase joined from clips that play back to back: those clips, and where each sits in it.</summary>
     public IReadOnlyList<PhraseMember> Members { get; init; } = [];
+    /// <summary>The General MIDI program a .mid file sets for the part's channel, if any.</summary>
+    public int? Program { get; init; }
+    /// <summary>A .mid track's own name where <see cref="Part"/> leaves it out (a file's only track): it may say what plays.</summary>
+    public string TrackName { get; init; } = "";
 }
 
 /// <summary>A saved phrase as the browser lists it: everything but its notes, which are read when it's shown.</summary>
@@ -30,6 +34,12 @@ public sealed record StoredPhrase(long Id, MidiSource Source, string Part, strin
 {
     /// <summary>For a phrase joined from clips (<see cref="PhraseMember.Encode"/>), else "".</summary>
     public string Members { get; init; } = "";
+    /// <summary>The General MIDI program a .mid file sets for the part's channel, if any.</summary>
+    public int? Program { get; init; }
+    /// <summary>On MIDI channel 10 (a .mid file) or played by an unpitched drum plugin (a project).</summary>
+    public bool Drums { get; init; }
+    /// <summary>A .mid track's own name where <see cref="Part"/> leaves it out, such as "Keyscape", else "".</summary>
+    public string TrackName { get; init; } = "";
     /// <summary>The octave you moved these notes to, or null.</summary>
     public int? YourOctave { get; init; }
 }
@@ -54,12 +64,15 @@ public sealed class MidiIndex : IDisposable
             part TEXT, clip TEXT, role TEXT, role_why TEXT, drums INTEGER,
             bars INTEGER, notes INTEGER, lowest INTEGER, highest INTEGER,
             key_tonic INTEGER, key_minor INTEGER, key_conf REAL,
-            chroma BLOB, chords TEXT, features BLOB, hash TEXT, data BLOB, members TEXT
+            chroma BLOB, chords TEXT, features BLOB, hash TEXT, data BLOB, members TEXT, program INTEGER, track_name TEXT
         );
         CREATE INDEX IF NOT EXISTS ix_phrases_source ON phrases(source);
         CREATE INDEX IF NOT EXISTS ix_phrases_hash ON phrases(hash);
         -- What you said a part is, by its notes, so it holds for every copy and survives reading the file again.
         CREATE TABLE IF NOT EXISTS your_roles (hash TEXT PRIMARY KEY, role TEXT NOT NULL);
+        -- What CLaMP 3 heard in each set of notes (768 signed bytes), by note hash like your_roles, so copies share one and
+        -- reading a file again keeps them. model says which export made it; another export's are dropped.
+        CREATE TABLE IF NOT EXISTS clamp (hash TEXT PRIMARY KEY, model TEXT NOT NULL, vec BLOB NOT NULL);
         -- The octave you moved a part to, by its notes, the same way.
         CREATE TABLE IF NOT EXISTS your_octaves (hash TEXT PRIMARY KEY, octaves INTEGER NOT NULL);
         """;
@@ -86,11 +99,13 @@ public sealed class MidiIndex : IDisposable
         {
             cmd.CommandText = Schema;
             cmd.ExecuteNonQuery();
-            // Added for phrases joined from clips (2026-10-16): a midi.db made before then gets the column.
-            cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('phrases') WHERE name = 'members'";
-            if (Convert.ToInt32(cmd.ExecuteScalar()) == 0)
+            // Added later: a midi.db made before then gets the columns (members for phrases joined from clips, 2026-10-16;
+            // program and track_name for what a .mid file says plays, 2026-10-16).
+            foreach (var (column, type) in new[] { ("members", "TEXT"), ("program", "INTEGER"), ("track_name", "TEXT") })
             {
-                cmd.CommandText = "ALTER TABLE phrases ADD COLUMN members TEXT";
+                cmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('phrases') WHERE name = '{column}'";
+                if (Convert.ToInt32(cmd.ExecuteScalar()) != 0) continue;
+                cmd.CommandText = $"ALTER TABLE phrases ADD COLUMN {column} {type}";
                 cmd.ExecuteNonQuery();
             }
         }
@@ -157,11 +172,11 @@ public sealed class MidiIndex : IDisposable
                 cmd.Transaction = tx;
                 cmd.CommandText = """
                     INSERT INTO phrases (source, part, clip, role, role_why, drums, bars, notes, lowest, highest, key_tonic, key_minor,
-                                         key_conf, chroma, chords, features, hash, data, members)
-                    VALUES ($s, $part, $clip, $role, $why, $drums, $bars, $notes, $lo, $hi, $kt, $km, $kc, $chroma, $chords, $feat, $hash, $data, $members)
+                                         key_conf, chroma, chords, features, hash, data, members, program, track_name)
+                    VALUES ($s, $part, $clip, $role, $why, $drums, $bars, $notes, $lo, $hi, $kt, $km, $kc, $chroma, $chords, $feat, $hash, $data, $members, $program, $track_name)
                     """;
                 var ps = new[] { "$s", "$part", "$clip", "$role", "$why", "$drums", "$bars", "$notes", "$lo", "$hi", "$kt", "$km", "$kc",
-                                 "$chroma", "$chords", "$feat", "$hash", "$data", "$members" }
+                                 "$chroma", "$chords", "$feat", "$hash", "$data", "$members", "$program", "$track_name" }
                     .ToDictionary(n => n, n => cmd.Parameters.Add(new SqliteParameter(n, DBNull.Value)));
                 foreach (var p in phrases)
                 {
@@ -185,6 +200,8 @@ public sealed class MidiIndex : IDisposable
                     ps["$hash"].Value = a.Hash;
                     ps["$data"].Value = EncodeNotes(p.Notes);
                     ps["$members"].Value = p.Members.Count > 0 ? PhraseMember.Encode(p.Members) : DBNull.Value;
+                    ps["$program"].Value = p.Program is { } program ? program : DBNull.Value;
+                    ps["$track_name"].Value = p.TrackName;
                     cmd.ExecuteNonQuery();
                 }
             }
@@ -224,7 +241,7 @@ public sealed class MidiIndex : IDisposable
             cmd.CommandText = """
                 SELECT ph.id, ph.source, ph.part, ph.clip, ph.role, ph.role_why, y.role AS your_role, ph.bars, ph.notes, ph.lowest,
                        ph.highest, ph.key_tonic, ph.key_minor, ph.key_conf, ph.chroma, ph.chords, ph.features, ph.hash,
-                       s.kind, s.daw, s.mtime, s.size, s.tempo, ph.members, o.octaves
+                       s.kind, s.daw, s.mtime, s.size, s.tempo, ph.members, o.octaves, ph.program, ph.drums, ph.track_name
                 FROM phrases ph JOIN sources s ON s.path = ph.source LEFT JOIN your_roles y ON y.hash = ph.hash
                      LEFT JOIN your_octaves o ON o.hash = ph.hash
                 ORDER BY s.mtime DESC, ph.id
@@ -240,8 +257,11 @@ public sealed class MidiIndex : IDisposable
                 KeyEstimate? key = r.IsDBNull(11) ? null : new KeyEstimate(r.GetInt32(11), r.GetInt32(12) == 1, r.GetDouble(13));
                 list.Add(new StoredPhrase(r.GetInt64(0), source, Str(r, 2), Str(r, 3), Str(r, 4), Str(r, 5),
                                           r.IsDBNull(6) ? null : r.GetString(6), r.GetInt32(7), r.GetInt32(8), r.GetInt32(9), r.GetInt32(10),
-                                          key, (byte[])r[14], Str(r, 15), (byte[])r[16], Str(r, 17))
-                         { Members = Str(r, 23), YourOctave = r.IsDBNull(24) ? null : r.GetInt32(24) });
+                                          key, (byte[])r[14], Str(r, 15), (byte[])r[16], Str(r, 17)) {
+                    Members = Str(r, 23), YourOctave = r.IsDBNull(24) ? null : r.GetInt32(24),
+                    Program = r.IsDBNull(25) ? null : r.GetInt32(25), Drums = !r.IsDBNull(26) && r.GetInt32(26) == 1,
+                    TrackName = Str(r, 27),
+                });
             }
         }
         return list;
@@ -278,6 +298,81 @@ public sealed class MidiIndex : IDisposable
             cmd.Parameters.AddWithValue("$r", (object?)role ?? DBNull.Value);
             cmd.ExecuteNonQuery();
         }
+    }
+
+    // ---- CLaMP 3 embeddings ----
+
+    /// <summary>One phrase for each set of notes that has no embedding from <paramref name="model"/> yet, newest files first.</summary>
+    public List<(long Id, string Hash, bool Drums, double? Tempo)> WithoutEmbedding(string model)
+    {
+        var list = new List<(long, string, bool, double?)>();
+        lock (_readLock)
+        {
+            using var cmd = _read.CreateCommand();
+            cmd.CommandText = """
+                SELECT MIN(ph.id), ph.hash, MAX(ph.drums), MAX(s.tempo), MAX(s.mtime) AS newest
+                FROM phrases ph JOIN sources s ON s.path = ph.source
+                WHERE NOT EXISTS (SELECT 1 FROM clamp c WHERE c.hash = ph.hash AND c.model = $m)
+                GROUP BY ph.hash ORDER BY newest DESC
+                """;
+            cmd.Parameters.AddWithValue("$m", model);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) list.Add((r.GetInt64(0), r.GetString(1), r.GetInt32(2) == 1, r.IsDBNull(3) ? null : r.GetDouble(3)));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Drops what another export of the model made, and what was heard in notes no file holds any more (a part deleted
+    /// or changed), so the table only keeps what's used. Once each time the model listens, not with every batch.
+    /// </summary>
+    public int PruneEmbeddings(string model)
+    {
+        lock (_writeLock)
+        {
+            using var cmd = _write.CreateCommand();
+            cmd.CommandText = "DELETE FROM clamp WHERE model <> $m OR NOT EXISTS (SELECT 1 FROM phrases ph WHERE ph.hash = clamp.hash)";
+            cmd.Parameters.AddWithValue("$m", model);
+            return cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Saves embeddings (each a packed 768-byte vector), replacing any for the same notes.</summary>
+    public void SetEmbeddings(string model, IReadOnlyList<(string Hash, byte[] Vector)> batch)
+    {
+        if (batch.Count == 0) return;
+        lock (_writeLock)
+        {
+            using var tx = _write.BeginTransaction();
+            using var cmd = _write.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "INSERT INTO clamp (hash, model, vec) VALUES ($h, $m, $v) ON CONFLICT(hash) DO UPDATE SET model = $m, vec = $v";
+            var h = cmd.Parameters.Add(new SqliteParameter("$h", ""));
+            cmd.Parameters.AddWithValue("$m", model);
+            var v = cmd.Parameters.Add(new SqliteParameter("$v", Array.Empty<byte>()));
+            foreach (var (hash, vec) in batch)
+            {
+                h.Value = hash;
+                v.Value = vec;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    /// <summary>Every embedding from <paramref name="model"/>, by note hash.</summary>
+    public Dictionary<string, sbyte[]> Embeddings(string model)
+    {
+        var map = new Dictionary<string, sbyte[]>();
+        lock (_readLock)
+        {
+            using var cmd = _read.CreateCommand();
+            cmd.CommandText = "SELECT hash, vec FROM clamp WHERE model = $m";
+            cmd.Parameters.AddWithValue("$m", model);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) map[r.GetString(0)] = Clamp3Model.Unpack((byte[])r[1]);
+        }
+        return map;
     }
 
     /// <summary>Remembers the octave you moved these notes to (every copy), or null to let the app pick again.</summary>
