@@ -156,6 +156,21 @@ public sealed partial class SettingsViewModel : ObservableObject
             var options = LiveTestOptions() with { ReportFolder = folder };
             return Task.Run(() => BitwigLiveTests.RunAsync(options, progress, ct));
         });
+        SelfCheck = new LiveTestsViewModel(Core.LiveTests.SelfCheck.Key,
+                                           dataFolder is null ? Core.LiveTests.SelfCheck.DefaultFolder : Path.Combine(dataFolder, "reports", "checks"),
+                                           (folder, progress, ct) =>
+        {
+            // Only Settings' own lists are copied here, on the UI thread (a few folders). Everything else, even listing the
+            // library's projects, happens in the background, so the app stays usable while the checks run.
+            var (projects, samples, plugins) = (ProjectFolders.ToList(), SampleFolders.ToList(), PluginFolders.ToList());
+            return Task.Run(() => Core.LiveTests.SelfCheck.RunAsync(new SelfCheckOptions
+            {
+                ReportFolder = folder, DataFolder = main.DataFolder, Projects = _db.Projects().Select(p => p.Path).ToList(),
+                ProjectFolders = projects, SampleFolders = samples, PluginFolders = plugins,
+                PluginFoldersAreDefaults = _db.GetList(Scanner.PluginFoldersKey).Count == 0,
+                Sounds = main.SoundLibrary, ScannerExecutable = main.PluginScanner.Executable, AppChecks = main.AppChecks,
+            }, progress, ct), ct);
+        }) { Answering = true };
         LiveTests = liveTests;
         var flPort = new FlPortSetting(db);
         SoundOutput = new SoundOutputSetting(db, Ui.Current.SoundOutputs);
@@ -291,7 +306,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     public async Task RefreshLinksAsync()
     {
         foreach (var link in Links) await link.RefreshAsync();
+        await SelfCheck.RefreshAsync();
     }
+
+    /// <summary>
+    /// The app checking itself with the real library (every project opens, the sound library's speed, the plugin scanner,
+    /// sound output, graphics), with a report in reports\checks for Claude to read.
+    /// </summary>
+    public LiveTestsViewModel SelfCheck { get; }
 
     void UpdateSampleIndexText() => SampleIndexText = $"{_db.SampleIndexCount():N0} audio files indexed";
 
