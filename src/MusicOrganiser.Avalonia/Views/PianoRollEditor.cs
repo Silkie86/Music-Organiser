@@ -494,20 +494,8 @@ public sealed class PianoRollEditor : Control
             var y = Y(k, low, high);
             if (Black[k % 12]) using (dc.PushOpacity(0.35)) dc.FillRectangle(Brushes.Black, new Rect(Keys, y, w - Keys, rowH));
             if (k % 12 == 0) using (dc.PushOpacity(0.5)) dc.FillRectangle(stroke, new Rect(Keys, y + rowH - 1, w - Keys, 1));
-            // Note names on every key when there's room and they're asked for, else on the Cs.
-            if (k % 12 == 0 || NoteLabels != NoteLabelKind.Off && rowH >= 8)
-            {
-                if (rowH >= 7)
-                {
-                    var label = new FormattedText(MidiChannel.KeyName(k), CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                                                  Typeface.Default, Math.Min(10, rowH + 1), muted);
-                    dc.DrawText(label, new Point(3, y + (rowH - label.Height) / 2));
-                }
-            }
-            var on = lit.Contains(k);
-            if (on) using (dc.PushOpacity(0.3)) dc.FillRectangle(accent, new Rect(0, y, Keys - 10, rowH));
-            dc.FillRectangle(on ? accent : Black[k % 12] ? Brushes.Black : Brushes.WhiteSmoke, new Rect(Keys - 10, y + 0.5, 9, Math.Max(1, rowH - 1)));
         }
+        DrawKeyboard(dc, low, high, rowH, lit, accent);
 
         // Everything from here on stays right of the keyboard, however far it's zoomed and moved along.
         using var noteArea = dc.PushClip(new Rect(Keys, 0, w - Keys, h));
@@ -582,6 +570,41 @@ public sealed class PianoRollEditor : Control
             var px = Math.Clamp(X((long)(Position % shown)), Keys, w - 2);
             dc.FillRectangle(text, new Rect(px, 0, 2, h));
         }
+    }
+
+    // The keyboard: grey keys like a real one (Solomon's picture, 2026-10-21), white keys meeting halfway along the black
+    // ones, shorter black keys with rounded ends; the keys whose notes are playing lit in the accent.
+    static readonly IBrush WhiteKey = new SolidColorBrush(Color.Parse("#FFBDBDBD")), WhiteKeyLine = new SolidColorBrush(Color.Parse("#FF6E6E6E")),
+                           BlackKey = new SolidColorBrush(Color.Parse("#FF161616")), KeyText = new SolidColorBrush(Color.Parse("#FF3A3A3A"));
+
+    void DrawKeyboard(DrawingContext dc, int low, int high, double rowH, HashSet<int> lit, IBrush accent)
+    {
+        var area = new Rect(0, Ruler, Keys, Math.Max(0, Bounds.Height - Ruler));
+        using var clip = dc.PushClip(area);
+        dc.FillRectangle(WhiteKey, area);
+        for (var k = low - 1; k <= high + 1; k++)
+        {
+            if (Black[(k % 12 + 12) % 12]) continue;
+            // a white key reaches halfway into the black keys either side of it
+            var top = Y(k, low, high) - (Black[((k + 1) % 12 + 12) % 12] ? rowH / 2 : 0);
+            var bottom = Y(k, low, high) + rowH + (Black[((k - 1) % 12 + 12) % 12] ? rowH / 2 : 0);
+            if (lit.Contains(k)) dc.FillRectangle(accent, new Rect(0, top, Keys, bottom - top));
+            dc.FillRectangle(WhiteKeyLine, new Rect(0, bottom - 0.5, Keys, 1));
+            // the Cs named, and every key when names are asked for and there's room
+            if (rowH >= 7 && (k % 12 == 0 || NoteLabels != NoteLabelKind.Off && rowH >= 8) && k >= 0)
+            {
+                var label = new FormattedText(MidiChannel.KeyName(k), CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                                              Typeface.Default, Math.Min(9.5, rowH + 1), KeyText);
+                dc.DrawText(label, new Point(Keys - label.Width - 3, Y(k, low, high) + (rowH - label.Height) / 2));
+            }
+        }
+        for (var k = low; k <= high; k++)
+        {
+            if (!Black[k % 12]) continue;
+            var key = new Rect(0, Y(k, low, high) + rowH * 0.08, Keys * 0.6, rowH * 0.84);
+            dc.DrawRectangle(lit.Contains(k) ? accent : BlackKey, null, new RoundedRect(key, 0, Math.Min(2.5, rowH / 3), Math.Min(2.5, rowH / 3), 0));
+        }
+        dc.FillRectangle(Brushes.Black, new Rect(Keys - 1, Ruler, 1, area.Height));
     }
 
     /// <summary>The keys of the part's notes (and their repeats) playing where the playhead is.</summary>

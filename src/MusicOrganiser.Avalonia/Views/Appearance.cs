@@ -86,6 +86,42 @@ public static class Appearance
             scaler.LayoutTransform = a.Size == 100 ? null : new ScaleTransform(a.Size / 100.0, a.Size / 100.0);
 
         SetMotion(app, !a.LessMotion);
+        Shade(app, t);
+    }
+
+    /// <summary>
+    /// The studio look's shading (Studio.axaml), from the theme's own colours (Solomon, 2026-10-21: shading, grooves and
+    /// joined buttons "is what makes it look more professional"): faces lit from the top, wells pressed in, and grooves
+    /// of a dark line over a light one. Light themes get softer shadows and brighter highlights.
+    /// </summary>
+    static void Shade(Application app, AppTheme t)
+    {
+        Color bg = Color.Parse(t.Background), surface = Color.Parse(t.Surface), raised = Color.Parse(t.SurfaceRaised);
+        var light = t.Light;
+        var black = Colors.Black;
+        var white = Colors.White;
+        static LinearGradientBrush Down(Color top, Color bottom) => new()
+        {
+            StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative), EndPoint = new RelativePoint(0, 1, RelativeUnit.Relative),
+            GradientStops = { new GradientStop(top, 0), new GradientStop(bottom, 1) },
+        };
+        static LinearGradientBrush Groove(Color dark, Color lit, bool across) => new()
+        {
+            StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+            EndPoint = across ? new RelativePoint(1, 0, RelativeUnit.Relative) : new RelativePoint(0, 1, RelativeUnit.Relative),
+            GradientStops = { new GradientStop(dark, 0), new GradientStop(dark, 0.5), new GradientStop(lit, 0.5), new GradientStop(lit, 1) },
+        };
+        app.Resources["StudioFaceBrush"] = Down(Mix(raised, white, light ? 0.55 : 0.1), Mix(raised, black, light ? 0.04 : 0.08));
+        app.Resources["StudioFaceHoverBrush"] = Down(Mix(raised, white, light ? 0.7 : 0.16), Mix(raised, black, light ? 0.0 : 0.02));
+        app.Resources["StudioPressedBrush"] = Down(Mix(bg, black, light ? 0.1 : 0.3), Mix(bg, black, light ? 0.04 : 0.12));
+        var edge = Mix(bg, black, light ? 0.35 : 0.5);
+        Recolour(app, "StudioWellBrush", Mix(bg, black, light ? 0.05 : 0.3));
+        Recolour(app, "StudioEdgeBrush", edge);
+        var lit = Mix(surface, white, light ? 0.7 : 0.08);
+        app.Resources["StudioGrooveBrush"] = Groove(edge, lit, across: false);
+        app.Resources["StudioGrooveUpBrush"] = Groove(edge, lit, across: true);
+        app.Resources["StudioRaise"] = BoxShadows.Parse(light ? "inset 0 1 0 0 #B3FFFFFF" : "inset 0 1 0 0 #24FFFFFF");
+        app.Resources["StudioSink"] = BoxShadows.Parse(light ? "inset 0 1 2 0 #26000000" : "inset 0 1 3 0 #73000000");
     }
 
     static IEnumerable<Window> Windows(Application app) =>

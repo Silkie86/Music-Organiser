@@ -580,6 +580,11 @@ public sealed class TimelineView : Control
         InvalidateVisual();
     }
 
+    static readonly IBrush strip = new SolidColorBrush(Color.FromArgb(0x38, 0, 0, 0));
+    static readonly IBrush edge = new SolidColorBrush(Color.FromArgb(0x80, 0, 0, 0));
+    static readonly Dictionary<string, Color> Colours = [];
+    static Color ColourOf(string hex) => Colours.TryGetValue(hex, out var c) ? c : Colours[hex] = Color.Parse(hex);
+
     public override void Render(DrawingContext dc)
     {
         double w = Bounds.Width, h = Bounds.Height;
@@ -646,29 +651,34 @@ public sealed class TimelineView : Control
             {
                 var track = tracks[r];
                 var y = Top + r * RowHeight;
-                var drums = track.Role == MidiRoles.Drums;
+                var colour = ColourOf(track.Colour);
+                var fill = new SolidColorBrush(colour);
+                var notesBrush = new SolidColorBrush(Color.FromArgb(0x99, 0, 0, 0));
                 using var _ = dc.PushOpacity(track.Muted ? 0.4 : 1);
                 foreach (var clip in track.Clips)
                 {
                     var rect = new Rect(X(clip.Start) + 0.5, y + 3, Math.Max(3, W(clip.Length) - 1), RowHeight - 6);
                     if (rect.Right < 0 || rect.X > w) continue;   // zoomed in: off the view
                     var picked = clip == Selected;
-                    dc.DrawRectangle(picked ? soft : faint, new Pen(picked ? accent : stroke, picked ? 2 : 1), new RoundedRect(rect, 5));
+                    // Flat, in the track's colour, with a darker strip for its name (Solomon, 2026-10-21: shaded ones were "too bubbly").
+                    dc.DrawRectangle(fill, new Pen(edge, 1), new RoundedRect(rect, 3));
+                    dc.FillRectangle(strip, new Rect(rect.X + 0.5, rect.Y + 0.5, rect.Width - 1, Math.Min(14, rect.Height - 1)));
+                    if (picked) dc.DrawRectangle(null, new Pen(text, 2), new RoundedRect(rect.Inflate(1), 4));
                     using (dc.PushClip(rect))
                     {
                         // Where each go round starts.
                         for (var i = 1; i < clip.Repeats; i++)
                         {
                             var rx = X(clip.RepeatAt(i));
-                            if (rx > rect.X && rx < rect.Right) dc.FillRectangle(stroke, new Rect(rx, rect.Y + 14, 1, rect.Height - 14));
+                            if (rx > rect.X && rx < rect.Right) dc.FillRectangle(strip, new Rect(rx, rect.Y + 14, 1, rect.Height - 14));
                         }
-                        dc.DrawText(Text(clip.Name, 11, text, bold), new Point(rect.X + 5, rect.Y + 1));
+                        dc.DrawText(Text(clip.Name, 11, Brushes.White, bold), new Point(rect.X + 5, rect.Y + 1));
                         // How far each go round moved to fit the chords under it (or, set by hand, how far it's moved in all).
                         for (var i = 0; i < clip.Repeats && i < clip.Fits.Count; i++)
                         {
                             var by = clip.Pinned ? clip.Shift(i) : clip.Fits[i];
                             if (by == 0) continue;
-                            var label = Text(by > 0 ? $"+{by}" : $"{by}", 10, clip.Pinned ? text : accent, bold);
+                            var label = Text(by > 0 ? $"+{by}" : $"{by}", 10, Brushes.White, bold);
                             dc.DrawText(label, new Point(Math.Max(rect.X, X(clip.RepeatAt(i))) + 3, rect.Bottom - label.Height - 1));
                         }
                         // Changed by hand: a corner mark (bottom right) says it won't move to fit.
@@ -682,14 +692,14 @@ public sealed class TimelineView : Control
                                 gc.LineTo(new Point(rect.Right - 10, rect.Bottom));
                                 gc.EndFigure(true);
                             }
-                            dc.DrawGeometry(accent, null, corner);
+                            dc.DrawGeometry(Brushes.White, null, corner);
                         }
                         var notes = NotesOf(clip);
                         if (notes.Count > 0)
                         {
                             int lo = notes.Min(n => n.Key), hi = Math.Max(lo + 11, notes.Max(n => n.Key));
                             double top = rect.Y + 16, span = rect.Height - 19;
-                            var brush = drums ? muted : accent;
+                            var brush = notesBrush;
                             foreach (var n in notes)
                             {
                                 if (n.Start > From + Span || n.Start + n.Length < From) continue;

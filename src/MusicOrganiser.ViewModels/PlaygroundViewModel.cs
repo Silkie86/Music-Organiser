@@ -52,6 +52,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>The tracks, top to bottom.</summary>
     public ObservableCollection<LayerRow> Layers { get; } = [];
     public ObservableCollection<ChordCell> Chords { get; } = [];
+    /// <summary>The key heard, shown faintly in the empty key box (a typed key replaces it).</summary>
+    [ObservableProperty] string _keyHint = "Key";
     /// <summary>The names over stretches of bars (Verse, Build…).</summary>
     public ObservableCollection<PlaygroundLabel> Labels { get; } = [];
 
@@ -145,6 +147,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         for (var i = 0; i < h.Lane.Count; i++)
             Chords.Add(new ChordCell(h.Lane[i], funcs?[i], h.Length));
         KeySummary = key is null ? "Key: not sure yet" : $"Key: {key.Name}{(h.KeyTyped ? "" : " (heard)")}";
+        KeyHint = key is null ? "Key" : key.Name;
         ChordSummary = h.Lane.Count == 0 ? "No chords yet: add a chord or bass part"
             : "Chords heard live from the chord and bass parts (everything playing, where there are none)";
         foreach (var row in Layers) row.GuideChanged();
@@ -2457,6 +2460,8 @@ public sealed partial class LayerRow : ObservableObject
     }
 
     public string Role => Layer.Role;
+    /// <summary>Its colour on the timeline and beside its name: one per kind of part, like a DAW's track colours.</summary>
+    public string Colour => TrackColours.Of(Layer.Role);
     public string RoleLabel => MidiRoles.Plural(Layer.Role) switch { "Melodies" => "Melody", "Basslines" => "Bassline", "Arps" => "Arp", var p => p };
     public bool IsWritten => Layer.Written.Length > 0;
     public string From => Layer.SourcePath.Length > 0 ? Path.GetFileNameWithoutExtension(Layer.SourcePath)
@@ -2730,4 +2735,18 @@ public sealed partial class NextChordRow(PlaygroundViewModel owner, ChordSymbol 
     public string Name => chord.Name;
     public string ShareText => $"{share * 100:0}%";
     [RelayCommand] void Add() => owner.AddNextChord(chord);
+}
+
+/// <summary>A colour for each kind of part, the same in every theme, as a DAW gives its tracks colours.</summary>
+public static class TrackColours
+{
+    public static string Of(string role) => role switch
+    {
+        MidiRoles.Chords => "#2FBF83",
+        MidiRoles.Bass => "#3A86D0",
+        MidiRoles.Melody => "#8A63D2",
+        MidiRoles.Arp => "#C9577A",
+        MidiRoles.Drums => "#D79B3A",
+        _ => "#7D8590",
+    };
 }
