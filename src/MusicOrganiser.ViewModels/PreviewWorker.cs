@@ -43,6 +43,59 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
         Latest = null;
     }
 
+    // ---- warming up the files just ahead of the mouse ----------------------------------------------------
+
+    /// <summary>How much of each file is read ahead: its header and the first moment, all a preview needs to start.</summary>
+    const int WarmBytes = 128 * 1024;
+    readonly object _warmGate = new();
+    // The files to read, nearest the mouse first: each new batch replaces the last, which the mouse has passed by now.
+    readonly Queue<string> _toWarm = new();
+    // Files read lately, so a sweep back over the same stars doesn't read them again (the system keeps them now).
+    readonly HashSet<string> _warmed = [];
+    readonly Queue<string> _warmedOrder = new();
+    bool _warming;
+
+    /// <summary>
+    /// Reads the start of files the mouse is about to reach, on a thread of its own at low priority, so the system has
+    /// them in memory when they're asked for: on a hard drive, a file not read for a while takes tens of milliseconds
+    /// to open (the disk finding its folder, then the file), which is the sound arriving that much after the mouse.
+    /// </summary>
+    public void Warm(IEnumerable<string> paths)
+    {
+        if (_ui is null) return;   // tests that play in order have nothing to wait for
+        lock (_warmGate)
+        {
+            _toWarm.Clear();
+            foreach (var p in paths)
+                if (!_warmed.Contains(p) && !_toWarm.Contains(p)) _toWarm.Enqueue(p);
+            if (_warming || _toWarm.Count == 0) return;
+            _warming = true;
+        }
+        new Thread(WarmWork) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "Preview warm-up" }.Start();
+    }
+
+    void WarmWork()
+    {
+        var buffer = new byte[WarmBytes];
+        while (true)
+        {
+            string path;
+            lock (_warmGate)
+            {
+                if (!_toWarm.TryDequeue(out path!)) { _warming = false; return; }
+                _warmed.Add(path);
+                _warmedOrder.Enqueue(path);
+                if (_warmedOrder.Count > 4096) _warmed.Remove(_warmedOrder.Dequeue());
+            }
+            try
+            {
+                using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan);
+                _ = file.Read(buffer, 0, buffer.Length);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // it plays (or says why) when asked
+        }
+    }
+
     void Ask(string? path, bool stop)
     {
         if (_ui is null)
@@ -86,7 +139,12 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
     {
         try
         {
-            if (path is not null) player.Play(path);
+            if (path is not null)
+            {
+                MusicOrganiser.Core.SweepTiming.Opening(path);
+                player.Play(path);
+                MusicOrganiser.Core.SweepTiming.Started(path);
+            }
             else if (stop) player.Stop();
         }
         catch (Exception e) when (path is not null)

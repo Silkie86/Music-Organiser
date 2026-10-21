@@ -9,6 +9,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Media.Immutable;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using MusicOrganiser.Core;
 using MusicOrganiser.Core.Sounds;
 using MusicOrganiser.ViewModels;
 
@@ -44,6 +45,7 @@ public sealed class GalaxyCanvas : Control
     public static readonly StyledProperty<ICommand?> SweepCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(SweepCommand));
     public static readonly StyledProperty<ICommand?> PickCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(PickCommand));
     public static readonly StyledProperty<ICommand?> SweepEndedCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(SweepEndedCommand));
+    public static readonly StyledProperty<ICommand?> AheadCommandProperty = AvaloniaProperty.Register<GalaxyCanvas, ICommand?>(nameof(AheadCommand));
 
     public IReadOnlyList<GalaxyStar>? Stars { get => GetValue(StarsProperty); set => SetValue(StarsProperty, value); }
     public IReadOnlyList<GalaxyRegion>? Regions { get => GetValue(RegionsProperty); set => SetValue(RegionsProperty, value); }
@@ -54,6 +56,8 @@ public sealed class GalaxyCanvas : Control
     public ICommand? PickCommand { get => GetValue(PickCommandProperty); set => SetValue(PickCommandProperty, value); }
     /// <summary>The left button was let go after sweeping: the preview stops.</summary>
     public ICommand? SweepEndedCommand { get => GetValue(SweepEndedCommandProperty); set => SetValue(SweepEndedCommandProperty, value); }
+    /// <summary>The sounds the sweeping mouse is heading for (a list of <see cref="Sound"/>), nearest first, so their files can be read ahead.</summary>
+    public ICommand? AheadCommand { get => GetValue(AheadCommandProperty); set => SetValue(AheadCommandProperty, value); }
 
     static GalaxyCanvas() => AffectsRender<GalaxyCanvas>(StarsProperty, RegionsProperty, TrailProperty, ConstellationProperty, SelectedProperty);
 
@@ -271,6 +275,12 @@ public sealed class GalaxyCanvas : Control
         return p.X > -margin && p.Y > -margin && p.X < _w + margin && p.Y < _h + margin;
     }
 
+    /// <summary>How many stars are sorted and ready (tests: a big library sorts in the background).</summary>
+    internal int StarCount => _all.Length;
+
+    /// <summary>Puts the camera where it's going at once (tests: headless runs don't tick the animation).</summary>
+    internal void SettleNow() => Settle(1);
+
     /// <summary>Back to the whole galaxy.</summary>
     public void Fit() => FlyTo(0.5, 0.5, 1);
 
@@ -421,10 +431,18 @@ public sealed class GalaxyCanvas : Control
             // many pixels between two moves, and the stars in between are the ones you meant to hear.
             var from = _last;
             _last = p;
+            var now = Environment.TickCount64;
             var passed = HitPath(from, p, _hover);
+            ReadAhead(from, p, now - _movedAt);
+            _movedAt = now;
             if (passed.Count == 0) return;
             _hover = passed[^1];
-            foreach (var star in passed) QueueSweep(star);
+            var late = InputDelay(e);
+            foreach (var star in passed)
+            {
+                SweepTiming.Reached(star.Sound.Path, late);
+                QueueSweep(star);
+            }
             InvalidateVisual();
             return;
         }
@@ -479,6 +497,7 @@ public sealed class GalaxyCanvas : Control
     void Sweep(GalaxyStar star)
     {
         _sweptAt = DateTime.UtcNow;
+        SweepTiming.Asked(star.Sound.Path);
         if (SweepCommand?.CanExecute(star.Sound) == true) SweepCommand.Execute(star.Sound);
         Pulse(star);
     }
@@ -584,6 +603,25 @@ public sealed class GalaxyCanvas : Control
     {
         var passed = new List<GalaxyStar>();
         var steps = Math.Clamp((int)Math.Ceiling(Distance(a, b) / 6), 1, 200);
+        GalaxyStar? At(int i)
+        {
+            var t = (double)i / steps;
+            return HitTest(new Point(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t));
+        }
+        if (steps > LongMove)
+        {
+            // A long way in one move (the window was busy and the mouse got far ahead): only the first star can play
+            // straight away and only the last one waits its turn, so those two are all it looks for. Every star in
+            // between cost 30-40 ms with 450,000 stars, which held the window up more, so the next move was longer still.
+            GalaxyStar? first = null, end = null;
+            for (var i = 1; i <= steps && first is null; i++)
+                if (At(i) is { } star && star != last) first = star;
+            for (var i = steps; i >= 1 && end is null; i--)
+                if (At(i) is { } star && star != last) end = star;
+            if (first is not null) passed.Add(first);
+            if (end is not null && end != first) passed.Add(end);
+            return passed;
+        }
         for (var i = 1; i <= steps; i++)
         {
             var t = (double)i / steps;
@@ -592,6 +630,39 @@ public sealed class GalaxyCanvas : Control
             last = star;
         }
         return passed;
+    }
+
+    /// <summary>Moves longer than this many hit tests (6 pixels each) look only for their first and last stars.</summary>
+    const int LongMove = 24;
+
+    long _movedAt;
+
+    /// <summary>
+    /// How long ago the move happened when the app got to it, in milliseconds: Windows stamps each mouse message with
+    /// its own clock (the one Environment.TickCount reads). 0 elsewhere, or when the stamp doesn't fit.
+    /// </summary>
+    static double InputDelay(PointerEventArgs e)
+    {
+        if (!OperatingSystem.IsWindows()) return 0;
+        var late = unchecked((uint)Environment.TickCount - (uint)e.Timestamp);
+        return late < 5000 ? late : 0;
+    }
+
+    /// <summary>
+    /// Where the sweep is heading, from how fast it's going: the stars a tenth of a second or so ahead, nearest
+    /// first, so their files are read before the mouse gets there (a few hit tests, not a path's worth).
+    /// </summary>
+    void ReadAhead(Point from, Point to, long ms)
+    {
+        if (AheadCommand is not { } ahead || ms <= 0 || ms > 200) return;
+        var step = new Vector(to.X - from.X, to.Y - from.Y) * (40.0 / ms);   // 40 ms of travel
+        var length = Math.Sqrt(step.X * step.X + step.Y * step.Y);
+        if (length < 3) return;
+        if (length > 80) step *= 80 / length;
+        var stars = new List<Sound>(4);
+        for (var i = 1; i <= 4; i++)
+            if (HitTest(to + step * i) is { } star && star != _hover && !stars.Contains(star.Sound)) stars.Add(star.Sound);
+        if (stars.Count > 0 && ahead.CanExecute(stars)) ahead.Execute(stars);
     }
 
     int? LabelAt(Point p)
