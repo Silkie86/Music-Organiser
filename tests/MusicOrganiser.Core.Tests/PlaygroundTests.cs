@@ -116,18 +116,19 @@ public class PlaygroundTests : IDisposable
     {
         Ui.Current = new Headless();
         UiWork.InBackground = false;
-        var dbPath = Path.Combine(_root, "library.db");
-        using (var index = new MidiIndex(MidiIndex.PathBeside(dbPath)))
-        {
-            IndexedPhrase Part(string name, List<NoteEvent> notes, string hints = "") =>
-                new(name, "Pattern 1", notes, PhraseAnalyser.Analyse(notes, hints), false);
-            index.Replace(new MidiSource(@"K:\Packs\Sunday.mid", MidiSource.File, "", 1, 1, 90), 1,
-                [Part("Keys", Chords(TwoFiveOne)), Part("Bass", Line(Bar, 38, 43, 36, 36), "bass")]);
-        }
-        using var db = new LibraryDb(dbPath);
+        // A real file in a MIDI library folder: opening the list indexes the folders, which drops parts whose file is gone.
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var song = new MidiClip { Name = "Sunday", Ppq = PhraseAnalyser.Ppq };
+        song.Track("Keys").AddRange(Chords(TwoFiveOne));
+        song.Track("Bass").AddRange(Line(Bar, 38, 43, 36, 36));
+        File.WriteAllBytes(Path.Combine(pack, "Sunday.mid"), MusicOrganiser.Core.Export.MidiWriter.Write(song));
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        db.SetList(MidiIndexer.FoldersKey, [pack]);
         using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
         using var sounds = new SoundOrganiser(soundDb);
         var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        await main.Midi.IndexAsync();
         var p = main.Playground;
 
         // Nothing on the timeline: Suggest has nothing to fit to, so the page shows the MIDI page's own list.
@@ -144,7 +145,7 @@ public class PlaygroundTests : IDisposable
         // Add on a part of that list: on the timeline, and Suggest lists parts that fit it.
         for (var i = 0; i < 300 && p.Midi.Results.Count != 1; i++) await Task.Delay(10);
         p.AddMidiRowCommand.Execute(p.Midi.Results.Single(r => r.Entry.Role == MidiRoles.Bass));
-        Assert.False(p.IsEmpty);
+        Assert.False(p.IsEmpty, p.Message);
         Assert.Single(p.Layers);
         for (var i = 0; i < 300 && (p.IsMatching || p.Matches.Count == 0); i++) await Task.Delay(10);
         Assert.True(p.Matches.Count > 0 || p.MatchStatus.Contains("Nothing found"), p.MatchStatus);   // Suggest ran, for chords
