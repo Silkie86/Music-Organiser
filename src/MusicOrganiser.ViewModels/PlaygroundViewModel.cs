@@ -1490,6 +1490,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var h = Harmony;
         if (h.Key is { } k && h.Lane.Count > 0)
             foreach (var r in Reharmoniser.All(h.Lane, k.Tonic, k.Minor)) Ideas.Add(new ReharmRow(this, r));
+        RefreshHarmonise();
         ChordsChangedUnderReharm();
         _ = RefreshNextChordsAsync();
     }
@@ -1540,11 +1541,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     internal void ApplyIdea(Reharm idea)
     {
-        if (Changes(Harmony.Lane, idea.Lane) is not { } range) return;
+        if (RangeOf(idea) is not { } range) return;
         Remember();
         if (Rechord(Section, idea.Lane, range.From, range.To)) ShowSection();   // a new chord track to show
         Changed();
-        Message = $"{idea.Title}: {idea.Before} → {idea.After}, played by the chord parts there. Undo takes it back.";
+        Message = idea.Whole ? $"{idea.Title}: {idea.After}, on a Chords track under {idea.Before}. Undo takes it back."
+                             : $"{idea.Title}: {idea.Before} → {idea.After}, played by the chord parts there. Undo takes it back.";
     }
 
     /// <summary>A plain chord part playing <paramref name="chart"/> ("Dm7 | G7"), from the highlight or bar 1: chords to start from.</summary>
@@ -2390,7 +2392,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (row.IsPlaying) { StopPlaying(); return; }
         StopPlaying();
         var tried = PlaygroundSession.FromJson(_session.ToJson())!.Timeline;
-        if (Changes(Harmony.Lane, row.Idea.Lane) is { } range) Rechord(tried, row.Idea.Lane, range.From, range.To);
+        if (RangeOf(row.Idea) is { } range) Rechord(tried, row.Idea.Lane, range.From, range.To);
         // What plays then (soloed parts only, when any are), with the written parts playing the idea's chords.
         var channels = new List<MidiChannel>();
         foreach (var l in PlaygroundSession.Audible(tried))

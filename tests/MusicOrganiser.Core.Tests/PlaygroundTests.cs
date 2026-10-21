@@ -429,6 +429,42 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public async Task A_melody_on_its_own_gets_whole_sets_of_chords_to_try_and_keep_as_a_chords_track()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        // Twinkle, twinkle, on its own: C C G G | A A G G | F F E E | D D C C
+        var tune = Line(Beat, 72, 72, 79, 79, 81, 81, 79, 79, 77, 77, 76, 76, 74, 74, 72, 72);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", tune, "melody lead")]).Entries[0];
+        p.AddFromLibrary(entry, tune, "Lead");
+        Assert.True(p.CanHarmonise);
+        Assert.StartsWith("Chords for your melody", p.HarmoniseText);
+        var plain = p.HarmoniseIdeas.First(i => i.Title == "Harmonise: plain");
+
+        // Tried: the chords show striped all the way along, and nothing changes yet.
+        Assert.True(p.RunShortcut("playground.reharm"));
+        Assert.Null(p.PickedChord);   // Reharmonise opens on these, not on a chord heard in the melody
+        await p.TryIdea(plain);
+        Assert.Equal(3, p.ReharmStep);
+        Assert.Equal(plain.Idea.Lane.Count, p.ProposedChords!.Count);
+        Assert.Single(p.Layers);
+
+        // Kept: a Chords track plays them, the chord lane reads them, and there's nothing left to harmonise.
+        p.KeepIdeaCommand.Execute(null);
+        Assert.Equal(2, p.Layers.Count);
+        Assert.Equal(plain.Idea.Lane.Select(c => c.Chord.Name), p.Chords.Select(c => c.Name));
+        Assert.False(p.CanHarmonise);
+        p.UndoCommand.Execute(null);
+        Assert.Single(p.Layers);
+        Assert.True(p.CanHarmonise);
+    }
+
+    [Fact]
     public async Task Reharm_in_three_steps_pick_a_chord_try_an_idea_striped_then_keep_it_or_go_back()
     {
         Ui.Current = new Headless();

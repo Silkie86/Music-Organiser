@@ -543,10 +543,32 @@
 
                             <Panel Grid.Row="1">
                                 <!-- 1: nothing picked -->
-                                <StackPanel IsVisible="{Binding IsReharmPicking}" Spacing="6" Margin="0,12">
-                                    <TextBlock Text="Click a chord on the chord lane" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                                    <TextBlock Text="Its ideas show here." Classes="small" HorizontalAlignment="Center" />
-                                </StackPanel>
+                                <Panel IsVisible="{Binding IsReharmPicking}">
+                                    <StackPanel IsVisible="{Binding !CanHarmonise}" Spacing="6" Margin="0,12">
+                                        <TextBlock Text="Click a chord on the chord lane" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                        <TextBlock Text="Its ideas show here." Classes="small" HorizontalAlignment="Center" />
+                                    </StackPanel>
+                                    <!-- no chords yet: whole sets of chords for the melody or bassline, to try -->
+                                    <DockPanel IsVisible="{Binding CanHarmonise}">
+                                        <TextBlock DockPanel.Dock="Top" Text="{Binding HarmoniseText}" FontWeight="SemiBold" Margin="0,0,0,6" TextWrapping="Wrap" TextTrimming="None"
+                                                   ToolTip.Tip="No chord part plays, so these are chords made for what does: try one, then keep it as a Chords track or go back" />
+                                        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                            <ItemsControl ItemsSource="{Binding HarmoniseIdeas}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:ReharmRow">
+                                                        <Button Classes="idea" Command="{Binding TryCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,4"
+                                                                ToolTip.Tip="{Binding Why}">
+                                                            <StackPanel Spacing="2">
+                                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                                                <TextBlock Text="{Binding Idea.After}" Classes="small" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" TextTrimming="None" />
+                                                            </StackPanel>
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </DockPanel>
+                                </Panel>
 
                                 <!-- 2: the ideas for the picked chord -->
                                 <DockPanel IsVisible="{Binding IsReharmChoosing}">

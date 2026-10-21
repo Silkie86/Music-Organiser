@@ -2,7 +2,11 @@ namespace MusicOrganiser.Core.Midi.Jazz;
 
 /// <summary>One reharmonisation idea: what it's called, why it works, and the whole chord lane with it done.</summary>
 /// <param name="Bar">The bar it changes, from 1, for showing where.</param>
-public sealed record Reharm(string Title, string Why, string Before, string After, int Bar, IReadOnlyList<TimedChord> Lane);
+public sealed record Reharm(string Title, string Why, string Before, string After, int Bar, IReadOnlyList<TimedChord> Lane)
+{
+    /// <summary>Chords for the whole idea where it had none (<see cref="Harmoniser"/>): kept as a chord part the whole way.</summary>
+    public bool Whole { get; init; }
+}
 
 /// <summary>
 /// Reharmonisation ideas for a chord lane, the moves jazz and gospel players reach for: the tritone sub, turning a

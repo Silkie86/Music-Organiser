@@ -724,6 +724,14 @@ public sealed class ProgressionModel
         row[next] = row.GetValueOrDefault(next) + 1;
     }
 
+    /// <summary>How often <paramref name="next"/> (its step from <paramref name="last"/> and its kind) follows <paramref name="last"/>, 0 to 1; 0 when never seen.</summary>
+    public double Chance(ChordSymbol last, ChordSymbol next)
+    {
+        if (!_one.TryGetValue(Kind(last), out var row)) return 0;
+        var seen = row.Values.Sum();
+        return seen == 0 ? 0 : row.GetValueOrDefault($"{ChordSymbol.Mod(next.Root - last.Root)}:{Kind(next)}") / (double)seen;
+    }
+
     /// <summary>
     /// The likeliest chords to follow <paramref name="last"/> (after <paramref name="before"/>), with how often (0 to 1).
     /// What followed both chords and what followed the last one alone are blended, the two-chord count weighing more

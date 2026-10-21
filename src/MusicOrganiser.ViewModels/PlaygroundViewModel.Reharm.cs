@@ -1,7 +1,11 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Jazz;
+using MusicOrganiser.Core.Midi.Playground;
+using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Sounds;
 
 namespace MusicOrganiser.ViewModels;
 
@@ -73,7 +77,7 @@ public sealed partial class PlaygroundViewModel
         if (TryingIdea == row) { await PreviewIdea(row); return; }   // its tile again: stop or play
         StopPlaying();
         var lane = row.Idea.Lane;
-        var range = Changes(Harmony.Lane, lane);
+        var range = RangeOf(row.Idea);
         var key = Harmony.Key;
         var funcs = key is { } k ? ChordFunctions.Analyse(lane.Select(c => c.Chord).ToList(), k.Tonic, k.Minor) : null;
         var length = Harmony.Length;
@@ -104,6 +108,52 @@ public sealed partial class PlaygroundViewModel
         ProposedChords = null;
     }
 
+    // ---- harmonise: chords for a melody or a bassline with none ----
+
+    /// <summary>
+    /// Whole chord lanes for the idea's melody, bassline or both when no chord part plays (Solomon, 2026-10-21:
+    /// "should be able to reharmonise a melody on its own", "or harmonise a bassline or bass an melody").
+    /// </summary>
+    public ObservableCollection<ReharmRow> HarmoniseIdeas { get; } = [];
+    [ObservableProperty] string _harmoniseText = "";
+    public bool CanHarmonise => HarmoniseIdeas.Count > 0;
+
+    void RefreshHarmonise()
+    {
+        HarmoniseIdeas.Clear();
+        var layers = PlaygroundSession.Audible(Section).Where(l => l.Role != MidiRoles.Drums).ToList();
+        var chordParts = layers.Any(l => l.Clips.Any(c => c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords));
+        if (IsQuick || chordParts || layers.Count == 0)
+        {
+            HarmoniseText = "";
+            OnPropertyChanged(nameof(CanHarmonise));
+            return;
+        }
+        var length = Section.Length;
+        bool IsBass(PlaygroundLayer l) => l.Role == MidiRoles.Bass;
+        var melody = layers.Where(l => !IsBass(l)).SelectMany(l => l.Notes).Where(n => !n.Muted && n.Start < length).ToList();
+        var bass = layers.Where(IsBass).SelectMany(l => l.Notes).Where(n => !n.Muted && n.Start < length).ToList();
+        var (tonic, minor) = HarmoniseKey(melody.Concat(bass));
+        var model = _model;
+        foreach (var idea in Harmoniser.Harmonise(melody, bass, length, tonic, minor, model is null ? null : model.Chance))
+            HarmoniseIdeas.Add(new ReharmRow(this, idea));
+        HarmoniseText = HarmoniseIdeas.Count == 0 ? "" : $"Chords for {HarmoniseIdeas[0].Idea.Before}, in {ChordSymbol.Names[tonic]} {(minor ? "minor" : "major")}";
+        OnPropertyChanged(nameof(CanHarmonise));
+    }
+
+    /// <summary>The idea's key: the one typed or heard, else the notes' likeliest even when it's only a guess.</summary>
+    (int Tonic, bool Minor) HarmoniseKey(IEnumerable<NoteEvent> notes)
+    {
+        if (Harmony.Key is { } k) return (k.Tonic, k.Minor);
+        var chroma = new double[12];
+        foreach (var n in notes) chroma[n.Key % 12] += Math.Clamp(n.Length / (double)Bar, 1 / 16.0, 2);
+        return MusicTheory.EstimateMidiKey(chroma) is { } guess ? (guess.Tonic, guess.Minor) : (0, false);
+    }
+
+    /// <summary>Where an idea changes the chords: all of it for chords made for a melody, else where its lane differs.</summary>
+    (long From, long To)? RangeOf(Reharm idea) =>
+        idea.Whole && idea.Lane.Count > 0 ? (idea.Lane[0].Start, idea.Lane[^1].End) : Changes(Harmony.Lane, idea.Lane);
+
     /// <summary>Back to step 1: no chord picked.</summary>
     [RelayCommand]
     void ClearPickedChord()
@@ -117,7 +167,7 @@ public sealed partial class PlaygroundViewModel
     void OpenReharm()
     {
         RightTab = ReharmTab;
-        if (PickedChord is not null) return;
+        if (PickedChord is not null || CanHarmonise) return;   // with no chord part, it offers chords for the melody first
         var at = Math.Max(0, Cursor);
         PickChord(Chords.FirstOrDefault(c => c.Timed.Start <= at && c.Timed.End > at) ?? Chords.FirstOrDefault());
     }
