@@ -15,7 +15,7 @@ public static class SweepTiming
     static readonly object Gate = new();
     // Each sound on its way: when the mouse reached its star, how late the app heard about that move, when it was asked for.
     static readonly Dictionary<string, (long Reached, double InputMs, long Asked, long Opening)> Pending = [];
-    static readonly Step Input = new(), Turn = new(), Start = new(), Open = new();
+    static readonly Step Input = new(), Turn = new(), Start = new(), Open = new(), OpenAhead = new(), OpenCold = new();
     static int _sounds;
     static double _mixMs = -1, _outputMs = -1;
     static long _since = Stopwatch.GetTimestamp();
@@ -62,7 +62,8 @@ public static class SweepTiming
     }
 
     /// <summary>Opened and handed to OpenAL, which mixes it in from its next pass.</summary>
-    public static void Started(string path)
+    /// <param name="readAhead">Whether its start had already been read ahead (<c>PreviewWorker.Warm</c>) when it was opened.</param>
+    public static void Started(string path, bool readAhead = false)
     {
         string? note = null;
         lock (Gate)
@@ -73,6 +74,7 @@ public static class SweepTiming
             Turn.Add(Ms(p.Reached, p.Asked));
             Start.Add(Ms(p.Asked, p.Opening));
             Open.Add(Ms(p.Opening, now));
+            (readAhead ? OpenAhead : OpenCold).Add(Ms(p.Opening, now));
             _sounds++;
             if (Ms(_since, now) / 1000 >= Every) note = Note(now);
         }
@@ -94,11 +96,11 @@ public static class SweepTiming
         var note = $"{_sounds} swept sounds in {Ms(_since, now) / 1000:0} s, from the mouse over a star to hearing it: " +
                    $"mouse reaching the app {Input.Average:0} ms (slowest {Input.Max:0}), waiting its turn {Turn.Average:0} ms " +
                    $"(slowest {Turn.Max:0}), preview starting {Start.Average:0.0} ms, opening the file {Open.Average:0.0} ms " +
-                   $"(slowest {Open.Max:0}), " +
+                   $"(slowest {Open.Max:0}; {OpenAhead.Count} read ahead took {OpenAhead.Average:0.0} ms, {OpenCold.Count} not read ahead {OpenCold.Average:0.0} ms), " +
                    (_mixMs >= 0 ? $"OpenAL's next mix about {_mixMs:0} ms, " : "") +
                    (_outputMs >= 0 ? $"then out of the speakers after {_outputMs:0} ms (OpenAL's buffer, Windows and the interface). " : "output delay not known. ") +
                    $"About {total:0} ms in all.";
-        foreach (var s in new[] { Input, Turn, Start, Open }) s.Clear();
+        foreach (var s in new[] { Input, Turn, Start, Open, OpenAhead, OpenCold }) s.Clear();
         _sounds = 0;
         _since = now;
         return note;

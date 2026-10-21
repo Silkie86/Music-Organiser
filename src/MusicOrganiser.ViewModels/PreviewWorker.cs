@@ -54,6 +54,8 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
     readonly HashSet<string> _warmed = [];
     readonly Queue<string> _warmedOrder = new();
     bool _warming;
+    // Files whose start has been read, so the sweep log can say whether reading ahead got there first.
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _read = new();
 
     /// <summary>
     /// Reads the start of files the mouse is about to reach, on a thread of its own at low priority, so the system has
@@ -91,6 +93,8 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
             {
                 using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan);
                 _ = file.Read(buffer, 0, buffer.Length);
+                if (_read.Count > 4096) _read.Clear();
+                _read[path] = 0;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // it plays (or says why) when asked
         }
@@ -143,7 +147,7 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
             {
                 MusicOrganiser.Core.SweepTiming.Opening(path);
                 player.Play(path);
-                MusicOrganiser.Core.SweepTiming.Started(path);
+                MusicOrganiser.Core.SweepTiming.Started(path, _read.ContainsKey(path));
             }
             else if (stop) player.Stop();
         }
