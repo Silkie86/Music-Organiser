@@ -9,7 +9,7 @@ using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
 
-public partial class SoundsView : UserControl
+public partial class SoundsView : UserControl, IShortcutPage
 {
     public SoundsView()
     {
@@ -27,7 +27,6 @@ public partial class SoundsView : UserControl
         // On the way down, before the lists use the keys themselves.
         TileList.AddHandler(KeyDownEvent, OnTilesKeyDown, RoutingStrategies.Tunnel);
         TileList.AddHandler(KeyUpEvent, OnTilesKeyUp, RoutingStrategies.Bubble, handledEventsToo: true);
-        HistoryList.AddHandler(KeyDownEvent, OnHistoryKeyDown, RoutingStrategies.Tunnel);
         HistoryList.AddHandler(PointerReleasedEvent, OnHistoryClicked, RoutingStrategies.Bubble, handledEventsToo: true);
         HistoryList.AddHandler(PointerPressedEvent, OnPressCounted, RoutingStrategies.Tunnel, handledEventsToo: true);
     }
@@ -35,14 +34,6 @@ public partial class SoundsView : UserControl
     void OnGridDoubleTapped(object? sender, TappedEventArgs e)
     {
         if (e.IsOnRow()) (DataContext as SoundsViewModel)?.AuditionCommand.Execute(null);
-    }
-
-    // Space plays the selected sound, as in the Windows app.
-    void OnGridKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Space) return;
-        (DataContext as SoundsViewModel)?.PlayCommand.Execute(null);
-        e.Handled = true;
     }
 
     /// <summary>
@@ -127,16 +118,10 @@ public partial class SoundsView : UserControl
 
     void OnTileDoubleTapped(object? sender, TappedEventArgs e) => Vm?.AuditionCommand.Execute(null);
 
-    // Arrows move round the tiles (Up and Down a whole row), Space plays, Home and End go to either end.
+    // Arrows move round the tiles (Up and Down a whole row), Home and End go to either end. (Space plays: the app's keys.)
     void OnTilesKeyDown(object? sender, KeyEventArgs e)
     {
         if (Vm is not { } vm || e.KeyModifiers != KeyModifiers.None) return;
-        if (e.Key == Key.Space)
-        {
-            vm.PlayCommand.Execute(null);
-            e.Handled = true;
-            return;
-        }
         var shown = vm.Shown;
         if (shown.Count == 0) return;
         var at = vm.Selected is { } s ? IndexOf(shown, s) : -1;
@@ -190,10 +175,48 @@ public partial class SoundsView : UserControl
     void OnGalaxyZoomOut(object? sender, RoutedEventArgs e) => Galaxy.ZoomBy(1 / 1.5);
     void OnGalaxyFit(object? sender, RoutedEventArgs e) => Galaxy.Fit();
 
-    void OnHistoryKeyDown(object? sender, KeyEventArgs e)
+    // ---- keys ----
+
+    /// <summary>
+    /// Sound Lab's keys (Settings › Shortcuts). Space plays the picked sound wherever the keyboard is on the page (the
+    /// Galaxy keeps its own Space, which pulses the star), and Ctrl+Up and Ctrl+Down step through the sounds even while
+    /// typing a search, playing each one as the arrows do.
+    /// </summary>
+    public bool RunShortcut(string id, bool repeat)
     {
-        if (e.Key != Key.Space) return;
-        Vm?.PlayCommand.Execute(null);
-        e.Handled = true;
+        if (Vm is not { } vm) return false;
+        switch (id)
+        {
+            case "app.play" when Galaxy.IsKeyboardFocusWithin || vm.Selected is null: return false;
+            case "app.play": vm.PlayCommand.Execute(null); return true;
+            case "app.prevItem" or "app.nextItem" when vm.TabIndex == 0: return StepSound(vm, id == "app.nextItem" ? 1 : -1, repeat);
+            case "sounds.stop" when vm.IsSounding: vm.StopPlayingCommand.Execute(null); return true;
+            case "sounds.tag" when TagBox.IsEffectivelyVisible: TagBox.Focus(); return true;
+        }
+        if (vm.Selected is null) return false;
+        switch (id)
+        {
+            case "sounds.favourite": vm.ToggleFavouriteCommand.Execute(null); return true;
+            case "sounds.toBitwig": vm.ToBitwigCommand.Execute(null); return true;
+            case "sounds.reveal": vm.RevealCommand.Execute(null); return true;
+            case "sounds.copyPath": vm.CopyPathCommand.Execute(null); return true;
+        }
+        return false;
+    }
+
+    /// <summary>The sound before or after the picked one in the library, kept in sight and played (Autoplay on).</summary>
+    bool StepSound(SoundsViewModel vm, int by, bool held)
+    {
+        if (vm.IsHistory) return AppShortcuts.Step(HistoryList, by);
+        var shown = vm.Shown;
+        if (shown.Count == 0) return false;
+        var at = vm.Selected is { } s ? IndexOf(shown, s) : -1;
+        var next = at < 0 ? 0 : Math.Clamp(at + by, 0, shown.Count - 1);
+        if (next == at || !vm.MayStep(held)) return true;   // held down, it waits until the sound it's on has played
+        vm.Selected = shown[next];
+        if (vm.IsTiles && vm.RowOf(shown[next]) is { } row) TileList.ScrollIntoView(row);
+        else if (vm.IsList) SoundGrid.ScrollIntoView(shown[next], null);
+        vm.PlayPassing();
+        return true;
     }
 }

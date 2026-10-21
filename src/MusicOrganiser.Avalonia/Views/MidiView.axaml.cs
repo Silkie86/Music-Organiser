@@ -7,7 +7,7 @@ using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
 
-public partial class MidiView : UserControl
+public partial class MidiView : UserControl, IShortcutPage
 {
     MidiBrowserViewModel? _vm;
 
@@ -60,11 +60,29 @@ public partial class MidiView : UserControl
             Vm?.PlaySelectedCommand.Execute(null);
     }
 
-    /// <summary>Space plays or stops the part picked, as in a DAW's browser.</summary>
-    void OnKeyDown(object? sender, KeyEventArgs e)
+    /// <summary>
+    /// The MIDI page's keys (Settings › Shortcuts), for the part picked: Space plays or stops it, as in a DAW's browser,
+    /// wherever the keyboard is on the page.
+    /// </summary>
+    public bool RunShortcut(string id, bool repeat)
     {
-        if (e.Key != Key.Space || Vm is not { } vm) return;
-        vm.PlaySelectedCommand.Execute(null);
-        e.Handled = true;
+        if (Vm is not { Selected: { } row } vm) return false;
+        System.Windows.Input.ICommand? command = id switch
+        {
+            "app.play" => vm.PlaySelectedCommand,
+            "midi.playTogether" => vm.PlaySelectedTogetherCommand,
+            "midi.fit" => vm.FitToSelectedCommand,
+            "midi.moreLike" => vm.MoreLikeSelectedCommand,
+            "midi.toPlayground" => vm.SendToPlaygroundCommand,
+            "midi.toBitwig" => vm.SendBothToBitwigCommand,
+            "midi.save" => vm.SaveSelectedCommand,
+            "midi.source" => vm.ShowSourceCommand,
+            "midi.octaveUp" when row.CanChangeOctave => row.OctaveUpCommand,
+            "midi.octaveDown" when row.CanChangeOctave => row.OctaveDownCommand,
+            _ => null,
+        };
+        if (command?.CanExecute(null) != true) return false;
+        command.Execute(null);
+        return true;
     }
 }

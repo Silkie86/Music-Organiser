@@ -45,7 +45,7 @@
     </UserControl.Styles>
     <DockPanel>
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,16">
-            <TextBox DockPanel.Dock="Right" Classes="clearButton" Width="360" VerticalAlignment="Center"
+            <TextBox DockPanel.Dock="Right" Classes="clearButton pageSearch" Width="360" VerticalAlignment="Center"
                      PlaceholderText="Search plugins or vendors…" Text="{Binding SearchText}" />
             <StackPanel>
                 <TextBlock Text="Plugins" Classes="pageTitle" />
@@ -248,7 +248,7 @@
             </ListBox>
 
             <Border Grid.Row="2" Classes="card" Padding="8,10,8,8">
-                <DataGrid ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
+                <DataGrid Classes="pageList" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
                           AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" CanUserSortColumns="True"
                           GridLinesVisibility="None" Background="Transparent" DoubleTapped="OnDoubleTapped" RowHeight="46">
                     <DataGrid.Columns>

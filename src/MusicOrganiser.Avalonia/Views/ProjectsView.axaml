@@ -18,7 +18,7 @@
             <StackPanel DockPanel.Dock="Right" Margin="18,0,0,0" VerticalAlignment="Center">
                 <TextBlock Text="{Binding CountText}" FontSize="13" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
             </StackPanel>
-            <TextBox x:Name="Search" Classes="bigSearch" VerticalAlignment="Center"
+            <TextBox x:Name="Search" Classes="bigSearch pageSearch" VerticalAlignment="Center"
                      PlaceholderText="{x:Static views:Keys.SearchProjects}" Text="{Binding SearchText}"
                      ToolTip.Tip="Several words find projects matching all of them, e.g. &quot;serum dark 2019&quot;. Down arrow goes to the list, Esc clears.">
                 <TextBox.InnerLeftContent>
@@ -138,7 +138,7 @@
                 </StackPanel>
             </Border>
 
-            <DataGrid x:Name="Grid" Classes="songs" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
+            <DataGrid x:Name="Grid" Classes="songs pageList" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="None"
                       CanUserSortColumns="False" CanUserResizeColumns="False" CanUserReorderColumns="False"
                       GridLinesVisibility="None" Background="Transparent" views:ColumnFloor.Enabled="False" RowHeight="64" HorizontalScrollBarVisibility="Disabled"

@@ -19,6 +19,19 @@
         <DataTemplate DataType="vm:SamplesViewModel"><views:SamplesView /></DataTemplate>
     </Window.DataTemplates>
 
+    <Window.Resources>
+        <!-- One key on the keys sheet: the key in a box, then what it does. -->
+        <DataTemplate x:Key="ShortcutChip" x:DataType="vm:ShortcutRow">
+            <DockPanel Width="352" Margin="0,2,10,2">
+                <Border DockPanel.Dock="Left" Width="118" Margin="0,0,10,0" CornerRadius="4" Padding="6,2"
+                        Background="{StaticResource StrokeBrush}" HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding KeyText}" FontFamily="{DynamicResource NumberFont}" FontSize="12" HorizontalAlignment="Center" />
+                </Border>
+                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="13" />
+            </DockPanel>
+        </DataTemplate>
+    </Window.Resources>
+
     <!-- Settings › Appearance › Size scales everything in here. -->
     <LayoutTransformControl x:Name="Scaler">
     <Grid ColumnDefinitions="84,*">
@@ -98,7 +111,7 @@
         </Border>
 
         <!-- Page: a new one fades in. -->
-        <TransitioningContentControl Grid.Column="1" Margin="32,24,32,20" Content="{Binding SelectedNav.Page}">
+        <TransitioningContentControl x:Name="PageHost" Grid.Column="1" Margin="32,24,32,20" Content="{Binding SelectedNav.Page}">
             <TransitioningContentControl.PageTransition>
                 <CrossFade Duration="0:0:0.16" />
             </TransitioningContentControl.PageTransition>
@@ -150,6 +163,35 @@
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
         </ItemsControl>
+
+        <!-- The keys sheet (? or F1): this page's keys, then the ones that work everywhere. Esc, ? or a click outside closes it. -->
+        <Border Grid.ColumnSpan="2" ZIndex="20" IsVisible="{Binding Shortcuts.SheetOpen}" Background="#99000000" PointerPressed="OnSheetBackdrop">
+            <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="780" Padding="22,18" Margin="24"
+                    Background="{StaticResource SurfaceBrush}" PointerPressed="OnSheetCard" DataContext="{Binding Shortcuts}" x:DataType="vm:ShortcutsViewModel">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                        <Button DockPanel.Dock="Right" Content="Close" Command="{Binding CloseSheetCommand}" VerticalAlignment="Top" />
+                        <StackPanel>
+                            <TextBlock Text="{Binding SheetTitle}" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Change any of them in Settings › Shortcuts. Press ? or Esc to close. F12 writes a note for Claude."
+                                       FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </DockPanel>
+                    <ScrollViewer MaxHeight="560" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="On this page" FontWeight="SemiBold" IsVisible="{Binding SheetHasPage}" />
+                            <ItemsControl ItemsSource="{Binding SheetRows}" ItemTemplate="{StaticResource ShortcutChip}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                            </ItemsControl>
+                            <TextBlock Text="Everywhere" FontWeight="SemiBold" Margin="0,8,0,0" />
+                            <ItemsControl ItemsSource="{Binding SheetEverywhere}" ItemTemplate="{StaticResource ShortcutChip}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Border>
     </Grid>
     </LayoutTransformControl>
 </Window>

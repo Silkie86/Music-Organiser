@@ -130,7 +130,7 @@
 
         <!-- Search, where from, and what kind of part. -->
         <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" Margin="0,14,0,0">
-            <TextBox Classes="clearButton bigSearch" Text="{Binding Search}"
+            <TextBox Classes="clearButton bigSearch pageSearch" Text="{Binding Search}"
                      PlaceholderText="{Binding SearchHint}"
                      ToolTip.Tip="Words match part, pattern, project and file names, folders, the kind of part, its key and its chords. With the MIDI model installed you can also describe how a part sounds, and the closest come first.">
                 <TextBox.InnerLeftContent>
@@ -262,9 +262,9 @@
 
         <!-- The card grows to two thirds of the page while fitting, to play a suggestion on top of what it's fitted to. -->
         <Grid x:Name="Body" Grid.Row="4" ColumnDefinitions="*,370" IsVisible="{Binding !IsEmpty}">
-            <ListBox x:Name="Parts" ItemsSource="{Binding Results}" SelectedItem="{Binding Selected}" Background="Transparent"
+            <ListBox x:Name="Parts" Classes="pageList" ItemsSource="{Binding Results}" SelectedItem="{Binding Selected}" Background="Transparent"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}"
-                     DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">
+                     DoubleTapped="OnDoubleTapped">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:MidiRow">
                         <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,3">

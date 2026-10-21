@@ -166,7 +166,7 @@
                             </ToggleButton>
                             <ToggleButton DockPanel.Dock="Right" Content="Describe it" IsChecked="{Binding DescribeMode}" Margin="8,0,0,0"
                                           ToolTip.Tip="Search by describing the sound, e.g. “dusty vinyl snare” or “dark gritty reese”. Press Enter to search." />
-                            <TextBox Classes="clearButton" PlaceholderText="Search names, types and tags… or switch on Describe it" Text="{Binding SearchText}">
+                            <TextBox Classes="clearButton pageSearch" PlaceholderText="Search names, types and tags… or switch on Describe it" Text="{Binding SearchText}">
                                 <TextBox.KeyBindings>
                                     <KeyBinding Gesture="Enter" Command="{Binding SearchCommand}" />
                                 </TextBox.KeyBindings>
@@ -252,7 +252,7 @@
                             <DataGrid x:Name="SoundGrid" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
                                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" CanUserSortColumns="True"
                                       GridLinesVisibility="None" Background="Transparent" views:FileDrag.Source="{Binding}"
-                                      DoubleTapped="OnGridDoubleTapped" KeyDown="OnGridKeyDown">
+                                      DoubleTapped="OnGridDoubleTapped">
                                 <DataGrid.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Play" Command="{Binding PlayCommand}" />
@@ -571,7 +571,7 @@
                                     </ItemsControl>
                                     <DockPanel Margin="0,4,0,0">
                                         <Button DockPanel.Dock="Right" Content="Add" Command="{Binding AddTagCommand}" Margin="6,0,0,0" />
-                                        <TextBox Classes="clearButton" PlaceholderText="Add a tag (e.g. dusty, signature)" Text="{Binding NewTag}">
+                                        <TextBox x:Name="TagBox" Classes="clearButton" PlaceholderText="Add a tag (e.g. dusty, signature)" Text="{Binding NewTag}">
                                             <TextBox.KeyBindings>
                                                 <KeyBinding Gesture="Enter" Command="{Binding AddTagCommand}" />
                                             </TextBox.KeyBindings>
