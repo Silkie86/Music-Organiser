@@ -71,8 +71,11 @@ public sealed partial class AppearanceViewModel : ObservableObject
         new("Amber", "#F2A03D"), new("Coral", "#F2766B"), new("Pink", "#F28CB1"),
     ];
 
-    /// <summary>How big everything is, in percent of normal.</summary>
-    public static IReadOnlyList<int> Sizes { get; } = [90, 100, 110, 125];
+    /// <summary>
+    /// How big everything is, in percent of normal: smaller fits more on a big screen, bigger is easier to read on a small
+    /// one (Solomon, 21 Oct: "zoom in and out of the whole screen").
+    /// </summary>
+    public static IReadOnlyList<int> Sizes { get; } = [70, 80, 90, 100, 110, 125, 150];
 
     readonly LibraryDb _db;
 

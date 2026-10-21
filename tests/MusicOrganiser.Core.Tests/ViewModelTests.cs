@@ -309,6 +309,12 @@ public class ViewModelTests : IDisposable
 
         again.ResetCommand.Execute(null);
         Assert.Equal("Graphite", new AppearanceViewModel(_db).Theme.Name);
+
+        // The whole app can go well below and above normal size (Solomon, 21 Oct), and that's remembered too.
+        again.Size = 70;
+        Assert.Equal(70, new AppearanceViewModel(_db).Size);
+        again.Size = 150;
+        Assert.Equal(150, new AppearanceViewModel(_db).Size);
     }
 
     [Fact]

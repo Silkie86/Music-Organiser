@@ -130,8 +130,9 @@
                                         <ComboBox ItemsSource="{x:Static vm:AppearanceViewModel.Fonts}" SelectedItem="{Binding Font}" MinWidth="200" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
-                                        <TextBlock Text="SIZE" Classes="filterLabel" />
-                                        <ListBox Classes="chips" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}">
+                                        <TextBlock Text="SIZE OF EVERYTHING" Classes="filterLabel" />
+                                        <ListBox Classes="chips" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}"
+                                                 ToolTip.Tip="Zooms the whole app: smaller fits more on a big screen, bigger is easier to read on a small one">
                                             <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
                                             <ListBox.ItemTemplate>
                                                 <DataTemplate x:DataType="x:Int32">
