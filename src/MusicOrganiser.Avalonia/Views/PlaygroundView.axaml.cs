@@ -14,6 +14,7 @@ public partial class PlaygroundView : UserControl
     {
         InitializeComponent();
         KeyDown += OnKeyDown;
+        Timeline.MenuAsked += OnTimelineMenu;
         LeftPane.SizeChanged += (_, e) => { if (e.HeightChanged) LayOutRows(); };   // not while the side panel's edge is dragged
     }
 
@@ -27,6 +28,7 @@ public partial class PlaygroundView : UserControl
         if (_vm is not null) _vm.PropertyChanged -= OnVmChanged;
         _vm = DataContext as PlaygroundViewModel;
         if (_vm is not null) _vm.PropertyChanged += OnVmChanged;
+        BuildMenus();
         LayOut();
     }
 
@@ -190,7 +192,8 @@ public partial class PlaygroundView : UserControl
         if (ShortcutKeys.UsedByControl(e, key)) return;
         if (e.Source is PianoRollEditor && key is "Delete" or "Backspace") return;   // deletes the note under the pointer
         e.Handled = true;
-        if (repeat && id is "playground.play" or "playground.help" or "playground.loop" or "playground.save" or "playground.split" or "playground.duplicate") return;
+        if (repeat && id is "playground.play" or "playground.help" or "playground.loop" or "playground.save" or "playground.split" or "playground.duplicate"
+            or "playground.paste" or "playground.new" or "playground.ideas" or "playground.rename") return;
         if (box is not null) BindingOperations.GetBindingExpressionBase(box, TextBox.TextProperty)?.UpdateSource();   // Ctrl+S saves the name as typed
         if (!vm.RunShortcut(id)) e.Handled = false;
     }

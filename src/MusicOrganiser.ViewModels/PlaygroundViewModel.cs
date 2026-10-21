@@ -2041,6 +2041,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             case "playground.zoomOut": Zoom(2); return true;
             case "playground.zoomFit": ZoomToFit(); return true;
         }
+        if (RunMenuAction(id, clip)) return true;
         if (clip is null) return false;
         switch (id)
         {

@@ -77,11 +77,10 @@
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
         <!-- Header: the idea, saving, undo, and out to the DAW. -->
         <DockPanel>
+            <!-- File, Edit, Create… like a DAW's (2026-10-21); built in PlaygroundView.Menus.cs from the Playground's menu lists. -->
+            <Menu x:Name="MenuBar" DockPanel.Dock="Top" Margin="-6,-6,0,6" />
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top">
-                <ToggleButton Content="Keys" IsChecked="{Binding CheatSheetOpen}" ToolTip.Tip="The keyboard shortcuts on this page (or press ?). Change them in Settings › Shortcuts" />
-                <Button Content="Undo" Command="{Binding UndoCommand}" IsEnabled="{Binding CanUndo}" ToolTip.Tip="Take back the last change" />
-                <Button Content="Redo" Command="{Binding RedoCommand}" IsEnabled="{Binding CanRedo}" />
-                <Button Content="Ideas" ToolTip.Tip="Save this idea by name, open one you saved, or start a new one">
+                <Button x:Name="IdeasButton" Content="Ideas" ToolTip.Tip="Save this idea by name, open one you saved, or start a new one">
                     <Button.Flyout>
                         <Flyout Placement="BottomEdgeAlignedRight">
                             <StackPanel Width="320" Spacing="8">
@@ -190,7 +189,7 @@
             <!-- The timeline: chords heard, energy, tracks of clips, and the piano roll for the clip picked. -->
             <Grid x:Name="LeftPane" RowDefinitions="Auto,*,Auto,330">
                 <StackPanel Spacing="2" Margin="0,0,0,6">
-                    <views:ChordLaneView Height="46" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
+                    <views:ChordLaneView Height="46" ContextRequested="OnChordMenu" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
                                          ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}" />
                     <views:EnergyCurveView Height="36" Values="{Binding EnergyCurve}" Target="{Binding EnergyTarget}" Inset="210" ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}"
                                            ToolTip.Tip="Energy, bar by bar: how busy, loud and high it plays, and how far its harmony pulls from the key. Dashed: what each label's feel asks for." />
@@ -210,7 +209,7 @@
                                      ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:LayerRow">
-                                        <Panel Height="{Binding Height}">
+                                        <Panel Height="{Binding Height}" Background="Transparent" ContextRequested="OnTrackMenu">
                                         <StackPanel Spacing="1" Margin="6,3,8,3" VerticalAlignment="Center" ClipToBounds="True">
                                             <DockPanel>
                                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
@@ -230,7 +229,7 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </StackPanel>
-                        <views:TimelineView Grid.Column="1" Tracks="{Binding Layers}" Labels="{Binding Labels}" Length="{Binding Length}"
+                        <views:TimelineView x:Name="Timeline" Grid.Column="1" Tracks="{Binding Layers}" Labels="{Binding Labels}" Length="{Binding Length}"
                                             Revision="{Binding Revision}" Position="{Binding Position}"
                                             Highlight="{Binding Loop}" HighlightCommand="{Binding SetLoopCommand}"
                                             Selected="{Binding SelectedClip.Clip}" SelectCommand="{Binding SelectClipCommand}"
@@ -281,7 +280,7 @@
                                 ToolTip.Tip="Drag this track into your DAW as a MIDI clip">
                             <TextBlock Text="Drag this track" />
                         </Border>
-                        <TextBox DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
+                        <TextBox x:Name="TrackName" DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
                                  Width="160" Margin="0,0,6,6" FontSize="12" ToolTip.Tip="The track's name: its name in your DAW" />
                     </WrapPanel>
                     <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6" IsVisible="{Binding !PianoFolded}">

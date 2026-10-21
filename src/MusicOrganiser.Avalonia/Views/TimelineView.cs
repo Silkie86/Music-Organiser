@@ -23,6 +23,9 @@ namespace MusicOrganiser.Avalonia.Views;
 /// </summary>
 public sealed class TimelineView : Control
 {
+    /// <summary>Right-clicked on a clip ("clip") or on empty bars ("timeline"), for the page to show its menu.</summary>
+    public event EventHandler<string>? MenuAsked;
+
     public const double LabelHeight = 20, RulerHeight = 18, Top = LabelHeight + RulerHeight, DefaultRowHeight = 46;
 
     /// <summary>How tall each track is (Solomon's design, point 18: dragged by the line under a track's name).</summary>
@@ -341,6 +344,24 @@ public sealed class TimelineView : Control
         {
             _panFrom = p.X;
             _panStart = From;
+            e.Handled = true;
+            return;
+        }
+        // Right-click: the clip under it is picked, and the page shows the menu for a clip or for empty bars.
+        if (props.IsRightButtonPressed)
+        {
+            var at = ClipAt(p);
+            if (at is { } r)
+            {
+                var pick = new ClipPick(r.Track.Layer, r.Clip);
+                if (SelectCommand?.CanExecute(pick) == true) SelectCommand.Execute(pick);
+            }
+            else
+            {
+                var tick = SnapTo(Math.Clamp(TickAt(p.X), 0, Length), e.KeyModifiers);   // Paste lands where you clicked
+                if (CursorCommand?.CanExecute(tick) == true) CursorCommand.Execute(tick);
+            }
+            MenuAsked?.Invoke(this, at is null ? "timeline" : "clip");
             e.Handled = true;
             return;
         }

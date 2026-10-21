@@ -193,6 +193,49 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void The_menus_copy_cut_and_paste_clips_and_every_line_has_a_shortcut_entry()
+    {
+        // Solomon, 2026-10-21: "no right click menus or file edit view menus… it should look like a modern daw".
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        var lines = PlaygroundViewModel.MenuBar.SelectMany(m => m.Items)
+            .Concat(PlaygroundViewModel.ClipMenu).Concat(PlaygroundViewModel.TrackMenu)
+            .Concat(PlaygroundViewModel.TimelineMenu).Concat(PlaygroundViewModel.ChordMenu).Where(l => !l.IsSeparator);
+        foreach (var line in lines) Assert.Contains(ShortcutsViewModel.Actions, a => a.Id == line.Id);
+
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
+        p.AddFromLibrary(entry, bass);
+        var track = Assert.Single(p.Layers);
+        p.PickClip(track, track.Layer.Clips[0]);
+        Assert.False(p.CanRun("playground.paste"));
+        Assert.True(p.RunShortcut("playground.copy"));
+        Assert.True(p.CanRun("playground.paste"));
+
+        p.Cursor = 4 * Bar;
+        Assert.True(p.RunShortcut("playground.paste"));
+        Assert.Equal([0L, 4L * Bar], track.Layer.Clips.Select(c => c.Start).Order());
+        Assert.True(p.Bars >= 8);
+
+        Assert.True(p.RunShortcut("playground.cut"));   // the pasted one, picked after pasting
+        Assert.Single(track.Layer.Clips);
+        p.RunShortcut("playground.undo");
+        Assert.Equal(2, p.Layers.Single().Layer.Clips.Count);
+
+        var renamed = false;
+        p.RenameAsked += (_, _) => renamed = true;
+        Assert.True(p.RunShortcut("playground.rename"));
+        Assert.True(renamed);
+        Assert.True(p.RunShortcut("playground.reharm"));
+        Assert.Equal(PlaygroundViewModel.ReharmTab, p.RightTab);
+    }
+
+    [Fact]
     public void Suggestions_say_how_many_parts_they_were_picked_from()
     {
         var keys = Chords(TwoFiveOne);
