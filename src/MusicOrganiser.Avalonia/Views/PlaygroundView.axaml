@@ -5,6 +5,28 @@
              x:Class="MusicOrganiser.Avalonia.Views.PlaygroundView"
              x:DataType="vm:PlaygroundViewModel">
     <UserControl.Styles>
+        <!-- A suggestion being heard: its card lights up (and glows softly while its sound is being made). -->
+        <Style Selector="Border.tryCard">
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="BorderBrush" Duration="0:0:0.15" />
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Border.tryCard.preparing">
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentSoftBrush}" />
+        </Style>
+        <Style Selector="Border.tryCard.playing">
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="Background" Value="{DynamicResource AccentFaintBrush}" />
+        </Style>
+        <Style Selector="Border.tryBar">
+            <Setter Property="Padding" Value="0,0,0,2" />
+        </Style>
         <Style Selector="TextBlock.small">
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
@@ -214,7 +236,7 @@
                                             Selected="{Binding SelectedClip.Clip}" SelectCommand="{Binding SelectClipCommand}"
                                             SelectedLabel="{Binding SelectedLabel}" LabelCommand="{Binding SelectLabelCommand}"
                                             EditCommand="{Binding ChangeClipCommand}" Grid="{Binding Grid}" DropCommand="{Binding DropPartCommand}"
-                                            ViewStart="{Binding ViewStart}" ViewLength="{Binding ViewLength}" PlayFrom="{Binding Cursor}" CursorCommand="{Binding SetCursorCommand}"
+                                            ViewStart="{Binding ViewStart}" ViewLength="{Binding ViewLength}" PlayFrom="{Binding Cursor}" CursorCommand="{Binding SetCursorCommand}" Trying="{Binding Trying}"
                                             DragSource="{Binding}"
                                             SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
                                             RowHeight="{Binding TrackHeight}"
@@ -287,7 +309,7 @@
             <!-- Getting parts: suggestions, writing from the chords, reharmonising, and songs. -->
             <Border Grid.Column="2" Classes="card" Padding="12">
                 <TabControl Padding="0,8,0,0" SelectedIndex="{Binding RightTab}">
-                    <TabItem Header="Suggest" FontSize="14">
+                    <TabItem Header="{Binding SuggestTab}" FontSize="14">
                         <Panel>
                         <!-- An empty idea: the MIDI page's own list, smaller, with Add on each part. -->
                         <views:MidiListView Classes="compact" DataContext="{Binding Midi}" IsVisible="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).IsEmpty}"
@@ -324,7 +346,11 @@
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:PlaygroundMatchRow">
+                                        <Border Classes="tryCard" Classes.playing="{Binding IsPlaying}" Classes.preparing="{Binding IsPreparing}">
                                         <StackPanel Spacing="3" Margin="0,2">
+                                            <Border Classes="tryBar" IsVisible="{Binding IsPlaying}">
+                                                <TextBlock Text="▶ Playing with your idea, faint on the timeline" Classes="small" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" />
+                                            </Border>
                                             <DockPanel>
                                                 <TextBlock DockPanel.Dock="Right" Text="{Binding FitText}" Classes="fit" Margin="6,0,0,0" />
                                                 <StackPanel>
@@ -337,16 +363,14 @@
                                             <TextBlock Text="{Binding Chords}" Classes="small" FontFamily="{DynamicResource NumberFont}" />
                                             <StackPanel Orientation="Horizontal" Spacing="6">
                                                 <Button Classes="tiny" Command="{Binding PreviewCommand}" ToolTip.Tip="Hear it with the idea, where it would go">
-                                                    <Panel>
-                                                        <TextBlock Text="▶ With the idea" IsVisible="{Binding !IsPlaying}" />
-                                                        <TextBlock Text="■ Stop" IsVisible="{Binding IsPlaying}" />
-                                                    </Panel>
+                                                    <TextBlock Text="{Binding PreviewText}" />
                                                 </Button>
                                                 <Button Content="{Binding AddText}" Classes="tiny accent" Command="{Binding AddCommand}" ToolTip.Tip="Add: on a new track over the highlight (or from bar 1), moved into key. Swap in: in place of the highlighted bars of the clip you picked." />
                                                 <Button Content="Copy its groove" Classes="tiny" Command="{Binding TakeGrooveCommand}"
                                                         ToolTip.Tip="Put its feel, rhythm or whole playing on the part picked (block chords played like it)" />
                                             </StackPanel>
                                         </StackPanel>
+                                        </Border>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>

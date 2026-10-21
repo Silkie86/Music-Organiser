@@ -132,19 +132,50 @@ public class PlaygroundTests : IDisposable
 
         // Nothing on the timeline: Suggest has nothing to fit to, so the page shows the MIDI page's own list.
         Assert.True(p.IsEmpty);
-        Assert.Same(main.Midi, p.Midi);
+        Assert.NotSame(main.Midi, p.Midi);   // a copy: its own search and kind
         await p.FindMatchesAsync();
         Assert.Empty(p.Matches);
         p.Opened();
-        for (var i = 0; i < 300 && main.Midi.Results.Count < 2; i++) await Task.Delay(10);
-        Assert.Equal(2, main.Midi.Results.Count);
+        for (var i = 0; i < 300 && p.Midi.Results.Count < 2; i++) await Task.Delay(10);
+        Assert.Equal(2, p.Midi.Results.Count);
+        p.Midi.Search = "bass";   // searching here leaves the MIDI page's search alone
+        Assert.Equal("", main.Midi.Search);
 
         // Add on a part of that list: on the timeline, and Suggest lists parts that fit it.
-        p.AddMidiRowCommand.Execute(main.Midi.Results.Single(r => r.Entry.Role == MidiRoles.Bass));
+        for (var i = 0; i < 300 && p.Midi.Results.Count != 1; i++) await Task.Delay(10);
+        p.AddMidiRowCommand.Execute(p.Midi.Results.Single(r => r.Entry.Role == MidiRoles.Bass));
         Assert.False(p.IsEmpty);
         Assert.Single(p.Layers);
         for (var i = 0; i < 300 && (p.IsMatching || p.Matches.Count == 0); i++) await Task.Delay(10);
         Assert.True(p.Matches.Count > 0 || p.MatchStatus.Contains("Nothing found"), p.MatchStatus);   // Suggest ran, for chords
+    }
+
+    [Fact]
+    public async Task A_suggestion_heard_with_the_idea_shows_faintly_on_the_timeline_until_stopped()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
+        var row = new PlaygroundMatchRow(p, new PlaygroundMatch(entry, null, 0.8, bass, ""));
+        Assert.Equal("▶ With the idea", row.PreviewText);
+
+        await p.PreviewMatch(row);
+        Assert.True(row.IsPlaying);
+        Assert.Equal("■ Stop", row.PreviewText);
+        var trying = Assert.IsType<TryingPart>(p.Trying);
+        Assert.Equal(p.Layers.Count, trying.Row);   // where Add would put it: a new track
+        Assert.Equal(bass.Select(n => n.Key), trying.Notes.Select(n => n.Key));
+
+        await p.PreviewMatch(row);   // pressed again: stops, and the timeline is just the idea again
+        Assert.Null(p.Trying);
+        Assert.False(row.IsPlaying);
     }
 
     [Fact]

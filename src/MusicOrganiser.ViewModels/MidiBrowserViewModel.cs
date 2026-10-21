@@ -52,6 +52,13 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     public event EventHandler? NewSearchShown;
     bool _loading, _indexAgain, _retryFailed;
 
+    /// <summary>The MIDI page's list this one copies (null for the MIDI page itself), and the parts it last read.</summary>
+    readonly MidiBrowserViewModel? _source;
+    (MidiCatalogue Catalogue, IReadOnlyDictionary<string, int> Counts, int Files)? _read;
+
+    /// <summary>The parts have been read (again), for copies of this list to show them too.</summary>
+    event EventHandler? Read;
+
     public MidiBrowserViewModel(LibraryDb db, MainViewModel main, MidiIndex? index = null)
     {
         _db = db;
@@ -68,6 +75,22 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         GmSounds.ChosenFile = db.GetSetting(SoundFontKey) is { Length: > 0 } chosen ? chosen : null;
         _hasGoodSounds = GmSounds.IsInstalled;
         LoadOptions(db);
+    }
+
+    /// <summary>
+    /// A copy of the MIDI page's list with a search, kind and pick of its own (the Playground's, while its idea is empty;
+    /// Solomon, 2026-10-21): it shows the parts the MIDI page has read and leaves reading them, and the folders, to it.
+    /// </summary>
+    public MidiBrowserViewModel(MidiBrowserViewModel source) : this(source._db, source._main, source._index)
+    {
+        _source = source;
+        source.Read += (_, _) => _ = TakeFromSourceAsync();
+    }
+
+    async Task TakeFromSourceAsync()
+    {
+        if (_source?._read is not { } read || ReferenceEquals(read.Catalogue, _catalogue)) return;
+        await ShowAsync(read.Catalogue, read.Counts, read.Files);
     }
 
     // ---- sounds ----
@@ -709,6 +732,12 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// <summary>The page has come into view: the first time, read the index (and bring it up to date).</summary>
     public void Opened()
     {
+        if (_source is not null)
+        {
+            if (_source._read is null) _source.Opened();   // its Read brings the parts here
+            else _ = TakeFromSourceAsync();
+            return;
+        }
         if (_db.GetSetting(UsedKey) != "1") _db.SetSetting(UsedKey, "1");
         if (_catalogue is null && !_loading) _ = LoadAsync(thenIndex: true);
     }
@@ -734,6 +763,26 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
                 sorted = clock.Elapsed;
                 return r;
             });
+            _read = (catalogue, counts, files);
+            await ShowAsync(catalogue, counts, files);
+            Read?.Invoke(this, EventArgs.Empty);
+            var shown = clock.Elapsed;
+            // Where the time went when it's slow, for Solomon's log: on his PC it varied from 3 s to 51 s.
+            if (clock.Elapsed.TotalSeconds >= MidiIndexer.SlowSeconds)
+                AppLog.Info("MIDI", $"Showing the list took {clock.Elapsed.TotalSeconds:0.0} s ({catalogue.Entries.Count:N0} parts): " +
+                                    $"waited {started.TotalSeconds:0.0} s to start, read them in {(read - started).TotalSeconds:0.0} s, " +
+                                    $"sorted in {(sorted - read).TotalSeconds:0.0} s, shown and searched {(shown - sorted).TotalSeconds:0.0} s later; " +
+                                    $"{poolThreads} shared threads with {poolWaiting} jobs " +
+                                    $"waiting when it began, the app paused {GC.GetTotalPauseDuration().TotalSeconds:0.0} s cleaning memory since it opened");
+        }
+        finally { _loading = false; }
+        if (thenIndex) _ = IndexAsync();
+    }
+
+    /// <summary>Shows parts just read: the picks kept where they're still there, the counts, the summary, and the list.</summary>
+    async Task ShowAsync(MidiCatalogue catalogue, IReadOnlyDictionary<string, int> counts, int files)
+    {
+        {
             _catalogue = catalogue;
             // The parts picked before the reload, found again in the new list (gone parts are let go).
             if (_fitSource is { } source) _fitSource = catalogue.Find(source.Phrase.Hash);
@@ -757,18 +806,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
                 : $"{catalogue.Entries.Count:N0} MIDI parts from {files:N0} files" +
                   (IncludeOlderSaves ? "" : " · newest save of each song") +
                   (catalogue.PhraseCount > catalogue.Entries.Count ? $" · {catalogue.PhraseCount - catalogue.Entries.Count:N0} copies kept as one" : "");
-            var shown = clock.Elapsed;
             await RefreshAsync();
-            // Where the time went when it's slow, for Solomon's log: on his PC it varied from 3 s to 51 s.
-            if (clock.Elapsed.TotalSeconds >= MidiIndexer.SlowSeconds)
-                AppLog.Info("MIDI", $"Showing the list took {clock.Elapsed.TotalSeconds:0.0} s ({catalogue.Entries.Count:N0} parts): " +
-                                    $"waited {started.TotalSeconds:0.0} s to start, read them in {(read - started).TotalSeconds:0.0} s, " +
-                                    $"sorted in {(sorted - read).TotalSeconds:0.0} s, back on screen after {(shown - sorted).TotalSeconds:0.0} s, " +
-                                    $"searched in {(clock.Elapsed - shown).TotalSeconds:0.0} s; {poolThreads} shared threads with {poolWaiting} jobs " +
-                                    $"waiting when it began, the app paused {GC.GetTotalPauseDuration().TotalSeconds:0.0} s cleaning memory since it opened");
         }
-        finally { _loading = false; }
-        if (thenIndex) _ = IndexAsync();
     }
 
     /// <summary>Runs the search (after a short pause while typing) in the background, newest request winning.</summary>
@@ -845,6 +884,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     public Task IndexAsync(bool retryFailed = false)
     {
+        if (_source is not null) return _source.IndexAsync(retryFailed);   // one reader, the MIDI page's
         _retryFailed |= retryFailed;
         if (_indexing is { IsCompleted: false })
         {
@@ -1077,6 +1117,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [RelayCommand]
     async Task AddFolder()
     {
+        if (_source is not null)
+        {
+            await _source.AddFolder();
+            return;
+        }
         if (await Ui.Current.PickFolder("Choose a folder of MIDI files (they stay where they are)") is not { } f || Folders.Contains(f)) return;
         Folders.Add(f);
         _db.SetList(MidiIndexer.FoldersKey, Folders);

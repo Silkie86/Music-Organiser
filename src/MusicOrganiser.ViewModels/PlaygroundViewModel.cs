@@ -1441,7 +1441,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     public void Opened()
     {
         _ = RefreshNextChordsAsync(load: true);
-        if (IsEmpty) _main.Midi.Opened();   // its list shows here
+        if (IsEmpty) Midi.Opened();   // its list shows here
         else if (Matches.Count == 0 && !IsMatching) _ = FindMatchesAsync();
     }
 
@@ -1574,18 +1574,24 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     bool _wasEmpty = true;
 
+    /// <summary>The first side tab's name: Browse while the idea is empty and it's the MIDI list (Solomon, 2026-10-21:
+    /// "shouldn't say suggest"), Suggest once there's something to fit to.</summary>
+    public string SuggestTab => IsEmpty ? "Browse" : "Suggest";
+
     /// <summary>The first part on the timeline: Suggest takes over from the MIDI page's list, so it lists parts that fit.</summary>
     void EmptyChanged()
     {
         OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(SuggestTab));
         if (IsEmpty == _wasEmpty || _main.Playground != this) return;   // not while being made
         _wasEmpty = IsEmpty;
         if (!IsEmpty) _ = FindMatchesAsync();
     }
 
-    /// <summary>The MIDI page's list, which an empty idea shows instead of Suggest (Solomon, 2026-10-21: "should just be a
+    /// <summary>A copy of the MIDI page's list (its own search and kind), which an empty idea shows instead of Suggest (Solomon, 2026-10-21: "should just be a
     /// smaller version of the main midi list on the midi page so any improvements there can be carried over").</summary>
-    public MidiBrowserViewModel Midi => _main.Midi;
+    public MidiBrowserViewModel Midi => _midiList ??= new MidiBrowserViewModel(_main.Midi);
+    MidiBrowserViewModel? _midiList;
 
     /// <summary>A part from the MIDI page's list onto the timeline, as it plays there (moved, octave and all).</summary>
     [RelayCommand]
@@ -2115,6 +2121,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         var request = ++_request;
         List<MidiChannel> channels;
+        if (instead is null) Trying = null;   // the idea alone now
         if (instead is null) channels = ChannelsToPlay(out _playLength);
         else
         {
@@ -2221,36 +2228,58 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _playing = false;
         IsPlaying = false;
         Position = -1;
-        foreach (var m in Matches) m.IsPlaying = false;
+        foreach (var m in Matches) m.IsPlaying = m.IsPreparing = false;
         foreach (var r in Ideas) r.IsPlaying = false;
         IsGroovePlaying = false;
+        Trying = null;
     }
+
+    /// <summary>The suggestion being heard with the idea, shown faintly on the timeline (Solomon, 2026-10-21: "play with
+    /// idea has no visual feedback"); null when none is.</summary>
+    [ObservableProperty] TryingPart? _trying;
 
     /// <summary>The idea with a suggestion playing on top where it would go (the highlight, or from bar 1), to hear it before adding it.</summary>
     internal async Task PreviewMatch(PlaygroundMatchRow row)
     {
-        if (row.IsPlaying) { StopPlaying(); return; }
+        if (row.IsPlaying || row.IsPreparing)
+        {
+            StopPlaying();
+            row.IsPlaying = row.IsPreparing = false;   // also a row no longer in the list
+            return;
+        }
         StopPlaying();
+        row.IsPreparing = true;   // making the sound takes a moment: say so straight away
+        try { await PreviewMatchAsync(row); }
+        finally { row.IsPreparing = false; }
+    }
+
+    async Task PreviewMatchAsync(PlaygroundMatchRow row)
+    {
         if (SwapTarget is { } target && SwapRange is { } bars)
         {
             // Heard as Swap in would leave it: those bars of the clip played by the suggestion instead.
             var tried = PlaygroundSession.FromJson(_session.ToJson())!.Timeline;
             var layer = tried.Layers[Section.Layers.IndexOf(target.Track.Layer)];
             CutOut(layer, bars.Start, bars.End);
-            layer.Clips.Add(LibraryClip(row.Match.Entry, row.Match.Notes, bars.Start, bars.End - bars.Start));
+            var swapped = LibraryClip(row.Match.Entry, row.Match.Notes, bars.Start, bars.End - bars.Start);
+            layer.Clips.Add(swapped);
             layer.Render();
             await PlayAsync(instead: ChannelsOf(tried).ToList());
             row.IsPlaying = _playing;
+            if (_playing)
+                Trying = new(row.Title, Layers.IndexOf(target.Track), bars.Start, bars.End - bars.Start,
+                             layer.Notes.Where(n => n.Start >= bars.Start && n.Start < bars.End).ToList());
             return;
         }
         var channels = ChannelsOf(Section).ToList();
         var notes = row.Match.Notes;
         var period = Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
         var (start, length) = Place;
-        channels.Add(Channel(row.Title, GmSounds.DefaultFor(row.Match.Entry.Role),
-                             SectionMatcher.Loop(notes, period, length).Select(n => n with { Start = n.Start + start }).ToList()));
+        var placed = SectionMatcher.Loop(notes, period, length).Select(n => n with { Start = n.Start + start }).ToList();
+        channels.Add(Channel(row.Title, GmSounds.DefaultFor(row.Match.Entry.Role), placed));
         await PlayAsync(instead: channels);
         row.IsPlaying = _playing;
+        if (_playing) Trying = new(row.Title, Layers.Count, start, length, placed);
     }
 
     /// <summary>The idea with a reharmonisation in place, as Apply would leave it: the chord parts play the new chords, and parts written from the chords follow.</summary>
@@ -2507,6 +2536,10 @@ public sealed partial class LayerRow : ObservableObject
 /// <summary>A clip on a track, as the timeline hands it over when it's clicked.</summary>
 public sealed record ClipPick(PlaygroundLayer Track, PlaygroundClip Clip);
 
+/// <summary>A suggestion being heard with the idea, drawn faintly on the timeline where it would go: on track
+/// <paramref name="Row"/> (one past the last is a new track), its notes already placed.</summary>
+public sealed record TryingPart(string Name, int Row, long Start, long Length, IReadOnlyList<NoteEvent> Notes);
+
 /// <summary>
 /// A clip dragged on the timeline: onto track <paramref name="Row"/> (one past the last makes a new track), starting at
 /// <paramref name="Start"/>, playing for <paramref name="Length"/>, from <paramref name="Offset"/> into its go round.
@@ -2658,7 +2691,10 @@ public sealed partial class PlaygroundMatchRow(PlaygroundViewModel owner, Playgr
     public string Why => match.Why;
     public string Chords => string.Join(" ", match.Entry.Chords.Take(6).Select(c => ChordSpeller.Spell(c.Mask, c.Root)?.Transposed(match.Fit?.Semitones ?? 0).Name).OfType<string>());
     public MidiChannel Channel => new(Title, "", PhraseAnalyser.Ppq, match.Notes);
-    [ObservableProperty] bool _isPlaying;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(PreviewText))] bool _isPlaying;
+    /// <summary>Its sound is being made, before it plays.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(PreviewText))] bool _isPreparing;
+    public string PreviewText => IsPreparing ? "Getting it ready…" : IsPlaying ? "■ Stop" : "▶ With the idea";
     [RelayCommand] void Add() => owner.AddMatch(this);
     /// <summary>What Add does: a new track, or (with a highlight in a clip) swapping those bars of it.</summary>
     public string AddText { get; } = owner.SwapTarget is null ? "Add" : "Swap in";

@@ -52,7 +52,7 @@ public sealed class TimelineView : Control
     static TimelineView()
     {
         AffectsRender<TimelineView>(RowHeightProperty, TracksProperty, LabelsProperty, LengthProperty, RevisionProperty, PositionProperty, HighlightProperty,
-                                    SelectedProperty, SelectedLabelProperty, ViewStartProperty, ViewLengthProperty, PlayFromProperty);
+                                    SelectedProperty, SelectedLabelProperty, ViewStartProperty, ViewLengthProperty, PlayFromProperty, TryingProperty);
         AffectsMeasure<TimelineView>(TracksProperty, RevisionProperty, RowHeightProperty);
     }
 
@@ -76,6 +76,9 @@ public sealed class TimelineView : Control
     public static readonly StyledProperty<long> ViewLengthProperty =
         AvaloniaProperty.Register<TimelineView, long>(nameof(ViewLength), defaultBindingMode: global::Avalonia.Data.BindingMode.TwoWay);
     /// <summary>Where Play starts from: set by clicking the bar numbers, drawn as a marker on them.</summary>
+    /// <summary>A suggestion being heard with the idea, drawn faintly where it would go.</summary>
+    public static readonly StyledProperty<TryingPart?> TryingProperty = AvaloniaProperty.Register<TimelineView, TryingPart?>(nameof(Trying));
+    public TryingPart? Trying { get => GetValue(TryingProperty); set => SetValue(TryingProperty, value); }
     public static readonly StyledProperty<long> PlayFromProperty = AvaloniaProperty.Register<TimelineView, long>(nameof(PlayFrom));
     public static readonly StyledProperty<ICommand?> CursorCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(CursorCommand));
     /// <summary>Makes the files when a clip or a label is dragged out of the timeline into a DAW.</summary>
@@ -676,6 +679,28 @@ public sealed class TimelineView : Control
                     }
                 }
             }
+
+        // A suggestion being heard with the idea: faint, dashed, where Add or Swap in would put it.
+        if (Trying is { } tr)
+        {
+            var rect = new Rect(X(tr.Start) + 0.5, Top + tr.Row * RowHeight + 3, Math.Max(3, W(tr.Length) - 1), RowHeight - 6);
+            dc.DrawRectangle(soft, new Pen(accent, 2, new DashStyle([4, 3], 0)), new RoundedRect(rect, 5));
+            using (dc.PushClip(rect))
+            {
+                dc.DrawText(Text($"▶ Trying: {tr.Name}", 11, text, bold), new Point(rect.X + 5, rect.Y + 1));
+                if (tr.Notes.Count > 0)
+                {
+                    int lo = tr.Notes.Min(n => n.Key), hi = Math.Max(lo + 11, tr.Notes.Max(n => n.Key));
+                    double top = rect.Y + 16, span = rect.Height - 19;
+                    using (dc.PushOpacity(0.6))
+                        foreach (var n in tr.Notes)
+                        {
+                            if (n.Start > From + Span || n.Start + n.Length < From) continue;
+                            dc.FillRectangle(accent, new Rect(X(n.Start), top + (hi - n.Key) / (double)(hi - lo) * span, Math.Max(1.5, W(n.Length) - 1), 2));
+                        }
+                }
+            }
+        }
 
         // The clip being dragged, where it would land.
         if (_clip is { Moved: true } g)

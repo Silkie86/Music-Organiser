@@ -1825,8 +1825,8 @@ public class ViewModelTests : IDisposable
         main.SelectedNav = main.Nav.First(n => n.Page == playground);
         // An empty idea shows the MIDI page's list; with a part in it, Suggest lists parts that fit.
         Assert.True(playground.IsEmpty);
-        for (var i = 0; i < 300 && main.Midi.Results.Count == 0; i++) await Task.Delay(10);
-        Assert.Contains(main.Midi.Results, r => r.Title.Contains("Keys"));
+        for (var i = 0; i < 300 && playground.Midi.Results.Count == 0; i++) await Task.Delay(10);
+        Assert.Contains(playground.Midi.Results, r => r.Title.Contains("Keys"));
     }
 
     [Fact]
