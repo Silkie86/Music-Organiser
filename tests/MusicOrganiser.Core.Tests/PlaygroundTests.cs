@@ -392,6 +392,56 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public async Task Reharm_in_three_steps_pick_a_chord_try_an_idea_striped_then_keep_it_or_go_back()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("Dm7 | G7 | Cmaj7 | %");
+        Assert.Equal(1, p.ReharmStep);
+
+        // 1: clicking G7 on the chord lane opens Reharm with its ideas, and only ideas that change it.
+        p.PickChordCommand.Execute(p.Chords[1]);
+        Assert.Equal(2, p.ReharmStep);
+        Assert.Equal(PlaygroundViewModel.ReharmTab, p.RightTab);
+        Assert.StartsWith("G7 (V7) · bar 2", p.PickedChordText);
+        var sub = p.ChordIdeas.First(i => i.Title == "Tritone sub");
+        Assert.DoesNotContain(p.ChordIdeas, i => i.Idea.Bar == 4 && i.Title != "Turnaround" && i.Title != "Richer chords");
+
+        // 2: trying it shows Db9 striped where G7 is, and plays; the chords themselves don't change yet.
+        await p.TryIdea(sub);
+        Assert.Equal(3, p.ReharmStep);
+        Assert.StartsWith("Db", Assert.Single(p.ProposedChords!).Name);
+        Assert.Equal("G7", p.Chords[1].Name);
+        Assert.Equal("Back to G7", p.BackText);
+
+        // 3: Back leaves G7 picked to try another; Keep changes it, and the new chord stays picked.
+        p.BackIdeaCommand.Execute(null);
+        Assert.Equal(2, p.ReharmStep);
+        Assert.Null(p.ProposedChords);
+        Assert.Equal("G7", p.Chords[1].Name);
+        await p.TryIdea(sub);
+        p.KeepIdeaCommand.Execute(null);
+        Assert.StartsWith("Db", p.Chords[1].Name);
+        Assert.Equal(2, p.ReharmStep);
+        Assert.StartsWith("Db", p.PickedChord!.Name);
+        Assert.Null(p.ProposedChords);
+
+        // Undo puts G7 back, still picked; Harmony › Reharmonise picks the chord under the play marker when none is.
+        p.UndoCommand.Execute(null);
+        Assert.Equal("G7", p.PickedChord!.Name);
+        p.ClearPickedChordCommand.Execute(null);
+        Assert.Equal(1, p.ReharmStep);
+        p.Cursor = 2 * Bar + 10;
+        p.RunShortcut("playground.reharm");
+        Assert.Equal("Cmaj7", p.PickedChord!.Name);
+    }
+
+    [Fact]
     public void Clips_slide_onto_new_tracks_repeat_when_stretched_and_written_ones_follow_their_bars()
     {
         Ui.Current = new Headless();

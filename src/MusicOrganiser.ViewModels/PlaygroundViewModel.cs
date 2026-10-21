@@ -1425,7 +1425,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (IsQuick) return;   // the small playground shows no ideas, so it doesn't work them out (or read every chord part for next chords)
         var h = Harmony;
         if (h.Key is { } k && h.Lane.Count > 0)
-            foreach (var r in Reharmoniser.Suggest(h.Lane, k.Tonic, k.Minor, 14)) Ideas.Add(new ReharmRow(this, r));
+            foreach (var r in Reharmoniser.All(h.Lane, k.Tonic, k.Minor)) Ideas.Add(new ReharmRow(this, r));
+        ChordsChangedUnderReharm();
         _ = RefreshNextChordsAsync();
     }
 
@@ -2677,6 +2678,8 @@ public sealed class ChordCell(TimedChord chord, ChordFunction? function, long le
     public double Start => chord.Start / (double)Math.Max(1, length);
     public double Share => chord.Length / (double)Math.Max(1, length);
     public string Tip => $"{Name}{(Roman.Length > 0 ? $"  ({Roman})" : "")}{(Label.Length > 0 ? $": {Label}" : "")}";
+    public TimedChord Timed => chord;
+    public int Bar => (int)(chord.Start / (4 * PhraseAnalyser.Ppq)) + 1;
 }
 
 /// <summary>What a piano roll writes on its notes and keys: nothing, note names, or what each note is over the chord.</summary>
@@ -2710,10 +2713,14 @@ public sealed partial class ReharmRow(PlaygroundViewModel owner, Reharm idea) : 
     public Reharm Idea => idea;
     public string Title => idea.Title;
     public string Change => $"Bar {idea.Bar}: {idea.Before} → {idea.After}";
+    /// <summary>"G7 → Db9": what the chord becomes.</summary>
+    public string Swap => $"{idea.Before} → {idea.After}";
     public string Why => idea.Why;
     [ObservableProperty] bool _isPlaying;
     [RelayCommand] void Apply() => owner.ApplyIdea(idea);
     [RelayCommand] Task Preview() => owner.PreviewIdea(this);
+    /// <summary>Step 2 of Reharm: shown striped on the chord lane and heard, to keep or go back from.</summary>
+    [RelayCommand] Task Try() => owner.TryIdea(this);
 }
 
 /// <summary>A chord your library often plays next.</summary>

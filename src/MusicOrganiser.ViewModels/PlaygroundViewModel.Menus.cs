@@ -189,7 +189,7 @@ public sealed partial class PlaygroundViewModel
             case "playground.writeGuideTones": RightTab = WriteTab; WriteGuideTonesCommand.Execute(null); return true;
             case "playground.jazz": IsClassical = false; return true;
             case "playground.classical": IsClassical = true; return true;
-            case "playground.reharm": RightTab = ReharmTab; return true;
+            case "playground.reharm": OpenReharm(); return true;
             case "playground.tabMidi": RightTab = SuggestTabIndex; return true;
             case "playground.tabWrite": RightTab = WriteTab; return true;
             case "playground.tabGroove": RightTab = GrooveTab; return true;

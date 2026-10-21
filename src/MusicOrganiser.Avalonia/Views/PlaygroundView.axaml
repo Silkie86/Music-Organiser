@@ -24,6 +24,33 @@
             <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
             <Setter Property="Background" Value="{DynamicResource AccentFaintBrush}" />
         </Style>
+        <!-- Reharm's three steps: where you are, the ideas as tiles, and the one being tried. -->
+        <Style Selector="Border.steps">
+            <Setter Property="Background" Value="{DynamicResource SurfaceRaisedBrush}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
+            <Setter Property="Padding" Value="2" />
+        </Style>
+        <Style Selector="TextBlock.step">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="0,4" />
+            <Setter Property="TextAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        </Style>
+        <Style Selector="TextBlock.step.on">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="Button.idea">
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+        </Style>
+        <Style Selector="Border.reharmCard">
+            <Setter Property="Padding" Value="10" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="Background" Value="{DynamicResource AccentFaintBrush}" />
+        </Style>
         <Style Selector="Border.tryBar">
             <Setter Property="Padding" Value="0,0,0,2" />
         </Style>
@@ -189,7 +216,8 @@
             <!-- The timeline: chords heard, energy, tracks of clips, and the piano roll for the clip picked. -->
             <Grid x:Name="LeftPane" RowDefinitions="Auto,*,Auto,330">
                 <StackPanel Spacing="2" Margin="0,0,0,6">
-                    <views:ChordLaneView Height="46" ContextRequested="OnChordMenu" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
+                    <views:ChordLaneView Height="46" ContextRequested="OnChordMenu" Items="{Binding Chords}" PickCommand="{Binding PickChordCommand}"
+                                         Picked="{Binding PickedChord}" Proposed="{Binding ProposedChords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
                                          ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}" />
                     <views:EnergyCurveView Height="36" Values="{Binding EnergyCurve}" Target="{Binding EnergyTarget}" Inset="210" ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}"
                                            ToolTip.Tip="Energy, bar by bar: how busy, loud and high it plays, and how far its harmony pulls from the key. Dashed: what each label's feel asks for." />
@@ -442,45 +470,93 @@
                         </ScrollViewer>
                     </TabItem>
 
-                    <TabItem Header="Reharm" FontSize="14">
-                        <Grid RowDefinitions="Auto,Auto,Auto,*">
-                            <TextBlock Text="{Binding NextChordsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                            <ItemsControl Grid.Row="1" ItemsSource="{Binding NextChords}" Margin="0,4,0,8">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:NextChordRow">
-                                        <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add it as the next bar">
-                                            <StackPanel Orientation="Horizontal" Spacing="5">
-                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                                <TextBlock Text="{Binding ShareText}" Classes="small" />
-                                            </StackPanel>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <TextBlock Grid.Row="2" Text="Reharmonisation ideas" FontWeight="SemiBold" Margin="0,0,0,4" />
-                            <ListBox Grid.Row="3" ItemsSource="{Binding Ideas}" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:ReharmRow">
-                                        <StackPanel Spacing="3" Margin="0,2">
+                    <TabItem Header="Reharm" FontSize="14" ToolTip.Tip="Change a chord: click it on the chord lane, try an idea, keep it or go back">
+                        <Grid RowDefinitions="Auto,*,Auto">
+                            <!-- where you are in the three steps -->
+                            <Border Classes="steps" Margin="0,0,0,8">
+                                <Grid ColumnDefinitions="*,*,*">
+                                    <TextBlock Text="1  Pick a chord" Classes="step" Classes.on="{Binding IsReharmPicking}" />
+                                    <TextBlock Grid.Column="1" Text="2  Try an idea" Classes="step" Classes.on="{Binding IsReharmChoosing}" />
+                                    <TextBlock Grid.Column="2" Text="3  Keep it" Classes="step" Classes.on="{Binding IsReharmTrying}" />
+                                </Grid>
+                            </Border>
+
+                            <Panel Grid.Row="1">
+                                <!-- 1: nothing picked -->
+                                <StackPanel IsVisible="{Binding IsReharmPicking}" Spacing="6" Margin="0,12">
+                                    <TextBlock Text="Click a chord on the chord lane" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                    <TextBlock Text="Its ideas show here." Classes="small" HorizontalAlignment="Center" />
+                                </StackPanel>
+
+                                <!-- 2: the ideas for the picked chord -->
+                                <DockPanel IsVisible="{Binding IsReharmChoosing}">
+                                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                                        <Button DockPanel.Dock="Right" Content="✕" Classes="tiny" Command="{Binding ClearPickedChordCommand}" ToolTip.Tip="Pick no chord" />
+                                        <TextBlock Text="{Binding PickedChordText}" FontSize="16" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="No ideas for this chord. Try another." Classes="small" IsVisible="{Binding !ChordIdeas.Count}" />
+                                    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsControl ItemsSource="{Binding ChordIdeas}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:ReharmRow">
+                                                    <Button Classes="idea" Command="{Binding TryCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,4"
+                                                            ToolTip.Tip="{Binding Why}">
+                                                        <StackPanel Spacing="2">
+                                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                                            <TextBlock Text="{Binding Swap}" Classes="small" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" TextTrimming="None" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </DockPanel>
+
+                                <!-- 3: trying one, striped on the chord lane -->
+                                <Panel IsVisible="{Binding IsReharmTrying}">
+                                <StackPanel Spacing="8" DataContext="{Binding TryingIdea}" x:DataType="vm:ReharmRow">
+                                    <Border Classes="reharmCard">
+                                        <StackPanel Spacing="6">
                                             <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
-                                            <TextBlock Text="{Binding Change}" Classes="small" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" TextTrimming="None" />
+                                            <TextBlock Text="{Binding Swap}" FontSize="18" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" TextTrimming="None" />
                                             <TextBlock Text="{Binding Why}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                                <Button Classes="tiny" Command="{Binding PreviewCommand}" ToolTip.Tip="Hear the idea with it">
-                                                    <Panel>
-                                                        <TextBlock Text="▶ Hear it" IsVisible="{Binding !IsPlaying}" />
-                                                        <TextBlock Text="■ Stop" IsVisible="{Binding IsPlaying}" />
-                                                    </Panel>
-                                                </Button>
-                                                <Button Content="Use it" Classes="tiny accent" Command="{Binding ApplyCommand}" ToolTip.Tip="Change the chords; parts written from them follow. Undo takes it back." />
-                                            </StackPanel>
                                         </StackPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                                    </Border>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Button Classes="accent" Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).KeepIdeaCommand}"
+                                                Content="Keep" ToolTip.Tip="Change the chords; parts written from them follow. Undo takes it back." />
+                                        <Button Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackIdeaCommand}"
+                                                Content="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackText}" ToolTip.Tip="Leave the chords as they were and try another idea" />
+                                        <Button Command="{Binding PreviewCommand}" ToolTip.Tip="Hear the idea with it">
+                                            <Panel>
+                                                <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
+                                                <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
+                                            </Panel>
+                                        </Button>
+                                    </StackPanel>
+                                </StackPanel>
+                                </Panel>
+                            </Panel>
+
+                            <!-- what could come next, smaller, under the steps -->
+                            <StackPanel Grid.Row="2" Spacing="4" Margin="0,8,0,0" IsVisible="{Binding NextChords.Count}">
+                                <TextBlock Text="{Binding NextChordsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                                <ItemsControl ItemsSource="{Binding NextChords}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:NextChordRow">
+                                            <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add it as the next bar">
+                                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding ShareText}" Classes="small" />
+                                                </StackPanel>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
                         </Grid>
                     </TabItem>
 

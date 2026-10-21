@@ -484,6 +484,9 @@ public sealed class PianoRollEditor : Control
         var clash = Res("MissingBrush", Brushes.IndianRed);
         dc.DrawRectangle(surface, null, new RoundedRect(new Rect(0, 0, w, h), 4));
 
+        // The keys whose notes are sounding under the playhead light up (Solomon, 2026-10-21).
+        var lit = Sounding();
+
         // Rows: the black keys a little darker, a line under each C.
         for (var k = low; k <= high; k++)
         {
@@ -500,7 +503,9 @@ public sealed class PianoRollEditor : Control
                     dc.DrawText(label, new Point(3, y + (rowH - label.Height) / 2));
                 }
             }
-            dc.FillRectangle(Black[k % 12] ? Brushes.Black : Brushes.WhiteSmoke, new Rect(Keys - 10, y + 0.5, 9, Math.Max(1, rowH - 1)));
+            var on = lit.Contains(k);
+            if (on) using (dc.PushOpacity(0.3)) dc.FillRectangle(accent, new Rect(0, y, Keys - 10, rowH));
+            dc.FillRectangle(on ? accent : Black[k % 12] ? Brushes.Black : Brushes.WhiteSmoke, new Rect(Keys - 10, y + 0.5, 9, Math.Max(1, rowH - 1)));
         }
 
         // Everything from here on stays right of the keyboard, however far it's zoomed and moved along.
@@ -576,6 +581,19 @@ public sealed class PianoRollEditor : Control
             var px = Math.Clamp(X((long)(Position % shown)), Keys, w - 2);
             dc.FillRectangle(text, new Rect(px, 0, 2, h));
         }
+    }
+
+    /// <summary>The keys of the part's notes (and their repeats) playing where the playhead is.</summary>
+    HashSet<int> Sounding()
+    {
+        var keys = new HashSet<int>();
+        if (Position < 0 || Shown <= 0 || Loop <= 0) return keys;
+        var at = (long)(Position % Shown);
+        if (at < From || at >= To) return keys;
+        var from = From + (at - From) / Loop * Loop;   // the go round the playhead is in
+        foreach (var n in Current)
+            if (at >= from + n.Start && at < from + n.Start + n.Length) keys.Add(n.Key);
+        return keys;
     }
 
     void Note(DrawingContext dc, IBrush fill, IPen? pen, long start, long length, int key, int low, int high, string? label = null)
