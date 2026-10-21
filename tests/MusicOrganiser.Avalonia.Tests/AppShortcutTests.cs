@@ -125,6 +125,8 @@ public sealed class AppShortcutTests : IDisposable
         Assert.Equal("Sound Lab", main.SelectedNav.Title);
         Press(Key.Left, RawInputModifiers.Alt);
         Assert.Equal("Projects", main.SelectedNav.Title);
+        // the search box has the keyboard here: Alt+arrows still work from it, except on a Mac (Option+arrow jumps a word)
+        if (OperatingSystem.IsMacOS()) window.GetVisualDescendants().OfType<DataGrid>().First(g => g.Classes.Contains("pageList")).Focus();
         Press(Key.Right, RawInputModifiers.Alt);
         Assert.Equal("Sound Lab", main.SelectedNav.Title);
         Press(Key.OemComma, RawInputModifiers.Control, ",");
