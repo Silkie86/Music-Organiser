@@ -199,9 +199,13 @@ public class PlaygroundTests : IDisposable
         var trying = Assert.IsType<TryingPart>(p.Trying);
         Assert.Equal(p.Layers.Count, trying.Row);   // where Add would put it: a new track
         Assert.Equal(bass.Select(n => n.Key), trying.Notes.Select(n => n.Key));
+        // and outlined on the piano roll over the chords' clip, picked for it, so the notes are seen together
+        Assert.NotNull(p.SelectedClip);
+        Assert.Equal(bass.Select(n => n.Key), p.SelectedClip!.Overlay!.Select(n => n.Key));
 
         await p.PreviewMatch(row);   // pressed again: stops, and the timeline is just the idea again
         Assert.Null(p.Trying);
+        Assert.Null(p.SelectedClip.Overlay);
         Assert.False(row.IsPlaying);
     }
 

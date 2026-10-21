@@ -34,6 +34,13 @@ public sealed class PianoRollEditor : Control
         AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<NoteEvent>?>(nameof(Notes));
     public static readonly StyledProperty<IReadOnlyList<NoteEvent>?> GuideProperty =
         AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<NoteEvent>?>(nameof(Guide));
+    /// <summary>
+    /// A part being tried with the idea, drawn outlined over the grey guide (Solomon, 2026-10-21: "show you the proposed
+    /// idea in the piano roll overlaid so you can see how the notes go together"); null when nothing is tried.
+    /// </summary>
+    public static readonly StyledProperty<IReadOnlyList<NoteEvent>?> OverlayProperty =
+        AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<NoteEvent>?>(nameof(Overlay));
+    public IReadOnlyList<NoteEvent>? Overlay { get => GetValue(OverlayProperty); set => SetValue(OverlayProperty, value); }
     /// <summary>How long the part is before it repeats (ticks).</summary>
     public static readonly StyledProperty<long> PeriodProperty = AvaloniaProperty.Register<PianoRollEditor, long>(nameof(Period));
     /// <summary>How long a stretch is shown (ticks): both parts until they meet again.</summary>
@@ -89,7 +96,7 @@ public sealed class PianoRollEditor : Control
     static PianoRollEditor() =>
         AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty,
                                        PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty, NoteLabelsProperty, DegreeOfProperty,
-                                       StrengthOfProperty, FitGuideProperty);
+                                       StrengthOfProperty, FitGuideProperty, OverlayProperty);
 
     public Func<NoteEvent, bool>? ClashTest { get => GetValue(ClashTestProperty); set => SetValue(ClashTestProperty, value); }
 
@@ -592,6 +599,15 @@ public sealed class PianoRollEditor : Control
         using (dc.PushOpacity(0.45))
             foreach (var n in guide)
                 Note(dc, muted, null, n.Start, n.Length, n.Key, low, high);
+
+        // The part being tried with the idea: outlined in the text colour, over the guide and under the part.
+        if (Overlay is { Count: > 0 } tried)
+        {
+            var outline = new Pen(text, 1.2);
+            using (dc.PushOpacity(0.3))
+                foreach (var n in tried) Note(dc, text, null, n.Start, n.Length, n.Key, low, high);
+            foreach (var n in tried) Note(dc, Brushes.Transparent, outline, n.Start, n.Length, n.Key, low, high);
+        }
 
         // The part: its own go full strength, repeats faint; red where it rubs a half step above the guide.
         var notes = Current;

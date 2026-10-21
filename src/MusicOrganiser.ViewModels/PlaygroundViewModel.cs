@@ -2330,6 +2330,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// idea has no visual feedback"); null when none is.</summary>
     [ObservableProperty] TryingPart? _trying;
 
+    partial void OnTryingChanged(TryingPart? value)
+    {
+        // With no clip picked, the first pitched one where it's tried is, so the piano roll shows them together.
+        if (value is not null && SelectedClip is null &&
+            Layers.Where(l => l.Role != MidiRoles.Drums).SelectMany(l => l.Layer.Clips.Select(c => (l, c)))
+                  .FirstOrDefault(p => p.c.Start < value.Start + value.Length && p.c.End > value.Start) is ({ } track, { } clip))
+            PickClip(track, clip);
+        SelectedClip?.TryingChanged();
+    }
+
     /// <summary>The idea with a suggestion playing on top where it would go (the highlight, or from bar 1), to hear it before adding it.</summary>
     internal async Task PreviewMatch(PlaygroundMatchRow row)
     {
@@ -2719,6 +2729,21 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
                 .Select(n => n.Start >= from ? n with { Start = n.Start - from } : n with { Start = 0, Length = n.Start + n.Length - from }).ToList();
         }
     }
+
+    /// <summary>The part being tried with the idea, over this go round of the clip: outlined on the piano roll.</summary>
+    public IReadOnlyList<NoteEvent>? Overlay
+    {
+        get
+        {
+            if (owner.Trying is not { } t) return null;
+            long from = At, to = At + clip.Loop;
+            var notes = t.Notes.Where(n => n.Start < to && n.Start + n.Length > from)
+                .Select(n => n.Start >= from ? n with { Start = n.Start - from } : n with { Start = 0, Length = n.Start + n.Length - from }).ToList();
+            return notes.Count == 0 ? null : notes;
+        }
+    }
+
+    internal void TryingChanged() => OnPropertyChanged(nameof(Overlay));
 
     /// <summary>Which notes fight the chords under them, judged as <see cref="LayerRow.Clashes"/> does.</summary>
     public Func<NoteEvent, bool> Clashes

@@ -376,7 +376,7 @@
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
-                    <views:PianoRollEditor MinHeight="80" IsVisible="{Binding !PianoFolded}" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}"
+                    <views:PianoRollEditor MinHeight="80" IsVisible="{Binding !PianoFolded}" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}" Overlay="{Binding SelectedClip.Overlay}"
                                            NoteLabels="{Binding NoteLabels}" DegreeOf="{Binding SelectedClip.DegreeOf}"
                                            StrengthOf="{Binding SelectedClip.StrengthOf}" FitGuide="{Binding SelectedClip.FitGuide}"
                                            SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
