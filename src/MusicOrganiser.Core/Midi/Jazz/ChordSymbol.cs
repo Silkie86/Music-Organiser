@@ -28,6 +28,29 @@ public readonly record struct ChordSymbol(int Root, int Mask, int Bass, ChordFam
 
     /// <summary>A diminished chord on a black note is usually a passing chord climbing to the next, so it's named sharp: C#dim7.</summary>
     static readonly string[] Sharps = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    static readonly string[] Flats = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+
+    /// <summary>
+    /// The name spelled the way the key is written: with sharps in the sharp keys (G, D, A, E and B major and their
+    /// relative minors, so C#m in A major, not Dbm), with flats in the flat keys (Gb in Db major), and as <see cref="Name"/>
+    /// in C major, A minor or with no key. A diminished chord stays sharp, as it climbs to the chord after it.
+    /// </summary>
+    public string NameIn(Sounds.KeyEstimate? key)
+    {
+        if (key is null) return Name;
+        var names = Mod(key.Minor ? key.Tonic + 3 : key.Tonic) switch
+        {
+            7 or 2 or 9 or 4 or 11 => Sharps,
+            0 => Names,
+            _ => Flats,
+        };
+        return Spelled(Family == ChordFamily.Diminished ? Sharps : names, names);
+    }
+
+    /// <summary>Every way the name is written, for searching: "C#m7" and "Dbm7".</summary>
+    public IEnumerable<string> Spellings => new[] { Name, Spelled(Sharps, Sharps), Spelled(Flats, Flats) }.Distinct();
+
+    string Spelled(string[] roots, string[] basses) => roots[Root] + Quality + (Bass != Root ? "/" + basses[Bass] : "");
 
     public override string ToString() => Name;
 

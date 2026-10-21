@@ -97,3 +97,102 @@ the launcher's automatic restarts until it's saved, so a new build never loses i
 Settings › Self-check runs the app's checks against the real library (folders there, every project opens, how fast
 the sound library loads, the plugin scanner, sound output, how the galaxy draws) and writes a report to
 `reports\checks` in the data folder, for Claude to read the same way. It only reads.
+
+## Theory bench
+
+`theorybench` measures the app's harmony code on real music: its key finder, chord readers, the MIDI page's fit
+and red marks, and the Playground's fit and red marks, run over the POP909 songs (909 Chinese pop songs as MIDI, with
+melody, bridge and piano parts plus chord, key and beat labels; MIT licence). Use it to check a change to how the app
+hears harmony before shipping it: run it before and after, and compare.
+
+Get the songs once, outside the repository (about 76 MB; they are never committed):
+
+```
+git clone --filter=blob:none --sparse https://github.com/music-x-lab/POP909-Dataset.git pop909
+cd pop909 && git sparse-checkout set --no-cone '/POP909/*/*.mid' '/POP909/*/*.txt'
+```
+
+Then, from the repository folder:
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909             # everything
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --fitonly   # fit scores and red marks
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --keysonly  # keys
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --clips     # keys on 8-bar clips
+```
+
+It can also read a folder of whole-song MIDI files, one track per instrument, such as the construction kits in gospel,
+jazz and soul MIDI packs. In each file, the melody is a Lead, Flute, Sax or Talk Box track, or another part the app calls
+a melody. It is tested against the file's other parts, and the key written in the file or folder name ("Ebmin",
+"F#maj") is checked against the app's key. Subfolders at the first level are reported as styles. The files are only
+read; keep bought packs out of the repository.
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" [--verbose]
+```
+
+`--verbose` lists each file whose key the app got wrong.
+
+`--keylab` (with either the POP909 folder or `--library`) puts key finders side by side: the app's, three published key
+profiles, ways of counting the bass, and profiles learned from the other songs or packs (never the one being tested). It
+prints the exact share and the MIREX score per style, then how often each confidence cut shows a key and how often
+that key is right. `--save-profile file.txt` writes the profile learned from that run's labelled files, and
+`--profiles a.txt,b.txt` tries saved profiles (and their average) on another set. The app's MIDI key profile
+(`MusicTheory.EstimateMidiKey`) is the average of a POP909 profile and a gospel, jazz, neo soul and soul pack profile
+made this way; only those 24 averages are in the code, never the files.
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --keylab --save-profile pop.txt
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" --keylab --profiles pop.txt
+```
+
+`--ear` (with `--library`) counts which notes over which chords the melodies play, against other files' melodies moved
+into the key, next to how the app's ear rates them (`ChordScales.Sit`). It then scores each pack with an ear learned
+from the other packs only. `--save-ear ear.txt` saves the learned table, and `--ear-table ear.txt` tries it on POP909
+(with `--fitonly`).
+
+`--learn <folder>` looks at the chord parts of a pack library, each pack tested against what the other packs teach:
+how often "what chord next?" names the chord the player went to, how close each voicing style comes to the notes
+players put in a chord typed plainly (Cm7), the groove of the parts (swing, pushes into the bar), and how well each comp
+rhythm matches the bars they played.
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" --ear
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --learn "path/to/New Midi"
+```
+
+`--learn` also takes `--chords-from app` (the chords the app's MIDI index keeps now, which "what chord next?" learns
+from) or `--chords-from before` (the index's chords before the one chord reader). Without it, the chord moves are read
+from the notes struck each half bar. With either, only the chord moves are measured.
+
+`--chords` puts chord readers side by side: the MIDI page's and the Playground's half-bar readers as they were before
+2026-10-20 (`Before.cs`), the app's one chord reader (`ChordReader`), and a lab copy of it with a knob for each of its
+ideas (`ChordLab.cs`). With the POP909 folder it first reads a few hand-made cases (walk-ups, pushed chords, jazz and
+gospel voicings), then scores each reader against the songs' chord labels: root, root and major/minor, bass note, how
+well its chord changes line up with the labelled ones, and changes per bar. With `--library` it scores them on the pack
+files instead: how well the Playground's fit tells a file's own melody from another over the chords each reader hears,
+red marks, and changes per bar. `--knobs "name:Knob=value,Knob=value;name2:..."` adds lab variants (each starts from
+what the app does; the knobs are the properties of `ChordLab.Knobs`), `--labonly` leaves out the first three readers,
+`--popsonly` skips the hand-made cases, `--show` prints the first bars of a few songs as each reader hears them next to
+the labels, and `--speed` times each reader on 16-bar phrases.
+
+```
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --chords
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop909/POP909 --chords --labonly --knobs "nodim:DimByNext=false"
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" --chords
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --learn "path/to/New Midi" --chords-from app
+```
+
+Things to know:
+
+- Only songs whose MIDI beats line up with the labelled beats are used (387 of them). The chord, key and beat labels
+  were made by software, so the absolute chord and key numbers are rough; comparing two versions of the app is the
+  reliable part.
+- Ranking numbers are "times in 100 a song's own melody scores higher than another song's melody over the same
+  chords" (AUC). Red-mark numbers are the share of a song's own melody notes the app would mark red: lower is better,
+  since those notes are what the song really plays.
+- Lines saying "as it is" call the app's own code, so they show what the app does now. `Together` and `Fit` in
+  `Program.cs` are copies of the app's scores as they were before the 2026-10-20 fixes, with a switch for each idea
+  measured then; they stay as a fixed point to compare against.
+- `Before.cs` keeps the two chord readers the app had before the one chord reader (2026-10-20) the same way.
+- The 2026-10-20 check-up and its numbers: https://claude.ai/artifact/5Rr3Y59gLCo9Q3Xh3Cohqp

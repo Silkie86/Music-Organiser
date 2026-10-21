@@ -367,15 +367,23 @@
                                     <ComboBox DockPanel.Dock="Right" Width="132" FontSize="12" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteLabelChoices}" SelectedItem="{Binding NoteLabelPick}" />
                                     <TextBlock Text="Notes say" Classes="label" />
                                 </DockPanel>
+                                <DockPanel ToolTip.Tip="By fit: each note's colour shows how strongly it fits the chord under it, brightest for the strongest, red where it fights. The rows of the strongest notes are lit faintly behind, so you can see where a note would go best.">
+                                    <ComboBox DockPanel.Dock="Right" Width="132" FontSize="12" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteColourChoices}" SelectedItem="{Binding NoteColourPick}" />
+                                    <TextBlock Text="Colours" Classes="label" />
+                                </DockPanel>
+                                <views:FitLegend Bass="{Binding SelectedClip.IsBass}" IsVisible="{Binding FitColours}" HorizontalAlignment="Left"
+                                                 ToolTip.Tip="Strongest fit first. A bassline leans on the root and 5th, then the 3rd; other parts on the root, 3rd and 5th, then the 7th, then tensions." />
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
                     <views:PianoRollEditor MinHeight="80" IsVisible="{Binding !PianoFolded}" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}"
                                            NoteLabels="{Binding NoteLabels}" DegreeOf="{Binding SelectedClip.DegreeOf}"
+                                           StrengthOf="{Binding SelectedClip.StrengthOf}" FitGuide="{Binding SelectedClip.FitGuide}"
                                            SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
                                            Period="{Binding SelectedClip.Loop}" Length="{Binding SelectedClip.Loop}" Position="{Binding SelectedClip.Position}"
+                                           Section="{Binding SelectedClip.Highlight}" SectionCommand="{Binding SelectedClip.PickBarsCommand}" SeekCommand="{Binding SelectedClip.SeekCommand}"
                                            EditedCommand="{Binding SelectedClip.EditedCommand}" ClashTest="{Binding SelectedClip.Clashes}"
-                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note (it copies the length and velocity of the last note you clicked), drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Notes snap with the Grid, Relative and Objects switches above; hold Shift to place freely." />
+                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note (it copies the length and velocity of the last note you clicked), drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Drag along the bar numbers to pick part of the clip: Suggest then finds the bit of each part that fits there, to swap in (right-click the bar numbers to let go). Notes snap with the Grid, Relative and Objects switches above; hold Shift to place freely." />
                 </DockPanel>
             </Grid>
             <!-- The side panel's edge: drag to make it wider or narrower. -->

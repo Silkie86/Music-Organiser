@@ -9,67 +9,17 @@ public sealed record TimedChord(long Start, long Length, ChordSymbol Chord)
 }
 
 /// <summary>
-/// The chord track: which chord sounds when. Worked out from notes (half a bar at a time, the lowest note as the bass,
-/// so a bassline under rootless chords names them right), or read from a chart typed like a lead sheet:
-/// "Dm9 G13 | Cmaj9 | %" (two chords share a bar between bar lines; % repeats the bar before).
+/// The chord track: which chord sounds when. Worked out from notes by the app's chord reader (<see cref="ChordReader"/>:
+/// beat by beat, pushes and walking basses heard as a player hears them, a bassline under rootless chords naming
+/// them), or read from a chart typed like a lead sheet: "Dm9 G13 | Cmaj9 | %" (two chords share a bar between bar
+/// lines; % repeats the bar before).
 /// </summary>
 public static class ChordLane
 {
     public const int Ppq = PhraseAnalyser.Ppq, Bar = 4 * Ppq;
 
-    /// <summary>The chords in these notes, a half bar at a time, the same chord running on as one.</summary>
-    public static List<TimedChord> Detect(IReadOnlyList<NoteEvent> notes, long length, int slot = 2 * Ppq)
-    {
-        var lane = new List<TimedChord>();
-        if (notes.Count == 0 || length <= 0) return lane;
-        var sorted = notes.Where(n => !n.Muted).OrderBy(n => n.Start).ToList();
-        var weights = new float[12];
-        for (long at = 0; at < length; at += slot)
-        {
-            Array.Clear(weights);
-            var lowest = int.MaxValue;
-            long end = Math.Min(length, at + slot), lowestHeld = 0;
-            foreach (var n in sorted)
-            {
-                if (n.Start >= end) break;
-                var overlap = Math.Min(n.Start + n.Length, end) - Math.Max(n.Start, at);
-                if (overlap < slot / 8) continue;   // a grace note or the tail of the chord before
-                weights[n.Key % 12] += overlap;
-                // The bass: the lowest note that sounds for a good part of the slot.
-                if (overlap >= slot / 4 && (n.Key < lowest || (n.Key == lowest && overlap > lowestHeld)))
-                {
-                    lowest = n.Key;
-                    lowestHeld = overlap;
-                }
-            }
-            var max = weights.Max();
-            ChordSymbol? chord = null;
-            if (max > 0)
-            {
-                var mask = 0;
-                for (var p = 0; p < 12; p++)
-                {
-                    weights[p] /= max;
-                    if (weights[p] >= 0.2f) mask |= 1 << p;
-                }
-                chord = ChordSpeller.Spell(mask, lowest == int.MaxValue ? -1 : lowest % 12, weights);
-                // Too few notes to say (a melody alone, a bass note): the chord before carries on if these notes fit it.
-                if (chord is null && lane.Count > 0 && Fits(lane[^1].Chord, mask)) chord = lane[^1].Chord;
-            }
-            if (chord is not { } c) continue;
-            if (lane.Count > 0 && lane[^1].End == at && lane[^1].Chord.Name == c.Name)
-                lane[^1] = lane[^1] with { Length = lane[^1].Length + (end - at) };
-            else lane.Add(new TimedChord(at, end - at, c));
-        }
-        return lane;
-    }
-
-    static bool Fits(ChordSymbol chord, int mask)
-    {
-        for (var p = 0; p < 12; p++)
-            if ((mask >> p & 1) != 0 && ChordScales.Sit(chord, p) < 0.3) return false;
-        return true;
-    }
+    /// <summary>The chords in these notes, beat by beat, the same chord running on as one (<see cref="ChordReader"/>).</summary>
+    public static List<TimedChord> Detect(IReadOnlyList<NoteEvent> notes, long length) => ChordReader.Read(notes, length);
 
     /// <summary>The chord sounding at a tick, the lane going round when it's shorter; null where none is.</summary>
     public static ChordSymbol? At(IReadOnlyList<TimedChord> lane, long tick, long loop = 0)
@@ -80,6 +30,51 @@ public static class ChordLane
         foreach (var c in lane)
             if (tick >= c.Start && tick < c.End) return c.Chord;
         return null;
+    }
+
+    /// <summary>
+    /// Every chord a note sounds over, one piece per chord, in order: a note held from C7 into F7 is heard against both.
+    /// Struck is true for the piece where the note starts; the others are held over. Gaps with no chord are skipped.
+    /// </summary>
+    public static IEnumerable<(ChordSymbol Chord, long Start, long Length, bool Struck)> Under(
+        IReadOnlyList<TimedChord> lane, long start, long length, long loop = 0)
+    {
+        if (lane.Count == 0) yield break;
+        long at = start, end = start + Math.Max(1, length);
+        while (at < end)
+        {
+            var tick = loop > 0 ? at % loop : at;
+            long next;
+            TimedChord? hit = null;
+            foreach (var c in lane)
+                if (tick >= c.Start && tick < c.End) { hit = c; break; }
+            if (hit is not null) next = at + (hit.End - tick);
+            else
+            {
+                // A gap: on to the next chord to start, or the loop's end.
+                var later = long.MaxValue;
+                foreach (var c in lane)
+                    if (c.Start > tick) later = Math.Min(later, c.Start);
+                next = later != long.MaxValue ? at + (later - tick) : loop > 0 ? at + (loop - tick) : end;
+            }
+            if (loop > 0 && next - at > loop - tick) next = at + (loop - tick);   // a chord running past the loop's end
+            next = Math.Min(Math.Max(next, at + 1), end);
+            if (hit is not null) yield return (hit.Chord, at, next - at, at == start);
+            at = next;
+        }
+    }
+
+    /// <summary>
+    /// Whether a note fights the chords under it, for marking it red: true when it sounds for longer than an eighth
+    /// over a chord it doesn't sit on (<see cref="ChordScales.Sit"/> under 0.05). Shorter notes are passing notes.
+    /// </summary>
+    public static bool Fights(IReadOnlyList<TimedChord> lane, long start, long length, int pc,
+                              HarmonyStyle style = HarmonyStyle.JazzGospel, long loop = 0)
+    {
+        if (length <= Ppq / 2) return false;
+        foreach (var (chord, _, len, _) in Under(lane, start, length, loop))
+            if (len > Ppq / 2 && ChordScales.Sit(chord, pc, style) < 0.05) return true;
+        return false;
     }
 
     /// <summary>

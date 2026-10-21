@@ -338,6 +338,26 @@ public class PlaygroundTests : IDisposable
         Assert.Equal("Cmaj7", next[0].Chord.Name);
     }
 
+    [Fact]
+    public void What_followed_two_chords_counts_even_when_seen_only_a_few_times()
+    {
+        // Five ii–V–Is, and six chains of dominants (C7 – F7 – Bb7 – Eb7) where a 7 chord goes on to another 7 a 4th up.
+        // After Dm7 – G7 the two-chord count has only seen five, but they all went to Cmaj7: that wins over the
+        // one-chord count's "a 7 goes to another 7".
+        var entries = new List<StoredPhrase>();
+        // Each in its own key: the same notes twice would be one part with two copies.
+        for (var t = 0; t < 5; t++)
+            entries.Add(Stored(t + 1, $@"K:\Two{t}\Song.flp", "Keys", Chords([50 + t, 53 + t, 57 + t, 60 + t], [43 + t, 53 + t, 59 + t, 62 + t], [48 + t, 52 + t, 55 + t, 59 + t])));
+        for (var t = 0; t < 6; t++)
+            entries.Add(Stored(t + 10, $@"K:\Chain{t}\Song.flp", "Keys", Chords([48 + t, 52 + t, 55 + t, 58 + t], [53 + t, 57 + t, 60 + t, 63 + t], [46 + t, 50 + t, 53 + t, 56 + t], [51 + t, 55 + t, 58 + t, 61 + t])));
+        var model = ProgressionModel.Learn(new MidiCatalogue(entries).Entries, []);
+        var next = model.Next(ChordSymbol.Parse("G7")!.Value, ChordSymbol.Parse("Dm7")!.Value);
+        Assert.Equal("Cmaj7", next[0].Chord.Name);
+        Assert.Equal("C7", next[1].Chord.Name);
+        // With nothing before it, a 7 chord goes on to the next 7.
+        Assert.Equal("C7", model.Next(ChordSymbol.Parse("G7")!.Value, null)[0].Chord.Name);
+    }
+
     // ---- the page ----
 
     [Fact]
@@ -598,6 +618,95 @@ public class PlaygroundTests : IDisposable
         p.ViewLength = p.Length / 2;
         p.ViewStart = p.Length / 4;
         Assert.Equal((0.25, 0.75), (p.ViewFrom, p.ViewTo));
+    }
+
+    [Fact]
+    public void A_bassline_leans_on_the_root_and_fifth_and_other_parts_on_the_chords_own_notes()
+    {
+        // F12 note, 20 Oct: "for bass the root and the 5th should be the strongest fit then 3rd".
+        FitStrength S(string chord, int pc, string role) => NoteStrength.Of(ChordSymbol.Parse(chord)!.Value, pc, role);
+        Assert.Equal([FitStrength.Strongest, FitStrength.Strongest, FitStrength.Strong, FitStrength.Colour, FitStrength.Weak, FitStrength.Fights],
+                     new[] { 0, 7, 4, 10, 2, 11 }.Select(pc => S("C7", pc, MidiRoles.Bass)));   // C G E Bb D B
+        Assert.Equal(FitStrength.Strongest, S("C/E", 4, MidiRoles.Bass));          // a slash chord's bass note
+        Assert.Equal(FitStrength.Strongest, S("Cm7b5", 6, MidiRoles.Bass));        // its 5th is flat
+        // Any other part: root, 3rd and 5th, then the 7th and the chord's other notes, then tensions; the avoid note fights.
+        Assert.Equal([FitStrength.Strongest, FitStrength.Strongest, FitStrength.Strongest, FitStrength.Strong, FitStrength.Colour, FitStrength.Fights],
+                     new[] { 0, 4, 7, 11, 2, 5 }.Select(pc => S("Cmaj7", pc, MidiRoles.Melody)));   // C E G B D F
+        Assert.Equal(FitStrength.Strong, S("Cmaj9", 2, MidiRoles.Chords));
+        Assert.Equal(FitStrength.Weak, S("Cmaj9", 2, MidiRoles.Bass));
+        Assert.Equal(FitStrength.Strongest, S("C7sus4", 5, MidiRoles.Chords));     // the sus note stands in for the 3rd
+        Assert.Equal(FitStrength.Strong, S("Cdim7", 9, MidiRoles.Chords));          // a diminished 7th is its 7th
+    }
+
+    [Fact]
+    public void Swapping_a_bar_finds_the_bit_of_a_part_that_fits_there_and_joins_on()
+    {
+        // F12 note, 20 Oct: "select a part of a clip and have suggestions to replace that ... so it finds a fragment that
+        // goes". The part plays Cmaj7 – Dm7 – G7 – Cmaj7, and the bar being swapped is under a Dm7: its second bar fits.
+        var keys = Chords([48, 52, 55, 59], [50, 53, 57, 60], [43, 53, 59, 62], [48, 52, 55, 59]);
+        var catalogue = new MidiCatalogue([Stored(1, @"K:\Other\Keys.flp", "Keys", keys)]);
+        var section = new PlaygroundSection { Bars = 1, Chart = "Dm7" };
+        // The clip around it plays a Cmaj7 an octave up in the bar before.
+        var around = new SwapAround(Chords([60, 64, 67, 71]).Select(n => n with { Start = n.Start - Bar }).ToList(), [], 0, 65.5, 4);
+        var best = Assert.Single(SectionMatcher.Rank(catalogue, SectionHarmony.Of(section), MidiRoles.Chords, _ => keys, around: around));
+        Assert.StartsWith("Its bar 2", best.Why);
+        Assert.Contains("joins on", best.Why);
+        Assert.Equal(Bar, best.Period);
+        Assert.Equal([2, 5, 9, 0], best.Notes.OrderBy(n => n.Key).Select(n => n.Key % 12));   // D F A C
+        Assert.InRange(best.Notes.Average(n => n.Key), 60, 72);                             // up an octave, by the chords before it
+        Assert.All(best.Notes, n => Assert.True(n.Start + n.Length <= Bar));
+
+        // A stretch that steps on smoothly joins better than one that leaps.
+        var line = new SwapAround(Line(Beat, 60, 62).Select(n => n with { Start = n.Start - 2 * Beat }).ToList(), Line(Beat, 67), 0, 64, 4);
+        Assert.True(SectionMatcher.Joins(Line(Beat, 64, 65, 64, 65), line, MidiRoles.Melody, Bar) >
+                    SectionMatcher.Joins(Line(Beat, 76, 77, 76, 77), line, MidiRoles.Melody, Bar) + 0.3);
+    }
+
+    [Fact]
+    public void Bars_picked_in_the_piano_roll_are_swapped_for_a_stretch_and_notes_show_how_strongly_they_fit()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
+        p.AddFromLibrary(entry, bass, "Bass");
+        var track = p.Layers[1];
+        var row = p.SelectedClip!;
+
+        // Coloured by how strongly each note fits: on the C, its root and 5th, then its 3rd; a C# fights it.
+        var strength = row.StrengthOf!;
+        Assert.Equal([FitStrength.Strongest, FitStrength.Strongest, FitStrength.Strong, FitStrength.Fights],
+                     new[] { 36, 43, 40, 37 }.Select(k => strength(new NoteEvent(0, Beat, k, 100))));
+        Assert.True(row.IsBass);
+        var under = row.FitGuide!;
+        Assert.Equal(4, under.Count);
+        Assert.Equal(FitStrength.Strongest, under[1].Strengths[5]);   // bar 2 is the F
+        p.NoteColourPick = "Plain";
+        Assert.Null(p.SelectedClip!.StrengthOf);
+        Assert.Null(p.SelectedClip.FitGuide);
+        p.NoteColourPick = PlaygroundViewModel.ByFit;
+
+        // Bars 2–3 picked along the piano roll's bar numbers: the same bars of the timeline, for Suggest to fill.
+        p.SelectedClip.PickBarsCommand.Execute(new RollRange(Bar, 3L * Bar));
+        Assert.Equal(new RollRange(Bar, 3L * Bar), p.Loop);
+        Assert.Equal(new RollRange(Bar, 3L * Bar), p.SelectedClip.Highlight);
+        Assert.Same(row.Clip, p.SwapTarget!.Clip);
+        Assert.Equal(MidiRoles.Bass, p.SuggestRole.Role);
+
+        // A stretch two bars long that only plays in its first: swapped in, its second bar stays quiet (it doesn't go round).
+        var other = new MidiCatalogue([Stored(2, @"K:\Other\Walk.flp", "Bass", Line(Bar, 41, 43), "bass")]).Entries[0];
+        p.SwapIn(p.SwapTarget, (Bar, 3L * Bar), other, Line(Bar, 41), 2L * Bar);
+        Assert.Single(track.Notes, n => n.Start >= Bar && n.Start < 3L * Bar);
+
+        // A right-click on the bar numbers lets go.
+        p.SelectedClip!.PickBarsCommand.Execute(null);
+        Assert.Null(p.Loop);
     }
 
     [Fact]
