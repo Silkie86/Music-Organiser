@@ -146,7 +146,7 @@ public sealed class PianoRollEditor : Control
         return (low, high);
     }
 
-    // ---- zoom and pan (Solomon, 2026-10-19): Ctrl + scroll zooms in time, Ctrl + Shift + scroll the notes' height, plain
+    // ---- zoom and pan (Solomon, 2026-10-19): Ctrl + scroll zooms in time, Alt (or Ctrl + Shift) + scroll the notes' height, plain
     // scroll moves up and down the notes (when zoomed), Shift + scroll along the bars, the middle button drags it about,
     // and a double-click on the bar numbers shows it all again.
     long _viewFrom, _viewSpan;   // ticks shown (0: all)
@@ -171,8 +171,9 @@ public sealed class PianoRollEditor : Control
         var dy = e.Delta.Y;
         var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);   // Cmd on a Mac
         var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        var alt = e.KeyModifiers.HasFlag(KeyModifiers.Alt);   // as in FL Studio and Ableton (Solomon, 2026-10-21: zoom up and down with the wheel)
         var (low, high) = Range();
-        if (ctrl && shift && dy != 0)
+        if ((alt || ctrl && shift) && dy != 0)
         {
             // Taller or shorter notes, round the key under the pointer.
             var key = KeyAt(p.Y, low, high);

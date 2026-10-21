@@ -209,7 +209,7 @@
                 <TextBlock Text="highlighted: Play loops them, suggestions fit them, new parts go there." Classes="label" />
                 <Button Content="Clear" Classes="tiny" Command="{Binding ClearLoopCommand}" />
             </StackPanel>
-            <TextBlock Text="Drag across empty bars or the bar numbers to highlight them. Ctrl + scroll zooms, Shift + scroll moves along." Classes="label" Margin="0,0,0,6" IsVisible="{Binding !HasLoop}" />
+            <TextBlock Text="Drag across empty bars or the bar numbers to highlight them. Ctrl + scroll zooms, Alt + scroll makes tracks taller, Shift + scroll moves along." Classes="label" Margin="0,0,0,6" IsVisible="{Binding !HasLoop}" />
         </WrapPanel>
 
         <Grid x:Name="Body" Grid.Row="4" ColumnDefinitions="*,16,400" Margin="0,6,0,0">
@@ -229,7 +229,7 @@
                 </StackPanel>
 
                 <!-- Track names beside their rows, then the clips. -->
-                <ScrollViewer Grid.Row="1" MinHeight="80" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer x:Name="TrackScroll" Grid.Row="1" MinHeight="80" HorizontalScrollBarVisibility="Disabled">
                     <Grid ColumnDefinitions="210,*">
                         <StackPanel>
                             <Border Height="38" />
@@ -603,7 +603,7 @@
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0" Spacing="3">
                         <TextBlock Text="With the mouse" FontWeight="SemiBold" Margin="0,0,0,2" />
                         <TextBlock Classes="small" TextTrimming="None" Text="Hold Shift while dragging: no snapping" />
-                        <TextBlock Classes="small" TextTrimming="None" Text="Ctrl + scroll: zoom round the pointer · Shift + scroll or middle-drag: move along" />
+                        <TextBlock Classes="small" TextTrimming="None" Text="Ctrl + scroll: zoom round the pointer · Alt + scroll: taller or shorter · Shift + scroll or middle-drag: move along" />
                         <TextBlock Classes="small" TextTrimming="None" Text="Click the bar numbers: play from there · drag them: highlight bars · double-click: show it all" />
                         <TextBlock Classes="small" TextTrimming="None" Text="Drag a clip's right edge to repeat it, its left edge to trim it, or pull it off the timeline into your DAW" />
                     </StackPanel>

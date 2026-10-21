@@ -93,4 +93,20 @@ public sealed class PianoRollTests
         window.MouseUp(new Point(XOf(3 * Beat) + 2, Key60), MouseButton.Left);
         Assert.Equal(3L * Beat, edits[^1].Single().Start);
     }
+
+    [AvaloniaFact]
+    public void Alt_scroll_makes_the_notes_taller_round_the_key_under_the_pointer()
+    {
+        var (window, roll, edits) = Roll();
+        window.MouseWheel(new Point(XOf(2 * Beat), Key60), new Vector(0, 3), RawInputModifiers.Alt);
+        window.MouseDown(new Point(XOf(2 * Beat) + 2, Key60), MouseButton.Left);
+        window.MouseUp(new Point(XOf(2 * Beat) + 2, Key60), MouseButton.Left);
+        Assert.Equal(60, Assert.Single(edits).Single(n => n.Start != 0).Key);   // zoomed round middle C, which stayed under the pointer
+        // Three rows up was E above it before; the rows are taller now, so it's nearer.
+        roll.Notes = [];
+        var up = Key60 - 3 * 280 / 25.0;
+        window.MouseDown(new Point(XOf(3 * Beat) + 2, up), MouseButton.Left);
+        window.MouseUp(new Point(XOf(3 * Beat) + 2, up), MouseButton.Left);
+        Assert.InRange(edits[^1].Single().Key, 61, 62);
+    }
 }

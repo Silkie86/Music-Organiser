@@ -4,6 +4,7 @@ using Avalonia.VisualTree;
 using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
@@ -15,6 +16,7 @@ public partial class PlaygroundView : UserControl
         InitializeComponent();
         KeyDown += OnKeyDown;
         Timeline.MenuAsked += OnTimelineMenu;
+        AddHandler(PointerWheelChangedEvent, OnWheel, RoutingStrategies.Tunnel);
         LeftPane.SizeChanged += (_, e) => { if (e.HeightChanged) LayOutRows(); };   // not while the side panel's edge is dragged
     }
 
@@ -166,7 +168,38 @@ public partial class PlaygroundView : UserControl
         _held.Clear();
     }
 
-    void OnKeyLifted(object? sender, KeyEventArgs e) => _held.Remove(e.Key);
+    void OnKeyLifted(object? sender, KeyEventArgs e)
+    {
+        _held.Remove(e.Key);
+        // Letting go of Alt opens the menu bar's keys, unless Alt was only held to zoom with the wheel.
+        if (e.Key is Key.LeftAlt or Key.RightAlt && _altWheeled)
+        {
+            _altWheeled = false;
+            Dispatcher.UIThread.Post(() => MenuBar.Close());
+        }
+    }
+
+    // ---- Alt + wheel: taller or shorter tracks (the piano roll does its own notes) ----
+
+    bool _altWheeled;
+
+    void OnWheel(object? sender, PointerWheelEventArgs e)
+    {
+        if (!e.KeyModifiers.HasFlag(KeyModifiers.Alt) || e.Delta.Y == 0) return;
+        _altWheeled = true;
+        if (_vm is null || e.Source is not Visual v || !TrackScroll.IsVisualAncestorOf(v)) return;
+        var old = _vm.TrackHeight;
+        var height = Math.Round(Math.Clamp(old * Math.Pow(1.15, e.Delta.Y), PlaygroundViewModel.MinTrackHeight, PlaygroundViewModel.MaxTrackHeight));
+        e.Handled = true;   // not scrolled as well
+        if (height == old) return;
+        // the track under the pointer stays under it
+        var y = e.GetPosition(TrackScroll).Y;
+        var offset = TrackScroll.Offset;
+        _vm.TrackHeight = height;
+        _vm.KeepTrackHeight();
+        var to = Math.Max(0, (offset.Y + y) * height / old - y);
+        Dispatcher.UIThread.Post(() => TrackScroll.Offset = TrackScroll.Offset.WithY(to), DispatcherPriority.Background);   // once the rows are laid out at their new height
+    }
     void OnTopLostFocus(object? sender, RoutedEventArgs e) => _held.Clear();
 
     /// <summary>
