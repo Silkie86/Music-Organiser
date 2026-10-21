@@ -1821,7 +1821,7 @@ public class ViewModelTests : IDisposable
         var main = Main();
         await main.Midi.IndexAsync();
         var playground = main.Playground;
-        Assert.Equal(Core.Midi.MidiRoles.Chords, playground.SuggestRole.Role);
+        Assert.Equal("All", playground.SuggestRole.Role);   // an empty idea lists all your MIDI
         main.SelectedNav = main.Nav.First(n => n.Page == playground);
         for (var i = 0; i < 300 && playground.Matches.Count == 0; i++) await Task.Delay(10);
         Assert.True(playground.Matches.Count > 0, playground.MatchStatus);

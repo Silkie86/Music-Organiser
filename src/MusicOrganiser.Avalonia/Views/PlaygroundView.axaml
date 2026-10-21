@@ -301,7 +301,7 @@
                             </ListBox>
                             <DockPanel Grid.Row="1" Margin="0,6,0,0">
                                 <Button DockPanel.Dock="Right" Content="Find" Classes="accent" Margin="6,0,0,0" Command="{Binding FindMatchesCommand}" />
-                                <TextBox Text="{Binding SuggestSearch}" PlaceholderText="Words to narrow it (optional)" Classes="clearButton" />
+                                <TextBox Text="{Binding SuggestSearch}" PlaceholderText="{Binding SuggestHint}" Classes="clearButton" />
                             </DockPanel>
                             <WrapPanel Grid.Row="2" Margin="0,6,0,0">
                                 <TextBlock Text="These bars are a" Classes="label" Margin="0,0,6,4" />

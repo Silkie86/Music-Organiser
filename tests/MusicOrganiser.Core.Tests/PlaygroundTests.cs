@@ -112,6 +112,41 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public async Task An_empty_idea_searches_all_your_midi_and_the_first_part_turns_fitting_on()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        var dbPath = Path.Combine(_root, "library.db");
+        using (var index = new MidiIndex(MidiIndex.PathBeside(dbPath)))
+        {
+            IndexedPhrase Part(string name, List<NoteEvent> notes, string hints = "", bool drums = false) =>
+                new(name, "Pattern 1", notes, PhraseAnalyser.Analyse(notes, hints), drums);
+            index.Replace(new MidiSource(@"K:\Packs\Sunday.mid", MidiSource.File, "", 1, 1, 90), 1,
+                [Part("Keys", Chords(TwoFiveOne)), Part("Bass", Line(Bar, 38, 43, 36, 36), "bass")]);
+        }
+        using var db = new LibraryDb(dbPath);
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+
+        // Nothing on the timeline: All is offered and picked, and every kind is listed with nothing moved to fit.
+        Assert.True(p.IsEmpty);
+        Assert.Equal("All", p.SuggestRole.Role);
+        await p.FindMatchesAsync();
+        Assert.Equal(2, p.Matches.Count);
+        Assert.All(p.Matches, m => Assert.Equal(0, m.Match.Move));
+        Assert.Contains("all your MIDI", p.MatchStatus);
+
+        // A part on the timeline: back to fitting, and All goes (it can't fit every kind at once).
+        var bass = p.Matches.Single(m => m.Match.Entry.Role == MidiRoles.Bass);
+        p.AddMatch(bass);
+        Assert.False(p.IsEmpty);
+        Assert.DoesNotContain(p.RoleChips, c => c.Role == "All");
+        Assert.NotEqual("All", p.SuggestRole.Role);
+    }
+
+    [Fact]
     public void Suggestions_say_how_many_parts_they_were_picked_from()
     {
         var keys = Chords(TwoFiveOne);
