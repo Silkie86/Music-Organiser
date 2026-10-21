@@ -496,9 +496,11 @@ public sealed partial class FlStudioReader : IProjectReader
     /// </summary>
     static List<(int Channel, NoteEvent Note)> DecodeNotes(ReadOnlySpan<byte> s, IReadOnlySet<int>? channels)
     {
-        var size = 24;
-        if (s.Length % 24 != 0 || channels is not null && !AllChannelsKnown(s, 24, channels))
-            if (s.Length % 20 == 0 && (channels is null || AllChannelsKnown(s, 20, channels))) size = 20;
+        // FL 9 on writes 24-byte notes, FL 4 to 8 20-byte ones. A pattern whose size both divide (120, 240, ...) is told
+        // apart by the notes being in time order, as FL keeps them: read in the wrong size, Solomon's FL 7 "i dont know_8"
+        // got notes at jumbled times lasting 2^31 ticks (a velocity and pan landing in the length).
+        var size = Fits(s, 24, channels) ? 24 : Fits(s, 20, channels) ? 20
+                 : s.Length % 24 != 0 && s.Length % 20 == 0 ? 20 : 24;   // notes out of order: by size alone
         var velocityAt = size - 3;
         var notes = new List<(int, NoteEvent)>(s.Length / size);
         for (var off = 0; off + size <= s.Length; off += size)
@@ -513,6 +515,15 @@ public sealed partial class FlStudioReader : IProjectReader
                 Muted: size == 24 && (r[19] & 0x20) != 0, Step: length == 0)));
         }
         return notes;
+    }
+
+    /// <summary>Whether the notes read as <paramref name="size"/>-byte records: a whole number of them, in time order, on known channels.</summary>
+    static bool Fits(ReadOnlySpan<byte> s, int size, IReadOnlySet<int>? channels)
+    {
+        if (s.Length == 0 || s.Length % size != 0 || channels is not null && !AllChannelsKnown(s, size, channels)) return false;
+        for (var off = size; off + size <= s.Length; off += size)
+            if (BinaryPrimitives.ReadUInt32LittleEndian(s[off..]) < BinaryPrimitives.ReadUInt32LittleEndian(s[(off - size)..])) return false;
+        return true;
     }
 
     static bool AllChannelsKnown(ReadOnlySpan<byte> s, int size, IReadOnlySet<int> channels)
