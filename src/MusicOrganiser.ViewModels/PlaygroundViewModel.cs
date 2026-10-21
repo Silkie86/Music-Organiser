@@ -243,8 +243,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>How wide the side panel of suggestions is (drag its left edge).</summary>
     [ObservableProperty] double _sidePanelWidth = DefaultSidePanelWidth;
     /// <summary>The piano roll folded away, leaving the timeline the room.</summary>
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(FoldText))] bool _pianoFolded;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(FoldText), nameof(FoldGlyph))] bool _pianoFolded;
     public string FoldText => PianoFolded ? "▸ Show piano roll" : "▾ Fold piano roll";
+    public string FoldGlyph => PianoFolded ? "▸" : "▾";
 
     static string Number(double v) => Math.Round(v).ToString(System.Globalization.CultureInfo.InvariantCulture);
     // Changes live while the line is dragged; KeepTrackHeight saves it once, when it's let go.
@@ -2584,6 +2585,19 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     }
 
     static string Bars(long ticks) => ticks % Bar == 0 ? $"{ticks / Bar} bar{(ticks == Bar ? "" : "s")}" : $"{ticks / (double)Bar:0.##} bars";
+
+    // The inspector's lines, short (the whole sentence is Details).
+    public string BarsText => $"{clip.Start / Bar + 1} – {(clip.End + Bar - 1) / Bar}";
+    public string RoundText => $"{Bars(clip.Loop)}{(clip.Length > clip.Loop ? $" × {clip.Length / (double)clip.Loop:0.#}" : "")}";
+    public string MovedText
+    {
+        get
+        {
+            var moved = clip.Pinned ? clip.Shift(0) : clip.Transpose;
+            return moved == 0 ? "0 st" : $"{(moved > 0 ? "+" : "")}{moved} st";
+        }
+    }
+    public string Colour => track.Colour;
 
     /// <summary>Where its first go round would start on the timeline.</summary>
     long At => clip.RepeatAt(0);

@@ -286,48 +286,90 @@
                 <Border Grid.Row="2" Classes="grip" Width="48" Height="3" IsVisible="{Binding #ClipDivider.IsVisible}" />
 
                 <!-- The clip picked: its controls and the piano roll, the other parts grey behind. -->
-                <DockPanel Grid.Row="3" Margin="8,8,8,6" IsVisible="{Binding HasSelectedClip}">
-                    <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                        <Button Content="{Binding FoldText}" Classes="tiny" MinWidth="124" Margin="0,0,12,6" Command="{Binding FoldPianoCommand}"
-                                ToolTip.Tip="Fold the piano roll away to give the timeline the room, or bring it back" />
-                        <TextBlock Text="{Binding SelectedClip.Details}" Classes="label" FontWeight="SemiBold" Margin="0,0,12,6" />
-                        <ComboBox DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" ItemsSource="{x:Static vm:LayerRow.SoundChoices}" SelectedItem="{Binding Sound}"
-                                  MinWidth="150" Margin="0,0,10,6" FontSize="12" ToolTip.Tip="The track's sound here (General MIDI)" />
-                        <TextBlock Text="Octave" Classes="label" Margin="0,0,4,6" />
-                        <Button Content="−" Classes="tiny" Margin="0,0,2,6" Command="{Binding SelectedClip.OctaveDownCommand}" />
-                        <Button Content="+" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.OctaveUpCommand}" />
-                        <TextBlock Text="Semitone" Classes="label" Margin="0,0,4,6" />
-                        <Button Content="−" Classes="tiny" Margin="0,0,2,6" Command="{Binding SelectedClip.DownCommand}" />
-                        <Button Content="+" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.UpCommand}" />
-                        <TextBlock Text="Inversion" Classes="label" Margin="0,0,4,6" IsVisible="{Binding SelectedClip.IsChords}" />
-                        <Button Content="−" Classes="tiny" Margin="0,0,2,6" Command="{Binding SelectedClip.TurnDownCommand}" IsVisible="{Binding SelectedClip.IsChords}"
-                                ToolTip.Tip="Turn its chords down: each chord's top note down an octave" />
-                        <Button Content="+" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.TurnUpCommand}" IsVisible="{Binding SelectedClip.IsChords}"
-                                ToolTip.Tip="Turn its chords up: each chord's bottom note up an octave" />
-                        <Button Content="Fit again" Classes="tiny" Margin="0,0,6,6" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
-                                ToolTip.Tip="Changed by hand, so it stays as it is. Fit again lets it move to fit the chords under it again (its octave is kept)." />
-                        <TextBlock Text="{Binding SelectedClip.FitText}" Classes="label" Margin="0,0,12,6"
-                                   ToolTip.Tip="Shift to fit: a clip you move moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Fit again." />
-                        <Button Content="Copy after it" Classes="tiny" Margin="0,0,4,6" Command="{Binding SelectedClip.DuplicateCommand}" />
-                        <Button Content="Remove" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.RemoveCommand}" />
-                        <Button Content="Smooth inversions" Classes="tiny" Margin="0,0,10,6" Command="{Binding SmoothInversionsCommand}" IsVisible="{Binding IsChordLayer}"
-                                ToolTip.Tip="Turn each chord over (same notes, same spacing) so the voices move as little as they can from chord to chord" />
-                        <Border Classes="dragChip" Margin="0,0,6,6" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
-                                ToolTip.Tip="Drag this track into your DAW as a MIDI clip">
-                            <TextBlock Text="Drag this track" />
-                        </Border>
-                        <TextBox x:Name="TrackName" DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
-                                 Width="160" Margin="0,0,6,6" FontSize="12" ToolTip.Tip="The track's name: its name in your DAW" />
-                    </WrapPanel>
-                    <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6" IsVisible="{Binding !PianoFolded}">
-                        <TextBlock Text="Note names" Classes="label" Margin="0,0,6,4" />
-                        <ListBox Classes="chips" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteLabelChoices}" SelectedItem="{Binding NoteLabelPick}" Margin="0,0,0,4"
-                                 ToolTip.Tip="Write each note's name on it and on the keys (C4, F#3), or what it is over the chord heard there (3, ♭7, 9, 13): handy for jazz and gospel tensions">
-                            <ListBox.ItemsPanel>
-                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
-                            </ListBox.ItemsPanel>
-                        </ListBox>
-                    </WrapPanel>
+                <DockPanel Grid.Row="3" Margin="6" IsVisible="{Binding HasSelectedClip}">
+                    <!-- The inspector: what can be done to the picked clip and its track, in a column under the track names
+                         (Solomon, 2026-10-21: the strip of buttons and sentences above the piano roll was too cluttered). -->
+                    <ScrollViewer DockPanel.Dock="Left" Width="204" Margin="0,0,6,0" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Spacing="6" Margin="2,2,8,2">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Classes="tiny" Content="{Binding FoldGlyph}" Command="{Binding FoldPianoCommand}"
+                                        ToolTip.Tip="Fold the piano roll away to give the timeline the room, or bring it back" />
+                                <TextBlock Text="INSPECTOR" Classes="caps" />
+                            </DockPanel>
+                            <DockPanel ToolTip.Tip="{Binding SelectedClip.Details}">
+                                <Border DockPanel.Dock="Left" Width="12" Height="12" CornerRadius="2" Margin="0,0,7,0" Background="{Binding SelectedClip.Colour}" />
+                                <TextBlock Text="{Binding SelectedClip.Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            </DockPanel>
+                            <StackPanel Spacing="5" IsVisible="{Binding !PianoFolded}">
+                                <DockPanel>
+                                    <Border DockPanel.Dock="Right" Classes="lcd" MinWidth="72"><TextBlock Text="{Binding SelectedClip.BarsText}" HorizontalAlignment="Center" /></Border>
+                                    <TextBlock Text="Bars" Classes="label" />
+                                </DockPanel>
+                                <DockPanel>
+                                    <Border DockPanel.Dock="Right" Classes="lcd" MinWidth="72"><TextBlock Text="{Binding SelectedClip.RoundText}" HorizontalAlignment="Center" /></Border>
+                                    <TextBlock Text="Round" Classes="label" ToolTip.Tip="How long one go round is, and how many times it plays" />
+                                </DockPanel>
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Right" Classes="group">
+                                        <Button Content="−" Classes="tiny" Command="{Binding SelectedClip.OctaveDownCommand}" ToolTip.Tip="Down an octave" />
+                                        <Button Content="+" Classes="tiny" Command="{Binding SelectedClip.OctaveUpCommand}" ToolTip.Tip="Up an octave" />
+                                    </StackPanel>
+                                    <TextBlock Text="Octave" Classes="label" />
+                                </DockPanel>
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Right" Classes="group">
+                                        <Button Content="−" Classes="tiny" Command="{Binding SelectedClip.DownCommand}" ToolTip.Tip="Down a semitone" />
+                                        <Button Content="+" Classes="tiny" Command="{Binding SelectedClip.UpCommand}" ToolTip.Tip="Up a semitone" />
+                                    </StackPanel>
+                                    <Border DockPanel.Dock="Right" Classes="lcd" MinWidth="50" Margin="0,0,6,0"><TextBlock Text="{Binding SelectedClip.MovedText}" HorizontalAlignment="Center" /></Border>
+                                    <TextBlock Text="Transpose" Classes="label" />
+                                </DockPanel>
+                                <DockPanel IsVisible="{Binding SelectedClip.IsChords}">
+                                    <StackPanel DockPanel.Dock="Right" Classes="group">
+                                        <Button Content="−" Classes="tiny" Command="{Binding SelectedClip.TurnDownCommand}" ToolTip.Tip="Turn its chords down: each chord's top note down an octave" />
+                                        <Button Content="+" Classes="tiny" Command="{Binding SelectedClip.TurnUpCommand}" ToolTip.Tip="Turn its chords up: each chord's bottom note up an octave" />
+                                    </StackPanel>
+                                    <TextBlock Text="Inversion" Classes="label" />
+                                </DockPanel>
+                                <DockPanel ToolTip.Tip="Shift to fit: a clip you move moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Fit again.">
+                                    <Button DockPanel.Dock="Right" Content="Fit again" Classes="tiny" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
+                                            ToolTip.Tip="Changed by hand, so it stays as it is. Fit again lets it move to fit the chords under it again (its octave is kept)." />
+                                    <TextBlock Text="{Binding SelectedClip.FitText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" VerticalAlignment="Center" />
+                                </DockPanel>
+                                <StackPanel Classes="group">
+                                    <Button Content="Copy after" Classes="tiny" Command="{Binding SelectedClip.DuplicateCommand}" ToolTip.Tip="A copy straight after it (Ctrl+D)" />
+                                    <Button Content="Remove" Classes="tiny" Command="{Binding SelectedClip.RemoveCommand}" ToolTip.Tip="Take the clip out (Delete)" />
+                                    <Button Content="Smooth" Classes="tiny" Command="{Binding SmoothInversionsCommand}" IsVisible="{Binding IsChordLayer}"
+                                            ToolTip.Tip="Smooth inversions: turn each chord over (same notes, same spacing) so the voices move as little as they can from chord to chord" />
+                                </StackPanel>
+
+                                <Border Classes="groove" Margin="0,4" />
+                                <TextBlock Text="TRACK" Classes="caps" />
+                                <DockPanel>
+                                    <ComboBox DockPanel.Dock="Right" DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" ItemsSource="{x:Static vm:LayerRow.SoundChoices}" SelectedItem="{Binding Sound}"
+                                  FontSize="12" Width="132" ToolTip.Tip="The track's sound here (General MIDI)" />
+                                    <TextBlock Text="Sound" Classes="label" />
+                                </DockPanel>
+                                <DockPanel>
+                                    <TextBox x:Name="TrackName" DockPanel.Dock="Right" DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
+                                 Width="132" FontSize="12" ToolTip.Tip="The track's name: its name in your DAW" />
+                                    <TextBlock Text="Name" Classes="label" />
+                                </DockPanel>
+                                <StackPanel Classes="group">
+                                    <Border Classes="dragChip" Margin="0" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
+                                            ToolTip.Tip="Drag this track into your DAW as a MIDI clip">
+                                        <TextBlock Text="Drag this track out" />
+                                    </Border>
+                                </StackPanel>
+
+                                <Border Classes="groove" Margin="0,4" />
+                                <DockPanel ToolTip.Tip="Write each note's name on it and on the keys (C4, F#3), or what it is over the chord heard there (3, ♭7, 9, 13): handy for jazz and gospel tensions">
+                                    <ComboBox DockPanel.Dock="Right" Width="132" FontSize="12" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteLabelChoices}" SelectedItem="{Binding NoteLabelPick}" />
+                                    <TextBlock Text="Notes say" Classes="label" />
+                                </DockPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
                     <views:PianoRollEditor MinHeight="80" IsVisible="{Binding !PianoFolded}" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}"
                                            NoteLabels="{Binding NoteLabels}" DegreeOf="{Binding SelectedClip.DegreeOf}"
                                            SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
