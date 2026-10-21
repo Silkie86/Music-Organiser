@@ -216,6 +216,27 @@ public static class SectionFit
     }
 
     /// <summary>
+    /// How much of the time the part plays while there are chords: the share of beats with a chord in which one of its
+    /// notes sounds. A short fragment that sits well on one chord shouldn't beat a part that plays through them all
+    /// (Solomon, 2026-10-21: "favour clips that go with the chords for the most amount of time").
+    /// </summary>
+    public static double Cover(IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length)
+    {
+        int beats = 0, played = 0;
+        var sorted = notes.Where(n => n.Start < length).OrderBy(n => n.Start).ToList();
+        var from = 0;
+        for (long at = 0; at < length; at += Beat)
+        {
+            if (ChordLane.At(lane, at + 1) is null) continue;
+            beats++;
+            while (from < sorted.Count && sorted[from].Start + sorted[from].Length <= at) from++;
+            for (var i = from; i < sorted.Count && sorted[i].Start < at + Beat; i++)
+                if (sorted[i].Start + sorted[i].Length > at) { played++; break; }
+        }
+        return beats == 0 ? 1 : played / (double)beats;
+    }
+
+    /// <summary>
     /// How closely a chord part's own chords follow the lane, half a bar at a time, with substitutes counting as alike
     /// (<see cref="ChordKinship"/>): a part playing Db7 where the lane has G7 still follows it. Null when it plays too
     /// few chords to say.
@@ -288,7 +309,7 @@ public static class SectionMatcher
         var energy = feel == SectionFeel.Any ? null : Energy.Target(feel, (int)(section.Length / ChordLane.Bar));
         if (role == MidiRoles.Drums) return Grooves(catalogue, section, notesOf, text, limit, ct, energy, feel, out matching);
         var target = section.Target();
-        var hits = catalogue.Search(new MidiQuery(text, role, Fit: target, Limit: target is null && energy is null ? limit : Math.Max(limit * 4, 200), Notes: notesOf)
+        var hits = catalogue.Search(new MidiQuery(text, role, Fit: target, Limit: target is null && energy is null ? limit : Math.Max(limit * 6, 300), Notes: notesOf)
                                     { LeaveSongs = section.Songs }, out matching, ct);
         var list = new List<PlaygroundMatch>();
         foreach (var hit in hits)
@@ -322,10 +343,14 @@ public static class SectionMatcher
                 _ => refine,
             };
             if (lift is { } l) score = 0.72 * score + 0.28 * l;
+            // Sitting well only counts for the time it plays: a chunk that plays a quarter of the time keeps about half its score.
+            var cover = SectionFit.Cover(looped, section.Lane, section.Length);
+            score *= 0.35 + 0.65 * cover;
             var why = string.Join(" · ", new[]
             {
                 sits is { } sv ? $"Sits on the chords {sv * 100:0}%" : "",
                 follow is { } fv ? $"follows them {fv * 100:0}%" : "",
+                cover < 0.95 ? $"plays {cover * 100:0}% of the time" : "",
                 feelText,
                 MoveText(move),
             }.Where(s => s.Length > 0));

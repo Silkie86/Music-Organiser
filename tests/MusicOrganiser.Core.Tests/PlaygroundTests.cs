@@ -78,6 +78,19 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void A_part_that_plays_through_the_chords_covers_more_than_a_short_chunk()
+    {
+        // Solomon, 2026-10-21: Suggest favoured small chunks of MIDI because they're easy to fit.
+        var lane = ChordLane.ParseChart("Dm7 | G7 | Cmaj7 | %", out _)!;
+        var through = Chords([62, 65, 69, 72], [59, 62, 65, 67], [60, 64, 67, 71], [60, 64, 67, 71]);
+        var chunk = new List<NoteEvent> { new(3 * Beat, Beat / 2, 62, 90), new(3 * Beat, Beat / 2, 65, 90) };
+        Assert.Equal(1, SectionFit.Cover(through, lane, 4 * Bar));
+        Assert.Equal(1 / 16.0, SectionFit.Cover(chunk, lane, 4 * Bar), 3);
+        // Staccato on every beat still counts as playing through.
+        Assert.Equal(1, SectionFit.Cover(Line(Beat / 4, Enumerable.Repeat(0, 16).Select((_, i) => 0).ToArray()).Select((n, i) => n with { Start = i * (long)Beat, Key = 50 }).ToList(), lane, 4 * Bar));
+    }
+
+    [Fact]
     public void Approach_notes_are_let_off_but_a_held_clash_is_not()
     {
         var lane = ChordLane.ParseChart("Cmaj7", out _)!;
