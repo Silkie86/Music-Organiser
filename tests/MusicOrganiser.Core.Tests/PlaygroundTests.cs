@@ -134,6 +134,9 @@ public class PlaygroundTests : IDisposable
         Assert.True(p.IsEmpty);
         Assert.Equal("All", p.SuggestRole.Role);
         await p.FindMatchesAsync();
+        // Other test classes can turn background work back on while this runs, and the MIDI page's first read can start
+        // a search of its own: wait for the newest one to finish.
+        for (var i = 0; i < 300 && (p.IsMatching || p.Matches.Count < 2); i++) await Task.Delay(10);
         Assert.Equal(2, p.Matches.Count);
         Assert.All(p.Matches, m => Assert.Equal(0, m.Match.Move));
         Assert.Contains("all your MIDI", p.MatchStatus);
