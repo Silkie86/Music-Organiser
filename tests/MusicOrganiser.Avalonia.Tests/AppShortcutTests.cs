@@ -57,6 +57,8 @@ public sealed class AppShortcutTests : IDisposable
         Assert.Equal("playground.play", keys.Find(ShortcutsViewModel.Playground, "Space"));   // the page's own first
         Assert.Equal("app.play", keys.Find(ShortcutsViewModel.Sounds, "Space"));
         Assert.Equal("app.goSounds", keys.Find(ShortcutsViewModel.Playground, "ctrl+2"));     // then the everywhere ones
+        Assert.Equal("playground.zoomIn", keys.Find(ShortcutsViewModel.Playground, "Ctrl+="));  // the timeline's zoom there
+        Assert.Equal("app.sizeUp", keys.Find(ShortcutsViewModel.Projects, "Ctrl+Shift+="));     // the whole app's elsewhere
         Assert.Equal("playground.help", keys.Find(ShortcutsViewModel.Playground, "Shift+/"));
         Assert.Equal("app.help", keys.Find(ShortcutsViewModel.Projects, "Shift+/"));
         Assert.Null(keys.Find("Settings", "Ctrl+B"));
@@ -106,7 +108,7 @@ public sealed class AppShortcutTests : IDisposable
         {
             var physical = key switch
             {
-                Key.D1 => PhysicalKey.Digit1, Key.D2 => PhysicalKey.Digit2, Key.PageDown => PhysicalKey.PageDown,
+                Key.D1 => PhysicalKey.Digit1, Key.D0 => PhysicalKey.Digit0, Key.OemPlus => PhysicalKey.Equal, Key.OemMinus => PhysicalKey.Minus, Key.D2 => PhysicalKey.Digit2, Key.PageDown => PhysicalKey.PageDown,
                 Key.Left => PhysicalKey.ArrowLeft, Key.Right => PhysicalKey.ArrowRight, Key.Up => PhysicalKey.ArrowUp,
                 Key.Down => PhysicalKey.ArrowDown, Key.OemComma => PhysicalKey.Comma, Key.F => PhysicalKey.F, Key.F1 => PhysicalKey.F1,
                 Key.Escape => PhysicalKey.Escape, Key.OemQuestion => PhysicalKey.Slash, _ => PhysicalKey.None,
@@ -157,6 +159,15 @@ public sealed class AppShortcutTests : IDisposable
         Assert.NotEqual(tab, tabs.SelectedIndex);
         Press(Key.Left, RawInputModifiers.Control);
         Assert.Equal(tab, tabs.SelectedIndex);
+
+        // Ctrl+= and Ctrl+- make everything bigger and smaller, Ctrl+0 puts it back
+        Press(Key.OemPlus, RawInputModifiers.Control, "=");
+        Assert.Equal(110, main.Settings.Appearance.Size);
+        Press(Key.OemMinus, RawInputModifiers.Control, "-");
+        Press(Key.OemMinus, RawInputModifiers.Control, "-");
+        Assert.Equal(90, main.Settings.Appearance.Size);
+        Press(Key.D0, RawInputModifiers.Control, "0");
+        Assert.Equal(100, main.Settings.Appearance.Size);
 
         // F1 shows this page's keys and everywhere's; while it's up other keys do nothing; Esc closes it
         Press(Key.F1);

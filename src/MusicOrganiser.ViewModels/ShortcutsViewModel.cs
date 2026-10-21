@@ -65,6 +65,9 @@ public sealed partial class ShortcutsViewModel : ObservableObject
         new("app.play", Everywhere, "Play or stop the picked sound or MIDI part", "Space", "Bitwig's browser"),
         new("app.rescan", Everywhere, "Look for new and changed projects", "F5", "Windows' refresh key"),
         new("app.fullScreen", Everywhere, "Full screen on or off", "F11", "Windows"),
+        new("app.sizeUp", Everywhere, "Make everything bigger (Settings › Appearance › Size)", "Ctrl+=", "the browsers' zoom"),
+        new("app.sizeDown", Everywhere, "Make everything smaller, to fit more on screen", "Ctrl+-", "the browsers' zoom"),
+        new("app.sizeReset", Everywhere, "Everything back to normal size", "Ctrl+0", "the browsers' zoom"),
 
         new("projects.open", Projects, "Open the picked song (FL Studio songs go to Bitwig)", "Ctrl+O", "Windows"),
         new("projects.openInBitwig", Projects, "Open the picked song in Bitwig", "Ctrl+B", "Music Organiser"),

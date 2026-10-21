@@ -121,6 +121,9 @@ public sealed class AppShortcuts
             case "app.rescan":
                 if (!main.IsScanning) main.RescanCommand.Execute(null);
                 return true;
+            case "app.sizeUp": main.Settings.Appearance.StepSize(1); return true;
+            case "app.sizeDown": main.Settings.Appearance.StepSize(-1); return true;
+            case "app.sizeReset": main.Settings.Appearance.Size = 100; return true;
             case "app.fullScreen":
                 if (_window.WindowState == WindowState.FullScreen) _window.WindowState = _beforeFullScreen;
                 else

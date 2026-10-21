@@ -106,6 +106,16 @@ public sealed partial class AppearanceViewModel : ObservableObject
     partial void OnAccentChanged(AccentChoice value) => _db.SetSetting(AccentKey, value.Colour);
     partial void OnFontChanged(string value) => _db.SetSetting(FontKey, value);
     partial void OnSizeChanged(int value) => _db.SetSetting(SizeKey, value.ToString());
+
+    /// <summary>The next size up (or down, <paramref name="by"/> negative) in <see cref="Sizes"/>; false at either end.</summary>
+    public bool StepSize(int by)
+    {
+        var at = Sizes.ToList().IndexOf(Size);
+        var next = Math.Clamp((at < 0 ? Sizes.ToList().IndexOf(100) : at) + by, 0, Sizes.Count - 1);
+        if (Sizes[next] == Size) return false;
+        Size = Sizes[next];
+        return true;
+    }
     partial void OnLessMotionChanged(bool value) => _db.SetSetting(MotionKey, value ? "1" : "0");
 
     [RelayCommand]
