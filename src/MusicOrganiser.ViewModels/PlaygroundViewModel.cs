@@ -2022,7 +2022,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     /// <summary>The ? cheat sheet: open, and what's on it.</summary>
     [ObservableProperty] bool _cheatSheetOpen;
-    public IReadOnlyList<ShortcutRow> CheatSheet => Shortcuts.For(ShortcutsViewModel.Playground);
+    /// <summary>Every action on the page, keyed or not, so a key can be given to any of them right there.</summary>
+    public IReadOnlyList<ShortcutRow> CheatSheet => Shortcuts.Rows.Where(r => r.Page == ShortcutsViewModel.Playground).ToList();
     partial void OnCheatSheetOpenChanged(bool value) { if (value) OnPropertyChanged(nameof(CheatSheet)); }
     [RelayCommand] void CloseCheatSheet() => CheatSheetOpen = false;
 

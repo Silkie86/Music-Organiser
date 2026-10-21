@@ -596,7 +596,7 @@
                         <Button DockPanel.Dock="Right" Content="Close" Command="{Binding CloseCheatSheetCommand}" />
                         <StackPanel>
                             <TextBlock Text="Playground keys" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock Text="Bitwig's keys unless you changed them in Settings › Shortcuts. Press ? or Esc to close."
+                            <TextBlock Text="Click a key, then press the one you want: every action can have one. Esc leaves it as it is. Settings › Shortcuts has the same list. Press ? or Esc to close."
                                        Classes="small" TextTrimming="None" TextWrapping="Wrap" />
                         </StackPanel>
                     </DockPanel>
@@ -607,6 +607,7 @@
                         <TextBlock Classes="small" TextTrimming="None" Text="Click the bar numbers: play from there · drag them: highlight bars · double-click: show it all" />
                         <TextBlock Classes="small" TextTrimming="None" Text="Drag a clip's right edge to repeat it, its left edge to trim it, or pull it off the timeline into your DAW" />
                     </StackPanel>
+                    <ScrollViewer MaxHeight="480" HorizontalScrollBarVisibility="Disabled">
                     <ItemsControl ItemsSource="{Binding CheatSheet}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
@@ -614,15 +615,14 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:ShortcutRow">
                                 <DockPanel Width="340" Margin="0,2,10,2">
-                                    <Border DockPanel.Dock="Left" Width="104" Margin="0,0,10,0" CornerRadius="4" Padding="6,2"
-                                            Background="{StaticResource StrokeBrush}" HorizontalAlignment="Left">
-                                        <TextBlock Text="{Binding KeyText}" FontFamily="{DynamicResource NumberFont}" FontSize="12" HorizontalAlignment="Center" />
-                                    </Border>
+                                    <views:ShortcutBox DockPanel.Dock="Left" Width="120" MinWidth="120" Margin="0,0,10,0" Padding="6,2" FontSize="12"
+                                                       FontFamily="{DynamicResource NumberFont}" />
                                     <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="13" />
                                 </DockPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    </ScrollViewer>
                 </DockPanel>
             </Border>
         </Border>

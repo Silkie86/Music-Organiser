@@ -23,6 +23,9 @@ public sealed partial class PlaygroundViewModel
 {
     static PlaygroundMenuItem M(string header, string id) => new(header, id);
     static readonly PlaygroundMenuItem Sep = PlaygroundMenuItem.Separator;
+    /// <summary>The last line of each right-click menu: the keys sheet, where any line's key can be set (Solomon, 2026-10-21:
+    /// "they don't all have to have one but they should all have the possibility to").</summary>
+    static readonly PlaygroundMenuItem Keys = M("Change keys…", "playground.help");
 
     public static IReadOnlyList<PlaygroundMenu> MenuBar { get; } =
     [
@@ -47,7 +50,7 @@ public sealed partial class PlaygroundViewModel
                      M("Loop", "playground.loop"), M("Piano roll", "playground.foldRoll"), Sep,
                      M("Your MIDI", "playground.tabMidi"), M("Write", "playground.tabWrite"), M("Groove", "playground.tabGroove"),
                      M("Reharm", "playground.reharm"), M("Song", "playground.tabSong")]),
-        new("Help", [M("Keyboard shortcuts", "playground.help")]),
+        new("Help", [M("Keyboard shortcuts: see and change them…", "playground.help")]),
     ];
 
     /// <summary>Right-click on a clip.</summary>
@@ -57,27 +60,27 @@ public sealed partial class PlaygroundViewModel
         M("Delete", "playground.delete"), Sep, M("Split", "playground.split"), M("Rename", "playground.rename"), Sep,
         M("Find alternatives", "playground.alternatives"), M("Fit to the chords again", "playground.fitAgain"),
         M("Smooth inversions", "playground.smooth"), M("Copy its groove", "playground.copyGroove"), Sep,
-        M("Up an octave", "playground.octaveUp"), M("Down an octave", "playground.octaveDown"),
+        M("Up an octave", "playground.octaveUp"), M("Down an octave", "playground.octaveDown"), Sep, Keys,
     ];
 
     /// <summary>Right-click on a track's name.</summary>
     public static IReadOnlyList<PlaygroundMenuItem> TrackMenu { get; } =
     [
         M("Mute", "playground.mute"), M("Solo", "playground.solo"), M("Rename", "playground.rename"), Sep,
-        M("Paste", "playground.paste"), M("Duplicate track", "playground.duplicateTrack"), M("Delete track", "playground.deleteTrack"),
+        M("Paste", "playground.paste"), M("Duplicate track", "playground.duplicateTrack"), M("Delete track", "playground.deleteTrack"), Sep, Keys,
     ];
 
     /// <summary>Right-click on empty timeline or the bar numbers.</summary>
     public static IReadOnlyList<PlaygroundMenuItem> TimelineMenu { get; } =
     [
         M("Paste", "playground.paste"), Sep, M("Label over the highlight", "playground.addLabel"), M("Loop", "playground.loop"),
-        M("Zoom to fit", "playground.zoomFit"), Sep, M("Write chords", "playground.writeChords"), M("Write a bassline", "playground.writeBass"),
+        M("Zoom to fit", "playground.zoomFit"), Sep, M("Write chords", "playground.writeChords"), M("Write a bassline", "playground.writeBass"), Sep, Keys,
     ];
 
     /// <summary>Right-click on the chord lane.</summary>
     public static IReadOnlyList<PlaygroundMenuItem> ChordMenu { get; } =
     [
-        M("Reharmonise…", "playground.reharm"), Sep, M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"),
+        M("Reharmonise…", "playground.reharm"), Sep, M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"), Sep, Keys,
     ];
 
     public const int SuggestTabIndex = 0, WriteTab = 1, ReharmTab = 3, SongTab = 4;

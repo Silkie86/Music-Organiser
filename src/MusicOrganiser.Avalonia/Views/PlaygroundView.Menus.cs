@@ -60,9 +60,18 @@ public partial class PlaygroundView
     /// <summary>A key from the shortcut list as a menu shows it ("Ctrl+D"), or none when it has no key or can't be shown.</summary>
     static KeyGesture? Gesture(string key)
     {
-        if (key.Length == 0) return null;
-        var text = key.Replace("Alt+=", "Alt+OemPlus").Replace("Alt+-", "Alt+OemMinus").Replace("Ctrl+=", "Ctrl+OemPlus").Replace("Ctrl+-", "Ctrl+OemMinus");
-        try { return KeyGesture.Parse(text); }
+        if (key.Length == 0 || key == "?") return null;
+        // the last part is the key, the rest are Ctrl, Shift and Alt; keys set in Settings can be any of these
+        var cut = key.Length > 1 && key.EndsWith('+') ? key.Length - 1 : key.LastIndexOf('+') + 1;
+        var last = key[cut..] switch
+        {
+            "=" => "OemPlus", "-" => "OemMinus", "," => "OemComma", "." => "OemPeriod", "/" => "OemQuestion",
+            "[" => "OemOpenBrackets", "]" => "OemCloseBrackets", ";" => "OemSemicolon", "'" => "OemQuotes",
+            "Esc" => "Escape", "Enter" => "Return", "Backspace" => "Back",
+            [var c] when char.IsDigit(c) => "D" + c,
+            var k => k,
+        };
+        try { return KeyGesture.Parse(key[..cut] + last); }
         catch (Exception e) when (e is ArgumentException or FormatException or KeyNotFoundException) { return null; }
     }
 

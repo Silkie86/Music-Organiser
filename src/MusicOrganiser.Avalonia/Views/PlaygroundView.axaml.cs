@@ -211,6 +211,7 @@ public partial class PlaygroundView : UserControl
     {
         if (!IsEffectivelyVisible || DataContext is not PlaygroundViewModel vm || ShortcutKeys.Of(e) is not { } key) return;
         if (e.Source is Visual v && !this.IsVisualAncestorOf(v) && e.Source != _top && !IsSidebar(v)) return;   // a key for another part of the window
+        if (e.Source is ShortcutBox { IsListening: true }) return;   // a new key being set on the cheat sheet
         var repeat = !_held.Add(e.Key);
         var id = vm.Shortcuts.Find(ShortcutsViewModel.Playground, key);
         if (vm.CheatSheetOpen)
