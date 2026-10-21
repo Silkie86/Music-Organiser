@@ -57,7 +57,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             wanted[p.Path] = new MidiSource(p.Path, MidiSource.Project, p.Daw, p.Mtime, p.Size, p.Tempo);
         var folders = library.GetList(FoldersKey).Where(Directory.Exists).ToList();
         // Sizes and times come with the folder listing: no extra look at each of tens of thousands of files.
-        foreach (var f in Parallelism.FindFileStamps(folders, MidiFileReader.IsMidiPath, (name, _) => name.StartsWith('.'), ct: ct))
+        foreach (var f in Parallelism.FindFileStamps(folders, IsMidiFile, (name, _) => name.StartsWith('.'), ct: ct))
         {
             // Too short to hold a single note (an empty or never-finished download): nothing to read, and not a failure.
             if (f.Size < MinMidiBytes) continue;
@@ -114,7 +114,9 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                     catch (Exception e)   // one unreadable file never stops the rest
                     {
                         Interlocked.Increment(ref failed);
-                        AppLog.Info("MIDI", $"Couldn't read {source.Path}: {e}");
+                        // A damaged file needs only its reason; anything else, where it went wrong too.
+                        AppLog.Info("MIDI", $"Couldn't read {source.Path}: " +
+                                            (e is InvalidDataException or EndOfStreamException or IOException or UnauthorizedAccessException ? e.Message : $"{e}"));
                         try { results.Add((source, VersionFor(source), [], Why(e)), ct); }
                         catch (OperationCanceledException) { break; }
                     }
@@ -162,6 +164,12 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         progress?.Report(new("Done", total, total, ""));
         return new(read, failed, forget.Count, phrases);
     }
+
+    /// <summary>
+    /// A .mid file, but not the "._" copy a Mac leaves beside each file on a shared drive, which holds only Finder details
+    /// (Niko's MIDI Pack had 1,221 of them, each one an error in the log).
+    /// </summary>
+    static bool IsMidiFile(string path) => MidiFileReader.IsMidiPath(path) && !Path.GetFileName(path).StartsWith("._", StringComparison.Ordinal);
 
     /// <summary>A file that takes this long (or waits this long for a free slot) is noted in the log, with why.</summary>
     public const double SlowSeconds = 2;

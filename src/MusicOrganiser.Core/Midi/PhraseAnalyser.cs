@@ -106,6 +106,12 @@ public static partial class PhraseAnalyser
     /// <summary>The most notes kept in one phrase.</summary>
     public const int MaxNotes = 4096;
     public const int FeatureCount = 48;
+    /// <summary>
+    /// No note is held longer than this (64 bars). Some FL Studio 6 patterns say a note lasts about two billion ticks
+    /// (millions of bars), and cutting such a part into phrases went through every one of those bars: 6 to 17 GB of memory
+    /// for one old song, whose clean-ups paused the app while MIDI was read (Solomon's log, 2026-10-21).
+    /// </summary>
+    public const long MaxHold = 64 * Bar;
 
     /// <summary>
     /// The notes at <see cref="Ppq"/>, muted ones left out, moved so the phrase starts in its first bar (a pattern
@@ -118,7 +124,7 @@ public static partial class PhraseAnalyser
             .Select(n => n with
             {
                 Start = (long)Math.Round(n.Start * scale),
-                Length = Math.Max(1, (long)Math.Round((n.Step ? ppq / 4.0 : n.Length) * scale)),
+                Length = Math.Clamp((long)Math.Round((n.Step ? ppq / 4.0 : n.Length) * scale), 1, MaxHold),
                 Step = false,
             })
             .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();

@@ -800,4 +800,19 @@ public class MidiBrowserTests
         Assert.NotNull(doc.BodyError);
         Assert.Contains("past end", doc.BodyError);
     }
+
+    [Fact]
+    public void A_note_said_to_last_millions_of_bars_is_cut_to_a_length_a_part_can_hold()
+    {
+        // Some FL Studio 6 patterns give a note a length of about two billion ticks; cutting that part into phrases went
+        // through every bar, 6 to 17 GB of memory for one old song (Solomon's log, 2026-10-21).
+        NoteEvent[] notes = [new(24, 96, 60, 100), new(120, 2_156_314_664, 64, 100), new(400, 96, 67, 100), new(500, 96, 72, 100)];
+        var normal = PhraseAnalyser.Normalise(notes, 96);
+        Assert.Equal(PhraseAnalyser.MaxHold, normal.Max(n => n.Length));
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var pieces = PhraseAnalyser.Split(normal).ToList();
+        Assert.NotEmpty(pieces);
+        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 50_000_000);
+    }
 }
+
