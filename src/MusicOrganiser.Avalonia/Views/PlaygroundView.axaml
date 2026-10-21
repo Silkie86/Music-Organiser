@@ -288,7 +288,11 @@
             <Border Grid.Column="2" Classes="card" Padding="12">
                 <TabControl Padding="0,8,0,0" SelectedIndex="{Binding RightTab}">
                     <TabItem Header="Suggest" FontSize="14">
-                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
+                        <Panel>
+                        <!-- An empty idea: the MIDI page's own list, smaller, with Add on each part. -->
+                        <views:MidiListView Classes="compact" DataContext="{Binding Midi}" IsVisible="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).IsEmpty}"
+                                            AddCommand="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).AddMidiRowCommand}" />
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" IsVisible="{Binding !IsEmpty}">
                             <ListBox Classes="chips" ItemsSource="{Binding RoleChips}" SelectedItem="{Binding SuggestRole}">
                                 <ListBox.ItemsPanel>
                                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
@@ -301,7 +305,7 @@
                             </ListBox>
                             <DockPanel Grid.Row="1" Margin="0,6,0,0">
                                 <Button DockPanel.Dock="Right" Content="Find" Classes="accent" Margin="6,0,0,0" Command="{Binding FindMatchesCommand}" />
-                                <TextBox Text="{Binding SuggestSearch}" PlaceholderText="{Binding SuggestHint}" Classes="clearButton" />
+                                <TextBox Text="{Binding SuggestSearch}" PlaceholderText="Words to narrow it (optional)" Classes="clearButton" />
                             </DockPanel>
                             <WrapPanel Grid.Row="2" Margin="0,6,0,0">
                                 <TextBlock Text="These bars are a" Classes="label" Margin="0,0,6,4" />
@@ -347,6 +351,7 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </Grid>
+                        </Panel>
                     </TabItem>
 
                     <TabItem Header="Write" FontSize="14">

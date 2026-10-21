@@ -932,7 +932,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     }
 
     /// <summary>What the model makes of the search words (the last one is kept, so changing the kind doesn't ask again).</summary>
-    internal async Task<float[]?> WordsAsync(string text)
+    async Task<float[]?> WordsAsync(string text)
     {
         if (!MeaningInstalled) return null;
         if (_lastWords is { } last && last.Text == text) return last.Vector;

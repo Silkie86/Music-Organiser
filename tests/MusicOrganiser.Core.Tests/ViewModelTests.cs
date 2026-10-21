@@ -1821,11 +1821,12 @@ public class ViewModelTests : IDisposable
         var main = Main();
         await main.Midi.IndexAsync();
         var playground = main.Playground;
-        Assert.Equal("All", playground.SuggestRole.Role);   // an empty idea lists all your MIDI
+        Assert.Equal(Core.Midi.MidiRoles.Chords, playground.SuggestRole.Role);
         main.SelectedNav = main.Nav.First(n => n.Page == playground);
-        for (var i = 0; i < 300 && playground.Matches.Count == 0; i++) await Task.Delay(10);
-        Assert.True(playground.Matches.Count > 0, playground.MatchStatus);
-        Assert.Contains(playground.Matches, m => m.Match.Entry.Title.Contains("Keys"));
+        // An empty idea shows the MIDI page's list; with a part in it, Suggest lists parts that fit.
+        Assert.True(playground.IsEmpty);
+        for (var i = 0; i < 300 && main.Midi.Results.Count == 0; i++) await Task.Delay(10);
+        Assert.Contains(main.Midi.Results, r => r.Title.Contains("Keys"));
     }
 
     [Fact]

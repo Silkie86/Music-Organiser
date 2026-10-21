@@ -112,15 +112,15 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
-    public async Task An_empty_idea_searches_all_your_midi_and_the_first_part_turns_fitting_on()
+    public async Task An_empty_idea_shows_the_midi_pages_list_and_the_first_part_turns_suggest_on()
     {
         Ui.Current = new Headless();
         UiWork.InBackground = false;
         var dbPath = Path.Combine(_root, "library.db");
         using (var index = new MidiIndex(MidiIndex.PathBeside(dbPath)))
         {
-            IndexedPhrase Part(string name, List<NoteEvent> notes, string hints = "", bool drums = false) =>
-                new(name, "Pattern 1", notes, PhraseAnalyser.Analyse(notes, hints), drums);
+            IndexedPhrase Part(string name, List<NoteEvent> notes, string hints = "") =>
+                new(name, "Pattern 1", notes, PhraseAnalyser.Analyse(notes, hints), false);
             index.Replace(new MidiSource(@"K:\Packs\Sunday.mid", MidiSource.File, "", 1, 1, 90), 1,
                 [Part("Keys", Chords(TwoFiveOne)), Part("Bass", Line(Bar, 38, 43, 36, 36), "bass")]);
         }
@@ -130,23 +130,21 @@ public class PlaygroundTests : IDisposable
         var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
         var p = main.Playground;
 
-        // Nothing on the timeline: All is offered and picked, and every kind is listed with nothing moved to fit.
+        // Nothing on the timeline: Suggest has nothing to fit to, so the page shows the MIDI page's own list.
         Assert.True(p.IsEmpty);
-        Assert.Equal("All", p.SuggestRole.Role);
+        Assert.Same(main.Midi, p.Midi);
         await p.FindMatchesAsync();
-        // Other test classes can turn background work back on while this runs, and the MIDI page's first read can start
-        // a search of its own: wait for the newest one to finish.
-        for (var i = 0; i < 300 && (p.IsMatching || p.Matches.Count < 2); i++) await Task.Delay(10);
-        Assert.Equal(2, p.Matches.Count);
-        Assert.All(p.Matches, m => Assert.Equal(0, m.Match.Move));
-        Assert.Contains("all your MIDI", p.MatchStatus);
+        Assert.Empty(p.Matches);
+        p.Opened();
+        for (var i = 0; i < 300 && main.Midi.Results.Count < 2; i++) await Task.Delay(10);
+        Assert.Equal(2, main.Midi.Results.Count);
 
-        // A part on the timeline: back to fitting, and All goes (it can't fit every kind at once).
-        var bass = p.Matches.Single(m => m.Match.Entry.Role == MidiRoles.Bass);
-        p.AddMatch(bass);
+        // Add on a part of that list: on the timeline, and Suggest lists parts that fit it.
+        p.AddMidiRowCommand.Execute(main.Midi.Results.Single(r => r.Entry.Role == MidiRoles.Bass));
         Assert.False(p.IsEmpty);
-        Assert.DoesNotContain(p.RoleChips, c => c.Role == "All");
-        Assert.NotEqual("All", p.SuggestRole.Role);
+        Assert.Single(p.Layers);
+        for (var i = 0; i < 300 && (p.IsMatching || p.Matches.Count == 0); i++) await Task.Delay(10);
+        Assert.True(p.Matches.Count > 0 || p.MatchStatus.Contains("Nothing found"), p.MatchStatus);   // Suggest ran, for chords
     }
 
     [Fact]

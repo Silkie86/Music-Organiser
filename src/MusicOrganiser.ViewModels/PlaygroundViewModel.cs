@@ -40,11 +40,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _store = store ?? new PlaygroundStore(Path.Combine(main.DataFolder, "playground"));
         LoadOptions();
         _session = !quick && _store.HasCurrent ? _store.LoadCurrent() : Fresh();
-        RoleChips = new(new[] { MidiRoles.Chords, MidiRoles.Bass, MidiRoles.Melody, MidiRoles.Arp, MidiRoles.Drums }
-            .Select(r => new RoleChip(MidiRoles.Plural(r), r)));
+        RoleChips = new[] { MidiRoles.Chords, MidiRoles.Bass, MidiRoles.Melody, MidiRoles.Arp, MidiRoles.Drums }
+            .Select(r => new RoleChip(MidiRoles.Plural(r), r)).ToList();
         _suggestRole = RoleChips[0];
         Show();
-        _ready = true;
+        _wasEmpty = IsEmpty;   // nothing looked up while being made: Opened does that
     }
 
     // ---- the idea: one timeline of tracks and clips ----
@@ -1441,7 +1441,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     public void Opened()
     {
         _ = RefreshNextChordsAsync(load: true);
-        if (Matches.Count == 0 && !IsMatching) _ = FindMatchesAsync();
+        if (IsEmpty) _main.Midi.Opened();   // its list shows here
+        else if (Matches.Count == 0 && !IsMatching) _ = FindMatchesAsync();
     }
 
     /// <summary>
@@ -1569,33 +1570,35 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     // ---- suggestions from the library ----
 
-    public ObservableCollection<RoleChip> RoleChips { get; }
-    /// <summary>"All": every kind at once, offered while the idea is empty and Suggest is a plain search of the library.</summary>
-    readonly RoleChip _allKinds = new("All", "All");
-    bool _wasEmpty, _ready;
+    public IReadOnlyList<RoleChip> RoleChips { get; }
 
-    /// <summary>
-    /// An empty idea has nothing to fit to, so Suggest becomes a search of all your MIDI (Solomon, 2026-10-21: "if
-    /// there's no midi in the arrangement you should just be able to search the whole library"): an All chip first and
-    /// picked, newest first, no limit beyond Show more. The first part on the timeline turns fitting back on.
-    /// </summary>
+    bool _wasEmpty = true;
+
+    /// <summary>The first part on the timeline: Suggest takes over from the MIDI page's list, so it lists parts that fit.</summary>
     void EmptyChanged()
     {
         OnPropertyChanged(nameof(IsEmpty));
-        OnPropertyChanged(nameof(SuggestHint));
-        if (IsEmpty == _wasEmpty) return;
+        if (IsEmpty == _wasEmpty || _main.Playground != this) return;   // not while being made
         _wasEmpty = IsEmpty;
-        if (IsEmpty) RoleChips.Insert(0, _allKinds);
-        // picked before All goes, so the chips never have nothing picked
-        var pick = IsEmpty ? _allKinds : SuggestRole == _allKinds ? RoleChips.First(c => c != _allKinds) : SuggestRole;
-        if (_ready) SuggestRole = pick;
-#pragma warning disable MVVMTK0034   // still being made: nothing is looked up until the page opens
-        else _suggestRole = pick;
-#pragma warning restore MVVMTK0034
-        if (!IsEmpty) RoleChips.Remove(_allKinds);
+        if (!IsEmpty) _ = FindMatchesAsync();
     }
 
-    public string SuggestHint => IsEmpty ? "Search all your MIDI by name, chord or feel" : "Words to narrow it (optional)";
+    /// <summary>The MIDI page's list, which an empty idea shows instead of Suggest (Solomon, 2026-10-21: "should just be a
+    /// smaller version of the main midi list on the midi page so any improvements there can be carried over").</summary>
+    public MidiBrowserViewModel Midi => _main.Midi;
+
+    /// <summary>A part from the MIDI page's list onto the timeline, as it plays there (moved, octave and all).</summary>
+    [RelayCommand]
+    void AddMidiRow(MidiRow? row)
+    {
+        if (row is null) return;
+        if (row.Channel.Notes.Count == 0)
+        {
+            Message = $"{row.Title} has no notes to add.";
+            return;
+        }
+        AddFromLibrary(row.Entry, row.Channel.Notes, row.Title);
+    }
     [ObservableProperty] RoleChip _suggestRole;
     [ObservableProperty] string _suggestSearch = "";
     public ObservableCollection<PlaygroundMatchRow> Matches { get; } = [];
@@ -1609,10 +1612,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>Whether more parts could fit than the list shows, so Show more has something to add.</summary>
     [ObservableProperty] bool _canShowMore;
 
-    partial void OnSuggestRoleChanged(RoleChip value)
-    {
-        if (value is not null) _ = FindMatchesAsync();
-    }
+    partial void OnSuggestRoleChanged(RoleChip value) => _ = FindMatchesAsync();
 
     [RelayCommand]
     Task FindMatches() => FindMatchesAsync();
@@ -1623,11 +1623,17 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     public async Task FindMatchesAsync(bool more = false)
     {
-        var page = IsEmpty ? BrowsePage : SuggestCount;
-        _shown = more ? Math.Max(_shown, page) + page : page;
-        if (!IsEmpty) _shown = Math.Min(MaxShown, _shown);
+        _shown = more ? Math.Min(MaxShown, Math.Max(_shown, SuggestCount) + SuggestCount) : SuggestCount;
         var limit = _shown;
         _matchCts?.Cancel();
+        if (IsEmpty)
+        {
+            // nothing to fit to: the page shows the MIDI page's list instead
+            Matches.Clear();
+            CanShowMore = false;
+            IsMatching = false;
+            return;
+        }
         var cts = _matchCts = new CancellationTokenSource();
         IsMatching = true;
         MatchStatus = "Looking through your MIDI…";
@@ -1636,11 +1642,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             if (await _main.Midi.CatalogueAsync() is not { } catalogue)
             {
                 MatchStatus = "Your MIDI hasn't been read yet: open the MIDI page once to read it.";
-                return;
-            }
-            if (IsEmpty)
-            {
-                await BrowseAsync(catalogue, limit, cts.Token);
                 return;
             }
             var harmony = MatchHarmony;
@@ -1669,40 +1670,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         {
             if (_matchCts == cts) IsMatching = false;
         }
-    }
-
-    /// <summary>How many parts a page of the plain search holds (Show more adds as many again, with no end).</summary>
-    public const int BrowsePage = 200;
-
-    /// <summary>
-    /// Suggest on an empty idea: every part of the kind picked (or all kinds), newest first, or closest to the words
-    /// first (the MIDI page's description search, when its model is downloaded). Nothing to fit, so nothing is moved.
-    /// </summary>
-    async Task BrowseAsync(MidiCatalogue catalogue, int limit, CancellationToken ct)
-    {
-        var role = SuggestRole.Role == _allKinds.Role ? null : SuggestRole.Role;
-        var text = SuggestSearch.Trim();
-        var words = text.Length > 0 ? await _main.Midi.WordsAsync(text) : null;
-        if (ct.IsCancellationRequested) return;
-        var notesOf = _main.Midi.NotesOf;
-        var query = new MidiQuery(text, role, Words: words, NameWeight: (float)_main.Midi.NameWeight, Notes: notesOf) { Limit = limit };
-        var matching = 0;
-        var found = await UiWork.Run(() => catalogue.Search(query, out matching, ct)
-            .Select(h => (h.Entry, Notes: notesOf(h.Entry)))
-            .Where(h => h.Notes.Count > 0)
-            .Select(h => new PlaygroundMatch(h.Entry, null, 0,
-                h.Entry.YourOctave is { } o and not 0 ? h.Notes.Select(n => n with { Key = Math.Clamp(n.Key + 12 * o, 0, 127) }).ToList() : h.Notes,
-                MidiRoles.Plural(h.Entry.Role)))
-            .ToList());
-        if (ct.IsCancellationRequested) return;
-        Matches.Clear();
-        foreach (var m in found) Matches.Add(new PlaygroundMatchRow(this, m));
-        CanShowMore = matching > limit;
-        var kind = role is null ? "parts" : MidiRoles.Plural(role).ToLowerInvariant();
-        var count = matching > found.Count ? $"{found.Count:N0} of {matching:N0}" : $"{found.Count:N0}";
-        MatchStatus = found.Count == 0 ? (text.Length > 0 ? "Nothing found. Try other words, or another kind." : "No MIDI of this kind yet: add MIDI folders on the MIDI page.")
-            : $"{count} {kind}, {(words is not null ? $"closest to “{text}” first" : text.Length > 0 ? $"with “{text}”, newest first" : "newest first")}. " +
-              "Nothing to fit to yet, so this is all your MIDI: add one to start, and Suggest ranks the rest by how they fit.";
     }
 
     internal void AddMatch(PlaygroundMatchRow row)
