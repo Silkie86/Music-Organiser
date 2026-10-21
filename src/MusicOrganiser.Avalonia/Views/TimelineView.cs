@@ -341,6 +341,14 @@ public sealed class TimelineView : Control
             e.Handled = true;
             return;
         }
+        // A right-click anywhere lets go of the highlight (Solomon, 2026-10-21: "right clicking should remove the loop/selection").
+        if (props.IsRightButtonPressed)
+        {
+            if (Highlight is not null && HighlightCommand?.CanExecute(null) == true) HighlightCommand.Execute(null);
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
         if (!props.IsLeftButtonPressed) return;
         _press = e;
         if (p.Y < LabelHeight)

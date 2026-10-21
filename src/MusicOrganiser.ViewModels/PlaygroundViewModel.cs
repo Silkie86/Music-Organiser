@@ -2120,7 +2120,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (instead is null) channels = ChannelsToPlay(out _playLength);
         else
         {
-            _playLength = Section.Length;
+            _playLength = PlayedTo(instead.SelectMany(c => c.Notes).Select(n => n.Start + n.Length).DefaultIfEmpty(0).Max());
             channels = Looped(instead.ToList(), ref _playLength);
         }
         if (channels.Count == 0 || channels.All(c => c.Notes.Count == 0))
@@ -2178,10 +2178,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     List<MidiChannel> ChannelsToPlay(out long length)
     {
-        length = Section.Length;
+        length = PlayedTo(Section.Layers.SelectMany(l => l.Clips).Select(c => c.End).DefaultIfEmpty(0).Max());
         var channels = PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
         return Looped(channels, ref length);
     }
+
+    /// <summary>
+    /// With no highlight, Play goes round at the end of the bar the last clip ends in, not on through the empty bars after it
+    /// (Solomon, 2026-10-21: "it should automatically loop at the end of all the clips").
+    /// </summary>
+    long PlayedTo(long end) => Math.Clamp((end + Bar - 1) / Bar * Bar, Bar, Math.Max(Bar, Section.Length));
 
     /// <summary>Just the loop's bars, from its start, when there are loop points.</summary>
     List<MidiChannel> Looped(List<MidiChannel> channels, ref long length)
