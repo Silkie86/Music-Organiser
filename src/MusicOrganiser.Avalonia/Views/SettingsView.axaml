@@ -147,6 +147,11 @@
                                                       ToolTip.Tip="No sliding, fading or popping. Spinners and progress still show." />
                                     </StackPanel>
                                 </Grid>
+                                <!-- Pages sized on their own with the rail's size button. -->
+                                <DockPanel Margin="0,10,0,0" IsVisible="{Binding HasOwnSizes}">
+                                    <Button DockPanel.Dock="Right" Content="Same size on every page" Command="{Binding SameSizeEverywhereCommand}" Margin="12,0,0,0" />
+                                    <TextBlock Text="{Binding OwnSizesText}" Classes="muted" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                </DockPanel>
                             </StackPanel>
                         </Border>
 

@@ -29,6 +29,7 @@ public sealed partial class AppearanceViewModel : ObservableObject
     public const string FontKey = "appearance_font";
     public const string SizeKey = "appearance_size";
     public const string MotionKey = "appearance_less_motion";
+    public const string PageSizesKey = "appearance_page_sizes";
 
     /// <summary>The fonts built into the app. "Theme's font" follows the theme.</summary>
     public const string ThemeFont = "Theme's font";
@@ -87,6 +88,67 @@ public sealed partial class AppearanceViewModel : ObservableObject
         _font = db.GetSetting(FontKey) is { } f && Fonts.Contains(f) ? f : ThemeFont;
         _size = int.TryParse(db.GetSetting(SizeKey), out var s) && Sizes.Contains(s) ? s : 100;
         _lessMotion = db.GetSetting(MotionKey) == "1";
+        foreach (var entry in db.GetList(PageSizesKey))
+            if (entry.Split('=', 2) is [var page, var size] && int.TryParse(size, out var n) && Sizes.Contains(n)) _pageSizes[page] = n;
+    }
+
+    // ---- each page's own size (Solomon, 21 Oct: "every page should be individually or you can do it all together") ----
+
+    readonly Dictionary<string, int> _pageSizes = [];
+
+    /// <summary>Raised when a page's own size changes, or goes back to <see cref="Size"/>.</summary>
+    public event Action? PageSizesChanged;
+
+    /// <summary>The size of <paramref name="page"/> (its title in the sidebar): its own if it has one, else <see cref="Size"/>.</summary>
+    public int SizeFor(string page) => _pageSizes.TryGetValue(page, out var n) ? n : Size;
+
+    /// <summary>Whether <paramref name="page"/> has a size of its own.</summary>
+    public bool HasOwnSize(string page) => _pageSizes.ContainsKey(page);
+
+    /// <summary>The pages with a size of their own, and what it is.</summary>
+    public string OwnSizesText => _pageSizes.Count == 0 ? ""
+        : $"Sized on their own: {string.Join(", ", _pageSizes.OrderBy(p => p.Key).Select(p => $"{p.Key} {p.Value}%"))}.";
+    public bool HasOwnSizes => _pageSizes.Count > 0;
+
+    /// <summary>One page a size up (<paramref name="by"/> 1) or down (-1), staying at the ends; landing on <see cref="Size"/> it follows that again.</summary>
+    public bool StepPage(string page, int by)
+    {
+        var list = Sizes.ToList();
+        var at = list.IndexOf(SizeFor(page));
+        var next = list[Math.Clamp((at < 0 ? list.IndexOf(100) : at) + by, 0, list.Count - 1)];
+        if (next == SizeFor(page)) return false;
+        SetPage(page, next == Size ? null : next);
+        return true;
+    }
+
+    /// <summary>The page back to the size of the rest.</summary>
+    public void ResetPage(string page)
+    {
+        if (HasOwnSize(page)) SetPage(page, null);
+    }
+
+    /// <summary>Every page back to <see cref="Size"/>.</summary>
+    [RelayCommand]
+    void SameSizeEverywhere()
+    {
+        if (_pageSizes.Count == 0) return;
+        _pageSizes.Clear();
+        SavePageSizes();
+    }
+
+    void SetPage(string page, int? size)
+    {
+        if (size is { } n) _pageSizes[page] = n;
+        else _pageSizes.Remove(page);
+        SavePageSizes();
+    }
+
+    void SavePageSizes()
+    {
+        _db.SetList(PageSizesKey, _pageSizes.Select(p => $"{p.Key}={p.Value}"));
+        OnPropertyChanged(nameof(OwnSizesText));
+        OnPropertyChanged(nameof(HasOwnSizes));
+        PageSizesChanged?.Invoke();
     }
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(AccentColour), nameof(AccentText), nameof(FontName))] AppTheme _theme;
@@ -119,6 +181,7 @@ public sealed partial class AppearanceViewModel : ObservableObject
         Font = ThemeFont;
         Size = 100;
         LessMotion = false;
+        SameSizeEverywhere();
     }
 
     /// <summary>Whether a colour is light enough that white text on it is hard to read.</summary>

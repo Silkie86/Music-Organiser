@@ -318,6 +318,48 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Each_page_can_have_its_own_size_and_Settings_sizes_the_rest()
+    {
+        // Solomon, 21 Oct: "every page should be individually or you can do it all together".
+        static void Go(MainViewModel m, string page) => m.SelectedNav = m.Nav.First(n => n.Title == page);
+        var main = Main();
+        var look = main.Settings.Appearance;
+        Go(main, "Projects");
+        Assert.Equal(("100%", false, 1.0), (main.PageSizeText, main.PageHasOwnSize, main.PageScale));
+
+        main.PageSmallerCommand.Execute(null);
+        main.PageSmallerCommand.Execute(null);
+        Assert.Equal(("80%", true), (main.PageSizeText, main.PageHasOwnSize));
+        Assert.Equal(0.8, main.PageScale, 3);
+        Go(main, "Sound Lab");
+        Assert.Equal("100%", main.PageSizeText);   // the other pages stay as they were
+
+        // Settings' size moves every page without one of its own; Projects keeps its 80%.
+        look.Size = 125;
+        Assert.Equal("125%", main.PageSizeText);
+        Go(main, "Projects");
+        Assert.Equal(0.64, main.PageScale, 3);
+        Assert.Equal("Sized on their own: Projects 80%.", look.OwnSizesText);
+
+        // Remembered, and stepping back onto the size of the rest makes it follow them again.
+        var later = Main();
+        Go(later, "Projects");
+        Assert.Equal("80%", later.PageSizeText);
+        later.PageSizeAsRestCommand.Execute(null);
+        Assert.Equal(("125%", false), (later.PageSizeText, later.PageHasOwnSize));
+        later.PageBiggerCommand.Execute(null);
+        Assert.True(later.PageHasOwnSize);
+        later.PageSmallerCommand.Execute(null);
+        Assert.False(later.PageHasOwnSize);
+
+        // All together: every page back to the one size.
+        later.PageSmallerCommand.Execute(null);
+        later.Settings.Appearance.SameSizeEverywhereCommand.Execute(null);
+        Assert.False(later.Settings.Appearance.HasOwnSizes);
+        Assert.Equal("125%", later.PageSizeText);
+    }
+
+    [Fact]
     public async Task Activity_cards_show_a_job_start_progress_and_finish_then_go()
     {
         var feed = new ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero };

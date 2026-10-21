@@ -19,6 +19,14 @@
         <DataTemplate DataType="vm:SamplesViewModel"><views:SamplesView /></DataTemplate>
     </Window.DataTemplates>
 
+    <Window.Styles>
+        <!-- The rail's size button, when the page has a size of its own. -->
+        <Style Selector="TextBlock.ownSize">
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        </Style>
+    </Window.Styles>
+
     <!-- Settings › Appearance › Size scales everything in here. -->
     <LayoutTransformControl x:Name="Scaler">
     <Grid ColumnDefinitions="84,*">
@@ -54,6 +62,31 @@
                         <Path Data="{StaticResource RescanIcon}" Classes="navIcon" />
                     </Button>
                 </StackPanel>
+
+                <!-- This page's size: smaller fits more on it, bigger is easier to read. Settings › General sizes every page. -->
+                <Button DockPanel.Dock="Bottom" Classes="dawLight" HorizontalAlignment="Center" Margin="0,0,0,6" ToolTip.Tip="{Binding PageSizeTip}">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <Path Data="M5,5 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 M8,8 L11,11" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.4"
+                              StrokeLineCap="Round" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding PageSizeText}" FontSize="10.5" VerticalAlignment="Center" Classes.ownSize="{Binding PageHasOwnSize}" />
+                    </StackPanel>
+                    <Button.Flyout>
+                        <Flyout Placement="RightEdgeAlignedBottom">
+                            <StackPanel Spacing="8" Width="220">
+                                <TextBlock Text="{Binding SelectedNav.Title, StringFormat='Size of {0}'}" FontWeight="SemiBold" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <Button Content="−" Width="36" Command="{Binding PageSmallerCommand}" ToolTip.Tip="Smaller: fit more on this page" />
+                                    <TextBlock Text="{Binding PageSizeText}" Width="56" TextAlignment="Center" VerticalAlignment="Center" FontSize="15" />
+                                    <Button Content="+" Width="36" Command="{Binding PageBiggerCommand}" ToolTip.Tip="Bigger: easier to read" />
+                                </StackPanel>
+                                <Button Content="Same as the other pages" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Command="{Binding PageSizeAsRestCommand}" IsVisible="{Binding PageHasOwnSize}" />
+                                <TextBlock Classes="muted" FontSize="11.5" TextWrapping="Wrap"
+                                           Text="Settings › General › Size of everything changes every page at once." />
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
 
                 <!-- The DAW lights: lit in the DAW's colour when it's open and linked. Click one to open its project here. -->
                 <ItemsControl DockPanel.Dock="Bottom" ItemsSource="{Binding Live.Rows}" HorizontalAlignment="Center">
@@ -97,12 +130,14 @@
             </DockPanel>
         </Border>
 
-        <!-- Page: a new one fades in. -->
-        <TransitioningContentControl Grid.Column="1" Margin="32,24,32,20" Content="{Binding SelectedNav.Page}">
-            <TransitioningContentControl.PageTransition>
-                <CrossFade Duration="0:0:0.16" />
-            </TransitioningContentControl.PageTransition>
-        </TransitioningContentControl>
+        <!-- Page: a new one fades in. A page sized on its own (the rail's size button) is scaled again in here. -->
+        <LayoutTransformControl x:Name="PageScaler" Grid.Column="1">
+            <TransitioningContentControl Margin="32,24,32,20" Content="{Binding SelectedNav.Page}">
+                <TransitioningContentControl.PageTransition>
+                    <CrossFade Duration="0:0:0.16" />
+                </TransitioningContentControl.PageTransition>
+            </TransitioningContentControl>
+        </LayoutTransformControl>
 
         <!-- Activity cards, bottom right: what's running, how far it has got, and what just finished. -->
         <ItemsControl Grid.Column="1" ItemsSource="{Binding Activities.Items}" Width="380" Margin="0,0,24,20"

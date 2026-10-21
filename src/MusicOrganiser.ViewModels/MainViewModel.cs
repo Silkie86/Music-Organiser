@@ -81,6 +81,8 @@ public sealed partial class MainViewModel : ObservableObject
         Midi = new MidiBrowserViewModel(db, this);
         Playground = new PlaygroundViewModel(db, this);
         Settings.Liked.Changed += Sounds.WeightsChanged;
+        Settings.Appearance.PageSizesChanged += PageSizeChanged;
+        Settings.Appearance.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(AppearanceViewModel.Size)) PageSizeChanged(); };
         Nav =
         [
             new("Projects", "", Projects),
@@ -175,8 +177,43 @@ public sealed partial class MainViewModel : ObservableObject
         if (SelectedNav?.Page == Settings) Settings.RefreshTemplate();
     }
 
+    // ---- the size of the page on show (Settings › Appearance sets every page; the rail's size button just this one) ----
+
+    string PageTitle => SelectedNav?.Title ?? "";
+    /// <summary>The page on show's size, in percent.</summary>
+    public int PageSize => Settings.Appearance.SizeFor(PageTitle);
+    /// <summary>How much bigger the page is drawn than the rest of the window, which <see cref="AppearanceViewModel.Size"/> scales.</summary>
+    public double PageScale => PageSize / (double)Settings.Appearance.Size;
+    public bool PageHasOwnSize => Settings.Appearance.HasOwnSize(PageTitle);
+    public string PageSizeText => $"{PageSize}%";
+    public string PageSizeTip => PageHasOwnSize
+        ? $"{PageTitle} is {PageSize}%, its own size (the other pages are {Settings.Appearance.Size}%). Click to change it."
+        : $"Every page is {PageSize}% (Settings › General). Click to size {PageTitle} on its own.";
+
+    void PageSizeChanged()
+    {
+        OnPropertyChanged(nameof(PageSize));
+        OnPropertyChanged(nameof(PageScale));
+        OnPropertyChanged(nameof(PageHasOwnSize));
+        OnPropertyChanged(nameof(PageSizeText));
+        OnPropertyChanged(nameof(PageSizeTip));
+    }
+
+    /// <summary>The page on show a size bigger.</summary>
+    [RelayCommand]
+    void PageBigger() => Settings.Appearance.StepPage(PageTitle, 1);
+
+    /// <summary>The page on show a size smaller, to fit more on it.</summary>
+    [RelayCommand]
+    void PageSmaller() => Settings.Appearance.StepPage(PageTitle, -1);
+
+    /// <summary>The page on show back to the size of the rest.</summary>
+    [RelayCommand]
+    void PageSizeAsRest() => Settings.Appearance.ResetPage(PageTitle);
+
     partial void OnSelectedNavChanged(NavItem value)
     {
+        PageSizeChanged();
         _db.SetSetting(LastPageKey, value.Title);
         if (value.Page == Midi || value.Page == Playground) Midi.Opened();   // the playground matches against the MIDI page's parts
         if (value.Page == Playground) Playground.Opened();
