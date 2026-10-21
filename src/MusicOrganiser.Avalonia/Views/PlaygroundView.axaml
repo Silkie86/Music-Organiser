@@ -415,6 +415,8 @@
                                 <TextBox Text="{Binding SuggestSearch}" PlaceholderText="Words to narrow it (optional)" Classes="clearButton" />
                             </DockPanel>
                             <WrapPanel Grid.Row="2" Margin="0,6,0,0">
+                                <ComboBox DataContext="{Binding Midi}" x:DataType="vm:MidiBrowserViewModel" ItemsSource="{x:Static vm:MidiBrowserViewModel.FromChoices}" SelectedItem="{Binding From}"
+                                          Width="136" FontSize="12" Margin="0,0,10,4" ToolTip.Tip="Parts from your projects, from your MIDI folders, or both" />
                                 <TextBlock Text="These bars are a" Classes="label" Margin="0,0,6,4" />
                                 <ComboBox ItemsSource="{x:Static vm:PlaygroundViewModel.FeelChoices}" SelectedItem="{Binding FeelPick}" Width="120" Margin="0,0,10,4"
                                           ToolTip.Tip="Verse: steady and calm. Build: rising. Drop: full all the way. Breakdown: sparse. Suggestions whose energy suits it rank higher; Any ranks on harmony alone." />

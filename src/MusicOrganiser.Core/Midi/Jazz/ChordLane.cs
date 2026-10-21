@@ -65,6 +65,20 @@ public static class ChordLane
     }
 
     /// <summary>
+    /// The chord a note is heard against: the one it sounds over longest (the first of equals). A note pushed a 16th
+    /// ahead of the bar belongs to the chord it rings into, not to a sliver of the chord before (Solomon, 2026-10-21:
+    /// a D marked red over Gsus4 → Fmaj13 "didn't rub against the chord tho").
+    /// </summary>
+    public static ChordSymbol? Heard(IReadOnlyList<TimedChord> lane, long start, long length, long loop = 0)
+    {
+        ChordSymbol? best = null;
+        long most = 0;
+        foreach (var (chord, _, len, _) in Under(lane, start, length, loop))
+            if (len > most) { best = chord; most = len; }
+        return best;
+    }
+
+    /// <summary>
     /// Whether a note fights the chords under it, for marking it red: true when it sounds for longer than an eighth
     /// over a chord it doesn't sit on (<see cref="ChordScales.Sit"/> under 0.05). Shorter notes are passing notes.
     /// </summary>

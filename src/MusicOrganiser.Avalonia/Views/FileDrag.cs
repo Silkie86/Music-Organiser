@@ -165,6 +165,9 @@ public sealed class FileDrag
     /// </summary>
     public static bool Dragging { get; private set; }
 
+    /// <summary>What is being dragged out while <see cref="Dragging"/>: a MIDI part from a list can land on the Playground's timeline too.</summary>
+    public static IReadOnlyList<object> Items { get; private set; } = [];
+
     static async Task Run(Control el, PointerPressedEventArgs press, IReadOnlyList<object> items, DragPayload payload)
     {
         if (TopLevel.GetTopLevel(el)?.StorageProvider is not { } storage) return;
@@ -178,10 +181,12 @@ public sealed class FileDrag
         Action? hidePreview = null;
         if (OperatingSystem.IsWindows()) hidePreview = ShowPreview(payload);
         Dragging = true;
+        Items = items;
         try { await DragDrop.DoDragDropAsync(press, data, DragDropEffects.Copy); }
         finally
         {
             Dragging = false;
+            Items = [];
             hidePreview?.Invoke();
             foreach (var row in lifted) row.Opacity = 1;
         }

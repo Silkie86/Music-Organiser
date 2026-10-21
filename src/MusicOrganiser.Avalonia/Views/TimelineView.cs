@@ -102,7 +102,7 @@ public sealed class TimelineView : Control
     /// <summary>Snap to the edges of other clips, the highlight, labels and the play marker (Bitwig's snap to events).</summary>
     public bool SnapObjects { get => GetValue(SnapObjectsProperty); set => SetValue(SnapObjectsProperty, value); }
 
-    /// <summary>Takes a <see cref="PartDrop"/> when a suggestion or .mid files are let go on a track.</summary>
+    /// <summary>Takes a <see cref="PartDrop"/> when a suggestion, a part from the MIDI list or .mid files are let go on a track.</summary>
     public static readonly StyledProperty<ICommand?> DropCommandProperty = AvaloniaProperty.Register<TimelineView, ICommand?>(nameof(DropCommand));
     public ICommand? DropCommand { get => GetValue(DropCommandProperty); set => SetValue(DropCommandProperty, value); }
 
@@ -137,6 +137,13 @@ public sealed class TimelineView : Control
             part = match;
             name = match.Title;
             length = Math.Max(1, PhraseAnalyser.BarsOf(match.Match.Notes)) * (long)Bar;
+        }
+        else if (FileDrag.Dragging && FileDrag.Items is [MidiRow listed] && listed.Channel.Notes.Count > 0)
+        {
+            // a part dragged from the MIDI list beside it (Solomon, 2026-10-21: "not able to drag midi into arranger")
+            part = listed;
+            name = listed.Title;
+            length = Math.Max(1, PhraseAnalyser.BarsOf(listed.Channel.Notes)) * (long)Bar;
         }
         else if (!FileDrag.Dragging && e.DataTransfer.TryGetFiles() is { Length: > 0 } files
                  && files.Select(f => f.TryGetLocalPath()).OfType<string>().Where(MidiFileReader.IsMidiPath).ToList() is { Count: > 0 } paths)

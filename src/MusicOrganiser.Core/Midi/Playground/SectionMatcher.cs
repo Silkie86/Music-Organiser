@@ -355,23 +355,24 @@ public sealed record SwapAround(IReadOnlyList<NoteEvent> Before, IReadOnlyList<N
 public static class SectionMatcher
 {
     /// <param name="around">Set when bars of a part are being swapped: then each part offers its stretch that fits there best.</param>
+    /// <param name="from">"projects" or "files" for only the parts in your projects or in your MIDI folders; null for both.</param>
     public static IReadOnlyList<PlaygroundMatch> Rank(MidiCatalogue catalogue, SectionHarmony section, string role,
                                                       Func<MidiEntry, IReadOnlyList<NoteEvent>> notesOf, string text = "",
                                                       int limit = 60, CancellationToken ct = default, SectionFeel feel = SectionFeel.Any,
-                                                      SwapAround? around = null) =>
-        Rank(catalogue, section, role, notesOf, out _, text, limit, ct, feel, around);
+                                                      SwapAround? around = null, string? from = null) =>
+        Rank(catalogue, section, role, notesOf, out _, text, limit, ct, feel, around, from);
 
     /// <param name="matching">How many parts of this kind could have been suggested (the words found them and no song
     /// in the section has them), of which the best <paramref name="limit"/> come back.</param>
     public static IReadOnlyList<PlaygroundMatch> Rank(MidiCatalogue catalogue, SectionHarmony section, string role,
                                                       Func<MidiEntry, IReadOnlyList<NoteEvent>> notesOf, out int matching, string text = "",
                                                       int limit = 60, CancellationToken ct = default, SectionFeel feel = SectionFeel.Any,
-                                                      SwapAround? around = null)
+                                                      SwapAround? around = null, string? from = null)
     {
         var energy = feel == SectionFeel.Any ? null : Energy.Target(feel, (int)(section.Length / ChordLane.Bar));
-        if (role == MidiRoles.Drums) return Grooves(catalogue, section, notesOf, text, limit, ct, energy, feel, around, out matching);
+        if (role == MidiRoles.Drums) return Grooves(catalogue, section, notesOf, text, limit, ct, energy, feel, around, from, out matching);
         var target = section.Target();
-        var hits = catalogue.Search(new MidiQuery(text, role, Fit: target, Limit: target is null && energy is null ? limit : Math.Max(limit * 6, 300), Notes: notesOf)
+        var hits = catalogue.Search(new MidiQuery(text, role, from, Fit: target, Limit: target is null && energy is null ? limit : Math.Max(limit * 6, 300), Notes: notesOf)
                                     { LeaveSongs = section.Songs }, out matching, ct);
         var list = new List<PlaygroundMatch>();
         foreach (var hit in hits)
@@ -578,9 +579,9 @@ public static class SectionMatcher
 
     /// <summary>Drums have no harmony: they're matched on where their hits fall against the section's rhythm.</summary>
     static IReadOnlyList<PlaygroundMatch> Grooves(MidiCatalogue catalogue, SectionHarmony section, Func<MidiEntry, IReadOnlyList<NoteEvent>> notesOf,
-                                                  string text, int limit, CancellationToken ct, double[]? energy, SectionFeel feel, SwapAround? around, out int matching)
+                                                  string text, int limit, CancellationToken ct, double[]? energy, SectionFeel feel, SwapAround? around, string? from, out int matching)
     {
-        var hits = catalogue.Search(new MidiQuery(text, MidiRoles.Drums, Limit: section.Notes.Count == 0 && energy is null && around is null ? limit : Math.Max(limit * 2, 600)) { LeaveSongs = section.Songs }, out matching, ct);
+        var hits = catalogue.Search(new MidiQuery(text, MidiRoles.Drums, from, Limit: section.Notes.Count == 0 && energy is null && around is null ? limit : Math.Max(limit * 2, 600)) { LeaveSongs = section.Songs }, out matching, ct);
         if (around is not null) return DrumStretches(hits, section, notesOf, limit, ct, around);
         if (energy is not null)
         {

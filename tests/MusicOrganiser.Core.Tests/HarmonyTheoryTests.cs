@@ -34,6 +34,18 @@ public class HarmonyTheoryTests
     }
 
     [Fact]
+    public void A_note_pushed_ahead_of_the_bar_is_heard_against_the_chord_it_rings_into()
+    {
+        // A 16th of G+ read where the next chord is played early, then Fmaj13: a D pushed a 16th ahead is the 13th of F,
+        // not a clash with the sliver (Solomon, 2026-10-21: "it didnt rub against the chord tho").
+        var lane = new List<TimedChord> { new(0, Bar - Beat / 4, Chord("Gsus4")), new(Bar - Beat / 4, Beat / 4, Chord("G+")), new(Bar, Bar, Chord("Fmaj13")) };
+        long start = Bar - Beat / 4, length = Beat;
+        Assert.Equal("Fmaj13", ChordLane.Heard(lane, start, length)!.Value.Name);
+        Assert.Equal("13", ChordScales.Degree(ChordLane.Heard(lane, start, length)!.Value, 2));
+        Assert.False(ChordLane.Fights(lane, start, length, 2));
+    }
+
+    [Fact]
     public void An_altered_or_diminished_5th_stays_out()
     {
         // G7alt has a ♭5 or ♯5 in place of the 5th, so D still clashes with it; B° and Bø have F, not F#.

@@ -936,6 +936,15 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
                 Changed();
                 Message = $"Added {clip.Name} from {m.Match.Entry.SourceName} at bar {drop.Start / Bar + 1}. Parts from {m.Match.Entry.SourceName} won't be suggested now.";
                 break;
+            case MidiRow r when r.Channel.Notes.Count > 0:
+                StopBrowsing();
+                Remember();
+                var part = LibraryClip(r.Entry, r.Channel.Notes, drop.Start);
+                part.Name = r.Title;
+                PlaceClip(part, drop.Row, r.Title);
+                Changed();
+                Message = $"Added {r.Title} at bar {drop.Start / Bar + 1}. Parts from {r.Entry.SourceName} won't be suggested now.";
+                break;
             case IReadOnlyList<string> paths:
                 DropFiles(paths, drop.Row, drop.Start);
                 break;
@@ -1646,8 +1655,25 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     /// <summary>A copy of the MIDI page's list (its own search and kind), which an empty idea shows instead of Suggest (Solomon, 2026-10-21: "should just be a
     /// smaller version of the main midi list on the midi page so any improvements there can be carried over").</summary>
-    public MidiBrowserViewModel Midi => _midiList ??= new MidiBrowserViewModel(_main.Midi);
+    public MidiBrowserViewModel Midi
+    {
+        get
+        {
+            if (_midiList is not null) return _midiList;
+            _midiList = new MidiBrowserViewModel(_main.Midi);
+            _midiList.StartedPlaying += () => { if (_playing) StopPlaying(); };   // one sound at a time
+            // Where the parts come from (your projects, your MIDI folders, or both) goes for Suggest too.
+            _midiList.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(MidiBrowserViewModel.From) && !IsEmpty) _ = FindMatchesAsync(); };
+            return _midiList;
+        }
+    }
     MidiBrowserViewModel? _midiList;
+
+    /// <summary>
+    /// The list's part stops when the idea plays, a part is added, or the page is left (Solomon, 2026-10-21: "the clip
+    /// that you were playing in the browser continues playing").
+    /// </summary>
+    void StopBrowsing() => _midiList?.StopForQuick();
 
     /// <summary>A part from the MIDI page's list onto the timeline, as it plays there (moved, octave and all).</summary>
     [RelayCommand]
@@ -1659,6 +1685,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             Message = $"{row.Title} has no notes to add.";
             return;
         }
+        StopBrowsing();
         AddFromLibrary(row.Entry, row.Channel.Notes, row.Title);
     }
     [ObservableProperty] RoleChip _suggestRole;
@@ -1712,8 +1739,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             // nothing highlighted or picked: the whole timeline, whatever its labels' feels
             var feel = Loop is null && SelectedLabel is null ? SectionFeel.Any : FeelHere;
             var matching = 0;
+            var from = Midi.FromQuery;
             var around = SwapTarget is { } swapping && SwapRange is { } swapped ? AroundOf(swapping, swapped) : null;
-            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, out matching, text, limit, cts.Token, feel, around));
+            var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, out matching, text, limit, cts.Token, feel, around, from));
             if (cts.IsCancellationRequested) return;
             Matches.Clear();
             foreach (var m in found) Matches.Add(new PlaygroundMatchRow(this, m));
@@ -2182,6 +2210,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>The section (or the arrangement) going round, every part that plays, with its sound.</summary>
     async Task PlayAsync(bool keepPlace = false, IReadOnlyList<MidiChannel>? instead = null)
     {
+        StopBrowsing();
         var request = ++_request;
         List<MidiChannel> channels;
         if (instead is null) Trying = null;   // the idea alone now
@@ -2479,7 +2508,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     bool CanSend() => !IsSending;
 
-    public void Left() => StopPlaying();
+    public void Left()
+    {
+        StopPlaying();
+        StopBrowsing();
+    }
 
     public void Dispose()
     {
@@ -2609,7 +2642,7 @@ public sealed record TryingPart(string Name, int Row, long Start, long Length, I
 /// <paramref name="Start"/>, playing for <paramref name="Length"/>, from <paramref name="Offset"/> into its go round.
 /// </summary>
 /// <summary>
-/// A part let go on the timeline: a suggestion (<see cref="PlaygroundMatchRow"/>) or .mid file paths, on track
+/// A part let go on the timeline: a suggestion (<see cref="PlaygroundMatchRow"/>), a part from the MIDI list (<see cref="MidiRow"/>) or .mid file paths, on track
 /// <paramref name="Row"/> (one past the last makes a new track) from <paramref name="Start"/>.
 /// </summary>
 public sealed record PartDrop(object Part, int Row, long Start);
@@ -2708,7 +2741,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
             var h = owner.Harmony;
             var at = At;
             if (clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => null;
-            return n => ChordLane.At(h.Lane, at + n.Start + 1, h.Length) is { } chord ? ChordScales.Degree(chord, n.Key % 12) : null;
+            return n => ChordLane.Heard(h.Lane, at + n.Start, n.Length, h.Length) is { } chord ? ChordScales.Degree(chord, n.Key % 12) : null;
         }
     }
 
@@ -2728,7 +2761,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
             var fights = Clashes;
             return n =>
             {
-                if (ChordLane.At(h.Lane, at + n.Start + 1, h.Length) is not { } chord) return null;
+                if (ChordLane.Heard(h.Lane, at + n.Start, n.Length, h.Length) is not { } chord) return null;
                 if (fights(n)) return FitStrength.Fights;
                 var strength = NoteStrength.Of(chord, n.Key % 12, role, h.Style);
                 return strength == FitStrength.Fights ? FitStrength.Weak : strength;

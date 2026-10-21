@@ -155,11 +155,24 @@ public class PlaygroundTests : IDisposable
         p.Midi.Search = "bass";   // searching here leaves the MIDI page's search alone
         Assert.Equal("", main.Midi.Search);
 
-        // Add on a part of that list: on the timeline, and Suggest lists parts that fit it.
+        // Only your projects: the pack is a MIDI folder, so nothing (Solomon, 2026-10-21: "filter whether you see midi
+        // from your projects or from midi folders").
         for (var i = 0; i < 300 && p.Midi.Results.Count != 1; i++) await Task.Delay(10);
-        p.AddMidiRowCommand.Execute(p.Midi.Results.Single(r => r.Entry.Role == MidiRoles.Bass));
+        p.Midi.From = MidiBrowserViewModel.YourProjects;
+        for (var i = 0; i < 300 && p.Midi.Results.Count != 0; i++) await Task.Delay(10);
+        Assert.Empty(p.Midi.Results);
+        p.Midi.From = MidiBrowserViewModel.YourLibraries;
+        for (var i = 0; i < 300 && p.Midi.Results.Count != 1; i++) await Task.Delay(10);
+
+        // Add on a part of that list: on the timeline, and Suggest lists parts that fit it.
+        var bass = p.Midi.Results.Single(r => r.Entry.Role == MidiRoles.Bass);
+        p.AddMidiRowCommand.Execute(bass);
         Assert.False(p.IsEmpty, p.Message);
         Assert.Single(p.Layers);
+        // A part dragged from the list lands where it's let go: here a new track from bar 3.
+        p.DropPartCommand.Execute(new PartDrop(bass, 1, 2L * Bar));
+        Assert.Equal(2, p.Layers.Count);
+        Assert.Equal(2L * Bar, p.Layers[1].Layer.Clips.Single().Start);
         for (var i = 0; i < 300 && (p.IsMatching || p.Matches.Count == 0); i++) await Task.Delay(10);
         Assert.True(p.Matches.Count > 0 || p.MatchStatus.Contains("Nothing found"), p.MatchStatus);   // Suggest ran, for chords
     }

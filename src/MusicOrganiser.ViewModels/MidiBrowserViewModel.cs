@@ -191,6 +191,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [ObservableProperty] string _search = "";
     [ObservableProperty] RoleChip _selectedRole;
     [ObservableProperty] string _from = Everything;
+    /// <summary>Where <see cref="From"/> looks, as a <see cref="MidiQuery"/> says it: "projects", "files" or null for both.</summary>
+    public string? FromQuery => From == YourProjects ? "projects" : From == YourLibraries ? "files" : null;
     [ObservableProperty] IReadOnlyList<MidiRow> _results = [];
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSelection))] MidiRow? _selected;
     [ObservableProperty] string _summary = "Reading your MIDI…";
@@ -698,6 +700,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// <summary>A small playground started playing: what the page plays stops, so two loops never play at once.</summary>
     internal void StopForQuick() => StopPlaying();
 
+    /// <summary>A part started playing here: the Playground showing this list stops its own sound, so two never play at once.</summary>
+    internal event Action? StartedPlaying;
+
     /// <summary>Another page is showing: nothing keeps playing behind it.</summary>
     public void Left()
     {
@@ -821,7 +826,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var words = text.Length > 0 && (_sectionTarget ?? Fit) is null && Like is null && PhrasesOf is null ? await WordsAsync(text) : null;
         if (request != _searchRequest) return;
         var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
-                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, _sectionTarget ?? Fit, Like, Leave: _fitPath,
+                                  FromQuery, _sectionTarget ?? Fit, Like, Leave: _fitPath,
                                   Words: words, Within: PhrasesOf, NameWeight: (float)NameWeight, Notes: NotesOf, Shuffle: _shuffle);
         query = query with { Limit = ListLimit };
         // A new search stops the one before: scoring every part against a harmony is the heavy part, and only the
@@ -1369,6 +1374,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _plan = plan;
         _playing = row;
         row.IsPlaying = true;
+        StartedPlaying?.Invoke();
         // The button pressed shows Stop, even where the song is silent for the stretch shown and the part plays alone.
         row.IsPlayingTogether = both;
         Tick();
