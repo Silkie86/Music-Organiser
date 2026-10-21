@@ -23,7 +23,7 @@ public sealed partial class PlaygroundViewModel
 
     /// <summary>The idea being tried: shown striped on the chord lane, to Keep or go Back from.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ReharmStep), nameof(IsReharmChoosing), nameof(IsReharmTrying), nameof(BackText))]
+    [NotifyPropertyChangedFor(nameof(ReharmStep), nameof(IsReharmPicking), nameof(IsReharmChoosing), nameof(IsReharmTrying), nameof(BackText))]
     ReharmRow? _tryingIdea;
 
     /// <summary>The tried idea's chords where they differ, drawn striped over the chord lane; null when none is tried.</summary>
