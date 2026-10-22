@@ -32,14 +32,33 @@ public static class ChordReader
 
     /// <summary>The chords in these notes (ticks at <see cref="PhraseAnalyser.Ppq"/>), the same chord running on as one.</summary>
     /// <param name="cuts">Where a chord must end and the next start (ticks, on a beat), such as where a chord clip begins.</param>
-    public static List<TimedChord> Read(IReadOnlyList<NoteEvent> notes, long length, IEnumerable<long>? cuts = null)
+    /// <param name="downbeat">
+    /// A tick a bar starts on, when that isn't tick 0 (a stretch cut from the middle of a bar): the beats, the bar lines
+    /// chords change on and the walking bass's beats 2 and 4 are counted from there.
+    /// </param>
+    public static List<TimedChord> Read(IReadOnlyList<NoteEvent> notes, long length, IEnumerable<long>? cuts = null, long downbeat = 0)
     {
         var lane = new List<TimedChord>();
         if (notes.Count == 0 || length <= 0) return lane;
+        // Read as if a bar started at tick 0, then moved back.
+        var pad = ((-downbeat % Bar) + Bar) % Bar;
+        if (pad != 0)
+        {
+            notes = notes.Select(n => n with { Start = n.Start + pad }).ToList();
+            cuts = cuts?.Select(c => c + pad).ToList();
+            length += pad;
+        }
         length = Math.Min(length, MostBeats * Beat);
         var heard = new Heard(notes, length);
         var at = cuts?.Where(c => c > 0 && c < length).Select(c => (int)(c / Beat)).ToHashSet() ?? [];
         foreach (var (from, to) in heard.Runs(at)) heard.Cut(from, to, lane);
+        if (pad == 0) return lane;
+        for (var i = 0; i < lane.Count; i++)
+        {
+            var start = Math.Max(0, lane[i].Start - pad);
+            lane[i] = lane[i] with { Start = start, Length = lane[i].Start + lane[i].Length - pad - start };
+        }
+        lane.RemoveAll(c => c.Length <= 0);
         return lane;
     }
 
@@ -215,8 +234,15 @@ public static class ChordReader
             {
                 if (named[i] is not { Family: ChordFamily.Diminished } d || !d.Has(9) || named[i + 1] is not { } next) continue;
                 if (BassOf(spans[i].A, spans[i].E).Bass >= 0) continue;
+                // Only to a root that sounds, and that the same notes are a diminished chord on (an extra note can make them
+                // something else from there).
                 for (var r = d.Root; r < d.Root + 12; r += 3)
-                    if (ChordSymbol.Mod(next.Root - r) == 1) { named[i] = new ChordSymbol(r % 12, d.Mask, r % 12, ChordFamily.Diminished); break; }
+                    if (ChordSymbol.Mod(next.Root - r) == 1)
+                    {
+                        if ((d.Mask >> (r % 12) & 1) != 0 && ChordSpeller.FamilyOf(PhraseChord.Rotate(d.Mask, -r)) == ChordFamily.Diminished)
+                            named[i] = new ChordSymbol(r % 12, d.Mask, r % 12, ChordFamily.Diminished);
+                        break;
+                    }
             }
             for (var i = 0; i < spans.Count; i++)
             {

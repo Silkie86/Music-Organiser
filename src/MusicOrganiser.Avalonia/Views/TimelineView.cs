@@ -354,9 +354,11 @@ public sealed class TimelineView : Control
             e.Handled = true;
             return;
         }
-        // Right-click: the clip under it is picked, and the page shows the menu for a clip or for empty bars.
+        // Right-click: it lets go of the highlight (Solomon, 2026-10-21: "right clicking should remove the loop/selection"),
+        // the clip under it is picked, and the page shows the menu for a clip or for empty bars.
         if (props.IsRightButtonPressed)
         {
+            if (Highlight is not null && HighlightCommand?.CanExecute(null) == true) HighlightCommand.Execute(null);
             var at = ClipAt(p);
             if (at is { } r)
             {
@@ -369,6 +371,7 @@ public sealed class TimelineView : Control
                 if (CursorCommand?.CanExecute(tick) == true) CursorCommand.Execute(tick);
             }
             MenuAsked?.Invoke(this, at is null ? "timeline" : "clip");
+            InvalidateVisual();
             e.Handled = true;
             return;
         }

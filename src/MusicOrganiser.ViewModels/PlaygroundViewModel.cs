@@ -563,15 +563,17 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// A part from the MIDI page or the suggestions, as it plays there (moved, octave and all), on a new track over the
     /// highlight, or from bar 1 for as long as the timeline (and at least once through, up to Settings' longest).
     /// </summary>
-    public void AddFromLibrary(MidiEntry entry, IReadOnlyList<NoteEvent> notes, string? title = null) => AddFromLibrary(entry, notes, title, SmoothIncoming);
+    /// <param name="period">How long it goes round, for a stretch cut from a part (ticks); 0 for its own bars.</param>
+    public void AddFromLibrary(MidiEntry entry, IReadOnlyList<NoteEvent> notes, string? title = null, long period = 0) =>
+        AddFromLibrary(entry, notes, title, SmoothIncoming && period == 0, period);
 
-    void AddFromLibrary(MidiEntry entry, IReadOnlyList<NoteEvent> notes, string? title, bool smooth)
+    void AddFromLibrary(MidiEntry entry, IReadOnlyList<NoteEvent> notes, string? title, bool smooth, long period = 0)
     {
         if (notes.Count == 0) return;
         Remember();
         var name = title ?? (entry.Title.Length > 0 ? entry.Title : entry.SourceName);
-        var bars = Math.Max(1, PhraseAnalyser.BarsOf(notes));
-        var loop = bars * (long)Bar;
+        var loop = period > 0 ? period : Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
+        var bars = (int)((loop + Bar - 1) / Bar);
         var (start, length) = Place;
         // A part longer than the timeline grows it (up to Settings' longest), so nothing is cut off; an empty timeline takes its length.
         if (Loop is null)
@@ -779,8 +781,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>The bars of <see cref="SwapTarget"/> under the highlight.</summary>
     (long Start, long End)? SwapRange => SwapTarget is { } t && Loop is { } r ? (Math.Max(r.Start, t.Clip.Start), Math.Min(r.End, t.Clip.End)) : null;
 
-    static string RoleOf(ClipRow row) => row.Clip.Role == MidiRoles.Other ? row.Track.Role : row.Clip.Role;
-
     /// <summary>What the picked clip's track plays in the bar either side of the bars being swapped, for stretches of other parts to join on to.</summary>
     static SwapAround AroundOf(ClipRow target, (long Start, long End) bars)
     {
@@ -826,7 +826,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (target?.Clip == _swapFor && !highlightMoved) return;
         _swapFor = target?.Clip;
         OnPropertyChanged(nameof(SwapTarget));
-        if (target is not null && RoleChips.FirstOrDefault(c => c.Role == RoleOf(target)) is { } chip && chip != SuggestRole)
+        if (target is not null && RoleChips.FirstOrDefault(c => c.Role == target.Role) is { } chip && chip != SuggestRole)
         {
             SuggestRole = chip;   // finds again
             return;
@@ -899,13 +899,14 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     /// <summary>
     /// A library part as a clip: one go round of its bars, or of <paramref name="period"/> for a stretch cut from it (chord
-    /// parts turned into smooth inversions when that's on).
+    /// parts turned into smooth inversions when that's on; a stretch keeps its own voicing, which it was picked for
+    /// joining on).
     /// </summary>
     PlaygroundClip LibraryClip(MidiEntry entry, IReadOnlyList<NoteEvent> notes, long start, long? length = null, long period = 0)
     {
         var loop = period > 0 ? period : Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
         var one = notes.Where(n => n.Start < loop).ToList();
-        if (SmoothIncoming && entry.Role == MidiRoles.Chords) one = Inversions.Smooth(one, ChordCentre(null));
+        if (SmoothIncoming && entry.Role == MidiRoles.Chords && period == 0) one = Inversions.Smooth(one, ChordCentre(null));
         return PlaygroundClip.Of(entry.Title.Length > 0 ? entry.Title : entry.SourceName, entry.Role, one, loop, start, length ?? loop,
                                  entry.Phrase.Source.Path, entry.Phrase.Hash);
     }
@@ -1771,6 +1772,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var matching = 0;
             var from = Midi.FromQuery;
             var around = SwapTarget is { } swapping && SwapRange is { } swapped ? AroundOf(swapping, swapped) : null;
+            // Swapping: the highlight may still be moving, and each move starts again, so wait for it to settle.
+            if (around is not null) await Task.Delay(150, cts.Token);
             var found = await UiWork.Run(() => SectionMatcher.Rank(catalogue, harmony, role, _main.Midi.NotesOf, out matching, text, limit, cts.Token, feel, around, from, scored));
             if (cts.IsCancellationRequested) return;
             Matches.Clear();
@@ -1796,7 +1799,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     internal void AddMatch(PlaygroundMatchRow row)
     {
         if (SwapTarget is { } target && SwapRange is { } bars) SwapIn(target, bars, row.Match.Entry, row.Match.Notes, row.Match.Period);
-        else AddFromLibrary(row.Match.Entry, row.Match.Notes);
+        else AddFromLibrary(row.Match.Entry, row.Match.Notes, period: row.Match.Period);
     }
 
     // ---- a stretch of one of your songs ----
@@ -2263,7 +2266,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (instead is null) channels = ChannelsToPlay(out _playLength);
         else
         {
-            _playLength = Section.Length;
+            _playLength = PlayedTo(instead.SelectMany(c => c.Notes).Select(n => n.Start + n.Length).DefaultIfEmpty(0).Max());
             channels = Looped(instead.ToList(), ref _playLength);
         }
         if (channels.Count == 0 || channels.All(c => c.Notes.Count == 0))
@@ -2322,10 +2325,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     List<MidiChannel> ChannelsToPlay(out long length)
     {
-        length = Section.Length;
+        length = PlayedTo(Section.Layers.SelectMany(l => l.Clips).Select(c => c.End).DefaultIfEmpty(0).Max());
         var channels = PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
         return Looped(channels, ref length);
     }
+
+    /// <summary>
+    /// With no highlight, Play goes round at the end of the bar the last clip ends in, not on through the empty bars after it
+    /// (Solomon, 2026-10-21: "it should automatically loop at the end of all the clips").
+    /// </summary>
+    long PlayedTo(long end) => Math.Clamp((end + Bar - 1) / Bar * Bar, Bar, Math.Max(Bar, Section.Length));
 
     /// <summary>Just the loop's bars, from its start, when there are loop points.</summary>
     List<MidiChannel> Looped(List<MidiChannel> channels, ref long length)
@@ -2424,7 +2433,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         }
         var channels = ChannelsOf(Section).ToList();
         var notes = row.Match.Notes;
-        var period = Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
+        var period = row.Match.Period > 0 ? row.Match.Period : Math.Max(1, PhraseAnalyser.BarsOf(notes)) * (long)Bar;
         var (start, length) = Place;
         var placed = SectionMatcher.Loop(notes, period, length).Select(n => n with { Start = n.Start + start }).ToList();
         channels.Add(Channel(row.Title, GmSounds.DefaultFor(row.Match.Entry.Role), placed));
@@ -2761,7 +2770,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     internal long At => clip.RepeatAt(0);
 
     /// <summary>What it plays as: its own kind, or its track's when it has none.</summary>
-    string Role => clip.Role == MidiRoles.Other ? track.Role : clip.Role;
+    internal string Role => clip.Role == MidiRoles.Other ? track.Role : clip.Role;
     bool IsDrums => clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums;
 
     /// <summary>One go round, as it first plays (moved by hand and to fit).</summary>
@@ -2861,11 +2870,22 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         {
             var h = owner.Harmony;
             if (!owner.FitColours || IsDrums || h.Lane.Count == 0) return null;
-            long from = At, to = At + clip.Loop;
+            long from = At, to = At + clip.Loop, length = Math.Max(1, h.Length);
             var role = Role;
-            return h.Lane.Where(c => c.Start < to && c.End > from)
-                .Select(c => new FitSpan(Math.Max(c.Start, from) - from, Math.Min(c.End, to) - Math.Max(c.Start, from), NoteStrength.All(c.Chord, role, h.Style)))
-                .ToList();
+            // Going round past the section's end, it carries on from the section's start, as the note colours do.
+            var spans = new List<FitSpan>();
+            for (var a = from; a < to;)
+            {
+                var lap = a / length * length;
+                var b = Math.Min(to, lap + length);
+                foreach (var c in h.Lane.Where(c => c.Start + lap < b && c.End + lap > a))
+                {
+                    long start = Math.Max(c.Start + lap, a), end = Math.Min(c.End + lap, b);
+                    spans.Add(new FitSpan(start - from, end - start, NoteStrength.All(c.Chord, role, h.Style)));
+                }
+                a = b;
+            }
+            return spans;
         }
     }
 
@@ -2963,7 +2983,7 @@ public sealed partial class PlaygroundMatchRow(PlaygroundViewModel owner, Playgr
     public string From => match.Entry.IsProject ? $"{match.Entry.SourceName} · {match.Entry.Phrase.Source.Daw}" : match.Entry.SourceName;
     public string FitText => match.Score > 0 ? $"{match.Percent}%" : "";
     public string Why => match.Why;
-    /// <summary>Its chords as they'd go in, spelled in the idea's key as the MIDI page does: a stretch cut from a chord part reads its own (moved as it is).</summary>
+    /// <summary>Its chords as they'd go in, spelled in the section's key: a stretch cut from a chord part reads its own (moved as it is).</summary>
     public string Chords => match.Period > 0
         ? match.Entry.Role == MidiRoles.Chords ? string.Join(" ", ChordLane.Detect(match.Notes, match.Period).Take(6).Select(c => c.Chord.NameIn(owner.Harmony.Key))) : ""
         : string.Join(" ", match.Entry.Chords.Take(6).Select(c => c.Symbol.Transposed(match.Fit?.Semitones ?? 0).NameIn(owner.Harmony.Key)));

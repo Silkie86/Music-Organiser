@@ -105,8 +105,10 @@ public sealed class Scanner(LibraryDb db)
         var known = db.KnownFiles();
         // DAWs whose reader has got better since the library last read their projects: read those again.
         var reread = Readers.All.Where(r => db.GetSetting(ReaderVersionKey(r)) != r.Version.ToString()).Select(r => r.Daw).ToHashSet();
+        // And every project when the way keys are found from the notes has changed.
+        var rekey = db.GetSetting(KeyVersionKey) != ProjectKey.Version.ToString();
         // The folder listing already says each file's size and modified time: only new or changed files are read.
-        var todo = found.Where(f => full || reread.Contains(Readers.For(f.Path)!.Daw) ||
+        var todo = found.Where(f => full || rekey || reread.Contains(Readers.For(f.Path)!.Daw) ||
                                     !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
                         .Select(f => f.Path).ToList();
 
@@ -136,6 +138,7 @@ public sealed class Scanner(LibraryDb db)
         }
         db.UpsertMany(batch);
         foreach (var r in Readers.All) db.SetSetting(ReaderVersionKey(r), r.Version.ToString());
+        db.SetSetting(KeyVersionKey, ProjectKey.Version.ToString());
         db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
         progress?.Report(new("Done", files.Count, files.Count, ""));
         return todo.Count(f => !known.ContainsKey(f));
@@ -173,6 +176,7 @@ public sealed class Scanner(LibraryDb db)
     }
 
     static string ReaderVersionKey(IProjectReader r) => $"reader_version:{r.Daw}";
+    const string KeyVersionKey = "project_key_version";
 
     /// <summary>Refresh the list of plugins installed on this PC.</summary>
     public int ScanInstalledPlugins() => ScanInstalledPlugins(out _);

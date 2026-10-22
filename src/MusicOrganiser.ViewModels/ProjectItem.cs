@@ -1,7 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
-using MusicOrganiser.Core.Sounds;
 
 namespace MusicOrganiser.ViewModels;
 
@@ -83,7 +82,7 @@ public sealed partial class ProjectItem : ObservableObject
     public int MissingCount => _p.MissingPlugins + _p.MissingSamples;
 
     /// <summary>The key the project's notes point to (drums left out), or "" when they don't point to one.</summary>
-    public string DetectedKey => MusicTheory.Respell(_p.DetectedKey);   // keys found before 2026-10-20 were written with sharps
+    public string DetectedKey => _p.DetectedKey;
     /// <summary>The key: the one typed in, or else the one its notes point to.</summary>
     public string Key => string.IsNullOrWhiteSpace(MusicalKey) ? DetectedKey : MusicalKey.Trim();
     /// <summary>The Key box's hint: the key the notes point to, until one is typed in.</summary>
