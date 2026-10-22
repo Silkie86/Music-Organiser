@@ -76,7 +76,10 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
     double _startSeconds;
     long _framesPlayed;      // frames in buffers already taken back off the queue since the start or last seek
     bool _ended;             // the source has nothing more to give
-    string? _playing;
+    // Written under _gate, read without it: the window asks what's playing many times a second, and must never wait
+    // while a preview reads its file's start under the lock (a slow disk once held the window up 2.2 s).
+    volatile string? _playing;
+    double? _lastPosition;
     Timer? _pump;
     int _generation;
     Stopwatch? _timing;      // from the start or last seek, until the log has said whether it kept time
@@ -444,16 +447,16 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
     /// <summary>OpenAL's last word on why the output wouldn't open or move.</summary>
     static string Why(Output output) => output.CanReconnect ? $"{output.Alc.GetError((Device*)output.Device)}" : "this OpenAL can't move it";
 
-    public string? Playing
-    {
-        get { lock (_gate) return _playing; }
-    }
+    public string? Playing => _playing;
 
+    /// <summary>Where the sound is; while another thread holds the player (reading a file's start), the last answer.</summary>
     public double? Position
     {
         get
         {
-            lock (_gate) return _playing is null || _pcm is null ? null : PositionNow(Al);
+            if (!Monitor.TryEnter(_gate)) return _playing is null ? null : _lastPosition;
+            try { return _lastPosition = _playing is null || _pcm is null ? null : PositionNow(Al); }
+            finally { Monitor.Exit(_gate); }
         }
     }
 
@@ -713,6 +716,7 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
         _pcm?.Dispose();
         _pcm = null;
         _playing = null;
+        _lastPosition = null;
         _timing = null;
         Parallelism.AudioPlaying = false;
     }
