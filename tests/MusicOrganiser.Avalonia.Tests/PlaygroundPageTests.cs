@@ -121,6 +121,38 @@ public sealed class PlaygroundPageTests : IDisposable
         Settle();
         Assert.Equal(5, clip.Transpose);
         Assert.False(box.IsVisible);
+
+        // Typed or dragged, each is one undo step (code review, 22 Oct: typing 11 made 11).
+        p.RunShortcut("playground.undo");
+        Assert.Equal(2, p.SelectedClip!.Clip.Transpose);
+        p.RunShortcut("playground.undo");
+        Assert.Equal(0, p.SelectedClip!.Clip.Transpose);
+    }
+
+    [AvaloniaFact]
+    public void Rename_puts_a_name_box_in_the_tracks_header_with_no_clip_picked()
+    {
+        // Code review, 22 Oct: the track menu's Rename focused a box in the inspector, hidden with no clip picked.
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F |");
+        p.WriteChordsCommand.Execute(null);
+        var window = new Window { Content = new PlaygroundView { DataContext = p }, Width = 1400, Height = 900 };
+        window.Show();
+        var row = p.Layers[^1];
+        p.PickClip(null, null);
+        p.SelectedLayer = row;
+        Settle();
+
+        Assert.True(p.RunShortcut("playground.rename"));
+        Settle();
+        var box = window.GetVisualDescendants().OfType<TextBox>().Single(b => b.Classes.Contains("trackRename") && b.IsVisible);
+        Assert.True(box.IsFocused);
+        box.Text = "Pads";
+        window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, "");
+        Settle();
+        Assert.Equal("Pads", row.Name);
+        Assert.False(box.IsVisible);
     }
 
     [AvaloniaFact]
