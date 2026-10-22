@@ -449,12 +449,15 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
 
     public string? Playing => _playing;
 
-    /// <summary>Where the sound is; while another thread holds the player (reading a file's start), the last answer.</summary>
+    /// <summary>
+    /// Where the sound is. The player's own refills hold it for a moment, so that's waited for; a file's start read from
+    /// a slow or sleeping disk can hold it for seconds, and then it's the last answer (or where the sound began).
+    /// </summary>
     public double? Position
     {
         get
         {
-            if (!Monitor.TryEnter(_gate)) return _playing is null ? null : _lastPosition;
+            if (!Monitor.TryEnter(_gate, 50)) return _playing is null ? null : _lastPosition;
             try { return _lastPosition = _playing is null || _pcm is null ? null : PositionNow(Al); }
             finally { Monitor.Exit(_gate); }
         }
@@ -482,6 +485,7 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
         al.SetSourceProperty(_source, SourceInteger.Buffer, 0);   // a stopped source lets go of its whole queue
         _pcm!.SeekTo(Math.Max(0, seconds));
         _startSeconds = Math.Max(0, seconds);
+        _lastPosition = _startSeconds;
         _framesPlayed = 0;
         _ended = false;
         _timing = Stopwatch.StartNew();
@@ -527,6 +531,7 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
             _pcm = pcm;
             if (startSeconds > 0) pcm.SeekTo(startSeconds);
             _startSeconds = Math.Max(0, startSeconds);
+            _lastPosition = _startSeconds;
             _framesPlayed = 0;
             _ended = false;
             _restarts = 0;
