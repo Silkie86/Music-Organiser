@@ -16,7 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
-    public int Version => 4;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play
+    public int Version => 5;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play; 5: FL 4 to 8 notes read as 20-byte records (2026-10-22)
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
@@ -69,6 +69,8 @@ public sealed partial class FlStudioReader : IProjectReader
     {
         public int Ppq;
         public string Version = "";
+        /// <summary>FL's major version, or 0 when the project doesn't say.</summary>
+        public int Major => int.TryParse(Version.Split('.')[0], out var v) ? v : 0;
         public bool Utf16 = true;
         public readonly List<Event> Events = new();
         /// <summary>Said about the project when it could still be read but something about the file was off.</summary>
@@ -515,7 +517,7 @@ public sealed partial class FlStudioReader : IProjectReader
                 case EvPatternNotes when pattern is not null:
                     if (!patternNotes.TryGetValue(pattern.Value, out var list))
                         patternNotes[pattern.Value] = list = new();
-                    list.AddRange(DecodeNotes(e.Payload.Span, null).Where(n => !n.Note.Muted));   // MIDI has no muted notes
+                    list.AddRange(DecodeNotes(e.Payload.Span, flp.Major, null).Where(n => !n.Note.Muted));   // MIDI has no muted notes
                     break;
             }
         }
@@ -533,16 +535,17 @@ public sealed partial class FlStudioReader : IProjectReader
 
     /// <summary>
     /// Pattern note records: u32 position, u16 flags, u16 channel, u32 length, u16 key, ...
-    /// FL 7 onwards uses 24 bytes with velocity at 21; older versions 20 bytes with velocity at 17.
-    /// When the channels are known, the record size whose channel numbers all exist wins.
+    /// FL 9 onwards uses 24 bytes with velocity at 21; FL 4 to 8 20 bytes with velocity at 17 (checked on Solomon's
+    /// FL 4 to 26 saves). Without a version the size is told from the notes, see <see cref="SizeFromNotes"/>.
     /// In 24-byte records bit 0x20 of byte 19 marks a note muted in the piano roll, and a length
     /// of 0 a step from the step sequencer, which is kept 1 tick long and marked.
     /// </summary>
-    static List<(int Channel, NoteEvent Note)> DecodeNotes(ReadOnlySpan<byte> s, IReadOnlySet<int>? channels)
+    static List<(int Channel, NoteEvent Note)> DecodeNotes(ReadOnlySpan<byte> s, int flMajor, IReadOnlySet<int>? channels)
     {
-        var size = 24;
-        if (s.Length % 24 != 0 || channels is not null && !AllChannelsKnown(s, 24, channels))
-            if (s.Length % 20 == 0 && (channels is null || AllChannelsKnown(s, 20, channels))) size = 20;
+        // Read as 24-byte notes, Solomon's FL 7 "i dont know_8" got notes at jumbled times lasting 2^31 ticks (a velocity
+        // and pan landing in the length): its patterns were 120 and 240 bytes long, a whole number of either size.
+        var size = flMajor >= 9 ? 24 : flMajor > 0 ? 20 : 0;
+        if (size == 0 || s.Length % size != 0) size = SizeFromNotes(s, channels);
         var velocityAt = size - 3;
         var notes = new List<(int, NoteEvent)>(s.Length / size);
         for (var off = 0; off + size <= s.Length; off += size)
@@ -557,6 +560,28 @@ public sealed partial class FlStudioReader : IProjectReader
                 Muted: size == 24 && (r[19] & 0x20) != 0, Step: length == 0)));
         }
         return notes;
+    }
+
+    /// <summary>
+    /// The record size for notes from a file with no FL version: the size that reads them in time order (as FL keeps them)
+    /// on known channels, else the one whose length and channel numbers fit, 24 when both or neither do.
+    /// </summary>
+    static int SizeFromNotes(ReadOnlySpan<byte> s, IReadOnlySet<int>? channels)
+    {
+        if (Fits(s, 24, channels)) return 24;
+        if (Fits(s, 20, channels)) return 20;
+        var fits24 = s.Length % 24 == 0 && (channels is null || AllChannelsKnown(s, 24, channels));
+        var fits20 = s.Length % 20 == 0 && (channels is null || AllChannelsKnown(s, 20, channels));
+        return !fits24 && fits20 ? 20 : 24;
+    }
+
+    /// <summary>Whether the notes read as <paramref name="size"/>-byte records: a whole number of them, in time order, on known channels.</summary>
+    static bool Fits(ReadOnlySpan<byte> s, int size, IReadOnlySet<int>? channels)
+    {
+        if (s.Length == 0 || s.Length % size != 0 || channels is not null && !AllChannelsKnown(s, size, channels)) return false;
+        for (var off = size; off + size <= s.Length; off += size)
+            if (BinaryPrimitives.ReadUInt32LittleEndian(s[off..]) < BinaryPrimitives.ReadUInt32LittleEndian(s[(off - size)..])) return false;
+        return true;
     }
 
     static bool AllChannelsKnown(ReadOnlySpan<byte> s, int size, IReadOnlySet<int> channels)
@@ -719,7 +744,7 @@ public sealed partial class FlStudioReader : IProjectReader
         foreach (var (pat, data) in rawNotes)
         {
             if (!patterns.TryGetValue(pat, out var list)) patterns[pat] = list = new();
-            list.AddRange(DecodeNotes(data.Span, known));
+            list.AddRange(DecodeNotes(data.Span, flp.Major, known));
         }
 
         var clips = new Dictionary<int, List<FlClip>>();

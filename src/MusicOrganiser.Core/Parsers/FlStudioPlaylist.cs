@@ -102,7 +102,7 @@ public sealed partial class FlStudioReader
         var known = channels.ToHashSet();
         var patterns = rawNotes.GroupBy(r => r.Pattern).OrderBy(g => g.Key)
             .Select(g => new FlPattern(g.Key, patternNames.GetValueOrDefault(g.Key, $"Pattern {g.Key}"), patternColours.TryGetValue(g.Key, out var c) ? c : null,
-                                       g.SelectMany(r => DecodeNotes(r.Data.Span, known)).ToList()))
+                                       g.SelectMany(r => DecodeNotes(r.Data.Span, flp.Major, known)).ToList()))
             .ToList();
         foreach (var (index, name) in patternNames)
             if (patterns.All(p => p.Index != index))
