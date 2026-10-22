@@ -20,6 +20,8 @@ public class JazzHarmonyTests
     [InlineData("G7(b9)", "7", "")]
     [InlineData("G7sus4", "7sus", "")]
     [InlineData("Cmaj9", "Δ9", "")]
+    [InlineData("Cm(maj7)", "mΔ7", "m")]
+    [InlineData("Cm(maj9)", "mΔ9", "m")]
     public void A_crowded_chord_lane_writes_qualities_the_way_a_lead_sheet_does(string name, string shorter, string least)
     {
         var chord = ChordSymbol.Parse(name)!.Value;

@@ -77,13 +77,12 @@
         <Setter Property="Orientation" Value="Horizontal" />
         <Setter Property="views:StripEnds.Mark" Value="True" />
     </Style>
+    <!-- (Their corners; the sunk strips further down give them their well.) -->
     <Style Selector=".studio StackPanel.group > Button, .studio StackPanel.group > ToggleButton, .studio ListBox.chips.group ListBoxItem">
         <Setter Property="CornerRadius" Value="0" />
-        <Setter Property="Margin" Value="-1,0,0,0" />
     </Style>
     <Style Selector=".studio StackPanel.group > Button.stripStart, .studio StackPanel.group > ToggleButton.stripStart, .studio ListBox.chips.group ListBoxItem:nth-child(1)">
         <Setter Property="CornerRadius" Value="{DynamicResource RadiusStart}" />
-        <Setter Property="Margin" Value="0" />
     </Style>
     <Style Selector=".studio StackPanel.group > Button.stripEnd, .studio StackPanel.group > ToggleButton.stripEnd, .studio ListBox.chips.group ListBoxItem:nth-last-child(1)">
         <Setter Property="CornerRadius" Value="{DynamicResource RadiusEnd}" />
@@ -106,23 +105,6 @@
         <Setter Property="CornerRadius" Value="{DynamicResource RadiusEnd}" />
     </Style>
 
-    <!-- A drag handle in a group (Drag out) joins it too, looking like its buttons. -->
-    <Style Selector=".studio StackPanel.group > Border.dragChip">
-        <Setter Property="MinHeight" Value="24" />
-        <Setter Property="Padding" Value="10,0" />
-        <Setter Property="Background" Value="{DynamicResource StudioFaceBrush}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource StudioEdgeBrush}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="BoxShadow" Value="{DynamicResource StudioRaise}" />
-    </Style>
-    <Style Selector=".studio StackPanel.group > Border.dragChip:pointerover">
-        <Setter Property="Background" Value="{DynamicResource StudioFaceHoverBrush}" />
-    </Style>
-    <Style Selector=".studio StackPanel.group > Border.dragChip TextBlock">
-        <Setter Property="FontSize" Value="12" />
-        <Setter Property="FontWeight" Value="Normal" />
-        <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
     <Style Selector=".studio StackPanel.group > Border">
         <Setter Property="CornerRadius" Value="0" />
         <Setter Property="Margin" Value="-1,0,0,0" />
@@ -268,6 +250,8 @@
     <!-- A drag handle in a strip (Drag out): words in the well, like its neighbours. -->
     <Style Selector=".studio StackPanel.group > Border.dragChip">
         <Setter Property="MinHeight" Value="24" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="BorderBrush" Value="{DynamicResource StudioEdgeBrush}" />
         <Setter Property="Background" Value="{DynamicResource StudioWellBrush}" />
         <Setter Property="BorderThickness" Value="0,1" />
         <Setter Property="BoxShadow" Value="{DynamicResource StudioSink}" />
@@ -277,6 +261,9 @@
         <Setter Property="Background" Value="{DynamicResource StudioWellBrush}" />
     </Style>
     <Style Selector=".studio StackPanel.group > Border.dragChip TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
     </Style>
     <Style Selector=".studio StackPanel.group > Border.dragChip:pointerover TextBlock">
