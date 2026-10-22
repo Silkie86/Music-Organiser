@@ -20,6 +20,12 @@ sealed class UiWatchdog : IDisposable
     /// <summary>A freeze this long is written while it is still going on, in case the app never comes back.</summary>
     static readonly TimeSpan StuckAfter = TimeSpan.FromSeconds(5);
 
+    /// <summary>A freeze this long gets the code the window's thread is in written down (<see cref="StackSnapshot"/>).</summary>
+    static readonly TimeSpan StackAfter = TimeSpan.FromSeconds(1);
+
+    /// <summary>Reading the stack snapshots the app, so a run that keeps freezing does it only this often.</summary>
+    int _stacksLeft = 20;
+
     readonly ActivityFeed _jobs;
     readonly Func<string> _page;
     /// <summary>The jobs running now, kept as they start and end, so the watchdog can name them while the UI thread is stuck.</summary>
@@ -27,6 +33,8 @@ sealed class UiWatchdog : IDisposable
     readonly Thread _thread;
     /// <summary>Windows' own number for the UI thread (made on it), to ask Windows what it's waiting for while it's stuck.</summary>
     readonly int _uiThread;
+    /// <summary>.NET's number for the UI thread, to find its stack in a snapshot.</summary>
+    readonly int _uiManagedThread;
     volatile bool _stop;
 
     public UiWatchdog(MainViewModel main) : this(main.Activities, () => main.SelectedNav?.Title ?? "") { }
@@ -37,6 +45,7 @@ sealed class UiWatchdog : IDisposable
         _jobs = jobs;
         _page = page;
         _uiThread = OperatingSystem.IsWindows() ? (int)GetCurrentThreadId() : 0;
+        _uiManagedThread = Environment.CurrentManagedThreadId;
         jobs.Changed += OnJob;
         // Jobs already running (the start-up scan) are known from the start, not only those that start later.
         foreach (var job in jobs.Items.ToArray()) if (job.IsRunning) _running[job] = job.Title;
@@ -88,10 +97,19 @@ sealed class UiWatchdog : IDisposable
                             (jobs.Length > 0 ? $", while running: {jobs}" : ", with no job running (a click or the page itself)");
                 // A hang that never ends (the app is closed from Task Manager) is written while it lasts, too.
                 var saidStuck = false;
+                string? stack = null;
                 while (!_stop && !answered.Wait(TimeSpan.FromSeconds(1)))
                 {
-                    if (saidStuck || Stopwatch.GetElapsedTime(knocked) < StuckAfter || Debugger.IsAttached) continue;
-                    SessionLog.Current?.Warning("Freeze", $"The app has stopped responding for {Seconds(StuckAfter)} so far{where}");
+                    if (Debugger.IsAttached) continue;
+                    // Still stuck after a second: which code it's in, so the line names the cause (on 2026-10-22 a 5 s
+                    // freeze said only "waiting (Executive)").
+                    if (stack is null && _stacksLeft > 0 && Stopwatch.GetElapsedTime(knocked) >= StackAfter)
+                    {
+                        _stacksLeft--;
+                        stack = StackSnapshot.Of(_uiManagedThread) ?? "";
+                    }
+                    if (saidStuck || Stopwatch.GetElapsedTime(knocked) < StuckAfter) continue;
+                    SessionLog.Current?.Warning("Freeze", $"The app has stopped responding for {Seconds(StuckAfter)} so far{where}{In(stack)}");
                     saidStuck = true;
                 }
                 if (_stop) return;
@@ -102,7 +120,7 @@ sealed class UiWatchdog : IDisposable
                     $"The app didn't respond for {Seconds(froze)}{where}" +
                     // Whether the stall was the garbage collector tidying memory (it stops every thread) or work.
                     $" [memory clean-up: {Seconds(GC.GetTotalPauseDuration() - paused)} paused, " +
-                    $"{GC.CollectionCount(2) - fullCollections} full; {Busy(app, cpu, stuckFor)}{state}]");
+                    $"{GC.CollectionCount(2) - fullCollections} full; {Busy(app, cpu, stuckFor)}{state}]{In(stack)}");
             }
             Thread.Sleep(200);
         }
@@ -149,6 +167,8 @@ sealed class UiWatchdog : IDisposable
 
     [DllImport("kernel32.dll")]
     static extern uint GetCurrentThreadId();
+
+    static string In(string? stack) => stack is { Length: > 0 } ? $"; the window's thread was in {stack}" : "";
 
     static string Seconds(TimeSpan t) => t.TotalSeconds >= 1 ? $"{t.TotalSeconds:0.0} s" : $"{t.TotalMilliseconds:0} ms";
 

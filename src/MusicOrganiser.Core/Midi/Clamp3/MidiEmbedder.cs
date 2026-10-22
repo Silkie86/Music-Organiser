@@ -46,7 +46,7 @@ public static class MidiEmbedder
             {
                 try
                 {
-                    var notes = index.Notes(item.Id);
+                    var notes = index.NotesInBackground(item.Id);
                     var vec = notes.Count == 0 ? null
                         : Parallelism.Background(() => model.EmbedMidi(notes, PhraseAnalyser.Ppq, item.Tempo, item.Drums));
                     if (vec is null) return;

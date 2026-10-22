@@ -28,6 +28,8 @@
     <!-- Sound output on every system: OpenAL Soft, with its native library for Windows, macOS and Linux. -->
     <PackageReference Include="Silk.NET.OpenAL" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
+    <!-- Reads the window thread's stack while it's stuck, so a freeze in the log names the code it was in (UiWatchdog). -->
+    <PackageReference Include="Microsoft.Diagnostics.Runtime" Version="3.1.512801" />
     <!-- On Windows, MP3, FLAC, M4A and OGG through Media Foundation, and compressed WAVs through Windows'
          audio codecs, as in the WPF app. Unused on a Mac or Linux. -->
     <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />

@@ -155,6 +155,33 @@ public sealed class WatchdogTests : IDisposable
     public void Dispose() => Directory.Delete(_dir, recursive: true);
 
     [global::Avalonia.Headless.XUnit.AvaloniaFact]
+    public void A_long_freeze_names_the_code_the_window_was_stuck_in()
+    {
+        // On 2026-10-22 a 5 s freeze said only "waiting (Executive)": now the line says which code it was in.
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The stack is read on Windows only");
+        var log = SessionLog.Start(_dir);
+        var jobs = new MusicOrganiser.ViewModels.ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero };
+        using (new UiWatchdog(jobs, () => "Sound Lab"))
+        {
+            HeldUpByAFreezeTest();
+            var until = DateTime.UtcNow.AddSeconds(10);
+            while (!log.Recent().Any(l => l.Contains("[Freeze] The app didn't respond")) && DateTime.UtcNow < until)
+            {
+                global::Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                Thread.Sleep(20);
+            }
+        }
+
+        var line = log.Recent().Single(l => l.Contains("[Freeze] The app didn't respond"));
+        Assert.Contains("the window's thread was in ", line);
+        Assert.Contains("WatchdogTests.HeldUpByAFreezeTest", line);
+        log.Dispose();
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    static void HeldUpByAFreezeTest() => Thread.Sleep(2500);
+
+    [global::Avalonia.Headless.XUnit.AvaloniaFact]
     public void A_freeze_is_logged_with_the_page_and_the_job_running()
     {
         var log = SessionLog.Start(_dir);
