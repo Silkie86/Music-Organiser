@@ -2,6 +2,7 @@ package org.musicorganiser.bitwig;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.musicorganiser.bitwig.FakeBitwig.device;
 import static org.musicorganiser.bitwig.FakeBitwig.knob;
 import static org.musicorganiser.bitwig.Messages.assertJson;
@@ -330,5 +331,63 @@ class NewerApiTest {
         assertEquals(List.of("clip notes"), listAt(result, "checks").stream().filter(c -> !(Boolean) at(c, "ok")).map(c -> at(c, "name"))
                                                                     .collect(Collectors.toList()));
         assertMatches("^Couldn't set it up: java.lang.AbstractMethodError: ", SelfCheckTest.detail(result, "clip notes"));
+    }
+
+    // ---- following and playing in Bitwig (extension 3.16) ----
+
+    /** The song with a clip on the bass track's first slot, and the bass track's ID. */
+    void startWithABassClip() {
+        Model m = LinkTest.song();
+        m.scenes = 1;
+        m.tracks.get(1).id("bass-id").slots("old.mid");
+        start(m);
+    }
+
+    @Test
+    @DisplayName("says whether Bitwig is playing, where and how fast, without needing changes allowed")
+    void saysWhereBitwigIsPlaying() {
+        startWithABassClip();
+        assertJson(obj("playing", false, "position", 0, "playStart", 0, "tempo", 124, "timeSignature", "7/8"),
+                   app.ask(obj("id", 1, "cmd", "transport")).get("result"));
+
+        // Playing from the play start, Bitwig moves on at its tempo.
+        bitwig.allowChanges(true);
+        app.waitFor(obj("id", 2, "cmd", "clip", "trackId", "bass-id", "slot", 0, "path", "C:\\MIDI\\Bass.mid", "replace", true, "launch", true));
+        Map<String, Object> playing = SelfCheckTest.map(app.ask(obj("id", 3, "cmd", "transport")).get("result"));
+        assertEquals(true, playing.get("playing"));
+        assertTrue((Double) playing.get("position") > 0, Json.write(playing));
+    }
+
+    @Test
+    @DisplayName("swaps a slot's clip for a file and launches it, which starts Bitwig playing")
+    void replacesAndLaunchesAClip() {
+        startWithABassClip();
+        bitwig.allowChanges(true);
+        assertJson(obj("slot", 0, "launched", true),
+                   app.waitFor(obj("id", 1, "cmd", "clip", "trackId", "bass-id", "slot", 0, "path", "C:\\MIDI\\Bass.mid", "replace", true, "launch", true))
+                      .get("result"));
+        assertEquals(List.of("C:\\MIDI\\Bass.mid"), bitwig.state.tracks.get(1).slots);
+        assertTrue(bitwig.calls.contains(List.of("launch", 1, 0)), String.valueOf(bitwig.calls));
+        assertTrue(bitwig.playingNow);
+
+        // Swapping it again without launching leaves it as it is; replacing needs the slot said.
+        assertJson(obj("slot", 0), app.waitFor(obj("id", 2, "cmd", "clip", "trackId", "bass-id", "slot", 0, "path", "C:\\MIDI\\Bass 2.mid", "replace", true))
+                                      .get("result"));
+        assertEquals(List.of("C:\\MIDI\\Bass 2.mid"), bitwig.state.tracks.get(1).slots);
+        assertEquals("Say which slot's clip to replace.",
+                     error(app.ask(obj("id", 3, "cmd", "clip", "trackId", "bass-id", "path", "C:\\MIDI\\x.mid", "replace", true))));
+    }
+
+    @Test
+    @DisplayName("stops the launcher clips on the tracks given and puts them back on the arranger, leaving out tracks that are gone")
+    void stopsTracks() {
+        startWithABassClip();
+        bitwig.allowChanges(true);
+        app.waitFor(obj("id", 1, "cmd", "clip", "trackId", "bass-id", "slot", 0, "path", "C:\\MIDI\\Bass.mid", "replace", true, "launch", true));
+        assertJson(obj("stopped", list("bass-id")),
+                   app.waitFor(obj("id", 2, "cmd", "stoptracks", "trackIds", list("bass-id", "gone-id"))).get("result"));
+        assertTrue(bitwig.calls.contains(List.of("stopTrack", 1)), String.valueOf(bitwig.calls));
+        assertTrue(bitwig.calls.contains(List.of("returnToArrangement", 1)), String.valueOf(bitwig.calls));
+        assertEquals("Say which tracks to stop, by their IDs.", error(app.waitFor(obj("id", 3, "cmd", "stoptracks"))));
     }
 }

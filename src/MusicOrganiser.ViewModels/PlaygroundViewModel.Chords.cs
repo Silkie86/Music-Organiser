@@ -26,12 +26,13 @@ public sealed partial class PlaygroundViewModel
     /// <summary>Whether the chord track has any chords: they then decide the harmony where they are.</summary>
     public bool HasChordTrack => Section.ChordTrack.Count > 0;
 
-    /// <summary>The chord track played as plain chords with the idea (never sent out to the DAW: it has no MIDI).</summary>
+    /// <summary>The chord track played as plain chords with the idea, and in Bitwig with Play in Bitwig (Send to Bitwig and dragging out leave it: it has no MIDI of its own).</summary>
     [ObservableProperty] bool _hearChordTrack = true;
     partial void OnHearChordTrackChanged(bool value)
     {
         SaveOption(HearChordTrackKey, value ? "1" : "0");
         if (_playing) _ = PlayAsync(keepPlace: true);
+        PlayInBitwigSoon();
     }
 
     /// <summary>The chord track's notes as heard: each chord voiced plainly, root at the bottom.</summary>

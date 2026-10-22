@@ -45,6 +45,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             .Select(r => new RoleChip(MidiRoles.Plural(r), r)).ToList();
         _suggestRole = RoleChips[0];
         BitwigClips = AskBitwigAsync;
+        SetUpBitwig();
         // More MIDI read (a folder or project added, or the list read again): the progressions are found again.
         if (!quick) main.Midi.Read += (_, _) => _ = RefreshProgressionsAsync();
         Show();
@@ -206,6 +207,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         NewTempo = Number(NewTempoKey, NewTempoChoices, 90);
         NewBars = Number(NewBarsKey, NewBarsChoices, 4);
         UndoSteps = Number(UndoStepsKey, UndoStepsChoices, 60);
+        FollowNudge = Number(FollowNudgeKey, FollowNudgeChoices, 0);
         NewStyle = _db.GetSetting(NewStyleKey) == Classical ? Classical : JazzGospel;
         SmoothIncoming = _db.GetSetting(SmoothKey) != "0";
         LoopOn = _db.GetSetting(LoopKey) != "0";
@@ -307,6 +309,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         else RefreshEnergy();
         EmptyChanged();
         if (_playing) _ = PlayAsync(keepPlace: true);
+        PlayInBitwigSoon();
     }
 
     /// <summary>The chord track as parts last followed it.</summary>
@@ -2105,6 +2108,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Loop = range is { } r && Math.Clamp(r.End, 1, Length) > Math.Clamp(r.Start, 0, Length)
             ? new RollRange(Math.Clamp(r.Start, 0, Length), Math.Clamp(r.End, 1, Length)) : null;
         if (_playing) _ = PlayAsync();
+        PlayInBitwigSoon();
         SuggestFollow(true);
     }
 
@@ -2278,6 +2282,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     async Task Play()
     {
+        // While it plays because Bitwig does, Stop stops following too: otherwise the next look at Bitwig starts it again.
+        if (_playing && _follow.Following) { FollowBitwig = false; return; }
         if (_playing) { StopPlaying(); return; }
         if (IsQuick) _main.Midi.StopForQuick();   // a small playground and the MIDI page never play over each other
         await PlayAsync();
@@ -2304,7 +2310,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             Message = "Nothing to play yet.";
             return false;
         }
-        var tempo = _session.Tempo;
+        var tempo = _followTempo ?? _session.Tempo;
         var total = _playLength;
         float[] audio;
         try
@@ -2383,7 +2389,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     void GoRound()
     {
         if (!_playing || _audio is null || _player is null) return;
-        if (!LoopOn) { StopPlaying(); return; }
+        if (!LoopOn && !_follow.Following) { StopPlaying(); return; }
         try { _player.Play(_audio, MidiRender.Rate, _playKey); }
         catch (Exception e) { Message = $"Couldn't play it: {e.Message}"; StopPlaying(); }
     }
@@ -2629,12 +2635,14 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     public void Left()
     {
+        FollowBitwig = false;
         StopPlaying();
         StopBrowsing();
     }
 
     public void Dispose()
     {
+        StopWithBitwig();
         StopPlaying();
         _player?.Dispose();
         _matchCts?.Cancel();

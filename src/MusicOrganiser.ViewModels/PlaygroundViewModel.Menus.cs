@@ -30,7 +30,8 @@ public sealed partial class PlaygroundViewModel
     public static IReadOnlyList<PlaygroundMenu> MenuBar { get; } =
     [
         new("File", [M("New idea", "playground.new"), M("Open an idea…", "playground.ideas"), M("Save", "playground.save"), Sep,
-                     M("Send to Bitwig", "playground.sendToBitwig")]),
+                     M("Send to Bitwig", "playground.sendToBitwig"), Sep,
+                     M("Follow Bitwig", "playground.followBitwig"), M("Play in Bitwig", "playground.playInBitwig")]),
         new("Edit", [M("Undo", "playground.undo"), M("Redo", "playground.redo"), Sep,
                      M("Cut", "playground.cut"), M("Copy", "playground.copy"), M("Paste", "playground.paste"),
                      M("Duplicate", "playground.duplicate"), M("Delete", "playground.delete"), Sep,
@@ -129,6 +130,8 @@ public sealed partial class PlaygroundViewModel
         "playground.jazz" => !IsClassical,
         "playground.classical" => IsClassical,
         "playground.loop" => LoopOn,
+        "playground.followBitwig" => FollowBitwig,
+        "playground.playInBitwig" => PlayInBitwig,
         "playground.hearChordTrack" => HearChordTrack,
         "playground.foldRoll" => !PianoFolded,
         "playground.mute" => (SelectedClip?.Track ?? SelectedLayer)?.Layer.Muted == true,
@@ -149,7 +152,8 @@ public sealed partial class PlaygroundViewModel
 
     /// <summary>Whether a menu line has a tick box at all.</summary>
     public static bool IsToggle(string id) =>
-        id is "playground.jazz" or "playground.classical" or "playground.loop" or "playground.hearChordTrack" or "playground.foldRoll" or "playground.mute" or "playground.solo" ||
+        id is "playground.jazz" or "playground.classical" or "playground.loop" or "playground.hearChordTrack" or "playground.foldRoll" or "playground.mute" or "playground.solo" or
+            "playground.followBitwig" or "playground.playInBitwig" ||
         FollowOf(id) is not null;
 
     // ---- copy and paste ----
@@ -236,6 +240,8 @@ public sealed partial class PlaygroundViewModel
             case "playground.keepHeardChords": KeepHeardChords(); return true;
             case "playground.chordsFromBitwig": _ = ChordsFromBitwigCommand.ExecuteAsync(null); return true;
             case "playground.hearChordTrack": HearChordTrack = !HearChordTrack; return true;
+            case "playground.followBitwig": FollowBitwig = !FollowBitwig; return true;
+            case "playground.playInBitwig": PlayInBitwig = !PlayInBitwig; return true;
             case "playground.tabWrite": RightTab = WriteTab; return true;
             case "playground.tabSong": RightTab = SongTab; return true;
             case "playground.foldRoll": PianoFolded = !PianoFolded; return true;

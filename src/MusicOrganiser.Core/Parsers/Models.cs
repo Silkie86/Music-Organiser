@@ -28,6 +28,8 @@ public sealed class MidiClip
     public required int Ppq { get; init; }
     /// <summary>Track name → notes, in insertion order.</summary>
     public List<KeyValuePair<string, List<NoteEvent>>> Tracks { get; } = new();
+    /// <summary>Where the clip ends, in ticks, when it goes on past its last note (a loop with empty beats at its end); null at the last note.</summary>
+    public long? End { get; init; }
 
     public List<NoteEvent> Track(string name)
     {

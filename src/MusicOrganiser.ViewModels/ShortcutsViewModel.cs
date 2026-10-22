@@ -128,6 +128,8 @@ public sealed partial class ShortcutsViewModel : ObservableObject
         new("playground.new", Playground, "New idea", "Ctrl+N"),
         new("playground.ideas", Playground, "Open an idea", "Ctrl+O"),
         new("playground.sendToBitwig", Playground, "Send the idea to Bitwig", ""),
+        new("playground.followBitwig", Playground, "Follow Bitwig: play along when Bitwig plays", ""),
+        new("playground.playInBitwig", Playground, "Play in Bitwig: the parts on tracks there, kept up to date", ""),
         new("playground.addLabel", Playground, "Label over the highlight", ""),
         new("playground.writeChords", Playground, "Write chords", ""),
         new("playground.writeBass", Playground, "Write a bassline", ""),

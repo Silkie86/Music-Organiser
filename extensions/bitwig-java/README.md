@@ -162,11 +162,18 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   `restoreFailed`), and what changed in the tracks and launcher slots, by ID (`diff`).
 - `recordabort`: asks a running `record` to stop (it answers `running`). It isn't a change, so it reaches the
   job whatever project is in front.
+- `transport` (extension 3.16): for the Playground's Follow Bitwig, whether Bitwig is `playing`, where
+  (`position`, in beats from the start), where Play starts (`playStart`), its `tempo` and `timeSignature`. The
+  app asks many times a second while it follows, so these aren't logged.
+- `stoptracks` ✎ with `trackIds` (extension 3.16): stops the launcher clips on those tracks and puts them back
+  on the arranger, for the Playground's Play in Bitwig, answering with the IDs it found as `stopped`.
 - `probe` ✎ with `via` and `gap` (optional, in ms): runs Bitwig's panel commands (`toggle_arranger`, then
   the focus actions of the clip launcher and the arranger) twice each, `gap` apart, by the route, and says for
   each whether its panel showed before and after each go (`visible`), whether the route `ran` it, and whether
   the link put the panel back as it was (`restored`). A panel that shows and hides with them means Bitwig
   carried them out for the link.
+- From 3.16, `transport` says where Bitwig is playing, `stoptracks` stops tracks' launcher clips, and `clip` takes
+  `replace` (swap a slot's clip for the file) and `launch`, for the Playground playing along with Bitwig.
 - From 3.15, `notes` answers with the notes of the clip selected in the arranger and in the clip launcher, for the
   Playground's Get chords from Bitwig.
 - From 3.14, an effect after a pad's empty Sampler is one Bitwig calls `audio-effect`, as well as `audio_to_audio`.

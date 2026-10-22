@@ -126,6 +126,8 @@ final class Link {
     static final long DEVICE_WAIT = 2000;
     /** How long to wait for Bitwig to make a change the app asked for (a track, a device, a clip). */
     static final long CHANGE_WAIT = 5000;
+    /** How long a replaced clip gets to be swapped before it's launched (extension 3.16). */
+    static final long REPLACE_WAIT = 250;
     /** When to write the first self-check: once Bitwig has sent the values the link watches. */
     static final long SELF_CHECK_DELAY = 1000;
     /** Bitwig's own devices the app tunes, by the IDs Bitwig saves them under. */
@@ -237,6 +239,8 @@ final class Link {
     private Application app;
     private Project project;
     private Transport transport;
+    /** Whether the transport's play position and play start could be followed (extension 3.16). */
+    private boolean followed;
     private TrackBank tracks;
     private final Track[] trackItems = new Track[MAX_TRACKS];
     private final DeviceBank[] trackDevices = new DeviceBank[MAX_TRACKS];
@@ -385,6 +389,11 @@ final class Link {
         // Extension 3.15: the notes of the clips selected in the arranger and the clip launcher, for the Playground's Get
         // chords from Bitwig. It only reads, so it doesn't need changes allowed.
         commands.put("notes", Command.answer(false, this::notes));
+        // Extension 3.16: for the Playground playing along with Bitwig. transport says whether Bitwig is playing, where and
+        // how fast (it only reads, and the app asks many times a second); stoptracks stops the clips the Playground launched
+        // on its tracks. clip takes "replace" and "launch" from 3.16 too.
+        commands.put("transport", Command.answer(false, this::transportNow));
+        commands.put("stoptracks", Command.job(this::stopTracks));
     }
 
     // ---- Starting and stopping ----
@@ -411,6 +420,14 @@ final class Link {
             transport.getPosition().markInterested();
         }, () -> Json.number(transport.tempo().getRaw()) + " BPM in " + str(transport.timeSignature().get())
                  + (transport.isPlaying().get() ? ", playing." : ", stopped."));
+
+        // For transport (extension 3.16): where Bitwig is as it plays, and where Play starts from.
+        feature("following", () -> {
+            transport.playPosition().markInterested();
+            transport.playStartPosition().markInterested();
+            followed = true;
+        }, () -> "Bitwig is at beat " + Json.number(transport.playPosition().get()) + ", and Play starts at beat "
+                 + Json.number(transport.playStartPosition().get()) + ".");
 
         // The track and device selected in Bitwig.
         feature("cursor track", () -> {
@@ -1023,7 +1040,8 @@ final class Link {
         if (error != null) message.put("error", error);
         else message.put("result", result);
         send(ask.client(), message);
-        if (error == null && "hello".equals(ask.cmd())) return;
+        // The app asks hello every few seconds, and transport many times a second while the Playground follows Bitwig.
+        if (error == null && ("hello".equals(ask.cmd()) || "transport".equals(ask.cmd()))) return;
 
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("cmd", ask.cmd());
@@ -1822,6 +1840,9 @@ final class Link {
     private void addClip(Map<String, Object> request, Finish finish) {
         int t = requestedTrack(request);
         String path = given(field(request, "path"), "file");
+        boolean replace = flag(request, "replace", false);
+        boolean launch = flag(request, "launch", false);
+        if (replace && absent(field(request, "slot"))) throw new LinkError("Say which slot's clip to replace.");
         ClipLauncherSlot[] slots = trackSlots[t];
         Object s = field(request, "slot");
         int index;
@@ -1829,7 +1850,7 @@ final class Link {
             if (!isIndex(s, SCENES))
                 throw new LinkError("The app can reach the first " + SCENES + " clip slots on a track, not slot " + Json.js(s) + ".");
             index = index(s);
-            if (slots[index].hasContent().get()) throw new LinkError("Slot " + index + " on that track already has a clip.");
+            if (slots[index].hasContent().get() && !replace) throw new LinkError("Slot " + index + " on that track already has a clip.");
         } else {
             index = emptySlot(slots);
             if (index < 0) throw new LinkError("The track's first " + SCENES + " clip slots are full.");
@@ -1844,8 +1865,58 @@ final class Link {
             if (!made) throw new LinkError("Bitwig didn't make a clip from " + path + ".");
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("slot", index);
-            finish.ok(m);
+            if (!replace && !launch) {
+                finish.ok(m);
+                return;
+            }
+            // A replaced clip is there all along, so there's nothing to see change: it waits a moment for Bitwig to swap it,
+            // then launches it (extension 3.16), which with Bitwig stopped starts it playing.
+            waitFor(() -> false, REPLACE_WAIT, ignored -> {
+                if (launch) {
+                    int now = id.isEmpty() ? t : indexOf(id);
+                    if (now < 0) throw new LinkError("The track went before its clip could be launched.");
+                    trackSlots[now][index].launch();
+                    m.put("launched", true);
+                }
+                finish.ok(m);
+            }, finish);
         }, finish);
+    }
+
+    /**
+     * Stops the launcher clips playing on the tracks with the IDs given (`trackIds`) and puts them back on the arranger
+     * (extension 3.16), for the Playground when it stops playing in Bitwig. A track that's gone is left out of `stopped`.
+     */
+    private void stopTracks(Map<String, Object> request, Finish finish) {
+        Object given = field(request, "trackIds");
+        if (!(given instanceof List)) throw new LinkError("Say which tracks to stop, by their IDs.");
+        List<Object> stopped = new ArrayList<>();
+        for (Object id : (List<?>) given) {
+            if (!(id instanceof String)) throw new LinkError("A track's ID is text.");
+            int t = indexOf((String) id);
+            if (t < 0) continue;
+            trackItems[t].stop();
+            trackItems[t].returnToArrangement();
+            stopped.add(id);
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("stopped", stopped);
+        finish.ok(m);
+    }
+
+    /**
+     * Whether Bitwig is `playing`, where (`position`, in beats from the start), where Play starts (`playStart`), its `tempo`
+     * and `timeSignature` (extension 3.16), for the Playground's Follow Bitwig, which asks many times a second.
+     */
+    private void transportNow(Ask ask, Map<String, Object> request) {
+        if (!followed) throw new LinkError("This Bitwig didn't let the link follow where it's playing. A selftest says why.");
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("playing", transport.isPlaying().get());
+        m.put("position", transport.playPosition().get());
+        m.put("playStart", transport.playStartPosition().get());
+        m.put("tempo", transport.tempo().getRaw());
+        m.put("timeSignature", str(transport.timeSignature().get()));
+        reply(ask, m, null);
     }
 
     /** The first empty slot in a scene that exists, else the first of the scenes still to come; -1 if none. */
