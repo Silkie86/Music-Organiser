@@ -96,6 +96,7 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         Detail = db.Project(item.Id);
         var installed = db.InstalledNames();
         _canSwapSerum = Detail is not null && ProjectFixer.CanSwapSerum(Detail, installed);
+        _needsRepair = Detail is not null && ProjectFixer.NeedsRepair(Detail);
         Plugins = Detail?.Plugins.Select(p => new PluginRow(db, p, installed)).ToList() ?? [];
         VisiblePlugins = Plugins;
         Samples = Detail?.Samples.Select(s => new SampleRow(db, s, item, this)).ToList() ?? [];

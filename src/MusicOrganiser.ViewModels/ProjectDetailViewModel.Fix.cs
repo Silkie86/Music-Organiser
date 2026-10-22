@@ -16,10 +16,10 @@ public sealed partial class ProjectDetailViewModel
     /// <summary>Set once the waiting fixed copy has been opened, so Keep and Delete still show after the page reloads.</summary>
     public static string FixOpenedKey(string projectPath) => $"fix_opened:{projectPath}";
 
-    /// <summary>Whether this project has something missing, or a Serum to swap for Serum 2, and is a kind Fix can write.</summary>
-    public bool CanFix => (Item.HasMissing || _canSwapSerum) && !Item.FileMissing && ProjectFixer.CanWrite(Item.Path);
+    /// <summary>Whether this project has something missing, a Serum to swap for Serum 2, or a damaged save to repair, and is a kind Fix can write.</summary>
+    public bool CanFix => (Item.HasMissing || _canSwapSerum || _needsRepair) && !Item.FileMissing && ProjectFixer.CanWrite(Item.Path);
 
-    readonly bool _canSwapSerum;
+    readonly bool _canSwapSerum, _needsRepair;
 
     /// <summary>The preview's lines, while it's open.</summary>
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsFixOpen))] IReadOnlyList<FixRow> _fixRows = [];
@@ -27,7 +27,9 @@ public sealed partial class ProjectDetailViewModel
     [ObservableProperty] string _fixSummary = "";
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(FixButtonText))] bool _fixBusy;
     public string FixButtonText => FixBusy ? "Looking…" : "Fix…";
-    public string FixTip => Item.HasMissing
+    public string FixTip => _needsRepair
+        ? "FL Studio didn't finish writing this save. Fix saves a repaired copy next to the original, finished from an earlier save."
+        : Item.HasMissing
         ? $"{Item.MissingText} missing, so it will open with gaps. Fix finds what it can on your drives and saves a repaired copy next to the original."
         : "Fix can swap Serum for Serum 2 in a copy next to the original, with Serum's sound translated.";
     [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(SaveFixedCommand))] int _fixTicked;
@@ -94,6 +96,7 @@ public sealed partial class ProjectDetailViewModel
             var still = lines.Count(l => l.Action == FixAction.StillMissing);
             FixSummary = string.Join(" · ", new[]
             {
+                lines.Any(l => l.IsRepair) ? "The save can be repaired" : null,
                 lines.Any(l => l.IsSwap) ? "Serum can be swapped for Serum 2" : null,
                 relink > 0 ? $"{relink} found" : null,
                 suggest > 0 ? $"{suggest} to choose" : null,
@@ -122,6 +125,7 @@ public sealed partial class ProjectDetailViewModel
         var samples = use.Count(l => l.IsSample);
         var doing = string.Join(" and ", new[]
         {
+            use.Any(l => l.IsRepair) ? "repairing the save" : null,
             samples > 0 ? $"relinking {SampleCount(samples)}" : null,
             use.Any(l => l.IsSwap) ? "swapping Serum for Serum 2" : null,
         }.OfType<string>());
@@ -291,9 +295,9 @@ public sealed partial class FixRow : ObservableObject
     public string ChoicesTip => $"{Line.Choices.Count} files could stand in for it: pick another";
     /// <summary>The line as it will be written, with the file you picked.</summary>
     public FixLine ToWrite => Line with { Use = Chosen };
-    public string KindText => Line.IsSample ? "Sample" : "Plugin";
+    public string KindText => Line.IsSample ? "Sample" : Line.IsRepair ? "Save" : "Plugin";
     /// <summary>"Relink", "Choose", "Swap", "Swap by hand" or "Still missing", for the line's badge.</summary>
-    public string ActionText => Line.IsSwap ? "Swap" : Line.Action switch
+    public string ActionText => Line.IsRepair ? "Repair" : Line.IsSwap ? "Swap" : Line.Action switch
     {
         FixAction.Relink => "Relink",
         FixAction.Suggestion when Line.IsSample => "Choose",

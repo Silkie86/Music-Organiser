@@ -16,7 +16,7 @@ namespace MusicOrganiser.Core.Parsers;
 public sealed partial class FlStudioReader : IProjectReader
 {
     public string Daw => "FL Studio";
-    public int Version => 5;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play; 5: FL 4 to 8 notes read as 20-byte records (2026-10-22)
+    public int Version => 6;   // 2: FL 9 plugin states read whole, plugins that saved nothing, FL's own effects in the old wrapper; 3: FL 9 steps and playlist; 4: samples that don't play; 5: FL 4 to 8 notes read as 20-byte records (2026-10-22); 6: FL 6 to 8 playlists, and saves FL stopped writing part-way
     public IReadOnlyList<string> Extensions { get; } = [".flp"];
 
     const int Text = 192, Data = 208;
@@ -62,6 +62,11 @@ public sealed partial class FlStudioReader : IProjectReader
         };
     }
 
+    /// <summary>The warning for a save FL stopped writing part-way (<see cref="FlDamage.EndsEarly"/>).</summary>
+    public const string StoppedPartWay = "FL Studio stopped part-way through writing this save, so FL won't open it. "
+        + "What it got as far as is shown here; Fix can finish it from an earlier save.";
+    /// <summary>The warning for a save whose data header FL didn't finish writing, though everything after it is there.</summary>
+    public const string GarbledHeader = "Saved by an old FL Studio that garbled the start of its data; everything after it was read as usual.";
     /// <summary>What's said of a file named .flp that holds no FL project any more: empty, or overwritten (disk damage).</summary>
     internal const string Damaged = "This file is empty or damaged: it doesn't start the way an FL Studio project does, so there's nothing in it to read";
 
@@ -104,7 +109,7 @@ public sealed partial class FlStudioReader : IProjectReader
             // Some FL Studio 4 to 7 saves have junk (what looks like a leftover memory address and a size) where the
             // FLdt chunk's name and length belong. Their events follow it as usual, to the end of the file.
             end = length;
-            flp.Warning = "Saved by an old FL Studio that garbled the start of its data; everything after it was read as usual.";
+            flp.Warning = GarbledHeader;
         }
 
         var major = 0;
@@ -134,6 +139,9 @@ public sealed partial class FlStudioReader : IProjectReader
             pos += size;
         }
 
+        // A save FL stopped writing before the mixer and playlist (see FlDamage) won't open in FL.
+        if (flp.Warning is not null && !flp.Events.Any(e => e.Id is EvInsertFlags or EvPlaylist))
+            flp.Warning = StoppedPartWay;
         var ver = flp.Events.FirstOrDefault(e => e.Id == EvVersion);
         // Without the FLdt chunk to go by, only events that include FL's version show it's really a project.
         if (flp.Warning is not null && ver.Id != EvVersion) throw new InvalidDataException(Damaged);
@@ -827,7 +835,7 @@ public sealed partial class FlStudioReader : IProjectReader
     /// <summary>
     /// Clips in the playlist. FL 9 onwards writes 32-byte items (60 from FL 21, 80 from FL 25, 88 from FL 26):
     /// u32 position, u16 pattern base (20480), u16 item index, u32 length, ..., u16 flags at 18, start offset at 24
-    /// (an integer before FL 21, a float since; -1 = none). Older layouts aren't read.
+    /// (an integer before FL 21, a float since; -1 = none). FL 6 to 8 write 28-byte items, see below. Older layouts aren't read.
     /// </summary>
     static List<PlaylistItem> PlaylistItems(ReadOnlySpan<byte> d)
     {
@@ -857,7 +865,10 @@ public sealed partial class FlStudioReader : IProjectReader
                 var row = BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 12)..]);
                 if (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 4)..]) != 0 || BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 6)..]) != 0x6000 ||
                     row is 0 or > 999)
-                    return [];
+                {
+                    items.Clear();   // not FL 9's: perhaps FL 6 to 8's, whose 28-byte items fill a whole number of 32 bytes too
+                    break;
+                }
                 items.Add(new PlaylistItem(PatternBase + 999 - row, BinaryPrimitives.ReadUInt32LittleEndian(d[off..]),
                                            BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), ItemOffset(d[(off + 24)..]),
                                            (BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 18)..]) & 0x2000) != 0, row));
@@ -865,6 +876,31 @@ public sealed partial class FlStudioReader : IProjectReader
             var order = items.Select(i => i.Index).Distinct().Order().Select((index, n) => (index, n)).ToDictionary();
             for (var n = 0; n < items.Count; n++)
                 items[n] = items[n] with { Slot = 499 - order[items[n].Index] };
+        }
+        // FL 6 to 8: 28-byte items laid out like FL 9's, but with the start offset at 20 (a float, -1 = none) and rows
+        // 29952 higher: pattern n plays on row 30951 - n. Audio and automation clips have the pattern base and their
+        // channel instead, on rows counted down from 30818 below the patterns. Checked on Solomon's FL 7 saves (the
+        // pattern lengths match their notes in "i dont know_7"; gypsy_7 has audio and automation clips). Each pattern
+        // gets a track, as for FL 9, and each row of audio or automation clips one after them.
+        if (items.Count == 0 && d.Length > 0 && d.Length % 28 == 0)
+        {
+            const int Fl8Rows = 29952;
+            var rows = new List<int>();
+            for (var off = 0; off < d.Length; off += 28)
+            {
+                var (kind, index, row) = ((int)BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 4)..]),
+                                          (int)BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 6)..]), (int)BinaryPrimitives.ReadUInt16LittleEndian(d[(off + 12)..]));
+                if (kind == 0 && index == 0x6000 && row is > Fl8Rows and < Fl8Rows + 999) index = PatternBase + Fl8Rows + 999 - row;
+                else if (kind != PatternBase || index >= PatternBase) return [];
+                items.Add(new PlaylistItem(index, BinaryPrimitives.ReadUInt32LittleEndian(d[off..]),
+                                           BinaryPrimitives.ReadUInt32LittleEndian(d[(off + 8)..]), ItemOffset(d[(off + 20)..]), false));
+                rows.Add(row);
+            }
+            var order = items.Zip(rows, (i, row) => i.Index > PatternBase ? i.Index : PatternBase + 1000 + (ushort.MaxValue - row))
+                             .ToList();
+            var track = order.Distinct().Order().Select((key, n) => (key, n)).ToDictionary();
+            for (var n = 0; n < items.Count; n++)
+                items[n] = items[n] with { Slot = 499 - track[order[n]] };
         }
         return items;
     }

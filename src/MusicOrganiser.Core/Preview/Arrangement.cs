@@ -106,6 +106,21 @@ public static class ArrangementReader
     }
 
     /// <summary>
+    /// The arrangement Overview shows: the project's own, except for an FL Studio save FL stopped writing before its
+    /// playlist (<see cref="FlDamage"/>), which shows the newest older save FL finished, with a note saying so.
+    /// </summary>
+    public static IReadOnlyList<Arrangement> ReadNewestWhole(string path)
+    {
+        if (!System.IO.Path.GetExtension(path).Equals(".flp", StringComparison.OrdinalIgnoreCase) ||
+            FlStudioReader.Damage(path) is not { EndsEarly: true } || FlStudioReader.WholeOlderSave(path) is not { } older)
+            return Read(path);
+        var (name, from) = (System.IO.Path.GetFileNameWithoutExtension(path), System.IO.Path.GetFileNameWithoutExtension(older));
+        var note = $"{name} stopped part-way through saving, before its playlist, so this is {from}'s arrangement: the newest save FL finished. "
+                   + $"Fix can finish {name} from it.";
+        return Read(older).Select(a => a with { Notes = [note, .. a.Notes] }).ToList();
+    }
+
+    /// <summary>
     /// Where an audio file is on this computer: the path the project saved, else a file of that name in the project's
     /// folder or the folders beside it (Bitwig keeps them in samples/ and recordings/, Studio One in Media/, FL in the project's folder).
     /// </summary>
