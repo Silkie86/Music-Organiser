@@ -178,4 +178,91 @@ public class ChordTrackTests : IDisposable
         Assert.True(p.RunShortcut("playground.clearChordTrack"));
         Assert.Empty(p.Chords);
     }
+
+    // ---- step 2: parts follow the chord track ----
+
+    static List<TimedChord> Track(params string[] names) => names.Select((n, i) => new TimedChord(i * (long)Bar, Bar, Chord(n))).ToList();
+
+    static List<NoteEvent> Line(params int[] keys) => keys.Select((k, i) => new NoteEvent(i * (long)Ppq, Ppq, k, 100)).ToList();
+
+    static int[] Pcs(IEnumerable<NoteEvent> notes) => notes.Select(n => n.Key % 12).Distinct().Order().ToArray();
+
+    [Fact]
+    public void A_chord_part_keeps_its_place_in_each_chord_of_the_track()
+    {
+        // Dm7 played for two bars, over a track of Dm7 then G7: the second bar is re-voiced as G7, its root in the bass.
+        var part = Chords(Dm7, Dm7);
+        var played = ChordFollow.Apply(part, Track("Dm7", "G7"), FollowWay.Auto, MidiRoles.Chords);
+        Assert.Equal(Dm7, played.Where(n => n.Start == 0).Select(n => n.Key));
+        var second = played.Where(n => n.Start == Bar).ToList();
+        Assert.Equal(Pcs(G7.Select(k => new NoteEvent(0, 1, k, 1))), Pcs(second));
+        Assert.Equal(7, second.Min(n => n.Key) % 12);
+        Assert.True(second.Average(n => n.Key) - Dm7.Average() is > -7 and < 7);   // near where it was
+    }
+
+    [Fact]
+    public void A_bassline_or_melody_follows_the_way_picked_for_it()
+    {
+        // A one-bar bass riff in C minor (C C Eb F), played over Cm then Fm.
+        var riff = Line(36, 36, 39, 41).Concat(Line(36, 36, 39, 41).Select(n => n with { Start = n.Start + Bar })).ToList();
+        var track = Track("Cm", "Fm");
+        // Move with the root: the second bar is the riff a fourth up (or a fifth down), note for note.
+        var moved = ChordFollow.Apply(riff, track, FollowWay.Root, MidiRoles.Bass);
+        Assert.Equal([41, 41, 44, 46], moved.Where(n => n.Start >= Bar).Select(n => n.Key));
+        // Keep its place: root, root, minor 3rd, 4th of Fm.
+        var placed = ChordFollow.Apply(riff, track, FollowWay.Degree, MidiRoles.Bass);
+        Assert.Equal([5, 5, 8, 10], placed.Where(n => n.Start >= Bar).Select(n => n.Key % 12));
+        // Don't follow, or a riff that already fits: as it is.
+        Assert.Equal(riff, ChordFollow.Apply(riff, track, FollowWay.None, MidiRoles.Bass));
+        Assert.Equal(riff.Take(4), ChordFollow.Apply(riff, track, FollowWay.Degree, MidiRoles.Bass).Take(4));
+
+        // Nudge clashes: a melody holding Bb over Cmaj7 moves to B; the notes that fit, and quick passing notes, stay.
+        var melody = new List<NoteEvent> { new(0, 2 * Ppq, 70, 100), new(2 * Ppq, Ppq / 2, 61, 100), new(3 * Ppq, Ppq, 67, 100) };
+        var nudged = ChordFollow.Apply(melody, Track("Cmaj7"), FollowWay.Auto, MidiRoles.Melody);
+        Assert.Equal([71, 61, 67], nudged.Select(n => n.Key));
+    }
+
+    [Fact]
+    public void A_dropped_part_follows_the_chord_track_live_until_its_changed_by_hand()
+    {
+        Ui.Current = new PlaygroundTests.Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = Playground(db, sounds);
+        p.CurrentSection.ChordTrack = [Block("Dm7", 0, Bar), Block("G7", Bar, Bar)];
+        p.CurrentSection.Bars = 2;
+        // A Dm7 chord part, two bars, dropped from a .mid file.
+        var clip = new MidiClip { Name = "Keys", Ppq = Ppq };
+        clip.Track("Keys").AddRange(Chords(Dm7, Dm7));
+        var file = Path.Combine(_root, "Keys.mid");
+        File.WriteAllBytes(file, MusicOrganiser.Core.Export.MidiWriter.Write(clip));
+        p.DropPartCommand.Execute(new PartDrop(new[] { file }, 0, 0));
+        var keys = Assert.Single(p.Layers);
+        Assert.Equal(MidiRoles.Chords, keys.Role);
+        Assert.Equal(["Dm7", "G7"], p.Chords.Select(c => c.Name));
+        Assert.Equal(7, keys.Layer.Notes.Where(n => n.Start == Bar).Min(n => n.Key) % 12);   // the second bar plays G7
+
+        // G7 dragged back half a bar: the part changes chord half a bar sooner, straight away.
+        p.DragChordCommand.Execute(new ChordDrag(Bar, Bar / 2, Bar + Bar / 2, 9, true));
+        Assert.Contains(keys.Layer.Notes, n => n.Start == Bar / 2 && n.Key % 12 == 7);
+        Assert.Equal("Follows the chord track", p.SelectedClip!.FitText);
+        Assert.Equal("Keep its place", p.SelectedClip.FollowPick);
+
+        // Moved with the root instead, from the clip's menu.
+        Assert.True(p.RunShortcut("playground.followRoot"));
+        Assert.True(p.IsTicked("playground.followRoot"));
+        Assert.Equal(Dm7.Select(k => k + 5), keys.Layer.Notes.Where(n => n.Start == Bar).Select(n => n.Key));
+
+        // Up an octave by hand: it stays as it is when the chords change, until Follow the chords again.
+        Assert.True(p.RunShortcut("playground.octaveUp"));
+        var asItIs = keys.Layer.Notes.ToList();
+        Assert.Equal(Dm7.Select(k => k + 17), asItIs.Where(n => n.Start == Bar).Select(n => n.Key));
+        p.CurrentSection.ChordTrack[1].Chord = Chord("C7");
+        p.DragChordCommand.Execute(new ChordDrag(Bar / 2, Bar / 2, Bar + Bar / 2, 10, true));   // any change to the track
+        Assert.Equal(asItIs, keys.Layer.Notes);
+        Assert.True(p.RunShortcut("playground.fitAgain"));
+        Assert.Equal(Dm7.Select(k => k + 12 - 2), keys.Layer.Notes.Where(n => n.Start == Bar).Select(n => n.Key));   // down a tone to C7, an octave up
+    }
 }

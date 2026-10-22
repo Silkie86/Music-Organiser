@@ -356,9 +356,14 @@
                                         <Border DockPanel.Dock="Right" Classes="lcd" MinWidth="72"><TextBlock Text="{Binding SelectedClip.RoundText}" HorizontalAlignment="Center" /></Border>
                                         <TextBlock Text="Round" Classes="label" ToolTip.Tip="How long one go round is, and how many times it plays" />
                                     </DockPanel>
-                                    <DockPanel ToolTip.Tip="Shift to fit: a clip you move moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Fit again.">
-                                        <Button DockPanel.Dock="Right" Content="Fit again" Classes="tiny" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
-                                                ToolTip.Tip="Changed by hand, so it stays as it is. Fit again lets it move to fit the chords under it again (its octave is kept)." />
+                                    <StackPanel Spacing="3" IsVisible="{Binding SelectedClip.CanFollow}">
+                                        <TextBlock Text="Follows the chords" Classes="label" />
+                                        <ComboBox HorizontalAlignment="Stretch" ItemsSource="{x:Static vm:ClipRow.FollowWays}" SelectedItem="{Binding SelectedClip.FollowPick}"
+                                                  ToolTip.Tip="How it follows the chords on the chord track. Nudge clashes: the line stays as written, only notes that clash move (melodies, soul, pop). Keep its place (in the chord): a root stays a root and a 3rd a 3rd, so it reshapes for each chord (chord parts, gospel and funk bass, arps). Move with root: the whole riff moves with the chord, note for note (riffs, EDM, hip hop). Don't follow: it stays exactly as it is (a pedal note, a drone)." />
+                                    </StackPanel>
+                                    <DockPanel ToolTip.Tip="A clip follows the chords where it's put: on the chord track the way picked above, elsewhere it moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Follow again.">
+                                        <Button DockPanel.Dock="Right" Content="Follow again" Classes="tiny" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
+                                                ToolTip.Tip="Changed by hand, so it stays as it is. Follow again lets it follow the chords under it again (its octave is kept)." />
                                         <TextBlock Text="{Binding SelectedClip.FitText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" VerticalAlignment="Center" />
                                     </DockPanel>
                                     <StackPanel Classes="group">
@@ -512,8 +517,6 @@
                                                         <TextBlock Text="{Binding PreviewText}" />
                                                     </Button>
                                                     <Button Content="{Binding AddText}" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add: on a new track over the highlight (or from bar 1), moved into key. Swap in: in place of the highlighted bars of the clip you picked." />
-                                                    <Button Content="Copy its groove" Classes="tiny" Command="{Binding TakeGrooveCommand}"
-                                                            ToolTip.Tip="Put its feel, rhythm or whole playing on the part picked (block chords played like it)" />
                                                 </StackPanel>
                                             </StackPanel>
                                         </Border>
@@ -605,47 +608,6 @@
                                 <TextBlock TextWrapping="Wrap" Classes="small" TextTrimming="None"
                                            Text="One line on each chord's third or seventh, moving as little as it can: the line jazz melodies and solos are built on." />
                                 <Button Content="Write a guide-tone line" Command="{Binding WriteGuideTonesCommand}" />
-                            </StackPanel>
-                        </ScrollViewer>
-                    </TabItem>
-
-                    <TabItem Header="Groove" FontSize="14">
-                        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel Spacing="8">
-                                <TextBlock TextWrapping="Wrap" Classes="small" TextTrimming="None"
-                                           Text="Take the groove of one part and put it on another: from just its swing and accents to its whole playing, so plain block chords play the way a player's part does." />
-                                <TextBlock Text="Copy from" FontWeight="SemiBold" />
-                                <ComboBox ItemsSource="{Binding GrooveSources}" SelectedItem="{Binding GrooveSource}" HorizontalAlignment="Stretch"
-                                          PlaceholderText="Another part"
-                                          ToolTip.Tip="Another part here. Or press Copy its groove on any suggestion to copy from a part in your library.">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:LayerRow">
-                                            <TextBlock Text="{Binding Name}" />
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                                <TextBlock Text="{Binding GrooveSourceText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                                <TextBlock Text="How much to copy" FontWeight="SemiBold" Margin="0,4,0,0" />
-                                <Slider Minimum="1" Maximum="6" TickFrequency="1" IsSnapToTickEnabled="True" TickPlacement="BottomRight"
-                                        Value="{Binding GrooveAmount}" Margin="0,-4,0,0" />
-                                <!-- Six stops: four of feel (25% to 100%), then rhythm, then the whole playing. -->
-                                <Grid ColumnDefinitions="*,*,*,*,*,*,*,*,*,*" Margin="0,-6,0,0">
-                                    <TextBlock Grid.ColumnSpan="5" Text="Feel" Classes="small" />
-                                    <TextBlock Grid.Column="7" Grid.ColumnSpan="2" Text="Rhythm" Classes="small" HorizontalAlignment="Center" />
-                                    <TextBlock Grid.Column="8" Grid.ColumnSpan="2" Text="Playing" Classes="small" HorizontalAlignment="Right" />
-                                </Grid>
-                                <TextBlock Text="{Binding GrooveAmountText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" MinHeight="34" />
-                                <TextBlock Text="{Binding GrooveTargetText}" FontWeight="SemiBold" Margin="0,4,0,0" />
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Button Classes="tiny" Command="{Binding PreviewGrooveCommand}" IsEnabled="{Binding CanCopyGroove}" ToolTip.Tip="Hear the idea with it">
-                                        <Panel>
-                                            <TextBlock Text="▶ Hear it" IsVisible="{Binding !IsGroovePlaying}" />
-                                            <TextBlock Text="■ Stop" IsVisible="{Binding IsGroovePlaying}" />
-                                        </Panel>
-                                    </Button>
-                                    <Button Content="Copy the groove" Classes="accent" Command="{Binding CopyGrooveCommand}" IsEnabled="{Binding CanCopyGroove}"
-                                            ToolTip.Tip="Put it on the part picked on the left. Undo takes it back. A part written from the chords keeps the groove when the chords change." />
-                                </StackPanel>
                             </StackPanel>
                         </ScrollViewer>
                     </TabItem>

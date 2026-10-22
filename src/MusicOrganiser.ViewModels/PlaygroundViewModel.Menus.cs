@@ -40,8 +40,10 @@ public sealed partial class PlaygroundViewModel
                        M("Write guide tones", "playground.writeGuideTones")]),
         new("Clip", [M("Up a semitone", "playground.up"), M("Down a semitone", "playground.down"),
                      M("Up an octave", "playground.octaveUp"), M("Down an octave", "playground.octaveDown"), Sep,
-                     M("Fit to the chords again", "playground.fitAgain"), M("Smooth inversions", "playground.smooth"), Sep,
-                     M("Find alternatives", "playground.alternatives"), M("Copy its groove", "playground.copyGroove")]),
+                     M("Follow the chords again", "playground.fitAgain"), M("Smooth inversions", "playground.smooth"), Sep,
+                     M("Follow: nudge clashes", "playground.followNudge"), M("Follow: keep its place in the chord", "playground.followDegree"),
+                     M("Follow: move with the root", "playground.followRoot"), M("Don't follow the chords", "playground.followNone"), Sep,
+                     M("Find alternatives", "playground.alternatives")]),
         new("Track", [M("Mute", "playground.mute"), M("Solo", "playground.solo"), Sep,
                       M("Duplicate track", "playground.duplicateTrack"), M("Delete track", "playground.deleteTrack")]),
         new("Harmony", [M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"), Sep,
@@ -50,7 +52,7 @@ public sealed partial class PlaygroundViewModel
                         M("Hear the chord track", "playground.hearChordTrack")]),
         new("View", [M("Zoom in", "playground.zoomIn"), M("Zoom out", "playground.zoomOut"), M("Zoom to fit", "playground.zoomFit"), Sep,
                      M("Loop", "playground.loop"), M("Piano roll", "playground.foldRoll"), Sep,
-                     M("Your MIDI", "playground.tabMidi"), M("Chords", "playground.tabChords"), M("Write", "playground.tabWrite"), M("Groove", "playground.tabGroove"),
+                     M("Your MIDI", "playground.tabMidi"), M("Chords", "playground.tabChords"), M("Write", "playground.tabWrite"),
                      M("Reharm", "playground.reharm"), M("Song", "playground.tabSong")]),
         new("Help", [M("Keyboard shortcuts: see and change them…", "playground.help")]),
     ];
@@ -60,8 +62,10 @@ public sealed partial class PlaygroundViewModel
     [
         M("Cut", "playground.cut"), M("Copy", "playground.copy"), M("Paste", "playground.paste"), M("Duplicate", "playground.duplicate"),
         M("Delete", "playground.delete"), Sep, M("Split", "playground.split"), M("Rename", "playground.rename"), Sep,
-        M("Find alternatives", "playground.alternatives"), M("Fit to the chords again", "playground.fitAgain"),
-        M("Smooth inversions", "playground.smooth"), M("Copy its groove", "playground.copyGroove"), Sep,
+        M("Find alternatives", "playground.alternatives"), M("Follow the chords again", "playground.fitAgain"),
+        M("Smooth inversions", "playground.smooth"), Sep,
+        M("Follow: nudge clashes", "playground.followNudge"), M("Follow: keep its place in the chord", "playground.followDegree"),
+        M("Follow: move with the root", "playground.followRoot"), M("Don't follow the chords", "playground.followNone"), Sep,
         M("Up an octave", "playground.octaveUp"), M("Down an octave", "playground.octaveDown"), Sep, Keys,
     ];
 
@@ -88,7 +92,7 @@ public sealed partial class PlaygroundViewModel
         M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"), Sep, Keys,
     ];
 
-    public const int SuggestTabIndex = 0, ChordsTab = 1, WriteTab = 2, GrooveTab = 3, ReharmTab = 4, SongTab = 5;
+    public const int SuggestTabIndex = 0, ChordsTab = 1, WriteTab = 2, ReharmTab = 3, SongTab = 4;
 
     /// <summary>Whether <paramref name="id"/> can be done now: menu lines that can't are greyed.</summary>
     public bool CanRun(string id)
@@ -105,11 +109,12 @@ public sealed partial class PlaygroundViewModel
             "playground.keepHeardChords" => Harmony.Lane.Count > 0,
             "playground.sendToBitwig" => SendToBitwigCommand.CanExecute(null),
             "playground.fitAgain" => clip is { CanFitAgain: true },
-            "playground.smooth" or "playground.copyGroove" => track is not null,
+            "playground.smooth" => track is not null,
             "playground.mute" or "playground.solo" or "playground.duplicateTrack" or "playground.deleteTrack" => track is not null,
             "playground.rename" => clip is not null || track is not null,
             "playground.cut" or "playground.copy" or "playground.duplicate" or "playground.delete" or "playground.split" or
             "playground.up" or "playground.down" or "playground.octaveUp" or "playground.octaveDown" or "playground.alternatives" => clip is not null,
+            "playground.followNudge" or "playground.followDegree" or "playground.followRoot" or "playground.followNone" => clip is { IsDrums: false },
             _ => true,
         };
     }
@@ -124,12 +129,24 @@ public sealed partial class PlaygroundViewModel
         "playground.foldRoll" => !PianoFolded,
         "playground.mute" => (SelectedClip?.Track ?? SelectedLayer)?.Layer.Muted == true,
         "playground.solo" => (SelectedClip?.Track ?? SelectedLayer)?.Layer.Solo == true,
+        _ when FollowOf(id) is { } way => SelectedClip?.Clip.Way == way,
         _ => false,
+    };
+
+    /// <summary>The way of following the chords a menu line picks, or null when it's another line.</summary>
+    static FollowWay? FollowOf(string id) => id switch
+    {
+        "playground.followNudge" => FollowWay.Nudge,
+        "playground.followDegree" => FollowWay.Degree,
+        "playground.followRoot" => FollowWay.Root,
+        "playground.followNone" => FollowWay.None,
+        _ => null,
     };
 
     /// <summary>Whether a menu line has a tick box at all.</summary>
     public static bool IsToggle(string id) =>
-        id is "playground.jazz" or "playground.classical" or "playground.loop" or "playground.hearChordTrack" or "playground.foldRoll" or "playground.mute" or "playground.solo";
+        id is "playground.jazz" or "playground.classical" or "playground.loop" or "playground.hearChordTrack" or "playground.foldRoll" or "playground.mute" or "playground.solo" ||
+        FollowOf(id) is not null;
 
     // ---- copy and paste ----
 
@@ -214,7 +231,6 @@ public sealed partial class PlaygroundViewModel
             case "playground.keepHeardChords": KeepHeardChords(); return true;
             case "playground.hearChordTrack": HearChordTrack = !HearChordTrack; return true;
             case "playground.tabWrite": RightTab = WriteTab; return true;
-            case "playground.tabGroove": RightTab = GrooveTab; return true;
             case "playground.tabSong": RightTab = SongTab; return true;
             case "playground.foldRoll": PianoFolded = !PianoFolded; return true;
             case "playground.rename": if (clip is null && track is null) return false; RenameAsked?.Invoke(this, EventArgs.Empty); return true;
@@ -228,12 +244,6 @@ public sealed partial class PlaygroundViewModel
                 case "playground.duplicateTrack": DuplicateLayer(track); return true;
                 case "playground.deleteTrack": RemoveLayer(track); return true;
                 case "playground.smooth": SelectedLayer = track; SmoothInversionsCommand.Execute(null); return true;
-                case "playground.copyGroove":
-                    GrooveMatch = null;
-                    GrooveSource = track;
-                    RightTab = GrooveTab;
-                    Message = $"Copying the groove of {track.Layer.Name}. Pick the part to copy it onto, then Copy the groove.";
-                    return true;
             }
         }
         if (clip is null) return false;
@@ -243,6 +253,7 @@ public sealed partial class PlaygroundViewModel
             case "playground.cut": CopyClip(clip, cut: true); return true;
             case "playground.alternatives": FindAlternatives(clip); return true;
         }
+        if (FollowOf(id) is { } follow && !clip.IsDrums) { SetFollow(clip, follow); return true; }
         return false;
     }
 }

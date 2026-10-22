@@ -119,6 +119,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var keep = SelectedLayer is { } sel ? IndexOf(sel) : -1;
         var keepClip = SelectedClip is { } sc ? (IndexOf(sc.Track), sc.Track.Layer.Clips.IndexOf(sc.Clip)) : (-1, -1);
         foreach (var l in Section.Layers) l.Render();
+        _followedFor = ChordTrackKey();
         Layers.Clear();
         foreach (var l in Section.Layers) Layers.Add(new LayerRow(this, l));
         SelectedLayer = keep >= 0 && keep < Layers.Count ? Layers[keep] : Layers.FirstOrDefault();
@@ -132,7 +133,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         FeelPick = FeelHere.ToString();
         _showing = was;
         HarmonyChanged();
-        RefreshGrooveSources();
         EmptyChanged();
         OnPropertyChanged(nameof(Length));
         OnPropertyChanged(nameof(ViewFrom));
@@ -294,6 +294,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>After every change: saved straight away, so nothing is lost if the app closes.</summary>
     void Changed(bool harmony = true)
     {
+        if (harmony && ChordTrackKey() != _followedFor) FollowChordTrack();
         // Parts written from the chords follow when an edit changed the chords heard, or moved or stretched a written clip.
         if (harmony && Section.Layers.Any(l => l.Written.Length > 0) && _writtenFor != WrittenKey(LaneForWriting()))
             RewriteWritten();
@@ -305,6 +306,28 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         else RefreshEnergy();
         EmptyChanged();
         if (_playing) _ = PlayAsync(keepPlace: true);
+    }
+
+    /// <summary>The chord track as parts last followed it.</summary>
+    string _followedFor = "";
+
+    string ChordTrackKey() => string.Join(" ", Section.ChordTrack.Select(c => $"{c.Start}+{c.Length}:{c.Root}:{c.Mask}/{c.Bass}"));
+
+    /// <summary>
+    /// The chord track changed (a chord stretched, moved, added or taken off): every part not changed by hand follows it
+    /// straight away (Solomon, 2026-10-22: parts change live as a chord is stretched).
+    /// </summary>
+    void FollowChordTrack()
+    {
+        _followedFor = ChordTrackKey();
+        foreach (var row in Layers)
+        {
+            if (row.Layer.Written.Length > 0) continue;
+            foreach (var c in row.Layer.Clips) Refit(row.Layer, c);
+            row.Layer.Render();
+            row.Changed();
+        }
+        SelectedClip?.Changed();
     }
 
     [RelayCommand]
@@ -550,13 +573,13 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             Clips = [PlaygroundClip.Of(name, role, notes, loop > 0 ? loop : len, at, len, sourcePath, hash)],
         };
         Reach(at + len);
+        if (written.Length == 0 && HasChordTrack) Refit(layer, layer.Clips[0]);   // it follows the chord track
         layer.Render();
         Section.Layers.Add(layer);
         var row = new LayerRow(this, layer);
         Layers.Add(row);
         SelectedLayer = row;
         SelectedClip = new ClipRow(this, row, layer.Clips[0]);
-        RefreshGrooveSources();
         return layer;
     }
 
@@ -608,7 +631,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Layers.Remove(row);
         if (SelectedLayer == row) SelectedLayer = Layers.Count == 0 ? null : Layers[Math.Clamp(i, 0, Layers.Count - 1)];
         if (SelectedClip?.Track == row) SelectedClip = null;
-        RefreshGrooveSources();
         Changed();
     }
 
@@ -675,6 +697,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var clips = picked >= 0 && picked < layer.Clips.Count ? [layer.Clips[picked]] : layer.Clips.ToList();
         foreach (var c in clips)
         {
+            if (c.Under.Count > 0) c.Bake();   // following the chord track: changed as it plays, all of it
             var at = c.RepeatAt(0);
             var played = Inversions.Turn(c.Notes, c.Inversion).Select(n => n with { Key = Math.Clamp(n.Key + c.Shift(0), 0, 127) }).ToList();
             var lane = LaneAt(Harmony.Lane, at, at + c.Loop);
@@ -721,6 +744,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
                                   : [.. Enumerable.Repeat(clip.Fits[0], (int)-into), .. clip.Fits];
         }
         clip.Offset = Math.Max(0, edit.Offset);
+        if (clip.Start != wasStart && clip.End == wasEnd) clip.StartMoved(clip.Start - wasStart);
         var to = from;
         if (edit.Row != Layers.IndexOf(from))
         {
@@ -752,7 +776,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         to.Changed();
         SelectedLayer = to;
         SelectedClip = new ClipRow(this, to, clip);
-        RefreshGrooveSources();
         Changed();
         if (clip.Fits.Any(f => f != 0))
         {
@@ -769,10 +792,25 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// it's pinned (changed by hand), written from the chords, drums, or a chord part (chord parts are what the chords
     /// are heard from). A bassline fits the chord parts only.
     /// </summary>
+    /// <remarks>
+    /// Chords first, step 2 (Solomon, 2026-10-22): over the chord track it follows the chords there, the way picked for
+    /// it (<see cref="PlaygroundClip.Way"/>). Nudging clashes still moves each go round to fit first.
+    /// </remarks>
     void Refit(PlaygroundLayer layer, PlaygroundClip clip)
     {
         var role = clip.Role == MidiRoles.Other ? layer.Role : clip.Role;
-        if (clip.Pinned || layer.Written.Length > 0 || role is MidiRoles.Chords or MidiRoles.Drums) { if (!clip.Pinned) clip.Fits = []; return; }
+        if (clip.Pinned) return;
+        clip.PlaysAs = role;
+        var way = clip.Way;
+        clip.Under = layer.Written.Length == 0 && way != FollowWay.None
+            ? Section.ChordTrack.Where(c => c.Start < clip.End && c.End > clip.Start).Select(c => new PlaygroundChord { Start = c.Start - clip.Start, Length = c.Length, Chord = c.Chord }).ToList()
+            : [];
+        if (layer.Written.Length > 0 || role is MidiRoles.Chords or MidiRoles.Drums || way == FollowWay.None ||
+            clip.Under.Count > 0 && way is FollowWay.Degree or FollowWay.Root)
+        {
+            clip.Fits = [];
+            return;
+        }
         var leaveOut = role == MidiRoles.Bass ? Section.Layers.Where(l => l.Role != MidiRoles.Chords).ToList() : [layer];
         var lane = SectionHarmony.Of(Section, _session.Key, _session.Style, leaveOut).Lane;
         clip.Fits = ClipFit.Repeats(clip, lane, _session.Style);
@@ -871,6 +909,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         piece.Length = to - from;
         piece.Offset = into % loop;
         piece.Fits = [.. clip.Fits.Skip((int)(into / loop))];
+        piece.StartMoved(from - clip.Start);
         return piece;
     }
 
@@ -902,7 +941,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         to.Changed();
         SelectedLayer = to;
         SelectedClip = new ClipRow(this, to, clip);
-        RefreshGrooveSources();
         return to;
     }
 
@@ -1015,6 +1053,28 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             Refit(row.Track.Layer, c);
         });
 
+    /// <summary>
+    /// How the clip follows the chord track, picked (Solomon, 2026-10-22: "some might fit better for different types of
+    /// music"): it follows again that way, as Follow the chords again does.
+    /// </summary>
+    internal void SetFollow(ClipRow row, FollowWay way)
+    {
+        EditClip(row, c =>
+        {
+            c.Follow = way;
+            if (c.Pinned)
+            {
+                c.Pinned = false;
+                c.Transpose = (int)Math.Round(c.Transpose / 12.0) * 12;
+                c.Inversion = 0;
+            }
+            Refit(row.Track.Layer, c);
+        });
+        Message = way == FollowWay.None ? $"{row.Clip.Name} stays as it is, whatever the chords."
+            : HasChordTrack ? $"{row.Clip.Name} follows the chord track: {ChordFollow.Label(way).ToLowerInvariant()}."
+            : $"{row.Clip.Name} will {ChordFollow.Label(way).ToLowerInvariant()} when there are chords on the chord track.";
+    }
+
     /// <summary>Its chords turned over by hand, up or down: it stays like that until Fit again.</summary>
     internal void TurnClip(ClipRow row, int steps, int gesture = 0) => EditClip(row, c => { c.Inversion += steps; c.Pinned = true; }, gesture: gesture);
 
@@ -1101,7 +1161,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     internal void SetClipNotes(ClipRow row, IReadOnlyList<NoteEvent> notes) =>
         EditClip(row, c =>
         {
-            c.Notes = notes.Select(n => n with { Key = Math.Clamp(n.Key - c.Shift(0), 0, 127) }).ToList();
+            if (c.Under.Count > 0)
+            {
+                // Following the chord track: the clip keeps playing just as it does, with the go round on the piano roll as
+                // changed (and from then on it's one go round as long as the clip, so all of it shows).
+                long from = c.RepeatAt(0) - c.Start, to = from + c.Loop;
+                c.Bake();
+                c.Notes = c.Notes.Where(n => n.Start < from || n.Start >= to)
+                           .Concat(notes.Select(n => n with { Start = n.Start + from }).Where(n => n.Start >= 0 && n.Start < c.Length)).ToList();
+            }
+            else c.Notes = notes.Select(n => n with { Key = Math.Clamp(n.Key - c.Shift(0), 0, 127) }).ToList();
             c.Inversion = 0;   // the notes as shown are already turned
             c.Pinned = true;   // changed by hand: it stays as it is until Fit again
             row.Track.Layer.Written = "";
@@ -1322,146 +1391,20 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     static IReadOnlyList<NoteEvent> WithGroove(PlaygroundLayer layer, IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length) =>
         layer.GrooveData.Length == 0 ? notes : Groove.Copy(notes, layer.GrooveNotes, layer.GrooveDepth, length, lane, layer.GrooveAmount);
 
-    // ---- copying a groove ----
-
-    /// <summary>
-    /// How much of the other part's groove to copy, one slider (Solomon, 2026-10-17: "make how much to copy a slider"):
-    /// 1–4 its feel at 25%–100% (swing, push and pull, accents), 5 its rhythm too (your chords struck on its hits),
-    /// 6 its whole playing (block chords played the way it plays its chords).
-    /// </summary>
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(GrooveAmountText))] double _grooveAmount = 4;
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(GrooveSourceText), nameof(CanCopyGroove))] LayerRow? _grooveSource;
-    /// <summary>A part from the suggestions to take the groove from, instead of one of the section's own.</summary>
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(GrooveSourceText), nameof(CanCopyGroove))] PlaygroundMatchRow? _grooveMatch;
-    [ObservableProperty] bool _isGroovePlaying;
-    [ObservableProperty] bool _smoothIncoming = true;
-
-    public ObservableCollection<LayerRow> GrooveSources { get; } = [];
-
-    (GrooveDepth Depth, double Amount) GrooveChoice => GrooveAmount switch
-    {
-        >= 5.5 => (GrooveDepth.Playing, 1),
-        >= 4.5 => (GrooveDepth.Rhythm, 1),
-        _ => (GrooveDepth.Feel, Math.Clamp(Math.Round(GrooveAmount) / 4, 0.25, 1)),
-    };
-
-    public string GrooveAmountText => GrooveChoice switch
-    {
-        (GrooveDepth.Playing, _) => "Its whole playing: your chords played the way it plays its chords, with its rhythm, voicing moves and touch.",
-        (GrooveDepth.Rhythm, _) => "Its rhythm too: your chords, as they're voiced, struck when it strikes, as long and as hard.",
-        (_, var a) => $"Its feel, {a * 100:0}%: your notes stay put but swing, push, pull and accent like it{(a < 1 ? ", part of the way" : "")}.",
-    };
-
-    IReadOnlyList<NoteEvent>? GrooveNotesSource => GrooveMatch?.Match.Notes ?? GrooveSource?.Layer.Notes;
-    string GrooveSourceName => GrooveMatch?.Title ?? GrooveSource?.Name ?? "";
-
-    public string GrooveSourceText => GrooveNotesSource is { } src
-        ? $"{GrooveSourceName}: {(Groove.Of(src) is { } g ? g.Describe() : "too few notes to hear a groove")}"
-        : "Pick the part to copy from.";
-
-    public bool CanCopyGroove => GrooveNotesSource is { Count: > 2 } && SelectedLayer is not null;
-
     partial void OnSelectedLayerChanged(LayerRow? value)
     {
         // Picking a track picks its first clip, unless one of its clips is picked already.
         if (SelectedClip?.Track != value)
             SelectedClip = value is { Layer.Clips.Count: > 0 } t ? new ClipRow(this, t, t.Layer.Clips[0]) : null;
-        RefreshGrooveSources();
-        OnPropertyChanged(nameof(CanCopyGroove));
-        OnPropertyChanged(nameof(GrooveTargetText));
         OnPropertyChanged(nameof(IsChordLayer));
     }
 
-    public string GrooveTargetText => SelectedLayer is { } s ? $"Onto {s.Name}" : "Pick a part on the left to put the groove on.";
     public bool IsChordLayer => SelectedLayer?.Role == MidiRoles.Chords;
 
-    void RefreshGrooveSources()
-    {
-        var keep = GrooveSource?.Layer;
-        GrooveSources.Clear();
-        foreach (var row in Layers.Where(r => r != SelectedLayer)) GrooveSources.Add(row);
-        // A suggestion picked to copy from stays picked when you pick another part to put it on.
-        if (GrooveMatch is not null) { GrooveSource = null; return; }
-        GrooveSource = GrooveSources.FirstOrDefault(r => r.Layer == keep) ?? GrooveSources.FirstOrDefault(r => r.Role == MidiRoles.Drums)
-                       ?? GrooveSources.FirstOrDefault();
-    }
+    /// <summary>Chord parts put in are turned into the inversions that flow best (Settings › Playground).</summary>
+    [ObservableProperty] bool _smoothIncoming = true;
 
-    partial void OnGrooveSourceChanged(LayerRow? value)
-    {
-        if (value is not null) GrooveMatch = null;
-    }
-
-    /// <summary>
-    /// The picked part (its picked clip, when one is) with the groove on it, as it would be: a copy of the track, so
-    /// nothing changes until it's kept.
-    /// </summary>
-    PlaygroundLayer? Grooved(LayerRow row)
-    {
-        if (GrooveNotesSource is not { Count: > 2 } src) return null;
-        var (depth, amount) = GrooveChoice;
-        var l = row.Layer;
-        var copy = l.Copy();
-        MapClips(copy, (played, length, heard) =>
-        {
-            // A written part is grooved from its plain writing, so copying again replaces the groove instead of piling on.
-            var lane = row.IsWritten ? heard : row.Role == MidiRoles.Chords ? ChordLane.Detect(played.ToList(), length) : heard;
-            var plain = row.IsWritten && lane.Count > 0 ? Written(l.Written, lane, length) : played;
-            if (depth == GrooveDepth.Playing && lane.Count == 0) lane = heard;
-            return Groove.Copy(plain, src, depth, length, lane, amount);
-        }, like: l);
-        return copy;
-    }
-
-    [RelayCommand]
-    void CopyGroove()
-    {
-        if (SelectedLayer is not { } row || Grooved(row) is not { } grooved) return;
-        if (grooved.Notes.Count == 0)
-        {
-            Message = "That gave no notes: the part to copy from needs chords for its whole playing to come across. Try less on the slider.";
-            return;
-        }
-        var (depth, amount) = GrooveChoice;
-        var from = GrooveSourceName;
-        var src = GrooveNotesSource!;
-        EditLayer(row, l =>
-        {
-            l.Clips = grooved.Clips;
-            if (l.Written.Length > 0)
-            {
-                // Remembered, so it's put on again when the chords change.
-                l.GrooveNotes = src;
-                l.GrooveDepth = depth;
-                l.GrooveAmount = amount;
-            }
-            l.GrooveFrom = from;
-        });
-        StopPlaying();
-        Message = $"{row.Name} now has {(depth == GrooveDepth.Playing ? "the whole playing" : depth == GrooveDepth.Rhythm ? "the rhythm and feel" : "the feel")} of {from}. Undo takes it back.";
-    }
-
-    /// <summary>The section with the picked part grooved, to hear before keeping it.</summary>
-    [RelayCommand]
-    async Task PreviewGroove()
-    {
-        if (IsGroovePlaying) { StopPlaying(); return; }
-        if (SelectedLayer is not { } row || Grooved(row) is not { } grooved) return;
-        StopPlaying();
-        var channels = PlaygroundSession.Audible(Section).Where(l => l != row.Layer).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume)).ToList();
-        channels.Add(Channel(row.Name, row.Layer.Program, grooved.Notes, row.Layer.Volume));
-        IsGroovePlaying = await PlayAsync(instead: channels);
-    }
-
-    /// <summary>A suggestion's groove, to copy onto the picked part (from the Groove button on a suggestion).</summary>
-    internal void TakeGrooveFrom(PlaygroundMatchRow row)
-    {
-        GrooveSource = null;
-        GrooveMatch = row;
-        RightTab = GrooveTab;
-        Message = $"Copying from {row.Title}. Pick how much on the Groove tab, then Copy the groove.";
-    }
-
-    /// <summary>The tab showing on the right: Suggest, Chords, Write, Groove, Reharm, Song.</summary>
+    /// <summary>The tab showing on the right: Suggest, Chords, Write, Reharm, Song.</summary>
     [ObservableProperty] int _rightTab;
 
     // ---- smooth inversions ----
@@ -1717,6 +1660,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             c.Transpose = 0;
             c.Inversion = 0;   // Render already turned them
             c.Fits = [];
+            c.Under = [];
             c.Pinned = true;
             layer.Render();
         }
@@ -2448,7 +2392,6 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         foreach (var m in Matches) m.IsPlaying = m.IsPreparing = false;
         foreach (var r in Ideas) r.IsPlaying = false;
         foreach (var r in HarmoniseIdeas) r.IsPlaying = false;
-        IsGroovePlaying = false;
         Trying = null;
     }
 
@@ -2873,20 +2816,40 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
 
     /// <summary>What it plays as: its own kind, or its track's when it has none.</summary>
     internal string Role => clip.Role == MidiRoles.Other ? track.Role : clip.Role;
-    bool IsDrums => clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums;
+    internal bool IsDrums => clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums;
 
     /// <summary>One go round, as it first plays (moved by hand and to fit).</summary>
-    public IReadOnlyList<NoteEvent> Notes => Inversions.Turn(clip.Notes, clip.Inversion).Select(n => n with { Key = Math.Clamp(n.Key + clip.Shift(0), 0, 127) }).ToList();
+    public IReadOnlyList<NoteEvent> Notes => clip.Under.Count > 0 ? clip.FirstRound()
+        : Inversions.Turn(clip.Notes, clip.Inversion).Select(n => n with { Key = Math.Clamp(n.Key + clip.Shift(0), 0, 127) }).ToList();
     public long Loop => clip.Loop;
     public bool IsChords => clip.Role == MidiRoles.Chords;
 
     /// <summary>What shift to fit is doing with it, to show beside its tools.</summary>
     public string FitText => track.IsWritten ? "Written from the chords: follows them"
-        : clip.Role is MidiRoles.Chords or MidiRoles.Drums || track.Role is MidiRoles.Chords or MidiRoles.Drums ? ""
+        : IsDrums ? ""
         : clip.Pinned ? "Set by hand: stays as it is"
+        : clip.Under.Count > 0 ? "Follows the chord track"
+        : clip.Way == FollowWay.None ? "Doesn't follow the chords"
+        : clip.Role is MidiRoles.Chords || track.Role is MidiRoles.Chords ? ""
         : clip.Fits.All(f => f == 0) ? "Fits where it is"
         : "Moved to fit: " + string.Join(" ", clip.Fits.Select(f => f == 0 ? "0" : f > 0 ? $"+{f}" : $"{f}"));
     public bool CanFitAgain => clip.Pinned && clip.Role != MidiRoles.Drums && track.Role != MidiRoles.Drums;
+
+    /// <summary>The ways it can follow the chord track, for the inspector's list.</summary>
+    public static IReadOnlyList<string> FollowWays { get; } =
+        [.. new[] { FollowWay.Nudge, FollowWay.Degree, FollowWay.Root, FollowWay.None }.Select(ChordFollow.ShortLabel)];
+
+    /// <summary>How it follows the chord track; picking another follows that way (Solomon, 2026-10-22).</summary>
+    public string FollowPick
+    {
+        get => ChordFollow.ShortLabel(clip.Way);
+        set
+        {
+            var way = Enum.GetValues<FollowWay>().FirstOrDefault(w => w != FollowWay.Auto && ChordFollow.ShortLabel(w) == value);
+            if (way != FollowWay.Auto && way != clip.Way) owner.SetFollow(this, way);
+        }
+    }
+    public bool CanFollow => !IsDrums && !track.IsWritten;
 
     /// <summary>Every other part playing during that go round, grey behind it on the piano roll.</summary>
     public IReadOnlyList<NoteEvent> Guide
@@ -3039,6 +3002,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         OnPropertyChanged(nameof(Loop));
         OnPropertyChanged(nameof(FitText));
         OnPropertyChanged(nameof(CanFitAgain));
+        OnPropertyChanged(nameof(FollowPick));
         OnPropertyChanged(nameof(Highlight));
         GuideChanged();
     }
@@ -3117,8 +3081,6 @@ public sealed partial class PlaygroundMatchRow(PlaygroundViewModel owner, Playgr
     /// <summary>What Add does: a new track, or (with a highlight in a clip) swapping those bars of it.</summary>
     public string AddText { get; } = owner.SwapTarget is null ? "Add" : "Swap in";
     [RelayCommand] Task Preview() => owner.PreviewMatch(this);
-    /// <summary>Copy its groove (up to its whole playing) onto the part picked in the section.</summary>
-    [RelayCommand] void TakeGroove() => owner.TakeGrooveFrom(this);
 }
 
 /// <summary>A reharmonisation idea, to hear and keep.</summary>

@@ -1252,7 +1252,7 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
-    public void Copying_a_groove_onto_written_chords_keeps_it_when_the_chords_change()
+    public void A_groove_copied_onto_written_chords_in_an_older_idea_is_kept_when_the_chords_change()
     {
         Ui.Current = new Headless();
         UiWork.InBackground = false;
@@ -1268,11 +1268,10 @@ public class PlaygroundTests : IDisposable
         p.WriteBassCommand.Execute(null);
         var chords = p.Layers[1];
         p.SelectedLayer = chords;
-        // Copy the walking bass's rhythm: the held chords are now struck on every beat.
-        p.GrooveSource = p.GrooveSources.Single(r => r.Role == MidiRoles.Bass);
-        p.GrooveAmount = 5;
-        p.CopyGrooveCommand.Execute(null);
-        Assert.Equal(16, chords.Notes.Select(n => n.Start).Distinct().Count());
+        // The walking bass's rhythm copied onto the chords (the Groove tab did this before chords first, step 2).
+        chords.Layer.GrooveNotes = p.Layers.Single(r => r.Role == MidiRoles.Bass).Layer.Notes;
+        chords.Layer.GrooveDepth = GrooveDepth.Rhythm;
+        chords.Layer.GrooveFrom = "Bass";
         Assert.Contains("groove of", chords.Details);
 
         // New chords played on the chord part: the written part is written again and struck on the beats again.
