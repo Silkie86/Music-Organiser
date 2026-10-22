@@ -12,7 +12,7 @@ namespace MusicOrganiser.Core.Midi.Playground;
 public sealed class SectionHarmony
 {
     /// <summary>Below this a heard key is a guess (see <see cref="MusicTheory.EstimateMidiKey"/>): the MIDI page hides it too.</summary>
-    public const double MinKeyConfidence = 0.05;
+    public const double MinKeyConfidence = MusicTheory.SureMidiKey;
 
     public required IReadOnlyList<NoteEvent> Notes { get; init; }
     public required IReadOnlyList<TimedChord> Lane { get; init; }
@@ -72,9 +72,12 @@ public sealed class SectionHarmony
                 for (var p = 0; p < 12; p++)
                     if ((c.Chord.Mask >> p & 1) != 0) chroma[p] += 0.5 * c.Length / ChordLane.Bar + (p == c.Chord.Root ? 0.25 : 0);
             // A key the notes don't clearly point at (a gospel lift, half in C and half in Db) is no key at all.
-            key = MusicTheory.EstimateMidiKey(chroma, lane.Count > 0 ? lane[0].Chord.Root : null) is { Confidence: >= MinKeyConfidence } heard ? heard : null;
-            // A ii–V–I lane says its key louder than the notes do: home is where the last V resolves.
-            if (HomeOf(lane) is { } home && key is { } est && est.Tonic != home.Tonic) key = new KeyEstimate(home.Tonic, home.Minor, est.Confidence);
+            var heard = MusicTheory.EstimateMidiKey(chroma, lane.Count > 0 ? (lane[0].Chord.Root, MusicTheory.IsMinorChord(lane[0].Chord.Root, lane[0].Chord.Mask)) : null);
+            key = heard is { Confidence: >= MinKeyConfidence } ? heard : null;
+            // A ii–V–I lane says its key louder than the notes do: home is where the last V resolves, even where the
+            // notes alone are too busy to be sure.
+            if (HomeOf(lane) is { } home && key?.Tonic != home.Tonic)
+                key = new KeyEstimate(home.Tonic, home.Minor, Math.Max(heard?.Confidence ?? 0, MinKeyConfidence));
         }
         return new SectionHarmony
         {
@@ -104,23 +107,27 @@ public sealed class SectionHarmony
         var chordNotes = pieces.Where(p => p.Role == MidiRoles.Chords).SelectMany(p => p.Notes).Where(n => !n.Muted).ToList();
         // The bassline counts while the chords sound, passing notes and all: the chord reader hears a walking bass's
         // passing and approach notes as passing (Dm7 stays Dm7, not D7#9), and a bass on the one under chords pushed onto
-        // the and of four still names them. Where the chord part rests, an 808 line on its own isn't read as chords.
-        var sounding = Sounding(chordNotes);
+        // the and of four still names them. Where the chord part rests a bar or more, an 808 line on its own isn't read
+        // as chords; a shorter gap is still the chords playing, so short stabs let go before the bass on the one (or an
+        // offbeat skank) are still read over their bass: Dm9, not Fmaj7. A bass struck up to half a beat before the
+        // chords come in counts with them.
+        var sounding = Sounding(chordNotes, joinUnder: ChordLane.Bar);
         var notes = chordNotes.Concat(pieces.Where(p => p.Role == MidiRoles.Bass).SelectMany(p => p.Notes)
-                                            .Where(n => !n.Muted && Sounds(sounding, n.Start, n.Start + Math.Max(1, n.Length))))
+                                            .Where(n => !n.Muted && Sounds(sounding, n.Start, n.Start + Math.Max(PhraseAnalyser.Ppq / 2 + 1, n.Length))))
                               .Where(UnderChords)
                               .Concat(all.Where(n => !UnderChords(n))).OrderBy(n => n.Start).ToList();
         return (notes, chordSpans.SelectMany(s => new[] { s.Start, s.End }).Distinct().ToList());
     }
 
     /// <summary>Where at least one of the notes sounds: stretches in order, none touching the next.</summary>
-    static List<(long Start, long End)> Sounding(IEnumerable<NoteEvent> notes)
+    /// <param name="joinUnder">A gap shorter than this (ticks) between two stretches counts as sounding too.</param>
+    static List<(long Start, long End)> Sounding(IEnumerable<NoteEvent> notes, long joinUnder = 0)
     {
         var spans = new List<(long Start, long End)>();
         foreach (var n in notes.OrderBy(n => n.Start))
         {
             var end = n.Start + Math.Max(1, n.Length);
-            if (spans.Count > 0 && n.Start <= spans[^1].End) spans[^1] = (spans[^1].Start, Math.Max(spans[^1].End, end));
+            if (spans.Count > 0 && n.Start <= spans[^1].End || spans.Count > 0 && n.Start - spans[^1].End < joinUnder) spans[^1] = (spans[^1].Start, Math.Max(spans[^1].End, end));
             else spans.Add((n.Start, end));
         }
         return spans;
@@ -191,10 +198,7 @@ public sealed class SectionHarmony
         var bars = PhraseAnalyser.BarsOf(padded);
         if (bars * ChordLane.Bar < Length) padded.Add(new NoteEvent(Length - 1, 1, notes[^1].Key, 1));
         // The chords are the lane's (typed, or heard from the chord and bass parts), so the tune doesn't colour them.
-        var chords = new List<PhraseChord>();
-        foreach (var c in Lane)
-            if (chords.Count == 0 || chords[^1] != PhraseChord.Of(c.Chord)) chords.Add(PhraseChord.Of(c.Chord));
-        return HarmonyTarget.FromPart(name, MidiRoles.Chords, padded, chroma, chords, Key);
+        return HarmonyTarget.FromPart(name, MidiRoles.Chords, padded, chroma, PhraseAnalyser.Progression(Lane), Key);
     }
 }
 
@@ -218,10 +222,15 @@ public static class SectionFit
         return 0.6;
     }
 
-    /// <summary>0 to 1, or null when no note falls on a chord.</summary>
+    /// <summary>
+    /// 0 to 1, or null when no note falls on a chord. <paramref name="sit"/> and <paramref name="strongTension"/> swap in
+    /// other note values and strong-beat weights (the theory bench tries learned ones).
+    /// </summary>
     public static double? Score(IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length, string role,
-                                HarmonyStyle style = HarmonyStyle.JazzGospel)
+                                HarmonyStyle style = HarmonyStyle.JazzGospel, Func<ChordSymbol, int, double>? sit = null,
+                                double strongTension = 0.6)
     {
+        double Sit(ChordSymbol chord, int pc) => sit?.Invoke(chord, pc) ?? ChordScales.Sit(chord, pc, style);
         if (notes.Count == 0 || lane.Count == 0) return null;
         var sorted = notes.Where(n => n.Start < length).OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
         var bass = role == MidiRoles.Bass;
@@ -233,15 +242,18 @@ public static class SectionFit
             var n = sorted[i];
             var pc = n.Key % 12;
             // A held note is heard against every chord it sounds over, not just the one it starts on: an E held from
-            // C7 into F7 rubs on the F7. The pieces held over count a little less than where the note is struck.
+            // C7 into F7 rubs on the F7. The pieces held over count a little less than where the note is struck, and by
+            // how long they last: a legato note running a few ticks past the change counts next to nothing. The
+            // strong-beat rules below judge held pieces too: on 387 pop songs that tells a song's own melody from
+            // another's better (AUC 0.808 against 0.793 without), as a tension held onto a new downbeat is heard there.
             foreach (var (chord, start, len, struck) in ChordLane.Under(lane, n.Start, Math.Min(n.Length, length - n.Start)))
             {
                 var metric = Metric(start);
-                var w = Math.Clamp(len / (double)Beat, 0.25, 2) * metric * (struck ? 1 : 0.8);
-                var v = ChordScales.Sit(chord, pc, style);
+                var w = (struck ? Math.Clamp(len / (double)Beat, 0.25, 2) : Math.Min(len / (double)Beat, 2) * 0.8) * metric;
+                var v = Sit(chord, pc);
                 // A tension on beat 1 or 3 of a tune counts less than a chord note there: melodies land on chord
                 // notes on the strong beats and colour the weak ones.
-                if (melody && jazz && metric >= 1.25 && v > 0 && v < 1) v *= 0.6;
+                if (melody && jazz && metric >= 1.25 && v > 0 && v < 1) v *= strongTension;
                 if (bass && metric >= 1.25)
                     v = pc == chord.Bass ? 1 : pc == chord.Root ? 0.9 : v * 0.75;
                 if (struck && v < 0.55 && n.Length <= Beat / 2 && metric < 1.25)
@@ -249,7 +261,7 @@ public static class SectionFit
                     // A short note between beats: a passing or approach note if the next note steps to one that sits.
                     var next = sorted.Skip(i + 1).FirstOrDefault(m => m.Start > n.Start);
                     if (next.Length > 0 && Math.Abs(next.Key - n.Key) <= 2 && ChordLane.At(lane, next.Start + 1) is { } then &&
-                        ChordScales.Sit(then, next.Key % 12, style) >= 0.75)
+                        Sit(then, next.Key % 12) >= 0.75)
                         v = Math.Max(v, jazz ? 0.65 : 0.55);
                     else v = Math.Max(v, 0.15);
                 }
@@ -455,6 +467,28 @@ public static class SectionMatcher
     /// <summary>The most stretches of one part tried (a stretch starts on each of its bars).</summary>
     const int MostStretches = 32;
 
+    /// <summary>How many of a part's stretches (each in a key) are judged in full: the rest are passed over on a quick look.</summary>
+    const int JudgedStretches = 4;
+
+    /// <summary>
+    /// A part's stretches as long as the bars being swapped, one starting on each of its bars where they start in the bar
+    /// (going round from its end into its start), with where each starts, and how long the part goes round.
+    /// </summary>
+    static (List<(long From, List<NoteEvent> Piece)> Pieces, long Period) Stretches(IReadOnlyList<NoteEvent> raw, SwapAround around, long length)
+    {
+        var period = Math.Max(1, PhraseAnalyser.BarsOf(raw)) * (long)ChordLane.Bar;
+        var round = Loop(raw, period, period + length);
+        var pieces = new List<(long, List<NoteEvent>)>();
+        var tried = 0;
+        for (var from = around.Phase % ChordLane.Bar; from < period && tried < MostStretches; from += ChordLane.Bar, tried++)
+        {
+            var piece = round.Where(n => n.Start >= from && n.Start < from + length)
+                             .Select(n => n with { Start = n.Start - from, Length = Math.Min(n.Length, from + length - n.Start) }).ToList();
+            if (piece.Count > 0) pieces.Add((from, piece));
+        }
+        return (pieces, period);
+    }
+
     /// <summary>
     /// The stretch of a part that best fills bars being swapped (Solomon, 2026-10-20: "select a part of a clip and have
     /// suggestions to replace that with midi suggested so it finds a fragment that goes"). Each stretch as long as the
@@ -466,39 +500,45 @@ public static class SectionMatcher
                                     SwapAround around, double[]? energy, SectionFeel feel)
     {
         var length = section.Length;
-        var period = Math.Max(1, PhraseAnalyser.BarsOf(raw)) * (long)ChordLane.Bar;
-        var round = Loop(raw, period, period + length);
+        var (pieces, period) = Stretches(raw, around, length);
         var lane = section.Lane;
         var chords = role == MidiRoles.Chords && lane.Count > 0;
         // How well each of the 12 notes sits on the chords there, by how long each chord lasts: picks the keys worth trying.
         var sits = new double[12];
         foreach (var c in lane)
             for (var pc = 0; pc < 12; pc++) sits[pc] += c.Length * ChordScales.Sit(c.Chord, pc, section.Style);
-        (double Score, List<NoteEvent> Notes, long From, int Move, double? Sits, double? Follow, double Joins)? best = null;
-        var tried = 0;
-        for (var from = around.Phase % ChordLane.Bar; from < period && tried < MostStretches; from += ChordLane.Bar, tried++)
+        var laneLength = Math.Max(1, lane.Sum(c => c.Length));
+        // A quick look first: how its notes sit on the chords there by pitch alone, and how it joins on. Only the best few
+        // are judged in full (the notes against each chord in time, a chord part's own chords read), so a Suggest stays quick.
+        var quick = new List<(double Quick, long From, List<NoteEvent> Piece, int Shift, List<NoteEvent> Moved, double Joins)>();
+        foreach (var (from, piece) in pieces)
         {
-            var piece = round.Where(n => n.Start >= from && n.Start < from + length)
-                             .Select(n => n with { Start = n.Start - from, Length = Math.Min(n.Length, from + length - n.Start) }).ToList();
-            if (piece.Count == 0) continue;
-            var own = chords ? ChordLane.Detect(piece, length) : null;
-            // Chords and basslines fill the bars they're in: a stretch that's mostly rests counts for less.
-            var fills = role is MidiRoles.Chords or MidiRoles.Bass or MidiRoles.Arp ? 0.75 + 0.25 * Filled(piece, length) : 1;
+            var held = new double[12];
+            foreach (var n in piece) held[n.Key % 12] += n.Length;
+            var heard = Math.Max(1, held.Sum());
             foreach (var shift in Keys(piece, move, sits, lane.Count > 0, around.Height))
             {
                 var moved = piece.Select(n => n with { Key = Math.Clamp(n.Key + shift, 0, 127) }).ToList();
-                double? sit = lane.Count > 0 ? SectionFit.Score(moved, lane, length, role, section.Style) : null;
-                // A chord part whose chords can't be read there (a lone line) doesn't follow the chords.
-                double? follow = own is null ? null : SectionFit.Follow(own.Select(c => c with { Chord = c.Chord.Transposed(shift) }).ToList(), lane, length) ?? 0.4;
                 var joins = Joins(moved, around, role, length);
-                var score = fills * (sit, follow) switch
-                {
-                    ({ } s, { } fo) => 0.35 * s + 0.3 * fo + 0.35 * joins,
-                    ({ } s, null) => 0.6 * s + 0.4 * joins,
-                    _ => joins,
-                };
-                if (best is null || score > best.Value.Score) best = (score, moved, from, shift, sit, follow, joins);
+                var keyFit = lane.Count == 0 ? 0 : Enumerable.Range(0, 12).Sum(pc => held[pc] * sits[ChordSymbol.Mod(pc + shift)]) / (heard * laneLength);
+                quick.Add((0.6 * keyFit + 0.4 * joins, from, piece, shift, moved, joins));
             }
+        }
+        (double Score, List<NoteEvent> Notes, long From, int Move, double? Sits, double? Follow, double Joins)? best = null;
+        foreach (var (_, from, piece, shift, moved, joins) in quick.OrderByDescending(q => q.Quick).Take(JudgedStretches))
+        {
+            // Chords and basslines fill the bars they're in: a stretch that's mostly rests counts for less.
+            var fills = role is MidiRoles.Chords or MidiRoles.Bass or MidiRoles.Arp ? 0.75 + 0.25 * Filled(piece, length) : 1;
+            double? sit = lane.Count > 0 ? SectionFit.Score(moved, lane, length, role, section.Style) : null;
+            // A chord part whose chords can't be read there (a lone line) doesn't follow the chords.
+            double? follow = chords ? SectionFit.Follow(ChordLane.Detect(moved, length), lane, length) ?? 0.4 : null;
+            var score = fills * (sit, follow) switch
+            {
+                ({ } s, { } fo) => 0.35 * s + 0.3 * fo + 0.35 * joins,
+                ({ } s, null) => 0.6 * s + 0.4 * joins,
+                _ => joins,
+            };
+            if (best is null || score > best.Value.Score) best = (score, moved, from, shift, sit, follow, joins);
         }
         if (best is not { } b) return null;
         var total = b.Score;
@@ -566,14 +606,31 @@ public static class SectionMatcher
             var off = piece.Average(n => n.Key) - height;
             Add(0.35, Math.Exp(-off * off / 50));   // 5 semitones off: 0.6, an octave: 0.06
         }
-        if (Struck(around.Before, last: true) is { Count: > 0 } before) Add(0.25, Step(before, Struck(piece, last: false), role));
-        if (Struck(around.After, last: false) is { Count: > 0 } after) Add(0.25, Step(Struck(piece, last: true), after, role));
+        if (role == MidiRoles.Drums)
+        {
+            // A drum's note number is which drum it is, not how high: a stretch joins on when it plays the same kit.
+            if (around.Before.Count + around.After.Count > 0) Add(0.5, Kit(around.Before.Concat(around.After), piece));
+        }
+        else
+        {
+            if (Struck(around.Before, last: true) is { Count: > 0 } before) Add(0.25, Step(before, Struck(piece, last: false), role));
+            if (Struck(around.After, last: false) is { Count: > 0 } after) Add(0.25, Step(Struck(piece, last: true), after, role));
+        }
         if (around.Busy > 0)
         {
             var busy = piece.Count / Math.Max(0.25, length / (double)ChordLane.Bar);
             Add(0.15, Math.Sqrt(Math.Min(busy, around.Busy) / Math.Max(busy, around.Busy)));
         }
         return weight == 0 ? 0.5 : sum / weight;
+    }
+
+    /// <summary>The share of the drums either plays that both play, 0 to 1.</summary>
+    static double Kit(IEnumerable<NoteEvent> a, IEnumerable<NoteEvent> b)
+    {
+        var mine = a.Select(n => n.Key).ToHashSet();
+        var theirs = b.Select(n => n.Key).ToHashSet();
+        var all = mine.Count + theirs.Count - mine.Intersect(theirs).Count();
+        return all == 0 ? 0.5 : mine.Intersect(theirs).Count() / (double)all;
     }
 
     /// <summary>The keys of the notes struck first (or last), together within a 32nd.</summary>
@@ -598,7 +655,7 @@ public static class SectionMatcher
                                                   string text, int limit, CancellationToken ct, double[]? energy, SectionFeel feel, SwapAround? around, string? from, out int matching)
     {
         var hits = catalogue.Search(new MidiQuery(text, MidiRoles.Drums, from, Limit: section.Notes.Count == 0 && energy is null && around is null ? limit : Math.Max(limit * 2, 600)) { LeaveSongs = section.Songs }, out matching, ct);
-        if (around is not null) return DrumStretches(hits, section, notesOf, limit, ct, around);
+        if (around is not null) return DrumStretches(hits, section, notesOf, limit, ct, around, energy, feel);
         if (energy is not null)
         {
             var mineOrNone = section.Notes.Count == 0 ? null : SectionFit.Onsets(section.Notes);
@@ -641,11 +698,11 @@ public static class SectionMatcher
     /// section's rhythm when the part has none there) and is about as busy.
     /// </summary>
     static IReadOnlyList<PlaygroundMatch> DrumStretches(IReadOnlyList<MidiHit> hits, SectionHarmony section, Func<MidiEntry, IReadOnlyList<NoteEvent>> notesOf,
-                                                        int limit, CancellationToken ct, SwapAround around)
+                                                        int limit, CancellationToken ct, SwapAround around, double[]? energy, SectionFeel feel)
     {
         var length = section.Length;
         var near = around.Before.Concat(around.After).ToList();
-        var feel = near.Count > 0 ? SectionFit.Onsets(near) : section.Notes.Count > 0 ? SectionFit.Onsets(section.Notes) : null;
+        var rhythm = near.Count > 0 ? SectionFit.Onsets(near) : section.Notes.Count > 0 ? SectionFit.Onsets(section.Notes) : null;
         var list = new List<PlaygroundMatch>();
         foreach (var h in hits)
         {
@@ -653,23 +710,26 @@ public static class SectionMatcher
             if (section.Hashes.Contains(h.Entry.Phrase.Hash)) continue;
             var raw = notesOf(h.Entry);
             if (raw.Count == 0) continue;
-            var period = Math.Max(1, PhraseAnalyser.BarsOf(raw)) * (long)ChordLane.Bar;
-            var round = Loop(raw, period, period + length);
+            var (pieces, period) = Stretches(raw, around, length);
             (double Score, List<NoteEvent> Notes, long From, double? Groove)? best = null;
-            var tried = 0;
-            for (var from = around.Phase % ChordLane.Bar; from < period && tried < MostStretches; from += ChordLane.Bar, tried++)
+            foreach (var (from, piece) in pieces)
             {
-                var piece = round.Where(n => n.Start >= from && n.Start < from + length)
-                                 .Select(n => n with { Start = n.Start - from, Length = Math.Min(n.Length, from + length - n.Start) }).ToList();
-                if (piece.Count == 0) continue;
-                double? groove = feel is null ? null : SectionFit.Cosine(feel, SectionFit.Onsets(piece));
+                double? groove = rhythm is null ? null : SectionFit.Cosine(rhythm, SectionFit.Onsets(piece));
                 var joins = Joins(piece, around with { Height = null }, MidiRoles.Drums, length);
                 var score = groove is { } g ? 0.6 * g + 0.4 * joins : joins;
                 if (best is null || score > best.Value.Score) best = (score, piece, from, groove);
             }
             if (best is not { } b) continue;
-            var why = string.Join(" · ", new[] { Where(b.From, length, period), b.Groove is { } gv ? $"grooves with it {gv * 100:0}%" : "" }.Where(t => t.Length > 0));
-            list.Add(new PlaygroundMatch(h.Entry, null, Math.Clamp(b.Score, 0, 1), b.Notes, char.ToUpperInvariant(why[0]) + why[1..]) { Period = length });
+            // How well its energy suits the section's feel (a verse, a build, a drop), as for every other kind of part.
+            double? lift = energy is null ? null : Energy.Match(Energy.Curve(b.Notes, length, MidiRoles.Drums, null), energy);
+            var total = lift is { } l ? 0.72 * b.Score + 0.28 * l : b.Score;
+            var why = string.Join(" · ", new[]
+            {
+                Where(b.From, length, period),
+                b.Groove is { } gv ? $"grooves with it {gv * 100:0}%" : "",
+                lift is { } lv ? $"{Energy.Name(feel)} energy {lv * 100:0}%" : "",
+            }.Where(t => t.Length > 0));
+            list.Add(new PlaygroundMatch(h.Entry, null, Math.Clamp(total, 0, 1), b.Notes, char.ToUpperInvariant(why[0]) + why[1..]) { Period = length });
         }
         return list.OrderByDescending(m => m.Score).Take(limit).ToList();
     }
@@ -713,14 +773,21 @@ public sealed class ProgressionModel
 
     public static ProgressionModel Learn(IEnumerable<MidiEntry> entries, IReadOnlyCollection<string> leaveSongs, CancellationToken ct = default)
     {
-        var model = new ProgressionModel();
         var n = 0;
-        foreach (var e in entries)
+        return Learn(entries.Where(e =>
+            {
+                if (++n % 4096 == 0) ct.ThrowIfCancellationRequested();
+                return e.Role == MidiRoles.Chords && e.Chords.Count >= 3 && (leaveSongs.Count == 0 || !leaveSongs.Any(e.IsInSong));
+            })
+            .Select(e => e.Chords.Select(c => c.Symbol).ToList()));
+    }
+
+    /// <summary>The same from chord parts' chords in order (the theory bench learns from packs this way).</summary>
+    public static ProgressionModel Learn(IEnumerable<IReadOnlyList<ChordSymbol>> parts)
+    {
+        var model = new ProgressionModel();
+        foreach (var chords in parts)
         {
-            if (++n % 4096 == 0) ct.ThrowIfCancellationRequested();
-            if (e.Role != MidiRoles.Chords || e.Chords.Count < 3) continue;
-            if (leaveSongs.Count > 0 && leaveSongs.Any(e.IsInSong)) continue;
-            var chords = e.Chords.Select(c => c.Symbol).ToList();
             for (var i = 1; i < chords.Count; i++)
             {
                 if (chords[i].Root == chords[i - 1].Root && Kind(chords[i]) == Kind(chords[i - 1])) continue;
@@ -751,8 +818,9 @@ public sealed class ProgressionModel
     /// <summary>
     /// The likeliest chords to follow <paramref name="last"/> (after <paramref name="before"/>), with how often (0 to 1).
     /// What followed both chords and what followed the last one alone are blended, the two-chord count weighing more
-    /// the more it has seen: on 77 gospel, jazz and soul packs, each guessed from the others, the chord played next was
-    /// the first guess 12 times in 100 and among the first three 21 (was 10 and 19 using one or the other).
+    /// the more it has seen: on 77 gospel, jazz and soul packs, each guessed from the others with their chords read as the
+    /// app reads them, the chord played next was the first guess 11 times in 100 and among the first six 32 (10 and 30
+    /// using one count or the other; tools/MusicOrganiser.TheoryBench --learn).
     /// </summary>
     public IReadOnlyList<(ChordSymbol Chord, double Share)> Next(ChordSymbol last, ChordSymbol? before, int most = 6)
     {

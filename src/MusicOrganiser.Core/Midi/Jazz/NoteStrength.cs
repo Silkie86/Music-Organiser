@@ -20,10 +20,18 @@ public static class NoteStrength
         pc = ChordSymbol.Mod(pc);
         var i = ChordSymbol.Mod(pc - chord.Root);
         var bass = role == MidiRoles.Bass;
-        if (i == 0 || i == FifthOf(chord) || bass && pc == chord.Bass) return FitStrength.Strongest;
-        if (i == ThirdOf(chord)) return bass ? FitStrength.Strong : FitStrength.Strongest;
-        if (IsSeventh(chord, i)) return bass ? FitStrength.Colour : FitStrength.Strong;
-        if (!bass && chord.Has(i)) return FitStrength.Strong;   // its other notes: the 9 of a Cmaj9
+        var has = chord.Has(i);
+        // What the note is in the chord, as the chord speller names it, so a 5th is a 5th the same way everywhere: the
+        // ♭5 of C7♭5 and of Cm7♭5 alike.
+        var tone = ChordSpeller.Role(chord.Intervals, chord.Family, i);
+        // The 5th is the chord's even when the voicing leaves it out, unless an altered one stands in its place.
+        var fifth = tone == ToneRole.Fifth && (has || i == 7 && !ChordScales.AlteredFifth(chord));
+        if (tone == ToneRole.Root || fifth || bass && pc == chord.Bass) return FitStrength.Strongest;
+        // So is the 3rd, or a sus chord's note in its place when it's there.
+        if (tone == ToneRole.Third && (has || chord.Family != ChordFamily.Sus)) return bass ? FitStrength.Strong : FitStrength.Strongest;
+        // Its 7th, or the 6th of a sixth chord.
+        if (tone == ToneRole.Seventh && has) return bass ? FitStrength.Colour : FitStrength.Strong;
+        if (!bass && has) return FitStrength.Strong;   // its other notes: the 9 of a Cmaj9
         var sit = ChordScales.Sit(chord, pc, style);
         return sit >= 0.6 ? bass ? FitStrength.Weak : FitStrength.Colour : sit >= 0.2 ? FitStrength.Weak : FitStrength.Fights;
     }
@@ -35,30 +43,4 @@ public static class NoteStrength
         for (var pc = 0; pc < 12; pc++) all[pc] = Of(chord, pc, role, style);
         return all;
     }
-
-    /// <summary>How far above the root its 5th is: ♭5 on diminished chords, ♯5 on augmented ones, none on an altered dominant.</summary>
-    static int? FifthOf(ChordSymbol chord) => chord.Family switch
-    {
-        ChordFamily.Diminished or ChordFamily.HalfDiminished => 6,
-        ChordFamily.Augmented => 8,
-        ChordFamily.Dominant when !chord.Has(7) && (chord.Has(6) || chord.Has(8)) => null,
-        _ => 7,
-    };
-
-    /// <summary>How far above the root its 3rd is, or the note a sus chord holds in its place.</summary>
-    static int? ThirdOf(ChordSymbol chord) => chord.Family switch
-    {
-        ChordFamily.Major or ChordFamily.Dominant or ChordFamily.Augmented => 4,
-        ChordFamily.Minor or ChordFamily.Diminished or ChordFamily.HalfDiminished => 3,
-        ChordFamily.Sus => chord.Has(5) ? 5 : chord.Has(2) ? 2 : null,
-        _ => null,
-    };
-
-    /// <summary>Its 7th, or the 6th of a sixth chord (a 13 on a seventh chord is a tension, not its 6th).</summary>
-    static bool IsSeventh(ChordSymbol chord, int i) => i switch
-    {
-        10 or 11 => chord.Has(i),
-        9 => chord.Has(9) && (chord.Family == ChordFamily.Diminished || !chord.Has(10) && !chord.Has(11)),
-        _ => false,
-    };
 }

@@ -12,6 +12,12 @@ public sealed record SongNotes(string Key, int Notes, int Bars);
 
 public static class ProjectKey
 {
+    /// <summary>
+    /// Raised whenever the key a project's notes give can change (2: the key profile learned from real songs, keys named
+    /// with flats): a scan reads every project again once, so old and new projects aren't keyed two different ways.
+    /// </summary>
+    public const int Version = 2;
+
     /// <summary>Below this, the notes don't point clearly enough at one key (see <see cref="MusicTheory.EstimateMidiKey"/>).</summary>
     public const double MinConfidence = 0.12;
 
