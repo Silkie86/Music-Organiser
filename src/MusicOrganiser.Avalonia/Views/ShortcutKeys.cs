@@ -32,6 +32,8 @@ public static class ShortcutKeys
             Key.Back => "Backspace",
             Key.Return => "Enter",
             Key.Escape => "Esc",
+            Key.PageUp => "PageUp",   // named once here: the key has two names (Prior too), and either may come back
+            Key.PageDown => "PageDown",
             >= Key.D0 and <= Key.D9 => ((char)('0' + (e.Key - Key.D0))).ToString(),
             >= Key.NumPad0 and <= Key.NumPad9 => ((char)('0' + (e.Key - Key.NumPad0))).ToString(),
             _ => e.Key.ToString(),

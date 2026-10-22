@@ -20,7 +20,7 @@ public sealed partial class StyleCheckTests
     /// <summary>Fixed colours that stay on purpose, with why.</summary>
     static readonly Dictionary<(string File, string Colour), string> AllowedColours = new()
     {
-        [("PlaygroundView.axaml", "#99000000")] = "the dimmed backdrop behind the shortcuts sheet, the same in every theme",
+        [("MainWindow.axaml", "#99000000")] = "the dimmed backdrop behind the keys sheet, the same in every theme",
         [("SettingsView.axaml", "#F2994A")] = "the orange song marker drawn in each theme's little preview",
     };
 

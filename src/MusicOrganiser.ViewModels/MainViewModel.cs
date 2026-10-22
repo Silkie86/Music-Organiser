@@ -175,6 +175,49 @@ public sealed partial class MainViewModel : ObservableObject
         if (SelectedNav?.Page == Settings) Settings.RefreshTemplate();
     }
 
+    // ---- moving between pages with the keyboard ----
+
+    readonly Stack<NavItem> _back = new(), _forward = new();
+    bool _stepping;
+
+    /// <summary>Shows the page called <paramref name="title"/> (as in the sidebar), if the app has it.</summary>
+    public bool GoTo(string title)
+    {
+        if (Nav.FirstOrDefault(n => n.Title == title) is not { } page) return false;
+        SelectedNav = page;
+        return true;
+    }
+
+    /// <summary>The page <paramref name="by"/> places down the sidebar (up when negative), round from the end to the start.</summary>
+    public void StepPage(int by)
+    {
+        var at = Nav.ToList().IndexOf(SelectedNav);
+        SelectedNav = Nav[((at + by) % Nav.Count + Nav.Count) % Nav.Count];
+    }
+
+    /// <summary>Back to the page shown before this one, as a browser's back button does; false when there's none.</summary>
+    public bool Back() => Step(_back, _forward);
+
+    /// <summary>Forward again after <see cref="Back"/>.</summary>
+    public bool Forward() => Step(_forward, _back);
+
+    bool Step(Stack<NavItem> from, Stack<NavItem> to)
+    {
+        if (from.Count == 0) return false;
+        to.Push(SelectedNav);
+        _stepping = true;
+        try { SelectedNav = from.Pop(); }
+        finally { _stepping = false; }
+        return true;
+    }
+
+    partial void OnSelectedNavChanged(NavItem? oldValue, NavItem newValue)
+    {
+        if (_stepping || oldValue is null || oldValue == newValue) return;
+        _back.Push(oldValue);
+        _forward.Clear();
+    }
+
     partial void OnSelectedNavChanged(NavItem value)
     {
         _db.SetSetting(LastPageKey, value.Title);
