@@ -7,6 +7,7 @@
 #   Env: SCREEN=1600x1000  WAIT=10 (seconds for the first scan)  NO_BUILD=1 (skip dotnet build)
 #        MIDI=<folder of .mid files> (copied in and added as a MIDI library folder, for the MIDI page)
 #        PLAYGROUND=<a playground idea .json> (opened on the Playground page)
+#        SETTING="key=value ..." (options set before it starts, e.g. appearance_theme=Paper)
 #        PLAYGROUND_STEPS=<file of xdotool and shot lines> (only the Playground page, then those steps)
 set -euo pipefail
 
@@ -57,6 +58,10 @@ sqlite3 "$XDG_DATA_HOME/MusicOrganiser/library.db" \
   "INSERT OR IGNORE INTO roots(path) VALUES('$WORK/Projects');
    INSERT OR REPLACE INTO settings(key,value) VALUES('sample_folders','[\"$WORK/Samples\"]');
    INSERT OR REPLACE INTO settings(key,value) VALUES('midi_folders','[\"$WORK/MIDI\"]');"
+# SETTING="appearance_theme=Paper" (several with spaces between) sets options first, e.g. to photograph another theme.
+for kv in ${SETTING:-}; do
+  sqlite3 "$XDG_DATA_HOME/MusicOrganiser/library.db" "INSERT OR REPLACE INTO settings(key,value) VALUES('${kv%%=*}','${kv#*=}');"
+done
 
 if [[ -n ${PLAYGROUND:-} && -f $PLAYGROUND ]]; then
   mkdir -p "$XDG_DATA_HOME/MusicOrganiser/playground"; cp "$PLAYGROUND" "$XDG_DATA_HOME/MusicOrganiser/playground/current.json"

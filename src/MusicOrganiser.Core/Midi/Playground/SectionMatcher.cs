@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
@@ -275,6 +276,27 @@ public static class SectionFit
     }
 
     /// <summary>
+    /// How much of the time the part plays while there are chords: the share of beats with a chord in which one of its
+    /// notes sounds. A short fragment that sits well on one chord shouldn't beat a part that plays through them all
+    /// (Solomon, 2026-10-21: "favour clips that go with the chords for the most amount of time").
+    /// </summary>
+    public static double Cover(IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length)
+    {
+        int beats = 0, played = 0;
+        var sorted = notes.Where(n => n.Start < length).OrderBy(n => n.Start).ToList();
+        var from = 0;
+        for (long at = 0; at < length; at += Beat)
+        {
+            if (ChordLane.At(lane, at + 1) is null) continue;
+            beats++;
+            while (from < sorted.Count && sorted[from].Start + sorted[from].Length <= at) from++;
+            for (var i = from; i < sorted.Count && sorted[i].Start < at + Beat; i++)
+                if (sorted[i].Start + sorted[i].Length > at) { played++; break; }
+        }
+        return beats == 0 ? 1 : played / (double)beats;
+    }
+
+    /// <summary>
     /// How closely a chord part's own chords follow the lane, half a bar at a time, with substitutes counting as alike
     /// (<see cref="ChordKinship"/>): a part playing Db7 where the lane has G7 still follows it. Null when it plays too
     /// few chords to say.
@@ -346,28 +368,53 @@ public sealed record SwapAround(IReadOnlyList<NoteEvent> Before, IReadOnlyList<N
 public static class SectionMatcher
 {
     /// <param name="around">Set when bars of a part are being swapped: then each part offers its stretch that fits there best.</param>
+    /// <param name="from">"projects" or "files" for only the parts in your projects or in your MIDI folders; null for both.</param>
     public static IReadOnlyList<PlaygroundMatch> Rank(MidiCatalogue catalogue, SectionHarmony section, string role,
                                                       Func<MidiEntry, IReadOnlyList<NoteEvent>> notesOf, string text = "",
                                                       int limit = 60, CancellationToken ct = default, SectionFeel feel = SectionFeel.Any,
-                                                      SwapAround? around = null)
+                                                      SwapAround? around = null, string? from = null) =>
+        Rank(catalogue, section, role, notesOf, out _, text, limit, ct, feel, around, from);
+
+    /// <param name="matching">How many parts of this kind could have been suggested (the words found them and no song
+    /// in the section has them), of which the best <paramref name="limit"/> come back.</param>
+    /// <param name="scored">Parts already scored for the same question (Show more asks again for more): they aren't
+    /// scored again, and the ones scored now are added. Null scores every part.</param>
+    public static IReadOnlyList<PlaygroundMatch> Rank(MidiCatalogue catalogue, SectionHarmony section, string role,
+                                                      Func<MidiEntry, IReadOnlyList<NoteEvent>> notesOf, out int matching, string text = "",
+                                                      int limit = 60, CancellationToken ct = default, SectionFeel feel = SectionFeel.Any,
+                                                      SwapAround? around = null, string? from = null,
+                                                      ConcurrentDictionary<MidiEntry, PlaygroundMatch?>? scored = null)
     {
         var energy = feel == SectionFeel.Any ? null : Energy.Target(feel, (int)(section.Length / ChordLane.Bar));
-        if (role == MidiRoles.Drums) return Grooves(catalogue, section, notesOf, text, limit, ct, energy, feel, around);
+        if (role == MidiRoles.Drums) return Grooves(catalogue, section, notesOf, text, limit, ct, energy, feel, around, from, out matching);
         var target = section.Target();
-        var hits = catalogue.Search(new MidiQuery(text, role, Fit: target, Limit: target is null && energy is null ? limit : Math.Max(limit * 4, 200), Notes: notesOf)
-                                    { LeaveSongs = section.Songs }, out _, ct);
+        var hits = catalogue.Search(new MidiQuery(text, role, from, Fit: target, Limit: target is null && energy is null ? limit : Math.Max(limit * 6, 300), Notes: notesOf)
+                                    { LeaveSongs = section.Songs }, out matching, ct);
         var list = new List<PlaygroundMatch>();
         foreach (var hit in hits)
         {
             ct.ThrowIfCancellationRequested();
             if (section.Hashes.Contains(hit.Entry.Phrase.Hash)) continue;
+            if (scored is not null && scored.TryGetValue(hit.Entry, out var known))
+            {
+                if (known is not null) list.Add(known);
+                continue;
+            }
+            var before = list.Count;
+            Score(hit);
+            scored?.TryAdd(hit.Entry, list.Count > before ? list[^1] : null);
+        }
+        return list.OrderByDescending(m => m.Score).ThenByDescending(m => m.Entry.Copies).Take(limit).ToList();
+
+        void Score(MidiHit hit)
+        {
             var raw = notesOf(hit.Entry);
-            if (raw.Count == 0) continue;
+            if (raw.Count == 0) return;
             var move = hit.Fit is { } f ? f.Semitones + 12 * (hit.Entry.YourOctave ?? f.Octaves) : 12 * (hit.Entry.YourOctave ?? 0);
             if (around is not null)
             {
                 if (Stretch(hit.Entry, hit.Fit, raw, move, section, role, around, energy, feel) is { } stretch) list.Add(stretch);
-                continue;
+                return;
             }
             var moved = raw.Select(n => n with { Key = Math.Clamp(n.Key + move, 0, 127) }).ToList();
             var period = Math.Max(1, PhraseAnalyser.BarsOf(moved)) * (long)ChordLane.Bar;
@@ -381,7 +428,7 @@ public static class SectionMatcher
                 if (lift is { } l0) plain = hit.Fit is null ? l0 : 0.7 * plain + 0.3 * l0;
                 list.Add(new PlaygroundMatch(hit.Entry, hit.Fit, plain, moved,
                     string.Join(" · ", new[] { hit.Fit is null ? "" : $"Fits {hit.Fit.Percent}%", feelText }.Where(s => s.Length > 0))));
-                continue;
+                return;
             }
             var sits = SectionFit.Score(looped, section.Lane, section.Length, role, section.Style);
             var follow = role == MidiRoles.Chords ? SectionFit.Follow(looped, section.Lane, section.Length) : null;
@@ -393,16 +440,19 @@ public static class SectionMatcher
                 _ => refine,
             };
             if (lift is { } l) score = 0.72 * score + 0.28 * l;
+            // Sitting well only counts for the time it plays: a chunk that plays a quarter of the time keeps about half its score.
+            var cover = SectionFit.Cover(looped, section.Lane, section.Length);
+            score *= 0.35 + 0.65 * cover;
             var why = string.Join(" · ", new[]
             {
                 sits is { } sv ? $"Sits on the chords {sv * 100:0}%" : "",
                 follow is { } fv ? $"follows them {fv * 100:0}%" : "",
+                cover < 0.95 ? $"plays {cover * 100:0}% of the time" : "",
                 feelText,
                 MoveText(move),
             }.Where(s => s.Length > 0));
             list.Add(new PlaygroundMatch(hit.Entry, hit.Fit, Math.Clamp(score, 0, 1), moved, why));
         }
-        return list.OrderByDescending(m => m.Score).ThenByDescending(m => m.Entry.Copies).Take(limit).ToList();
     }
 
     static string MoveText(int move) => move switch
@@ -602,9 +652,9 @@ public static class SectionMatcher
 
     /// <summary>Drums have no harmony: they're matched on where their hits fall against the section's rhythm.</summary>
     static IReadOnlyList<PlaygroundMatch> Grooves(MidiCatalogue catalogue, SectionHarmony section, Func<MidiEntry, IReadOnlyList<NoteEvent>> notesOf,
-                                                  string text, int limit, CancellationToken ct, double[]? energy, SectionFeel feel, SwapAround? around)
+                                                  string text, int limit, CancellationToken ct, double[]? energy, SectionFeel feel, SwapAround? around, string? from, out int matching)
     {
-        var hits = catalogue.Search(new MidiQuery(text, MidiRoles.Drums, Limit: section.Notes.Count == 0 && energy is null && around is null ? limit : 600) { LeaveSongs = section.Songs }, out _, ct);
+        var hits = catalogue.Search(new MidiQuery(text, MidiRoles.Drums, from, Limit: section.Notes.Count == 0 && energy is null && around is null ? limit : Math.Max(limit * 2, 600)) { LeaveSongs = section.Songs }, out matching, ct);
         if (around is not null) return DrumStretches(hits, section, notesOf, limit, ct, around, energy, feel);
         if (energy is not null)
         {
@@ -755,6 +805,14 @@ public sealed class ProgressionModel
     {
         if (!table.TryGetValue(context, out var row)) table[context] = row = new Dictionary<string, int>();
         row[next] = row.GetValueOrDefault(next) + 1;
+    }
+
+    /// <summary>How often <paramref name="next"/> (its step from <paramref name="last"/> and its kind) follows <paramref name="last"/>, 0 to 1; 0 when never seen.</summary>
+    public double Chance(ChordSymbol last, ChordSymbol next)
+    {
+        if (!_one.TryGetValue(Kind(last), out var row)) return 0;
+        var seen = row.Values.Sum();
+        return seen == 0 ? 0 : row.GetValueOrDefault($"{ChordSymbol.Mod(next.Root - last.Root)}:{Kind(next)}") / (double)seen;
     }
 
     /// <summary>

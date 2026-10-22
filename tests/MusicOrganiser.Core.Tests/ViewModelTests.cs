@@ -341,6 +341,38 @@ public class ViewModelTests : IDisposable
         Assert.Empty(feed.Items);
     }
 
+    [Fact]
+    public void A_running_jobs_card_can_be_put_away_without_stopping_it()
+    {
+        var feed = new ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero };
+        var stopped = false;
+        var scan = feed.Start("Scanning sample folders", cancel: () => stopped = true);
+        var midi = feed.Start("Reading MIDI");
+
+        scan.DismissCommand.Execute(null);   // the ✕ on a running card
+        Assert.False(stopped);
+        Assert.True(scan.IsRunning);
+        Assert.True(scan.IsHidden);
+        Assert.Contains(scan, feed.Items);
+        Assert.Equal("1 job running", feed.HiddenText);
+
+        midi.DismissCommand.Execute(null);
+        Assert.Equal("2 jobs running", feed.HiddenText);
+        feed.ShowHiddenCommand.Execute(null);
+        Assert.False(scan.IsHidden || midi.IsHidden);
+        Assert.False(feed.HasHidden);
+
+        // Put away again: finishing doesn't bring it back, but failing does, so a failure is seen.
+        scan.DismissCommand.Execute(null);
+        midi.DismissCommand.Execute(null);
+        scan.Finish("Sample folders scanned");
+        Assert.True(scan.IsHidden);
+        Assert.Equal(1, feed.HiddenCount);
+        midi.Fail("Couldn't read MIDI", "Disk gone");
+        Assert.False(midi.IsHidden);
+        Assert.False(feed.HasHidden);
+    }
+
     static async Task PollUntil(Func<bool> done)
     {
         for (var i = 0; i < 100 && !done(); i++) await Task.Delay(20);
@@ -1823,9 +1855,10 @@ public class ViewModelTests : IDisposable
         var playground = main.Playground;
         Assert.Equal(Core.Midi.MidiRoles.Chords, playground.SuggestRole.Role);
         main.SelectedNav = main.Nav.First(n => n.Page == playground);
-        for (var i = 0; i < 300 && playground.Matches.Count == 0; i++) await Task.Delay(10);
-        Assert.True(playground.Matches.Count > 0, playground.MatchStatus);
-        Assert.Contains(playground.Matches, m => m.Match.Entry.Title.Contains("Keys"));
+        // An empty idea shows the MIDI page's list; with a part in it, Suggest lists parts that fit.
+        Assert.True(playground.IsEmpty);
+        for (var i = 0; i < 300 && playground.Midi.Results.Count == 0; i++) await Task.Delay(10);
+        Assert.Contains(playground.Midi.Results, r => r.Title.Contains("Keys"));
     }
 
     [Fact]
