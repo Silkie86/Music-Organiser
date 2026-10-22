@@ -59,7 +59,7 @@ public sealed class Scanner(LibraryDb db)
     public static bool IsProjectFile(string path)
     {
         var name = Path.GetFileName(path);
-        return Readers.For(path) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
+        return Readers.For(path) is not null && !Parallelism.IsMacShadow(path) && !IsAutosaveFile(name);
     }
 
     /// <summary>
