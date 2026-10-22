@@ -457,6 +457,40 @@ public class ViewModelTests : IDisposable
         Assert.False(feed.HasHidden);
     }
 
+    [Fact]
+    public void Jobs_that_start_after_a_card_is_put_away_go_there_too()
+    {
+        // Solomon, 2026-10-22: "was able to minimize the scanners but the came back"
+        var feed = new ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero };
+        var scan = feed.Start("Scanning sample folders");
+        var projects = feed.Start("Looking for new and changed projects");
+        scan.DismissCommand.Execute(null);
+        projects.DismissCommand.Execute(null);
+
+        // The scan's next step is a new card: it starts put away
+        projects.Finish("Library up to date");
+        var midi = feed.Start("Listening to your MIDI");
+        Assert.True(midi.IsHidden);
+        Assert.Equal("2 jobs running", feed.HiddenText);
+
+        // Something done at once (an F12 note saved) still shows, and doesn't bring the others back
+        var note = feed.Done("Note saved for Claude");
+        Assert.False(note.IsHidden);
+        Assert.True(scan.IsHidden && midi.IsHidden);
+
+        // "2 jobs running" brings them back, and new jobs show again
+        feed.ShowHiddenCommand.Execute(null);
+        Assert.False(scan.IsHidden || midi.IsHidden);
+        Assert.False(feed.Start("Reading MIDI").IsHidden);
+
+        // Put away, then nothing runs for a while: the next job shows
+        var quiet = new ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero, PutAwayFor = TimeSpan.Zero };
+        var one = quiet.Start("Scanning sample folders");
+        one.DismissCommand.Execute(null);
+        one.Finish("Sample folders up to date");
+        Assert.False(quiet.Start("Converting grimey for Bitwig").IsHidden);
+    }
+
     static async Task PollUntil(Func<bool> done)
     {
         for (var i = 0; i < 100 && !done(); i++) await Task.Delay(20);

@@ -11,7 +11,9 @@ public enum ActivityState { Running, Done, Failed, Stopped }
 /// The window's activity cards (bottom right): one per job, so it's always clear that something started, how far it
 /// has got, and that it finished. A card for a finished job fades away by itself; a failed one stays a little longer.
 /// A running job's card can be put away without stopping the job (Solomon, 2026-10-22: they sat over buttons); a small
-/// "N running" button brings them back.
+/// "N running" button brings them back. Once one is put away, jobs that start after it go straight there too (the next
+/// step of a scan is a new card, and it looked like the hidden one coming back), until that button is pressed or nothing
+/// has run for a few seconds.
 /// </summary>
 public sealed partial class ActivityFeed : ObservableObject
 {
@@ -38,19 +40,41 @@ public sealed partial class ActivityFeed : ObservableObject
     public bool HasHidden => HiddenCount > 0;
     public string HiddenText => HiddenCount == 1 ? "1 job running" : $"{HiddenCount} jobs running";
 
+    /// <summary>A card was put away: new jobs' cards are put away as they start, until <see cref="ShowHidden"/>.</summary>
+    bool _puttingAway;
+
+    /// <summary>When the last running job ended, while none is running.</summary>
+    long? _idleSince;
+
+    /// <summary>How long nothing must run before a new job's card shows again after cards were put away.</summary>
+    public TimeSpan PutAwayFor { get; set; } = TimeSpan.FromSeconds(10);
+
     /// <summary>Brings the put-away cards back.</summary>
     [RelayCommand]
     void ShowHidden()
     {
+        _puttingAway = false;
         List<Activity> cards;
         lock (_lock) cards = [.. Items];
         foreach (var a in cards) a.IsHidden = false;
     }
 
+    internal void PutAway(Activity a)
+    {
+        _puttingAway = true;
+        a.IsHidden = true;
+    }
+
     internal void Recount()
     {
-        int hidden;
-        lock (_lock) hidden = Items.Count(a => a.IsHidden && a.IsRunning);
+        int hidden, running;
+        lock (_lock)
+        {
+            hidden = Items.Count(a => a.IsHidden && a.IsRunning);
+            running = Items.Count(a => a.IsRunning);
+        }
+        if (running > 0) _idleSince = null;
+        else _idleSince ??= System.Diagnostics.Stopwatch.GetTimestamp();
         HiddenCount = hidden;
     }
 
@@ -68,11 +92,14 @@ public sealed partial class ActivityFeed : ObservableObject
     Activity Start(string title, string detail, Action? cancel, bool raise)
     {
         var a = new Activity(this, title, detail, cancel);
+        if (_idleSince is { } idle && System.Diagnostics.Stopwatch.GetElapsedTime(idle) >= PutAwayFor) _puttingAway = false;
         lock (_lock)
         {
             Items.Add(a);
             while (Items.Count > MaxCards && Items.FirstOrDefault(i => !i.IsRunning) is { } old) Items.Remove(old);
         }
+        if (raise && _puttingAway) a.IsHidden = true;
+        Recount();   // running again, so the quiet time starts over
         if (raise) Raise(a, null);
         return a;
     }
@@ -241,7 +268,7 @@ public sealed partial class Activity : ObservableObject
     {
         if (IsRunning)
         {
-            IsHidden = true;
+            _feed.PutAway(this);
             return;
         }
         Version++;

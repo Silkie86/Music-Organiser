@@ -245,7 +245,7 @@ public sealed class PlaygroundPageTests : IDisposable
     }
 
     /// <summary>The app's Avalonia screens, with a player that makes no sound.</summary>
-    sealed class SilentUi : IPlatformUi
+    internal sealed class SilentUi : IPlatformUi
     {
         readonly AvaloniaUi _ui = new();
         public IItemsView CreateView(IList items) => _ui.CreateView(items);
@@ -261,13 +261,15 @@ public sealed class PlaygroundPageTests : IDisposable
         public void ShowPresets(PresetsViewModel vm) { }
     }
 
-    sealed class Silence : IAudioPlayer
+    internal sealed class Silence : IAudioPlayer
     {
         public event Action? Stopped { add { } remove { } }
         public string? Playing { get; private set; }
         public double? Position => Playing is null ? null : 0;
         public void Seek(double seconds) { }
-        public void Play(string path, double startSeconds = 0) => Playing = path;
+        public void Play(string path, double startSeconds = 0) => Playing = LastPath = path;
+        /// <summary>The last file played.</summary>
+        public static string? LastPath;
         /// <summary>The last sound played: how long it was.</summary>
         public static (int Samples, int Rate)? Last;
         public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0)

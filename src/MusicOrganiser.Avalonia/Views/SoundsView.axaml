@@ -600,7 +600,9 @@
                                              views:FileDrag.Source="{Binding Parent}">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate x:DataType="snd:Suggestion">
-                                                <DockPanel Margin="0,2">
+                                                <!-- Click anywhere on the row to hear it, as on the Library's tiles; double-click keeps it playing. -->
+                                                <DockPanel Margin="0,2" Background="Transparent" Cursor="Hand" ToolTip.Tip="{Binding Sound.Path}"
+                                                           PointerPressed="OnSuggestionPressed" DoubleTapped="OnSuggestionDoubleTapped">
                                                     <Button DockPanel.Dock="Left" Content="▶" Padding="6,2" ToolTip.Tip="Play / stop" Margin="0,0,10,0"
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).PlayCommand}"
                                                             CommandParameter="{Binding Sound}" />
@@ -611,7 +613,9 @@
                                                             ToolTip.Tip="Put it on a Sampler on a new track in Bitwig"
                                                             Command="{Binding $parent[UserControl].((vm:SoundsViewModel)DataContext).ToBitwigCommand}"
                                                             CommandParameter="{Binding Sound}" />
-                                                    <StackPanel>
+                                                    <views:MiniWave DockPanel.Dock="Right" Width="200" Height="26" Margin="12,0,4,0" VerticalAlignment="Center"
+                                                                    Peaks="{Binding Sound.Analysis.Waveform}" Fill="{Binding Sound.Type, Converter={StaticResource TypeBrush}}" />
+                                                    <StackPanel VerticalAlignment="Center">
                                                         <TextBlock>
                                                             <Run Text="{Binding Sound.Name, Mode=OneWay}" FontWeight="SemiBold" />
                                                             <Run Text="{Binding Sound.Type, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />

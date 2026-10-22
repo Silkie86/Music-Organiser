@@ -406,6 +406,9 @@ public class LearningTests
         Assert.Equal(5, picks.Count);
         Assert.All(picks, p => Assert.Equal(0, p.Sound.UsedIn));
         Assert.All(picks, p => Assert.Equal("Kick", p.Sound.Type));
+        // Each line starts with the picked sound's own use, so "never used" can't be read as the other sound's.
+        Assert.All(picks, p => Assert.StartsWith("Never used", p.Reason));
+        Assert.All(picks, p => Assert.DoesNotContain("used in", p.Reason));
         // When there's nothing to suggest, the page says why.
         Assert.Empty(Rediscover.Suggest(org, new Rediscover.Options(Type: "Ride")));
         Assert.StartsWith("No sounds are sorted as Ride", Rediscover.WhyNothing(org, new Rediscover.Options(Type: "Ride")));

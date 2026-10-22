@@ -103,14 +103,16 @@ public static class Rediscover
         var nearest = taste.Where(t => t.s.Type == s.Type && index.Get(t.s.Id) is not null)
                            .Select(t => (t.s, Sim: VectorIndex.Dot(v, index.Get(t.s.Id)!)))
                            .OrderByDescending(t => t.Sim).FirstOrDefault();
-        var unused = s.UsedIn == 0 ? "never used" : $"used in {s.UsedIn} project{(s.UsedIn == 1 ? "" : "s")}";
+        // This sound's own use first, then the one it's like and how much that one is used: "never used" beside the other
+        // sound's "used in 42 projects" read as one sound saying both (Solomon, 2026-10-22).
+        var own = s.UsedIn == 0 ? "Never used" : $"Used in {s.UsedIn} project{(s.UsedIn == 1 ? "" : "s")}";
         if (nearest.s is not null && nearest.Sim > 0.5)
         {
-            var why = nearest.s.UsedIn > 0 ? $"used in {nearest.s.UsedIn} project{(nearest.s.UsedIn == 1 ? "" : "s")}"
+            var why = nearest.s.UsedIn > 0 ? $"which is in {nearest.s.UsedIn} of your projects"
                     : nearest.s.Favourite ? "a favourite" : "one you like";
-            return $"Sounds like {nearest.s.Name} ({why}), {unused}";
+            return $"{own}. Sounds like {nearest.s.Name}, {why}";
         }
-        return $"{char.ToUpper(unused[0])}{unused[1..]}, from {s.Folder}";
+        return $"{own}, from {s.Folder}";
     }
 
     /// <summary>Your sample folders by how much of them your projects use: find forgotten packs.</summary>
