@@ -270,6 +270,12 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// </summary>
     internal sealed record SectionFrame(IReadOnlyList<NoteEvent> Guide, long Length, int Octaves, string PairText)
     {
+        /// <summary>The guide's notes its chords are read from (all but the tune), or null for all of them.</summary>
+        public IReadOnlyList<NoteEvent>? Harmony { get; init; }
+
+        /// <summary>Where the guide's first tick sits in its bar (a song's stretch can start halfway through one).</summary>
+        public long Phase { get; init; }
+
         public IReadOnlyList<NoteEvent> GuideAt(int octaves) => octaves == Octaves ? Guide
             : Guide.Select(n => n with { Key = Math.Clamp(n.Key + 12 * (octaves - Octaves), 0, 127) }).ToList();
     }
@@ -294,7 +300,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (_frame is null)
         {
             if (Selected is not { CanPlayTogether: true, EditorGuide: { Count: > 0 } guide } row) return;
-            _frame = new SectionFrame(guide, row.PairLength, WithOctaves, row.PairText);
+            _frame = new SectionFrame(guide, row.PairLength, WithOctaves, row.PairText) { Harmony = row.EditorHarmony, Phase = row.GuidePhase };
             _wholeFitText = FitText;
         }
         FitSection(s);
@@ -305,7 +311,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         if (_frame is not { } frame || Fit is not { } fit) return;
         var s = range.Within(frame.Length);
         var notes = Cut(frame.GuideAt(WithOctaves), s.Start, s.End);
-        if (HarmonyTarget.FromStretch($"{s.Describe()} of {fit.Name}", notes, s.Length, fit.Key, fit.Registers) is not { } target)
+        // Chords from the same notes as the whole song's: its tune left out.
+        var harmony = frame.Harmony is { } h ? Cut(h, s.Start, s.End) : null;
+        if (HarmonyTarget.FromStretch($"{s.Describe()} of {fit.Name}", notes, s.Length, fit.Key, fit.Registers, harmony, frame.Phase + s.Start) is not { } target)
         {
             Message = $"Nothing of {fit.Name} plays in {s.Describe()}, so there's nothing there to fit to.";
             return;
@@ -1812,19 +1820,17 @@ public sealed partial class MidiRow : ObservableObject
     // ---- played together with what it's fitted to ----
 
     /// <summary>What it's fitted to, as it plays with this part: the whole part (it loops too), or the stretch of the song where this fits best.</summary>
-    public IReadOnlyList<NoteEvent>? PartnerNotes
+    public IReadOnlyList<NoteEvent>? PartnerNotes => With is { Notes.Count: > 0 } target ? AsPartner(target, target.Notes) : null;
+
+    /// <summary>Notes of what it's fitted to (timed as its <see cref="HarmonyTarget.Notes"/>), as they play with this part.</summary>
+    IReadOnlyList<NoteEvent> AsPartner(HarmonyTarget target, IReadOnlyList<NoteEvent> notes)
     {
-        get
-        {
-            if (With is not { Notes.Count: > 0 } target) return null;
-            var move = 12 * _owner.OctavesOf(target);
-            if (target.Loops)
-                return move == 0 ? target.Notes : target.Notes.Select(n => n with { Key = Math.Clamp(n.Key + move, 0, 127) }).ToList();
-            long from = Fit?.At ?? 0, to = from + LoopLength;
-            return target.Notes.Where(n => n.Start >= from && n.Start < to)
-                               .Select(n => n with { Start = n.Start - from, Length = Math.Min(n.Length, to - n.Start), Key = Math.Clamp(n.Key + move, 0, 127) })
-                               .ToList();
-        }
+        var move = 12 * _owner.OctavesOf(target);
+        if (target.Loops) return move == 0 ? notes : notes.Select(n => n with { Key = Math.Clamp(n.Key + move, 0, 127) }).ToList();
+        long from = Fit?.At ?? 0, to = from + LoopLength;
+        return notes.Where(n => n.Start >= from && n.Start < to)
+                    .Select(n => n with { Start = n.Start - from, Length = Math.Min(n.Length, to - n.Start), Key = Math.Clamp(n.Key + move, 0, 127) })
+                    .ToList();
     }
 
     /// <summary>What it's fitted to moved: the together view follows.</summary>
@@ -1839,6 +1845,13 @@ public sealed partial class MidiRow : ObservableObject
     /// <summary>What it's fitted to, over the stretch both play before meeting again: grey behind the part on the piano roll.</summary>
     public IReadOnlyList<NoteEvent>? EditorGuide => Frame is { } frame ? frame.GuideAt(_owner.WithOctaves)
         : PartnerNotes is { Count: > 0 } theirs ? MidiBrowserViewModel.Repeat(theirs, PartnerLength, PairLength) : null;
+
+    /// <summary>Where the <see cref="EditorGuide"/>'s first tick sits in its bar: a song's stretch starts where this fits it, which can be halfway through a bar.</summary>
+    internal long GuidePhase => With is { Loops: false } ? (Fit?.At ?? 0) % Bar : 0;
+
+    /// <summary>The <see cref="EditorGuide"/>'s notes its chords are read from (all but the tune), when that's not all of them.</summary>
+    internal IReadOnlyList<NoteEvent>? EditorHarmony => With is { HarmonyNotes: { } harmony } target
+        ? MidiBrowserViewModel.Repeat(AsPartner(target, harmony), PartnerLength, PairLength) : null;
 
     /// <summary>Finding parts for some bars: what's fitted to stays as it was then, and this part plays in those bars.</summary>
     MidiBrowserViewModel.SectionFrame? Frame => _owner.FrameFor(this);

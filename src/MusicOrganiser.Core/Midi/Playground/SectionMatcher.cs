@@ -162,10 +162,7 @@ public sealed class SectionHarmony
         var bars = PhraseAnalyser.BarsOf(padded);
         if (bars * ChordLane.Bar < Length) padded.Add(new NoteEvent(Length - 1, 1, notes[^1].Key, 1));
         // The chords are the lane's (typed, or heard from the chord and bass parts), so the tune doesn't colour them.
-        var chords = new List<PhraseChord>();
-        foreach (var c in Lane)
-            if (chords.Count == 0 || chords[^1] != PhraseChord.Of(c.Chord)) chords.Add(PhraseChord.Of(c.Chord));
-        return HarmonyTarget.FromPart(name, MidiRoles.Chords, padded, chroma, chords, Key);
+        return HarmonyTarget.FromPart(name, MidiRoles.Chords, padded, chroma, PhraseAnalyser.Progression(Lane), Key);
     }
 }
 
@@ -482,7 +479,7 @@ public sealed class ProgressionModel
     /// The likeliest chords to follow <paramref name="last"/> (after <paramref name="before"/>), with how often (0 to 1).
     /// What followed both chords and what followed the last one alone are blended, the two-chord count weighing more
     /// the more it has seen: on 77 gospel, jazz and soul packs, each guessed from the others with their chords read as the
-    /// app reads them, the chord played next was the first guess 9 times in 100 and among the first six 28 (8 and 27
+    /// app reads them, the chord played next was the first guess 11 times in 100 and among the first six 32 (10 and 30
     /// using one count or the other; tools/MusicOrganiser.TheoryBench --learn).
     /// </summary>
     public IReadOnlyList<(ChordSymbol Chord, double Share)> Next(ChordSymbol last, ChordSymbol? before, int most = 6)

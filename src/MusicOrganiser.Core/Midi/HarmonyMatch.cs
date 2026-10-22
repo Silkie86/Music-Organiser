@@ -29,6 +29,12 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
     /// </summary>
     public IReadOnlyList<MidiChannel> Parts { get; init; } = [];
 
+    /// <summary>
+    /// The notes its chords are read from, timed as <see cref="Notes"/>: a song's without its tune (a melody's notes would
+    /// colour them), so bars picked from it read the same chords as all of it. Null when that's all of them.
+    /// </summary>
+    public IReadOnlyList<NoteEvent>? HarmonyNotes { get; init; }
+
     /// <summary>How long it lasts when that isn't its notes' bars: a stretch cut from a longer part (ticks).</summary>
     public long? Span { get; init; }
 
@@ -51,10 +57,7 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
     {
         var pitched = channels.Where(ProjectKey.IsPitched).ToList();
         if (pitched.Count == 0) pitched = channels.Where(c => c.Kind is not ("Drums" or "")).ToList();
-        var notes = pitched.SelectMany(c => c.Notes.Where(n => !n.Muted).Select(n => Scale(n, c.Ppq))).OrderBy(n => n.Start).ToList();
-        if (notes.Count < 3) return null;
-        var chroma = new float[12];
-        foreach (var n in notes) chroma[n.Key % 12] += (float)Math.Clamp(n.Length / (4.0 * PhraseAnalyser.Ppq), 1 / 16.0, 2);
+        if (pitched.Sum(c => c.Notes.Count(n => !n.Muted)) < 3) return null;
         var key = ProjectKey.Estimate(pitched);
         // Where its bassline, chords and melody sit, so parts fitted to it are offered in the octave they'd play in there.
         var registers = new Dictionary<string, List<double>>();
@@ -68,13 +71,17 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
             if (role is MidiRoles.Melody) melodies.Add(c);
             (registers.TryGetValue(role, out var list) ? list : registers[role] = []).Add(HarmonyMatcher.Centre(own));
         }
+        var all = pitched.SelectMany(c => c.Notes.Where(n => !n.Muted).Select(n => (Note: Scale(n, c.Ppq), Tune: melodies.Contains(c))))
+                         .OrderBy(t => t.Note.Start).ToList();
+        var notes = all.Select(t => t.Note).ToList();
+        var chroma = new float[12];
+        foreach (var n in notes) chroma[n.Key % 12] += (float)Math.Clamp(n.Length / (4.0 * PhraseAnalyser.Ppq), 1 / 16.0, 2);
         // The chords are read from everything but the tune: a melody's notes would colour them (C heard as Cadd9).
-        var harmony = melodies.Count == 0 ? notes
-            : pitched.Where(c => !melodies.Contains(c)).SelectMany(c => c.Notes.Where(n => !n.Muted).Select(n => Scale(n, c.Ppq))).OrderBy(n => n.Start).ToList();
-        if (harmony.Count < 3) harmony = notes;
-        return new HarmonyTarget(name, Strongest(chroma), PhraseAnalyser.Progression(harmony), key)
+        var harmony = melodies.Count == 0 ? null : all.Where(t => !t.Tune).Select(t => t.Note).ToList() is { Count: >= 3 } rest ? rest : null;
+        return new HarmonyTarget(name, Strongest(chroma), PhraseAnalyser.Progression(harmony ?? notes), key)
         {
             Notes = notes,
+            HarmonyNotes = harmony,
             Parts = pitched,
             // Two basslines: the lower one is the bass.
             Registers = registers.ToDictionary(kv => kv.Key, kv => kv.Key == MidiRoles.Bass ? kv.Value.Min() : kv.Value.Average()),
@@ -100,15 +107,19 @@ public sealed record HarmonyTarget(string Name, float[] Chroma, IReadOnlyList<Ph
     /// </summary>
     /// <param name="notes">Its notes, from the start of the stretch.</param>
     /// <param name="span">How long the stretch is (ticks).</param>
+    /// <param name="harmony">The stretch of what it was cut from's <see cref="HarmonyNotes"/>, when it has them: its chords are read from those.</param>
+    /// <param name="from">Where the stretch starts, in ticks from a bar line: its chords change on the bar lines it had there.</param>
     public static HarmonyTarget? FromStretch(string name, IReadOnlyList<NoteEvent> notes, long span, KeyEstimate? key,
-                                             IReadOnlyDictionary<string, double> registers)
+                                             IReadOnlyDictionary<string, double> registers, IReadOnlyList<NoteEvent>? harmony = null, long from = 0)
     {
         if (notes.Count == 0 || span <= 0) return null;
         var chroma = new float[12];
         foreach (var n in notes) chroma[n.Key % 12] += (float)Math.Clamp(n.Length / (4.0 * PhraseAnalyser.Ppq), 1 / 16.0, 2);
-        return new HarmonyTarget(name, Strongest(chroma), PhraseAnalyser.Progression(notes), key)
+        if (harmony is not { Count: >= 3 }) harmony = null;
+        return new HarmonyTarget(name, Strongest(chroma), PhraseAnalyser.Progression(harmony ?? notes, downbeat: -from), key)
         {
             Notes = notes,
+            HarmonyNotes = harmony,
             Loops = true,
             Span = span,
             Registers = registers,

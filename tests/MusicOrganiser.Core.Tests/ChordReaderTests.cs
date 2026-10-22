@@ -181,4 +181,60 @@ public class ChordReaderTests
         Assert.Contains("C#m", cSharpMinor.Spellings);
         Assert.Contains("Dbm", cSharpMinor.Spellings);
     }
+
+    [Theory]
+    [InlineData("D/C")]      // a D triad over C: not D7/C
+    [InlineData("C/Bb")]
+    [InlineData("G7/F")]     // the F is the chord's own 7th
+    [InlineData("C/E")]
+    [InlineData("Am7/G")]
+    public void A_slash_chord_keeps_its_name_in_the_index(string name)
+    {
+        var chord = PhraseChord.Of(ChordSymbol.Parse(name)!.Value);
+        Assert.Equal(name, chord.Name);
+        Assert.Equal(name, PhraseChord.Decode(PhraseChord.Encode([chord]))[0].Name);
+        // Its bass still sounds: D/C and D7/C share all four notes.
+        Assert.Equal(1.0, chord.Similarity(PhraseChord.Of(ChordSymbol.Parse(name)!.Value)));
+    }
+
+    [Fact]
+    public void A_part_taken_for_a_melody_that_strikes_chords_still_has_them()
+    {
+        // A comping piano named "Lead": a chord on each bar's one and a tune on the other beats.
+        var notes = new List<NoteEvent>();
+        int[][] chords = [[48, 52, 55], [53, 57, 60], [55, 59, 62], [48, 52, 55]];
+        for (var bar = 0; bar < 4; bar++)
+        {
+            notes.AddRange(Held(bar * (long)Bar, Beat, chords[bar]));
+            for (var b = 1; b < 4; b++) notes.Add(new NoteEvent(bar * (long)Bar + b * Beat, Beat, 72 + 2 * b - bar, 100));
+        }
+        var analysis = PhraseAnalyser.Analyse(notes, "Lead");
+        Assert.Equal(MidiRoles.Melody, analysis.Role);
+        Assert.NotEmpty(analysis.Chords);
+    }
+
+    [Fact]
+    public void A_stretch_cut_from_the_middle_of_a_bar_is_read_on_its_bar_lines()
+    {
+        // The walking bass under Dm7 G7 | Cmaj7, cut from beat 3 of the bar before: read from where its bars were, the
+        // walk is still passing notes.
+        var chart = Chart("Dm7 G7 | Cmaj7 |");
+        var notes = Voicer.Voice(chart, VoicingStyle.Close, CompRhythm.Held, 2 * Bar).Concat(Voicer.Bass(chart, BassStyle.Walking, 2 * Bar))
+                          .Select(n => n with { Start = n.Start + 2 * Beat }).ToList();
+        Assert.Equal(["Dm7", "G7", "Cmaj7"], ChordReader.Read(notes, 2 * Bar + 2 * Beat, downbeat: 2 * Beat).Select(c => c.Chord.Name));
+        Assert.Equal(2 * Beat, ChordReader.Read(notes, 2 * Bar + 2 * Beat, downbeat: 2 * Beat)[0].Start);
+    }
+
+    [Fact]
+    public void Picked_bars_read_their_chords_without_the_tune_like_the_whole_song()
+    {
+        var keys = new MidiChannel("Keys", "", Ppq, Bars([36, 52, 55, 60], [41, 57, 60, 65]), Plugin: "Keys");
+        var lead = new MidiChannel("Lead", "", Ppq, new[] { 74, 71, 74, 72, 71, 76, 71, 74 }.Select((k, i) => new NoteEvent(i * (long)Beat, Beat, k, 100)).ToList(),
+                                   Plugin: "Lead");
+        var song = HarmonyTarget.FromChannels("Song", [keys, lead])!;
+        Assert.NotNull(song.HarmonyNotes);
+        var stretch = HarmonyTarget.FromStretch("Bar 1", song.Notes.Where(n => n.Start < Bar).ToList(), Bar, song.Key, song.Registers,
+                                                song.HarmonyNotes!.Where(n => n.Start < Bar).ToList())!;
+        Assert.Equal("C", stretch.ChordText());
+    }
 }

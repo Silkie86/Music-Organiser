@@ -78,9 +78,10 @@ if (args.Contains("--chords"))
         // How long each reader takes over a 16-bar phrase (the most the MIDI index keeps in one), the piano part.
         var phrases = songs.SelectMany(s => Enumerable.Range(0, (int)(s.Length / (16 * Bar))).Select(i => Cut(s.Piano, i * 16L * Bar, 16 * Bar)))
                            .Where(p => p.Count > 0).ToList();
+        if (phrases.Count == 0) { Console.WriteLine("No 16-bar piano phrases to time."); return; }
         foreach (var (name, read) in readers)
         {
-            for (var i = 0; i < 20; i++) read(phrases[i], 16 * Bar);   // warm up
+            foreach (var p in phrases.Take(20)) read(p, 16 * Bar);   // warm up
             var sw = System.Diagnostics.Stopwatch.StartNew();
             foreach (var p in phrases) read(p, 16 * Bar);
             Console.WriteLine($"{name,-44} {sw.Elapsed.TotalMilliseconds / phrases.Count,6:0.000} ms per 16-bar phrase ({phrases.Count} phrases)");
