@@ -28,6 +28,21 @@ public sealed record BitwigHello(int Link, string Product, string Version, int A
     public string Answering => Runtime == "java" ? $"the Music Organiser extension {Extension}".TrimEnd() : "the Music Organiser script";
 }
 
+/// <summary>
+/// A clip selected in Bitwig with its notes (the Java extension 3.15: see <see cref="BitwigLink.ClipNotesAsync"/>).
+/// </summary>
+/// <param name="From">"arranger" or "launcher": where it's selected.</param>
+/// <param name="OnSelectedTrack">Whether it's on the track selected in Bitwig.</param>
+/// <param name="Start">The clip's loop start, in beats.</param>
+/// <param name="Length">The clip's loop length, in beats.</param>
+/// <param name="Cut">The clip is longer than the extension reads (256 beats): notes past that aren't in <see cref="Notes"/>.</param>
+/// <param name="Notes">Every note, from the clip's start.</param>
+public sealed record BitwigClipNotes(string From, string Track, bool OnSelectedTrack, double Start, double Length, bool Cut,
+                                     IReadOnlyList<BitwigNote> Notes);
+
+/// <summary>A note in a Bitwig clip: where it starts and how long it lasts in beats, its key and velocity (0 to 127).</summary>
+public sealed record BitwigNote(double Start, double Length, int Key, int Velocity);
+
 /// <summary>The project open in Bitwig, as Bitwig shows it.</summary>
 /// <param name="TrackCount">Every track in the project; <see cref="Tracks"/> holds the first 128.</param>
 public sealed record BitwigProject(string Name, bool Modified, double Tempo, string TimeSignature, bool Playing,
@@ -546,6 +561,29 @@ public sealed class BitwigLink : IDisposable
     /// <summary>The device selected in Bitwig with all its parameters (Device is null if none is selected).</summary>
     public async Task<BitwigSelection> SelectedDeviceAsync(CancellationToken ct = default) =>
         Parse<BitwigSelection>(await RequestAsync(new() { ["cmd"] = "device" }, ct));
+
+    /// <summary>What an older script or extension says to <see cref="ClipNotesAsync"/>.</summary>
+    public const string NeedsClipNotes = "Getting chords from Bitwig needs the Music Organiser extension 3.15 in Bitwig. " +
+                                         "Install it again from Settings > DAW links, then restart Bitwig.";
+
+    /// <summary>
+    /// The clips selected in Bitwig's arranger and clip launcher with their notes (the Java extension 3.15), the arranger's
+    /// first; none selected fails saying so. For the Playground's "Get chords from Bitwig": Bitwig doesn't tell extensions
+    /// its chords, so they're read from the notes.
+    /// </summary>
+    public async Task<IReadOnlyList<BitwigClipNotes>> ClipNotesAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            return Parse<SelectedClips>(await RequestAsync(new() { ["cmd"] = "notes" }, ct)).Clips;
+        }
+        catch (DawLinkException e) when (e.Message.StartsWith("Unknown command", StringComparison.Ordinal))
+        {
+            throw new DawLinkException(NeedsClipNotes, e);
+        }
+    }
+
+    sealed record SelectedClips(IReadOnlyList<BitwigClipNotes> Clips);
 
     /// <summary>Every action Bitwig offers (its menu commands and shortcuts), to run with <see cref="RunActionAsync"/>.</summary>
     public async Task<IReadOnlyList<BitwigAction>> ActionsAsync(CancellationToken ct = default) =>

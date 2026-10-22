@@ -49,6 +49,7 @@ import java.time.Clock;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -218,6 +219,14 @@ final class Link {
                                          + "which is the FL Studio link's.";
     static final String CHANGES_OFF = "Changes are turned off. To let the app change things, turn on \"Let the app make changes\" "
                                       + "in Bitwig: Settings > Controllers > Music Organiser.";
+    /**
+     * The note grid `notes` reads a clip through: steps of a 16th note (in beats), 1024 of them (256 beats, 64 bars of 4/4),
+     * on all 128 keys. A note that starts past the grid isn't read.
+     */
+    static final double NOTE_STEP = 0.25;
+    static final int NOTE_STEPS = 1024;
+    static final int NOTE_KEYS = 128;
+    static final String NO_CLIP = "No clip is selected in Bitwig. Click your chord clip in the arranger or the clip launcher, then try again.";
 
     private static final Pattern COLOUR = Pattern.compile("^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$");
 
@@ -275,6 +284,11 @@ final class Link {
     private Arranger arranger;
     private Clip arrangerClip;
     private Track arrangerClipTrack;
+    /**
+     * The clips selected in the arranger and in the clip launcher (in that order), each with the notes its grid shows, for
+     * `notes` (null when Bitwig wouldn't make them).
+     */
+    private List<NoteClip> noteClips;
     /** Where a file dropped after each track goes, for the filetrack experiment (null when Bitwig wouldn't make them). */
     private InsertionPoint[] trackAfter;
     /**
@@ -368,6 +382,9 @@ final class Link {
         commands.put("record", Command.job(this::record));
         commands.put("recordabort", Command.answer(false, this::abortRecording));
         commands.put("probe", Command.job(this::probe));
+        // Extension 3.15: the notes of the clips selected in the arranger and the clip launcher, for the Playground's Get
+        // chords from Bitwig. It only reads, so it doesn't need changes allowed.
+        commands.put("notes", Command.answer(false, this::notes));
     }
 
     // ---- Starting and stopping ----
@@ -613,6 +630,25 @@ final class Link {
                  + (arrangerClip.exists().get() ? "a clip on \"" + str(arrangerClipTrack.name().get()) + "\" is selected in the arranger"
                                                 : "no clip is selected in the arranger")
                  + ", and the play start is at beat " + Json.number(transport.playStartPosition().get()) + ".");
+
+        // For notes (extension 3.15): the clips selected in the arranger and in the clip launcher, each with a note grid of
+        // its own (the arranger feature's clip has a grid of one step, which shows no notes), the track each is on, and
+        // whether that's the selected track.
+        feature("clip notes", () -> {
+            NoteClip arranged = noteClip("arranger", host.createArrangerCursorClip(NOTE_STEPS, NOTE_KEYS));
+            NoteClip launched = noteClip("launcher", host.createLauncherCursorClip(NOTE_STEPS, NOTE_KEYS));
+            noteClips = List.of(arranged, launched);
+        }, () -> {
+            List<String> parts = new ArrayList<>();
+            for (NoteClip c : noteClips) {
+                String where = "arranger".equals(c.from) ? "the arranger" : "the clip launcher";
+                parts.add(c.clip.exists().get() ? "a clip on \"" + str(c.track.name().get()) + "\" is selected in " + where + ", with "
+                                                  + c.notes.size() + " notes starting in its grid"
+                                                : "no clip is selected in " + where);
+            }
+            String said = String.join("; ", parts) + ".";
+            return Character.toUpperCase(said.charAt(0)) + said.substring(1);
+        });
 
         // For the filetrack experiment (extension 3.8): where a file goes when it's dropped after each track.
         feature("files as tracks", () -> {
@@ -1575,6 +1611,83 @@ final class Link {
             addDetails(m, p);
         }
         m.put("locked", lastClicked.isLocked().get());
+        reply(ask, m, null);
+    }
+
+    /**
+     * Sets up a cursor clip for notes: its grid from the first step and the lowest key, what's read of it marked as
+     * interesting, and the notes Bitwig shows in its grid kept as they come.
+     */
+    private NoteClip noteClip(String from, Clip clip) {
+        clip.exists().markInterested();
+        clip.getLoopStart().markInterested();
+        clip.getLoopLength().markInterested();
+        Track on = clip.getTrack();
+        on.name().markInterested();
+        BooleanValue selected = null;
+        if (cursorTrack != null) {
+            // Only for onSelectedTrack, so notes still works when Bitwig won't compare the clip's track.
+            try {
+                selected = on.createEqualsValue(cursorTrack);
+                selected.markInterested();
+            } catch (RuntimeException | LinkageError e) {
+                selected = null;
+            }
+        }
+        NoteClip made = new NoteClip(from, clip, on, selected);
+        clip.setStepSize(NOTE_STEP);
+        clip.scrollToKey(0);
+        clip.scrollToStep(0);
+        // Bitwig tells each step of the grid that changes, for each channel: where a note starts (NoteOn), where one goes
+        // on (NoteSustain), and where there's none (Empty). Only the starts are kept.
+        clip.addNoteStepObserver(step -> {
+            List<Integer> at = List.of(step.channel(), step.x(), step.y());
+            switch (step.state()) {
+                case NoteOn -> made.notes.put(at, new GridNote(step.x(), step.y(), step.duration(), step.velocity()));
+                default -> made.notes.remove(at);
+            }
+        });
+        return made;
+    }
+
+    /**
+     * The notes of the clip selected in the arranger and of the one selected in the clip launcher (extension 3.15), for
+     * the Playground's Get chords from Bitwig: for each clip there is (the arranger's first), where it's `from`, its
+     * `track` and whether that's the selected one, its loop `start` and `length` in beats, whether it's longer than the
+     * grid the link reads it through (`cut`), and its `notes` (`start` in beats from the clip's start, `length` in beats,
+     * `key` and `velocity`, 0 to 127), by start, then key.
+     */
+    private void notes(Ask ask, Map<String, Object> request) {
+        if (noteClips == null) throw new LinkError("This Bitwig didn't let the link read its clips' notes. A selftest says why.");
+        List<Object> clips = new ArrayList<>();
+        for (NoteClip c : noteClips) {
+            if (!c.clip.exists().get()) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("from", c.from);
+            m.put("track", str(c.track.name().get()));
+            m.put("onSelectedTrack", c.selected != null && c.selected.get());
+            double start = c.clip.getLoopStart().get();
+            double length = c.clip.getLoopLength().get();
+            m.put("start", start);
+            m.put("length", length);
+            m.put("cut", start + length > NOTE_STEPS * NOTE_STEP + 1e-9);
+            List<GridNote> sorted = new ArrayList<>(c.notes.values());
+            sorted.sort(Comparator.comparingInt(GridNote::step).thenComparingInt(GridNote::key));
+            List<Object> notes = new ArrayList<>();
+            for (GridNote n : sorted) {
+                Map<String, Object> note = new LinkedHashMap<>();
+                note.put("start", n.step() * NOTE_STEP);
+                note.put("length", n.length());
+                note.put("key", n.key());
+                note.put("velocity", (int) Math.max(0, Math.min(127, Math.round(n.velocity() * 127))));
+                notes.add(note);
+            }
+            m.put("notes", notes);
+            clips.add(m);
+        }
+        if (clips.isEmpty()) throw new LinkError(NO_CLIP);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("clips", clips);
         reply(ask, m, null);
     }
 
@@ -3957,6 +4070,28 @@ final class Link {
     record Pad(int note, String path, String name) {}
 
     record Feature(String name, String error, long ms, Supplier<String> probe) {}
+
+    /**
+     * A cursor clip `notes` reads: where it's selected ("arranger" or "launcher"), the track it's on, whether that's the
+     * selected track (null when Bitwig wouldn't say), and the notes starting in its grid, by channel, step and key.
+     */
+    static final class NoteClip {
+        final String from;
+        final Clip clip;
+        final Track track;
+        final BooleanValue selected;
+        final Map<List<Integer>, GridNote> notes = new HashMap<>();
+
+        NoteClip(String from, Clip clip, Track track, BooleanValue selected) {
+            this.from = from;
+            this.clip = clip;
+            this.track = track;
+            this.selected = selected;
+        }
+    }
+
+    /** A note starting in a clip's grid: its step and key, its length in beats, and its velocity (0 to 1), as Bitwig said. */
+    record GridNote(int step, int key, double length, double velocity) {}
 
     static final class Params {
         List<String> ids = List.of();

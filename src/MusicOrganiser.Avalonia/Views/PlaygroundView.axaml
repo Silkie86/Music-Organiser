@@ -558,6 +558,8 @@
                             <DockPanel Grid.Row="2" Margin="0,6">
                                 <ToggleButton DockPanel.Dock="Right" Content="Hear" Classes="tiny" IsChecked="{Binding HearChordTrack}" Margin="6,0,0,0" VerticalAlignment="Top"
                                               ToolTip.Tip="Hear the chord track's chords, played plainly, with the idea. They're never sent to the DAW." />
+                                <Button DockPanel.Dock="Right" Content="From Bitwig" Classes="tiny" Command="{Binding ChordsFromBitwigCommand}" Margin="6,0,0,0" VerticalAlignment="Top"
+                                        ToolTip.Tip="Get chords from Bitwig: click your chord clip in Bitwig (arranger or clip launcher) first. Its chords, read from its notes, go on the chord track. Needs the Music Organiser extension 3.15." />
                                 <TextBlock Text="{Binding ProgressionsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                             </DockPanel>
                             <ListBox Grid.Row="3" ItemsSource="{Binding Progressions}" Background="Transparent" Classes="longList"

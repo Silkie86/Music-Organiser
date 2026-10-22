@@ -48,6 +48,7 @@ public sealed partial class PlaygroundViewModel
                       M("Duplicate track", "playground.duplicateTrack"), M("Delete track", "playground.deleteTrack")]),
         new("Harmony", [M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"), Sep,
                         M("Reharmonise…", "playground.reharm"), Sep, M("Chord progressions…", "playground.tabChords"),
+                        M("Get chords from Bitwig", "playground.chordsFromBitwig"),
                         M("Put the chords heard on the chord track", "playground.keepHeardChords"), M("Clear the chord track", "playground.clearChordTrack"), Sep,
                         M("Hear the chord track", "playground.hearChordTrack")]),
         new("View", [M("Zoom in", "playground.zoomIn"), M("Zoom out", "playground.zoomOut"), M("Zoom to fit", "playground.zoomFit"), Sep,
@@ -87,8 +88,8 @@ public sealed partial class PlaygroundViewModel
     public static IReadOnlyList<PlaygroundMenuItem> ChordMenu { get; } =
     [
         M("Reharmonise…", "playground.reharm"), M("Remove this chord", "playground.removeChord"), Sep,
-        M("Chord progressions…", "playground.tabChords"), M("Put the chords heard on the chord track", "playground.keepHeardChords"),
-        M("Clear the chord track", "playground.clearChordTrack"), M("Hear the chord track", "playground.hearChordTrack"), Sep,
+        M("Chord progressions…", "playground.tabChords"), M("Get chords from Bitwig", "playground.chordsFromBitwig"),
+        M("Put the chords heard on the chord track", "playground.keepHeardChords"), M("Clear the chord track", "playground.clearChordTrack"), M("Hear the chord track", "playground.hearChordTrack"), Sep,
         M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"), Sep, Keys,
     ];
 
@@ -107,6 +108,7 @@ public sealed partial class PlaygroundViewModel
             "playground.removeChord" => PickedChord is { IsSet: true },
             "playground.clearChordTrack" => HasChordTrack,
             "playground.keepHeardChords" => Harmony.Lane.Count > 0,
+            "playground.chordsFromBitwig" => ChordsFromBitwigCommand.CanExecute(null),
             "playground.sendToBitwig" => SendToBitwigCommand.CanExecute(null),
             "playground.fitAgain" => clip is { CanFitAgain: true },
             "playground.smooth" => track is not null,
@@ -229,6 +231,7 @@ public sealed partial class PlaygroundViewModel
             case "playground.removeChord": RemoveChord(); return true;
             case "playground.clearChordTrack": ClearChordTrack(); return true;
             case "playground.keepHeardChords": KeepHeardChords(); return true;
+            case "playground.chordsFromBitwig": _ = ChordsFromBitwigCommand.ExecuteAsync(null); return true;
             case "playground.hearChordTrack": HearChordTrack = !HearChordTrack; return true;
             case "playground.tabWrite": RightTab = WriteTab; return true;
             case "playground.tabSong": RightTab = SongTab; return true;

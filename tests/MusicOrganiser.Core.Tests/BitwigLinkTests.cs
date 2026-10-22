@@ -64,6 +64,9 @@ public class BitwigLinkTests
                      selected.Params.Take(2).Select(p => (p.Id, p.Name, p.Value ?? -1, p.Display)));
         Assert.Null(selected.Params[2].Value);   // Bitwig couldn't read it
 
+        // The script, like extensions before 3.15, can't read a clip's notes: the app says what to install.
+        Assert.Equal(BitwigLink.NeedsClipNotes, (await Assert.ThrowsAsync<DawLinkException>(() => link.ClipNotesAsync())).Message);
+
         Assert.Equal("Save", (await link.ActionsAsync()).Single().Id);
         // The project in front as Save ran, and that the script ran it straight away.
         Assert.Equal(new BitwigActionRun("Night Drive", "direct", true), await link.RunActionAsync("Save"));

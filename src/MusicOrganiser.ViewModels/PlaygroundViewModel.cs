@@ -44,6 +44,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         RoleChips = new[] { MidiRoles.Chords, MidiRoles.Bass, MidiRoles.Melody, MidiRoles.Arp, MidiRoles.Drums }
             .Select(r => new RoleChip(MidiRoles.Plural(r), r)).ToList();
         _suggestRole = RoleChips[0];
+        BitwigClips = AskBitwigAsync;
         // More MIDI read (a folder or project added, or the list read again): the progressions are found again.
         if (!quick) main.Midi.Read += (_, _) => _ = RefreshProgressionsAsync();
         Show();

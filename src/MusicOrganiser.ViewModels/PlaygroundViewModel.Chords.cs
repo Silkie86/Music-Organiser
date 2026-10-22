@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Midi.Playground;
@@ -304,9 +305,19 @@ public sealed partial class PlaygroundViewModel
         StopPlaying();
         var lane = await ProgressionLaneAsync(row.Progression);
         if (lane.Count == 0) return;
+        if (PlaceOnChordTrack(lane) is not var (from, to)) return;
+        Message = $"{row.Names} on the chord track, bars {from / Bar + 1}–{(to + Bar - 1) / Bar}. Drag the chords' edges to change how long each lasts; Undo takes them off.";
+    }
+
+    /// <summary>
+    /// One go round of chords (from 0) on the chord track: over the highlight, going round to fill it, else from bar 1 when
+    /// the track is empty, else after its last chord. The timeline grows to fit. Where they went; null when it's full.
+    /// </summary>
+    (long From, long To)? PlaceOnChordTrack(IReadOnlyList<TimedChord> lane)
+    {
         var length = lane[^1].End;
         var at = Loop?.Start ?? (HasChordTrack ? Section.ChordTrack.Max(c => c.End) : 0);
-        if (at >= (long)MaxBars * Bar) { Message = $"The timeline is full ({MaxBars} bars)."; return; }
+        if (at >= (long)MaxBars * Bar) { Message = $"The timeline is full ({MaxBars} bars)."; return null; }
         // Over a highlight it goes round to fill it.
         var to = Loop is { } r ? r.End : at + length;
         var placed = new List<TimedChord>();
@@ -317,7 +328,85 @@ public sealed partial class PlaygroundViewModel
         else Reach(to);
         PutOnChordTrack(Section, placed, at, Math.Min(to, Section.Length));
         Changed();
-        Message = $"{row.Names} on the chord track, bars {at / Bar + 1}–{(to + Bar - 1) / Bar}. Drag the chords' edges to change how long each lasts; Undo takes them off.";
+        return (at, to);
+    }
+
+    // ---- chords from Bitwig ----
+
+    /// <summary>
+    /// Asks Bitwig for the clips selected in its arranger and clip launcher, with their notes. Tests put a stand-in here.
+    /// </summary>
+    internal Func<CancellationToken, Task<IReadOnlyList<BitwigClipNotes>>> BitwigClips { get; set; }
+
+    async Task<IReadOnlyList<BitwigClipNotes>> AskBitwigAsync(CancellationToken ct)
+    {
+        using var link = await _main.Live.Watch.ConnectBitwigAsync(ct);
+        return await link.ClipNotesAsync(ct);
+    }
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ChordsFromBitwigCommand))]
+    bool _isAskingBitwig;
+
+    /// <summary>
+    /// Chords first, step 3 (Solomon, 2026-10-22: "How will it get the chords from bitwig"): the chords of the clip selected
+    /// in Bitwig go on the chord track, as a progression's do. Bitwig doesn't tell extensions its chords, so they're read
+    /// from the clip's notes as the chord lane reads a part. One clip each time, the one clicked in Bitwig.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanAskBitwig))]
+    async Task ChordsFromBitwig()
+    {
+        IsAskingBitwig = true;
+        Message = "Asking Bitwig for the clip you've selected…";
+        try
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var clips = await BitwigClips(limit.Token);
+            if (BitwigClipChords.Pick(clips) is not { } clip)
+            {
+                Message = "No clip is selected in Bitwig. Click your chord clip in the arranger or the clip launcher, then try again.";
+                return;
+            }
+            var where = $"the clip on {clip.Track} ({(clip.From == "arranger" ? "arranger" : "clip launcher")})";
+            var lane = await UiWork.Run(() => BitwigClipChords.Lane(clip));
+            if (lane.Count == 0)
+            {
+                Message = clip.Notes.Count == 0 ? $"{Capital(where)} has no notes. Click your chord clip in Bitwig, then try again."
+                                                : $"No chords heard in {where}.";
+                return;
+            }
+            StopPlaying();
+            if (PlaceOnChordTrack(lane) is not var (from, to)) return;
+            var names = string.Join(" ", Changes(lane).Take(8).Select(c => c.NameIn(Harmony.Key)));
+            Message = $"The chords of {where} are on the chord track, bars {from / Bar + 1}–{(to + Bar - 1) / Bar}: {names}" +
+                      (Changes(lane).Count > 8 ? " …" : "") + "." +
+                      (clip.Cut ? " The clip is longer than 64 bars, so only its first 64 came across." : "") + " Undo takes them off.";
+        }
+        catch (DawLinkException e)
+        {
+            Message = e.Message;
+        }
+        catch (OperationCanceledException)
+        {
+            Message = "Bitwig didn't answer. Check it's open with the Music Organiser extension on, then try again.";
+        }
+        finally
+        {
+            IsAskingBitwig = false;
+        }
+    }
+
+    bool CanAskBitwig() => !IsAskingBitwig;
+
+    static string Capital(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+
+    /// <summary>The chords as they change: a chord that only changes its colour (Fmaj7 to Fmaj7(#11)) isn't a new one.</summary>
+    static List<ChordSymbol> Changes(IEnumerable<TimedChord> lane)
+    {
+        var list = new List<ChordSymbol>();
+        foreach (var c in lane)
+            if (list.Count == 0 || !SameKind(list[^1], c.Chord)) list.Add(c.Chord);
+        return list;
     }
 
     // ---- a song's chords only ----

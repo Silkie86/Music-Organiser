@@ -145,6 +145,7 @@ public sealed partial class ShortcutsViewModel : ObservableObject
         new("playground.tabMidi", Playground, "Show your MIDI or suggestions", ""),
         new("playground.tabChords", Playground, "Show Chords: progressions from your chord parts", ""),
         new("playground.removeChord", Playground, "Remove the picked chord from the chord track", ""),
+        new("playground.chordsFromBitwig", Playground, "Get chords from the clip selected in Bitwig", ""),
         new("playground.keepHeardChords", Playground, "Put the chords heard on the chord track", ""),
         new("playground.clearChordTrack", Playground, "Clear the chord track", ""),
         new("playground.hearChordTrack", Playground, "Hear the chord track or not", ""),

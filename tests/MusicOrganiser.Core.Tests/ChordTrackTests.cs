@@ -1,3 +1,4 @@
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Jazz;
@@ -315,5 +316,64 @@ public class ChordTrackTests : IDisposable
         // The counts read back the same as they were written.
         var again = ProgressionModel.Load(new StringReader(charts.Save()));
         Assert.Equal(charts.Next(Chord("Bbm7"), Chord("Fm7")), again.Next(Chord("Bbm7"), Chord("Fm7")));
+    }
+
+    static BitwigNote[] Struck(double at, double beats, params int[] keys) => keys.Select(k => new BitwigNote(at, beats, k, 90)).ToArray();
+
+    // A clip of Dm7 | G7 | Cmaj7 | Cmaj7, a bar each, with a note before its loop start and one past its end.
+    static BitwigClipNotes ChordClip(string from = "arranger", bool onSelected = false) =>
+        new(from, "Keys", onSelected, Start: 4, Length: 16, Cut: false,
+            [.. Struck(0, 4, 40), .. Struck(4, 4, Dm7), .. Struck(8, 4, G7), .. Struck(12, 8, Cmaj7), .. Struck(20, 4, 70)]);
+
+    [Fact]
+    public void A_clip_selected_in_Bitwig_is_read_into_chords_from_its_loop_start()
+    {
+        var clip = ChordClip();
+        var notes = BitwigClipChords.Notes(clip);
+        Assert.Equal(0, notes.Min(n => n.Start));
+        Assert.DoesNotContain(notes, n => n.Key is 40 or 70);
+        Assert.Equal(4L * Bar, notes.Max(n => n.Start + n.Length));   // the last chord held over the end is cut there
+        var lane = BitwigClipChords.Lane(clip);
+        Assert.Equal(["Dm7", "G7", "Cmaj7"], lane.Select(c => c.Chord.Name));
+        Assert.Equal(4L * Bar, lane[^1].End);
+
+        // The clip on the track just clicked wins; else the arranger's; an empty one comes last.
+        var launcher = ChordClip("launcher", onSelected: true);
+        var empty = new BitwigClipNotes("arranger", "Pad", true, 0, 16, false, []);
+        Assert.Same(launcher, BitwigClipChords.Pick([clip, launcher]));
+        Assert.Same(clip, BitwigClipChords.Pick([ChordClip("launcher"), clip]));
+        Assert.Same(clip, BitwigClipChords.Pick([empty, clip]));
+        Assert.Null(BitwigClipChords.Pick([]));
+    }
+
+    [Fact]
+    public async Task Get_chords_from_Bitwig_puts_the_selected_clips_chords_on_the_chord_track()
+    {
+        Ui.Current = new PlaygroundTests.Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = Playground(db, sounds);
+
+        p.BitwigClips = _ => Task.FromResult<IReadOnlyList<BitwigClipNotes>>([]);
+        await p.ChordsFromBitwigCommand.ExecuteAsync(null);
+        Assert.Empty(p.CurrentSection.ChordTrack);
+        Assert.StartsWith("No clip is selected in Bitwig", p.Message);
+
+        p.BitwigClips = _ => throw new DawLinkException(BitwigLink.NeedsClipNotes);
+        await p.ChordsFromBitwigCommand.ExecuteAsync(null);
+        Assert.Equal(BitwigLink.NeedsClipNotes, p.Message);
+
+        p.BitwigClips = _ => Task.FromResult<IReadOnlyList<BitwigClipNotes>>([ChordClip()]);
+        await p.ChordsFromBitwigCommand.ExecuteAsync(null);
+        Assert.Equal(["Dm7", "G7", "Cmaj7"], p.CurrentSection.ChordTrack.OrderBy(c => c.Start).Select(c => c.Chord.Name));
+        Assert.Equal(4L * Bar, p.CurrentSection.ChordTrack.Max(c => c.End));
+        Assert.Contains("the clip on Keys (arranger)", p.Message);
+        Assert.True(p.ChordsFromBitwigCommand.CanExecute(null));
+
+        // Undo takes them off.
+        p.UndoCommand.Execute(null);
+        Assert.Empty(p.CurrentSection.ChordTrack);
     }
 }

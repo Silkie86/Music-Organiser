@@ -21,8 +21,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.musicorganiser.bitwig.FakeBitwig.App;
 import org.musicorganiser.bitwig.FakeBitwig.Model;
+import org.musicorganiser.bitwig.FakeBitwig.NoteClip;
 
-/** What link version 3 adds with Bitwig's newer API: track IDs, parameter steps and more, clicked and recorder. */
+/** What link version 3 adds with Bitwig's newer API: track IDs, parameter steps and more, clicked, recorder and notes. */
 class NewerApiTest {
     @TempDir
     Path reports;
@@ -251,5 +252,83 @@ class NewerApiTest {
         assertEquals("Bitwig didn't start recording. Is its audio engine on?", error(app.take().get(0)));
         // The next change isn't held up.
         assertEquals(true, app.waitFor(obj("id", 2, "cmd", "newtrack", "name", "Lead")).get("ok"));
+    }
+
+    // ---- notes (extension 3.15) ----
+
+    /** A note as notes answers with it. */
+    static Map<String, Object> note(double start, double length, int key, int velocity) {
+        return obj("start", start, "length", length, "key", key, "velocity", velocity);
+    }
+
+    @Test
+    @DisplayName("reads the notes of the clip selected in the arranger, by start then key, without needing changes allowed")
+    void readsTheArrangerClipsNotes() {
+        start(LinkTest.song());
+        // A C major chord, a bass note under it on channel 4, a D a bar on, and a note off the 16th-note grid, which reads
+        // as starting on the 16th it's in. The notes go on past their first 16th, which doesn't make them start again.
+        bitwig.state.arrangerNotes = new NoteClip("Bass", 0, 16).note(4, 2, 62, 0.8)
+                                                                .note(0, 1.5, 67, 1)
+                                                                .note(0, 1.5, 60, 100 / 127.0)
+                                                                .note(0, 1.5, 64, 0.5)
+                                                                .note(3, 0, 4, 36, 0.25)
+                                                                .note(8.1, 0.5, 65, 0.6);
+        bitwig.refresh();
+        assertJson(obj("clips", list(obj("from", "arranger", "track", "Bass", "onSelectedTrack", true, "start", 0, "length", 16, "cut", false,
+                                         "notes", list(note(0, 4, 36, 32), note(0, 1.5, 60, 100), note(0, 1.5, 64, 64), note(0, 1.5, 67, 127),
+                                                       note(4, 2, 62, 102), note(8, 0.5, 65, 76))))),
+                   app.ask(obj("id", 1, "cmd", "notes")).get("result"));
+        assertEquals(List.of(), bitwig.calls);
+    }
+
+    @Test
+    @DisplayName("reads the clips selected in the arranger and in the clip launcher, the arranger's first, and follows the selection")
+    void readsBothClips() {
+        start(LinkTest.song());
+        bitwig.state.launcherNotes = new NoteClip("Keys", 2, 8).note(2, 1, 57, 0.5).note(2, 1, 60, 0.5);
+        bitwig.state.arrangerNotes = new NoteClip("Bass", 0, 300).note(0, 4, 40, 1);
+        bitwig.refresh();
+        assertJson(obj("clips", list(obj("from", "arranger", "track", "Bass", "onSelectedTrack", true, "start", 0, "length", 300, "cut", true,
+                                         "notes", list(note(0, 4, 40, 127))),
+                                     obj("from", "launcher", "track", "Keys", "onSelectedTrack", false, "start", 2, "length", 8, "cut", false,
+                                         "notes", list(note(2, 1, 57, 64), note(2, 1, 60, 64))))),
+                   app.ask(obj("id", 1, "cmd", "notes")).get("result"));
+
+        // Another launcher clip selected, and none in the arranger: only the new clip's notes.
+        bitwig.state.launcherNotes = new NoteClip("Keys", 0, 4).note(1, 1, 62, 0.5);
+        bitwig.state.arrangerNotes = null;
+        bitwig.refresh();
+        assertJson(obj("clips", list(obj("from", "launcher", "track", "Keys", "onSelectedTrack", false, "start", 0, "length", 4, "cut", false,
+                                         "notes", list(note(1, 1, 62, 64))))),
+                   app.ask(obj("id", 2, "cmd", "notes")).get("result"));
+    }
+
+    @Test
+    @DisplayName("says how to select a clip when none is selected")
+    void saysWhenNoClipIsSelected() {
+        start(LinkTest.song());
+        assertEquals("No clip is selected in Bitwig. Click your chord clip in the arranger or the clip launcher, then try again.",
+                     error(app.ask(obj("id", 1, "cmd", "notes"))));
+
+        // An empty clip is still a clip.
+        bitwig.state.arrangerNotes = new NoteClip("Bass", 0, 4);
+        bitwig.refresh();
+        assertJson(obj("clips", list(obj("from", "arranger", "track", "Bass", "onSelectedTrack", true, "start", 0, "length", 4, "cut", false,
+                                         "notes", list()))),
+                   app.ask(obj("id", 2, "cmd", "notes")).get("result"));
+    }
+
+    @Test
+    @DisplayName("says the self-check tells why when Bitwig wouldn't make the cursor clips notes reads")
+    void notesWithoutTheCursorClips() {
+        Model m = LinkTest.song();
+        m.broken.add("createLauncherCursorClip");
+        start(m);
+        assertEquals(true, app.ask(obj("id", 1, "cmd", "project")).get("ok"));
+        assertEquals("This Bitwig didn't let the link read its clips' notes. A selftest says why.", error(app.ask(obj("id", 2, "cmd", "notes"))));
+        Map<String, Object> result = SelfCheckTest.map(app.ask(obj("id", 3, "cmd", "selftest")).get("result"));
+        assertEquals(List.of("clip notes"), listAt(result, "checks").stream().filter(c -> !(Boolean) at(c, "ok")).map(c -> at(c, "name"))
+                                                                    .collect(Collectors.toList()));
+        assertMatches("^Couldn't set it up: java.lang.AbstractMethodError: ", SelfCheckTest.detail(result, "clip notes"));
     }
 }
