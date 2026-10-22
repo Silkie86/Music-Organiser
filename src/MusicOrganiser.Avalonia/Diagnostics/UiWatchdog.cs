@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Avalonia.Threading;
 using MusicOrganiser.ViewModels;
 using Activity = MusicOrganiser.ViewModels.Activity;
@@ -24,6 +25,8 @@ sealed class UiWatchdog : IDisposable
     /// <summary>The jobs running now, kept as they start and end, so the watchdog can name them while the UI thread is stuck.</summary>
     readonly ConcurrentDictionary<Activity, string> _running = new();
     readonly Thread _thread;
+    /// <summary>Windows' own number for the UI thread (made on it), to ask Windows what it's waiting for while it's stuck.</summary>
+    readonly int _uiThread;
     volatile bool _stop;
 
     public UiWatchdog(MainViewModel main) : this(main.Activities, () => main.SelectedNav?.Title ?? "") { }
@@ -33,6 +36,7 @@ sealed class UiWatchdog : IDisposable
     {
         _jobs = jobs;
         _page = page;
+        _uiThread = OperatingSystem.IsWindows() ? (int)GetCurrentThreadId() : 0;
         jobs.Changed += OnJob;
         // Jobs already running (the start-up scan) are known from the start, not only those that start later.
         foreach (var job in jobs.Items.ToArray()) if (job.IsRunning) _running[job] = job.Title;
@@ -73,6 +77,13 @@ sealed class UiWatchdog : IDisposable
                 // Stuck: note what was going on now, while it still is, then wait for it to come back.
                 var page = _page();
                 var jobs = string.Join(", ", _running.Values);
+                // What the window's thread is doing, and how hard the app works meanwhile, say which kind of freeze it is:
+                // its own work (the processor busy), or waiting for another thread, the disk, or memory Windows had put on
+                // disk (on 2026-10-22 two freezes of 6 s with no clean-up couldn't be told apart from the log).
+                var state = UiThreadState();
+                using var app = Process.GetCurrentProcess();
+                var cpu = app.TotalProcessorTime;
+                var stuckFor = Stopwatch.GetTimestamp();
                 var where = $" on {(page.Length > 0 ? page : "?")}" +
                             (jobs.Length > 0 ? $", while running: {jobs}" : ", with no job running (a click or the page itself)");
                 // A hang that never ends (the app is closed from Task Manager) is written while it lasts, too.
@@ -91,11 +102,53 @@ sealed class UiWatchdog : IDisposable
                     $"The app didn't respond for {Seconds(froze)}{where}" +
                     // Whether the stall was the garbage collector tidying memory (it stops every thread) or work.
                     $" [memory clean-up: {Seconds(GC.GetTotalPauseDuration() - paused)} paused, " +
-                    $"{GC.CollectionCount(2) - fullCollections} full]");
+                    $"{GC.CollectionCount(2) - fullCollections} full; {Busy(app, cpu, stuckFor)}{state}]");
             }
             Thread.Sleep(200);
         }
     }
+
+    /// <summary>
+    /// How much processor time the whole app used while stuck, as a share of one core (100% = one core flat out), and its
+    /// memory: near nothing means everything was waiting, not working.
+    /// </summary>
+    static string Busy(Process app, TimeSpan cpuBefore, long since)
+    {
+        try
+        {
+            app.Refresh();
+            var used = app.TotalProcessorTime - cpuBefore;
+            var memory = GC.GetGCMemoryInfo();
+            var load = memory.TotalAvailableMemoryBytes > 0 ? $", the computer's memory {100.0 * memory.MemoryLoadBytes / memory.TotalAvailableMemoryBytes:0}% full" : "";
+            return $"app working {100 * used / Stopwatch.GetElapsedTime(since):0}% of a core, {app.WorkingSet64 / 1e9:0.0} GB in memory{load}";
+        }
+        catch (Exception e) when (e is InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            return "app use unknown";
+        }
+    }
+
+    /// <summary>"; window's thread waiting (UserRequest)": what Windows says the UI thread is doing, or nothing elsewhere.</summary>
+    string UiThreadState()
+    {
+        if (_uiThread == 0) return "";
+        try
+        {
+            foreach (ProcessThread t in Process.GetCurrentProcess().Threads)
+            {
+                if (t.Id != _uiThread) continue;
+                // A wait's reason: UserRequest is another thread (a lock), PageIn memory coming back from disk, Executive
+                // Windows itself (a file, a device), ExecutionDelay a sleep.
+                return t.ThreadState == System.Diagnostics.ThreadState.Wait ? $"; window's thread waiting ({t.WaitReason})"
+                                                                            : $"; window's thread {t.ThreadState}";
+            }
+        }
+        catch (Exception e) when (e is InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception) { }
+        return "";
+    }
+
+    [DllImport("kernel32.dll")]
+    static extern uint GetCurrentThreadId();
 
     static string Seconds(TimeSpan t) => t.TotalSeconds >= 1 ? $"{t.TotalSeconds:0.0} s" : $"{t.TotalMilliseconds:0} ms";
 

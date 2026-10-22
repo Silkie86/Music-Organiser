@@ -83,6 +83,72 @@ public class ResponsivenessTests
     }
 
     [Fact]
+    public async Task Clicking_into_or_away_from_the_window_never_waits_for_background_work()
+    {
+        // A reader holding the slots' lock while the busy processor isn't running it (Solomon's log, 2026-10-22: the
+        // window froze 6 s twice, each ending as a MIDI file's read did). The window says it's in front or behind
+        // through these, so they must return at once.
+        var gate = typeof(Parallelism).GetField("Gate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+        using var held = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var holder = Task.Run(() =>
+        {
+            lock (gate)
+            {
+                held.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+            }
+        });
+        held.Wait();
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            Parallelism.AppInBackground = true;
+            Parallelism.AppInBackground = false;
+            Parallelism.Mode = Parallelism.Pace.Gentle;
+            Assert.True(clock.ElapsedMilliseconds < 500, $"took {clock.ElapsedMilliseconds} ms");
+        }
+        finally
+        {
+            release.Set();
+            await holder;
+        }
+    }
+
+    [Fact]
+    public async Task Work_waiting_for_a_slot_starts_as_soon_as_the_window_goes_behind_and_frees_more()
+    {
+        try
+        {
+            Parallelism.Mode = Parallelism.Pace.Fast;
+            Parallelism.AppInBackground = false;
+            if (Parallelism.Cores - 2 < 1) return;   // one or two cores: nothing more to free
+            // Every slot taken, then one more piece of work waits for a free one.
+            using var release = new ManualResetEventSlim();
+            var started = 0;
+            var busy = Enumerable.Range(0, Parallelism.Workers).Select(_ => Task.Factory.StartNew(() => Parallelism.Background(() =>
+            {
+                Interlocked.Increment(ref started);
+                release.Wait(TimeSpan.FromSeconds(10));
+            }), TaskCreationOptions.LongRunning)).ToList();
+            for (var waited = 0; Volatile.Read(ref started) < busy.Count && waited < 5000; waited += 10) await Task.Delay(10);
+            using var ran = new ManualResetEventSlim();
+            var waiting = Task.Factory.StartNew(() => Parallelism.Background(ran.Set), TaskCreationOptions.LongRunning);
+            Assert.False(ran.Wait(200));
+
+            Parallelism.AppInBackground = true;   // Fast: every core while the app is behind another
+            Assert.True(ran.Wait(2000));
+            release.Set();
+            await Task.WhenAll([.. busy, waiting]);
+        }
+        finally
+        {
+            Parallelism.AppInBackground = false;
+            Parallelism.Mode = Parallelism.Pace.Gentle;
+        }
+    }
+
+    [Fact]
     public async Task Reading_the_library_never_waits_for_a_long_write()
     {
         var dir = Fixtures.TempDir();
