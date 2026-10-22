@@ -27,6 +27,40 @@ public class LibraryTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     [Fact]
+    public void A_scan_reads_each_song_once_into_borrowed_memory_and_lists_the_same_as_reading_it_on_its_own()
+    {
+        // Solomon's log (2026-10-22): re-reading every old FL song took the app to 14.4 GB, because each song was read
+        // twice into new memory and every plugin's sound copied out just to list its name. A scan now reads each song
+        // once into memory it hands back for the next song: nothing it lists may still point into that memory.
+        var folder = Path.Combine(_root, "Borrowed");
+        Directory.CreateDirectory(folder);
+        string[] songs =
+        [
+            Fixtures.FlStudioProject(folder, "Lead"), Fixtures.FlStudio25NothingSaved(folder),
+            Fixtures.FlStudio25Unplayed(folder, "Beat"), Fixtures.FlStudio9Project(folder, [.. Enumerable.Range(0, 5000).Select(i => (byte)i)]),
+        ];
+        static string Listed(LibraryDb.IndexedFile f) => string.Join("|",
+            f.Info!.Title, f.Info.Version, string.Join(",", f.Info.Plugins.Select(p => $"{p.Name}/{p.Vendor}/{p.Kind}/{p.Format}")),
+            string.Join(",", f.Info.Samples), string.Join(",", f.Info.Tracks), string.Join(",", f.Info.Warnings),
+            string.Join(",", f.Info.Unplayed.Select(u => $"{u.Key}={u.Value}")), f.DetectedKey, f.NoteCount, f.LengthBars);
+        var alone = songs.Select(path =>
+        {
+            var info = Readers.For(path)!.Read(path);
+            var notes = ProjectKey.Read(path);
+            return Listed(new LibraryDb.IndexedFile(path, 0, 0, info, null, [], [])
+                { DetectedKey = notes?.Key, NoteCount = notes?.Notes ?? -1, LengthBars = notes?.Bars ?? -1 });
+        }).ToList();
+
+        // Read one after another on this thread, so each song's memory is the one the song before handed back.
+        var scanned = songs.Select(path => Scanner.Analyse(path)).ToList();
+
+        Assert.All(scanned, f => Assert.Null(f.Error));
+        Assert.Equal(alone, scanned.Select(Listed));
+        Assert.Contains(scanned[1].Info!.Warnings, w => w.StartsWith("LegacyCell has no saved sound", StringComparison.Ordinal));
+        Assert.Contains(scanned[0].Info!.Plugins, p => p is { Name: "Serum", Vendor: "Xfer Records" });
+    }
+
+    [Fact]
     public void Used_in_can_leave_out_samples_without_notes_and_songs_whose_newest_save_mutes_them()
     {
         // Two saves of one song: the hat plays in the first and is muted in the newest. The kick never has notes.

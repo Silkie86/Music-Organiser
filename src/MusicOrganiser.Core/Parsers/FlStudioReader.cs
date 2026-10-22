@@ -217,27 +217,33 @@ public sealed partial class FlStudioReader : IProjectReader
         flp.Events.AddRange(events);
     }
 
-    static Dictionary<int, byte[]> WrapperFields(ReadOnlySpan<byte> blob)
+    /// <summary>
+    /// The Fruity Wrapper's fields by id, each a slice of <paramref name="blob"/> rather than a copy: a plugin's state can
+    /// be megabytes, and copying every state just to read plugins' names left that much to clean up per song while a
+    /// scan ran. Whatever is kept (a preset) is copied out.
+    /// </summary>
+    static Dictionary<int, ReadOnlyMemory<byte>> WrapperFields(ReadOnlyMemory<byte> blob)
     {
-        var fields = new Dictionary<int, byte[]>();
-        if (blob.Length < 4) return fields;
-        var version = BinaryPrimitives.ReadUInt32LittleEndian(blob);
+        var fields = new Dictionary<int, ReadOnlyMemory<byte>>();
+        var d = blob.Span;
+        if (d.Length < 4) return fields;
+        var version = BinaryPrimitives.ReadUInt32LittleEndian(d);
         if (version is 0 or > 64) return fields;
         var pos = 4;
-        while (pos + 12 <= blob.Length)
+        while (pos + 12 <= d.Length)
         {
-            var id = (int)BinaryPrimitives.ReadUInt32LittleEndian(blob[pos..]);
-            var size = BinaryPrimitives.ReadUInt64LittleEndian(blob[(pos + 4)..]);
+            var id = (int)BinaryPrimitives.ReadUInt32LittleEndian(d[pos..]);
+            var size = BinaryPrimitives.ReadUInt64LittleEndian(d[(pos + 4)..]);
             pos += 12;
-            if (size > (ulong)(blob.Length - pos)) break;
-            fields[id] = blob.Slice(pos, (int)size).ToArray();
+            if (size > (ulong)(d.Length - pos)) break;
+            fields[id] = blob.Slice(pos, (int)size);
             pos += (int)size;
         }
         return fields;
     }
 
-    static string WrapperText(Dictionary<int, byte[]> f, int id) =>
-        f.TryGetValue(id, out var b) ? Encoding.UTF8.GetString(b).TrimEnd('\0') : "";
+    static string WrapperText(Dictionary<int, ReadOnlyMemory<byte>> f, int id) =>
+        f.TryGetValue(id, out var b) ? Encoding.UTF8.GetString(b.Span).TrimEnd('\0') : "";
 
     public ProjectInfo Read(string path)
     {
@@ -299,10 +305,10 @@ public sealed partial class FlStudioReader : IProjectReader
                     }
                     break;
                 case EvPluginState when pendingInternal.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase):
-                    var f = WrapperFields(e.Payload.Span);
+                    var f = WrapperFields(e.Payload);
                     var name = WrapperText(f, VstName);
                     var vpath = WrapperText(f, VstPath);
-                    if (f.TryGetValue(VstState, out var st) && SavedNothing(st) && (name.Length > 0 || vpath.Length > 0))
+                    if (f.TryGetValue(VstState, out var st) && SavedNothing(st.Span) && (name.Length > 0 || vpath.Length > 0))
                         nothingSaved.Add(name.Length > 0 ? name : TextScan.PluginNameFromPath(vpath));
                     if (name.Length > 0 || vpath.Length > 0)
                     {
@@ -329,7 +335,7 @@ public sealed partial class FlStudioReader : IProjectReader
         info.Details["Channels"] = info.Tracks.Count.ToString();
         info.Details["Patterns"] = patterns.ToString();
         info.Details["Notes"] = notes.ToString();
-        try { NoteUnplayed(ReadSong(flp, path), info); }
+        try { NoteUnplayed(ReadSong(flp, path, sounds: false), info); }
         catch (Exception e) when (e is not OutOfMemoryException) { }   // the rest is still worth listing
         return info.Dedupe();
     }
@@ -395,19 +401,19 @@ public sealed partial class FlStudioReader : IProjectReader
     /// A Fruity Wrapper plugin state as a file the plugin can load: .fxp for VST2
     /// (with the plugin's own id), .vstpreset for VST3, raw bytes if the layout is unfamiliar.
     /// </summary>
-    static PresetBlob WrapperPreset(Dictionary<int, byte[]> f, byte[] state, string name, string plugin)
+    static PresetBlob WrapperPreset(Dictionary<int, ReadOnlyMemory<byte>> f, byte[] state, string name, string plugin)
     {
-        var isVst3 = (f.TryGetValue(VstKind, out var k) && k.Length > 0 && k[0] == KindVst3) ||
+        var isVst3 = (f.TryGetValue(VstKind, out var k) && k.Length > 0 && k.Span[0] == KindVst3) ||
                      WrapperText(f, VstPath).EndsWith(".vst3", StringComparison.OrdinalIgnoreCase);
         if (isVst3)
         {
             if (f.TryGetValue(VstClassId, out var cid) && cid.Length == 16 && Vst3State(state) is var (comp, cont))
-                return new PresetBlob(name, plugin, ".vstpreset", VstPreset.Build(cid, comp, cont));
+                return new PresetBlob(name, plugin, ".vstpreset", VstPreset.Build(cid.Span, comp, cont));
             return new PresetBlob(name, plugin, ".vst3state", state);
         }
 
         var id = f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4
-            ? BinaryPrimitives.ReadInt32LittleEndian(cc)
+            ? BinaryPrimitives.ReadInt32LittleEndian(cc.Span)
             : 0;
         var chunk = state;
         var selected = 0;
@@ -429,18 +435,18 @@ public sealed partial class FlStudioReader : IProjectReader
     /// kept only a few bytes of a big chunk, so the plugin came up at its default sound. Program is the plugin's
     /// program that was selected, which FL selects again after giving the plugin its chunk.
     /// </summary>
-    static (int Start, uint Length, int Program)? Vst2Header(byte[] state)
+    static (int Start, uint Length, int Program)? Vst2Header(ReadOnlySpan<byte> state)
     {
         if (state.Length < 13 || BinaryPrimitives.ReadInt32LittleEndian(state) != -9) return null;
-        if (BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(5)) == -2)
+        if (BinaryPrimitives.ReadInt32LittleEndian(state[5..]) == -2)
             return state.Length >= 21
-                ? (21, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(9)), Math.Max(0, BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(17))))
+                ? (21, BinaryPrimitives.ReadUInt32LittleEndian(state[9..]), Math.Max(0, BinaryPrimitives.ReadInt32LittleEndian(state[17..])))
                 : null;
-        return (13, BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(5)), Math.Max(0, BinaryPrimitives.ReadInt32LittleEndian(state.AsSpan(9))));
+        return (13, BinaryPrimitives.ReadUInt32LittleEndian(state[5..]), Math.Max(0, BinaryPrimitives.ReadInt32LittleEndian(state[9..])));
     }
 
     /// <summary>A VST2 that saves its sound as a chunk but gave FL an empty one, so FL kept none of it.</summary>
-    static bool SavedNothing(byte[] state) => Vst2Header(state) is (_, 0, _) && (state[4] & 0x08) != 0;
+    static bool SavedNothing(ReadOnlySpan<byte> state) => Vst2Header(state) is (_, 0, _) && (state[4] & 0x08) != 0;
 
     /// <summary>
     /// Plugins that don't save a chunk (Predator, older FabFilter) have their parameters after
@@ -698,7 +704,7 @@ public sealed partial class FlStudioReader : IProjectReader
                     break;
                 case EvPluginState when !inMixer && channel is not null &&
                                         pendingInternal.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase):
-                    var f = WrapperFields(e.Payload.Span);
+                    var f = WrapperFields(e.Payload);
                     var vst = WrapperText(f, VstName) is { Length: > 0 } n ? n : TextScan.PluginNameFromPath(WrapperText(f, VstPath));
                     if (vst.Length > 0)
                     {
@@ -960,11 +966,11 @@ public sealed partial class FlStudioReader : IProjectReader
                     if (inMixer && insert >= 0) presetInsert[presets.Count] = insert;
                     if (pendingInternal.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase))
                     {
-                        var f = WrapperFields(e.Payload.Span);
+                        var f = WrapperFields(e.Payload);
                         var plugin = WrapperText(f, VstName) is { Length: > 0 } n ? n : TextScan.PluginNameFromPath(WrapperText(f, VstPath));
                         var name = currentName.Length > 0 ? currentName : plugin;
-                        if (f.TryGetValue(VstState, out var state) && state.Length > 0 && !SavedNothing(state))
-                            presets.Add(WrapperPreset(f, state, name, plugin) with
+                        if (f.TryGetValue(VstState, out var state) && state.Length > 0 && !SavedNothing(state.Span))
+                            presets.Add(WrapperPreset(f, state.ToArray(), name, plugin) with
                             {
                                 Kind = onChannel ? PluginKind.Instrument : PluginKind.Effect,
                                 Channel = onChannel ? channel : null,
