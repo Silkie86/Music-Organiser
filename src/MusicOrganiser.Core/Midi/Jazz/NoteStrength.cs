@@ -43,4 +43,30 @@ public static class NoteStrength
         for (var pc = 0; pc < 12; pc++) all[pc] = Of(chord, pc, role, style);
         return all;
     }
+
+    /// <summary>
+    /// The colour the piano roll shows a note in: <see cref="Of"/>, kept in step with what the note is called over the chord
+    /// (<see cref="ChordScales.Degree"/>) and the legend under it (Solomon, 2026-10-22: "colour doesnt match the what degree
+    /// the note says"). Away from the bass, a note that fits and is named 9, 11 or 13 is violet even when the chord has it
+    /// (the 9 of a Cmaj9), and one named 7 or 6 is blue even over a plain triad. How well it fits for scoring stays <see cref="Of"/>.
+    /// </summary>
+    public static FitStrength Shown(ChordSymbol chord, int pc, string role, HarmonyStyle style = HarmonyStyle.JazzGospel)
+    {
+        var strength = Of(chord, pc, role, style);
+        if (role == MidiRoles.Bass || strength is not (FitStrength.Strong or FitStrength.Colour)) return strength;
+        return ChordScales.Degree(chord, pc) switch
+        {
+            "7" or "♭7" or "6" or "°7" => FitStrength.Strong,
+            "1" or "3" or "♭3" or "5" or "♭5" or "♯5" or "4" or "2" => strength,
+            _ => FitStrength.Colour,
+        };
+    }
+
+    /// <summary>As <see cref="Shown"/>, the 12 at once.</summary>
+    public static FitStrength[] AllShown(ChordSymbol chord, string role, HarmonyStyle style = HarmonyStyle.JazzGospel)
+    {
+        var all = new FitStrength[12];
+        for (var pc = 0; pc < 12; pc++) all[pc] = Shown(chord, pc, role, style);
+        return all;
+    }
 }

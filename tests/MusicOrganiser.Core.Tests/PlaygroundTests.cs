@@ -246,6 +246,67 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void A_note_about_to_be_clicked_in_shows_the_colour_it_will_have()
+    {
+        // F12 note, 22 Oct 09:47: "the preview colour of the piano roll doesnt make the colour when you click the note in".
+        // The chords are heard from the chord part being edited, so a note put in it can change the chord.
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("Cmaj7 | Am7 D9 | Dm7 | G7");
+        p.WriteChordsCommand.Execute(null);
+        var track = p.Layers.Single(l => !l.IsWritten).Layer;
+        p.SelectClipCommand.Execute(new ClipPick(track, track.Clips[0]));
+        var row = p.SelectedClip!;
+        var before = row.Notes.ToList();
+        var lane = p.Harmony.Lane.Select(c => c.Chord.Name).ToList();
+        var checkedAny = false;
+        foreach (var note in new[] { new NoteEvent(24, Beat / 4, 34, 100), new NoteEvent(Bar + Beat / 4, Beat / 4, 44, 100), new NoteEvent(Bar + Beat / 4, Beat / 4, 41, 100) })
+        {
+            var now = p.SelectedClip!.StrengthOf!(note);
+            var would = p.SelectedClip.WouldBe!(note);
+            Assert.Equal(lane, p.Harmony.Lane.Select(c => c.Chord.Name));   // looking doesn't change anything
+            Assert.Equal(before, p.SelectedClip.Notes);
+            p.SelectedClip.EditedCommand.Execute(before.Append(note).ToList());
+            Assert.Equal(p.SelectedClip!.StrengthOf!(note), would);
+            checkedAny |= now != would;
+            p.UndoCommand.Execute(null);   // the idea as it was, read back afresh
+            track = p.Layers.Single(l => !l.IsWritten).Layer;
+            p.SelectClipCommand.Execute(new ClipPick(track, track.Clips[0]));
+        }
+        Assert.True(checkedAny);   // one of them did change the chord it's judged against
+    }
+
+    [Fact]
+    public void A_clips_own_playhead_goes_round_with_it_where_it_repeats()
+    {
+        // F12 note, 22 Oct 10:05: "playhead goes one time through a looping clip".
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        p.WriteChordsCommand.Execute(null);
+        var layer = p.Layers[^1];
+        var row = new ClipRow(p, layer, new PlaygroundClip { Start = Bar, Loop = Bar, Length = 3 * Bar });
+        row.PlayheadAt(Bar + Beat);
+        Assert.Equal(Beat, row.Position);
+        row.PlayheadAt(3 * Bar + 2 * Beat);   // its third go round
+        Assert.Equal(2 * Beat, row.Position);
+        row.PlayheadAt(Beat);                  // before it starts
+        Assert.Equal(-1, row.Position);
+        row.PlayheadAt(4 * Bar);               // after it ends
+        Assert.Equal(-1, row.Position);
+    }
+
+    [Fact]
     public void A_tracks_volume_is_dragged_in_one_undo_step_and_kept_with_the_idea()
     {
         // F12 note, 22 Oct 09:40: "should be able to change the volume of the tracks individually".
@@ -808,6 +869,27 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(FitStrength.Weak, S("Cmaj9", 2, MidiRoles.Bass));
         Assert.Equal(FitStrength.Strongest, S("C7sus4", 5, MidiRoles.Chords));     // the sus note stands in for the 3rd
         Assert.Equal(FitStrength.Strong, S("Cdim7", 9, MidiRoles.Chords));          // a diminished 7th is its 7th
+    }
+
+    [Fact]
+    public void A_notes_colour_matches_what_its_label_calls_it_over_the_chord()
+    {
+        // F12 note, 22 Oct 10:01: "colour doesnt match the what degree the note says". The legend: green root, 3rd, 5th;
+        // blue 7th, 6th; violet 9, 11, 13.
+        FitStrength S(string chord, int pc, string role = MidiRoles.Chords) => NoteStrength.Shown(ChordSymbol.Parse(chord)!.Value, pc, role);
+        string D(string chord, int pc) => ChordScales.Degree(ChordSymbol.Parse(chord)!.Value, pc);
+        Assert.Equal(("9", FitStrength.Colour), (D("Cmaj9", 2), S("Cmaj9", 2)));     // the chord's own 9 is still a 9
+        Assert.Equal(("11", FitStrength.Colour), (D("Cm11", 5), S("Cm11", 5)));
+        Assert.Equal(("13", FitStrength.Colour), (D("C13", 9), S("C13", 9)));
+        Assert.Equal(("7", FitStrength.Strong), (D("Cmaj9", 11), S("Cmaj9", 11)));
+        Assert.Equal(("6", FitStrength.Strong), (D("C", 9), S("C", 9)));             // a 6 over a plain triad is a 6
+        Assert.Equal(("4", FitStrength.Strongest), (D("Csus4", 5), S("Csus4", 5)));  // a sus chord's 4 in place of its 3rd
+        Assert.Equal(("2", FitStrength.Strongest), (D("Csus2", 2), S("Csus2", 2)));
+        Assert.Equal("11", D("C7", 5));                                                // not a sus: still an 11
+        Assert.Equal(FitStrength.Fights, S("Cmaj7", 5));                               // the avoid note still fights
+        // A bassline keeps its own legend (root and 5th, then the 3rd, then the 7th), and scoring keeps Of.
+        Assert.Equal(NoteStrength.Of(ChordSymbol.Parse("C7")!.Value, 4, MidiRoles.Bass), S("C7", 4, MidiRoles.Bass));
+        Assert.Equal(FitStrength.Strong, NoteStrength.Of(ChordSymbol.Parse("Cmaj9")!.Value, 2, MidiRoles.Chords));
     }
 
     [Fact]

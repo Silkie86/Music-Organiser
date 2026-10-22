@@ -90,13 +90,17 @@ public sealed class PianoRollEditor : Control
     /// <summary>The chords under the roll, each with how strongly each note fits it: the rows of the strongest notes are lit faintly behind.</summary>
     public static readonly StyledProperty<IReadOnlyList<FitSpan>?> FitGuideProperty =
         AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<FitSpan>?>(nameof(FitGuide));
+    /// <summary>The colour a note clicked in would take, for the preview under the pointer (<see cref="StrengthOf"/> when not set).</summary>
+    public static readonly StyledProperty<Func<NoteEvent, FitStrength?>?> WouldBeProperty =
+        AvaloniaProperty.Register<PianoRollEditor, Func<NoteEvent, FitStrength?>?>(nameof(WouldBe));
     public Func<NoteEvent, FitStrength?>? StrengthOf { get => GetValue(StrengthOfProperty); set => SetValue(StrengthOfProperty, value); }
+    public Func<NoteEvent, FitStrength?>? WouldBe { get => GetValue(WouldBeProperty); set => SetValue(WouldBeProperty, value); }
     public IReadOnlyList<FitSpan>? FitGuide { get => GetValue(FitGuideProperty); set => SetValue(FitGuideProperty, value); }
 
     static PianoRollEditor() =>
         AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty,
                                        PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty, NoteLabelsProperty, DegreeOfProperty,
-                                       StrengthOfProperty, FitGuideProperty, OverlayProperty);
+                                       StrengthOfProperty, WouldBeProperty, FitGuideProperty, OverlayProperty);
 
     public Func<NoteEvent, bool>? ClashTest { get => GetValue(ClashTestProperty); set => SetValue(ClashTestProperty, value); }
 
@@ -138,6 +142,7 @@ public sealed class PianoRollEditor : Control
     // The last note clicked or stretched: new notes copy its length and velocity (one sixteenth before any).
     long _lastLength = Sixteenth;
     int _lastVelocity = 100;
+    double? _newAt;   // where a note being put in was clicked, until it's dragged longer
     (long Tick, int Key)? _hover;
 
     IReadOnlyList<NoteEvent> Current => _working ?? Notes ?? [];
@@ -324,6 +329,7 @@ public sealed class PianoRollEditor : Control
             _working.Add(note);
             _index = _working.Count - 1;
             _drag = Drag.Resize;
+            _newAt = p.X;
             _grabbed = note;
             _grabTick = tick;
         }
@@ -386,6 +392,9 @@ public sealed class PianoRollEditor : Control
         var loop = Loop;
         if (_drag == Drag.Resize)
         {
+            // A hand that shakes a little as it clicks doesn't shrink the note it's putting in to a sixteenth.
+            if (_newAt is { } x0 && Math.Abs(p.X - x0) < 4) return;
+            _newAt = null;
             var raw = TickAt(p.X, false) - _grabFrom;
             var endTick = snap ? SnapTick(raw, _grabbed.Start + _grabbed.Length, [0]) : raw;
             var length = Math.Max(snap ? Sixteenth : 4, endTick - _grabbed.Start);
@@ -470,6 +479,7 @@ public sealed class PianoRollEditor : Control
         if (_index >= 0 && _index < _working.Count) _lastLength = _working[_index].Length;
         var changed = _working;
         _working = null;
+        _newAt = null;
         _index = -1;
         _drag = Drag.None;
         e.Pointer.Capture(null);
@@ -636,9 +646,13 @@ public sealed class PianoRollEditor : Control
         // Where a click would put a note.
         if (_working is null && _hover is { } hov)
         {
-            // Coloured by how well it would fit there, when the notes are.
-            var would = fit is null ? null : StrengthOf!(new NoteEvent(hov.Tick, _lastLength, hov.Key, _lastVelocity));
-            using (dc.PushOpacity(would is null ? 0.25 : 0.55)) Note(dc, would is { } s ? fit![(int)s] : accent, null, hov.Tick, _lastLength, hov.Key, low, high);
+            // Coloured as the note a click puts there will be (its length cut at the end of the go round, judged with it in),
+            // and shaded as it will be, a little fainter.
+            var length = Math.Min(_lastLength, Loop - ((hov.Tick - From) % Loop + Loop) % Loop);
+            var ghost = new NoteEvent(hov.Tick, length, hov.Key, _lastVelocity);
+            var would = fit is null ? null : (WouldBe ?? StrengthOf)!(ghost);
+            using (dc.PushOpacity(would is null ? 0.25 : 0.7 * (0.4 + 0.6 * Math.Clamp(_lastVelocity / 110.0, 0, 1))))
+                Note(dc, would is { } s ? fit![(int)s] : accent, null, hov.Tick, length, hov.Key, low, high);
         }
 
         if (Position >= 0)

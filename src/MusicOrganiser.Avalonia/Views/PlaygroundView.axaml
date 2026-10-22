@@ -427,7 +427,7 @@
                     </ScrollViewer>
                     <views:PianoRollEditor MinHeight="80" IsVisible="{Binding !PianoFolded}" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}" Overlay="{Binding SelectedClip.Overlay}"
                                            NoteLabels="{Binding NoteLabels}" DegreeOf="{Binding SelectedClip.DegreeOf}"
-                                           StrengthOf="{Binding SelectedClip.StrengthOf}" FitGuide="{Binding SelectedClip.FitGuide}"
+                                           StrengthOf="{Binding SelectedClip.StrengthOf}" WouldBe="{Binding SelectedClip.WouldBe}" FitGuide="{Binding SelectedClip.FitGuide}"
                                            SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
                                            Period="{Binding SelectedClip.Loop}" Length="{Binding SelectedClip.Loop}" Position="{Binding SelectedClip.Position}"
                                            Section="{Binding SelectedClip.Highlight}" SectionCommand="{Binding SelectedClip.PickBarsCommand}" SeekCommand="{Binding SelectedClip.SeekCommand}"

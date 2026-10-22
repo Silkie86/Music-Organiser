@@ -1099,6 +1099,41 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             row.Track.Layer.GrooveData = "";
         });
 
+    /// <summary>
+    /// What <paramref name="judge"/> makes of the idea's chords with <paramref name="note"/> (one go round, as the piano roll
+    /// shows it) put in the clip, as <see cref="SetClipNotes"/> would; the clip is put back as it was straight after.
+    /// </summary>
+    internal T WithNoteAdded<T>(ClipRow row, NoteEvent note, Func<SectionHarmony, T> judge)
+    {
+        var clip = row.Clip;
+        var layer = row.Track.Layer;
+        var (notes, inversion, written) = (clip.Data, clip.Inversion, layer.Written);
+        // The parts written from the chords, as they are: they follow when the note changes the chords.
+        var others = Section.Layers.Where(l => l != layer && l.Written.Length > 0).ToList();
+        var kept = others.SelectMany(l => l.Clips).Select(c => (Clip: c, c.Data, c.Loop, c.Offset, c.Fits)).ToList();
+        var shown = row.Notes.ToList();
+        shown.Add(note with { Start = (note.Start % clip.Loop + clip.Loop) % clip.Loop });
+        try
+        {
+            clip.Notes = shown.Select(n => n with { Key = Math.Clamp(n.Key - clip.Shift(0), 0, 127) }).ToList();
+            clip.Inversion = 0;
+            layer.Written = "";
+            layer.Render();
+            if (others.Count > 0 && LaneForWriting() is var lane && WrittenKey(lane) != _writtenFor) WriteAgain(lane);
+            return judge(SectionHarmony.Of(Section, _session.Key, _session.Style));
+        }
+        finally
+        {
+            (clip.Data, clip.Inversion, layer.Written) = (notes, inversion, written);
+            layer.Render();
+            if (kept.Count > 0)
+            {
+                foreach (var k in kept) (k.Clip.Data, k.Clip.Loop, k.Clip.Offset, k.Clip.Fits) = (k.Data, k.Loop, k.Offset, k.Fits);
+                foreach (var l in others) l.Render();
+            }
+        }
+    }
+
     /// <summary>Moved up or down by hand: it stays there instead of moving to fit, until Fit again.</summary>
     internal void MoveClip(ClipRow row, int semitones, int gesture = 0) => EditClip(row, c => { c.Transpose += semitones; c.Pinned = true; }, gesture: gesture);
 
@@ -1251,6 +1286,15 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _harmony = null;
         var lane = LaneForWriting();
         _writtenFor = WrittenKey(lane);
+        WriteAgain(lane);
+        foreach (var row in Layers) row.Changed();
+        SelectedClip?.Changed();
+    }
+
+
+    /// <summary>Every part written from the chords written again over <paramref name="lane"/>.</summary>
+    void WriteAgain(IReadOnlyList<TimedChord> lane)
+    {
         foreach (var l in Section.Layers.Where(l => l.Written.Length > 0))
         {
             foreach (var c in l.Clips)
@@ -1263,10 +1307,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             }
             l.Render();
         }
-        foreach (var row in Layers) row.Changed();
-        SelectedClip?.Changed();
     }
-
 
     /// <summary>A written part with the groove copied onto it put on again (after the chords changed and it was rewritten).</summary>
     static IReadOnlyList<NoteEvent> WithGroove(PlaygroundLayer layer, IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length) =>
@@ -2857,16 +2898,14 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     internal void TryingChanged() => OnPropertyChanged(nameof(Overlay));
 
     /// <summary>Which notes fight the chords under them, judged as <see cref="LayerRow.Clashes"/> does.</summary>
-    public Func<NoteEvent, bool> Clashes
+    public Func<NoteEvent, bool> Clashes => ClashesIn(owner.Harmony);
+
+    Func<NoteEvent, bool> ClashesIn(SectionHarmony h)
     {
-        get
-        {
-            var h = owner.Harmony;
-            var style = h.Style;
-            var at = At;
-            if (clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => false;
-            return n => ChordLane.Fights(h.Lane, at + n.Start, n.Length, n.Key % 12, style, h.Length);
-        }
+        var style = h.Style;
+        var at = At;
+        if (clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => false;
+        return n => ChordLane.Fights(h.Lane, at + n.Start, n.Length, n.Key % 12, style, h.Length);
     }
 
     /// <summary>What each note is over the chord heard under it (3, ♭7, 9), for the piano roll's note labels.</summary>
@@ -2886,22 +2925,37 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     /// by; null when they're shown plain. A note that fights the chords there (<see cref="Clashes"/>) stays red, and one
     /// that only looks wrong on paper (a quick passing note) is weak.
     /// </summary>
-    public Func<NoteEvent, FitStrength?>? StrengthOf
+    public Func<NoteEvent, FitStrength?>? StrengthOf => owner.FitColours ? StrengthIn(owner.Harmony) : null;
+
+    Func<NoteEvent, FitStrength?>? StrengthIn(SectionHarmony h)
+    {
+        if (IsDrums || h.Lane.Count == 0) return null;
+        var at = At;
+        var role = Role;
+        var fights = ClashesIn(h);
+        return n =>
+        {
+            if (ChordLane.Heard(h.Lane, at + n.Start, n.Length, h.Length) is not { } chord) return null;
+            if (fights(n)) return FitStrength.Fights;
+            var strength = NoteStrength.Shown(chord, n.Key % 12, role, h.Style);
+            return strength == FitStrength.Fights ? FitStrength.Weak : strength;
+        };
+    }
+
+    /// <summary>
+    /// The colour a note clicked in would take, for the piano roll's preview of it (Solomon, 2026-10-22: "the preview colour
+    /// of the piano roll doesnt make the colour when you click the note in"). The chords are heard from the chord and bass
+    /// parts, so a note put in one can change the chord it's judged against (a low B♭ under Cmaj9 makes it B♭maj13): it's
+    /// judged against the chords as they'll be with it in. Each spot is worked out once, until the idea changes.
+    /// </summary>
+    public Func<NoteEvent, FitStrength?>? WouldBe
     {
         get
         {
-            var h = owner.Harmony;
-            if (!owner.FitColours || IsDrums || h.Lane.Count == 0) return null;
-            var at = At;
-            var role = Role;
-            var fights = Clashes;
-            return n =>
-            {
-                if (ChordLane.Heard(h.Lane, at + n.Start, n.Length, h.Length) is not { } chord) return null;
-                if (fights(n)) return FitStrength.Fights;
-                var strength = NoteStrength.Of(chord, n.Key % 12, role, h.Style);
-                return strength == FitStrength.Fights ? FitStrength.Weak : strength;
-            };
+            if (StrengthOf is not { } now) return null;
+            if (owner.Harmony.ChordsTyped) return now;   // typed chords don't change with the notes
+            var known = new Dictionary<NoteEvent, FitStrength?>();
+            return n => known.TryGetValue(n, out var s) ? s : known[n] = owner.WithNoteAdded(this, n, h => StrengthIn(h)?.Invoke(n));
         }
     }
 
@@ -2923,7 +2977,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
                 foreach (var c in h.Lane.Where(c => c.Start + lap < b && c.End + lap > a))
                 {
                     long start = Math.Max(c.Start + lap, a), end = Math.Min(c.End + lap, b);
-                    spans.Add(new FitSpan(start - from, end - start, NoteStrength.All(c.Chord, role, h.Style)));
+                    spans.Add(new FitSpan(start - from, end - start, NoteStrength.AllShown(c.Chord, role, h.Style)));
                 }
                 a = b;
             }
@@ -2948,7 +3002,9 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
 
     /// <summary>The playhead on the piano roll, while it's in the go round shown.</summary>
     [ObservableProperty] double _position = -1;
-    internal void PlayheadAt(double tick) => Position = tick < 0 ? -1 : tick >= At && tick < At + clip.Loop ? tick - At : -1;
+    // Round and round with the clip where it repeats (Solomon, 2026-10-22: "playhead goes one time through a looping clip").
+    internal void PlayheadAt(double tick) =>
+        Position = tick < 0 || tick < clip.Start || tick >= clip.End || clip.Loop <= 0 ? -1 : ((tick - At) % clip.Loop + clip.Loop) % clip.Loop;
 
     internal void Changed()
     {
@@ -2974,6 +3030,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         OnPropertyChanged(nameof(Clashes));
         OnPropertyChanged(nameof(DegreeOf));
         OnPropertyChanged(nameof(StrengthOf));
+        OnPropertyChanged(nameof(WouldBe));
         OnPropertyChanged(nameof(FitGuide));
     }
 
