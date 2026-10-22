@@ -53,7 +53,12 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
     // Files read lately, so a sweep back over the same stars doesn't read them again (the system keeps them now).
     readonly HashSet<string> _warmed = [];
     readonly Queue<string> _warmedOrder = new();
-    bool _warming;
+    // One warm-up thread for the whole run, woken when there's a batch; started the first time it's needed.
+    readonly AutoResetEvent _warmWake = new(false);
+    bool _warmStarted;
+    // Clear while a preview is opening: the warm-up waits, so its reads never queue on the disk in front of the sound
+    // that's due now (a low thread priority doesn't lower the disk's).
+    readonly ManualResetEventSlim _notOpening = new(true);
     // Files whose start has been read, so the sweep log can say whether reading ahead got there first.
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _read = new();
 
@@ -70,10 +75,14 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
             _toWarm.Clear();
             foreach (var p in paths)
                 if (!_warmed.Contains(p) && !_toWarm.Contains(p)) _toWarm.Enqueue(p);
-            if (_warming || _toWarm.Count == 0) return;
-            _warming = true;
+            if (_toWarm.Count == 0) return;
+            if (!_warmStarted)
+            {
+                _warmStarted = true;
+                new Thread(WarmWork) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "Preview warm-up" }.Start();
+            }
         }
-        new Thread(WarmWork) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "Preview warm-up" }.Start();
+        _warmWake.Set();
     }
 
     void WarmWork()
@@ -81,22 +90,28 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
         var buffer = new byte[WarmBytes];
         while (true)
         {
-            string path;
-            lock (_warmGate)
+            _warmWake.WaitOne();
+            while (true)
             {
-                if (!_toWarm.TryDequeue(out path!)) { _warming = false; return; }
-                _warmed.Add(path);
-                _warmedOrder.Enqueue(path);
-                if (_warmedOrder.Count > 4096) _warmed.Remove(_warmedOrder.Dequeue());
+                _notOpening.Wait();
+                string path;
+                lock (_warmGate)
+                {
+                    if (!_toWarm.TryDequeue(out path!)) break;
+                    _warmed.Add(path);
+                    _warmedOrder.Enqueue(path);
+                    if (_warmedOrder.Count > 4096) _warmed.Remove(_warmedOrder.Dequeue());
+                }
+                if (path == Latest) continue;   // the preview is reading that one itself
+                try
+                {
+                    using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan);
+                    _ = file.Read(buffer, 0, buffer.Length);
+                    if (_read.Count > 4096) _read.Clear();
+                    _read[path] = 0;
+                }
+                catch (Exception) { }   // only a head start: it plays (or says why) when asked
             }
-            try
-            {
-                using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan);
-                _ = file.Read(buffer, 0, buffer.Length);
-                if (_read.Count > 4096) _read.Clear();
-                _read[path] = 0;
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // it plays (or says why) when asked
         }
     }
 
@@ -145,9 +160,12 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
         {
             if (path is not null)
             {
+                var readAhead = _read.ContainsKey(path);
                 MusicOrganiser.Core.SweepTiming.Opening(path);
-                player.Play(path);
-                MusicOrganiser.Core.SweepTiming.Started(path, _read.ContainsKey(path));
+                _notOpening.Reset();
+                try { player.Play(path); }
+                finally { _notOpening.Set(); }
+                MusicOrganiser.Core.SweepTiming.Started(path, readAhead);
             }
             else if (stop) player.Stop();
         }

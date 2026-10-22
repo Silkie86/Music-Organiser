@@ -276,7 +276,11 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
             AudioLog.Write($"Output: \"{output.Name}\" ({(_openedAs is null ? "the default" : "chosen in Settings")}) at {output.Frequency} Hz, " +
                            $"mixed {output.Refresh} times a second" + (output.CanReconnect ? "" : " (it can't be moved or reconnected)"));
             AudioLog.Write($"Default output: \"{_defaultSeen}\"; all outputs: {string.Join(", ", all.Select(n => $"\"{n}\""))}");
-            AudioLog.Write($"Output delay: sound mixed now comes out after {output.DelayMs:0.0} ms (OpenAL's queue, Windows' and the interface's " +
+            // Read once here, where the output opens (or reopens on another device): it only changes then, and asking
+            // OpenAL on every play would sit outside the device lock while an output was being reopened.
+            var delay = output.DelayMs;
+            SweepTiming.Output(output.PeriodMs / 2, delay);
+            AudioLog.Write($"Output delay: sound mixed now comes out after {delay:0.0} ms (OpenAL's queue, Windows' and the interface's " +
                            $"delay), mixed every {output.PeriodMs:0.0} ms");
             return output;
         }
@@ -532,7 +536,6 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
             _buffers = al.GenBuffers(BufferCount);
             QueueAll(al);
             al.SourcePlay(_source);
-            SweepTiming.Output(output.PeriodMs / 2, output.DelayMs);
             var error = al.GetError();
             AudioLog.Write($"Play \"{key}\"{(startSeconds > 0 ? $" from {startSeconds:0.00} s" : "")}: {pcm.Describe()}, " +
                            $"{pcm.SampleRate} Hz, {(pcm.Channels == 2 ? "stereo" : "mono")}" +

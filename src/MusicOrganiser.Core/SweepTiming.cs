@@ -39,8 +39,14 @@ public static class SweepTiming
     {
         lock (Gate)
         {
-            if (Pending.Count > 64) Pending.Clear();   // a long sweep's passed stars that never played
-            Pending.TryAdd(path, (Stopwatch.GetTimestamp(), Math.Max(0, inputMs), 0, 0));
+            var now = Stopwatch.GetTimestamp();
+            // A long sweep's passed stars that never played: drop those, never one already asked for or being opened.
+            if (Pending.Count > 64)
+                foreach (var (key, old) in Pending.ToList())
+                    if (old.Asked == 0) Pending.Remove(key);
+            // Reached again before it was asked for: it waits from now, not from the first pass (seconds ago, perhaps).
+            if (!Pending.TryGetValue(path, out var p) || p.Asked == 0)
+                Pending[path] = (now, Math.Max(0, inputMs), 0, 0);
         }
     }
 

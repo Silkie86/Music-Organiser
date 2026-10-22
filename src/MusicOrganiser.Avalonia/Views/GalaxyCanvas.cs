@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows.Input;
@@ -431,19 +432,24 @@ public sealed class GalaxyCanvas : Control
             // many pixels between two moves, and the stars in between are the ones you meant to hear.
             var from = _last;
             _last = p;
-            var now = Environment.TickCount64;
-            var passed = HitPath(from, p, _hover);
-            ReadAhead(from, p, now - _movedAt);
+            // The fine clock: Environment.TickCount64 only moves every ~15.6 ms on Windows, so two moves usually read 0 apart.
+            var now = Stopwatch.GetTimestamp();
+            var ms = _movedAt == 0 ? 0 : (now - _movedAt) * 1000.0 / Stopwatch.Frequency;
             _movedAt = now;
-            if (passed.Count == 0) return;
-            _hover = passed[^1];
-            var late = InputDelay(e);
-            foreach (var star in passed)
+            var passed = HitPath(from, p, _hover);
+            if (passed.Count > 0)
             {
-                SweepTiming.Reached(star.Sound.Path, late);
-                QueueSweep(star);
+                _hover = passed[^1];
+                var late = InputDelay(e);
+                foreach (var star in passed)
+                {
+                    SweepTiming.Reached(star.Sound.Path, late);
+                    QueueSweep(star);
+                }
             }
-            InvalidateVisual();
+            // After the sound that's due has been asked for, never in front of it, and leaving out the stars just passed.
+            ReadAhead(from, p, ms, passed);
+            if (passed.Count > 0) InvalidateVisual();
             return;
         }
         var label = LabelAt(p) ?? -1;
@@ -614,9 +620,11 @@ public sealed class GalaxyCanvas : Control
             // straight away and only the last one waits its turn, so those two are all it looks for. Every star in
             // between cost 30-40 ms with 450,000 stars, which held the window up more, so the next move was longer still.
             GalaxyStar? first = null, end = null;
+            var firstAt = 0;
             for (var i = 1; i <= steps && first is null; i++)
-                if (At(i) is { } star && star != last) first = star;
-            for (var i = steps; i >= 1 && end is null; i--)
+                if (At(i) is { } star && star != last) (first, firstAt) = (star, i);
+            // Back from the end, only as far as the first star: nothing found going forward means nothing to find.
+            for (var i = steps; i > firstAt && first is not null && end is null; i--)
                 if (At(i) is { } star && star != last) end = star;
             if (first is not null) passed.Add(first);
             if (end is not null && end != first) passed.Add(end);
@@ -652,7 +660,7 @@ public sealed class GalaxyCanvas : Control
     /// Where the sweep is heading, from how fast it's going: the stars a tenth of a second or so ahead, nearest
     /// first, so their files are read before the mouse gets there (a few hit tests, not a path's worth).
     /// </summary>
-    void ReadAhead(Point from, Point to, long ms)
+    void ReadAhead(Point from, Point to, double ms, List<GalaxyStar> passed)
     {
         if (AheadCommand is not { } ahead || ms <= 0 || ms > 200) return;
         var step = new Vector(to.X - from.X, to.Y - from.Y) * (40.0 / ms);   // 40 ms of travel
@@ -661,7 +669,8 @@ public sealed class GalaxyCanvas : Control
         if (length > 80) step *= 80 / length;
         var stars = new List<Sound>(4);
         for (var i = 1; i <= 4; i++)
-            if (HitTest(to + step * i) is { } star && star != _hover && !stars.Contains(star.Sound)) stars.Add(star.Sound);
+            if (HitTest(to + step * i) is { } star && star != _hover && !passed.Contains(star) && !stars.Contains(star.Sound))
+                stars.Add(star.Sound);
         if (stars.Count > 0 && ahead.CanExecute(stars)) ahead.Execute(stars);
     }
 
