@@ -59,8 +59,8 @@ public static class Appearance
         }
         app.RequestedThemeVariant = variant;
 
-        // Corners: round, or square for the hardware-style themes.
-        var (s, m, l, pill, control, overlay) = t.Square ? (1.0, 2.0, 3.0, 3.0, 1.0, 2.0) : (6.0, 10.0, 14.0, 17.0, 4.0, 8.0);
+        // Corners: small, like the studio look's (Studio.axaml), or square for the hardware-style themes.
+        var (s, m, l, pill, control, overlay) = t.Square ? (1.0, 2.0, 3.0, 3.0, 1.0, 2.0) : (3.0, 4.0, 6.0, 6.0, 3.0, 4.0);
         app.Resources["RadiusS"] = new CornerRadius(s);
         app.Resources["RadiusM"] = new CornerRadius(m);
         app.Resources["RadiusL"] = new CornerRadius(l);

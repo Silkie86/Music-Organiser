@@ -11,6 +11,7 @@ sealed class ConfirmWindow : Window
     public ConfirmWindow(string message, string title, bool okOnly = false)
     {
         Title = title;
+        Classes.Add("studio"); // the app's one look (Studio.axaml)
         Width = 440;
         SizeToContent = SizeToContent.Height;
         CanResize = false;

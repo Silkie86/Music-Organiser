@@ -66,8 +66,9 @@
     </Style>
     <Style Selector=".studio Button.tiny, .studio ToggleButton.tiny">
         <Setter Property="MinHeight" Value="20" />
-        <Setter Property="Padding" Value="6,0" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="MinWidth" Value="26" />
+        <Setter Property="Padding" Value="7,1" />
+        <Setter Property="FontSize" Value="12" />
     </Style>
 
     <!-- Buttons that belong together, joined into one strip: square inside, rounded at the ends. -->
@@ -323,5 +324,179 @@
     <Style Selector=".studio TextBlock.laneName">
         <Setter Property="FontSize" Value="12" />
         <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+    </Style>
+
+    <!--
+        The rest of the app (2026-10-22: Solomon wanted the Playground's look everywhere, "one cohesive design"). Every
+        window has the class "studio", so every page gets this file. Pages use these shared parts and don't style their
+        own buttons, boxes or panels: change a look here and it changes everywhere. StyleCheckTests keeps it that way.
+    -->
+
+    <!-- Cards are panels: the same edge, lit top and small corners. -->
+    <Style Selector=".studio Border.card">
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource StudioEdgeBrush}" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="BoxShadow" Value="{DynamicResource StudioRaise}" />
+    </Style>
+    <!-- Small labels over a box or a group (KEY, TAGS, THEME): the panels' small caps. -->
+    <Style Selector=".studio TextBlock.filterLabel">
+        <Setter Property="FontSize" Value="10.5" />
+        <Setter Property="LetterSpacing" Value="1.2" />
+    </Style>
+    <!-- Words under a panel's title, and quieter words in a row. -->
+    <Style Selector=".studio TextBlock.small">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <!-- Tabs along the top of a panel: plain words, the accent line under the one that's open. -->
+    <Style Selector=".studio TabItem">
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Padding" Value="12,0" />
+    </Style>
+
+    <!-- A quiet button: no face until the pointer is on it (the sidebar's, a heart, a close cross). -->
+    <Style Selector=".studio Button.flat /template/ ContentPresenter#PART_ContentPresenter, .studio ToggleButton.flat /template/ ContentPresenter#PART_ContentPresenter, .studio ToggleButton.flat:checked /template/ ContentPresenter#PART_ContentPresenter, .studio ToggleButton.flat:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter, .studio Button.flat:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="BoxShadow" Value="none" />
+        <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+    </Style>
+    <Style Selector=".studio Button.flat:pointerover /template/ ContentPresenter#PART_ContentPresenter, .studio ToggleButton.flat:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="BoxShadow" Value="none" />
+        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+    </Style>
+    <!-- A link: words in the accent that take you somewhere (the counts on a song's Overview). -->
+    <Style Selector=".studio Button.link">
+        <Setter Property="Padding" Value="4,2" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+    </Style>
+    <Style Selector=".studio Button.link /template/ ContentPresenter#PART_ContentPresenter, .studio Button.link:pressed /template/ ContentPresenter#PART_ContentPresenter, .studio Button.link:disabled /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="BoxShadow" Value="none" />
+        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+    </Style>
+    <Style Selector=".studio Button.link:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+    </Style>
+    <Style Selector=".studio Button.link:disabled /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+    </Style>
+    <!-- A square button with just a symbol in it (play a copy, the galaxy's zoom). -->
+    <Style Selector=".studio Button.icon">
+        <Setter Property="Width" Value="26" />
+        <Setter Property="Height" Value="26" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <!-- Something that needs doing, in red (Fix… when something is missing). -->
+    <Style Selector=".studio Button.trouble /template/ ContentPresenter#PART_ContentPresenter, .studio Button.trouble:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource MissingSoftBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource TroubleBorderBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource MissingBrush}" />
+    </Style>
+    <Style Selector=".studio StackPanel.group > Button.trouble /template/ ContentPresenter#PART_ContentPresenter, .studio StackPanel.group > Button.trouble:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource MissingSoftBrush}" />
+        <Setter Property="Foreground" Value="{StaticResource MissingBrush}" />
+    </Style>
+    <!-- A symbol inside a button (a folder, a play triangle): drawn in the button's word colour. -->
+    <Style Selector=".studio Button Path.buttonIcon">
+        <Setter Property="Width" Value="12" />
+        <Setter Property="Height" Value="12" />
+        <Setter Property="Stretch" Value="Uniform" />
+        <Setter Property="StrokeThickness" Value="1.7" />
+        <Setter Property="StrokeJoin" Value="Round" />
+        <Setter Property="StrokeLineCap" Value="Round" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Stroke" Value="{StaticResource MutedBrush}" />
+    </Style>
+    <Style Selector=".studio Button Path.buttonIcon.filled">
+        <Setter Property="Fill" Value="{StaticResource MutedBrush}" />
+        <Setter Property="StrokeThickness" Value="0" />
+    </Style>
+    <Style Selector=".studio Button.accent Path.buttonIcon">
+        <Setter Property="Stroke" Value="{StaticResource OnAccentBrush}" />
+    </Style>
+    <Style Selector=".studio Button.accent Path.buttonIcon.filled">
+        <Setter Property="Fill" Value="{StaticResource OnAccentBrush}" />
+    </Style>
+    <Style Selector=".studio Button.trouble Path.buttonIcon">
+        <Setter Property="Stroke" Value="{StaticResource MissingBrush}" />
+    </Style>
+
+    <!-- A row in a list that lights up under the pointer; its buttons (rowActions) stay quiet until then. -->
+    <Style Selector=".studio Border.row">
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector=".studio Border.row:pointerover">
+        <Setter Property="Background" Value="{StaticResource HoverBrush}" />
+    </Style>
+    <Style Selector=".studio :is(Panel).rowActions">
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+    <Style Selector=".studio StackPanel.rowActions">
+        <Setter Property="Orientation" Value="Horizontal" />
+        <Setter Property="Spacing" Value="4" />
+    </Style>
+    <Style Selector=".studio Border.row:pointerover :is(Panel).rowActions">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+    <!-- A tile you can pick (a sound, a theme, a plugin to install): a panel that lights its edge when picked. -->
+    <Style Selector=".studio Border.tile">
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource StudioEdgeBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BoxShadow" Value="{DynamicResource StudioRaise}" />
+    </Style>
+    <Style Selector=".studio Border.tile:pointerover">
+        <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
+    </Style>
+    <Style Selector=".studio Border.tile.picked">
+        <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+    </Style>
+
+    <!-- A part that folds open (Expander): its heading like the inspector's, small words over a groove. -->
+    <Style Selector=".studio Expander /template/ ToggleButton#ExpanderHeader">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="MinHeight" Value="32" />
+    </Style>
+    <Style Selector=".studio Expander /template/ ToggleButton#ExpanderHeader /template/ ContentPresenter#PART_ContentPresenter, .studio Expander /template/ ToggleButton#ExpanderHeader:pointerover /template/ ContentPresenter#PART_ContentPresenter, .studio Expander /template/ ToggleButton#ExpanderHeader:checked /template/ ContentPresenter#PART_ContentPresenter, .studio Expander /template/ ToggleButton#ExpanderHeader:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="BoxShadow" Value="none" />
+        <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+    </Style>
+
+    <!-- A MIDI part's fit: a big number in the accent. -->
+    <Style Selector=".studio TextBlock.fitScore">
+        <Setter Property="FontSize" Value="18" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+    </Style>
+    <!-- What the list is matched to ("Fits: Drumazon decimal ✕"). -->
+    <Style Selector=".studio Border.targetPill">
+        <Setter Property="Padding" Value="10,3,4,3" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
     </Style>
 </Styles>

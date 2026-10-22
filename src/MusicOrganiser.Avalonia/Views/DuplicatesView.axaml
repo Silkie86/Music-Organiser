@@ -12,18 +12,13 @@
         <Style Selector="ListBox.groups ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="Transparent" />
         </Style>
-        <Style Selector="Border.copy">
+        <Style Selector="Border.row.copy">
             <Setter Property="Padding" Value="6,6,8,6" />
-            <Setter Property="CornerRadius" Value="{DynamicResource RadiusS}" />
-            <Setter Property="Background" Value="Transparent" />
         </Style>
-        <Style Selector="Border.copy:pointerover">
-            <Setter Property="Background" Value="{StaticResource HoverBrush}" />
-        </Style>
-        <Style Selector="Border.copy.keep">
+        <Style Selector="Border.row.copy.keep">
             <Setter Property="Background" Value="{StaticResource OkSoftBrush}" />
         </Style>
-        <Style Selector="Border.copy.hidden">
+        <Style Selector="Border.row.copy.hidden">
             <Setter Property="Opacity" Value="0.55" />
         </Style>
         <Style Selector="Border.badge.hiddenBadge">
@@ -60,14 +55,6 @@
         <Style Selector="Border.badge.similar TextBlock">
             <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
         </Style>
-        <Style Selector="Button.playCopy">
-            <Setter Property="Width" Value="30" />
-            <Setter Property="Height" Value="30" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="CornerRadius" Value="15" />
-            <Setter Property="HorizontalContentAlignment" Value="Center" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-        </Style>
     </UserControl.Styles>
 
     <Grid RowDefinitions="Auto,Auto,Auto,*">
@@ -82,7 +69,7 @@
                 <TextBlock Text="{Binding Summary}" Classes="muted" TextWrapping="Wrap" />
                 <!-- Hidden copies whose group has gone can't be reached from the list, so they're offered back here. -->
                 <Button Classes="link" Content="{Binding StrayHiddenText}" Command="{Binding ShowAllHiddenCommand}" IsVisible="{Binding HasStrayHidden}"
-                        Padding="0" Margin="0,4,0,0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource AccentBrush}" FontSize="12.5" />
+                        Padding="0" Margin="0,4,0,0" Foreground="{StaticResource AccentBrush}" FontSize="12.5" />
                 <CheckBox Content="Look for copies of new sounds after each scan" IsChecked="{Binding AfterScan}" Margin="0,6,0,0"
                           ToolTip.Tip="When a scan finds new or changed sounds, check them for copies straight away" />
             </StackPanel>
@@ -90,7 +77,7 @@
 
         <DockPanel Grid.Row="1" IsVisible="{Binding !IsEmpty}">
             <TextBlock DockPanel.Dock="Right" Text="{Binding ShownText}" Classes="muted" FontSize="12" VerticalAlignment="Center" />
-            <ListBox Classes="chips" ItemsSource="{Binding Source={x:Static vm:DuplicatesViewModel.KindChoices}}" SelectedItem="{Binding Kind}">
+            <ListBox Classes="chips group" ItemsSource="{Binding Source={x:Static vm:DuplicatesViewModel.KindChoices}}" SelectedItem="{Binding Kind}">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                 </ListBox.ItemsPanel>
@@ -113,7 +100,7 @@
                     <TextBlock Text="{Binding BatchMessage}" FontSize="12.5" Foreground="{StaticResource OkBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
                 </DockPanel>
                 <Button Classes="link" Content="{Binding UndoText}" Command="{Binding UndoCommand}" IsVisible="{Binding CanUndo}"
-                        Padding="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource AccentBrush}" FontSize="12.5" />
+                        Padding="0" Foreground="{StaticResource AccentBrush}" FontSize="12.5" />
             </StackPanel>
         </Border>
 
@@ -157,9 +144,9 @@
                                 <ItemsControl ItemsSource="{Binding Members}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:DuplicateMemberItem">
-                                            <Border Classes="copy" Classes.keep="{Binding IsKeep}" Classes.hidden="{Binding IsHidden}">
+                                            <Border Classes="row copy" Classes.keep="{Binding IsKeep}" Classes.hidden="{Binding IsHidden}">
                                                 <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12">
-                                                    <Button Classes="playCopy" Content="▶" ToolTip.Tip="Play / stop"
+                                                    <Button Classes="icon" Content="▶" ToolTip.Tip="Play / stop"
                                                             Command="{Binding $parent[UserControl].((vm:DuplicatesViewModel)DataContext).PlayCommand}"
                                                             CommandParameter="{Binding}" />
                                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">

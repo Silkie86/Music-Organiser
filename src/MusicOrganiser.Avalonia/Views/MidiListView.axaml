@@ -9,25 +9,6 @@
         same list, smaller (Classes="compact"), while its idea is empty, so what's added here shows there too.
     -->
     <UserControl.Styles>
-        <Style Selector="TextBlock.fitScore">
-            <Setter Property="FontSize" Value="18" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
-            <Setter Property="HorizontalAlignment" Value="Right" />
-        </Style>
-        <Style Selector="TextBlock.small">
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-        </Style>
-        <Style Selector="Border.targetPill">
-            <Setter Property="Padding" Value="12,6,6,6" />
-            <Setter Property="CornerRadius" Value="{DynamicResource RadiusPill}" />
-            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
-            <Setter Property="BorderThickness" Value="1.5" />
-            <Setter Property="HorizontalAlignment" Value="Left" />
-        </Style>
         <Style Selector="Button.rowAdd">
             <Setter Property="IsVisible" Value="False" />
         </Style>
@@ -83,7 +64,7 @@
                         <ItemsControl ItemsSource="{Binding FitChoices}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:ProjectItem">
-                                    <Button Background="Transparent" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,6"
+                                    <Button Classes="flat" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,6"
                                             Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).FitToCommand}"
                                             CommandParameter="{Binding}">
                                         <StackPanel>
@@ -100,7 +81,7 @@
         </Grid>
 
         <StackPanel Grid.Row="1" Margin="0,12,0,8" Spacing="8">
-            <ListBox Classes="chips" ItemsSource="{Binding RoleChips}" SelectedItem="{Binding SelectedRole}">
+            <ListBox Classes="chips group" ItemsSource="{Binding RoleChips}" SelectedItem="{Binding SelectedRole}">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                 </ListBox.ItemsPanel>

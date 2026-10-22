@@ -79,11 +79,6 @@
         <Style Selector="Border.tryBar">
             <Setter Property="Padding" Value="0,0,0,2" />
         </Style>
-        <Style Selector="TextBlock.small">
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-        </Style>
         <Style Selector="TextBlock.label">
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
@@ -93,16 +88,6 @@
             <Setter Property="FontSize" Value="17" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
-        </Style>
-        <Style Selector="Button.tiny">
-            <Setter Property="Padding" Value="7,1" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="MinWidth" Value="26" />
-        </Style>
-        <Style Selector="ToggleButton.tiny">
-            <Setter Property="Padding" Value="7,1" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="MinWidth" Value="26" />
         </Style>
         <Style Selector="ListBox.tracks > ListBoxItem">
             <Setter Property="Padding" Value="0" />

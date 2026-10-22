@@ -5,28 +5,6 @@
              xmlns:core="using:MusicOrganiser.Core.Midi"
              x:Class="MusicOrganiser.Avalonia.Views.MidiView"
              x:DataType="vm:MidiBrowserViewModel">
-    <UserControl.Styles>
-        <Style Selector="TextBlock.fitScore">
-            <Setter Property="FontSize" Value="18" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
-            <Setter Property="HorizontalAlignment" Value="Right" />
-        </Style>
-        <Style Selector="TextBlock.small">
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-        </Style>
-        <Style Selector="Border.targetPill">
-            <Setter Property="Padding" Value="12,6,6,6" />
-            <Setter Property="CornerRadius" Value="{DynamicResource RadiusPill}" />
-            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
-            <Setter Property="BorderThickness" Value="1.5" />
-            <Setter Property="HorizontalAlignment" Value="Left" />
-        </Style>
-    </UserControl.Styles>
-
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
         <!-- Header: what's here, reading progress, and the MIDI library folders. -->
         <DockPanel>
@@ -215,35 +193,39 @@
                                 <!-- One-click changes, each undone like any edit. The file it came from is never changed. -->
                                 <WrapPanel>
                                     <TextBlock Text="Change it:" Classes="small" VerticalAlignment="Center" Margin="0,0,8,6" />
-                                    <Button Content="▼ Semitone" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="down"
-                                            ToolTip.Tip="Every note down a semitone" />
-                                    <Button Content="▲ Semitone" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="up"
-                                            ToolTip.Tip="Every note up a semitone" />
-                                    <Button Content="Quantise" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="quantise"
-                                            ToolTip.Tip="Every note onto the grid, for a tight feel: 16ths, or what Settings › MIDI says" />
-                                    <Button Content="Play it twice" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="twice"
-                                            ToolTip.Tip="The part again straight after itself: twice as long, to change the second time round" />
-                                    <Button Content="First half" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="half"
-                                            ToolTip.Tip="Just its first half: for a part that plays the same idea twice" />
-                                    <Button Content="Reverse" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="reverse"
-                                            ToolTip.Tip="Back to front: the last note first" />
+                                    <StackPanel Classes="group" Margin="0,0,0,6">
+                                        <Button Content="▼ Semitone" Command="{Binding ToolCommand}" CommandParameter="down"
+                                                ToolTip.Tip="Every note down a semitone" />
+                                        <Button Content="▲ Semitone" Command="{Binding ToolCommand}" CommandParameter="up"
+                                                ToolTip.Tip="Every note up a semitone" />
+                                        <Button Content="Quantise" Command="{Binding ToolCommand}" CommandParameter="quantise"
+                                                ToolTip.Tip="Every note onto the grid, for a tight feel: 16ths, or what Settings › MIDI says" />
+                                        <Button Content="Play it twice" Command="{Binding ToolCommand}" CommandParameter="twice"
+                                                ToolTip.Tip="The part again straight after itself: twice as long, to change the second time round" />
+                                        <Button Content="First half" Command="{Binding ToolCommand}" CommandParameter="half"
+                                                ToolTip.Tip="Just its first half: for a part that plays the same idea twice" />
+                                        <Button Content="Reverse" Command="{Binding ToolCommand}" CommandParameter="reverse"
+                                                ToolTip.Tip="Back to front: the last note first" />
+                                    </StackPanel>
                                 </WrapPanel>
                             </StackPanel>
                             </Expander>
                             <!-- Listening: on its own or together, looping, at a tempo to try it at. -->
                             <WrapPanel>
                                 <!-- Playing it with what it's fitted to: the small playground's Play, above. -->
-                                <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedAloneCommand}" Margin="0,0,6,6" Padding="12,6"
-                                        ToolTip.Tip="Listen to this part on its own. Click along the notes to jump.">
-                                    <Panel>
-                                        <TextBlock Text="▶  Play" IsVisible="{Binding !IsPlayingAlone}" />
-                                        <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAlone}" />
-                                    </Panel>
-                                </Button>
-                                <ToggleButton Classes="chip" Margin="0,0,6,6" VerticalAlignment="Center" IsChecked="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Loop}"
-                                              ToolTip.Tip="Play round and round until you stop it">
-                                    <TextBlock Text="↻  Loop" />
-                                </ToggleButton>
+                                <StackPanel Classes="group" Margin="0,0,6,6">
+                                    <Button Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).PlaySelectedAloneCommand}"
+                                            ToolTip.Tip="Listen to this part on its own. Click along the notes to jump.">
+                                        <Panel>
+                                            <TextBlock Text="▶  Play" IsVisible="{Binding !IsPlayingAlone}" />
+                                            <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAlone}" />
+                                        </Panel>
+                                    </Button>
+                                    <ToggleButton IsChecked="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).Loop}"
+                                                  ToolTip.Tip="Play round and round until you stop it">
+                                        <TextBlock Text="↻  Loop" />
+                                    </ToggleButton>
+                                </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="6" Margin="4,0,10,6" VerticalAlignment="Center"
                                             ToolTip.Tip="The tempo to try it at. Drag files and Bitwig clips take this tempo too.">
                                     <Slider Width="130" Minimum="40" Maximum="240" Value="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).TempoValue}" VerticalAlignment="Center" />
