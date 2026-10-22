@@ -480,6 +480,45 @@ public class MidiBrowserTests
     }
 
     [Fact]
+    public async Task The_windows_notes_never_wait_behind_listening_reading_every_parts_notes()
+    {
+        // Listening to the MIDI reads every part's notes; the window reads them as rows come into view (2026-10-22: the
+        // window froze up to 1.3 s while it listened). Each has its own way in.
+        var dir = Fixtures.TempDir();
+        var notes = Enumerable.Range(0, 8).Select(i => new NoteEvent(i * 96L, 96, 60 + i, 100)).ToList();
+        var phrase = new IndexedPhrase("Keys", "Verse", notes, PhraseAnalyser.Analyse(notes, "Keys"), false);
+        using var index = new MidiIndex(Path.Combine(dir, "midi.db"));
+        index.Replace(new MidiSource(Path.Combine(dir, "a.mid"), MidiSource.File, "MIDI", 1, 1, null), MidiIndexer.Version, [phrase]);
+        var id = index.All().Single().Id;
+        Assert.Equal(8, index.NotesInBackground(id).Count);
+
+        var busy = typeof(MidiIndex).GetField("_backgroundNotesLock", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(index)!;
+        using var held = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var listening = Task.Run(() =>
+        {
+            lock (busy)
+            {
+                held.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+            }
+        });
+        held.Wait();
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            Assert.Equal(8, index.Notes(id).Count);
+            Assert.True(clock.ElapsedMilliseconds < 1000, $"took {clock.ElapsedMilliseconds} ms");
+        }
+        finally
+        {
+            release.Set();
+            await listening;
+        }
+    }
+
+    [Fact]
     public void An_fl_songs_patterns_played_one_after_another_become_a_phrase_and_each_knows_it()
     {
         var dir = Fixtures.TempDir();

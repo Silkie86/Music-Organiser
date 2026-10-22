@@ -77,11 +77,12 @@ public sealed class MidiIndex : IDisposable
         CREATE TABLE IF NOT EXISTS your_octaves (hash TEXT PRIMARY KEY, octaves INTEGER NOT NULL);
         """;
 
-    readonly SqliteConnection _write, _read, _notes;
+    readonly SqliteConnection _write, _read, _notes, _backgroundNotes;
     // A part's notes have a connection of their own: the window asks for them as rows come into view, and must never
     // wait behind a long read of every part (Solomon's log, 2026-10-19: Projects froze for 5 s while the MIDI list was
-    // read again after a song was saved).
-    readonly object _writeLock = new(), _readLock = new(), _notesLock = new();
+    // read again after a song was saved). Background work reading every part's notes (listening to them) has another,
+    // so the window doesn't queue behind it either.
+    readonly object _writeLock = new(), _readLock = new(), _notesLock = new(), _backgroundNotesLock = new();
 
     public string FilePath { get; }
 
@@ -113,6 +114,8 @@ public sealed class MidiIndex : IDisposable
         _read.Open();
         _notes = new SqliteConnection($"Data Source={path}");
         _notes.Open();
+        _backgroundNotes = new SqliteConnection($"Data Source={path}");
+        _backgroundNotes.Open();
     }
 
     public void Dispose()
@@ -120,6 +123,7 @@ public sealed class MidiIndex : IDisposable
         lock (_writeLock) _write.Dispose();
         lock (_readLock) _read.Dispose();
         lock (_notesLock) _notes.Dispose();
+        lock (_backgroundNotesLock) _backgroundNotes.Dispose();
     }
 
     /// <summary>Every file read so far: when it was last changed, its size, and which version of the analysis read it.</summary>
@@ -273,17 +277,28 @@ public sealed class MidiIndex : IDisposable
     /// </summary>
     public IReadOnlyList<NoteEvent> Notes(long id, string? hash = null)
     {
-        lock (_notesLock)
-        {
-            using var cmd = _notes.CreateCommand();
-            cmd.CommandText = "SELECT data FROM phrases WHERE id = $id";
-            cmd.Parameters.AddWithValue("$id", id);
-            if (cmd.ExecuteScalar() is byte[] data) return DecodeNotes(data);
-            if (hash is null) return [];
-            cmd.CommandText = "SELECT data FROM phrases WHERE hash = $h LIMIT 1";
-            cmd.Parameters.AddWithValue("$h", hash);
-            return cmd.ExecuteScalar() is byte[] same ? DecodeNotes(same) : [];
-        }
+        lock (_notesLock) return Notes(_notes, id, hash);
+    }
+
+    /// <summary>
+    /// <see cref="Notes(long, string?)"/> for background work that reads every part's notes (listening to them), on a
+    /// connection of its own, so the window's rows never wait their turn behind it.
+    /// </summary>
+    public IReadOnlyList<NoteEvent> NotesInBackground(long id)
+    {
+        lock (_backgroundNotesLock) return Notes(_backgroundNotes, id, null);
+    }
+
+    static IReadOnlyList<NoteEvent> Notes(SqliteConnection connection, long id, string? hash)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT data FROM phrases WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        if (cmd.ExecuteScalar() is byte[] data) return DecodeNotes(data);
+        if (hash is null) return [];
+        cmd.CommandText = "SELECT data FROM phrases WHERE hash = $h LIMIT 1";
+        cmd.Parameters.AddWithValue("$h", hash);
+        return cmd.ExecuteScalar() is byte[] same ? DecodeNotes(same) : [];
     }
 
     /// <summary>Says what kind of part this is (every copy with the same notes), or null to go back to the app's guess.</summary>
