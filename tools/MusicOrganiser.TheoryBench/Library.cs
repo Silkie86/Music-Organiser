@@ -130,13 +130,10 @@ static class LibraryBench
     {
         Console.WriteLine();
         Console.WriteLine("=== KEYS: the key in the file name against the app's (whole files; MIREX: exact 1, fifth 0.5, relative 0.3, parallel 0.2) ===");
-        static double Mirex(int t, bool m, int rt, bool rm)
+        if (KeyRows.Count == 0)
         {
-            if (t == rt && m == rm) return 1;
-            if (m == rm && (Mod(t - rt) == 7 || Mod(t - rt) == 5)) return 0.5;
-            if (m != rm && (rm ? Mod(rt + 3) == t : Mod(rt + 9) == t)) return 0.3;
-            if (t == rt && m != rm) return 0.2;
-            return 0;
+            Console.WriteLine("No file names with a key in them, so nothing to check keys against.");
+            return;
         }
         foreach (var group in KeyRows.GroupBy(r => r.Style).OrderBy(g => g.Key).Append(KeyRows.GroupBy(_ => "ALL").Single()))
         {

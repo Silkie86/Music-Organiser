@@ -328,7 +328,7 @@ public static partial class PhraseAnalyser
         var chords = pitched ? Progression(notes, role == MidiRoles.Chords) : [];
         // A key and its relative major or minor share every note; when they fit about the same, the first chord decides.
         var key = pitched && notes.Count >= 4 && chroma.Count(c => c > 0) >= 3
-            ? MusicTheory.EstimateMidiKey(chroma.Select(c => (double)c).ToArray(), chords.Count > 0 ? chords[0].Root : null)
+            ? MusicTheory.EstimateMidiKey(chroma.Select(c => (double)c).ToArray(), chords.Count > 0 ? (chords[0].Root, MusicTheory.IsMinorChord(chords[0].Root, chords[0].Mask)) : null)
             : null;
         return new PhraseAnalysis(role, why, BarsOf(notes), notes.Count == 0 ? 0 : notes.Min(n => n.Key),
                                   notes.Count == 0 ? 0 : notes.Max(n => n.Key), key, chroma, chords,
