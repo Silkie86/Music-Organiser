@@ -15,7 +15,7 @@ public sealed record AppTheme(string Name, string Description, string Background
                               bool Light = false, bool Square = false)
 {
     /// <summary>The theme preview's corners.</summary>
-    public double PreviewRadius => Square ? 1 : 10;
+    public double PreviewRadius => Square ? 1 : 4;
 }
 
 /// <summary>An accent colour to pick, or the theme's own when <see cref="Colour"/> is empty.</summary>

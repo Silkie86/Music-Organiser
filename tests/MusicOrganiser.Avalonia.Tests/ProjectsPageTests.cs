@@ -116,7 +116,7 @@ public sealed class ProjectsPageTests : IDisposable
         }
         clock.Stop();
 
-        var rows = window.GetVisualDescendants().Count(c => c is Border { DataContext: SampleRow or PluginRow } b && b.Classes.Contains("listRow"));
+        var rows = window.GetVisualDescendants().Count(c => c is Border { DataContext: SampleRow or PluginRow } b && b.Classes.Contains("row"));
         Assert.True(clock.ElapsedMilliseconds < 3000, $"Took {clock.ElapsedMilliseconds} ms");
         Assert.True(rows < 200, $"{rows} rows were built");
 
@@ -125,7 +125,7 @@ public sealed class ProjectsPageTests : IDisposable
         while (!plan.IsCompleted) Dispatcher.UIThread.RunJobs();
         Settle();
         Assert.True(page.Detail.FixRows.Count > 900);
-        var fixRows = window.GetVisualDescendants().Count(c => c is Border { DataContext: FixRow } b && b.Classes.Contains("listRow"));
+        var fixRows = window.GetVisualDescendants().Count(c => c is Border { DataContext: FixRow } b && b.Classes.Contains("row"));
         Assert.InRange(fixRows, 1, 100);
         window.Close();
     }
@@ -146,7 +146,8 @@ public sealed class ProjectsPageTests : IDisposable
         var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
         var page = main.Projects;
         page.ReloadAsync().GetAwaiter().GetResult();
-        var window = new Window { Content = new ProjectsView { DataContext = page }, Width = 1400, Height = 900 };
+        // In the app's look (Studio.axaml), as every window of the app is.
+        var window = new Window { Content = new ProjectsView { DataContext = page }, Width = 1400, Height = 900, Classes = { "studio" } };
         window.Show();
         page.Selected = page.Items.Single();
         Settle();
@@ -160,7 +161,7 @@ public sealed class ProjectsPageTests : IDisposable
 
         // The counts line opens each list's tab.
         var tabs = view.FindControl<TabControl>("Tabs")!;
-        view.GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("countLink") && (string?)b.Tag == "Samples")
+        view.GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("link") && (string?)b.Tag == "Samples")
             .RaiseEvent(new global::Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         Settle();
         Assert.Equal("Samples", (string?)((TabItem)tabs.SelectedItem!).Header);

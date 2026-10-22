@@ -163,6 +163,7 @@ public static class NoteForClaude
         public NoteWindow(bool canPicture, string? draft, Action<string> typed)
         {
             Title = "Note for Claude";
+            Classes.Add("studio"); // the app's one look (Studio.axaml)
             Width = 480;
             SizeToContent = SizeToContent.Height;
             CanResize = false;

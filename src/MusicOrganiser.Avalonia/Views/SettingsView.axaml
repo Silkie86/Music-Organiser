@@ -42,12 +42,6 @@
             <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
         </Style>
-        <Style Selector="TabControl.settingsTabs TabItem">
-            <Setter Property="FontSize" Value="14" />
-            <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="MinHeight" Value="40" />
-            <Setter Property="Padding" Value="12,0" />
-        </Style>
         <Style Selector="TextBlock.live.ok">
             <Setter Property="Foreground" Value="{StaticResource OkBrush}" />
         </Style>
@@ -58,7 +52,7 @@
             <TextBlock Text="Settings" Classes="pageTitle" />
         </StackPanel>
         <!-- One tab per part of the app (Solomon's 18 Oct ask), with the testing tools on their own Developer tab. -->
-        <TabControl x:Name="Tabs" Classes="settingsTabs" Margin="0,8,0,0">
+        <TabControl x:Name="Tabs" Margin="0,8,0,0">
             <TabItem Header="General">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16">
@@ -111,7 +105,7 @@
                                 </ListBox>
 
                                 <TextBlock Text="ACCENT COLOUR" Classes="filterLabel" Margin="0,12,0,0" />
-                                <ListBox Classes="chips" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Accents}" SelectedItem="{Binding Accent}">
+                                <ListBox Classes="chips group" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Accents}" SelectedItem="{Binding Accent}">
                                     <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
                                     <ListBox.ItemTemplate>
                                         <DataTemplate x:DataType="vm:AccentChoice">
@@ -131,7 +125,7 @@
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="SIZE OF EVERYTHING" Classes="filterLabel" />
-                                        <ListBox Classes="chips" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}"
+                                        <ListBox Classes="chips group" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}"
                                                  ToolTip.Tip="Zooms the whole app: smaller fits more on a big screen, bigger is easier to read on a small one">
                                             <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
                                             <ListBox.ItemTemplate>
@@ -253,7 +247,7 @@
                                                 </StackPanel>
                                                 <TextBox Grid.Column="1" Text="{Binding ExePath, Mode=OneWay}" IsReadOnly="True" PlaceholderText="Default program" />
                                                 <Button Grid.Column="2" Content="Choose…" Command="{Binding ChooseCommand}" Margin="6,0,0,0" />
-                                                <Button Grid.Column="3" Content="Reset" Background="Transparent" Command="{Binding ClearCommand}" Margin="6,0,0,0" />
+                                                <Button Classes="flat" Grid.Column="3" Content="Reset" Command="{Binding ClearCommand}" Margin="6,0,0,0" />
                                             </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>

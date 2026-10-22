@@ -15,4 +15,16 @@ public class ShellTests
         // dbus-send splits an array at its commas, so a comma in the path can't be left as it is.
         Assert.Contains("array:string:file:///home/me/Samples/Kick%2C%20Snare/Hit%2C%202.wav", Shell.ShowItemsArgs("/home/me/Samples/Kick, Snare/Hit, 2.wav"));
     }
+
+    [Fact]
+    public void Windows_command_line_passes_each_path_through_exactly()
+    {
+        Assert.Equal(@"C:\bitwig.exe C:\Songs\one.bwproject", Shell.WindowsCommandLine(@"C:\bitwig.exe", @"C:\Songs\one.bwproject"));
+        Assert.Equal(@"""C:\Program Files\Bitwig Studio\Bitwig Studio.exe"" ""K:\Bitwig Studio\Projects\my song\my song.bwproject""",
+            Shell.WindowsCommandLine(@"C:\Program Files\Bitwig Studio\Bitwig Studio.exe", @"K:\Bitwig Studio\Projects\my song\my song.bwproject"));
+        // Backslashes are only doubled before a quote, including the closing one.
+        Assert.Equal(@"x ""C:\a b\\""", Shell.WindowsCommandLine("x", @"C:\a b\"));
+        Assert.Equal(@"x ""say \""hi\""""", Shell.WindowsCommandLine("x", "say \"hi\""));
+        Assert.Equal(@"x """"", Shell.WindowsCommandLine("x", ""));
+    }
 }

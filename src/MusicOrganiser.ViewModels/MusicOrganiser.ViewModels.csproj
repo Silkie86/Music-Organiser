@@ -19,6 +19,7 @@
     <InternalsVisibleTo Include="MusicOrganiser" />
     <InternalsVisibleTo Include="MusicOrganiser.Avalonia" />
     <InternalsVisibleTo Include="MusicOrganiser.Core.Tests" />
+    <InternalsVisibleTo Include="MusicOrganiser.Avalonia.Tests" />
   </ItemGroup>
 
 </Project>

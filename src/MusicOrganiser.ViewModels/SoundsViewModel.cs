@@ -30,7 +30,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     public DuplicatesViewModel Duplicates { get; }
 
     public static IReadOnlyList<string> AllTypes { get; } = [.. SoundTypes.All, SoundTypes.Unknown];
-    public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. MusicTheory.NoteNames.Select(n => n), .. MusicTheory.NoteNames.Select(n => n + "m")];
+    public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. Enumerable.Range(0, 12).Select(t => MusicTheory.KeyName(t, false, true)), .. Enumerable.Range(0, 12).Select(t => MusicTheory.KeyName(t, true, true))];
 
     [ObservableProperty] IReadOnlyList<Sound> _items = [];
     [ObservableProperty] IItemsView? _view;
@@ -144,7 +144,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     public const string SimilarCountKey = "similar_count", SweepKey = "galaxy_sweep_ms";
     public static IReadOnlyList<int> SimilarCountChoices { get; } = [6, 12, 24, 48];
-    public static IReadOnlyList<int> SweepChoices { get; } = [60, 90, 150, 250];
+    public static IReadOnlyList<int> SweepChoices { get; } = [15, 30, 45, 60, 90, 150, 250];
     /// <summary>How many sounds "Sounds like this" shows (Settings › Sounds).</summary>
     [ObservableProperty] int _similarCount;
     /// <summary>How long each star plays when the mouse sweeps across the galaxy, in milliseconds (Settings › Sounds).</summary>
@@ -797,7 +797,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         FindSimilar(value);
         SelectedTypeLabel = value?.Type ?? "";
         KeyDetail = value?.Analysis is { KeyTonic: { } t } a
-            ? $"{MusicTheory.NoteNames[t]} {(a.KeyMinor ? "minor" : "major")} · Camelot {MusicTheory.Camelot(t, a.KeyMinor)} · {a.KeySource}" +
+            ? $"{MusicTheory.KeyName(t, a.KeyMinor)} · Camelot {MusicTheory.Camelot(t, a.KeyMinor)} · {a.KeySource}" +
               (a.KeySource == "detected" ? $" ({a.KeyConfidence:P0} sure)" : "")
             : "";
     }

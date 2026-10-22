@@ -21,6 +21,7 @@ public partial class ArrangementPanel : UserControl
             DataContext = d,
             Content = new ArrangementPanel { Margin = new global::Avalonia.Thickness(8) },
         };
+        window.Classes.Add("studio"); // the app's one look (Studio.axaml)
         ((ArrangementPanel)window.Content).FullSizeHolder.IsVisible = false;
         if (this.TryFindResource("AppBackgroundBrush", out var background) && background is global::Avalonia.Media.IBrush brush) window.Background = brush;
         if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner);

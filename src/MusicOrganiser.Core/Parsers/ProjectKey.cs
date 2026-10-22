@@ -12,7 +12,13 @@ public sealed record SongNotes(string Key, int Notes, int Bars);
 
 public static class ProjectKey
 {
-    /// <summary>Below this, the notes don't point clearly enough at one key (see <see cref="MusicTheory.EstimateKey"/>).</summary>
+    /// <summary>
+    /// Raised whenever the key a project's notes give can change (2: the key profile learned from real songs, keys named
+    /// with flats): a scan reads every project again once, so old and new projects aren't keyed two different ways.
+    /// </summary>
+    public const int Version = 2;
+
+    /// <summary>Below this, the notes don't point clearly enough at one key (see <see cref="MusicTheory.EstimateMidiKey"/>).</summary>
     public const double MinConfidence = 0.12;
 
     /// <summary>Plugins whose notes pick a slice or a pad, not a pitch.</summary>
@@ -43,7 +49,7 @@ public static class ProjectKey
             }
         }
         if (notes < 8 || chroma.Count(c => c > 0) < 4) return null;
-        return MusicTheory.EstimateKey(chroma) is { Confidence: >= MinConfidence } key ? key : null;
+        return MusicTheory.EstimateMidiKey(chroma) is { Confidence: >= MinConfidence } key ? key : null;
     }
 
     /// <summary>Reads the project's notes and works out its key: "" when it has no clear key, null when it can't be read.</summary>

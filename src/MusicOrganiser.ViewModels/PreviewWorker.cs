@@ -43,6 +43,78 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
         Latest = null;
     }
 
+    // ---- warming up the files just ahead of the mouse ----------------------------------------------------
+
+    /// <summary>How much of each file is read ahead: its header and the first moment, all a preview needs to start.</summary>
+    const int WarmBytes = 128 * 1024;
+    readonly object _warmGate = new();
+    // The files to read, nearest the mouse first: each new batch replaces the last, which the mouse has passed by now.
+    readonly Queue<string> _toWarm = new();
+    // Files read lately, so a sweep back over the same stars doesn't read them again (the system keeps them now).
+    readonly HashSet<string> _warmed = [];
+    readonly Queue<string> _warmedOrder = new();
+    // One warm-up thread for the whole run, woken when there's a batch; started the first time it's needed.
+    readonly AutoResetEvent _warmWake = new(false);
+    bool _warmStarted;
+    // Clear while a preview is opening: the warm-up waits, so its reads never queue on the disk in front of the sound
+    // that's due now (a low thread priority doesn't lower the disk's).
+    readonly ManualResetEventSlim _notOpening = new(true);
+    // Files whose start has been read, so the sweep log can say whether reading ahead got there first.
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _read = new();
+
+    /// <summary>
+    /// Reads the start of files the mouse is about to reach, on a thread of its own at low priority, so the system has
+    /// them in memory when they're asked for: on a hard drive, a file not read for a while takes tens of milliseconds
+    /// to open (the disk finding its folder, then the file), which is the sound arriving that much after the mouse.
+    /// </summary>
+    public void Warm(IEnumerable<string> paths)
+    {
+        if (_ui is null) return;   // tests that play in order have nothing to wait for
+        lock (_warmGate)
+        {
+            _toWarm.Clear();
+            foreach (var p in paths)
+                if (!_warmed.Contains(p) && !_toWarm.Contains(p)) _toWarm.Enqueue(p);
+            if (_toWarm.Count == 0) return;
+            if (!_warmStarted)
+            {
+                _warmStarted = true;
+                new Thread(WarmWork) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "Preview warm-up" }.Start();
+            }
+        }
+        _warmWake.Set();
+    }
+
+    void WarmWork()
+    {
+        var buffer = new byte[WarmBytes];
+        while (true)
+        {
+            _warmWake.WaitOne();
+            while (true)
+            {
+                _notOpening.Wait();
+                string path;
+                lock (_warmGate)
+                {
+                    if (!_toWarm.TryDequeue(out path!)) break;
+                    _warmed.Add(path);
+                    _warmedOrder.Enqueue(path);
+                    if (_warmedOrder.Count > 4096) _warmed.Remove(_warmedOrder.Dequeue());
+                }
+                if (path == Latest) continue;   // the preview is reading that one itself
+                try
+                {
+                    using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan);
+                    _ = file.Read(buffer, 0, buffer.Length);
+                    if (_read.Count > 4096) _read.Clear();
+                    _read[path] = 0;
+                }
+                catch (Exception) { }   // only a head start: it plays (or says why) when asked
+            }
+        }
+    }
+
     void Ask(string? path, bool stop)
     {
         if (_ui is null)
@@ -86,7 +158,15 @@ public sealed class PreviewWorker(IAudioPlayer player, Action<string, Exception>
     {
         try
         {
-            if (path is not null) player.Play(path);
+            if (path is not null)
+            {
+                var readAhead = _read.ContainsKey(path);
+                MusicOrganiser.Core.SweepTiming.Opening(path);
+                _notOpening.Reset();
+                try { player.Play(path); }
+                finally { _notOpening.Set(); }
+                MusicOrganiser.Core.SweepTiming.Started(path, readAhead);
+            }
             else if (stop) player.Stop();
         }
         catch (Exception e) when (path is not null)

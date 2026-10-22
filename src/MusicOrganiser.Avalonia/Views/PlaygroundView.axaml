@@ -5,10 +5,79 @@
              x:Class="MusicOrganiser.Avalonia.Views.PlaygroundView"
              x:DataType="vm:PlaygroundViewModel">
     <UserControl.Styles>
-        <Style Selector="TextBlock.small">
+        <!-- A suggestion being heard: its card lights up (and glows softly while its sound is being made). -->
+        <Style Selector="Border.tryCard">
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="BorderBrush" Duration="0:0:0.15" />
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="ListBox.matches ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+        </Style>
+        <Style Selector="TextBlock.pct">
             <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="FontFamily" Value="{DynamicResource NumberFont}" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <Style Selector="Border.matchRow">
+            <Setter Property="CornerRadius" Value="2" />
+            <Setter Property="Padding" Value="4,4" />
+            <Setter Property="Margin" Value="0,0,0,1" />
+        </Style>
+        <Style Selector="Border.matchRow:pointerover">
+            <Setter Property="Background" Value="{DynamicResource HoverBrush}" />
+        </Style>
+        <Style Selector="Border.matchRow StackPanel.actions">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <!-- Its buttons show on the row picked (a click), or while it plays: showing them under the mouse would make rows jump. -->
+        <Style Selector="ListBoxItem:selected Border.matchRow StackPanel.actions, Border.matchRow.playing StackPanel.actions, Border.matchRow.preparing StackPanel.actions">
+            <Setter Property="IsVisible" Value="True" />
+        </Style>
+        <Style Selector="Border.tryCard.preparing">
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentSoftBrush}" />
+        </Style>
+        <Style Selector="Border.tryCard.playing">
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="Background" Value="{DynamicResource AccentFaintBrush}" />
+        </Style>
+        <!-- Reharm's three steps: where you are, the ideas as tiles, and the one being tried. -->
+        <Style Selector="Border.steps">
+            <Setter Property="Background" Value="{DynamicResource SurfaceRaisedBrush}" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
+            <Setter Property="Padding" Value="2" />
+        </Style>
+        <Style Selector="TextBlock.step">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="0,4" />
+            <Setter Property="TextAlignment" Value="Center" />
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style Selector="TextBlock.step.on">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="Button.idea">
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+        </Style>
+        <Style Selector="Border.reharmCard">
+            <Setter Property="Padding" Value="10" />
+            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="Background" Value="{DynamicResource AccentFaintBrush}" />
+        </Style>
+        <Style Selector="Border.tryBar">
+            <Setter Property="Padding" Value="0,0,0,2" />
         </Style>
         <Style Selector="TextBlock.label">
             <Setter Property="FontSize" Value="12" />
@@ -19,16 +88,6 @@
             <Setter Property="FontSize" Value="17" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
-        </Style>
-        <Style Selector="Button.tiny">
-            <Setter Property="Padding" Value="7,1" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="MinWidth" Value="26" />
-        </Style>
-        <Style Selector="ToggleButton.tiny">
-            <Setter Property="Padding" Value="7,1" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="MinWidth" Value="26" />
         </Style>
         <Style Selector="ListBox.tracks > ListBoxItem">
             <Setter Property="Padding" Value="0" />
@@ -52,103 +111,114 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
-        <!-- Header: the idea, saving, undo, and out to the DAW. -->
+    <Grid Classes="studio" RowDefinitions="Auto,Auto,Auto,Auto,*">
+        <!-- Menus like a DAW's (2026-10-21; built in PlaygroundView.Menus.cs), and the idea's name on the right. -->
         <DockPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top">
-                <ToggleButton Content="Keys" IsChecked="{Binding CheatSheetOpen}" ToolTip.Tip="The keyboard shortcuts on this page (or press ?). Change them in Settings › Shortcuts" />
-                <Button Content="Undo" Command="{Binding UndoCommand}" IsEnabled="{Binding CanUndo}" ToolTip.Tip="Take back the last change" />
-                <Button Content="Redo" Command="{Binding RedoCommand}" IsEnabled="{Binding CanRedo}" />
-                <Button Content="Ideas" ToolTip.Tip="Save this idea by name, open one you saved, or start a new one">
-                    <Button.Flyout>
-                        <Flyout Placement="BottomEdgeAlignedRight">
-                            <StackPanel Width="320" Spacing="8">
-                                <TextBlock Text="Ideas" FontWeight="SemiBold" />
-                                <TextBlock Text="The idea you're working on is saved after every change. Save it by name to keep it and start another."
-                                           TextWrapping="Wrap" Classes="small" TextTrimming="None" />
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Button Content="Save this idea" Classes="accent" Command="{Binding SaveIdeaCommand}" />
-                                    <Button Content="New idea" Command="{Binding NewIdeaCommand}" />
-                                </StackPanel>
-                                <Border Height="1" Background="{StaticResource StrokeBrush}" Margin="0,4" />
-                                <TextBlock Text="Saved ideas" Classes="small" />
-                                <ScrollViewer MaxHeight="260">
-                                    <ItemsControl ItemsSource="{Binding SavedIdeas}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="x:String">
-                                                <Button Content="{Binding}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Margin="0,2"
-                                                        Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).OpenIdeaCommand}" CommandParameter="{Binding}" />
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </ScrollViewer>
-                            </StackPanel>
-                        </Flyout>
-                    </Button.Flyout>
-                </Button>
-                <Border Classes="dragChip" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}" DataContext="arrangement"
-                        ToolTip.Tip="Drag the whole timeline into your DAW: one MIDI file, a track for each part">
-                    <TextBlock Text="Drag the arrangement" />
-                </Border>
-                <Button Content="Send to Bitwig" Command="{Binding SendToBitwigCommand}"
-                        ToolTip.Tip="Each part on its own new track in Bitwig, as a clip" />
-            </StackPanel>
-            <StackPanel>
-                <TextBlock Text="Playground" Classes="pageTitle" />
-                <TextBox Text="{Binding IdeaName, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter" MinWidth="260" HorizontalAlignment="Left" Margin="0,4,0,0" FontSize="13"
-                         ToolTip.Tip="This idea's name: what the MIDI files are called when you drag them out" />
-            </StackPanel>
+            <TextBox DockPanel.Dock="Right" Text="{Binding IdeaName, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter ideaName" Width="220"
+                     VerticalAlignment="Center" ToolTip.Tip="This idea's name: what the MIDI files are called when you drag them out" />
+            <Menu x:Name="MenuBar" Margin="-6,-6,0,0" />
         </DockPanel>
 
-        <Border Grid.Row="1" Margin="0,10,0,0" Padding="12,8" CornerRadius="{DynamicResource RadiusM}" Background="{StaticResource AccentFaintBrush}"
+        <!-- The transport and the page's settings, on one strip: buttons that go together joined, numbers in wells. -->
+        <!-- The top bar, transport in the middle (Solomon, 2026-10-22): snapping on the left; play, position and tempo
+             in the middle; the key, length and ideas on the right. -->
+        <Border Grid.Row="1" Classes="panel" Margin="0,6,0,0" Padding="6">
+            <Grid ColumnDefinitions="*,Auto,*">
+                <WrapPanel VerticalAlignment="Center">
+                    <ListBox Classes="chips group" ItemsSource="{x:Static vm:PlaygroundViewModel.GridChoices}" SelectedItem="{Binding GridPick}" Margin="0,0,6,0"
+                             ToolTip.Tip="What clips snap to when you drag them. Hold Shift while dragging to place them freely.">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                    </ListBox>
+                    <StackPanel Classes="group" Margin="0,0,10,0">
+                        <ToggleButton Content="Grid" IsChecked="{Binding SnapGrid}" ToolTip.Tip="Snap to the grid: dragged clips land on the grid lines" />
+                        <ToggleButton Content="Rel" IsChecked="{Binding SnapRelative}"
+                                      ToolTip.Tip="Snap relative: dragged clips move in whole grid steps but keep how far off the grid they sat, so a pushed clip stays pushed. With Grid on too, whichever is nearer wins." />
+                        <ToggleButton Content="Obj" IsChecked="{Binding SnapObjects}"
+                                      ToolTip.Tip="Snap to objects: dragged clips catch the starts and ends of other clips, the highlight, labels and the play marker when they come close" />
+                    </StackPanel>
+                    <StackPanel Classes="group">
+                        <ToggleButton Content="Jazz" IsChecked="{Binding !IsClassical}"
+                                      ToolTip.Tip="Jazz and gospel: 9ths, 11ths, 13ths, altered dominants and blue notes heard as colour" />
+                        <ToggleButton Content="Classical" IsChecked="{Binding IsClassical}"
+                                      ToolTip.Tip="Classical: the chords' own notes are the safe ones; a clash on a strong beat counts against a part" />
+                    </StackPanel>
+                </WrapPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0">
+                    <StackPanel Classes="group" Margin="0,0,6,0">
+                        <Button Content="⏮" MinWidth="34" Command="{Binding ToStartCommand}" ToolTip.Tip="Back to the start: Play starts from bar 1" />
+                        <Button Classes="accent" MinWidth="40" Command="{Binding PlayCommand}" ToolTip.Tip="Play or stop, from the marker on the bar numbers (Space)">
+                            <Panel>
+                                <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
+                                <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
+                            </Panel>
+                        </Button>
+                        <ToggleButton Content="⟲" MinWidth="40" FontSize="15" IsChecked="{Binding LoopOn}"
+                                      ToolTip.Tip="Loop: Play goes round the highlighted bars, or the whole idea (Ctrl+L)" />
+                    </StackPanel>
+                    <Border Classes="lcd" MinWidth="70" Margin="0,0,6,0" ToolTip.Tip="Where it's playing, or where Play starts: bar, beat and sixteenth">
+                        <TextBlock Text="{Binding PositionText}" HorizontalAlignment="Center" />
+                    </Border>
+                    <NumericUpDown Value="{Binding Tempo}" Minimum="40" Maximum="200" Increment="1" FormatString="0" Width="58" Margin="0,0,4,0" ShowButtonSpinner="False"
+                                   FontFamily="{DynamicResource NumberFont}" ToolTip.Tip="Tempo, in beats a minute: type it, or scroll over it" />
+                    <TextBlock Text="BPM" Classes="caps" Margin="0,0,12,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <TextBox Text="{Binding KeyText}" Width="100" Margin="0,0,4,0" PlaceholderText="{Binding KeyHint}"
+                             ToolTip.Tip="{Binding KeySummary, StringFormat='{}{0}. Type a key (Eb, F# minor) to set it, or leave it empty for the app to hear it. A typed key wins.'}" />
+                    <TextBlock Text="KEY" Classes="caps" Margin="0,0,12,0" />
+                    <NumericUpDown Value="{Binding Bars}" Minimum="1" Maximum="128" Increment="1" FormatString="0" Width="52" Margin="0,0,4,0" ShowButtonSpinner="False"
+                                   FontFamily="{DynamicResource NumberFont}"
+                                   ToolTip.Tip="How long the timeline is, in bars. Clips that reach the end follow it, playing round again to fill new bars." />
+                    <TextBlock Text="BARS" Classes="caps" Margin="0,0,12,0" />
+                <StackPanel Classes="group" VerticalAlignment="Center">
+                        <Button x:Name="IdeasButton" Content="Ideas" ToolTip.Tip="Save this idea by name, open one you saved, or start a new one">
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedRight">
+                                <StackPanel Width="320" Spacing="8">
+                                    <TextBlock Text="Ideas" FontWeight="SemiBold" />
+                                    <TextBlock Text="The idea you're working on is saved after every change. Save it by name to keep it and start another."
+                                               TextWrapping="Wrap" Classes="small" TextTrimming="None" />
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Button Content="Save this idea" Classes="accent" Command="{Binding SaveIdeaCommand}" />
+                                        <Button Content="New idea" Command="{Binding NewIdeaCommand}" />
+                                    </StackPanel>
+                                    <Border Height="1" Background="{StaticResource StrokeBrush}" Margin="0,4" />
+                                    <TextBlock Text="Saved ideas" Classes="small" />
+                                    <ScrollViewer MaxHeight="260">
+                                        <ItemsControl ItemsSource="{Binding SavedIdeas}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="x:String">
+                                                    <Button Content="{Binding}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Margin="0,2"
+                                                            Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).OpenIdeaCommand}" CommandParameter="{Binding}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                        </Button>
+                        <Border Classes="dragChip" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}" DataContext="arrangement"
+                                ToolTip.Tip="Drag the whole timeline into your DAW: one MIDI file, a track for each part">
+                            <TextBlock Text="Drag out" />
+                        </Border>
+                        <Button Content="Send to Bitwig" Command="{Binding SendToBitwigCommand}"
+                                ToolTip.Tip="Each part on its own new track in Bitwig, as a clip" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2" Margin="0,6,0,0" Padding="12,6" CornerRadius="3" Background="{StaticResource AccentFaintBrush}"
                 IsVisible="{Binding HasMessage}">
             <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontSize="12.5" />
         </Border>
 
-        <!-- Transport, tempo, length, key and the harmony's ears. -->
-        <WrapPanel Grid.Row="2" Margin="0,12,0,0">
-            <Button Classes="accent" Margin="0,0,10,6" MinWidth="80" Command="{Binding PlayCommand}" ToolTip.Tip="Play from the marker on the bar numbers (Space does it too). Click the bar numbers to move the marker.">
-                <Panel>
-                    <TextBlock Text="▶ Play" IsVisible="{Binding !IsPlaying}" />
-                    <TextBlock Text="■ Stop" IsVisible="{Binding IsPlaying}" />
-                </Panel>
-            </Button>
-            <ToggleButton Classes="chip" Content="⟲ Loop" IsChecked="{Binding LoopOn}" Margin="0,0,12,6"
-                          ToolTip.Tip="On: Play goes round the highlighted bars, or the whole idea. Off: it plays to the end of them and stops." />
-            <TextBlock Text="Tempo" Classes="label" Margin="0,0,6,6" />
-            <Slider Minimum="40" Maximum="200" Value="{Binding Tempo}" Width="120" Margin="0,-6,6,0" />
-            <TextBlock Text="{Binding Tempo, StringFormat={}{0:0} BPM}" Classes="label" MinWidth="58" Margin="0,0,12,6" />
-            <TextBlock Text="Bars" Classes="label" Margin="0,0,6,6" />
-            <NumericUpDown Value="{Binding Bars}" Minimum="1" Maximum="128" Increment="1" FormatString="0" Width="110" Margin="0,0,12,6"
-                           ToolTip.Tip="How long the timeline is. Clips that reach the end follow it, playing round again to fill new bars." />
-            <TextBlock Text="Key" Classes="label" Margin="0,0,6,6" />
-            <TextBox Text="{Binding KeyText}" Width="90" Margin="0,0,6,6" PlaceholderText="Heard"
-                     ToolTip.Tip="Type a key (Eb, F# minor) to set it, or leave it empty for the app to hear it. A typed key wins." />
-            <TextBlock Text="{Binding KeySummary}" Classes="label" Margin="0,0,16,6" />
-            <ToggleButton Classes="chip" Content="Jazz and gospel" IsChecked="{Binding !IsClassical}" Margin="0,0,4,6"
-                          ToolTip.Tip="Hear 9ths, 11ths, 13ths, altered dominants and blue notes as colour" />
-            <ToggleButton Classes="chip" Content="Classical" IsChecked="{Binding IsClassical}" Margin="0,0,6,6"
-                          ToolTip.Tip="The chords' own notes are the safe ones; a clash on a strong beat counts against a part" />
-        </WrapPanel>
-
-        <!-- Labels, the grid and the highlight. -->
-        <WrapPanel Grid.Row="3" Margin="0,2,0,0">
-            <TextBlock Text="Snap to" Classes="label" Margin="0,0,6,6" />
-            <ListBox Classes="chips" ItemsSource="{x:Static vm:PlaygroundViewModel.GridChoices}" SelectedItem="{Binding GridPick}" Margin="0,0,12,6"
-                     ToolTip.Tip="What clips snap to when you drag them. Hold Shift while dragging to place them freely.">
-                <ListBox.ItemsPanel>
-                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
-                </ListBox.ItemsPanel>
-            </ListBox>
-            <ToggleButton Classes="chip" Content="Grid" IsChecked="{Binding SnapGrid}" Margin="0,0,4,6"
-                          ToolTip.Tip="Dragged clips land on the grid lines (Bitwig: Snap to Grid)" />
-            <ToggleButton Classes="chip" Content="Relative" IsChecked="{Binding SnapRelative}" Margin="0,0,4,6"
-                          ToolTip.Tip="Dragged clips move in whole grid steps but keep how far off the grid they sat, so a pushed clip stays pushed (Bitwig: Snap to Grid Offset). With Grid on too, whichever is nearer wins." />
-            <ToggleButton Classes="chip" Content="Objects" IsChecked="{Binding SnapObjects}" Margin="0,0,12,6"
-                          ToolTip.Tip="Dragged clips catch the starts and ends of other clips, the highlight, labels and the play marker when they come close (Bitwig: Snap to Events)" />
-            <Button Content="+ Label" Classes="tiny" Margin="0,0,10,6" Command="{Binding AddLabelCommand}"
-                    ToolTip.Tip="Name some bars (Verse, Build, Drop…): over the highlight, or the bars after the last label. Suggestions for those bars suit its feel." />
-            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,16,6" IsVisible="{Binding HasSelectedLabel}">
+        <!-- The picked label, and the highlight: only while there's one. -->
+        <WrapPanel Grid.Row="3" Margin="0,6,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,16,0" IsVisible="{Binding HasSelectedLabel}">
                 <TextBlock Text="Label" Classes="label" />
                 <TextBox Text="{Binding LabelName, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter" Width="130" FontSize="12" />
                 <TextBlock Text="is a" Classes="label" />
@@ -156,47 +226,62 @@
                           ToolTip.Tip="Verse: steady and calm. Build: rising. Drop: full all the way. Breakdown: sparse. Suggestions for these bars whose energy suits it rank higher." />
                 <Button Content="Remove label" Classes="tiny" Command="{Binding RemoveLabelCommand}" />
             </StackPanel>
-            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,0,6" IsVisible="{Binding HasLoop}">
+            <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding HasLoop}">
                 <TextBlock Text="{Binding LoopText}" Classes="label" FontWeight="SemiBold" />
-                <TextBlock Text="highlighted: Play loops them, suggestions fit them, new parts go there." Classes="label" />
+                <TextBlock Text="highlighted" Classes="label" ToolTip.Tip="Play loops them, suggestions fit them, new parts go there" />
                 <Button Content="Clear" Classes="tiny" Command="{Binding ClearLoopCommand}" />
             </StackPanel>
-            <TextBlock Text="Drag across empty bars or the bar numbers to highlight them. Ctrl + scroll zooms, Shift + scroll moves along." Classes="label" Margin="0,0,0,6" IsVisible="{Binding !HasLoop}" />
         </WrapPanel>
 
         <Grid x:Name="Body" Grid.Row="4" ColumnDefinitions="*,16,400" Margin="0,6,0,0">
             <!-- The timeline: chords heard, energy, tracks of clips, and the piano roll for the clip picked. -->
             <Grid x:Name="LeftPane" RowDefinitions="Auto,*,Auto,330">
-                <StackPanel Spacing="2" Margin="0,0,0,6">
-                    <views:ChordLaneView Height="46" Items="{Binding Chords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
+                <!-- Two panels: the arrangement (chords, energy, tracks), and the clip picked. -->
+                <Border Grid.RowSpan="2" Classes="panel" />
+                <Border Grid.Row="3" Classes="panel" IsVisible="{Binding HasSelectedClip}" />
+                <StackPanel Spacing="2" Margin="6,6,6,6">
+                    <Panel>
+                    <TextBlock Text="Chords" Classes="laneName" Margin="12,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent"
+                               ToolTip.Tip="Chords are heard, never typed: from the chord and bass parts where there are some, from everything playing where there aren't. Green: home. Red: pulling home. Faint: moving away. Click one to change it (Reharm)." />
+                    <views:ChordLaneView Height="28" ContextRequested="OnChordMenu" Items="{Binding Chords}" PickCommand="{Binding PickChordCommand}"
+                                         Picked="{Binding PickedChord}" Proposed="{Binding ProposedChords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
                                          ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}" />
-                    <views:EnergyCurveView Height="36" Values="{Binding EnergyCurve}" Target="{Binding EnergyTarget}" Inset="210" ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}"
+                    </Panel>
+                    <Panel>
+                    <TextBlock Text="Energy" Classes="laneName" Margin="12,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent"
+                               ToolTip.Tip="{Binding EnergyText}" />
+                    <views:EnergyCurveView Height="18" Values="{Binding EnergyCurve}" Target="{Binding EnergyTarget}" Inset="210" ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}"
                                            ToolTip.Tip="Energy, bar by bar: how busy, loud and high it plays, and how far its harmony pulls from the key. Dashed: what each label's feel asks for." />
-                    <DockPanel Margin="210,0,0,0">
-                        <TextBlock DockPanel.Dock="Right" Text="{Binding EnergyText}" Classes="small" Margin="8,0,0,0" />
-                        <TextBlock Text="{Binding ChordSummary}" Classes="small"
-                                   ToolTip.Tip="Chords are heard, never typed: from the chord and bass parts where there are some, from everything playing where there aren't. Green: home. Red: pulling home. Faint: moving away." />
-                    </DockPanel>
+                    </Panel>
                 </StackPanel>
 
                 <!-- Track names beside their rows, then the clips. -->
-                <ScrollViewer Grid.Row="1" MinHeight="80" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer x:Name="TrackScroll" Grid.Row="1" MinHeight="80" Margin="6,0,6,6" HorizontalScrollBarVisibility="Disabled">
                     <Grid ColumnDefinitions="210,*">
                         <StackPanel>
-                            <Border Height="38" />
-                            <ListBox Classes="tracks" ItemsSource="{Binding Layers}" SelectedItem="{Binding SelectedLayer}" Background="Transparent"
+                            <Border Height="32" />
+                            <ListBox x:Name="TrackList" Classes="tracks" ItemsSource="{Binding Layers}" SelectedItem="{Binding SelectedLayer}" Background="Transparent"
                                      ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:LayerRow">
-                                        <Panel Height="{Binding Height}">
-                                        <StackPanel Spacing="1" Margin="6,3,8,3" VerticalAlignment="Center" ClipToBounds="True">
+                                        <Panel Height="{Binding Height}" Background="Transparent" ContextRequested="OnTrackMenu">
+                                        <!-- A colour tab (Solomon, 2026-10-22): a faint wash of the track's colour, solid on its edge. -->
+                                        <Border Background="{Binding Colour}" Opacity="0.12" Margin="0,0,0,1" />
+                                        <Border Width="6" HorizontalAlignment="Left" Margin="0,0,0,1" Background="{Binding Colour}" />
+                                        <StackPanel Spacing="1" Margin="14,3,8,3" VerticalAlignment="Center" ClipToBounds="True">
                                             <DockPanel>
-                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
+                                                <StackPanel DockPanel.Dock="Right" Classes="group">
                                                     <ToggleButton Classes="tiny" Content="M" IsChecked="{Binding Muted, Mode=OneWay}" Command="{Binding MuteCommand}" ToolTip.Tip="Mute" />
                                                     <ToggleButton Classes="tiny" Content="S" IsChecked="{Binding Solo, Mode=OneWay}" Command="{Binding ToggleSoloCommand}" ToolTip.Tip="Solo: hear only the soloed parts" />
                                                     <Button Classes="tiny" Content="✕" Command="{Binding RemoveCommand}" ToolTip.Tip="Take this track and its clips out (Undo brings it back)" />
                                                 </StackPanel>
-                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip.Tip="{Binding Details}" />
+                                                <!-- Renamed in place: double-click the name, or Rename on the track's right-click menu. -->
+                                                <Panel>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip.Tip="{Binding Details}"
+                                                               DoubleTapped="OnTrackNameDoubleTapped" />
+                                                    <TextBox Classes="commitOnEnter trackRename" IsVisible="False" Text="{Binding Name, UpdateSourceTrigger=LostFocus}"
+                                                             MinHeight="0" FontSize="12" KeyDown="OnTrackRenameKey" LostFocus="OnTrackRenameDone" />
+                                                </Panel>
                                             </DockPanel>
                                             <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding Details}" />
                                         </StackPanel>
@@ -208,13 +293,13 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </StackPanel>
-                        <views:TimelineView Grid.Column="1" Tracks="{Binding Layers}" Labels="{Binding Labels}" Length="{Binding Length}"
+                        <views:TimelineView x:Name="Timeline" Grid.Column="1" Tracks="{Binding Layers}" Labels="{Binding Labels}" Length="{Binding Length}"
                                             Revision="{Binding Revision}" Position="{Binding Position}"
                                             Highlight="{Binding Loop}" HighlightCommand="{Binding SetLoopCommand}"
                                             Selected="{Binding SelectedClip.Clip}" SelectCommand="{Binding SelectClipCommand}"
                                             SelectedLabel="{Binding SelectedLabel}" LabelCommand="{Binding SelectLabelCommand}"
                                             EditCommand="{Binding ChangeClipCommand}" Grid="{Binding Grid}" DropCommand="{Binding DropPartCommand}"
-                                            ViewStart="{Binding ViewStart}" ViewLength="{Binding ViewLength}" PlayFrom="{Binding Cursor}" CursorCommand="{Binding SetCursorCommand}"
+                                            ViewStart="{Binding ViewStart}" ViewLength="{Binding ViewLength}" PlayFrom="{Binding Cursor}" CursorCommand="{Binding SetCursorCommand}" Trying="{Binding Trying}"
                                             DragSource="{Binding}"
                                             SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
                                             RowHeight="{Binding TrackHeight}"
@@ -229,54 +314,108 @@
                 <Border Grid.Row="2" Classes="grip" Width="48" Height="3" IsVisible="{Binding #ClipDivider.IsVisible}" />
 
                 <!-- The clip picked: its controls and the piano roll, the other parts grey behind. -->
-                <DockPanel Grid.Row="3" IsVisible="{Binding HasSelectedClip}">
-                    <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                        <Button Content="{Binding FoldText}" Classes="tiny" MinWidth="124" Margin="0,0,12,6" Command="{Binding FoldPianoCommand}"
-                                ToolTip.Tip="Fold the piano roll away to give the timeline the room, or bring it back" />
-                        <TextBlock Text="{Binding SelectedClip.Details}" Classes="label" FontWeight="SemiBold" Margin="0,0,12,6" />
-                        <ComboBox DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" ItemsSource="{x:Static vm:LayerRow.SoundChoices}" SelectedItem="{Binding Sound}"
-                                  MinWidth="150" Margin="0,0,10,6" FontSize="12" ToolTip.Tip="The track's sound here (General MIDI)" />
-                        <TextBlock Text="Octave" Classes="label" Margin="0,0,4,6" />
-                        <Button Content="−" Classes="tiny" Margin="0,0,2,6" Command="{Binding SelectedClip.OctaveDownCommand}" />
-                        <Button Content="+" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.OctaveUpCommand}" />
-                        <TextBlock Text="Semitone" Classes="label" Margin="0,0,4,6" />
-                        <Button Content="−" Classes="tiny" Margin="0,0,2,6" Command="{Binding SelectedClip.DownCommand}" />
-                        <Button Content="+" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.UpCommand}" />
-                        <TextBlock Text="Inversion" Classes="label" Margin="0,0,4,6" IsVisible="{Binding SelectedClip.IsChords}" />
-                        <Button Content="−" Classes="tiny" Margin="0,0,2,6" Command="{Binding SelectedClip.TurnDownCommand}" IsVisible="{Binding SelectedClip.IsChords}"
-                                ToolTip.Tip="Turn its chords down: each chord's top note down an octave" />
-                        <Button Content="+" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.TurnUpCommand}" IsVisible="{Binding SelectedClip.IsChords}"
-                                ToolTip.Tip="Turn its chords up: each chord's bottom note up an octave" />
-                        <Button Content="Fit again" Classes="tiny" Margin="0,0,6,6" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
-                                ToolTip.Tip="Changed by hand, so it stays as it is. Fit again lets it move to fit the chords under it again (its octave is kept)." />
-                        <TextBlock Text="{Binding SelectedClip.FitText}" Classes="label" Margin="0,0,12,6"
-                                   ToolTip.Tip="Shift to fit: a clip you move moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Fit again." />
-                        <Button Content="Copy after it" Classes="tiny" Margin="0,0,4,6" Command="{Binding SelectedClip.DuplicateCommand}" />
-                        <Button Content="Remove" Classes="tiny" Margin="0,0,10,6" Command="{Binding SelectedClip.RemoveCommand}" />
-                        <Button Content="Smooth inversions" Classes="tiny" Margin="0,0,10,6" Command="{Binding SmoothInversionsCommand}" IsVisible="{Binding IsChordLayer}"
-                                ToolTip.Tip="Turn each chord over (same notes, same spacing) so the voices move as little as they can from chord to chord" />
-                        <Border Classes="dragChip" Margin="0,0,6,6" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
-                                ToolTip.Tip="Drag this track into your DAW as a MIDI clip">
-                            <TextBlock Text="Drag this track" />
-                        </Border>
-                        <TextBox DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
-                                 Width="160" Margin="0,0,6,6" FontSize="12" ToolTip.Tip="The track's name: its name in your DAW" />
-                    </WrapPanel>
-                    <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6" IsVisible="{Binding !PianoFolded}">
-                        <TextBlock Text="Note names" Classes="label" Margin="0,0,6,4" />
-                        <ListBox Classes="chips" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteLabelChoices}" SelectedItem="{Binding NoteLabelPick}" Margin="0,0,0,4"
-                                 ToolTip.Tip="Write each note's name on it and on the keys (C4, F#3), or what it is over the chord heard there (3, ♭7, 9, 13): handy for jazz and gospel tensions">
-                            <ListBox.ItemsPanel>
-                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
-                            </ListBox.ItemsPanel>
-                        </ListBox>
-                    </WrapPanel>
-                    <views:PianoRollEditor MinHeight="80" IsVisible="{Binding !PianoFolded}" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}"
+                <DockPanel Grid.Row="3" Margin="6" IsVisible="{Binding HasSelectedClip}">
+                    <!-- The inspector: what can be done to the picked clip and its track, in a column under the track names
+                         (Solomon, 2026-10-21: the strip of buttons and sentences above the piano roll was too cluttered). -->
+                    <ScrollViewer DockPanel.Dock="Left" Width="204" Margin="0,0,6,0" HorizontalScrollBarVisibility="Disabled">
+                        <!-- Folding sections (Solomon, 2026-10-22): Clip, Notes and Track, each with a heading that folds it away;
+                             values are dragged up or down, scrolled or typed (DragValue), so there are no − and + buttons. -->
+                        <StackPanel Spacing="5" Margin="2,2,8,2">
+                            <DockPanel ToolTip.Tip="{Binding SelectedClip.Details}">
+                                <Button DockPanel.Dock="Right" Classes="tiny" Content="{Binding FoldGlyph}" Command="{Binding FoldPianoCommand}"
+                                        ToolTip.Tip="Fold the piano roll away to give the timeline the room, or bring it back" />
+                                <Border DockPanel.Dock="Left" Width="10" Height="10" CornerRadius="2" Margin="0,0,7,0" Background="{Binding SelectedClip.Colour}" />
+                                <TextBlock Text="{Binding SelectedClip.Name}" FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <StackPanel Spacing="5" IsVisible="{Binding !PianoFolded}">
+                                <ToggleButton x:Name="ClipOpen" Classes="section" IsChecked="True">
+                                    <StackPanel Orientation="Horizontal" Spacing="5"><TextBlock Classes="arrow" /><TextBlock Text="Clip" /></StackPanel>
+                                </ToggleButton>
+                                <StackPanel Spacing="5" IsVisible="{Binding #ClipOpen.IsChecked}">
+                                    <DockPanel>
+                                        <Border DockPanel.Dock="Right" Classes="lcd" MinWidth="72"><TextBlock Text="{Binding SelectedClip.BarsText}" HorizontalAlignment="Center" /></Border>
+                                        <TextBlock Text="Bars" Classes="label" />
+                                    </DockPanel>
+                                    <DockPanel>
+                                        <Border DockPanel.Dock="Right" Classes="lcd" MinWidth="72"><TextBlock Text="{Binding SelectedClip.RoundText}" HorizontalAlignment="Center" /></Border>
+                                        <TextBlock Text="Round" Classes="label" ToolTip.Tip="How long one go round is, and how many times it plays" />
+                                    </DockPanel>
+                                    <DockPanel ToolTip.Tip="Shift to fit: a clip you move moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Fit again.">
+                                        <Button DockPanel.Dock="Right" Content="Fit again" Classes="tiny" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
+                                                ToolTip.Tip="Changed by hand, so it stays as it is. Fit again lets it move to fit the chords under it again (its octave is kept)." />
+                                        <TextBlock Text="{Binding SelectedClip.FitText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <StackPanel Classes="group">
+                                        <Button Content="Copy after" Classes="tiny" Command="{Binding SelectedClip.DuplicateCommand}" ToolTip.Tip="A copy straight after it (Ctrl+D)" />
+                                        <Button Content="Remove" Classes="tiny" Command="{Binding SelectedClip.RemoveCommand}" ToolTip.Tip="Take the clip out (Delete)" />
+                                        <Button Content="Smooth" Classes="tiny" Command="{Binding SmoothInversionsCommand}" IsVisible="{Binding IsChordLayer}"
+                                                ToolTip.Tip="Smooth inversions: turn each chord over (same notes, same spacing) so the voices move as little as they can from chord to chord" />
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <ToggleButton x:Name="NotesOpen" Classes="section" IsChecked="True">
+                                    <StackPanel Orientation="Horizontal" Spacing="5"><TextBlock Classes="arrow" /><TextBlock Text="Notes" /></StackPanel>
+                                </ToggleButton>
+                                <StackPanel Spacing="5" IsVisible="{Binding #NotesOpen.IsChecked}">
+                                    <DockPanel>
+                                        <views:DragValue DockPanel.Dock="Right" MinWidth="72" Text="{Binding SelectedClip.OctaveText}" Value="{Binding SelectedClip.OctaveValue}"
+                                                         UpCommand="{Binding SelectedClip.OctaveUpCommand}" DownCommand="{Binding SelectedClip.OctaveDownCommand}" ByCommand="{Binding SelectedClip.OctaveByCommand}" />
+                                        <TextBlock Text="Octave" Classes="label" />
+                                    </DockPanel>
+                                    <DockPanel>
+                                        <views:DragValue DockPanel.Dock="Right" MinWidth="72" Text="{Binding SelectedClip.SemitoneText}" Value="{Binding SelectedClip.SemitoneValue}"
+                                                         UpCommand="{Binding SelectedClip.UpCommand}" DownCommand="{Binding SelectedClip.DownCommand}" ByCommand="{Binding SelectedClip.SemitoneByCommand}" />
+                                        <TextBlock Text="Transpose" Classes="label" ToolTip.Tip="Semitones up or down, on top of its octave" />
+                                    </DockPanel>
+                                    <DockPanel IsVisible="{Binding SelectedClip.IsChords}">
+                                        <views:DragValue DockPanel.Dock="Right" MinWidth="72" Text="{Binding SelectedClip.InversionText}" Value="{Binding SelectedClip.InversionValue}"
+                                                         UpCommand="{Binding SelectedClip.TurnUpCommand}" DownCommand="{Binding SelectedClip.TurnDownCommand}" ByCommand="{Binding SelectedClip.TurnByCommand}" />
+                                        <TextBlock Text="Inversion" Classes="label" ToolTip.Tip="Turn its chords up (each chord's bottom note up an octave) or down (its top note down an octave)" />
+                                    </DockPanel>
+                                    <DockPanel ToolTip.Tip="Write each note's name on it and on the keys (C4, F#3), or what it is over the chord heard there (3, ♭7, 9, 13): handy for jazz and gospel tensions">
+                                        <ComboBox DockPanel.Dock="Right" Width="112" FontSize="12" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteLabelChoices}" SelectedItem="{Binding NoteLabelPick}" />
+                                        <TextBlock Text="Notes say" Classes="label" />
+                                    </DockPanel>
+                                    <DockPanel ToolTip.Tip="By fit: each note's colour shows how strongly it fits the chord under it, brightest for the strongest, red where it fights. The rows of the strongest notes are lit faintly behind, so you can see where a note would go best. Quieter notes are drawn fainter either way.">
+                                        <ComboBox DockPanel.Dock="Right" Width="112" FontSize="12" ItemsSource="{x:Static vm:PlaygroundViewModel.NoteColourChoices}" SelectedItem="{Binding NoteColourPick}" />
+                                        <TextBlock Text="Colours" Classes="label" />
+                                    </DockPanel>
+                                    <views:FitLegend Bass="{Binding SelectedClip.IsBass}" IsVisible="{Binding FitColours}" HorizontalAlignment="Left"
+                                                     ToolTip.Tip="Strongest fit first. A bassline leans on the root and 5th, then the 3rd; other parts on the root, 3rd and 5th, then the 7th, then tensions." />
+                                </StackPanel>
+
+                                <ToggleButton x:Name="TrackOpen" Classes="section" IsChecked="True">
+                                    <StackPanel Orientation="Horizontal" Spacing="5"><TextBlock Classes="arrow" /><TextBlock Text="Track" /></StackPanel>
+                                </ToggleButton>
+                                <StackPanel Spacing="5" IsVisible="{Binding #TrackOpen.IsChecked}">
+                                    <DockPanel>
+                                        <ComboBox DockPanel.Dock="Right" DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" ItemsSource="{x:Static vm:LayerRow.SoundChoices}" SelectedItem="{Binding Sound}"
+                                      FontSize="12" Width="132" ToolTip.Tip="The track's sound here (General MIDI)" />
+                                        <TextBlock Text="Sound" Classes="label" />
+                                    </DockPanel>
+                                    <DockPanel>
+                                        <TextBox x:Name="TrackName" DockPanel.Dock="Right" DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
+                                     Width="132" FontSize="12" ToolTip.Tip="The track's name: its name in your DAW" />
+                                        <TextBlock Text="Name" Classes="label" />
+                                    </DockPanel>
+                                    <StackPanel Classes="group">
+                                        <Border Classes="dragChip" Margin="0" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}"
+                                                ToolTip.Tip="Drag this track into your DAW as a MIDI clip">
+                                            <TextBlock Text="Drag this track out" />
+                                        </Border>
+                                    </StackPanel>
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                    <views:PianoRollEditor MinHeight="80" IsVisible="{Binding !PianoFolded}" Notes="{Binding SelectedClip.Notes}" Guide="{Binding SelectedClip.Guide}" Overlay="{Binding SelectedClip.Overlay}"
                                            NoteLabels="{Binding NoteLabels}" DegreeOf="{Binding SelectedClip.DegreeOf}"
+                                           StrengthOf="{Binding SelectedClip.StrengthOf}" FitGuide="{Binding SelectedClip.FitGuide}"
                                            SnapGrid="{Binding SnapGrid}" SnapRelative="{Binding SnapRelative}" SnapObjects="{Binding SnapObjects}"
                                            Period="{Binding SelectedClip.Loop}" Length="{Binding SelectedClip.Loop}" Position="{Binding SelectedClip.Position}"
+                                           Section="{Binding SelectedClip.Highlight}" SectionCommand="{Binding SelectedClip.PickBarsCommand}" SeekCommand="{Binding SelectedClip.SeekCommand}"
                                            EditedCommand="{Binding SelectedClip.EditedCommand}" ClashTest="{Binding SelectedClip.Clashes}"
-                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note (it copies the length and velocity of the last note you clicked), drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Notes snap with the Grid, Relative and Objects switches above; hold Shift to place freely." />
+                                           ToolTip.Tip="One go round of the clip. The other parts playing then are grey behind. Click to add a note (it copies the length and velocity of the last note you clicked), drag to move, drag its end to stretch, right-click to remove; red notes fight the chords (a jazz tension or a quick passing note isn't marked). Drag along the bar numbers to pick part of the clip: Suggest then finds the bit of each part that fits there, to swap in (right-click the bar numbers to let go). Notes snap with the Grid, Relative and Objects switches above; hold Shift to place freely." />
                 </DockPanel>
             </Grid>
             <!-- The side panel's edge: drag to make it wider or narrower. -->
@@ -285,11 +424,15 @@
                           ToolTip.Tip="Drag to make the side panel wider or narrower; double-click to put it back" />
             <Border Grid.Column="1" Classes="grip" Width="3" Height="48" />
             <!-- Getting parts: suggestions, writing from the chords, reharmonising, and songs. -->
-            <Border Grid.Column="2" Classes="card" Padding="12">
+            <Border Grid.Column="2" Classes="panel" Padding="10,6,10,10">
                 <TabControl Padding="0,8,0,0" SelectedIndex="{Binding RightTab}">
-                    <TabItem Header="Suggest" FontSize="14">
-                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
-                            <ListBox Classes="chips" ItemsSource="{Binding RoleChips}" SelectedItem="{Binding SuggestRole}">
+                    <TabItem Header="{Binding SuggestTab}" FontSize="14">
+                        <Panel>
+                        <!-- An empty idea: the MIDI page's own list, smaller, with Add on each part. -->
+                        <views:MidiListView Classes="compact" DataContext="{Binding Midi}" IsVisible="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).IsEmpty}"
+                                            AddCommand="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).AddMidiRowCommand}" />
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" IsVisible="{Binding !IsEmpty}">
+                            <ListBox Classes="chips group" ItemsSource="{Binding RoleChips}" SelectedItem="{Binding SuggestRole}">
                                 <ListBox.ItemsPanel>
                                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                                 </ListBox.ItemsPanel>
@@ -304,44 +447,59 @@
                                 <TextBox Text="{Binding SuggestSearch}" PlaceholderText="Words to narrow it (optional)" Classes="clearButton" />
                             </DockPanel>
                             <WrapPanel Grid.Row="2" Margin="0,6,0,0">
+                                <ComboBox DataContext="{Binding Midi}" x:DataType="vm:MidiBrowserViewModel" ItemsSource="{x:Static vm:MidiBrowserViewModel.FromChoices}" SelectedItem="{Binding From}"
+                                          Width="136" FontSize="12" Margin="0,0,10,4" ToolTip.Tip="Parts from your projects, from your MIDI folders, or both" />
                                 <TextBlock Text="These bars are a" Classes="label" Margin="0,0,6,4" />
                                 <ComboBox ItemsSource="{x:Static vm:PlaygroundViewModel.FeelChoices}" SelectedItem="{Binding FeelPick}" Width="120" Margin="0,0,10,4"
                                           ToolTip.Tip="Verse: steady and calm. Build: rising. Drop: full all the way. Breakdown: sparse. Suggestions whose energy suits it rank higher; Any ranks on harmony alone." />
                                 <CheckBox Content="Smooth inversions" IsChecked="{Binding SmoothIncoming}" Margin="0,0,0,4"
                                           ToolTip.Tip="Chord parts you add are turned into the inversions that move least, sitting with the chords already here" />
                             </WrapPanel>
-                            <TextBlock Grid.Row="3" Text="{Binding MatchStatus}" Classes="small" TextWrapping="Wrap" TextTrimming="None" Margin="0,6" />
-                            <ListBox Grid.Row="4" ItemsSource="{Binding Matches}" Background="Transparent" Classes="longList"
+                            <DockPanel Grid.Row="3" Margin="0,6">
+                                <Button DockPanel.Dock="Right" Content="Show more" Classes="tiny" Margin="6,0,0,0" VerticalAlignment="Top"
+                                        IsVisible="{Binding CanShowMore}" Command="{Binding ShowMoreCommand}"
+                                        ToolTip.Tip="The next lot under these, best first. How many come at a time is in Settings › Playground." />
+                                <TextBlock Text="{Binding MatchStatus}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                            </DockPanel>
+                            <ListBox Grid.Row="4" ItemsSource="{Binding Matches}" Background="Transparent" Classes="longList matches"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:PlaygroundMatchRow">
-                                        <StackPanel Spacing="3" Margin="0,2">
-                                            <DockPanel>
-                                                <TextBlock DockPanel.Dock="Right" Text="{Binding FitText}" Classes="fit" Margin="6,0,0,0" />
-                                                <StackPanel>
-                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
-                                                    <TextBlock Text="{Binding From}" Classes="small" ToolTip.Tip="{Binding From}" />
+                                        <!-- A tight row (Solomon, 2026-10-22: strip and list, keeping the preview of its notes): name and
+                                             where it's from, its notes, how well it fits. Why it fits and its chords are in the tooltip;
+                                             the buttons show on the row clicked, or while it plays. -->
+                                        <Border Classes="tryCard matchRow" Classes.playing="{Binding IsPlaying}" Classes.preparing="{Binding IsPreparing}">
+                                            <ToolTip.Tip>
+                                                <StackPanel Spacing="3" MaxWidth="320">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="Medium" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Why}" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Chords}" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" />
                                                 </StackPanel>
-                                            </DockPanel>
-                                            <views:NoteRoll Height="36" Channel="{Binding Channel}" views:PartDrag.Part="{Binding}" ToolTip.Tip="Drag it onto a track on the timeline" />
-                                            <TextBlock Text="{Binding Why}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                                            <TextBlock Text="{Binding Chords}" Classes="small" FontFamily="{DynamicResource NumberFont}" />
-                                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                                <Button Classes="tiny" Command="{Binding PreviewCommand}" ToolTip.Tip="Hear it with the idea, where it would go">
-                                                    <Panel>
-                                                        <TextBlock Text="▶ With the idea" IsVisible="{Binding !IsPlaying}" />
-                                                        <TextBlock Text="■ Stop" IsVisible="{Binding IsPlaying}" />
-                                                    </Panel>
-                                                </Button>
-                                                <Button Content="{Binding AddText}" Classes="tiny accent" Command="{Binding AddCommand}" ToolTip.Tip="Add: on a new track over the highlight (or from bar 1), moved into key. Swap in: in place of the highlighted bars of the clip you picked." />
-                                                <Button Content="Copy its groove" Classes="tiny" Command="{Binding TakeGrooveCommand}"
-                                                        ToolTip.Tip="Put its feel, rhythm or whole playing on the part picked (block chords played like it)" />
+                                            </ToolTip.Tip>
+                                            <StackPanel Spacing="4">
+                                                <Grid ColumnDefinitions="*,104,40">
+                                                    <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+                                                        <TextBlock Text="{Binding Title}" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding From}" Classes="small" />
+                                                    </StackPanel>
+                                                    <views:NoteRoll Grid.Column="1" Height="28" Channel="{Binding Channel}" views:PartDrag.Part="{Binding}" ToolTip.Tip="Drag it onto a track on the timeline" />
+                                                    <TextBlock Grid.Column="2" Text="{Binding FitText}" Classes="pct" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                                </Grid>
+                                                <StackPanel Classes="group actions">
+                                                    <Button Classes="tiny" Command="{Binding PreviewCommand}" ToolTip.Tip="Hear it with the idea, where it would go">
+                                                        <TextBlock Text="{Binding PreviewText}" />
+                                                    </Button>
+                                                    <Button Content="{Binding AddText}" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add: on a new track over the highlight (or from bar 1), moved into key. Swap in: in place of the highlighted bars of the clip you picked." />
+                                                    <Button Content="Copy its groove" Classes="tiny" Command="{Binding TakeGrooveCommand}"
+                                                            ToolTip.Tip="Put its feel, rhythm or whole playing on the part picked (block chords played like it)" />
+                                                </StackPanel>
                                             </StackPanel>
-                                        </StackPanel>
+                                        </Border>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </Grid>
+                        </Panel>
                     </TabItem>
 
                     <TabItem Header="Write" FontSize="14">
@@ -409,45 +567,115 @@
                         </ScrollViewer>
                     </TabItem>
 
-                    <TabItem Header="Reharm" FontSize="14">
-                        <Grid RowDefinitions="Auto,Auto,Auto,*">
-                            <TextBlock Text="{Binding NextChordsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                            <ItemsControl Grid.Row="1" ItemsSource="{Binding NextChords}" Margin="0,4,0,8">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:NextChordRow">
-                                        <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add it as the next bar">
-                                            <StackPanel Orientation="Horizontal" Spacing="5">
-                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                                <TextBlock Text="{Binding ShareText}" Classes="small" />
-                                            </StackPanel>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <TextBlock Grid.Row="2" Text="Reharmonisation ideas" FontWeight="SemiBold" Margin="0,0,0,4" />
-                            <ListBox Grid.Row="3" ItemsSource="{Binding Ideas}" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:ReharmRow">
-                                        <StackPanel Spacing="3" Margin="0,2">
+                    <TabItem Header="Reharm" FontSize="14" ToolTip.Tip="Change a chord: click it on the chord lane, try an idea, keep it or go back">
+                        <Grid RowDefinitions="Auto,*,Auto">
+                            <!-- where you are in the three steps -->
+                            <Border Classes="steps" Margin="0,0,0,8">
+                                <Grid ColumnDefinitions="*,*,*">
+                                    <TextBlock Text="1  Pick a chord" Classes="step" Classes.on="{Binding IsReharmPicking}" />
+                                    <TextBlock Grid.Column="1" Text="2  Try an idea" Classes="step" Classes.on="{Binding IsReharmChoosing}" />
+                                    <TextBlock Grid.Column="2" Text="3  Keep it" Classes="step" Classes.on="{Binding IsReharmTrying}" />
+                                </Grid>
+                            </Border>
+
+                            <Panel Grid.Row="1">
+                                <!-- 1: nothing picked -->
+                                <Panel IsVisible="{Binding IsReharmPicking}">
+                                    <StackPanel IsVisible="{Binding !CanHarmonise}" Spacing="6" Margin="0,12">
+                                        <TextBlock Text="Click a chord on the chord lane" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                        <TextBlock Text="Its ideas show here." Classes="small" HorizontalAlignment="Center" />
+                                    </StackPanel>
+                                    <!-- no chords yet: whole sets of chords for the melody or bassline, to try -->
+                                    <DockPanel IsVisible="{Binding CanHarmonise}">
+                                        <TextBlock DockPanel.Dock="Top" Text="{Binding HarmoniseText}" FontWeight="SemiBold" Margin="0,0,0,6" TextWrapping="Wrap" TextTrimming="None"
+                                                   ToolTip.Tip="No chord part plays, so these are chords made for what does: try one, then keep it as a Chords track or go back" />
+                                        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                            <ItemsControl ItemsSource="{Binding HarmoniseIdeas}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:ReharmRow">
+                                                        <Button Classes="idea" Command="{Binding TryCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,4"
+                                                                ToolTip.Tip="{Binding Why}">
+                                                            <StackPanel Spacing="2">
+                                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                                                <TextBlock Text="{Binding Idea.After}" Classes="small" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" TextTrimming="None" />
+                                                            </StackPanel>
+                                                        </Button>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </DockPanel>
+                                </Panel>
+
+                                <!-- 2: the ideas for the picked chord -->
+                                <DockPanel IsVisible="{Binding IsReharmChoosing}">
+                                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                                        <Button DockPanel.Dock="Right" Content="✕" Classes="tiny" Command="{Binding ClearPickedChordCommand}" ToolTip.Tip="Pick no chord" />
+                                        <TextBlock Text="{Binding PickedChordText}" FontSize="16" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="No ideas for this chord. Try another." Classes="small" IsVisible="{Binding !ChordIdeas.Count}" />
+                                    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsControl ItemsSource="{Binding ChordIdeas}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:ReharmRow">
+                                                    <Button Classes="idea" Command="{Binding TryCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,4"
+                                                            ToolTip.Tip="{Binding Why}">
+                                                        <StackPanel Spacing="2">
+                                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                                            <TextBlock Text="{Binding Swap}" Classes="small" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" TextTrimming="None" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </DockPanel>
+
+                                <!-- 3: trying one, striped on the chord lane -->
+                                <Panel IsVisible="{Binding IsReharmTrying}">
+                                <StackPanel Spacing="8" DataContext="{Binding TryingIdea}" x:DataType="vm:ReharmRow">
+                                    <Border Classes="reharmCard">
+                                        <StackPanel Spacing="6">
                                             <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
-                                            <TextBlock Text="{Binding Change}" Classes="small" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" TextTrimming="None" />
+                                            <TextBlock Text="{Binding Swap}" FontSize="18" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" TextTrimming="None" />
                                             <TextBlock Text="{Binding Why}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                                <Button Classes="tiny" Command="{Binding PreviewCommand}" ToolTip.Tip="Hear the idea with it">
-                                                    <Panel>
-                                                        <TextBlock Text="▶ Hear it" IsVisible="{Binding !IsPlaying}" />
-                                                        <TextBlock Text="■ Stop" IsVisible="{Binding IsPlaying}" />
-                                                    </Panel>
-                                                </Button>
-                                                <Button Content="Use it" Classes="tiny accent" Command="{Binding ApplyCommand}" ToolTip.Tip="Change the chords; parts written from them follow. Undo takes it back." />
-                                            </StackPanel>
                                         </StackPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                                    </Border>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Button Classes="accent" Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).KeepIdeaCommand}"
+                                                Content="Keep" ToolTip.Tip="Change the chords; parts written from them follow. Undo takes it back." />
+                                        <Button Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackIdeaCommand}"
+                                                Content="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackText}" ToolTip.Tip="Leave the chords as they were and try another idea" />
+                                        <Button Command="{Binding PreviewCommand}" ToolTip.Tip="Hear the idea with it">
+                                            <Panel>
+                                                <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
+                                                <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
+                                            </Panel>
+                                        </Button>
+                                    </StackPanel>
+                                </StackPanel>
+                                </Panel>
+                            </Panel>
+
+                            <!-- what could come next, smaller, under the steps -->
+                            <StackPanel Grid.Row="2" Spacing="4" Margin="0,8,0,0" IsVisible="{Binding NextChords.Count}">
+                                <TextBlock Text="{Binding NextChordsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                                <ItemsControl ItemsSource="{Binding NextChords}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:NextChordRow">
+                                            <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add it as the next bar">
+                                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding ShareText}" Classes="small" />
+                                                </StackPanel>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
                         </Grid>
                     </TabItem>
 
@@ -487,17 +715,18 @@
                         <Button DockPanel.Dock="Right" Content="Close" Command="{Binding CloseCheatSheetCommand}" />
                         <StackPanel>
                             <TextBlock Text="Playground keys" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock Text="Bitwig's keys unless you changed them in Settings › Shortcuts. Press ? or Esc to close."
+                            <TextBlock Text="Click a key, then press the one you want: every action can have one. Esc leaves it as it is. Settings › Shortcuts has the same list. Press ? or Esc to close."
                                        Classes="small" TextTrimming="None" TextWrapping="Wrap" />
                         </StackPanel>
                     </DockPanel>
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0" Spacing="3">
                         <TextBlock Text="With the mouse" FontWeight="SemiBold" Margin="0,0,0,2" />
                         <TextBlock Classes="small" TextTrimming="None" Text="Hold Shift while dragging: no snapping" />
-                        <TextBlock Classes="small" TextTrimming="None" Text="Ctrl + scroll: zoom round the pointer · Shift + scroll or middle-drag: move along" />
+                        <TextBlock Classes="small" TextTrimming="None" Text="Ctrl + scroll: zoom round the pointer · Alt + scroll: taller or shorter · Shift + scroll or middle-drag: move along" />
                         <TextBlock Classes="small" TextTrimming="None" Text="Click the bar numbers: play from there · drag them: highlight bars · double-click: show it all" />
                         <TextBlock Classes="small" TextTrimming="None" Text="Drag a clip's right edge to repeat it, its left edge to trim it, or pull it off the timeline into your DAW" />
                     </StackPanel>
+                    <ScrollViewer MaxHeight="480" HorizontalScrollBarVisibility="Disabled">
                     <ItemsControl ItemsSource="{Binding CheatSheet}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
@@ -505,15 +734,14 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:ShortcutRow">
                                 <DockPanel Width="340" Margin="0,2,10,2">
-                                    <Border DockPanel.Dock="Left" Width="104" Margin="0,0,10,0" CornerRadius="4" Padding="6,2"
-                                            Background="{StaticResource StrokeBrush}" HorizontalAlignment="Left">
-                                        <TextBlock Text="{Binding KeyText}" FontFamily="{DynamicResource NumberFont}" FontSize="12" HorizontalAlignment="Center" />
-                                    </Border>
+                                    <views:ShortcutBox DockPanel.Dock="Left" Width="120" MinWidth="120" Margin="0,0,10,0" Padding="6,2" FontSize="12"
+                                                       FontFamily="{DynamicResource NumberFont}" />
                                     <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="13" />
                                 </DockPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    </ScrollViewer>
                 </DockPanel>
             </Border>
         </Border>

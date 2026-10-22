@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
 
@@ -23,12 +24,35 @@ public static class MidiRoles
 }
 
 /// <summary>
-/// One chord: its root and every pitch class sounding, as a 12-bit set (bit 0 = C). Keeping the notes rather than just a
-/// name lets two chords be compared by how many notes they share, so Am7 and C are close and Am and F# are not.
+/// One chord: its root, every pitch class sounding, as a 12-bit set (bit 0 = C), and its bass note. Keeping the notes
+/// rather than just a name lets two chords be compared by how many notes they share, so Am7 and C are close and Am and
+/// F# are not.
 /// </summary>
-public readonly record struct PhraseChord(int Root, int Mask)
+public readonly record struct PhraseChord(int Root, int Mask, int Bass)
 {
-    public PhraseChord Transposed(int semitones) => new(Mod12(Root + semitones), Rotate(Mask, semitones));
+    /// <summary>A chord with its root in the bass (or no bass of its own).</summary>
+    public PhraseChord(int root, int mask) : this(root, mask, root) { }
+
+    /// <summary>
+    /// A chord as the chord reader spelled it (<see cref="ChordReader"/>) or a chart has it. A bass note that's only a
+    /// bass (the C of D/C) is kept as the bass and left out of the chord's own notes, so <see cref="Symbol"/> names the
+    /// chord as it was named: D/C, not D7/C. One the chord needs to be what it is (the F of G7/F) stays in.
+    /// </summary>
+    public static PhraseChord Of(ChordSymbol chord)
+    {
+        var upper = chord.Mask & ~(1 << chord.Bass);
+        var onlyBass = chord.Bass != chord.Root && ChordSymbol.Count(upper) >= 3 &&
+                       ChordSpeller.FamilyOf(Rotate(upper, -chord.Root)) == chord.Family;
+        return new(chord.Root, onlyBass ? upper : chord.Mask, chord.Bass);
+    }
+
+    public PhraseChord Transposed(int semitones) => new(Mod12(Root + semitones), Rotate(Mask, semitones), Mod12(Bass + semitones));
+
+    /// <summary>The chord spelled out, the way a jazz or gospel player names it: "Am9", "G13(b9)", "C/E".</summary>
+    public ChordSymbol Symbol => new(Root, Sounding, Bass, ChordSpeller.FamilyOf(Rotate(Mask, -Root)));
+
+    /// <summary>Every note that sounds, the bass included.</summary>
+    public int Sounding => Mask | 1 << Bass;
 
     public static int Rotate(int mask, int semitones)
     {
@@ -44,25 +68,20 @@ public readonly record struct PhraseChord(int Root, int Mask)
     /// </summary>
     public double Similarity(PhraseChord other)
     {
-        var union = BitOperations.PopCount((uint)(Mask | other.Mask));
+        var union = BitOperations.PopCount((uint)(Sounding | other.Sounding));
         if (union == 0) return 0;
-        var shared = (double)BitOperations.PopCount((uint)(Mask & other.Mask)) / union;
+        var shared = (double)BitOperations.PopCount((uint)(Sounding & other.Sounding)) / union;
         return Math.Min(1, shared + (Root == other.Root ? 0.25 : 0));
     }
 
-    /// <summary>The chord's name, such as "Am7", or its root with a "?" when it isn't a chord with a name.</summary>
-    public string Name
-    {
-        get
-        {
-            var chroma = new double[12];
-            for (var i = 0; i < 12; i++) if ((Mask >> i & 1) != 0) chroma[i] = 1;
-            chroma[Root] += 0.5;
-            return MusicTheory.NameChord(chroma, 0.6)?.Name ?? MusicTheory.NoteNames[Root] + "?";
-        }
-    }
+    /// <summary>The chord's name, such as "Am7", "Dm9" or "C/E".</summary>
+    public string Name => Symbol.Name;
 
-    public override string ToString() => $"{Root}:{Mask:x3}";
+    /// <summary>The name spelled the way the key is written (C#m in A major, Dbm in Gb major), <see cref="ChordSymbol.NameIn"/>.</summary>
+    public string NameIn(KeyEstimate? key) => Symbol.NameIn(key);
+
+    /// <summary>"9:291" (A with C, E and G), with "/4" after it for a bass that isn't the root (over E).</summary>
+    public override string ToString() => Bass == Root ? $"{Root}:{Mask:x3}" : $"{Root}:{Mask:x3}/{Bass}";
 
     public static string Encode(IEnumerable<PhraseChord> chords) => string.Join(" ", chords);
 
@@ -73,9 +92,12 @@ public readonly record struct PhraseChord(int Root, int Mask)
         foreach (var part in text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
             var colon = part.IndexOf(':');
-            if (colon > 0 && int.TryParse(part[..colon], out var root) &&
-                int.TryParse(part[(colon + 1)..], System.Globalization.NumberStyles.HexNumber, null, out var mask))
-                list.Add(new PhraseChord(root, mask));
+            var slash = part.IndexOf('/');
+            if (slash < 0) slash = part.Length;
+            if (colon > 0 && slash > colon && int.TryParse(part[..colon], out var root) &&
+                int.TryParse(part[(colon + 1)..slash], System.Globalization.NumberStyles.HexNumber, null, out var mask))
+                list.Add(slash < part.Length && int.TryParse(part[(slash + 1)..], out var bass) && bass is >= 0 and < 12
+                    ? new PhraseChord(root, mask, bass) : new PhraseChord(root, mask));
         }
         return list;
     }
@@ -106,6 +128,13 @@ public static partial class PhraseAnalyser
     /// <summary>The most notes kept in one phrase.</summary>
     public const int MaxNotes = 4096;
     public const int FeatureCount = 48;
+    /// <summary>
+    /// No note is held longer than this: 1,024 bars, over half an hour at 120 BPM, so a real note (an 80-bar pad) is never
+    /// cut. Some FL Studio 6 patterns say a note lasts about two billion ticks (millions of bars), and cutting such a part
+    /// into phrases went through every one of those bars: 6 to 17 GB of memory for one old song, whose clean-ups paused the
+    /// app while MIDI was read (Solomon's log, 2026-10-21).
+    /// </summary>
+    public const long MaxHold = 1024 * Bar;
 
     /// <summary>
     /// The notes at <see cref="Ppq"/>, muted ones left out, moved so the phrase starts in its first bar (a pattern
@@ -118,7 +147,7 @@ public static partial class PhraseAnalyser
             .Select(n => n with
             {
                 Start = (long)Math.Round(n.Start * scale),
-                Length = Math.Max(1, (long)Math.Round((n.Step ? ppq / 4.0 : n.Length) * scale)),
+                Length = Math.Clamp((long)Math.Round((n.Step ? ppq / 4.0 : n.Length) * scale), 1, MaxHold),
                 Step = false,
             })
             .OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
@@ -145,6 +174,8 @@ public static partial class PhraseAnalyser
     public static IEnumerable<(string Where, List<NoteEvent> Notes, long From)> Split(List<NoteEvent> notes, IReadOnlySet<long>? clipStarts = null)
     {
         if (notes.Count == 0) yield break;
+        // Parts that didn't come through Normalise (a Bitwig song's tracks) are held to the same limit.
+        if (notes.Any(n => n.Length > MaxHold)) notes = notes.Select(n => n with { Length = Math.Min(n.Length, MaxHold) }).ToList();
         var sections = Sections(notes);
         var whole = sections.Count == 1 && BarsOf(notes) <= MaxBars;
         var seen = new HashSet<string>();
@@ -311,6 +342,9 @@ public static partial class PhraseAnalyser
         return hats >= 0.25 && together >= 0.15 || hats >= 0.4;
     }
 
+    /// <summary>A part taken for a melody or bassline with at least this share of its onsets struck as chords still has its chords read.</summary>
+    const double ChordsInALine = 0.25;
+
     /// <param name="notes">At <see cref="Ppq"/>, as <see cref="Normalise"/> gives them.</param>
     /// <param name="hints">Names that may say what the part is: its track, pattern, file and folders.</param>
     /// <param name="drums">Known to be drums: on MIDI channel 10, or played by a drum plugin.</param>
@@ -325,17 +359,17 @@ public static partial class PhraseAnalyser
         if (total > 0) for (var i = 0; i < 12; i++) chroma[i] /= total;
 
         var pitched = role is not MidiRoles.Drums;
+        // Chords are read from parts that play them: a melody's or a bassline's notes go by one at a time. One taken for a
+        // melody or bassline that strikes chords a good share of the time (a comping piano with a busy top line) gets
+        // them too, so it has them if it's labelled Chords.
+        var chords = role is MidiRoles.Chords or MidiRoles.Arp or MidiRoles.Other || pitched && shape.ChordShare >= ChordsInALine
+            ? Progression(notes) : [];
+        // A key and its relative major or minor share every note; when they fit about the same, the first chord decides
+        // (for a melody or bassline, the chord its own notes outline first: only for this, it's not kept).
+        var first = chords.Count > 0 ? chords : pitched && role is MidiRoles.Melody or MidiRoles.Bass ? Progression(notes) : [];
         var key = pitched && notes.Count >= 4 && chroma.Count(c => c > 0) >= 3
-            ? MusicTheory.EstimateKey(chroma.Select(c => (double)c).ToArray())
+            ? MusicTheory.EstimateMidiKey(chroma.Select(c => (double)c).ToArray(), first.Count > 0 ? (first[0].Root, MusicTheory.IsMinorChord(first[0].Root, first[0].Mask)) : null)
             : null;
-        var chords = pitched ? Progression(notes, role == MidiRoles.Chords) : [];
-        // A key and its relative major or minor share every note; a progression that starts on the other one's root
-        // (Cm – Ab – Eb – Bb) is in that one.
-        if (key is not null && chords.Count > 0)
-        {
-            var relative = key.Minor ? (key.Tonic + 3) % 12 : (key.Tonic + 9) % 12;
-            if (chords[0].Root == relative) key = key with { Tonic = relative, Minor = !key.Minor };
-        }
         return new PhraseAnalysis(role, why, BarsOf(notes), notes.Count == 0 ? 0 : notes.Min(n => n.Key),
                                   notes.Count == 0 ? 0 : notes.Max(n => n.Key), key, chroma, chords,
                                   Features(shape, notes, chroma, key), HashOf(notes));
@@ -454,58 +488,29 @@ public static partial class PhraseAnalyser
     // ---- harmony ----
 
     /// <summary>
-    /// The chords, a half bar at a time, in order: the notes that sound for a good share of each half bar (short stabs count). A chord
-    /// held for four bars is one chord, the same as one struck once, so only the harmony counts, not the rhythm.
+    /// The chords in order, as <see cref="ChordReader"/> reads them, a chord coming straight after itself once: what
+    /// harmony matching compares. A chord held for four bars is one chord, the same as one struck once, so only the
+    /// harmony counts, not the rhythm.
     /// </summary>
-    /// <param name="twoNoteChords">Count two notes as a chord too (power chords and thirds in a chord part).</param>
-    public static IReadOnlyList<PhraseChord> Progression(IReadOnlyList<NoteEvent> notes, bool twoNoteChords = false, int window = 2 * Ppq)
+    /// <param name="downbeat">A tick a bar starts on, when that isn't tick 0 (<see cref="ChordReader.Read"/>).</param>
+    public static IReadOnlyList<PhraseChord> Progression(IReadOnlyList<NoteEvent> notes, long downbeat = 0) =>
+        notes.Count == 0 ? [] : Progression(ChordReader.Read(notes, notes.Max(n => n.Start + n.Length), downbeat: downbeat));
+
+    /// <summary>A chord lane as <see cref="PhraseChord"/>s, in order, a chord coming straight after itself once.</summary>
+    public static IReadOnlyList<PhraseChord> Progression(IEnumerable<TimedChord> lane)
     {
-        if (notes.Count == 0) return [];
-        var sorted = notes.OrderBy(n => n.Start).ToList();
-        var end = sorted.Max(n => n.Start + n.Length);
         var chords = new List<PhraseChord>();
-        var longest = sorted.Max(n => n.Length);
-        var first = 0;
-        var weights = new double[12];
-        for (long w = 0; w < end; w += window)
+        foreach (var c in lane)
         {
-            Array.Clear(weights);
-            var lowest = int.MaxValue;
-            // Notes sorted by start: none before here can still be sounding.
-            while (first < sorted.Count && sorted[first].Start + longest <= w) first++;
-            for (var i = first; i < sorted.Count && sorted[i].Start < w + window; i++)
-            {
-                var n = sorted[i];
-                var overlap = Math.Min(n.Start + n.Length, w + window) - Math.Max(n.Start, w);
-                if (overlap < window / 16) continue;   // a grace note or a flam, not part of the harmony
-                weights[n.Key % 12] += overlap;
-                lowest = Math.Min(lowest, n.Key);
-            }
-            var max = weights.Max();
-            if (max <= 0) continue;
-            var mask = 0;
-            for (var p = 0; p < 12; p++) if (weights[p] >= 0.25 * max) mask |= 1 << p;
-            var count = BitOperations.PopCount((uint)mask);
-            if (count < (twoNoteChords ? 2 : 3)) continue;
-            var chord = new PhraseChord(RootOf(weights, lowest % 12), mask);
-            if (chords.Count == 0 || chords[^1].Mask != chord.Mask) chords.Add(chord);
+            var chord = PhraseChord.Of(c.Chord);
+            if (chords.Count == 0 || chords[^1] != chord) chords.Add(chord);
         }
         return chords;
     }
 
-    /// <summary>The root a chord's notes name (the bass note leans it), else the bass note itself.</summary>
-    static int RootOf(double[] weights, int bass)
-    {
-        var chroma = (double[])weights.Clone();
-        chroma[bass] += chroma.Max() * 0.5;
-        if (MusicTheory.NameChord(chroma, 0.6) is { } named)
-        {
-            var name = named.Name;
-            var root = Array.IndexOf(MusicTheory.NoteNames, name.Length > 1 && name[1] == '#' ? name[..2] : name[..1]);
-            if (root >= 0) return root;
-        }
-        return bass;
-    }
+    /// <summary>What a part is for (<see cref="MidiRoles"/>), from its notes and names alone, as <see cref="Analyse"/> decides it.</summary>
+    public static string RoleOf(IReadOnlyList<NoteEvent> notes, string hints = "", bool drums = false) =>
+        Role(Shape.Of(notes), notes, hints, drums).Role;
 
     // ---- likeness ----
 

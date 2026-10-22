@@ -425,6 +425,38 @@ public class ViewModelTests : IDisposable
         Assert.Empty(feed.Items);
     }
 
+    [Fact]
+    public void A_running_jobs_card_can_be_put_away_without_stopping_it()
+    {
+        var feed = new ActivityFeed { Linger = TimeSpan.Zero, FadeOut = TimeSpan.Zero };
+        var stopped = false;
+        var scan = feed.Start("Scanning sample folders", cancel: () => stopped = true);
+        var midi = feed.Start("Reading MIDI");
+
+        scan.DismissCommand.Execute(null);   // the ✕ on a running card
+        Assert.False(stopped);
+        Assert.True(scan.IsRunning);
+        Assert.True(scan.IsHidden);
+        Assert.Contains(scan, feed.Items);
+        Assert.Equal("1 job running", feed.HiddenText);
+
+        midi.DismissCommand.Execute(null);
+        Assert.Equal("2 jobs running", feed.HiddenText);
+        feed.ShowHiddenCommand.Execute(null);
+        Assert.False(scan.IsHidden || midi.IsHidden);
+        Assert.False(feed.HasHidden);
+
+        // Put away again: finishing doesn't bring it back, but failing does, so a failure is seen.
+        scan.DismissCommand.Execute(null);
+        midi.DismissCommand.Execute(null);
+        scan.Finish("Sample folders scanned");
+        Assert.True(scan.IsHidden);
+        Assert.Equal(1, feed.HiddenCount);
+        midi.Fail("Couldn't read MIDI", "Disk gone");
+        Assert.False(midi.IsHidden);
+        Assert.False(feed.HasHidden);
+    }
+
     static async Task PollUntil(Func<bool> done)
     {
         for (var i = 0; i < 100 && !done(); i++) await Task.Delay(20);
@@ -1818,14 +1850,14 @@ public class ViewModelTests : IDisposable
         await midi.RefreshAsync();
         var row = Assert.Single(midi.Results);
         var key = row.KeyText;   // C minor or its relative, E flat major: the same notes
-        Assert.Contains(key, new[] { "Cm", "D#" });
+        Assert.Contains(key, new[] { "Cm", "Eb" });
 
         // Fitted to the A minor song: moved down 3, and shown, played and dragged out that way.
         midi.FitToHarmony(Core.Midi.HarmonyTarget.FromChannels("Fit me", [song])!);
         await midi.RefreshAsync();
         row = Assert.Single(midi.Results);
         Assert.Equal("down 3 semitones", row.MoveText);
-        Assert.Equal(key == "Cm" ? "Cm → Am" : "D# → C", row.KeyText);
+        Assert.Equal(key == "Cm" ? "Cm → Am" : "Eb → C", row.KeyText);
         Assert.Equal(51 - 3, row.Channel.Notes.Min(n => n.Key));
         var drag = midi.MakeDrag([row])!;
         var written = Core.Midi.MidiFileReader.Read(drag.Files.Single());
@@ -1907,9 +1939,10 @@ public class ViewModelTests : IDisposable
         var playground = main.Playground;
         Assert.Equal(Core.Midi.MidiRoles.Chords, playground.SuggestRole.Role);
         main.SelectedNav = main.Nav.First(n => n.Page == playground);
-        for (var i = 0; i < 300 && playground.Matches.Count == 0; i++) await Task.Delay(10);
-        Assert.True(playground.Matches.Count > 0, playground.MatchStatus);
-        Assert.Contains(playground.Matches, m => m.Match.Entry.Title.Contains("Keys"));
+        // An empty idea shows the MIDI page's list; with a part in it, Suggest lists parts that fit.
+        Assert.True(playground.IsEmpty);
+        for (var i = 0; i < 300 && playground.Midi.Results.Count == 0; i++) await Task.Delay(10);
+        Assert.Contains(playground.Midi.Results, r => r.Title.Contains("Keys"));
     }
 
     [Fact]
@@ -2058,7 +2091,7 @@ public class ViewModelTests : IDisposable
         var edited = melody.BarNotes.Select((n, i) => i == 0 ? n with { Key = n.Key + 1 } : n).ToList();
         await melody.EditCommand.ExecuteAsync(edited);
         Assert.True(melody.IsEdited);
-        Assert.Contains("rubs a semitone", melody.TogetherText);
+        Assert.Contains("sits a half step above", melody.TogetherText);
         Assert.Equal(edited[0].Key, melody.BarNotes[0].Key);
         Assert.Equal(edited[0].Key, melody.FileClip().Tracks.Single().Value[0].Key);   // dragged out with the edit
         await melody.UndoEditCommand.ExecuteAsync(null);
@@ -2493,7 +2526,7 @@ public class ViewModelTests : IDisposable
         var tab = new SongMidiViewModel(main.Midi, main, project, "Two Parts");
         await tab.LoadAsync();
 
-        // Both of the song's parts, picked to start with; the clashing lead pulls the fit down.
+        // Both of the song's parts, picked to start with.
         Assert.True(tab.HasSongParts);
         Assert.Equal(["Keys", "Lead"], tab.SongParts.Select(p => p.Name));
         var both = tab.Rows.Single(r => r.Title == "Same Am");
@@ -2505,7 +2538,8 @@ public class ViewModelTests : IDisposable
         for (var i = 0; i < 100 && tab.Rows.FirstOrDefault()?.With?.Parts.Count != 1; i++) await Task.Delay(10);
         var keysOnly = tab.Rows.Single(r => r.Title == "Same Am");
         Assert.Equal("Keys", Assert.Single(keysOnly.With!.Parts).Name);
-        Assert.True(keysOnly.Fit!.Score > both.Fit!.Score);
+        // Its notes are the chords' own, so the lead doesn't pull down how they sound together; it's never worse alone.
+        Assert.True(keysOnly.Fit!.Score >= both.Fit!.Score);
         Assert.Same(keysOnly, tab.Open);
         Assert.Equal(keysOnly.With.Notes.Count, keysOnly.With.Parts[0].Notes.Count);
 

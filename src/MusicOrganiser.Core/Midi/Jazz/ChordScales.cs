@@ -92,8 +92,20 @@ public static class ChordScales
         if (i == 0 || (chord.Mask >> ChordSymbol.Mod(pc) & 1) != 0)
             // Its own notes. An avoid note that's in the chord (an add11) still sounds, but less sweetly.
             return ChordSpeller.Role(chord.Intervals, chord.Family, i) == ToneRole.Avoid ? 0.6 : 1;
+        // The 5th is a chord note even when the voicing leaves it out (a shell voicing plays only root, 3rd and 7th):
+        // the ear hears it as part of the chord. Not on chords whose 5th is altered (diminished, half-diminished,
+        // augmented), nor on any chord with a ♭5 or ♯5 in place of its 5th, as its name spells it (C7♭5, Cm♯5): only
+        // where a ♯11 or ♭13 is a tension over a 5th (Cmaj7♯11, Cm♭13) is the natural 5th still heard.
+        if (i == 7 && chord.Family is not (ChordFamily.Diminished or ChordFamily.HalfDiminished or ChordFamily.Augmented) &&
+            !AlteredFifth(chord))
+            return 1;
         return Colour(chord.Family, i, chord.Intervals, style);
     }
+
+    /// <summary>A ♭5 or ♯5 in place of its 5th, as its name spells it (C7♭5, Cm♯5), not a ♯11 or ♭13 over a 5th.</summary>
+    internal static bool AlteredFifth(ChordSymbol chord) =>
+        !chord.Has(7) && (chord.Has(6) && ChordSpeller.Role(chord.Intervals, chord.Family, 6) != ToneRole.Tension ||
+                          chord.Has(8) && ChordSpeller.Role(chord.Intervals, chord.Family, 8) != ToneRole.Tension);
 
     /// <summary>The 12 values at once, by pitch class.</summary>
     public static float[] Sits(ChordSymbol chord, HarmonyStyle style = HarmonyStyle.JazzGospel)
