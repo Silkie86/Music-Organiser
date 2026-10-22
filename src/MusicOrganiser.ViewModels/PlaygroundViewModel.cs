@@ -2058,18 +2058,32 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     // ---- listening ----
 
     [ObservableProperty] bool _isPlaying;
-    [ObservableProperty] double _position = -1;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(PositionText))] double _position = -1;
     /// <summary>
     /// The Loop button (Solomon, 2026-10-19): on, Play goes round the highlight (or the whole idea); off, it plays from
     /// where it starts to the end of the highlight (or the idea) and stops.
     /// </summary>
     [ObservableProperty] bool _loopOn = true;
     /// <summary>Where Play starts, set by clicking the bar numbers (inside the highlight, it starts there and goes round the highlight).</summary>
-    [ObservableProperty] long _cursor;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(PositionText))] long _cursor;
     partial void OnCursorChanged(long value) { if (_playing) _ = PlayAsync(); }
 
     [RelayCommand]
     void SetCursor(long tick) => Cursor = Math.Clamp(tick, 0, Math.Max(0, Length - 1));
+
+    [RelayCommand]
+    void ToStart() => Cursor = 0;
+
+    /// <summary>Where it's playing, or where Play starts, as a DAW shows it: bar.beat.sixteenth ("3.2.1").</summary>
+    public string PositionText
+    {
+        get
+        {
+            var t = Position >= 0 ? (long)Position : Cursor;
+            int ppq = PhraseAnalyser.Ppq, bar = 4 * ppq;
+            return $"{t / bar + 1}.{t % bar / ppq + 1}.{t % ppq / (ppq / 4) + 1}";
+        }
+    }
 
     // ---- zoom ----
 

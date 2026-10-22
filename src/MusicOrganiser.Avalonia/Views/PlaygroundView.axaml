@@ -17,6 +17,31 @@
                 </Transitions>
             </Setter>
         </Style>
+        <Style Selector="ListBox.matches ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+        </Style>
+        <Style Selector="TextBlock.pct">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="FontFamily" Value="{DynamicResource NumberFont}" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <Style Selector="Border.matchRow">
+            <Setter Property="CornerRadius" Value="2" />
+            <Setter Property="Padding" Value="4,4" />
+            <Setter Property="Margin" Value="0,0,0,1" />
+        </Style>
+        <Style Selector="Border.matchRow:pointerover">
+            <Setter Property="Background" Value="{DynamicResource HoverBrush}" />
+        </Style>
+        <Style Selector="Border.matchRow StackPanel.actions">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <!-- Its buttons show on the row picked (a click), or while it plays: showing them under the mouse would make rows jump. -->
+        <Style Selector="ListBoxItem:selected Border.matchRow StackPanel.actions, Border.matchRow.playing StackPanel.actions, Border.matchRow.preparing StackPanel.actions">
+            <Setter Property="IsVisible" Value="True" />
+        </Style>
         <Style Selector="Border.tryCard.preparing">
             <Setter Property="BorderBrush" Value="{DynamicResource AccentSoftBrush}" />
         </Style>
@@ -110,64 +135,11 @@
         </DockPanel>
 
         <!-- The transport and the page's settings, on one strip: buttons that go together joined, numbers in wells. -->
+        <!-- The top bar, transport in the middle (Solomon, 2026-10-22): snapping on the left; play, position and tempo
+             in the middle; the key, length and ideas on the right. -->
         <Border Grid.Row="1" Classes="panel" Margin="0,6,0,0" Padding="6">
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Classes="group" VerticalAlignment="Top">
-                    <Button x:Name="IdeasButton" Content="Ideas" ToolTip.Tip="Save this idea by name, open one you saved, or start a new one">
-                    <Button.Flyout>
-                        <Flyout Placement="BottomEdgeAlignedRight">
-                            <StackPanel Width="320" Spacing="8">
-                                <TextBlock Text="Ideas" FontWeight="SemiBold" />
-                                <TextBlock Text="The idea you're working on is saved after every change. Save it by name to keep it and start another."
-                                           TextWrapping="Wrap" Classes="small" TextTrimming="None" />
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Button Content="Save this idea" Classes="accent" Command="{Binding SaveIdeaCommand}" />
-                                    <Button Content="New idea" Command="{Binding NewIdeaCommand}" />
-                                </StackPanel>
-                                <Border Height="1" Background="{StaticResource StrokeBrush}" Margin="0,4" />
-                                <TextBlock Text="Saved ideas" Classes="small" />
-                                <ScrollViewer MaxHeight="260">
-                                    <ItemsControl ItemsSource="{Binding SavedIdeas}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="x:String">
-                                                <Button Content="{Binding}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Margin="0,2"
-                                                        Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).OpenIdeaCommand}" CommandParameter="{Binding}" />
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </ScrollViewer>
-                            </StackPanel>
-                        </Flyout>
-                    </Button.Flyout>
-                    </Button>
-                    <Border Classes="dragChip" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}" DataContext="arrangement"
-                            ToolTip.Tip="Drag the whole timeline into your DAW: one MIDI file, a track for each part">
-                        <TextBlock Text="Drag out" />
-                    </Border>
-                    <Button Content="Send to Bitwig" Command="{Binding SendToBitwigCommand}"
-                            ToolTip.Tip="Each part on its own new track in Bitwig, as a clip" />
-                </StackPanel>
-                <WrapPanel>
-                    <StackPanel Classes="group" Margin="0,0,10,0">
-                        <Button Classes="accent" MinWidth="40" Command="{Binding PlayCommand}" ToolTip.Tip="Play or stop, from the marker on the bar numbers (Space)">
-                            <Panel>
-                                <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
-                                <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
-                            </Panel>
-                        </Button>
-                        <ToggleButton Content="⟲" MinWidth="40" FontSize="15" IsChecked="{Binding LoopOn}"
-                                      ToolTip.Tip="Loop: Play goes round the highlighted bars, or the whole idea (Ctrl+L)" />
-                    </StackPanel>
-                    <NumericUpDown Value="{Binding Tempo}" Minimum="40" Maximum="200" Increment="1" FormatString="0" Width="124" Margin="0,0,4,0"
-                                   FontFamily="{DynamicResource NumberFont}" ToolTip.Tip="Tempo, in beats a minute" />
-                    <TextBlock Text="BPM" Classes="caps" Margin="0,0,12,0" />
-                    <NumericUpDown Value="{Binding Bars}" Minimum="1" Maximum="128" Increment="1" FormatString="0" Width="112" Margin="0,0,4,0"
-                                   FontFamily="{DynamicResource NumberFont}"
-                                   ToolTip.Tip="How long the timeline is, in bars. Clips that reach the end follow it, playing round again to fill new bars." />
-                    <TextBlock Text="BARS" Classes="caps" Margin="0,0,12,0" />
-                    <TextBox Text="{Binding KeyText}" Width="100" Margin="0,0,4,0" PlaceholderText="{Binding KeyHint}"
-                             ToolTip.Tip="{Binding KeySummary, StringFormat='{}{0}. Type a key (Eb, F# minor) to set it, or leave it empty for the app to hear it. A typed key wins.'}" />
-                    <TextBlock Text="KEY" Classes="caps" Margin="0,0,12,0" />
+            <Grid ColumnDefinitions="*,Auto,*">
+                <WrapPanel VerticalAlignment="Center">
                     <ListBox Classes="chips group" ItemsSource="{x:Static vm:PlaygroundViewModel.GridChoices}" SelectedItem="{Binding GridPick}" Margin="0,0,6,0"
                              ToolTip.Tip="What clips snap to when you drag them. Hold Shift while dragging to place them freely.">
                         <ListBox.ItemsPanel>
@@ -188,7 +160,70 @@
                                       ToolTip.Tip="Classical: the chords' own notes are the safe ones; a clash on a strong beat counts against a part" />
                     </StackPanel>
                 </WrapPanel>
-            </DockPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0">
+                    <StackPanel Classes="group" Margin="0,0,6,0">
+                        <Button Content="⏮" MinWidth="34" Command="{Binding ToStartCommand}" ToolTip.Tip="Back to the start: Play starts from bar 1" />
+                        <Button Classes="accent" MinWidth="40" Command="{Binding PlayCommand}" ToolTip.Tip="Play or stop, from the marker on the bar numbers (Space)">
+                            <Panel>
+                                <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
+                                <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
+                            </Panel>
+                        </Button>
+                        <ToggleButton Content="⟲" MinWidth="40" FontSize="15" IsChecked="{Binding LoopOn}"
+                                      ToolTip.Tip="Loop: Play goes round the highlighted bars, or the whole idea (Ctrl+L)" />
+                    </StackPanel>
+                    <Border Classes="lcd" MinWidth="70" Margin="0,0,6,0" ToolTip.Tip="Where it's playing, or where Play starts: bar, beat and sixteenth">
+                        <TextBlock Text="{Binding PositionText}" HorizontalAlignment="Center" />
+                    </Border>
+                    <NumericUpDown Value="{Binding Tempo}" Minimum="40" Maximum="200" Increment="1" FormatString="0" Width="58" Margin="0,0,4,0" ShowButtonSpinner="False"
+                                   FontFamily="{DynamicResource NumberFont}" ToolTip.Tip="Tempo, in beats a minute: type it, or scroll over it" />
+                    <TextBlock Text="BPM" Classes="caps" Margin="0,0,12,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <TextBox Text="{Binding KeyText}" Width="100" Margin="0,0,4,0" PlaceholderText="{Binding KeyHint}"
+                             ToolTip.Tip="{Binding KeySummary, StringFormat='{}{0}. Type a key (Eb, F# minor) to set it, or leave it empty for the app to hear it. A typed key wins.'}" />
+                    <TextBlock Text="KEY" Classes="caps" Margin="0,0,12,0" />
+                    <NumericUpDown Value="{Binding Bars}" Minimum="1" Maximum="128" Increment="1" FormatString="0" Width="52" Margin="0,0,4,0" ShowButtonSpinner="False"
+                                   FontFamily="{DynamicResource NumberFont}"
+                                   ToolTip.Tip="How long the timeline is, in bars. Clips that reach the end follow it, playing round again to fill new bars." />
+                    <TextBlock Text="BARS" Classes="caps" Margin="0,0,12,0" />
+                <StackPanel Classes="group" VerticalAlignment="Center">
+                        <Button x:Name="IdeasButton" Content="Ideas" ToolTip.Tip="Save this idea by name, open one you saved, or start a new one">
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedRight">
+                                <StackPanel Width="320" Spacing="8">
+                                    <TextBlock Text="Ideas" FontWeight="SemiBold" />
+                                    <TextBlock Text="The idea you're working on is saved after every change. Save it by name to keep it and start another."
+                                               TextWrapping="Wrap" Classes="small" TextTrimming="None" />
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Button Content="Save this idea" Classes="accent" Command="{Binding SaveIdeaCommand}" />
+                                        <Button Content="New idea" Command="{Binding NewIdeaCommand}" />
+                                    </StackPanel>
+                                    <Border Height="1" Background="{StaticResource StrokeBrush}" Margin="0,4" />
+                                    <TextBlock Text="Saved ideas" Classes="small" />
+                                    <ScrollViewer MaxHeight="260">
+                                        <ItemsControl ItemsSource="{Binding SavedIdeas}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="x:String">
+                                                    <Button Content="{Binding}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Margin="0,2"
+                                                            Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).OpenIdeaCommand}" CommandParameter="{Binding}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                        </Button>
+                        <Border Classes="dragChip" views:FileDrag.Source="{Binding $parent[UserControl].DataContext}" DataContext="arrangement"
+                                ToolTip.Tip="Drag the whole timeline into your DAW: one MIDI file, a track for each part">
+                            <TextBlock Text="Drag out" />
+                        </Border>
+                        <Button Content="Send to Bitwig" Command="{Binding SendToBitwigCommand}"
+                                ToolTip.Tip="Each part on its own new track in Bitwig, as a clip" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <Border Grid.Row="2" Margin="0,6,0,0" Padding="12,6" CornerRadius="3" Background="{StaticResource AccentFaintBrush}"
@@ -406,7 +441,7 @@
                         <views:MidiListView Classes="compact" DataContext="{Binding Midi}" IsVisible="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).IsEmpty}"
                                             AddCommand="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).AddMidiRowCommand}" />
                         <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" IsVisible="{Binding !IsEmpty}">
-                            <ListBox Classes="chips" ItemsSource="{Binding RoleChips}" SelectedItem="{Binding SuggestRole}">
+                            <ListBox Classes="chips group" ItemsSource="{Binding RoleChips}" SelectedItem="{Binding SuggestRole}">
                                 <ListBox.ItemsPanel>
                                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                                 </ListBox.ItemsPanel>
@@ -435,34 +470,39 @@
                                         ToolTip.Tip="The next lot under these, best first. How many come at a time is in Settings › Playground." />
                                 <TextBlock Text="{Binding MatchStatus}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                             </DockPanel>
-                            <ListBox Grid.Row="4" ItemsSource="{Binding Matches}" Background="Transparent" Classes="longList"
+                            <ListBox Grid.Row="4" ItemsSource="{Binding Matches}" Background="Transparent" Classes="longList matches"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:PlaygroundMatchRow">
-                                        <Border Classes="tryCard" Classes.playing="{Binding IsPlaying}" Classes.preparing="{Binding IsPreparing}">
-                                        <StackPanel Spacing="3" Margin="0,2">
-                                            <Border Classes="tryBar" IsVisible="{Binding IsPlaying}">
-                                                <TextBlock Text="▶ Playing with your idea, faint on the timeline" Classes="small" Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" />
-                                            </Border>
-                                            <DockPanel>
-                                                <TextBlock DockPanel.Dock="Right" Text="{Binding FitText}" Classes="fit" Margin="6,0,0,0" />
-                                                <StackPanel>
-                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
-                                                    <TextBlock Text="{Binding From}" Classes="small" ToolTip.Tip="{Binding From}" />
+                                        <!-- A tight row (Solomon, 2026-10-22: strip and list, keeping the preview of its notes): name and
+                                             where it's from, its notes, how well it fits. Why it fits and its chords are in the tooltip;
+                                             the buttons show on the row clicked, or while it plays. -->
+                                        <Border Classes="tryCard matchRow" Classes.playing="{Binding IsPlaying}" Classes.preparing="{Binding IsPreparing}">
+                                            <ToolTip.Tip>
+                                                <StackPanel Spacing="3" MaxWidth="320">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="Medium" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Why}" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding Chords}" FontFamily="{DynamicResource NumberFont}" TextWrapping="Wrap" />
                                                 </StackPanel>
-                                            </DockPanel>
-                                            <views:NoteRoll Height="36" Channel="{Binding Channel}" views:PartDrag.Part="{Binding}" ToolTip.Tip="Drag it onto a track on the timeline" />
-                                            <TextBlock Text="{Binding Why}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                                            <TextBlock Text="{Binding Chords}" Classes="small" FontFamily="{DynamicResource NumberFont}" />
-                                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                                <Button Classes="tiny" Command="{Binding PreviewCommand}" ToolTip.Tip="Hear it with the idea, where it would go">
-                                                    <TextBlock Text="{Binding PreviewText}" />
-                                                </Button>
-                                                <Button Content="{Binding AddText}" Classes="tiny accent" Command="{Binding AddCommand}" ToolTip.Tip="Add: on a new track over the highlight (or from bar 1), moved into key. Swap in: in place of the highlighted bars of the clip you picked." />
-                                                <Button Content="Copy its groove" Classes="tiny" Command="{Binding TakeGrooveCommand}"
-                                                        ToolTip.Tip="Put its feel, rhythm or whole playing on the part picked (block chords played like it)" />
+                                            </ToolTip.Tip>
+                                            <StackPanel Spacing="4">
+                                                <Grid ColumnDefinitions="*,104,40">
+                                                    <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+                                                        <TextBlock Text="{Binding Title}" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding From}" Classes="small" />
+                                                    </StackPanel>
+                                                    <views:NoteRoll Grid.Column="1" Height="28" Channel="{Binding Channel}" views:PartDrag.Part="{Binding}" ToolTip.Tip="Drag it onto a track on the timeline" />
+                                                    <TextBlock Grid.Column="2" Text="{Binding FitText}" Classes="pct" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                                </Grid>
+                                                <StackPanel Classes="group actions">
+                                                    <Button Classes="tiny" Command="{Binding PreviewCommand}" ToolTip.Tip="Hear it with the idea, where it would go">
+                                                        <TextBlock Text="{Binding PreviewText}" />
+                                                    </Button>
+                                                    <Button Content="{Binding AddText}" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add: on a new track over the highlight (or from bar 1), moved into key. Swap in: in place of the highlighted bars of the clip you picked." />
+                                                    <Button Content="Copy its groove" Classes="tiny" Command="{Binding TakeGrooveCommand}"
+                                                            ToolTip.Tip="Put its feel, rhythm or whole playing on the part picked (block chords played like it)" />
+                                                </StackPanel>
                                             </StackPanel>
-                                        </StackPanel>
                                         </Border>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
