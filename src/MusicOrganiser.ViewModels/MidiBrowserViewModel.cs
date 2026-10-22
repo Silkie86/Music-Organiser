@@ -1669,7 +1669,7 @@ public sealed partial class MidiRow : ObservableObject
     {
         get
         {
-            if (Entry.Phrase.Key is not { Confidence: >= 0.05 } k) return "";
+            if (Entry.Phrase.Key is not { Confidence: >= MusicTheory.SureMidiKey } k) return "";
             if (Fit is not { Semitones: not 0 } f) return k.Short;
             var moved = new KeyEstimate(((k.Tonic + f.Semitones) % 12 + 12) % 12, k.Minor, k.Confidence);
             return $"{k.Short} → {moved.Short}";
@@ -1734,7 +1734,10 @@ public sealed partial class MidiRow : ObservableObject
                                : $"{f.Percent}% fit, {MoveText}.",
         With is { Loops: false } && f.Together is not null && Frame is null ? $"Fits best from bar {f.At / Bar + 1} of the song." : "",
         f.ChordScore is { } c ? $"Its chords follow {(With is { Loops: true } ? "the part's" : "the song's")} {Math.Round(c * 100)}%." : "",
-        f.Clash > 0.02 ? $"{Math.Round(f.Clash * 100)}% of its notes are on notes the other hardly plays." : "Its notes are all ones the other plays too.",
+        // Played together, the % is how they sound at each moment (it told a song's own melody from another's best,
+        // measured on 387 songs), so notes on ones the other hardly plays are only a count beside it, not taken off.
+        f.Clash > 0.02 ? $"{Math.Round(f.Clash * 100)}% of its notes are on notes the other hardly plays{(f.Together is not null ? " (said, not taken off the %)" : "")}."
+                       : "Its notes are all ones the other plays too.",
     }.Where(s => s.Length > 0));
     /// <summary>Its chords, spelled in its key (moved with it when fitting): "C#m7 – A – E – B" in E major.</summary>
     public string ChordsText
@@ -1880,6 +1883,17 @@ public sealed partial class MidiRow : ObservableObject
     public bool IsEdited => _owner.EditsOf(Entry) is not null;
     public bool CanUndoEdit => _owner.CanUndo(Entry);
 
+    // The guide is built afresh on each read, so it's known again by its notes.
+    (int, long)? _laneOf;
+    IReadOnlyList<TimedChord> _lane = [];
+
+    static (int, long) Fingerprint(IReadOnlyList<NoteEvent> notes)
+    {
+        long hash = 17;
+        foreach (var n in notes) hash = unchecked(hash * 31 + n.Start * 131 + n.Length * 7 + n.Key);
+        return (notes.Count, hash);
+    }
+
     /// <summary>
     /// How much of it sits with what it's fitted to as they play now, over the loop points or all of it: edits, octaves
     /// and loop points too.
@@ -1894,8 +1908,15 @@ public sealed partial class MidiRow : ObservableObject
             var theirs = MidiBrowserViewModel.Cut(guide, range.Start, range.End);
             var where = LoopPoints is null ? "" : $"Looping {range.Describe()}: ";
             if (HarmonyMatcher.SitsWithin(mine, theirs, range.Length) is not { } sits) return where + "they hardly play at the same time.";
-            var lane = ChordLane.Detect(theirs, range.Length);
-            var rubs = mine.Count(n => HarmonyMatcher.Rubs(n.Start, n.Length, n.Key, theirs, lane));
+            // Counted as the piano roll marks them red: against the chords of the whole guide (read once per guide, not on
+            // every edit or loop-point drag), for the notes that start between the loop points.
+            var print = Fingerprint(guide);
+            if (print != _laneOf)
+            {
+                _laneOf = print;
+                _lane = ChordLane.Detect(guide, guide.Max(g => g.Start + g.Length));
+            }
+            var rubs = MineOnRoll.Count(n => n.Start >= range.Start && n.Start < range.End && HarmonyMatcher.Rubs(n.Start, n.Length, n.Key, guide, _lane));
             // Two different checks: the score is per half bar (the harmony around a note), the red is note against note.
             return where + $"{Math.Round(sits * 100)}% of its notes fit the other part's harmony" +
                    (rubs == 0 ? "." : rubs == 1 ? ". 1 note sits a half step above a note of the chord playing with it (red)."
