@@ -33,13 +33,26 @@ public readonly record struct PhraseChord(int Root, int Mask, int Bass)
     /// <summary>A chord with its root in the bass (or no bass of its own).</summary>
     public PhraseChord(int root, int mask) : this(root, mask, root) { }
 
-    /// <summary>A chord as the chord reader spelled it (<see cref="ChordReader"/>).</summary>
-    public static PhraseChord Of(ChordSymbol chord) => new(chord.Root, chord.Mask, chord.Bass);
+    /// <summary>
+    /// A chord as the chord reader spelled it (<see cref="ChordReader"/>) or a chart has it. A bass note that's only a
+    /// bass (the C of D/C) is kept as the bass and left out of the chord's own notes, so <see cref="Symbol"/> names the
+    /// chord as it was named: D/C, not D7/C. One the chord needs to be what it is (the F of G7/F) stays in.
+    /// </summary>
+    public static PhraseChord Of(ChordSymbol chord)
+    {
+        var upper = chord.Mask & ~(1 << chord.Bass);
+        var onlyBass = chord.Bass != chord.Root && ChordSymbol.Count(upper) >= 3 &&
+                       ChordSpeller.FamilyOf(Rotate(upper, -chord.Root)) == chord.Family;
+        return new(chord.Root, onlyBass ? upper : chord.Mask, chord.Bass);
+    }
 
     public PhraseChord Transposed(int semitones) => new(Mod12(Root + semitones), Rotate(Mask, semitones), Mod12(Bass + semitones));
 
     /// <summary>The chord spelled out, the way a jazz or gospel player names it: "Am9", "G13(b9)", "C/E".</summary>
-    public ChordSymbol Symbol => new(Root, Mask, Bass, ChordSpeller.FamilyOf(Rotate(Mask, -Root)));
+    public ChordSymbol Symbol => new(Root, Sounding, Bass, ChordSpeller.FamilyOf(Rotate(Mask, -Root)));
+
+    /// <summary>Every note that sounds, the bass included.</summary>
+    public int Sounding => Mask | 1 << Bass;
 
     public static int Rotate(int mask, int semitones)
     {
@@ -55,9 +68,9 @@ public readonly record struct PhraseChord(int Root, int Mask, int Bass)
     /// </summary>
     public double Similarity(PhraseChord other)
     {
-        var union = BitOperations.PopCount((uint)(Mask | other.Mask));
+        var union = BitOperations.PopCount((uint)(Sounding | other.Sounding));
         if (union == 0) return 0;
-        var shared = (double)BitOperations.PopCount((uint)(Mask & other.Mask)) / union;
+        var shared = (double)BitOperations.PopCount((uint)(Sounding & other.Sounding)) / union;
         return Math.Min(1, shared + (Root == other.Root ? 0.25 : 0));
     }
 
@@ -320,6 +333,9 @@ public static partial class PhraseAnalyser
         return hats >= 0.25 && together >= 0.15 || hats >= 0.4;
     }
 
+    /// <summary>A part taken for a melody or bassline with at least this share of its onsets struck as chords still has its chords read.</summary>
+    const double ChordsInALine = 0.25;
+
     /// <param name="notes">At <see cref="Ppq"/>, as <see cref="Normalise"/> gives them.</param>
     /// <param name="hints">Names that may say what the part is: its track, pattern, file and folders.</param>
     /// <param name="drums">Known to be drums: on MIDI channel 10, or played by a drum plugin.</param>
@@ -334,11 +350,16 @@ public static partial class PhraseAnalyser
         if (total > 0) for (var i = 0; i < 12; i++) chroma[i] /= total;
 
         var pitched = role is not MidiRoles.Drums;
-        // Chords are read from parts that play them: a melody's or a bassline's notes go by one at a time.
-        var chords = role is MidiRoles.Chords or MidiRoles.Arp or MidiRoles.Other ? Progression(notes) : [];
-        // A key and its relative major or minor share every note; when they fit about the same, the first chord decides.
+        // Chords are read from parts that play them: a melody's or a bassline's notes go by one at a time. One taken for a
+        // melody or bassline that strikes chords a good share of the time (a comping piano with a busy top line) gets
+        // them too, so it has them if it's labelled Chords.
+        var chords = role is MidiRoles.Chords or MidiRoles.Arp or MidiRoles.Other || pitched && shape.ChordShare >= ChordsInALine
+            ? Progression(notes) : [];
+        // A key and its relative major or minor share every note; when they fit about the same, the first chord decides
+        // (for a melody or bassline, the chord its own notes outline first: only for this, it's not kept).
+        var first = chords.Count > 0 ? chords : pitched && role is MidiRoles.Melody or MidiRoles.Bass ? Progression(notes) : [];
         var key = pitched && notes.Count >= 4 && chroma.Count(c => c > 0) >= 3
-            ? MusicTheory.EstimateMidiKey(chroma.Select(c => (double)c).ToArray(), chords.Count > 0 ? chords[0].Root : null)
+            ? MusicTheory.EstimateMidiKey(chroma.Select(c => (double)c).ToArray(), first.Count > 0 ? (first[0].Root, MusicTheory.IsMinorChord(first[0].Root, first[0].Mask)) : null)
             : null;
         return new PhraseAnalysis(role, why, BarsOf(notes), notes.Count == 0 ? 0 : notes.Min(n => n.Key),
                                   notes.Count == 0 ? 0 : notes.Max(n => n.Key), key, chroma, chords,
@@ -462,11 +483,15 @@ public static partial class PhraseAnalyser
     /// harmony matching compares. A chord held for four bars is one chord, the same as one struck once, so only the
     /// harmony counts, not the rhythm.
     /// </summary>
-    public static IReadOnlyList<PhraseChord> Progression(IReadOnlyList<NoteEvent> notes)
+    /// <param name="downbeat">A tick a bar starts on, when that isn't tick 0 (<see cref="ChordReader.Read"/>).</param>
+    public static IReadOnlyList<PhraseChord> Progression(IReadOnlyList<NoteEvent> notes, long downbeat = 0) =>
+        notes.Count == 0 ? [] : Progression(ChordReader.Read(notes, notes.Max(n => n.Start + n.Length), downbeat: downbeat));
+
+    /// <summary>A chord lane as <see cref="PhraseChord"/>s, in order, a chord coming straight after itself once.</summary>
+    public static IReadOnlyList<PhraseChord> Progression(IEnumerable<TimedChord> lane)
     {
-        if (notes.Count == 0) return [];
         var chords = new List<PhraseChord>();
-        foreach (var c in ChordReader.Read(notes, notes.Max(n => n.Start + n.Length)))
+        foreach (var c in lane)
         {
             var chord = PhraseChord.Of(c.Chord);
             if (chords.Count == 0 || chords[^1] != chord) chords.Add(chord);

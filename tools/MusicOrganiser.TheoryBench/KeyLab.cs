@@ -83,14 +83,10 @@ static class KeyLab
         return s <= 0 ? x : x.Select(v => v / s).ToArray();
     }
 
-    static double Mirex((int T, bool M) k, (int T, bool M) r)
-    {
-        if (k == r) return 1;
-        if (k.M == r.M && (Mod(k.T - r.T) == 7 || Mod(k.T - r.T) == 5)) return 0.5;
-        if (k.M != r.M && (r.M ? Mod(r.T + 3) == k.T : Mod(r.T + 9) == k.T)) return 0.3;
-        if (k.T == r.T && k.M != r.M) return 0.2;
-        return 0;
-    }
+    static double Mirex((int T, bool M)? k, (int T, bool M) r) => k is { } f ? Measure.Mirex(f.T, f.M, r.T, r.M) : 0;
+
+    static (int Root, bool Minor)? FirstOf(IReadOnlyList<PhraseChord> chords) =>
+        chords.Count > 0 ? (chords[0].Root, MusicTheory.IsMinorChord(chords[0].Root, chords[0].Mask)) : null;
 
     /// <summary>Profiles learned from the other packs' labelled files (never the file's own pack): all packs' sums minus its own.</summary>
     static Func<string, (double[] Maj, double[] Min)> Learner(List<Item> items)
@@ -139,10 +135,11 @@ static class KeyLab
             var (maj, min) = learned("\0");
             File.WriteAllLines(SaveTo, [string.Join(" ", Norm(maj).Select(v => v.ToString("0.0000"))), string.Join(" ", Norm(min).Select(v => v.ToString("0.0000")))]);
         }
-        var finders = new List<(string Name, Func<Item, (int, bool)> Find)>
+        var finders = new List<(string Name, Func<Item, (int, bool)?> Find)>
         {
             ("Krumhansl (Projects page now)", it => Best(Chroma(it.Notes), KkMaj, KkMin)),
-            ("MIDI page (PhraseAnalyser.Analyse)", it => PhraseAnalyser.Analyse(it.Notes).Key is { } k ? (k.Tonic, k.Minor) : (0, false)),
+            // A finder that gives no key scores nothing for that file (not a free C major).
+            ("MIDI page (PhraseAnalyser.Analyse)", it => PhraseAnalyser.Analyse(it.Notes).Key is { } k ? (k.Tonic, k.Minor) : null),
             ("Aarden-Essen", it => Best(Chroma(it.Notes), AeMaj, AeMin)),
             ("Temperley", it => Best(Chroma(it.Notes), TkpMaj, TkpMin)),
             ("Bellman-Budge", it => Best(Chroma(it.Notes), BbMaj, BbMin)),
@@ -186,7 +183,7 @@ static class KeyLab
             finders.Add(("App's MIDI key finder now (EstimateMidiKey)", it =>
             {
                 var chords = PhraseAnalyser.Progression(it.Notes);
-                return MusicTheory.EstimateMidiKey(Chroma(it.Notes), chords.Count > 0 ? chords[0].Root : null) is { } k ? (k.Tonic, k.Minor) : (0, false);
+                return MusicTheory.EstimateMidiKey(Chroma(it.Notes), FirstOf(chords)) is { } k ? (k.Tonic, k.Minor) : null;
             }));
             finders.Add(("CHOSEN (honest): pop + other packs, first chord when close (0.05)", it =>
             {
@@ -232,7 +229,7 @@ static class KeyLab
         foreach (var (name, find) in finders)
         {
             var found = items.Select(i => (i, k: find(i))).ToList();
-            string Cell(IEnumerable<(Item i, (int, bool) k)> rows)
+            string Cell(IEnumerable<(Item i, (int, bool)? k)> rows)
             {
                 var r = rows.ToList();
                 if (r.Count == 0) return "-";
@@ -250,7 +247,7 @@ static class KeyLab
             ("MIDI finder (EstimateMidiKey)", it =>
             {
                 var chords = PhraseAnalyser.Progression(it.Notes);
-                return MusicTheory.EstimateMidiKey(Chroma(it.Notes), chords.Count > 0 ? chords[0].Root : null);
+                return MusicTheory.EstimateMidiKey(Chroma(it.Notes), FirstOf(chords));
             }),
         })
             foreach (var g in groups)

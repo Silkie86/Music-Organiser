@@ -165,13 +165,10 @@ static class LibraryBench
     {
         Console.WriteLine();
         Console.WriteLine("=== KEYS: the key in the file name against the app's (whole files; MIREX: exact 1, fifth 0.5, relative 0.3, parallel 0.2) ===");
-        static double Mirex(int t, bool m, int rt, bool rm)
+        if (KeyRows.Count == 0)
         {
-            if (t == rt && m == rm) return 1;
-            if (m == rm && (Mod(t - rt) == 7 || Mod(t - rt) == 5)) return 0.5;
-            if (m != rm && (rm ? Mod(rt + 3) == t : Mod(rt + 9) == t)) return 0.3;
-            if (t == rt && m != rm) return 0.2;
-            return 0;
+            Console.WriteLine("No file names with a key in them, so nothing to check keys against.");
+            return;
         }
         foreach (var group in KeyRows.GroupBy(r => r.Style).OrderBy(g => g.Key).Append(KeyRows.GroupBy(_ => "ALL").Single()))
         {
@@ -197,16 +194,18 @@ static class LibraryBench
     }
 
     /// <summary>For each window, another file's melody moved into its key and register: what a wrong pick sounds like.</summary>
-    static List<List<NoteEvent>> Negatives(List<Piece> cases, int seed = 909)
+    /// <summary>For each window, another file's melody moved into its key and octave; only from windows <paramref name="donor"/> allows.</summary>
+    static List<List<NoteEvent>> Negatives(List<Piece> cases, int seed = 909, Func<int, bool>? donor = null)
     {
         var rng = new Random(seed);
         var negOther = new List<List<NoteEvent>>();
+        var donors = Enumerable.Range(0, cases.Count).Where(j => donor?.Invoke(j) ?? true).ToList();
         for (var i = 0; i < cases.Count; i++)
         {
             var a = cases[i];
-            var pool = Enumerable.Range(0, cases.Count).Where(j => cases[j].Name != a.Name && cases[j].Key.Minor == a.Key.Minor).ToList();
-            if (pool.Count == 0) pool = Enumerable.Range(0, cases.Count).Where(j => cases[j].Name != a.Name).ToList();
-            var b = cases[pool[rng.Next(pool.Count)]];
+            var pool = donors.Where(j => cases[j].Name != a.Name && cases[j].Key.Minor == a.Key.Minor).ToList();
+            if (pool.Count == 0) pool = donors.Where(j => cases[j].Name != a.Name).ToList();
+            var b = pool.Count == 0 ? a : cases[pool[rng.Next(pool.Count)]];   // nothing else to draw from: its own melody stands in
             var d = Mod(a.Key.Tonic - b.Key.Tonic);
             if (d > 6) d -= 12;
             var moved = b.Mel.Select(n => n with { Key = n.Key + d }).ToList();
@@ -283,9 +282,11 @@ static class LibraryBench
         var held = new Dictionary<string, double[]?[]>();
         foreach (var pack in packs.Distinct())
         {
+            // Neither its windows nor its melodies (as the wrong ones on other windows) teach the ear that scores it.
             var idx = Enumerable.Range(0, cases.Count).Where(i => packs[i] != pack).ToList();
+            var without = Negatives(cases, donor: j => packs[j] != pack);
             held[pack] = EarTable.Lift(EarTable.Count(idx.Select(i => ((IReadOnlyList<NoteEvent>)cases[i].Mel, (IReadOnlyList<TimedChord>)lanes[i], len))),
-                                       EarTable.Count(idx.Select(i => ((IReadOnlyList<NoteEvent>)neg[i], (IReadOnlyList<TimedChord>)lanes[i], len))));
+                                       EarTable.Count(idx.Select(i => ((IReadOnlyList<NoteEvent>)without[i], (IReadOnlyList<TimedChord>)lanes[i], len))));
         }
         // A second set of wrong melodies, drawn differently, so the score isn't judged on the same draw it learned from.
         var test = Negatives(cases, 2026);
