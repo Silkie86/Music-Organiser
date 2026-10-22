@@ -31,7 +31,7 @@ param(
 )
 
 # Raised whenever this script changes, so an older branch's copy never replaces a newer installed one.
-$LauncherVersion = 9
+$LauncherVersion = 10
 
 $ErrorActionPreference = 'Continue'   # git writes progress to stderr, which Windows PowerShell would treat as failure
 $GitHubRepo = 'Silkie86/Music-Organiser'
@@ -313,14 +313,16 @@ function Stop-Watch($Process) {
 
 function Wait-ForNote {
     # The app puts notes\writing.lock up while an F12 note is open (Diagnostics/NoteForClaude.cs). A restart then
-    # would close it half-written, so the restart waits until the note is saved or cancelled.
+    # would close it half-written, so new code waits until the note is saved or cancelled.
     $lock = Join-Path (Join-Path (Join-Path $DataRoot 'MusicOrganiser') 'notes') 'writing.lock'
     $said = $false
     while (Test-Path $lock) {
         $id = 0
         if (-not [int]::TryParse(((Get-Content $lock -Raw -ErrorAction SilentlyContinue) + '').Trim(), [ref]$id) -or
-            -not (Get-Process -Id $id -ErrorAction SilentlyContinue)) { break }   # left by an app that has gone
-        if (-not $said) { Say 'Waiting for the F12 note to be saved before restarting the app...' 'Yellow'; $said = $true }
+            -not (Get-Process -Id $id -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'MusicOrganiser*' })) {
+            break   # left by an app that has gone (its number may since belong to another program)
+        }
+        if (-not $said) { Say 'An F12 note is open: new code waits until it is saved or cancelled...' 'Yellow'; $said = $true }
         Start-Sleep -Seconds 2
     }
 }
@@ -357,6 +359,10 @@ try {
         $news = @(& $GitExe -C $Repo log --format='  %h %s' "$here..$there")
         $changed = @(& $GitExe -C $Repo diff --name-only $here $there)
         $restart = Test-NeedsRestart $here $there
+        # Not while an F12 note is open: dotnet watch restarts the app by itself on some changes (a rude edit, or a
+        # screen naming something new), and that restart doesn't ask. Holding the new code back until the note is
+        # saved or cancelled covers every kind of restart.
+        Wait-ForNote
         if (-not (Update-ToRemote)) { continue }
         Say ''
         Say "$(Get-Date -Format 'HH:mm:ss')  New from GitHub ($($news.Count) change(s)), now in the app:" 'Green'
@@ -364,7 +370,6 @@ try {
 
         if ($restart) {
             Say "Restarting the app with a fresh build, because $restart (live reload can't take those in)." 'Yellow'
-            Wait-ForNote
             Stop-Watch $watch
             $watch = Start-Watch
             continue
