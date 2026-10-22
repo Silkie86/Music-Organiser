@@ -2,7 +2,11 @@ namespace MusicOrganiser.Core.Midi.Jazz;
 
 /// <summary>One reharmonisation idea: what it's called, why it works, and the whole chord lane with it done.</summary>
 /// <param name="Bar">The bar it changes, from 1, for showing where.</param>
-public sealed record Reharm(string Title, string Why, string Before, string After, int Bar, IReadOnlyList<TimedChord> Lane);
+public sealed record Reharm(string Title, string Why, string Before, string After, int Bar, IReadOnlyList<TimedChord> Lane)
+{
+    /// <summary>Chords for the whole idea where it had none (<see cref="Harmoniser"/>): kept as a chord part the whole way.</summary>
+    public bool Whole { get; init; }
+}
 
 /// <summary>
 /// Reharmonisation ideas for a chord lane, the moves jazz and gospel players reach for: the tritone sub, turning a
@@ -43,7 +47,12 @@ public static class Reharmoniser
     }
 
     /// <summary>The ideas for this lane in this key, the likeliest first, at most <paramref name="most"/>.</summary>
-    public static IReadOnlyList<Reharm> Suggest(IReadOnlyList<TimedChord> lane, int tonic, bool minor, int most = 16)
+    public static IReadOnlyList<Reharm> Suggest(IReadOnlyList<TimedChord> lane, int tonic, bool minor, int most = 16) =>
+        // One of each kind of idea for each place, the likeliest kinds first, a few of each.
+        All(lane, tonic, minor).GroupBy(r => r.Title.Split(' ')[0]).SelectMany(g => g.Take(3)).Take(most).ToList();
+
+    /// <summary>Every idea for this lane in this key, chord by chord: the Reharm tab shows the ones for the chord clicked.</summary>
+    public static IReadOnlyList<Reharm> All(IReadOnlyList<TimedChord> lane, int tonic, bool minor)
     {
         var ideas = new List<Reharm>();
         if (lane.Count == 0) return ideas;
@@ -152,8 +161,7 @@ public static class Reharmoniser
             ideas.Add(new Reharm("Richer chords", "Ninths, elevenths and thirteenths on every chord: major sevenths become maj9 or 6/9, minors m9 or m11, dominants 13.",
                                  string.Join(" ", lane.Take(4).Select(c => c.Chord.Name)), string.Join(" ", richer.Take(4).Select(c => c.Chord.Name)), 1, richer));
 
-        // One of each kind of idea for each place, the likeliest kinds first, a few of each.
-        return ideas.GroupBy(r => r.Title.Split(' ')[0]).SelectMany(g => g.Take(3)).Take(most).ToList();
+        return ideas;
     }
 
     /// <summary>The chord with the extensions a jazz player would add.</summary>

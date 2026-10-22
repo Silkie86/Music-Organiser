@@ -5,8 +5,8 @@ using Avalonia.Media;
 namespace MusicOrganiser.Avalonia.Views;
 
 /// <summary>
-/// The section's tension curve under its chord lane: a soft bar per bar of music, as tall as its energy, a line
-/// through them, and dashed, the curve the section's feel asks for (a flat verse, a rising build, a full drop), so you can
+/// The section's tension curve under its chord lane: a thin line, high where a bar plays with more energy (Solomon,
+/// 2026-10-22: quiet blocks, no boxes), and dashed, the curve the section's feel asks for (a flat verse, a rising build, a full drop), so you can
 /// see where it sits low or high.
 /// </summary>
 public sealed class EnergyCurveView : Control
@@ -40,17 +40,10 @@ public sealed class EnergyCurveView : Control
         // Zoomed in, the whole curve is wider than the view and slid along to the part shown.
         double full = width / Math.Max(1e-6, ViewTo - ViewFrom), origin = Inset - ViewFrom * full, w = full / count;
         double Y(double v) => h - 2 - Math.Clamp(v, 0, 1) * (h - 4);
-        dc.DrawRectangle(Res("SurfaceRaisedBrush", Brushes.Transparent), null, new RoundedRect(new Rect(Inset, 0, width, h), 6));
         var accent = Res("AccentBrush", Brushes.SeaGreen);
-        var soft = Res("AccentSoftBrush", Brushes.Transparent);
         using var clip = dc.PushClip(new Rect(Inset, 0, width, h));
         if (values is { Length: > 0 })
         {
-            for (var i = 0; i < values.Length; i++)
-            {
-                var top = Y(values[i]);
-                dc.DrawRectangle(soft, null, new RoundedRect(new Rect(origin + i * w + 2, top, Math.Max(1, w - 4), h - top), 3));
-            }
             var line = new StreamGeometry();
             using (var g = line.Open())
             {
@@ -61,7 +54,7 @@ public sealed class EnergyCurveView : Control
                 }
                 g.EndFigure(false);
             }
-            dc.DrawGeometry(null, new Pen(accent, 1.6), line);
+            dc.DrawGeometry(null, new Pen(accent, 1.3), line);
         }
         if (target is { Length: > 0 })
         {

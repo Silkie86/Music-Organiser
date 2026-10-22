@@ -34,6 +34,13 @@ public sealed class PianoRollEditor : Control
         AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<NoteEvent>?>(nameof(Notes));
     public static readonly StyledProperty<IReadOnlyList<NoteEvent>?> GuideProperty =
         AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<NoteEvent>?>(nameof(Guide));
+    /// <summary>
+    /// A part being tried with the idea, drawn outlined over the grey guide (Solomon, 2026-10-21: "show you the proposed
+    /// idea in the piano roll overlaid so you can see how the notes go together"); null when nothing is tried.
+    /// </summary>
+    public static readonly StyledProperty<IReadOnlyList<NoteEvent>?> OverlayProperty =
+        AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<NoteEvent>?>(nameof(Overlay));
+    public IReadOnlyList<NoteEvent>? Overlay { get => GetValue(OverlayProperty); set => SetValue(OverlayProperty, value); }
     /// <summary>How long the part is before it repeats (ticks).</summary>
     public static readonly StyledProperty<long> PeriodProperty = AvaloniaProperty.Register<PianoRollEditor, long>(nameof(Period));
     /// <summary>How long a stretch is shown (ticks): both parts until they meet again.</summary>
@@ -89,7 +96,7 @@ public sealed class PianoRollEditor : Control
     static PianoRollEditor() =>
         AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty,
                                        PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty, NoteLabelsProperty, DegreeOfProperty,
-                                       StrengthOfProperty, FitGuideProperty);
+                                       StrengthOfProperty, FitGuideProperty, OverlayProperty);
 
     public Func<NoteEvent, bool>? ClashTest { get => GetValue(ClashTestProperty); set => SetValue(ClashTestProperty, value); }
 
@@ -160,7 +167,7 @@ public sealed class PianoRollEditor : Control
         return (low, high);
     }
 
-    // ---- zoom and pan (Solomon, 2026-10-19): Ctrl + scroll zooms in time, Ctrl + Shift + scroll the notes' height, plain
+    // ---- zoom and pan (Solomon, 2026-10-19): Ctrl + scroll zooms in time, Alt (or Ctrl + Shift) + scroll the notes' height, plain
     // scroll moves up and down the notes (when zoomed), Shift + scroll along the bars, the middle button drags it about,
     // and a double-click on the bar numbers shows it all again.
     long _viewFrom, _viewSpan;   // ticks shown (0: all)
@@ -185,8 +192,9 @@ public sealed class PianoRollEditor : Control
         var dy = e.Delta.Y;
         var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);   // Cmd on a Mac
         var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        var alt = e.KeyModifiers.HasFlag(KeyModifiers.Alt);   // as in FL Studio and Ableton (Solomon, 2026-10-21: zoom up and down with the wheel)
         var (low, high) = Range();
-        if (ctrl && shift && dy != 0)
+        if ((alt || ctrl && shift) && dy != 0)
         {
             // Taller or shorter notes, round the key under the pointer.
             var key = KeyAt(p.Y, low, high);
@@ -521,24 +529,17 @@ public sealed class PianoRollEditor : Control
         var clash = Res("MissingBrush", Brushes.IndianRed);
         dc.DrawRectangle(surface, null, new RoundedRect(new Rect(0, 0, w, h), 4));
 
+        // The keys whose notes are sounding under the playhead light up (Solomon, 2026-10-21).
+        var lit = Sounding();
+
         // Rows: the black keys a little darker, a line under each C.
         for (var k = low; k <= high; k++)
         {
             var y = Y(k, low, high);
             if (Black[k % 12]) using (dc.PushOpacity(0.35)) dc.FillRectangle(Brushes.Black, new Rect(Keys, y, w - Keys, rowH));
             if (k % 12 == 0) using (dc.PushOpacity(0.5)) dc.FillRectangle(stroke, new Rect(Keys, y + rowH - 1, w - Keys, 1));
-            // Note names on every key when there's room and they're asked for, else on the Cs.
-            if (k % 12 == 0 || NoteLabels != NoteLabelKind.Off && rowH >= 8)
-            {
-                if (rowH >= 7)
-                {
-                    var label = new FormattedText(MidiChannel.KeyName(k), CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                                                  Typeface.Default, Math.Min(10, rowH + 1), muted);
-                    dc.DrawText(label, new Point(3, y + (rowH - label.Height) / 2));
-                }
-            }
-            dc.FillRectangle(Black[k % 12] ? Brushes.Black : Brushes.WhiteSmoke, new Rect(Keys - 10, y + 0.5, 9, Math.Max(1, rowH - 1)));
         }
+        DrawKeyboard(dc, low, high, rowH, lit, accent);
 
         // Everything from here on stays right of the keyboard, however far it's zoomed and moved along.
         using var noteArea = dc.PushClip(new Rect(Keys, 0, w - Keys, h));
@@ -601,6 +602,15 @@ public sealed class PianoRollEditor : Control
             foreach (var n in guide)
                 Note(dc, muted, null, n.Start, n.Length, n.Key, low, high);
 
+        // The part being tried with the idea: outlined in the text colour, over the guide and under the part.
+        if (Overlay is { Count: > 0 } tried)
+        {
+            var outline = new Pen(text, 1.2);
+            using (dc.PushOpacity(0.3))
+                foreach (var n in tried) Note(dc, text, null, n.Start, n.Length, n.Key, low, high);
+            foreach (var n in tried) Note(dc, Brushes.Transparent, outline, n.Start, n.Length, n.Key, low, high);
+        }
+
         // The part: its own go full strength, repeats faint; red where it rubs a half step above the guide.
         var notes = Current;
         for (long from = From; from < To; from += loop)
@@ -614,8 +624,12 @@ public sealed class PianoRollEditor : Control
                 var rubs = strength is null && (ClashTest is { } test ? test(n with { Start = from + n.Start }) : Rubs(n, from, guide));
                 var picked = _working is not null && i == _index;
                 var fill = strength is { } s ? fit![(int)s] : rubs ? clash : accent;
-                Note(dc, fill, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high,
-                     LabelOf(n, from + n.Start));
+                // Names stay readable: dark on the bright notes, the page's text colour on the faded ones.
+                var ink = strength is FitStrength.Colour or FitStrength.Weak ? text : Brushes.Black;
+                // Shaded by velocity (Solomon, 2026-10-22): loud notes bright, quiet ones faded, each with a light attack edge.
+                using (dc.PushOpacity(0.4 + 0.6 * Math.Clamp(n.Velocity / 110.0, 0, 1)))
+                    Note(dc, fill, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high,
+                         LabelOf(n, from + n.Start), ink, attack: true);
             }
         }
 
@@ -634,14 +648,66 @@ public sealed class PianoRollEditor : Control
         }
     }
 
-    void Note(DrawingContext dc, IBrush fill, IPen? pen, long start, long length, int key, int low, int high, string? label = null)
+    // The keyboard: grey keys like a real one (Solomon's picture, 2026-10-21), white keys meeting halfway along the black
+    // ones, shorter black keys with rounded ends; the keys whose notes are playing lit in the accent.
+    static readonly IBrush WhiteKey = new SolidColorBrush(Color.Parse("#FFBDBDBD")), WhiteKeyLine = new SolidColorBrush(Color.Parse("#FF6E6E6E")),
+                           BlackKey = new SolidColorBrush(Color.Parse("#FF161616")), KeyText = new SolidColorBrush(Color.Parse("#FF3A3A3A"));
+
+    void DrawKeyboard(DrawingContext dc, int low, int high, double rowH, HashSet<int> lit, IBrush accent)
+    {
+        var area = new Rect(0, Ruler, Keys, Math.Max(0, Bounds.Height - Ruler));
+        using var clip = dc.PushClip(area);
+        dc.FillRectangle(WhiteKey, area);
+        for (var k = low - 1; k <= high + 1; k++)
+        {
+            if (Black[(k % 12 + 12) % 12]) continue;
+            // a white key reaches halfway into the black keys either side of it
+            var top = Y(k, low, high) - (Black[((k + 1) % 12 + 12) % 12] ? rowH / 2 : 0);
+            var bottom = Y(k, low, high) + rowH + (Black[((k - 1) % 12 + 12) % 12] ? rowH / 2 : 0);
+            if (lit.Contains(k)) dc.FillRectangle(accent, new Rect(0, top, Keys, bottom - top));
+            dc.FillRectangle(WhiteKeyLine, new Rect(0, bottom - 0.5, Keys, 1));
+            // the Cs named, and every key when names are asked for and there's room
+            if (rowH >= 7 && (k % 12 == 0 || NoteLabels != NoteLabelKind.Off && rowH >= 8) && k >= 0)
+            {
+                var label = new FormattedText(MidiChannel.KeyName(k), CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                                              Typeface.Default, Math.Min(9.5, rowH + 1), KeyText);
+                dc.DrawText(label, new Point(Keys - label.Width - 3, Y(k, low, high) + (rowH - label.Height) / 2));
+            }
+        }
+        for (var k = low; k <= high; k++)
+        {
+            if (!Black[k % 12]) continue;
+            var key = new Rect(0, Y(k, low, high) + rowH * 0.08, Keys * 0.6, rowH * 0.84);
+            dc.DrawRectangle(lit.Contains(k) ? accent : BlackKey, null, new RoundedRect(key, 0, Math.Min(2.5, rowH / 3), Math.Min(2.5, rowH / 3), 0));
+        }
+        dc.FillRectangle(Brushes.Black, new Rect(Keys - 1, Ruler, 1, area.Height));
+    }
+
+    /// <summary>The keys of the part's notes (and their repeats) playing where the playhead is.</summary>
+    HashSet<int> Sounding()
+    {
+        var keys = new HashSet<int>();
+        if (Position < 0 || Shown <= 0 || Loop <= 0) return keys;
+        var at = (long)(Position % Shown);
+        if (at < From || at >= To) return keys;
+        var from = From + (at - From) / Loop * Loop;   // the go round the playhead is in
+        foreach (var n in Current)
+            if (at >= from + n.Start && at < from + n.Start + n.Length) keys.Add(n.Key);
+        return keys;
+    }
+
+    static readonly IBrush Attack = new SolidColorBrush(Color.FromArgb(0xB0, 0xFF, 0xFF, 0xFF));
+
+    void Note(DrawingContext dc, IBrush fill, IPen? pen, long start, long length, int key, int low, int high, string? label = null, IBrush? ink = null,
+              bool attack = false)
     {
         if (key < low || key > high) return;
         var x0 = X(start);
         var x1 = Math.Max(x0 + 2, X(start + length) - 1);
         var y = Y(key, low, high);
         var rowH = RowHeight(low, high);
-        dc.DrawRectangle(fill, pen, new RoundedRect(new Rect(x0, y + 0.5, x1 - x0, Math.Max(1.5, rowH - 1)), 2));
+        dc.DrawRectangle(fill, pen, new RoundedRect(new Rect(x0, y + 0.5, x1 - x0, Math.Max(1.5, rowH - 1)), 1.5));
+        if (attack && x1 - x0 > 5) dc.FillRectangle(Attack, new Rect(x0, y + 0.5, 1.5, Math.Max(1.5, rowH - 1)));
         // Its name (or what it is over the chord), when it fits.
         if (label is null || rowH < 8) return;
         var text = new FormattedText(label, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, Math.Min(10, rowH), Brushes.Black);

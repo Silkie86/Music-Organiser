@@ -78,6 +78,19 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void A_part_that_plays_through_the_chords_covers_more_than_a_short_chunk()
+    {
+        // Solomon, 2026-10-21: Suggest favoured small chunks of MIDI because they're easy to fit.
+        var lane = ChordLane.ParseChart("Dm7 | G7 | Cmaj7 | %", out _)!;
+        var through = Chords([62, 65, 69, 72], [59, 62, 65, 67], [60, 64, 67, 71], [60, 64, 67, 71]);
+        var chunk = new List<NoteEvent> { new(3 * Beat, Beat / 2, 62, 90), new(3 * Beat, Beat / 2, 65, 90) };
+        Assert.Equal(1, SectionFit.Cover(through, lane, 4 * Bar));
+        Assert.Equal(1 / 16.0, SectionFit.Cover(chunk, lane, 4 * Bar), 3);
+        // Staccato on every beat still counts as playing through.
+        Assert.Equal(1, SectionFit.Cover(Line(Beat / 4, Enumerable.Repeat(0, 16).Select((_, i) => 0).ToArray()).Select((n, i) => n with { Start = i * (long)Beat, Key = 50 }).ToList(), lane, 4 * Bar));
+    }
+
+    [Fact]
     public void Approach_notes_are_let_off_but_a_held_clash_is_not()
     {
         var lane = ChordLane.ParseChart("Cmaj7", out _)!;
@@ -109,6 +122,197 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(-1, found[0].Move);
         Assert.Equal(tune.Select(n => n.Key), found[0].Notes.Select(n => n.Key));
         Assert.Contains("Sits on the chords", found[0].Why);
+    }
+
+    [Fact]
+    public async Task An_empty_idea_shows_the_midi_pages_list_and_the_first_part_turns_suggest_on()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        // A real file in a MIDI library folder: opening the list indexes the folders, which drops parts whose file is gone.
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var song = new MidiClip { Name = "Sunday", Ppq = PhraseAnalyser.Ppq };
+        song.Track("Keys").AddRange(Chords(TwoFiveOne));
+        song.Track("Bass").AddRange(Line(Bar, 38, 43, 36, 36));
+        File.WriteAllBytes(Path.Combine(pack, "Sunday.mid"), MusicOrganiser.Core.Export.MidiWriter.Write(song));
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        db.SetList(MidiIndexer.FoldersKey, [pack]);
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        await main.Midi.IndexAsync();
+        var p = main.Playground;
+
+        // Nothing on the timeline: Suggest has nothing to fit to, so the page shows the MIDI page's own list.
+        Assert.True(p.IsEmpty);
+        Assert.NotSame(main.Midi, p.Midi);   // a copy: its own search and kind
+        await p.FindMatchesAsync();
+        Assert.Empty(p.Matches);
+        p.Opened();
+        for (var i = 0; i < 300 && p.Midi.Results.Count < 2; i++) await Task.Delay(10);
+        Assert.Equal(2, p.Midi.Results.Count);
+        p.Midi.Search = "bass";   // searching here leaves the MIDI page's search alone
+        Assert.Equal("", main.Midi.Search);
+
+        // Only your projects: the pack is a MIDI folder, so nothing (Solomon, 2026-10-21: "filter whether you see midi
+        // from your projects or from midi folders").
+        for (var i = 0; i < 300 && p.Midi.Results.Count != 1; i++) await Task.Delay(10);
+        p.Midi.From = MidiBrowserViewModel.YourProjects;
+        for (var i = 0; i < 300 && p.Midi.Results.Count != 0; i++) await Task.Delay(10);
+        Assert.Empty(p.Midi.Results);
+        p.Midi.From = MidiBrowserViewModel.YourLibraries;
+        for (var i = 0; i < 300 && p.Midi.Results.Count != 1; i++) await Task.Delay(10);
+
+        // Add on a part of that list: on the timeline, and Suggest lists parts that fit it.
+        var bass = p.Midi.Results.Single(r => r.Entry.Role == MidiRoles.Bass);
+        p.AddMidiRowCommand.Execute(bass);
+        Assert.False(p.IsEmpty, p.Message);
+        Assert.Single(p.Layers);
+        // A part dragged from the list lands where it's let go: here a new track from bar 3.
+        p.DropPartCommand.Execute(new PartDrop(bass, 1, 2L * Bar));
+        Assert.Equal(2, p.Layers.Count);
+        Assert.Equal(2L * Bar, p.Layers[1].Layer.Clips.Single().Start);
+        for (var i = 0; i < 300 && (p.IsMatching || p.Matches.Count == 0); i++) await Task.Delay(10);
+        Assert.True(p.Matches.Count > 0 || p.MatchStatus.Contains("Nothing found"), p.MatchStatus);   // Suggest ran, for chords
+    }
+
+    [Fact]
+    public async Task A_suggestion_heard_with_the_idea_shows_faintly_on_the_timeline_until_stopped()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
+        var row = new PlaygroundMatchRow(p, new PlaygroundMatch(entry, null, 0.8, bass, ""));
+        Assert.Equal("▶ With the idea", row.PreviewText);
+
+        await p.PreviewMatch(row);
+        Assert.True(row.IsPlaying);
+        Assert.Equal("■ Stop", row.PreviewText);
+        var trying = Assert.IsType<TryingPart>(p.Trying);
+        Assert.Equal(p.Layers.Count, trying.Row);   // where Add would put it: a new track
+        Assert.Equal(bass.Select(n => n.Key), trying.Notes.Select(n => n.Key));
+        // and outlined on the piano roll over the chords' clip, picked for it, so the notes are seen together
+        Assert.NotNull(p.SelectedClip);
+        Assert.Equal(bass.Select(n => n.Key), p.SelectedClip!.Overlay!.Select(n => n.Key));
+
+        await p.PreviewMatch(row);   // pressed again: stops, and the timeline is just the idea again
+        Assert.Null(p.Trying);
+        Assert.Null(p.SelectedClip.Overlay);
+        Assert.False(row.IsPlaying);
+    }
+
+    [Fact]
+    public void The_menus_copy_cut_and_paste_clips_and_every_line_has_a_shortcut_entry()
+    {
+        // Solomon, 2026-10-21: "no right click menus or file edit view menus… it should look like a modern daw".
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        var lines = PlaygroundViewModel.MenuBar.SelectMany(m => m.Items)
+            .Concat(PlaygroundViewModel.ClipMenu).Concat(PlaygroundViewModel.TrackMenu)
+            .Concat(PlaygroundViewModel.TimelineMenu).Concat(PlaygroundViewModel.ChordMenu).Where(l => !l.IsSeparator);
+        foreach (var line in lines) Assert.Contains(ShortcutsViewModel.Actions, a => a.Id == line.Id);
+
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
+        p.AddFromLibrary(entry, bass);
+        var track = Assert.Single(p.Layers);
+        p.PickClip(track, track.Layer.Clips[0]);
+        Assert.False(p.CanRun("playground.paste"));
+        Assert.True(p.RunShortcut("playground.copy"));
+        Assert.True(p.CanRun("playground.paste"));
+
+        p.Cursor = 4 * Bar;
+        Assert.True(p.RunShortcut("playground.paste"));
+        Assert.Equal([0L, 4L * Bar], track.Layer.Clips.Select(c => c.Start).Order());
+        Assert.True(p.Bars >= 8);
+
+        Assert.True(p.RunShortcut("playground.cut"));   // the pasted one, picked after pasting
+        Assert.Single(track.Layer.Clips);
+        p.RunShortcut("playground.undo");
+        Assert.Equal(2, p.Layers.Single().Layer.Clips.Count);
+
+        var renamed = false;
+        p.RenameAsked += (_, _) => renamed = true;
+        Assert.True(p.RunShortcut("playground.rename"));
+        Assert.True(renamed);
+        Assert.True(p.RunShortcut("playground.reharm"));
+        Assert.Equal(PlaygroundViewModel.ReharmTab, p.RightTab);
+    }
+
+    [Fact]
+    public void A_cut_clip_pasted_onto_a_new_track_keeps_its_moves_and_undoes_on_its_own()
+    {
+        // Code review, 22 Oct: the new-track paste rebuilt the clip plain and took no undo step.
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
+        p.AddFromLibrary(entry, bass);
+        var track = Assert.Single(p.Layers);
+        p.PickClip(track, track.Layer.Clips[0]);
+        p.SelectedClip!.SemitoneByCommand.Execute(new ValueStep(5, 1));
+        p.SelectedClip.OctaveDownCommand.Execute(null);
+        // +5 st an octave down: one octave down and up 5, not "octave 0, -7 st".
+        Assert.Equal(-1, p.SelectedClip.OctaveValue);
+        Assert.Equal("+5 st", p.SelectedClip.SemitoneText);
+
+        Assert.True(p.RunShortcut("playground.cut"));   // its only clip: the track goes too
+        Assert.Empty(p.Layers);
+        Assert.True(p.RunShortcut("playground.paste"));
+        var pasted = Assert.Single(Assert.Single(p.Layers).Layer.Clips);
+        Assert.Equal(-7, pasted.Transpose);
+        Assert.True(pasted.Pinned);
+        p.RunShortcut("playground.undo");   // takes the paste back, not the cut too
+        Assert.Empty(p.Layers);
+    }
+
+    [Fact]
+    public void Show_more_lists_the_same_parts_as_asking_for_more_from_scratch()
+    {
+        // Code review, 22 Oct: Show more scored every part again; the ones scored already are kept.
+        var keys = Chords(TwoFiveOne);
+        var notes = Enumerable.Range(1, 5).ToDictionary(i => (long)i, i => Line(2 * Beat, 65 + i, 69, 65, 64));
+        var catalogue = new MidiCatalogue([.. notes.Select(n => Stored(n.Key, $@"K:\Song{n.Key}\Song.flp", "Lead", n.Value))]);
+        var harmony = SectionHarmony.Of(SectionWith(("Keys", MidiRoles.Chords, keys, @"K:\Mine\Idea.flp")));
+        var scored = new System.Collections.Concurrent.ConcurrentDictionary<MidiEntry, PlaygroundMatch?>(ReferenceEqualityComparer.Instance);
+        SectionMatcher.Rank(catalogue, harmony, MidiRoles.Melody, e => notes[e.Id], out _, limit: 2, scored: scored);
+        var kept = scored.Where(k => k.Value is not null).ToDictionary(k => k.Key, k => k.Value!);
+        Assert.NotEmpty(kept);
+        var more = SectionMatcher.Rank(catalogue, harmony, MidiRoles.Melody, e => notes[e.Id], out _, limit: 4, scored: scored);
+        var fresh = SectionMatcher.Rank(catalogue, harmony, MidiRoles.Melody, e => notes[e.Id], out _, limit: 4);
+        Assert.Equal(fresh.Select(m => m.Entry.Id), more.Select(m => m.Entry.Id));
+        foreach (var m in more)
+            if (kept.TryGetValue(m.Entry, out var was)) Assert.Same(was, m);   // not scored again
+    }
+
+    [Fact]
+    public void Suggestions_say_how_many_parts_they_were_picked_from()
+    {
+        var keys = Chords(TwoFiveOne);
+        var notes = Enumerable.Range(1, 5).ToDictionary(i => (long)i, i => Line(2 * Beat, 65 + i, 69, 65, 64));
+        var catalogue = new MidiCatalogue([.. notes.Select(n => Stored(n.Key, $@"K:\Song{n.Key}\Song.flp", "Lead", n.Value))]);
+        var section = SectionWith(("Keys", MidiRoles.Chords, keys, @"K:\Mine\Idea.flp"));
+        var found = SectionMatcher.Rank(catalogue, SectionHarmony.Of(section), MidiRoles.Melody, e => notes[e.Id], out var matching, limit: 2);
+        Assert.Equal(2, found.Count);   // the best two, as the Settings number asks
+        Assert.Equal(5, matching);      // of the five leads there were, so the page can offer Show more
     }
 
     [Fact]
@@ -273,6 +477,92 @@ public class PlaygroundTests : IDisposable
         var drag = p.MakeDrag(["arrangement"])!;
         var tracks = MidiFileReader.Read(File.ReadAllBytes(drag.Files[0]), "x");
         Assert.Equal(3, tracks.Count);
+    }
+
+    [Fact]
+    public async Task A_melody_on_its_own_gets_whole_sets_of_chords_to_try_and_keep_as_a_chords_track()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        // Twinkle, twinkle, on its own: C C G G | A A G G | F F E E | D D C C
+        var tune = Line(Beat, 72, 72, 79, 79, 81, 81, 79, 79, 77, 77, 76, 76, 74, 74, 72, 72);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", tune, "melody lead")]).Entries[0];
+        p.AddFromLibrary(entry, tune, "Lead");
+        Assert.True(p.CanHarmonise);
+        Assert.StartsWith("Chords for your melody", p.HarmoniseText);
+        var plain = p.HarmoniseIdeas.First(i => i.Title == "Harmonise: plain");
+
+        // Tried: the chords show striped all the way along, and nothing changes yet.
+        Assert.True(p.RunShortcut("playground.reharm"));
+        Assert.Null(p.PickedChord);   // Reharmonise opens on these, not on a chord heard in the melody
+        await p.TryIdea(plain);
+        Assert.Equal(3, p.ReharmStep);
+        Assert.Equal(plain.Idea.Lane.Count, p.ProposedChords!.Count);
+        Assert.Single(p.Layers);
+
+        // Kept: a Chords track plays them, the chord lane reads them, and there's nothing left to harmonise.
+        p.KeepIdeaCommand.Execute(null);
+        Assert.Equal(2, p.Layers.Count);
+        Assert.Equal(plain.Idea.Lane.Select(c => c.Chord.Name), p.Chords.Select(c => c.Name));
+        Assert.False(p.CanHarmonise);
+        p.UndoCommand.Execute(null);
+        Assert.Single(p.Layers);
+        Assert.True(p.CanHarmonise);
+    }
+
+    [Fact]
+    public async Task Reharm_in_three_steps_pick_a_chord_try_an_idea_striped_then_keep_it_or_go_back()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("Dm7 | G7 | Cmaj7 | %");
+        Assert.Equal(1, p.ReharmStep);
+
+        // 1: clicking G7 on the chord lane opens Reharm with its ideas, and only ideas that change it.
+        p.PickChordCommand.Execute(p.Chords[1]);
+        Assert.Equal(2, p.ReharmStep);
+        Assert.Equal(PlaygroundViewModel.ReharmTab, p.RightTab);
+        Assert.StartsWith("G7 (V7) · bar 2", p.PickedChordText);
+        var sub = p.ChordIdeas.First(i => i.Title == "Tritone sub");
+        Assert.DoesNotContain(p.ChordIdeas, i => i.Idea.Bar == 4 && i.Title != "Turnaround" && i.Title != "Richer chords");
+
+        // 2: trying it shows Db9 striped where G7 is, and plays; the chords themselves don't change yet.
+        await p.TryIdea(sub);
+        Assert.Equal(3, p.ReharmStep);
+        Assert.StartsWith("Db", Assert.Single(p.ProposedChords!).Name);
+        Assert.Equal("G7", p.Chords[1].Name);
+        Assert.Equal("Back to G7", p.BackText);
+
+        // 3: Back leaves G7 picked to try another; Keep changes it, and the new chord stays picked.
+        p.BackIdeaCommand.Execute(null);
+        Assert.Equal(2, p.ReharmStep);
+        Assert.Null(p.ProposedChords);
+        Assert.Equal("G7", p.Chords[1].Name);
+        await p.TryIdea(sub);
+        p.KeepIdeaCommand.Execute(null);
+        Assert.StartsWith("Db", p.Chords[1].Name);
+        Assert.Equal(2, p.ReharmStep);
+        Assert.StartsWith("Db", p.PickedChord!.Name);
+        Assert.Null(p.ProposedChords);
+
+        // Undo puts G7 back, still picked; Harmony › Reharmonise picks the chord under the play marker when none is.
+        p.UndoCommand.Execute(null);
+        Assert.Equal("G7", p.PickedChord!.Name);
+        p.ClearPickedChordCommand.Execute(null);
+        Assert.Equal(1, p.ReharmStep);
+        p.Cursor = 2 * Bar + 10;
+        p.RunShortcut("playground.reharm");
+        Assert.Equal("Cmaj7", p.PickedChord!.Name);
     }
 
     [Fact]

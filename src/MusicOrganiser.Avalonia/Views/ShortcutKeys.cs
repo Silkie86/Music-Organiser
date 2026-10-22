@@ -84,6 +84,9 @@ public sealed class ShortcutBox : Button
 
     ShortcutRow? Row => DataContext as ShortcutRow;
 
+    /// <summary>Waiting for the new key: the page's own keys stand aside until it's pressed.</summary>
+    public bool IsListening => _listening;
+
     protected override void OnClick()
     {
         base.OnClick();
