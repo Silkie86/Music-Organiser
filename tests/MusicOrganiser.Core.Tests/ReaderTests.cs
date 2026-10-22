@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Parsers;
@@ -545,6 +546,36 @@ public class FlStudio9Tests
         // A save with no older one keeps what it has.
         var alone = Fixtures.FlStudio25NothingSaved(Fixtures.TempDir());
         Assert.Empty(LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(alone), alone).Taken);
+    }
+
+    [Theory]
+    [InlineData("7.0.0")]
+    [InlineData(null)]   // no version: told from the notes being in time order
+    public void ReadsFl8AndOlder20ByteNotesWhenThePatternIsAlsoAWholeNumberOf24ByteOnes(string? version)
+    {
+        // Six of FL 7's 20-byte notes are 120 bytes, five 24-byte ones too. Read as 24, Solomon's "i dont know_8" had notes
+        // at jumbled times lasting 2^31 ticks, its pan and velocity bytes (40 80 80 80) landing in the length.
+        static byte[] Note20(uint pos, ushort key)
+        {
+            var b = new byte[20];
+            BinaryPrimitives.WriteUInt32LittleEndian(b, pos);
+            BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(4), 0x4000);
+            BinaryPrimitives.WriteUInt32LittleEndian(b.AsSpan(8), 24);
+            BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(12), key);
+            b[14] = 0x78; b[16] = 0x40; b[17] = 0x80; b[18] = 0x80; b[19] = 0x80;   // fine pitch, pan, velocity, release, as FL 7 saves them
+            return b;
+        }
+        var path = Path.Combine(Fixtures.TempDir(), "i dont know_8.flp");
+        var flp = new Fixtures.FlpBuilder();
+        if (version is not null) flp.Ascii(199, version);
+        File.WriteAllBytes(path, flp.Word(64, 0).Byte(21, 0).Ascii(192, "Kick")
+            .Word(65, 1).Data(224, [.. Enumerable.Range(0, 6).SelectMany(i => Note20((uint)i * 24, (ushort)(36 + i)))]).Build());
+
+        var notes = new FlStudioReader().ExtractMidi(path).Single().Tracks.Single().Value;
+        Assert.Equal([0L, 24, 48, 72, 96, 120], notes.Select(n => n.Start));
+        Assert.All(notes, n => Assert.Equal((24L, 127), (n.Length, n.Velocity)));
+        Assert.Equal([36, 37, 38, 39, 40, 41], notes.Select(n => n.Key));
+        Assert.Equal(6, Readers.FlStudio.ReadSong(path).Channels.Single().Notes.Count);
     }
 
     [Theory]

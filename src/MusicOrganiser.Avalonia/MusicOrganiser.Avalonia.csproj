@@ -49,6 +49,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- OpenAL Soft's settings (a small output buffer, so sounds start soon after they're asked for), beside the app
+         where it looks for them on Windows (alsoft.ini). Not copied as alsoft.conf for a Mac or Linux until it has been tried there. -->
+    <None Include="Audio\alsoft.ini" Link="alsoft.ini" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="MusicOrganiser.Avalonia.Tests" />
   </ItemGroup>
 

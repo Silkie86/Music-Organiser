@@ -181,8 +181,8 @@ public sealed class SoundOrganiser : IDisposable
     public static List<Parallelism.FoundFile> FindAudioStamps(IEnumerable<string> folders, CancellationToken ct = default,
                                                               ConcurrentBag<string>? unreadable = null) =>
         Parallelism.FindFileStamps(folders,
-            f => AudioFile.CanRead(f) && !System.IO.Path.GetFileName(f).StartsWith("._"),
-            (name, _) => name.StartsWith('.') || name.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase), ct: ct,
+            f => AudioFile.CanRead(f) && !Parallelism.IsMacShadow(f),
+            (name, _) => Parallelism.IsHiddenFolder(name), ct: ct,
             unreadable: unreadable);
 
     /// <summary>Analyses new and changed sounds in your sample folders. Fast: signal analysis only.</summary>
@@ -259,8 +259,8 @@ public sealed class SoundOrganiser : IDisposable
             // As the scan finds them: under a sample folder, not in a hidden or __MACOSX folder, not a "._" shadow.
             if (roots.FirstOrDefault(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase)) is not { } root) return false;
             var parts = path[root.Length..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
-            return parts.Length > 0 && !parts[^1].StartsWith("._") && AudioFile.CanRead(path) &&
-                   !parts[..^1].Any(d => d.StartsWith('.') || d.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase));
+            return parts.Length > 0 && !Parallelism.IsMacShadow(path) && AudioFile.CanRead(path) &&
+                   !parts[..^1].Any(Parallelism.IsHiddenFolder);
         }
         var todo = new List<(string Path, long Size, long Mtime)>();
         var gone = new List<string>();
