@@ -144,9 +144,10 @@ public sealed class AppShortcuts
             case "app.rescan":
                 if (!main.IsScanning) main.RescanCommand.Execute(null);
                 return true;
-            case "app.sizeUp": main.Settings.Appearance.StepSize(1); return true;
-            case "app.sizeDown": main.Settings.Appearance.StepSize(-1); return true;
-            case "app.sizeReset": main.Settings.Appearance.Size = 100; return true;
+            // Just the page on show, as the rail's size button does; Settings › General sizes every page.
+            case "app.sizeUp": main.PageBiggerCommand.Execute(null); return true;
+            case "app.sizeDown": main.PageSmallerCommand.Execute(null); return true;
+            case "app.sizeReset": main.PageSizeAsRestCommand.Execute(null); return true;
             case "app.fullScreen":
                 if (_window.WindowState == WindowState.FullScreen) _window.WindowState = _beforeFullScreen;
                 else

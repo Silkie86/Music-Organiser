@@ -124,8 +124,9 @@
                                         <ComboBox ItemsSource="{x:Static vm:AppearanceViewModel.Fonts}" SelectedItem="{Binding Font}" MinWidth="200" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
-                                        <TextBlock Text="SIZE" Classes="filterLabel" />
-                                        <ListBox Classes="chips group" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}">
+                                        <TextBlock Text="SIZE OF EVERYTHING" Classes="filterLabel" />
+                                        <ListBox Classes="chips group" AutoScrollToSelectedItem="False" ItemsSource="{x:Static vm:AppearanceViewModel.Sizes}" SelectedItem="{Binding Size}"
+                                                 ToolTip.Tip="Zooms the whole app: smaller fits more on a big screen, bigger is easier to read on a small one">
                                             <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
                                             <ListBox.ItemTemplate>
                                                 <DataTemplate x:DataType="x:Int32">
@@ -140,6 +141,11 @@
                                                       ToolTip.Tip="No sliding, fading or popping. Spinners and progress still show." />
                                     </StackPanel>
                                 </Grid>
+                                <!-- Pages sized on their own with the rail's size button. -->
+                                <DockPanel Margin="0,10,0,0" IsVisible="{Binding HasOwnSizes}">
+                                    <Button DockPanel.Dock="Right" Content="Same size on every page" Command="{Binding SameSizeEverywhereCommand}" Margin="12,0,0,0" />
+                                    <TextBlock Text="{Binding OwnSizesText}" Classes="muted" FontSize="12.5" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                </DockPanel>
                             </StackPanel>
                         </Border>
 

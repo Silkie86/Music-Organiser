@@ -29,6 +29,7 @@ public sealed partial class AppearanceViewModel : ObservableObject
     public const string FontKey = "appearance_font";
     public const string SizeKey = "appearance_size";
     public const string MotionKey = "appearance_less_motion";
+    public const string PageSizesKey = "appearance_page_sizes";
 
     /// <summary>The fonts built into the app. "Theme's font" follows the theme.</summary>
     public const string ThemeFont = "Theme's font";
@@ -71,8 +72,11 @@ public sealed partial class AppearanceViewModel : ObservableObject
         new("Amber", "#F2A03D"), new("Coral", "#F2766B"), new("Pink", "#F28CB1"),
     ];
 
-    /// <summary>How big everything is, in percent of normal.</summary>
-    public static IReadOnlyList<int> Sizes { get; } = [90, 100, 110, 125];
+    /// <summary>
+    /// How big everything is, in percent of normal: smaller fits more on a big screen, bigger is easier to read on a small
+    /// one (Solomon, 21 Oct: "zoom in and out of the whole screen").
+    /// </summary>
+    public static IReadOnlyList<int> Sizes { get; } = [70, 80, 90, 100, 110, 125, 150];
 
     readonly LibraryDb _db;
 
@@ -84,6 +88,87 @@ public sealed partial class AppearanceViewModel : ObservableObject
         _font = db.GetSetting(FontKey) is { } f && Fonts.Contains(f) ? f : ThemeFont;
         _size = int.TryParse(db.GetSetting(SizeKey), out var s) && Sizes.Contains(s) ? s : 100;
         _lessMotion = db.GetSetting(MotionKey) == "1";
+        foreach (var entry in db.GetList(PageSizesKey))
+            if (entry.Split('=', 2) is [var page, var size] && int.TryParse(size, out var n) && Sizes.Contains(n)) _pageSizes[page] = n;
+    }
+
+    // ---- each page's own size (Solomon, 21 Oct: "every page should be individually or you can do it all together") ----
+
+    readonly Dictionary<string, int> _pageSizes = [];
+    readonly Dictionary<string, string> _pageNames = [];
+
+    /// <summary>
+    /// The pages, by the key their sizes are saved under and their title in the sidebar. Sizes saved under a title (before
+    /// 22 Oct) move to the key, so they survive a page being renamed.
+    /// </summary>
+    public void NamePages(IEnumerable<(string Key, string Title)> pages)
+    {
+        var moved = false;
+        foreach (var (key, title) in pages)
+        {
+            _pageNames[key] = title;
+            if (title != key && _pageSizes.Remove(title, out var n))
+            {
+                _pageSizes.TryAdd(key, n);
+                moved = true;
+            }
+        }
+        if (moved) SavePageSizes();
+    }
+
+    /// <summary>Raised when a page's own size changes, or goes back to <see cref="Size"/>.</summary>
+    public event Action? PageSizesChanged;
+
+    /// <summary>The size of <paramref name="page"/> (its key): its own if it has one, else <see cref="Size"/>.</summary>
+    public int SizeFor(string page) => _pageSizes.TryGetValue(page, out var n) ? n : Size;
+
+    /// <summary>Whether <paramref name="page"/> has a size of its own.</summary>
+    public bool HasOwnSize(string page) => _pageSizes.ContainsKey(page);
+
+    /// <summary>The pages with a size of their own, and what it is.</summary>
+    public string OwnSizesText => _pageSizes.Count == 0 ? ""
+        : $"Sized on their own: {string.Join(", ", _pageSizes.OrderBy(p => _pageNames.GetValueOrDefault(p.Key, p.Key)).Select(p => $"{_pageNames.GetValueOrDefault(p.Key, p.Key)} {p.Value}%"))}.";
+    public bool HasOwnSizes => _pageSizes.Count > 0;
+
+    /// <summary>One page a size up (<paramref name="by"/> 1) or down (-1), staying at the ends; landing on <see cref="Size"/> it follows that again.</summary>
+    public bool StepPage(string page, int by)
+    {
+        var list = Sizes.ToList();
+        var at = list.IndexOf(SizeFor(page));
+        var next = list[Math.Clamp((at < 0 ? list.IndexOf(100) : at) + by, 0, list.Count - 1)];
+        if (next == SizeFor(page)) return false;
+        SetPage(page, next == Size ? null : next);
+        return true;
+    }
+
+    /// <summary>The page back to the size of the rest.</summary>
+    public void ResetPage(string page)
+    {
+        if (HasOwnSize(page)) SetPage(page, null);
+    }
+
+    /// <summary>Every page back to <see cref="Size"/>.</summary>
+    [RelayCommand]
+    void SameSizeEverywhere()
+    {
+        if (_pageSizes.Count == 0) return;
+        _pageSizes.Clear();
+        SavePageSizes();
+    }
+
+    void SetPage(string page, int? size)
+    {
+        if (size is { } n) _pageSizes[page] = n;
+        else _pageSizes.Remove(page);
+        SavePageSizes();
+    }
+
+    void SavePageSizes()
+    {
+        _db.SetList(PageSizesKey, _pageSizes.Select(p => $"{p.Key}={p.Value}"));
+        OnPropertyChanged(nameof(OwnSizesText));
+        OnPropertyChanged(nameof(HasOwnSizes));
+        PageSizesChanged?.Invoke();
     }
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(AccentColour), nameof(AccentText), nameof(FontName))] AppTheme _theme;
@@ -105,16 +190,13 @@ public sealed partial class AppearanceViewModel : ObservableObject
     partial void OnThemeChanged(AppTheme value) => _db.SetSetting(ThemeKey, value.Name);
     partial void OnAccentChanged(AccentChoice value) => _db.SetSetting(AccentKey, value.Colour);
     partial void OnFontChanged(string value) => _db.SetSetting(FontKey, value);
-    partial void OnSizeChanged(int value) => _db.SetSetting(SizeKey, value.ToString());
-
-    /// <summary>The next size up (or down, <paramref name="by"/> negative) in <see cref="Sizes"/>; false at either end.</summary>
-    public bool StepSize(int by)
+    partial void OnSizeChanged(int value)
     {
-        var at = Sizes.ToList().IndexOf(Size);
-        var next = Math.Clamp((at < 0 ? Sizes.ToList().IndexOf(100) : at) + by, 0, Sizes.Count - 1);
-        if (Sizes[next] == Size) return false;
-        Size = Sizes[next];
-        return true;
+        _db.SetSetting(SizeKey, value.ToString());
+        // A page whose own size the rest has now caught up with follows the rest again.
+        var same = _pageSizes.Where(p => p.Value == value).Select(p => p.Key).ToList();
+        foreach (var page in same) _pageSizes.Remove(page);
+        if (same.Count > 0) SavePageSizes();
     }
     partial void OnLessMotionChanged(bool value) => _db.SetSetting(MotionKey, value ? "1" : "0");
 
@@ -126,6 +208,7 @@ public sealed partial class AppearanceViewModel : ObservableObject
         Font = ThemeFont;
         Size = 100;
         LessMotion = false;
+        SameSizeEverywhere();
     }
 
     /// <summary>Whether a colour is light enough that white text on it is hard to read.</summary>

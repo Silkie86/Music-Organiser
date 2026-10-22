@@ -162,14 +162,17 @@ public sealed class AppShortcutTests : IDisposable
         Press(Key.Left, RawInputModifiers.Control);
         Assert.Equal(tab, tabs.SelectedIndex);
 
-        // Ctrl+= and Ctrl+- make the page bigger and smaller, Ctrl+0 puts it back
+        // Ctrl+= and Ctrl+- make just this page bigger and smaller, Ctrl+0 puts it back to the size of the rest
         Press(Key.OemPlus, RawInputModifiers.Control, "=");
-        Assert.Equal(110, main.Settings.Appearance.Size);
+        Assert.Equal(110, main.PageSize);
+        Assert.True(main.PageHasOwnSize);
         Press(Key.OemMinus, RawInputModifiers.Control, "-");
         Press(Key.OemMinus, RawInputModifiers.Control, "-");
-        Assert.Equal(90, main.Settings.Appearance.Size);
-        Press(Key.D0, RawInputModifiers.Control, "0");
+        Assert.Equal(90, main.PageSize);
         Assert.Equal(100, main.Settings.Appearance.Size);
+        Press(Key.D0, RawInputModifiers.Control, "0");
+        Assert.Equal(100, main.PageSize);
+        Assert.False(main.PageHasOwnSize);
 
         // F1 shows this page's keys and everywhere's, even from the search box (function keys never type). The keyboard goes
         // onto the sheet, where Tab moves round it; other shortcuts wait until it's shut; Esc closes it and the keyboard goes back

@@ -19,6 +19,13 @@
         <DataTemplate DataType="vm:SamplesViewModel"><views:SamplesView /></DataTemplate>
     </Window.DataTemplates>
 
+    <Window.Styles>
+        <!-- The rail's size button, when the page has a size of its own. -->
+        <Style Selector="TextBlock.ownSize">
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        </Style>
+    </Window.Styles>
     <Window.Resources>
         <!-- One key on the keys sheet: the key (click it, then press another to change it), then what it does. -->
         <DataTemplate x:Key="ShortcutChip" x:DataType="vm:ShortcutRow">
@@ -35,7 +42,10 @@
     <Grid ColumnDefinitions="84,*">
         <!-- The rail: the places to go, always in the same spot. Settings sits at the bottom, below the DAW lights. -->
         <Border Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,0,1,0">
-            <DockPanel Margin="0,18,0,14">
+            <!-- Scrolls only when it can't fit (a big size on a short screen), so Settings is always reachable. -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Border Padding="0,18,0,14" MinHeight="{Binding $parent[ScrollViewer].Viewport.Height}">
+            <DockPanel>
                 <Border DockPanel.Dock="Top" Width="40" Height="40" CornerRadius="{DynamicResource RadiusL}" Margin="0,0,0,18"
                         Background="{StaticResource AccentBrush}" ToolTip.Tip="Music Organiser">
                     <Path Data="{StaticResource NavIcon.Samples}" Classes="navIcon" Stroke="{StaticResource OnAccentBrush}" StrokeThickness="2.2" />
@@ -65,6 +75,32 @@
                         <Path Data="{StaticResource RescanIcon}" Classes="navIcon" />
                     </Button>
                 </StackPanel>
+
+                <!-- This page's size: smaller fits more on it, bigger is easier to read. Settings › General sizes every page. -->
+                <Button x:Name="PageSizeButton" AutomationProperties.AutomationId="PageSizeButton" DockPanel.Dock="Bottom" Classes="dawLight"
+                        HorizontalAlignment="Center" Margin="0,0,0,6" ToolTip.Tip="{Binding PageSizeTip}">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <Path Data="M5,5 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 M8,8 L11,11" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.4"
+                              StrokeLineCap="Round" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding PageSizeText}" FontSize="10.5" VerticalAlignment="Center" Classes.ownSize="{Binding PageHasOwnSize}" />
+                    </StackPanel>
+                    <Button.Flyout>
+                        <Flyout Placement="RightEdgeAlignedBottom">
+                            <StackPanel Spacing="8" Width="220">
+                                <TextBlock Text="{Binding SelectedNav.Title, StringFormat='Size of {0}'}" FontWeight="SemiBold" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <Button Content="−" Width="36" Command="{Binding PageSmallerCommand}" ToolTip.Tip="Smaller: fit more on this page" />
+                                    <TextBlock Text="{Binding PageSizeText}" Width="56" TextAlignment="Center" VerticalAlignment="Center" FontSize="15" />
+                                    <Button Content="+" Width="36" Command="{Binding PageBiggerCommand}" ToolTip.Tip="Bigger: easier to read" />
+                                </StackPanel>
+                                <Button Content="Same as the other pages" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Command="{Binding PageSizeAsRestCommand}" IsVisible="{Binding PageHasOwnSize}" />
+                                <TextBlock Classes="muted" FontSize="11.5" TextWrapping="Wrap"
+                                           Text="Settings › General › Size of everything changes every page at once." />
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
 
                 <!-- The DAW lights: lit in the DAW's colour when it's open and linked. Click one to open its project here. -->
                 <ItemsControl DockPanel.Dock="Bottom" ItemsSource="{Binding Live.Rows}" HorizontalAlignment="Center">
@@ -106,13 +142,23 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
             </DockPanel>
+            </Border>
+            </ScrollViewer>
         </Border>
 
-        <!-- Page: a new one fades in. -->
-        <TransitioningContentControl x:Name="PageHost" Grid.Column="1" Margin="32,24,32,20" Content="{Binding SelectedNav.Page}">
+        <!-- Page: a new one fades in. A page sized on its own (the rail's size button) is scaled again in here, each page
+             by its own scale, so the one fading out keeps its size. -->
+        <TransitioningContentControl x:Name="PageHost" Grid.Column="1" Content="{Binding SelectedNav}">
             <TransitioningContentControl.PageTransition>
                 <CrossFade Duration="0:0:0.16" />
             </TransitioningContentControl.PageTransition>
+            <TransitioningContentControl.ContentTemplate>
+                <DataTemplate x:DataType="vm:NavItem">
+                    <LayoutTransformControl Classes="pageScaler" LayoutTransform="{Binding Scale, Converter={StaticResource PageScaleTransform}}">
+                        <ContentControl Margin="32,24,32,20" Content="{Binding Page}" />
+                    </LayoutTransformControl>
+                </DataTemplate>
+            </TransitioningContentControl.ContentTemplate>
         </TransitioningContentControl>
 
         <!-- Activity cards, bottom right: what's running, how far it has got, and what just finished. A running job's ✕

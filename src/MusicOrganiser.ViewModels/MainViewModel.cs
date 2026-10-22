@@ -83,16 +83,20 @@ public sealed partial class MainViewModel : ObservableObject
         Settings.Liked.Changed += Sounds.WeightsChanged;
         Nav =
         [
-            new("Projects", "", Projects),
-            new("Sound Lab", "\uE8D6", Sounds),
-            new("MIDI", "", Midi),
-            new("Playground", "", Playground),
-            new("Plugins", "", Plugins),
-            new("Settings", "", Settings),
+            new("projects", "Projects", "", Projects),
+            new("sounds", "Sound Lab", "\uE8D6", Sounds),
+            new("midi", "MIDI", "", Midi),
+            new("playground", "Playground", "", Playground),
+            new("plugins", "Plugins", "", Plugins),
+            new("settings", "Settings", "", Settings),
         ];
+        Settings.Appearance.NamePages(Nav.Select(n => (n.Key, n.Title)));
         _midiPage = midiPage;
         if (!midiPage) Nav = Nav.Where(n => n.Page != Midi && n.Page != Playground).ToList();   // the playground needs the MIDI page, and has no WPF view either
         _selectedNav = StartPage();
+        Settings.Appearance.PageSizesChanged += PageSizeChanged;
+        Settings.Appearance.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(AppearanceViewModel.Size)) PageSizeChanged(); };
+        PageSizeChanged();
         if (_selectedNav.Page == Midi || _selectedNav.Page == Playground) Midi.Opened();
         if (_selectedNav.Page == Playground) Playground.Opened();
         _ = Projects.ReloadAsync();   // read in the background: 16,000 projects held the window up as it opened
@@ -175,6 +179,47 @@ public sealed partial class MainViewModel : ObservableObject
         if (SelectedNav?.Page == Settings) Settings.RefreshTemplate();
     }
 
+    // ---- the size of the page on show (Settings › Appearance sets every page; the rail's size button just this one) ----
+
+    string PageKey => SelectedNav?.Key ?? "";
+    string PageTitle => SelectedNav?.Title ?? "";
+    /// <summary>The page on show's size, in percent.</summary>
+    public int PageSize => Settings.Appearance.SizeFor(PageKey);
+    /// <summary>How much bigger the page is drawn than the rest of the window, which <see cref="AppearanceViewModel.Size"/> scales.</summary>
+    public double PageScale => SelectedNav?.Scale ?? 1;
+    public bool PageHasOwnSize => Settings.Appearance.HasOwnSize(PageKey);
+    public string PageSizeText => $"{PageSize}%";
+    public string PageSizeTip => PageHasOwnSize
+        ? $"{PageTitle} is {PageSize}%, its own size (the other pages are {Settings.Appearance.Size}%). Click to change it."
+        : $"Every page is {PageSize}% (Settings › General). Click to size {PageTitle} on its own.";
+
+    void PageSizeChanged()
+    {
+        // Every page's scale, not just this one's: a page fading out keeps the size it was shown at.
+        foreach (var nav in Nav) nav.Scale = Settings.Appearance.SizeFor(nav.Key) / (double)Settings.Appearance.Size;
+        OnPropertyChanged(nameof(PageSize));
+        OnPropertyChanged(nameof(PageScale));
+        OnPropertyChanged(nameof(PageHasOwnSize));
+        OnPropertyChanged(nameof(PageSizeText));
+        OnPropertyChanged(nameof(PageSizeTip));
+        PageBiggerCommand.NotifyCanExecuteChanged();
+        PageSmallerCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>The page on show a size bigger.</summary>
+    [RelayCommand(CanExecute = nameof(CanPageBigger))]
+    void PageBigger() => Settings.Appearance.StepPage(PageKey, 1);
+    bool CanPageBigger() => PageSize < AppearanceViewModel.Sizes[^1];
+
+    /// <summary>The page on show a size smaller, to fit more on it.</summary>
+    [RelayCommand(CanExecute = nameof(CanPageSmaller))]
+    void PageSmaller() => Settings.Appearance.StepPage(PageKey, -1);
+    bool CanPageSmaller() => PageSize > AppearanceViewModel.Sizes[0];
+
+    /// <summary>The page on show back to the size of the rest.</summary>
+    [RelayCommand]
+    void PageSizeAsRest() => Settings.Appearance.ResetPage(PageKey);
+
     // ---- moving between pages with the keyboard ----
 
     readonly Stack<NavItem> _back = new(), _forward = new();
@@ -220,6 +265,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSelectedNavChanged(NavItem value)
     {
+        PageSizeChanged();
         _db.SetSetting(LastPageKey, value.Title);
         if (value.Page == Midi || value.Page == Playground) Midi.Opened();   // the playground matches against the MIDI page's parts
         if (value.Page == Playground) Playground.Opened();
@@ -498,4 +544,17 @@ public sealed partial class MainViewModel : ObservableObject
     }
 }
 
-public sealed record NavItem(string Title, string Glyph, ObservableObject Page);
+/// <summary>A place in the sidebar. <paramref name="key"/> names it in saved settings, so renaming the page keeps them.</summary>
+public sealed partial class NavItem(string key, string title, string glyph, ObservableObject page) : ObservableObject
+{
+    public string Key { get; } = key;
+    public string Title { get; } = title;
+    public string Glyph { get; } = glyph;
+    public ObservableObject Page { get; } = page;
+
+    /// <summary>
+    /// How much bigger this page is drawn than the rest of the window (which Settings' size scales as a whole): 1 unless the
+    /// page has a size of its own. Each page carries its own, so the one fading out keeps its size while the next fades in.
+    /// </summary>
+    [ObservableProperty] double _scale = 1;
+}
