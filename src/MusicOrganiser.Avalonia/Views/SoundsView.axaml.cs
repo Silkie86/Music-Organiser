@@ -118,6 +118,22 @@ public partial class SoundsView : UserControl, IShortcutPage
 
     void OnTileDoubleTapped(object? sender, TappedEventArgs e) => Vm?.AuditionCommand.Execute(null);
 
+    // A Rediscover row plays like a tile: a click anywhere but its buttons (they take their own clicks).
+    void OnSuggestionPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (Vm is not { } vm || sender is not Control { DataContext: Suggestion row }) return;
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed || OnButton(e.Source)) return;
+        vm.Selected = row.Sound;
+        if (e.ClickCount == 1) vm.PlayClicked();
+    }
+
+    void OnSuggestionDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (!OnButton(e.Source)) Vm?.AuditionCommand.Execute(null);
+    }
+
+    static bool OnButton(object? source) => source is Visual v && v.FindAncestorOfType<Button>(includeSelf: true) is not null;
+
     // Arrows move round the tiles (Up and Down a whole row), Home and End go to either end. (Space plays: the app's keys.)
     void OnTilesKeyDown(object? sender, KeyEventArgs e)
     {
