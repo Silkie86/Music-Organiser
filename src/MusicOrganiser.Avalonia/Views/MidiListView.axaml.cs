@@ -47,6 +47,16 @@ public partial class MidiListView : UserControl
 
     MidiBrowserViewModel? Vm => DataContext as MidiBrowserViewModel;
 
+    /// <summary>
+    /// Makes this the page's own list for the app's keys (Ctrl+F finds its search, Ctrl+Up and Down step its parts). Only
+    /// the MIDI page's copy: the Playground's smaller one isn't what those keys are for there.
+    /// </summary>
+    internal void ForPageKeys()
+    {
+        SearchBox.Classes.Add("pageSearch");
+        Parts.Classes.Add("pageList");
+    }
+
     /// <summary>The list beside its card, for the MIDI page to widen the card.</summary>
     internal Grid BodyGrid => Body;
 

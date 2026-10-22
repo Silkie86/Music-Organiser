@@ -2155,12 +2155,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>The app's shortcut list, whose Playground keys this page answers (Settings › Shortcuts changes them).</summary>
     public ShortcutsViewModel Shortcuts => _main.Shortcuts;
 
-    /// <summary>The ? cheat sheet: open, and what's on it.</summary>
-    [ObservableProperty] bool _cheatSheetOpen;
-    /// <summary>Every action on the page, keyed or not, so a key can be given to any of them right there.</summary>
-    public IReadOnlyList<ShortcutRow> CheatSheet => Shortcuts.Rows.Where(r => r.Page == ShortcutsViewModel.Playground).ToList();
-    partial void OnCheatSheetOpenChanged(bool value) { if (value) OnPropertyChanged(nameof(CheatSheet)); }
-    [RelayCommand] void CloseCheatSheet() => CheatSheetOpen = false;
+    /// <summary>Whether the window's keys sheet is open on this page (? or Help › Keyboard shortcuts opens it).</summary>
+    public bool CheatSheetOpen => Shortcuts.SheetOpen && Shortcuts.SheetPage == ShortcutsViewModel.Playground;
 
     /// <summary>Does what a Playground shortcut is for; false when there was nothing for it to do (so the key goes on to the box or list it was pressed in).</summary>
     public bool RunShortcut(string id)
@@ -2173,7 +2169,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             case "playground.undo": Undo(); return true;
             case "playground.redo": Redo(); return true;
             case "playground.save": SaveIdea(); return true;
-            case "playground.help": CheatSheetOpen = !CheatSheetOpen; return true;
+            case "playground.help": Shortcuts.ToggleSheet(ShortcutsViewModel.Playground); return true;
             case "playground.zoomIn": Zoom(0.5); return true;
             case "playground.zoomOut": Zoom(2); return true;
             case "playground.zoomFit": ZoomToFit(); return true;
