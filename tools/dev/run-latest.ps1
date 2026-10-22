@@ -31,7 +31,7 @@ param(
 )
 
 # Raised whenever this script changes, so an older branch's copy never replaces a newer installed one.
-$LauncherVersion = 7
+$LauncherVersion = 8
 
 $ErrorActionPreference = 'Continue'   # git writes progress to stderr, which Windows PowerShell would treat as failure
 $GitHubRepo = 'Silkie86/Music-Organiser'
@@ -70,9 +70,16 @@ function Git {
     if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' ') didn't work (see above)." }
 }
 
+function Get-LauncherVersion([string]$Path) {
+    $line = Select-String -Path $Path -Pattern '^\$LauncherVersion\s*=\s*(\d+)' -List -ErrorAction SilentlyContinue
+    if ($line) { [int]$line.Matches[0].Groups[1].Value } else { 0 }
+}
+
 # --- First run: set up home -------------------------------------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $Home_ | Out-Null
-if ($PSCommandPath -ne $Installed) {
+# An older copy of this script (say, from an old branch) never replaces a newer installed launcher.
+if ($PSCommandPath -ne $Installed -and
+    (-not (Test-Path $Installed) -or (Get-LauncherVersion $Installed) -le $LauncherVersion)) {
     Copy-Item -Force $PSCommandPath $Installed
     $cmd = Join-Path $Home_ 'Run latest.cmd'
     Set-Content -Path $cmd -Encoding Ascii -Value "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0run-latest.ps1`" %*`r`nif errorlevel 1 pause"
@@ -93,14 +100,18 @@ if ($PSCommandPath -ne $Installed) {
 # --- One launcher per copy of the code ---------------------------------------------------------------------------
 # Two launcher windows on the same folder fight: each one's update and clean-up closes the other's app (it exits
 # with -1 straight after starting). So a second one stops and says why.
-$LockFile = "$Repo.launcher.lock"
-$other = 0
-if ((Test-Path $LockFile) -and [int]::TryParse(((Get-Content $LockFile -Raw -ErrorAction SilentlyContinue) + '').Trim(), [ref]$other) -and
-    $other -ne $PID -and (Get-Process -Id $other -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(powershell|pwsh)$' })) {
+# A named mutex (a lock Windows keeps for us) is held for as long as this window is open and let go the moment it
+# closes, however it closes, so there's no file to clean up and no stale lock. It's named after the full folder path.
+$repoKey = [IO.Path]::GetFullPath($Repo).TrimEnd('\', '/').ToLowerInvariant()
+$sha = [Security.Cryptography.SHA256]::Create()
+$hash = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($repoKey)) | ForEach-Object { $_.ToString('x2') })
+$LauncherLock = New-Object System.Threading.Mutex($false, "Local\MusicOrganiserLauncher-$($hash.Substring(0, 32))")
+try { $gotLock = $LauncherLock.WaitOne(0) }
+catch [System.Threading.AbandonedMutexException] { $gotLock = $true }   # the last holder closed without letting go
+if (-not $gotLock) {
     Stop-WithMessage ("Another Music Organiser launcher window is already running (it may be behind other windows). " +
         "Close that one first, or keep using it: two at once close each other's app.")
 }
-Set-Content -Path $LockFile -Value $PID -ErrorAction SilentlyContinue
 
 if (-not (Test-Path (Join-Path $Repo '.git'))) {
     Say "Downloading the code from GitHub into $Repo (only the first time)..." 'Cyan'
@@ -196,10 +207,6 @@ Update-ToRemote | Out-Null
 Say ("Now on: " + (& $GitExe -C $Repo log -1 --format='%h  %s  (%cr)')) 'Green'
 
 # A newer copy of this script in that version is used from the next run (never an older one, from an older branch).
-function Get-LauncherVersion([string]$Path) {
-    $line = Select-String -Path $Path -Pattern '^\$LauncherVersion\s*=\s*(\d+)' -List -ErrorAction SilentlyContinue
-    if ($line) { [int]$line.Matches[0].Groups[1].Value } else { 0 }
-}
 $newer = Join-Path $Repo 'tools/dev/run-latest.ps1'
 if ((Test-Path $newer) -and (Test-Path $Installed) -and $PSCommandPath -eq $Installed -and
     (Get-LauncherVersion $newer) -gt $LauncherVersion) {
@@ -349,5 +356,5 @@ try {
 }
 finally {
     Stop-Watch $watch
-    Remove-Item $LockFile -ErrorAction SilentlyContinue
+    try { $LauncherLock.ReleaseMutex() } catch { }
 }
