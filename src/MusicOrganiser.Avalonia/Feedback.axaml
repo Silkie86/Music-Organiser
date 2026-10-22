@@ -39,21 +39,12 @@
         <Setter Property="Background" Value="{DynamicResource SurfaceRaisedBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource StrokeBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{DynamicResource RadiusL}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
         <Setter Property="Padding" Value="14,12,10,12" />
         <Setter Property="BoxShadow" Value="0 10 30 0 #80000000" />
     </Style>
     <Style Selector="Button.toastButton">
-        <Setter Property="Background" Value="Transparent" />
-        <Setter Property="Padding" Value="8,4" />
-        <Setter Property="MinHeight" Value="28" />
-        <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
-        <Setter Property="FontSize" Value="12" />
-        <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="VerticalAlignment" Value="Top" />
-    </Style>
-    <Style Selector="Button.toastButton.primary">
-        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
     </Style>
 
     <!-- The rail's scan button while scanning: a progress ring with a stop square inside. -->

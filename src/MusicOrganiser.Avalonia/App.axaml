@@ -18,6 +18,7 @@
         <SolidColorBrush x:Key="AccentBrush" Color="#FF3DDC97" />
         <SolidColorBrush x:Key="AccentFaintBrush" Color="#1A3DDC97" />
         <SolidColorBrush x:Key="WarningBrush" Color="#FFF2B33D" />
+        <SolidColorBrush x:Key="WarningSoftBrush" Color="#1FF2B33D" />
         <SolidColorBrush x:Key="MissingBrush" Color="#FFF0616D" />
         <SolidColorBrush x:Key="MissingSoftBrush" Color="#26F0616D" />
 
@@ -83,10 +84,14 @@
         <BoxShadows x:Key="StudioSink">inset 0 1 3 0 #73000000</BoxShadows>
 
         <!-- Corners, from Settings › Appearance: round, or square for the hardware-style themes. -->
-        <CornerRadius x:Key="RadiusS">6</CornerRadius>
-        <CornerRadius x:Key="RadiusM">10</CornerRadius>
-        <CornerRadius x:Key="RadiusL">14</CornerRadius>
-        <CornerRadius x:Key="RadiusPill">17</CornerRadius>
+        <CornerRadius x:Key="RadiusS">3</CornerRadius>
+        <CornerRadius x:Key="RadiusM">4</CornerRadius>
+        <CornerRadius x:Key="RadiusL">6</CornerRadius>
+        <CornerRadius x:Key="RadiusPill">6</CornerRadius>
+        <!-- A joined strip's two ends, and a tile sitting inside a well (Studio.axaml). -->
+        <CornerRadius x:Key="RadiusStart">3,0,0,3</CornerRadius>
+        <CornerRadius x:Key="RadiusEnd">0,3,3,0</CornerRadius>
+        <CornerRadius x:Key="RadiusInner">2</CornerRadius>
 
         <!-- Tables: no black header bar, soft violet for the selected row and no box around the clicked cell. -->
         <SolidColorBrush x:Key="DataGridColumnHeaderBackgroundBrush" Color="Transparent" />

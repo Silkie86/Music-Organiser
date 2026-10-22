@@ -7,16 +7,6 @@
     <!-- A cut-down Playground: the part you're trying layered with the song's own parts, each with mute and solo, the
          chords, and a piano roll for the one picked. Open in Playground takes it to the Playground page. -->
     <UserControl.Styles>
-        <Style Selector="TextBlock.small">
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-        </Style>
-        <Style Selector="Button.tiny, ToggleButton.tiny">
-            <Setter Property="Padding" Value="7,1" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="MinWidth" Value="26" />
-        </Style>
         <Style Selector="ListBox.lanes > ListBoxItem">
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="0,0,0,4" />

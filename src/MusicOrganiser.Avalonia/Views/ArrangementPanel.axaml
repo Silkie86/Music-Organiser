@@ -14,14 +14,14 @@
         <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,10">
             <DockPanel>
                 <Panel x:Name="FullSizeHolder" DockPanel.Dock="Right">
-                    <Button Classes="row" Content="Full size" Click="OnFullSize" IsVisible="{Binding HasArrangement}"
+                    <Button Content="Full size" Click="OnFullSize" IsVisible="{Binding HasArrangement}"
                             ToolTip.Tip="Open the arrangement in its own window" Padding="10,4" />
                 </Panel>
                 <TextBlock Text="{Binding ArrangementSummary}" FontFamily="{DynamicResource NumberFont}" FontSize="12.5"
                            Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
             </DockPanel>
             <!-- FL Studio projects: the playlist as FL shows it, or the tracks it becomes in Bitwig. -->
-            <ListBox Classes="chips" ItemsSource="{Binding Arrangements}" SelectedItem="{Binding Arrangement}" IsVisible="{Binding HasArrangementChoice}"
+            <ListBox Classes="chips group" ItemsSource="{Binding Arrangements}" SelectedItem="{Binding Arrangement}" IsVisible="{Binding HasArrangementChoice}"
                      AutoScrollToSelectedItem="False">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
