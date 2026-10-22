@@ -1573,14 +1573,29 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             : $"After {last.NameIn(Harmony.Key)}, in your {_model.Learned:N0} chord parts (other songs) and {charts:N0} jazz and gospel charts:";
     }
 
-    internal void ApplyIdea(Reharm idea)
+    /// <summary>
+    /// An idea's chords kept. Chords made for a melody or bassline (Harmonise) go on the chord track (chords first, step 4;
+    /// Solomon, 2026-10-22: Harmonise puts its result on the chord track, with an option to write a chord part), or with
+    /// <paramref name="asPart"/> become a plain Chords part playing them. A reharm's go where the chords were.
+    /// </summary>
+    internal void ApplyIdea(Reharm idea, bool asPart = false)
     {
         if (RangeOf(idea) is not { } range) return;
         Remember();
-        if (SetChords(Section, idea.Lane, range.From, range.To)) ShowSection();   // a new chord part's track to show
+        if (idea.Whole && !asPart)
+        {
+            // The chords were made for these parts as they are, so they don't follow them (each can be told to).
+            foreach (var clip in PlaygroundSession.Audible(Section).Where(l => l.Role != MidiRoles.Drums)
+                                                  .SelectMany(l => l.Clips).Where(c => c.Start < range.To && c.End > range.From && c.Follow == FollowWay.Auto))
+                clip.Follow = FollowWay.None;
+            PutOnChordTrack(Section, idea.Lane, range.From, range.To);
+        }
+        else if (asPart ? Rechord(Section, idea.Lane, range.From, range.To) : SetChords(Section, idea.Lane, range.From, range.To))
+            ShowSection();   // a new chord part's track to show
         Changed();
-        Message = idea.Whole ? $"{idea.Title}: {idea.After}, on a Chords track under {idea.Before}. Undo takes it back."
-                             : $"{idea.Title}: {idea.Before} → {idea.After}, played by the chord parts there. Undo takes it back.";
+        Message = !idea.Whole ? $"{idea.Title}: {idea.Before} → {idea.After}, played by the chord parts there. Undo takes it back."
+                  : asPart ? $"{idea.Title}: {idea.After}, played by a Chords part under {idea.Before}. Undo takes it back."
+                  : $"{idea.Title}: {idea.After}, on the chord track under {idea.Before}, which stays as it is. Parts dropped in follow the chords; drag a chord's edges to stretch it. Undo takes it back.";
     }
 
     /// <summary>A plain chord part playing <paramref name="chart"/> ("Dm7 | G7"), from the highlight or bar 1: chords to start from.</summary>

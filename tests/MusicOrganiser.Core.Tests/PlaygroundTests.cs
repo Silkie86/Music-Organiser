@@ -654,7 +654,7 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
-    public async Task A_melody_on_its_own_gets_whole_sets_of_chords_to_try_and_keep_as_a_chords_track()
+    public async Task A_melody_on_its_own_gets_whole_sets_of_chords_to_try_and_keep_on_the_chord_track_or_as_a_part()
     {
         Ui.Current = new Headless();
         UiWork.InBackground = false;
@@ -679,9 +679,25 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(plain.Idea.Lane.Count, p.ProposedChords!.Count);
         Assert.Single(p.Layers);
 
-        // Kept: a Chords track plays them, the chord lane reads them, and there's nothing left to harmonise.
+        // Kept: they go on the chord track (no MIDI), the chord lane reads them, and there's nothing left to harmonise.
         p.KeepIdeaCommand.Execute(null);
+        Assert.Single(p.Layers);
+        Assert.Equal(plain.Idea.Lane.Select(c => c.Chord.Name), p.CurrentSection.ChordTrack.Select(c => c.Chord.Name));
+        Assert.Equal(plain.Idea.Lane.Select(c => c.Chord.Name), p.Chords.Select(c => c.Name));
+        Assert.Contains("on the chord track", p.Message);
+        // The melody they were made for stays exactly as it was.
+        Assert.Equal(tune.Select(n => (n.Start, n.Key)), p.Layers[0].Layer.Notes.Select(n => (n.Start, n.Key)));
+        Assert.Equal(FollowWay.None, p.Layers[0].Layer.Clips[0].Follow);
+        Assert.False(p.CanHarmonise);
+        p.UndoCommand.Execute(null);
+        Assert.Empty(p.CurrentSection.ChordTrack);
+        Assert.True(p.CanHarmonise);
+
+        // Or kept as a part: a Chords track plays them instead.
+        await p.TryIdea(p.HarmoniseIdeas.First(i => i.Title == "Harmonise: plain"));
+        p.KeepIdeaAsPartCommand.Execute(null);
         Assert.Equal(2, p.Layers.Count);
+        Assert.Empty(p.CurrentSection.ChordTrack);
         Assert.Equal(plain.Idea.Lane.Select(c => c.Chord.Name), p.Chords.Select(c => c.Name));
         Assert.False(p.CanHarmonise);
         p.UndoCommand.Execute(null);

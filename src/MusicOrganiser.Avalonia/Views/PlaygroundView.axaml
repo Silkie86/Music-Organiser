@@ -635,7 +635,7 @@
                                     <!-- no chords yet: whole sets of chords for the melody or bassline, to try -->
                                     <DockPanel IsVisible="{Binding CanHarmonise}">
                                         <TextBlock DockPanel.Dock="Top" Text="{Binding HarmoniseText}" FontWeight="SemiBold" Margin="0,0,0,6" TextWrapping="Wrap" TextTrimming="None"
-                                                   ToolTip.Tip="No chord part plays, so these are chords made for what does: try one, then keep it as a Chords track or go back" />
+                                                   ToolTip.Tip="No chord part plays, so these are chords made for what does: try one, then keep it on the chord track (or as a Chords part) or go back" />
                                         <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                                             <ItemsControl ItemsSource="{Binding HarmoniseIdeas}">
                                                 <ItemsControl.ItemTemplate>
@@ -690,7 +690,9 @@
                                     </Border>
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <Button Classes="accent" Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).KeepIdeaCommand}"
-                                                Content="Keep" ToolTip.Tip="Change the chords; parts written from them follow. Undo takes it back." />
+                                                Content="Keep" ToolTip.Tip="Change the chords (chords made for the melody go on the chord track); parts follow them. Undo takes it back." />
+                                        <Button Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).KeepIdeaAsPartCommand}" IsVisible="{Binding Idea.Whole}"
+                                                Content="As a part" ToolTip.Tip="Keep these chords as a Chords part with notes, played plainly, instead of on the chord track" />
                                         <Button Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackIdeaCommand}"
                                                 Content="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackText}" ToolTip.Tip="Leave the chords as they were and try another idea" />
                                         <Button Command="{Binding PreviewCommand}" ToolTip.Tip="Hear the idea with it">

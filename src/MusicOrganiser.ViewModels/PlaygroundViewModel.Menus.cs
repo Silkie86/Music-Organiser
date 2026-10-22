@@ -47,7 +47,8 @@ public sealed partial class PlaygroundViewModel
         new("Track", [M("Mute", "playground.mute"), M("Solo", "playground.solo"), Sep,
                       M("Duplicate track", "playground.duplicateTrack"), M("Delete track", "playground.deleteTrack")]),
         new("Harmony", [M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"), Sep,
-                        M("Reharmonise…", "playground.reharm"), Sep, M("Chord progressions…", "playground.tabChords"),
+                        M("Reharmonise…", "playground.reharm"), M("Harmonise the melody…", "playground.harmonise"), Sep,
+                        M("Chord progressions…", "playground.tabChords"),
                         M("Get chords from Bitwig", "playground.chordsFromBitwig"),
                         M("Put the chords heard on the chord track", "playground.keepHeardChords"), M("Clear the chord track", "playground.clearChordTrack"), Sep,
                         M("Hear the chord track", "playground.hearChordTrack")]),
@@ -109,6 +110,7 @@ public sealed partial class PlaygroundViewModel
             "playground.clearChordTrack" => HasChordTrack,
             "playground.keepHeardChords" => Harmony.Lane.Count > 0,
             "playground.chordsFromBitwig" => ChordsFromBitwigCommand.CanExecute(null),
+            "playground.harmonise" => CanHarmonise,
             "playground.sendToBitwig" => SendToBitwigCommand.CanExecute(null),
             "playground.fitAgain" => clip is { CanFitAgain: true },
             "playground.smooth" => track is not null,
@@ -226,6 +228,7 @@ public sealed partial class PlaygroundViewModel
             case "playground.jazz": IsClassical = false; return true;
             case "playground.classical": IsClassical = true; return true;
             case "playground.reharm": OpenReharm(); return true;
+            case "playground.harmonise": if (CanHarmonise) OpenReharm(); return true;
             case "playground.tabMidi": RightTab = SuggestTabIndex; return true;
             case "playground.tabChords": RightTab = ChordsTab; return true;
             case "playground.removeChord": RemoveChord(); return true;

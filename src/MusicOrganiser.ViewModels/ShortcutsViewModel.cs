@@ -141,6 +141,7 @@ public sealed partial class ShortcutsViewModel : ObservableObject
         new("playground.jazz", Playground, "Jazz and gospel harmony", ""),
         new("playground.classical", Playground, "Classical harmony", ""),
         new("playground.reharm", Playground, "Reharmonise", ""),
+        new("playground.harmonise", Playground, "Harmonise: chords for the melody or bassline, on the chord track", ""),
         new("playground.foldRoll", Playground, "Show or hide the piano roll", ""),
         new("playground.tabMidi", Playground, "Show your MIDI or suggestions", ""),
         new("playground.tabChords", Playground, "Show Chords: progressions from your chord parts", ""),
