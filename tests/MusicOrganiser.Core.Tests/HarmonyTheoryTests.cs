@@ -137,4 +137,45 @@ public class HarmonyTheoryTests
         var b = SectionFit.Score(leaning, lane, Bar, MidiRoles.Melody)!.Value;
         Assert.True(a > b + 0.05, $"{a:0.00} vs {b:0.00}");
     }
+
+    // ---- from the 22 Oct code review ----
+
+    [Fact]
+    public void A_natural_5th_isnt_a_chord_note_where_the_chord_raises_its_5th()
+    {
+        // Cm#5 is C Eb G#: a G there rubs on the G#. Cmaj7#11 keeps its 5th (Lydian), so G still sits.
+        Assert.True(ChordScales.Sit(Chord("Cm#5"), 7) < 1);
+        Assert.Equal(1, ChordScales.Sit(Chord("Cmaj7#11"), 7));
+    }
+
+    [Fact]
+    public void A_note_held_into_a_chord_a_half_step_below_it_is_marked_red()
+    {
+        // C held from a C chord into a B chord: it rubs on the B chord's B.
+        var lane = ChordLane.ParseChart("C | B", out _)!;
+        var guide = Held(0, Bar, 60, 64, 67).Concat(Held(Bar, Bar, 59, 63, 66)).ToList();
+        Assert.True(HarmonyMatcher.Rubs(Bar / 2, Bar, 72, guide, lane));
+        Assert.False(HarmonyMatcher.Rubs(0, Bar, 72, guide, lane));   // over the C chord alone it's the root
+    }
+
+    [Fact]
+    public void A_note_struck_in_a_gap_before_the_first_chord_counts_as_struck_on_it()
+    {
+        var lane = new List<TimedChord> { new(Bar, Bar, Chord("C")) };
+        var pieces = ChordLane.Under(lane, Bar - Beat, 2 * Beat).ToList();
+        Assert.Single(pieces);
+        Assert.True(pieces[0].Struck);   // nothing before it prepared it
+    }
+
+    [Fact]
+    public void A_legato_note_running_a_few_ticks_past_the_change_costs_next_to_nothing()
+    {
+        // E over C, held 6 ticks into a Bb chord where E is the ♯11/♭5: the overlap is legato, not a wrong note.
+        var lane = ChordLane.ParseChart("C | Bb", out _)!;
+        var clean = new List<NoteEvent> { new(0, Bar, 76, 100) };
+        var legato = new List<NoteEvent> { new(0, Bar + 6, 76, 100) };
+        var a = SectionFit.Score(clean, lane, 2 * Bar, MidiRoles.Melody)!.Value;
+        var b = SectionFit.Score(legato, lane, 2 * Bar, MidiRoles.Melody)!.Value;
+        Assert.True(a - b < 0.03, $"{a:0.00} vs {b:0.00}");
+    }
 }

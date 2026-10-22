@@ -84,13 +84,15 @@ public static class ChordLane
 
     /// <summary>
     /// Every chord a note sounds over, one piece per chord, in order: a note held from C7 into F7 is heard against both.
-    /// Struck is true for the piece where the note starts; the others are held over. Gaps with no chord are skipped.
+    /// Struck is true for the first piece, where the note starts (or, struck in a gap before a chord, where that chord
+    /// comes in: nothing came before it to prepare it); the others are held over. Gaps with no chord are skipped.
     /// </summary>
     public static IEnumerable<(ChordSymbol Chord, long Start, long Length, bool Struck)> Under(
         IReadOnlyList<TimedChord> lane, long start, long length, long loop = 0)
     {
         if (lane.Count == 0) yield break;
         long at = start, end = start + Math.Max(1, length);
+        var first = true;
         while (at < end)
         {
             var tick = loop > 0 ? at % loop : at;
@@ -109,7 +111,11 @@ public static class ChordLane
             }
             if (loop > 0 && next - at > loop - tick) next = at + (loop - tick);   // a chord running past the loop's end
             next = Math.Min(Math.Max(next, at + 1), end);
-            if (hit is not null) yield return (hit.Chord, at, next - at, at == start);
+            if (hit is not null)
+            {
+                yield return (hit.Chord, at, next - at, first);
+                first = false;
+            }
             at = next;
         }
     }

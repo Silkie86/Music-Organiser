@@ -429,13 +429,14 @@ public static class HarmonyMatcher
         if (length <= PhraseAnalyser.Ppq / 2) return false;
         long a = start, b = start + length;
         var pc = key % 12;
-        if (lane is not null && ChordLane.At(lane, start + 1) is { } heard && ChordScales.Sit(heard, pc) >= 1) return false;
         foreach (var g in harmony)
         {
             if (g.Start >= b || g.Start + g.Length <= a) continue;
             if (((pc - g.Key % 12) % 12 + 12) % 12 != 1) continue;
-            // What sounds with that note while this one plays: if it has this note too, it's part of the chord.
+            // What sounds with that note while this one plays: if it has this note too, it's part of the chord. So is a
+            // note of the chord heard then (a held note is judged on each chord it's held into, not just the first).
             long from = Math.Max(a, g.Start), to = Math.Min(b, g.Start + g.Length);
+            if (lane is not null && ChordLane.At(lane, from + 1) is { } heard && ChordScales.Sit(heard, pc) >= 1) continue;
             var inChord = false;
             foreach (var h in harmony)
                 if (h.Key % 12 == pc && h.Start < to && h.Start + h.Length > from) { inChord = true; break; }
