@@ -14,6 +14,13 @@ var profilesAt = Array.IndexOf(args, "--profiles");
 if (profilesAt >= 0 && profilesAt + 1 < args.Length) KeyLab.Load(args[profilesAt + 1]);
 var saveAt = Array.IndexOf(args, "--save-profile");
 if (saveAt >= 0 && saveAt + 1 < args.Length) KeyLab.SaveTo = args[saveAt + 1];
+if (args is ["--corpus", var corpus, ..] && File.Exists(corpus))
+{
+    var onlyAt = Array.IndexOf(args, "--only");
+    if (onlyAt >= 0 && onlyAt + 1 < args.Length) CorpusBench.Only = args[onlyAt + 1];
+    CorpusBench.Run(corpus);
+    return;
+}
 if (args is ["--learn", var learnFrom, ..] && Directory.Exists(learnFrom))
 {
     var fromAt = Array.IndexOf(args, "--chords-from");
