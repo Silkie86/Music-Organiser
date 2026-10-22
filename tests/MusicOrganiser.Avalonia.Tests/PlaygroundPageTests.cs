@@ -7,7 +7,9 @@ using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Playground;
+using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
 using MusicOrganiser.ViewModels;
 using MusicOrganiser.Avalonia.Views;
@@ -241,6 +243,55 @@ public sealed class PlaygroundPageTests : IDisposable
         Assert.True(p.IsPlaying);
         var seconds = Silence.Last!.Value.Samples / (double)Silence.Last.Value.Rate;
         Assert.Equal(2 * 4 * 60.0 / p.Tempo, seconds, 2);   // two bars, not eight
+        p.StopPlaying();
+    }
+
+    [AvaloniaFact]
+    public void The_down_arrow_in_the_suggestions_switches_the_part_playing()
+    {
+        // F12 note, 22 Oct 09:34: "press the arrow key or select another clip and it starts playing straight away".
+        // The arrows go through the app-wide keys (#23), which must leave them to the list.
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        p.WriteChordsCommand.Execute(null);
+        const int bar = 4 * PhraseAnalyser.Ppq;
+        static List<NoteEvent> Line(params int[] keys) => keys.Select((k, i) => new NoteEvent(i * (long)bar, bar, k, 100)).ToList();
+        static StoredPhrase Stored(long id, string path, List<NoteEvent> notes)
+        {
+            var a = PhraseAnalyser.Analyse(notes, "bass");
+            return new StoredPhrase(id, new MidiSource(path, MidiSource.Project, "FL Studio", 100 - id, 1, 120), "Bass", "Pattern 1",
+                                    a.Role, a.RoleWhy, null, a.Bars, notes.Count, a.Lowest, a.Highest, a.Key,
+                                    a.Chroma.Select(c => (byte)(c / a.Chroma.Max() * 255)).ToArray(), PhraseChord.Encode(a.Chords),
+                                    a.Features.Select(f => (byte)(f * 255)).ToArray(), a.Hash);
+        }
+        var bass = Line(36, 41, 43, 36);
+        var other = Line(36, 36, 43, 43);
+        var entries = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", bass), Stored(2, @"K:\Else\Bass.flp", other)]).Entries;
+        var first = new PlaygroundMatchRow(p, new PlaygroundMatch(entries[0], null, 0.8, bass, ""));
+        var second = new PlaygroundMatchRow(p, new PlaygroundMatch(entries[1], null, 0.7, other, ""));
+        p.Matches.Add(first);
+        p.Matches.Add(second);
+        var window = new MainWindow { DataContext = main, Width = 1400, Height = 900 };
+        window.Show();
+        main.GoTo(ShortcutsViewModel.Playground);
+        Settle();
+
+        p.PreviewMatch(first).GetAwaiter().GetResult();
+        Settle();
+        Assert.True(first.IsPlaying);
+        var list = window.GetVisualDescendants().OfType<ListBox>().First(l => l.Classes.Contains("matches"));
+        Assert.True(list.IsEffectivelyVisible);
+        Assert.Same(first, list.SelectedItem);
+        list.ContainerFromIndex(0)!.Focus();
+        Settle();
+
+        window.KeyPress(Key.Down, RawInputModifiers.None, PhysicalKey.ArrowDown, null);
+        window.KeyRelease(Key.Down, RawInputModifiers.None, PhysicalKey.ArrowDown, null);
+        Settle();
+        Assert.Same(second, p.SelectedMatch);
+        Assert.True(second.IsPlaying);
+        Assert.False(first.IsPlaying);
         p.StopPlaying();
     }
 
