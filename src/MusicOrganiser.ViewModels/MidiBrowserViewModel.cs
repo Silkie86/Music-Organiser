@@ -51,7 +51,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     /// <summary>Results for a different search than last time are in: the list goes back to the top.</summary>
     public event EventHandler? NewSearchShown;
-    bool _loading, _indexAgain, _retryFailed;
+    bool _indexAgain, _retryFailed;
 
     /// <summary>The MIDI page's list this one copies (null for the MIDI page itself), and the parts it last read.</summary>
     readonly MidiBrowserViewModel? _source;
@@ -86,6 +86,13 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     {
         _source = source;
         source.Read += (_, _) => _ = TakeFromSourceAsync();
+        // The MIDI page reading its list or files is this copy getting ready too.
+        source.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is not (nameof(IsLoading) or nameof(IsIndexing) or nameof(HasParts))) return;
+            OnPropertyChanged(nameof(IsEmpty));
+            OnPropertyChanged(nameof(IsGettingReady));
+        };
     }
 
     async Task TakeFromSourceAsync()
@@ -198,10 +205,12 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [ObservableProperty] string _summary = "Reading your MIDI…";
     [ObservableProperty] string _resultText = "";
     [ObservableProperty] string _message = "";
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsEmpty))] bool _isIndexing;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsEmpty), nameof(IsGettingReady))] bool _isIndexing;
+    /// <summary>The list of every part is being read from the index (on Solomon's PC up to a minute at start-up).</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsEmpty), nameof(IsGettingReady))] bool _isLoading;
     [ObservableProperty] string _indexText = "";
     [ObservableProperty] double _indexPercent;
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsEmpty))] bool _hasParts;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsEmpty), nameof(IsGettingReady))] bool _hasParts;
 
     /// <summary>Read every save of a song, not just its newest (off: one save per song, as Projects' "One row per song" shows).</summary>
     [ObservableProperty] bool _includeOlderSaves;
@@ -222,7 +231,19 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     public bool HasSelection => Selected is not null;
     /// <summary>Nothing to show yet, and nothing being read: say how to get MIDI in.</summary>
-    public bool IsEmpty => !HasParts && !IsIndexing;
+    public bool IsEmpty => !HasParts && !Coming;
+
+    /// <summary>
+    /// Nothing to show yet because the parts are still being read: says so, not "No MIDI here yet" (Solomon's Playground,
+    /// 2026-10-22, said that for the minute the MIDI page took to read its list at start-up).
+    /// </summary>
+    public bool IsGettingReady => !HasParts && Coming;
+
+    /// <summary>
+    /// Parts are on their way: the list or the files are being read, or (for a copy) the MIDI page, which does the reading,
+    /// has them and is handing them over.
+    /// </summary>
+    bool Coming => _source is { } source ? source.HasParts || source.Coming : IsLoading || IsIndexing;
 
     // ---- fitting a harmony ----
 
@@ -753,12 +774,12 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
             return;
         }
         if (_db.GetSetting(UsedKey) != "1") _db.SetSetting(UsedKey, "1");
-        if (_catalogue is null && !_loading) _ = LoadAsync(thenIndex: true);
+        if (_catalogue is null && !IsLoading) _ = LoadAsync(thenIndex: true);
     }
 
     async Task LoadAsync(bool thenIndex = false)
     {
-        _loading = true;
+        IsLoading = true;
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var (poolThreads, poolWaiting) = (ThreadPool.ThreadCount, ThreadPool.PendingWorkItemCount);
         TimeSpan started = TimeSpan.Zero, read = TimeSpan.Zero, sorted = TimeSpan.Zero;
@@ -789,7 +810,10 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
                                     $"{poolThreads} shared threads with {poolWaiting} jobs " +
                                     $"waiting when it began, the app paused {GC.GetTotalPauseDuration().TotalSeconds:0.0} s cleaning memory since it opened");
         }
-        finally { _loading = false; }
+        finally
+        {
+            IsLoading = false;
+        }
         if (thenIndex) _ = IndexAsync();
     }
 
@@ -1212,8 +1236,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// <summary>Every part, read from the index the first time it's wanted (by this page or a song's MIDI tab).</summary>
     public async Task<MidiCatalogue?> CatalogueAsync()
     {
-        if (_catalogue is null && !_loading) Opened();
-        while (_loading && _catalogue is null) await Task.Delay(50);
+        if (_catalogue is null && !IsLoading) Opened();
+        while (IsLoading && _catalogue is null) await Task.Delay(50);
         return _catalogue;
     }
 

@@ -177,7 +177,10 @@
         </Border>
 
 
-        <Grid x:Name="Body" Grid.Row="2" ColumnDefinitions="*,Auto" IsVisible="{Binding !IsEmpty}">
+        <!-- Still reading the parts: says so, rather than an empty list or "No MIDI here yet". -->
+        <TextBlock Grid.Row="2" Text="Getting your MIDI ready…" Classes="small" Margin="2,8" IsVisible="{Binding IsGettingReady}" />
+
+        <Grid x:Name="Body" Grid.Row="2" ColumnDefinitions="*,Auto" IsVisible="{Binding HasParts}">
             <ListBox x:Name="Parts" ItemsSource="{Binding Results}" SelectedItem="{Binding Selected}" Background="Transparent"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}"
                      DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">

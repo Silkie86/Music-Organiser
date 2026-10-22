@@ -125,6 +125,54 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public async Task The_browse_list_says_its_getting_ready_while_the_midi_page_reads_not_that_there_is_no_midi()
+    {
+        // Solomon's Playground (2026-10-22) said "No MIDI here yet" for the minute the MIDI page took to read its list.
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        var pack = Path.Combine(_root, "Packs");
+        Directory.CreateDirectory(pack);
+        var song = new MidiClip { Name = "Sunday", Ppq = PhraseAnalyser.Ppq };
+        song.Track("Keys").AddRange(Chords(TwoFiveOne));
+        File.WriteAllBytes(Path.Combine(pack, "Sunday.mid"), MusicOrganiser.Core.Export.MidiWriter.Write(song));
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        db.SetList(MidiIndexer.FoldersKey, [pack]);
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var list = main.Playground.Midi;
+        var changed = new List<string?>();
+        list.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        // Nothing read and nothing reading: how to get MIDI in.
+        Assert.True(list.IsEmpty);
+        Assert.False(list.IsGettingReady);
+
+        // The MIDI page reading its list, or its files: getting ready, here and there.
+        main.Midi.IsLoading = true;
+        Assert.False(list.IsEmpty);
+        Assert.True(list.IsGettingReady);
+        Assert.True(main.Midi.IsGettingReady);
+        Assert.Contains(nameof(MidiBrowserViewModel.IsEmpty), changed);
+        main.Midi.IsLoading = false;
+        main.Midi.IsIndexing = true;
+        Assert.True(list.IsGettingReady);
+        main.Midi.IsIndexing = false;
+        Assert.True(list.IsEmpty);
+
+        // Read: still getting ready until the copy has taken the parts, then the list.
+        await main.Midi.IndexAsync();
+        Assert.True(main.Midi.HasParts);
+        Assert.False(main.Midi.IsGettingReady);
+        Assert.False(list.IsEmpty);
+        main.Playground.Opened();
+        for (var i = 0; i < 300 && !list.HasParts; i++) await Task.Delay(10);
+        Assert.True(list.HasParts);
+        Assert.False(list.IsEmpty);
+        Assert.False(list.IsGettingReady);
+    }
+
+    [Fact]
     public async Task An_empty_idea_shows_the_midi_pages_list_and_the_first_part_turns_suggest_on()
     {
         Ui.Current = new Headless();
