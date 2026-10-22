@@ -1518,12 +1518,12 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     async Task<ProgressionModel?> ModelAsync(bool load = false)
     {
         var catalogue = load ? await _main.Midi.CatalogueAsync() : _main.Midi.LoadedCatalogue;
-        if (catalogue is null) return _model;
+        if (catalogue is null) return _model ??= ProgressionModel.Learn([]).With(ProgressionModel.FromCharts);
         var songs = Harmony.Songs;
         var key = string.Join("|", songs.OrderBy(s => s)) + ":" + catalogue.Entries.Count;
         if (_model is null || _modelFor != key)
         {
-            var model = await UiWork.Run(() => ProgressionModel.Learn(catalogue.Entries, songs));
+            var model = await UiWork.Run(() => ProgressionModel.Learn(catalogue.Entries, songs).With(ProgressionModel.FromCharts));
             (_model, _modelFor) = (model, key);
         }
         return _model;
@@ -1566,7 +1566,10 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         ChordSymbol? before = lane.Count > 1 ? lane[^2].Chord : null;
         NextChords.Clear();
         foreach (var (chord, share) in _model.Next(last, before)) NextChords.Add(new NextChordRow(this, chord, share, Harmony.Key));
-        NextChordsText = _model.Learned == 0 ? "" : $"After {last.NameIn(Harmony.Key)}, in your {_model.Learned:N0} chord parts (other songs):";
+        var charts = _model.Prior?.Learned ?? 0;
+        NextChordsText = _model.Learned == 0
+            ? charts == 0 ? "" : $"After {last.NameIn(Harmony.Key)}, in {charts:N0} jazz and gospel charts:"
+            : $"After {last.NameIn(Harmony.Key)}, in your {_model.Learned:N0} chord parts (other songs) and {charts:N0} jazz and gospel charts:";
     }
 
     internal void ApplyIdea(Reharm idea)

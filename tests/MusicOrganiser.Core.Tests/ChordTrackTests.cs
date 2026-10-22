@@ -296,4 +296,24 @@ public class ChordTrackTests : IDisposable
         Assert.Equal(ChordKey.Default.Guess(chords, lengths), again.Guess(chords, lengths));
         Assert.Equal((7, false), (again.Guess(chords, lengths)!.Tonic, again.Guess(chords, lengths)!.Minor));
     }
+
+    [Fact]
+    public void What_comes_next_starts_from_jazz_and_gospel_charts_and_leans_on_your_own_parts_as_they_grow()
+    {
+        var charts = ProgressionModel.FromCharts;
+        Assert.True(charts.Learned > 6000);
+        // Nothing of your own yet: after Dm7 then G7, the charts say C.
+        var empty = ProgressionModel.Learn([]).With(charts);
+        var next = empty.Next(Chord("G7"), Chord("Dm7"));
+        Assert.Equal(0, next[0].Chord.Root);
+        Assert.True(empty.Chance(Chord("G7"), Chord("Cmaj7")) > 0);
+
+        // Thousands of your own parts where G7 goes to Ab: yours win.
+        var mine = ProgressionModel.Learn(Enumerable.Repeat<IReadOnlyList<ChordSymbol>>([Chord("Dm7"), Chord("G7"), Chord("Ab")], 3000)).With(charts);
+        Assert.Equal("Ab", mine.Next(Chord("G7"), Chord("Dm7"))[0].Chord.Name);
+
+        // The counts read back the same as they were written.
+        var again = ProgressionModel.Load(new StringReader(charts.Save()));
+        Assert.Equal(charts.Next(Chord("Bbm7"), Chord("Fm7")), again.Next(Chord("Bbm7"), Chord("Fm7")));
+    }
 }

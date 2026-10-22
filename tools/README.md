@@ -152,13 +152,16 @@ Treebank (CC BY-NC-SA 4.0, used only to measure). It prints how often "what chor
 the key the app hears in each chart with no notes (`ChordKey`), the same key finder learned without the tunes it's
 tried on, and which chords lead into the next one against the Treebank's trees. `--only moves|keys|leads` runs one.
 `--save-chord-key <file>` learns `ChordKey` from every ChoCo chart with a key (never the Treebank) and writes its
-counts: that's how `src/MusicOrganiser.Core/Midi/Jazz/ChordKey.tsv` was made. `corpus_to_tsv.py <folder>` turns a
+counts: that's how `src/MusicOrganiser.Core/Midi/Jazz/ChordKey.tsv` was made. `--save-chord-moves <file>` does the same
+for "what chord next?" (`ProgressionModel.FromCharts`, `ChordMoves.tsv`), the counts the Playground starts from before
+your own chord parts outweigh them. `corpus_to_tsv.py <folder>` turns a
 ChoCo release (`<folder>/choco`) and the Treebank (`<folder>/jht/treebank.json`) into `<folder>/corpus.tsv`.
 
 ```
 python3 tools/MusicOrganiser.TheoryBench/corpus_to_tsv.py path/to/data
 dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --corpus path/to/data/corpus.tsv
 dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --corpus path/to/data/corpus.tsv --save-chord-key src/MusicOrganiser.Core/Midi/Jazz/ChordKey.tsv
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --corpus path/to/data/corpus.tsv --save-chord-moves src/MusicOrganiser.Core/Midi/Jazz/ChordMoves.tsv
 ```
 
 `--ear` (with `--library`) counts which notes over which chords the melodies play, against other files' melodies moved

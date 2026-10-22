@@ -787,7 +787,7 @@ public static class SectionMatcher
 /// </summary>
 public sealed class ProgressionModel
 {
-    readonly Dictionary<string, Dictionary<string, int>> _one = new(), _two = new();
+    Dictionary<string, Dictionary<string, int>> _one = new(), _two = new();
 
     /// <summary>The chord-kind spelling the model counts: maj7, m7, 7, m7b5, dim7, sus and plain triads.</summary>
     public static string Kind(ChordSymbol c) => c.Family switch
@@ -840,22 +840,88 @@ public sealed class ProgressionModel
         row[next] = row.GetValueOrDefault(next) + 1;
     }
 
-    /// <summary>How often <paramref name="next"/> (its step from <paramref name="last"/> and its kind) follows <paramref name="last"/>, 0 to 1; 0 when never seen.</summary>
+    /// <summary>How often <paramref name="next"/> (its step from <paramref name="last"/> and its kind) follows <paramref name="last"/>, 0 to 1 (blended with <see cref="Prior"/> as <see cref="Next"/> does); 0 when never seen.</summary>
     public double Chance(ChordSymbol last, ChordSymbol next)
     {
-        if (!_one.TryGetValue(Kind(last), out var row)) return 0;
-        var seen = row.Values.Sum();
-        return seen == 0 ? 0 : row.GetValueOrDefault($"{ChordSymbol.Mod(next.Root - last.Root)}:{Kind(next)}") / (double)seen;
+        var step = $"{ChordSymbol.Mod(next.Root - last.Root)}:{Kind(next)}";
+        double seen = 0, mine = 0;
+        if (_one.TryGetValue(Kind(last), out var row) && (seen = row.Values.Sum()) > 0) mine = row.GetValueOrDefault(step) / seen;
+        if (Prior is not { } prior || !prior._one.TryGetValue(Kind(last), out var from)) return mine;
+        double total = from.Values.Sum();
+        if (total == 0) return mine;
+        var weight = seen / (seen + PriorStrength);
+        return weight * mine + (1 - weight) * from.GetValueOrDefault(step) / (double)total;
     }
 
     /// <summary>
-    /// The likeliest chords to follow <paramref name="last"/> (after <paramref name="before"/>), with how often (0 to 1).
-    /// What followed both chords and what followed the last one alone are blended, the two-chord count weighing more
-    /// the more it has seen: on 77 gospel, jazz and soul packs, each guessed from the others with their chords read as the
-    /// app reads them, the chord played next was the first guess 11 times in 100 and among the first six 32 (10 and 30
-    /// using one count or the other; tools/MusicOrganiser.TheoryBench --learn).
+    /// What to start from before your own chord parts have taught it much: the chord moves of 6,479 charts gathered by ChoCo
+    /// (Chord Corpus, de Berardinis et al., CC BY 4.0, github.com/smashub/choco: the Real Book, iReal Pro jazz playlists
+    /// and gospel, worship and soul charts, the Weimar Jazz Database and the Jazz Corpus). Only the counts are kept
+    /// (ChordMoves.tsv, made by the theory bench's --save-chord-moves). Your own parts count for more the more of them
+    /// there are after a chord (<see cref="PriorStrength"/>).
     /// </summary>
-    public IReadOnlyList<(ChordSymbol Chord, double Share)> Next(ChordSymbol last, ChordSymbol? before, int most = 6)
+    public ProgressionModel? Prior { get; init; }
+
+    /// <summary>
+    /// How many of your own chord changes after a chord weigh as much as everything <see cref="Prior"/> says. Tried on
+    /// gospel charts guessed from 40 or from about 900 other gospel charts, with ChoCo's jazz as the prior (--corpus):
+    /// 1,000 did best for both, a small library getting most of the help and a big one still a little.
+    /// </summary>
+    public double PriorStrength { get; init; } = DefaultPriorStrength;
+
+    public const double DefaultPriorStrength = 1000;
+
+    static readonly Lazy<ProgressionModel> Charts = new(() =>
+    {
+        using var s = typeof(ProgressionModel).Assembly.GetManifestResourceStream("MusicOrganiser.Harmony.ChordMoves.tsv")
+                      ?? throw new InvalidOperationException("ChordMoves.tsv isn't in the build");
+        using var r = new StreamReader(s);
+        return Load(r);
+    });
+
+    /// <summary>The ChoCo chord moves the app ships with.</summary>
+    public static ProgressionModel FromCharts => Charts.Value;
+
+    /// <summary>The same model starting from <paramref name="prior"/>.</summary>
+    public ProgressionModel With(ProgressionModel? prior, double strength = DefaultPriorStrength)
+    {
+        var model = new ProgressionModel { Prior = prior, PriorStrength = strength, Learned = Learned };
+        (model._one, model._two) = (_one, _two);
+        return model;
+    }
+
+    /// <summary>The counts as a table (tab-separated): what ChordMoves.tsv holds. Counts under <paramref name="least"/> are left out.</summary>
+    public string Save(int least = 1)
+    {
+        var w = new StringWriter { NewLine = "\n" };
+        w.WriteLine("# What chord next: counts learned from ChoCo (Chord Corpus, de Berardinis et al., CC BY 4.0, github.com/smashub/choco).");
+        w.WriteLine("# Made by tools/MusicOrganiser.TheoryBench --save-chord-moves. Columns: one|two, the chord(s) before, the next step:kind, count.");
+        w.WriteLine($"learned\t{Learned}");
+        foreach (var (name, table) in new[] { ("one", _one), ("two", _two) })
+            foreach (var (context, row) in table.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+                foreach (var (next, n) in row.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+                    if (n >= least) w.WriteLine($"{name}\t{(context.Length == 0 ? "maj" : context)}\t{next}\t{n}");
+        return w.ToString();
+    }
+
+    public static ProgressionModel Load(TextReader reader)
+    {
+        var model = new ProgressionModel();
+        while (reader.ReadLine() is { } line)
+        {
+            if (line.Length == 0 || line[0] == '#') continue;
+            var f = line.Split('\t');
+            if (f[0] == "learned") { model.Learned = int.Parse(f[1]); continue; }
+            var table = f[0] == "two" ? model._two : model._one;
+            var context = f[1] == "maj" ? "" : f[1];
+            if (!table.TryGetValue(context, out var row)) table[context] = row = new Dictionary<string, int>();
+            row[f[2]] = int.Parse(f[3]);
+        }
+        return model;
+    }
+
+    /// <summary>What follows, by this model's own counts alone, with how many changes after the last chord it has seen.</summary>
+    Dictionary<string, double> Shares(ChordSymbol last, ChordSymbol? before, out double seen)
     {
         Dictionary<string, int>? two = null;
         if (before is { } b) _two.TryGetValue($"{Kind(b)}>{ChordSymbol.Mod(last.Root - b.Root)}:{Kind(last)}", out two);
@@ -864,7 +930,34 @@ public sealed class ProgressionModel
         var mix = new Dictionary<string, double>();
         if (two is not null) foreach (var kv in two) mix[kv.Key] = mix.GetValueOrDefault(kv.Key) + w * kv.Value / seenTwo;
         if (one is not null) foreach (var kv in one) mix[kv.Key] = mix.GetValueOrDefault(kv.Key) + (1 - w) * kv.Value / seenOne;
-        return mix.OrderByDescending(kv => kv.Value).Take(most).Select(kv =>
+        seen = seenOne;
+        return mix;
+    }
+
+    /// <summary>
+    /// The likeliest chords to follow <paramref name="last"/> (after <paramref name="before"/>), with how often (0 to 1).
+    /// What followed both chords and what followed the last one alone are blended, the two-chord count weighing more
+    /// the more it has seen: on 77 gospel, jazz and soul packs, each guessed from the others with their chords read as the
+    /// app reads them, the chord played next was the first guess 11 times in 100 and among the first six 32 (10 and 30
+    /// using one count or the other; tools/MusicOrganiser.TheoryBench --learn). With a <see cref="Prior"/>, your own counts
+    /// are blended with it, yours weighing more the more you have: on gospel charts guessed from 40 other gospel charts
+    /// the first guess was right 18 times in 100 alone and 24 starting from ChoCo's jazz, and guessed from about 900
+    /// it was 26 alone and 27 with it (--corpus).
+    /// </summary>
+    public IReadOnlyList<(ChordSymbol Chord, double Share)> Next(ChordSymbol last, ChordSymbol? before, int most = 6)
+    {
+        var mix = Shares(last, before, out var seen);
+        if (Prior is { } prior)
+        {
+            var from = prior.Shares(last, before, out var priorSeen);
+            if (priorSeen > 0)
+            {
+                var mine = seen / (seen + PriorStrength);
+                foreach (var key in mix.Keys.ToList()) mix[key] *= mine;
+                foreach (var kv in from) mix[kv.Key] = mix.GetValueOrDefault(kv.Key) + (1 - mine) * kv.Value;
+            }
+        }
+        return mix.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal).Take(most).Select(kv =>
         {
             var colon = kv.Key.IndexOf(':');
             var root = ChordSymbol.Mod(last.Root + int.Parse(kv.Key[..colon]));

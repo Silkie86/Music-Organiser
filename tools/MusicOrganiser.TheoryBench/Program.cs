@@ -19,7 +19,9 @@ if (args is ["--corpus", var corpus, ..] && File.Exists(corpus))
     var onlyAt = Array.IndexOf(args, "--only");
     if (onlyAt >= 0 && onlyAt + 1 < args.Length) CorpusBench.Only = args[onlyAt + 1];
     var chordKeyAt = Array.IndexOf(args, "--save-chord-key");
+    var chordMovesAt = Array.IndexOf(args, "--save-chord-moves");
     if (chordKeyAt >= 0 && chordKeyAt + 1 < args.Length) CorpusBench.SaveChordKey(corpus, args[chordKeyAt + 1]);
+    else if (chordMovesAt >= 0 && chordMovesAt + 1 < args.Length) CorpusBench.SaveChordMoves(corpus, args[chordMovesAt + 1]);
     else CorpusBench.Run(corpus);
     return;
 }

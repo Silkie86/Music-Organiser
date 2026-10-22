@@ -100,16 +100,36 @@ static class CorpusBench
         Score("gospel, learned from 40 other gospel charts", null, gospel, _ => few[i2++ % 5], folds);
         i2 = 0;
         Score("gospel, learned from 40 + ChoCo jazz", null, gospel, _ => few[i2++ % 5].Concat(jazzTrain).ToList(), folds);
+        // ChoCo's jazz as a starting point (ProgressionModel.Prior) the library's own counts outweigh as they grow.
+        var prior = MovesOf(jazzTrain);
+        foreach (var strength in new[] { 20.0, 200, 1000, 3000 })
+        {
+            i2 = 0;
+            Score($"gospel, 40 charts, ChoCo jazz as a prior ({strength})", null, gospel, _ => few[i2++ % 5], folds, prior, strength);
+            Score($"gospel, the other folds, ChoCo jazz as a prior ({strength})", null, gospel, test => gospel.Except(test).ToList(), folds, prior, strength);
+        }
+        Score("jazz, nothing of its own, ChoCo jazz as a prior", [], treebank, null, null, prior);
     }
 
-    static void Score(string name, List<Tune>? train, List<Tune> test, Func<List<Tune>, List<Tune>>? trainFor = null, List<List<Tune>>? folds = null)
+    static ProgressionModel MovesOf(IEnumerable<Tune> tunes) => ProgressionModel.Learn(tunes.Select(t => (IReadOnlyList<ChordSymbol>)Changes(t.Chords)));
+
+    /// <summary>--save-chord-moves: learns "what chord next?" from every ChoCo chart (never the Treebank) and writes its counts (ChordMoves.tsv).</summary>
+    public static void SaveChordMoves(string corpus, string to)
+    {
+        var tunes = Load(corpus).Where(t => t.Source != "treebank").ToList();
+        File.WriteAllText(to, MovesOf(tunes).Save(least: 2));
+        Console.WriteLine($"learned from {tunes.Count} charts, wrote {to}");
+    }
+
+    static void Score(string name, List<Tune>? train, List<Tune> test, Func<List<Tune>, List<Tune>>? trainFor = null, List<List<Tune>>? folds = null,
+                      ProgressionModel? prior = null, double strength = ProgressionModel.DefaultPriorStrength)
     {
         folds ??= [test];
         int n = 0, h1 = 0, h3 = 0, h6 = 0;
         foreach (var fold in folds)
         {
             var learnFrom = train ?? trainFor!(fold);
-            var model = ProgressionModel.Learn(learnFrom.Select(t => (IReadOnlyList<ChordSymbol>)Changes(t.Chords)));
+            var model = MovesOf(learnFrom).With(prior, strength);
             foreach (var t in fold)
             {
                 var c = Changes(t.Chords);
