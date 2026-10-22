@@ -146,6 +146,21 @@ dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- path/to/pop9
 dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --library "path/to/New Midi" --keylab --profiles pop.txt
 ```
 
+`--corpus <corpus.tsv>` checks the harmony ear against chord charts other people labelled: ChoCo (Real Book, iReal Pro
+jazz playlists and gospel/worship/soul forum charts, Weimar Jazz Database, Jazz Corpus; CC BY 4.0) and the Jazz Harmony
+Treebank (CC BY-NC-SA 4.0, used only to measure). It prints how often "what chord next?" names the chart's next chord,
+the key the app hears in each chart with no notes (`ChordKey`), the same key finder learned without the tunes it's
+tried on, and which chords lead into the next one against the Treebank's trees. `--only moves|keys|leads` runs one.
+`--save-chord-key <file>` learns `ChordKey` from every ChoCo chart with a key (never the Treebank) and writes its
+counts: that's how `src/MusicOrganiser.Core/Midi/Jazz/ChordKey.tsv` was made. `corpus_to_tsv.py <folder>` turns a
+ChoCo release (`<folder>/choco`) and the Treebank (`<folder>/jht/treebank.json`) into `<folder>/corpus.tsv`.
+
+```
+python3 tools/MusicOrganiser.TheoryBench/corpus_to_tsv.py path/to/data
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --corpus path/to/data/corpus.tsv
+dotnet run -c Release --project tools/MusicOrganiser.TheoryBench -- --corpus path/to/data/corpus.tsv --save-chord-key src/MusicOrganiser.Core/Midi/Jazz/ChordKey.tsv
+```
+
 `--ear` (with `--library`) counts which notes over which chords the melodies play, against other files' melodies moved
 into the key, next to how the app's ear rates them (`ChordScales.Sit`). It then scores each pack with an ear learned
 from the other packs only. `--save-ear ear.txt` saves the learned table, and `--ear-table ear.txt` tries it on POP909

@@ -64,6 +64,15 @@ public sealed class SectionHarmony
             key = new KeyEstimate(k.Tonic, k.Minor, 1);
             keyTyped = true;
         }
+        else if (notes.Count == 0 && lane.Count > 0)
+        {
+            // Only chords (the chord track, a typed chart): which key real tunes with these chords, held this long and
+            // moving this way, are in. Checked on charts experts labelled, this names the key far more often than the
+            // chords' notes do (ChordKey).
+            key = ChordKey.Of(lane.OrderBy(c => c.Start).ToList()) is { } guess
+                ? guess with { Confidence = Math.Max(guess.Confidence, MinKeyConfidence) }
+                : null;
+        }
         else
         {
             var chroma = new double[12];

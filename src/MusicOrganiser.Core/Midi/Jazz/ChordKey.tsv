@@ -1,0 +1,4162 @@
+# Key from chords: counts learned from ChoCo (Chord Corpus, de Berardinis et al., CC BY 4.0, github.com/smashub/choco).
+# Made by tools/MusicOrganiser.TheoryBench --save-chord-key. Degrees are semitones above the key's tonic.
+tunes	major	5603
+held	major	0:maj	150114.95
+first	major	0:maj	1812
+held	major	0:6	28978.55
+first	major	0:6	411
+held	major	0:maj7	49232.54
+first	major	0:maj7	1215
+held	major	0:m	2524.56
+first	major	0:m	27
+held	major	0:m6	858.07
+first	major	0:m6	3
+held	major	0:m7	5989.23
+first	major	0:m7	23
+held	major	0:7	45974.81
+first	major	0:7	347
+held	major	0:m7b5	174.46
+first	major	0:m7b5	1
+held	major	0:dim	1441.78
+first	major	0:dim	4
+held	major	0:dim7	346.92
+first	major	0:dim7	1
+held	major	0:sus4	1983.75
+first	major	0:sus4	19
+held	major	0:7sus4	2042.5
+first	major	0:7sus4	14
+held	major	0:+	815.84
+held	major	0:5	2.67
+held	major	1:maj	2148.95
+first	major	1:maj	2
+held	major	1:6	451.33
+first	major	1:6	2
+held	major	1:maj7	2927.22
+first	major	1:maj7	3
+held	major	1:m	271.77
+first	major	1:m	2
+held	major	1:m6	58
+held	major	1:m7	1422.3
+first	major	1:m7	7
+held	major	1:7	4972.78
+first	major	1:7	9
+held	major	1:m7b5	238.13
+first	major	1:m7b5	1
+held	major	1:dim	2266.59
+first	major	1:dim	1
+held	major	1:dim7	747.09
+held	major	1:sus4	54.67
+first	major	1:sus4	1
+held	major	1:7sus4	165.67
+held	major	1:+	97.33
+held	major	2:maj	6140.56
+first	major	2:maj	11
+held	major	2:6	410.9
+held	major	2:maj7	1907.9
+first	major	2:maj7	16
+held	major	2:m	14828.98
+first	major	2:m	54
+held	major	2:m6	1051.38
+held	major	2:m7	68106.85
+first	major	2:m7	304
+held	major	2:7	34553.5
+first	major	2:7	69
+held	major	2:m7b5	2619.69
+first	major	2:m7b5	17
+held	major	2:dim	258.54
+held	major	2:dim7	41.37
+held	major	2:sus4	325.5
+first	major	2:sus4	1
+held	major	2:7sus4	1071.5
+first	major	2:7sus4	2
+held	major	2:+	43
+held	major	3:maj	3495.61
+first	major	3:maj	10
+held	major	3:6	726.47
+first	major	3:6	3
+held	major	3:maj7	3784.53
+first	major	3:maj7	8
+held	major	3:m	634.97
+first	major	3:m	1
+held	major	3:m6	182
+first	major	3:m6	1
+held	major	3:m7	2591.99
+first	major	3:m7	7
+held	major	3:7	4997.3
+first	major	3:7	6
+held	major	3:m7b5	59.97
+held	major	3:dim	2678.33
+held	major	3:dim7	1765.03
+held	major	3:sus4	188.33
+first	major	3:sus4	1
+held	major	3:7sus4	415.67
+held	major	3:+	57
+held	major	4:maj	3369.23
+first	major	4:maj	6
+held	major	4:6	311
+first	major	4:6	1
+held	major	4:maj7	2108.71
+first	major	4:maj7	4
+held	major	4:m	7212.25
+first	major	4:m	16
+held	major	4:m6	194.8
+held	major	4:m7	23653.11
+first	major	4:m7	51
+held	major	4:7	18605.96
+first	major	4:7	14
+held	major	4:m7b5	3179.29
+first	major	4:m7b5	6
+held	major	4:dim	398.1
+held	major	4:dim7	129
+held	major	4:sus4	445.67
+held	major	4:7sus4	699.67
+first	major	4:7sus4	1
+held	major	4:+	333.12
+held	major	4:5	0.82
+held	major	5:maj	59604.85
+first	major	5:maj	129
+held	major	5:6	5871.23
+first	major	5:6	18
+held	major	5:maj7	20725.17
+first	major	5:maj7	83
+held	major	5:m	5077.97
+first	major	5:m	9
+held	major	5:m6	4148.09
+first	major	5:m6	4
+held	major	5:m7	7948.88
+first	major	5:m7	19
+held	major	5:7	24481
+first	major	5:7	39
+held	major	5:m7b5	135.69
+held	major	5:dim	373.42
+held	major	5:dim7	197.06
+held	major	5:sus4	396.33
+first	major	5:sus4	1
+held	major	5:7sus4	581
+first	major	5:7sus4	2
+held	major	5:+	167
+held	major	6:maj	1139.8
+first	major	6:maj	3
+held	major	6:6	163.92
+first	major	6:6	2
+held	major	6:maj7	1459.21
+first	major	6:maj7	1
+held	major	6:m	467.17
+held	major	6:m6	134
+first	major	6:m6	2
+held	major	6:m7	3298.96
+first	major	6:m7	13
+held	major	6:7	3553.65
+first	major	6:7	2
+held	major	6:m7b5	3047.54
+first	major	6:m7b5	20
+held	major	6:dim	2762.6
+first	major	6:dim	3
+held	major	6:dim7	1001.94
+first	major	6:dim7	2
+held	major	6:sus4	161.67
+held	major	6:7sus4	226
+first	major	6:7sus4	1
+held	major	6:+	19.61
+held	major	7:maj	32605.43
+first	major	7:maj	67
+held	major	7:6	1479.09
+first	major	7:6	1
+held	major	7:maj7	2707.93
+first	major	7:maj7	21
+held	major	7:m	1995.39
+first	major	7:m	5
+held	major	7:m6	744.69
+held	major	7:m7	11085.55
+first	major	7:m7	19
+held	major	7:7	103576.47
+first	major	7:7	128
+held	major	7:m7b5	357.02
+first	major	7:m7b5	6
+held	major	7:dim	586.11
+held	major	7:dim7	94.1
+held	major	7:sus4	2909.31
+first	major	7:sus4	3
+held	major	7:7sus4	7636.33
+first	major	7:7sus4	22
+held	major	7:+	888.67
+first	major	7:+	1
+held	major	7:5	0.5
+held	major	8:maj	2917.87
+first	major	8:maj	9
+held	major	8:6	377.33
+first	major	8:6	2
+held	major	8:maj7	4582.89
+first	major	8:maj7	9
+held	major	8:m	260.55
+held	major	8:m6	131.67
+held	major	8:m7	1113.65
+held	major	8:7	7048.54
+first	major	8:7	12
+held	major	8:m7b5	205.41
+held	major	8:dim	540.1
+held	major	8:dim7	374.31
+held	major	8:sus4	167.33
+held	major	8:7sus4	399.5
+held	major	8:+	118
+held	major	9:maj	4277.5
+first	major	9:maj	11
+held	major	9:6	329.17
+first	major	9:6	1
+held	major	9:maj7	1620.07
+first	major	9:maj7	7
+held	major	9:m	25114.06
+first	major	9:m	138
+held	major	9:m6	1649.69
+first	major	9:m6	10
+held	major	9:m7	32268.07
+first	major	9:m7	120
+held	major	9:7	33423.56
+first	major	9:7	35
+held	major	9:m7b5	522.29
+first	major	9:m7b5	2
+held	major	9:dim	473.95
+held	major	9:dim7	74.67
+held	major	9:sus4	330.64
+first	major	9:sus4	1
+held	major	9:7sus4	1164.33
+first	major	9:7sus4	2
+held	major	9:+	199
+held	major	10:maj	7632.76
+first	major	10:maj	15
+held	major	10:6	859.51
+first	major	10:6	2
+held	major	10:maj7	4923.19
+first	major	10:maj7	11
+held	major	10:m	552.07
+first	major	10:m	1
+held	major	10:m6	272.33
+held	major	10:m7	2200.62
+first	major	10:m7	6
+held	major	10:7	13791.58
+first	major	10:7	13
+held	major	10:m7b5	61.33
+held	major	10:dim	221.89
+held	major	10:dim7	92
+held	major	10:sus4	501.33
+held	major	10:7sus4	662.67
+first	major	10:7sus4	1
+held	major	10:+	59
+held	major	11:maj	1345.67
+first	major	11:maj	10
+held	major	11:6	184
+first	major	11:6	1
+held	major	11:maj7	1127.47
+first	major	11:maj7	4
+held	major	11:m	902.67
+held	major	11:m6	60
+held	major	11:m7	3901.01
+first	major	11:m7	12
+held	major	11:7	8760.23
+first	major	11:7	13
+held	major	11:m7b5	3318.1
+first	major	11:m7b5	14
+held	major	11:dim	331.11
+held	major	11:dim7	89.68
+held	major	11:sus4	50
+held	major	11:7sus4	658.83
+held	major	11:+	74
+held	major	11:5	4
+tunes	minor	876
+held	minor	0:maj	2207
+first	minor	0:maj	21
+held	minor	0:6	152.07
+first	minor	0:6	1
+held	minor	0:maj7	953.59
+first	minor	0:maj7	3
+held	minor	0:m	23173.7
+first	minor	0:m	272
+held	minor	0:m6	3090.28
+first	minor	0:m6	47
+held	minor	0:m7	27079.88
+first	minor	0:m7	332
+held	minor	0:7	3233.31
+first	minor	0:7	13
+held	minor	0:m7b5	117.44
+first	minor	0:m7b5	3
+held	minor	0:dim	96
+first	minor	0:dim	1
+held	minor	0:dim7	15
+held	minor	0:sus4	311.91
+first	minor	0:sus4	1
+held	minor	0:7sus4	709.73
+first	minor	0:7sus4	3
+held	minor	0:+	26
+held	minor	1:maj	443.98
+held	minor	1:6	75.33
+first	minor	1:6	1
+held	minor	1:maj7	1714.38
+first	minor	1:maj7	4
+held	minor	1:m	251.33
+held	minor	1:m6	134.17
+held	minor	1:m7	1074.86
+first	minor	1:m7	2
+held	minor	1:7	1559.53
+first	minor	1:7	3
+held	minor	1:m7b5	16.47
+first	minor	1:m7b5	1
+held	minor	1:dim	12
+held	minor	1:dim7	4
+held	minor	1:sus4	6
+held	minor	1:7sus4	132
+held	minor	2:maj	60.5
+held	minor	2:6	16
+held	minor	2:maj7	101.75
+held	minor	2:m	381.02
+first	minor	2:m	1
+held	minor	2:m6	84
+held	minor	2:m7	2588.33
+first	minor	2:m7	2
+held	minor	2:7	2551.57
+first	minor	2:7	4
+held	minor	2:m7b5	2969.08
+first	minor	2:m7b5	13
+held	minor	2:dim	99.33
+held	minor	2:dim7	3.37
+held	minor	2:sus4	6
+held	minor	2:7sus4	101
+held	minor	2:+	10
+held	minor	3:maj	4806.27
+first	minor	3:maj	10
+held	minor	3:6	827.61
+first	minor	3:6	1
+held	minor	3:maj7	3225.57
+first	minor	3:maj7	8
+held	minor	3:m	563.76
+first	minor	3:m	3
+held	minor	3:m6	52
+held	minor	3:m7	1263.26
+first	minor	3:m7	4
+held	minor	3:7	1838.86
+first	minor	3:7	3
+held	minor	3:m7b5	47.39
+held	minor	3:dim	21.33
+held	minor	3:dim7	40.5
+held	minor	3:sus4	127
+held	minor	3:7sus4	200.83
+held	minor	3:+	92
+first	minor	3:+	1
+held	minor	4:maj	42
+held	minor	4:maj7	255.37
+held	minor	4:m	140.67
+held	minor	4:m6	8
+held	minor	4:m7	654
+first	minor	4:m7	1
+held	minor	4:7	566.47
+first	minor	4:7	3
+held	minor	4:m7b5	198.19
+held	minor	4:dim	16.6
+held	minor	4:dim7	31.11
+held	minor	4:sus4	24
+first	minor	4:sus4	1
+held	minor	4:7sus4	10
+held	minor	4:+	8
+held	minor	5:maj	2215.33
+first	minor	5:maj	2
+held	minor	5:6	268.05
+first	minor	5:6	1
+held	minor	5:maj7	509.59
+first	minor	5:maj7	1
+held	minor	5:m	4163.81
+first	minor	5:m	5
+held	minor	5:m6	973.82
+first	minor	5:m6	2
+held	minor	5:m7	8439.64
+first	minor	5:m7	22
+held	minor	5:7	4710.18
+first	minor	5:7	1
+held	minor	5:m7b5	134.61
+first	minor	5:m7b5	1
+held	minor	5:dim	11
+held	minor	5:dim7	6
+held	minor	5:sus4	191
+held	minor	5:7sus4	475.33
+held	minor	5:+	2
+held	minor	6:maj	151.58
+held	minor	6:6	68.25
+held	minor	6:maj7	331
+held	minor	6:m	59.67
+held	minor	6:m6	12
+held	minor	6:m7	182.23
+held	minor	6:7	918.12
+first	minor	6:7	2
+held	minor	6:m7b5	69.31
+first	minor	6:m7b5	1
+held	minor	6:dim	45.73
+held	minor	6:dim7	122
+held	minor	6:7sus4	40
+held	minor	6:+	2
+held	minor	7:maj	1564.69
+held	minor	7:6	26
+held	minor	7:maj7	257.44
+held	minor	7:m	1321.47
+first	minor	7:m	1
+held	minor	7:m6	64.5
+first	minor	7:m6	1
+held	minor	7:m7	4677.4
+first	minor	7:m7	4
+held	minor	7:7	14133.58
+first	minor	7:7	11
+held	minor	7:m7b5	482.17
+first	minor	7:m7b5	1
+held	minor	7:dim	6
+held	minor	7:dim7	28
+held	minor	7:sus4	431
+first	minor	7:sus4	2
+held	minor	7:7sus4	657
+held	minor	7:+	38.5
+held	minor	8:maj	5000.59
+first	minor	8:maj	10
+held	minor	8:6	406.66
+held	minor	8:maj7	5926.58
+first	minor	8:maj7	11
+held	minor	8:m	182.31
+held	minor	8:m6	156.47
+held	minor	8:m7	679.55
+first	minor	8:m7	1
+held	minor	8:7	3036.69
+first	minor	8:7	3
+held	minor	8:m7b5	53.27
+held	minor	8:dim	6
+held	minor	8:dim7	36.5
+held	minor	8:sus4	42
+held	minor	8:7sus4	52
+held	minor	8:+	12
+held	minor	9:maj	95.1
+held	minor	9:6	36
+held	minor	9:maj7	414.54
+held	minor	9:m	60.17
+held	minor	9:m7	862
+first	minor	9:m7	2
+held	minor	9:7	884.66
+held	minor	9:m7b5	933.78
+first	minor	9:m7b5	6
+held	minor	9:dim	42.5
+held	minor	9:dim7	90.4
+held	minor	9:sus4	1
+held	minor	9:7sus4	162.17
+held	minor	9:+	1
+held	minor	10:maj	5931.82
+first	minor	10:maj	4
+held	minor	10:6	329.67
+first	minor	10:6	1
+held	minor	10:maj7	759.58
+first	minor	10:maj7	3
+held	minor	10:m	368.73
+first	minor	10:m	3
+held	minor	10:m6	201.04
+held	minor	10:m7	1850.18
+first	minor	10:m7	3
+held	minor	10:7	3817.85
+first	minor	10:7	3
+held	minor	10:m7b5	13.58
+held	minor	10:dim	8
+held	minor	10:dim7	11
+held	minor	10:sus4	305.67
+first	minor	10:sus4	1
+held	minor	10:7sus4	1051.17
+held	minor	10:+	18
+held	minor	11:maj	176.34
+held	minor	11:6	10
+held	minor	11:maj7	513.22
+held	minor	11:m	58.67
+held	minor	11:m7	377
+first	minor	11:m7	2
+held	minor	11:7	593.2
+first	minor	11:7	1
+held	minor	11:m7b5	68
+first	minor	11:m7b5	1
+held	minor	11:dim	101.5
+held	minor	11:dim7	93.84
+held	minor	11:sus4	6
+held	minor	11:7sus4	110.33
+held	minor	11:+	77.07
+move	major	0:maj	0:maj	8854
+move	major	0:maj	0:6	413
+move	major	0:maj	0:maj7	760
+move	major	0:maj	0:m	78
+move	major	0:maj	0:m6	17
+move	major	0:maj	0:m7	67
+move	major	0:maj	0:7	2215
+move	major	0:maj	0:dim	300
+move	major	0:maj	0:sus4	284
+move	major	0:maj	0:7sus4	14
+move	major	0:maj	0:+	162
+move	major	0:maj	1:maj	39
+move	major	0:maj	1:maj7	17
+move	major	0:maj	1:7	75
+move	major	0:maj	1:dim	422
+move	major	0:maj	1:dim7	34
+move	major	0:maj	2:maj	353
+move	major	0:maj	2:m	1053
+move	major	0:maj	2:m6	38
+move	major	0:maj	2:m7	1657
+move	major	0:maj	2:7	735
+move	major	0:maj	2:m7b5	21
+move	major	0:maj	2:dim	10
+move	major	0:maj	2:sus4	13
+move	major	0:maj	2:7sus4	15
+move	major	0:maj	3:maj	92
+move	major	0:maj	3:6	22
+move	major	0:maj	3:maj7	19
+move	major	0:maj	3:m	16
+move	major	0:maj	3:m6	9
+move	major	0:maj	3:m7	19
+move	major	0:maj	3:7	54
+move	major	0:maj	3:dim	297
+move	major	0:maj	3:dim7	49
+move	major	0:maj	4:maj	152
+move	major	0:maj	4:m	739
+move	major	0:maj	4:m7	430
+move	major	0:maj	4:7	685
+move	major	0:maj	4:m7b5	50
+move	major	0:maj	4:dim	106
+move	major	0:maj	4:+	30
+move	major	0:maj	5:maj	5636
+move	major	0:maj	5:6	206
+move	major	0:maj	5:maj7	275
+move	major	0:maj	5:m	162
+move	major	0:maj	5:m6	175
+move	major	0:maj	5:m7	73
+move	major	0:maj	5:7	598
+move	major	0:maj	5:dim	15
+move	major	0:maj	5:sus4	18
+move	major	0:maj	5:7sus4	12
+move	major	0:maj	6:maj7	12
+move	major	0:maj	6:m7	50
+move	major	0:maj	6:7	69
+move	major	0:maj	6:m7b5	67
+move	major	0:maj	6:dim	66
+move	major	0:maj	6:dim7	14
+move	major	0:maj	7:maj	3046
+move	major	0:maj	7:6	31
+move	major	0:maj	7:maj7	9
+move	major	0:maj	7:m	103
+move	major	0:maj	7:m6	67
+move	major	0:maj	7:m7	325
+move	major	0:maj	7:7	3739
+move	major	0:maj	7:dim	72
+move	major	0:maj	7:sus4	113
+move	major	0:maj	7:7sus4	122
+move	major	0:maj	7:+	98
+move	major	0:maj	8:maj	75
+move	major	0:maj	8:maj7	15
+move	major	0:maj	8:7	222
+move	major	0:maj	8:dim	30
+move	major	0:maj	9:maj	119
+move	major	0:maj	9:m	1668
+move	major	0:maj	9:m6	46
+move	major	0:maj	9:m7	1252
+move	major	0:maj	9:7	1086
+move	major	0:maj	9:dim	67
+move	major	0:maj	9:+	11
+move	major	0:maj	10:maj	708
+move	major	0:maj	10:6	30
+move	major	0:maj	10:maj7	76
+move	major	0:maj	10:7	192
+move	major	0:maj	10:dim	25
+move	major	0:maj	11:maj	96
+move	major	0:maj	11:m	32
+move	major	0:maj	11:m7	87
+move	major	0:maj	11:7	181
+move	major	0:maj	11:m7b5	68
+move	major	0:maj	11:dim	20
+move	major	0:6	0:maj	370
+move	major	0:6	0:6	1006
+move	major	0:6	0:maj7	444
+move	major	0:6	0:m6	15
+move	major	0:6	0:m7	64
+move	major	0:6	0:7	521
+move	major	0:6	0:dim	45
+move	major	0:6	0:dim7	15
+move	major	0:6	0:7sus4	26
+move	major	0:6	0:+	66
+move	major	0:6	1:6	24
+move	major	0:6	1:maj7	9
+move	major	0:6	1:7	43
+move	major	0:6	1:dim	156
+move	major	0:6	1:dim7	56
+move	major	0:6	2:m	32
+move	major	0:6	2:m6	10
+move	major	0:6	2:m7	1025
+move	major	0:6	2:7	169
+move	major	0:6	2:m7b5	23
+move	major	0:6	3:m7	30
+move	major	0:6	3:7	31
+move	major	0:6	3:dim	89
+move	major	0:6	3:dim7	49
+move	major	0:6	4:m7	198
+move	major	0:6	4:7	172
+move	major	0:6	4:m7b5	59
+move	major	0:6	5:maj	79
+move	major	0:6	5:6	102
+move	major	0:6	5:maj7	115
+move	major	0:6	5:m	10
+move	major	0:6	5:m6	50
+move	major	0:6	5:m7	68
+move	major	0:6	5:7	299
+move	major	0:6	6:m7	25
+move	major	0:6	6:7	32
+move	major	0:6	6:m7b5	72
+move	major	0:6	6:dim	21
+move	major	0:6	6:dim7	12
+move	major	0:6	7:maj	36
+move	major	0:6	7:6	10
+move	major	0:6	7:maj7	9
+move	major	0:6	7:m	8
+move	major	0:6	7:m7	284
+move	major	0:6	7:7	532
+move	major	0:6	7:7sus4	82
+move	major	0:6	7:+	13
+move	major	0:6	8:7	115
+move	major	0:6	9:m	36
+move	major	0:6	9:m6	22
+move	major	0:6	9:m7	690
+move	major	0:6	9:7	556
+move	major	0:6	10:6	66
+move	major	0:6	10:maj7	17
+move	major	0:6	10:m7	23
+move	major	0:6	10:7	106
+move	major	0:6	11:6	12
+move	major	0:6	11:m7	67
+move	major	0:6	11:7	113
+move	major	0:6	11:m7b5	80
+move	major	0:6	11:7sus4	11
+move	major	0:maj7	0:maj	202
+move	major	0:maj7	0:6	841
+move	major	0:maj7	0:maj7	1809
+move	major	0:maj7	0:m	19
+move	major	0:maj7	0:m6	12
+move	major	0:maj7	0:m7	210
+move	major	0:maj7	0:7	623
+move	major	0:maj7	0:dim	29
+move	major	0:maj7	0:dim7	38
+move	major	0:maj7	0:sus4	12
+move	major	0:maj7	0:7sus4	31
+move	major	0:maj7	0:+	22
+move	major	0:maj7	1:maj7	52
+move	major	0:maj7	1:m7	43
+move	major	0:maj7	1:7	116
+move	major	0:maj7	1:m7b5	8
+move	major	0:maj7	1:dim	175
+move	major	0:maj7	1:dim7	167
+move	major	0:maj7	2:maj	14
+move	major	0:maj7	2:maj7	31
+move	major	0:maj7	2:m	38
+move	major	0:maj7	2:m6	29
+move	major	0:maj7	2:m7	1525
+move	major	0:maj7	2:7	254
+move	major	0:maj7	2:m7b5	65
+move	major	0:maj7	2:7sus4	13
+move	major	0:maj7	3:maj	8
+move	major	0:maj7	3:maj7	81
+move	major	0:maj7	3:m6	10
+move	major	0:maj7	3:m7	109
+move	major	0:maj7	3:7	125
+move	major	0:maj7	3:dim	78
+move	major	0:maj7	3:dim7	141
+move	major	0:maj7	4:maj7	15
+move	major	0:maj7	4:m	33
+move	major	0:maj7	4:m7	491
+move	major	0:maj7	4:7	256
+move	major	0:maj7	4:m7b5	152
+move	major	0:maj7	4:7sus4	8
+move	major	0:maj7	5:maj	226
+move	major	0:maj7	5:6	42
+move	major	0:maj7	5:maj7	761
+move	major	0:maj7	5:m	34
+move	major	0:maj7	5:m6	102
+move	major	0:maj7	5:m7	221
+move	major	0:maj7	5:7	589
+move	major	0:maj7	5:7sus4	19
+move	major	0:maj7	6:m7	102
+move	major	0:maj7	6:7	125
+move	major	0:maj7	6:m7b5	167
+move	major	0:maj7	7:maj	68
+move	major	0:maj7	7:maj7	33
+move	major	0:maj7	7:m	14
+move	major	0:maj7	7:m6	15
+move	major	0:maj7	7:m7	568
+move	major	0:maj7	7:7	431
+move	major	0:maj7	7:sus4	17
+move	major	0:maj7	7:7sus4	278
+move	major	0:maj7	7:+	10
+move	major	0:maj7	8:maj	8
+move	major	0:maj7	8:maj7	72
+move	major	0:maj7	8:m7	10
+move	major	0:maj7	8:7	68
+move	major	0:maj7	8:dim7	12
+move	major	0:maj7	9:maj7	20
+move	major	0:maj7	9:m	130
+move	major	0:maj7	9:m7	1533
+move	major	0:maj7	9:7	914
+move	major	0:maj7	9:7sus4	17
+move	major	0:maj7	10:maj	13
+move	major	0:maj7	10:maj7	199
+move	major	0:maj7	10:m7	59
+move	major	0:maj7	10:7	258
+move	major	0:maj7	10:7sus4	8
+move	major	0:maj7	11:maj7	30
+move	major	0:maj7	11:m	24
+move	major	0:maj7	11:m7	202
+move	major	0:maj7	11:7	274
+move	major	0:maj7	11:m7b5	302
+move	major	0:maj7	11:dim	10
+move	major	0:maj7	11:7sus4	10
+move	major	0:maj7	11:+	9
+move	major	0:m	0:maj	31
+move	major	0:m	0:maj7	9
+move	major	0:m	0:m	234
+move	major	0:m	0:m6	20
+move	major	0:m	0:m7	62
+move	major	0:m	0:7	13
+move	major	0:m	1:maj	11
+move	major	0:m	2:m7	12
+move	major	0:m	2:7	24
+move	major	0:m	2:m7b5	15
+move	major	0:m	3:7	11
+move	major	0:m	5:maj	33
+move	major	0:m	5:m	26
+move	major	0:m	5:m7	14
+move	major	0:m	5:7	49
+move	major	0:m	7:maj	33
+move	major	0:m	7:m	10
+move	major	0:m	7:m7	29
+move	major	0:m	7:7	40
+move	major	0:m	8:maj	31
+move	major	0:m	8:maj7	8
+move	major	0:m	10:maj	33
+move	major	0:m	10:7	12
+move	major	0:m	11:m	11
+move	major	0:m6	0:maj	9
+move	major	0:m6	0:m	15
+move	major	0:m6	0:m6	13
+move	major	0:m6	0:m7	34
+move	major	0:m6	2:m7	9
+move	major	0:m6	2:7	30
+move	major	0:m6	2:m7b5	22
+move	major	0:m6	5:m	8
+move	major	0:m6	5:m7	9
+move	major	0:m6	5:7	8
+move	major	0:m6	7:maj	17
+move	major	0:m6	8:7	14
+move	major	0:m6	11:m7	8
+move	major	0:m7	0:6	8
+move	major	0:m7	0:maj7	36
+move	major	0:m7	0:m6	73
+move	major	0:m7	0:m7	215
+move	major	0:m7	0:7	16
+move	major	0:m7	1:maj7	24
+move	major	0:m7	1:m7	9
+move	major	0:m7	1:7	16
+move	major	0:m7	2:m7	101
+move	major	0:m7	2:7	33
+move	major	0:m7	2:m7b5	17
+move	major	0:m7	3:maj	11
+move	major	0:m7	3:m7	22
+move	major	0:m7	3:7	16
+move	major	0:m7	3:7sus4	20
+move	major	0:m7	5:maj	15
+move	major	0:m7	5:maj7	9
+move	major	0:m7	5:m7	172
+move	major	0:m7	5:7	607
+move	major	0:m7	5:7sus4	21
+move	major	0:m7	6:7	10
+move	major	0:m7	7:maj	8
+move	major	0:m7	7:m7	35
+move	major	0:m7	7:7	36
+move	major	0:m7	7:7sus4	10
+move	major	0:m7	7:+	9
+move	major	0:m7	8:maj	38
+move	major	0:m7	8:maj7	15
+move	major	0:m7	8:7	36
+move	major	0:m7	9:m7	21
+move	major	0:m7	9:m7b5	32
+move	major	0:m7	10:maj7	15
+move	major	0:m7	10:m7	32
+move	major	0:m7	11:m7	29
+move	major	0:m7	11:7	15
+move	major	0:m7	11:m7b5	14
+move	major	0:7	0:maj	251
+move	major	0:7	0:6	127
+move	major	0:7	0:maj7	37
+move	major	0:7	0:m7	59
+move	major	0:7	0:7	2911
+move	major	0:7	0:dim	30
+move	major	0:7	0:7sus4	36
+move	major	0:7	0:+	30
+move	major	0:7	1:maj	9
+move	major	0:7	1:maj7	15
+move	major	0:7	1:m7	8
+move	major	0:7	1:7	177
+move	major	0:7	1:dim	19
+move	major	0:7	2:maj	8
+move	major	0:7	2:maj7	10
+move	major	0:7	2:m	41
+move	major	0:7	2:m7	261
+move	major	0:7	2:7	81
+move	major	0:7	2:m7b5	22
+move	major	0:7	3:maj	19
+move	major	0:7	3:maj7	14
+move	major	0:7	3:7	42
+move	major	0:7	4:m	12
+move	major	0:7	4:m7	147
+move	major	0:7	4:7	48
+move	major	0:7	4:m7b5	33
+move	major	0:7	5:maj	2681
+move	major	0:7	5:6	585
+move	major	0:7	5:maj7	1999
+move	major	0:7	5:m	107
+move	major	0:7	5:m6	24
+move	major	0:7	5:m7	250
+move	major	0:7	5:7	2481
+move	major	0:7	5:m7b5	8
+move	major	0:7	5:dim	8
+move	major	0:7	5:dim7	8
+move	major	0:7	5:sus4	10
+move	major	0:7	5:7sus4	18
+move	major	0:7	6:m7	43
+move	major	0:7	6:7	83
+move	major	0:7	6:m7b5	50
+move	major	0:7	6:dim	13
+move	major	0:7	7:maj	32
+move	major	0:7	7:m	23
+move	major	0:7	7:m6	18
+move	major	0:7	7:m7	326
+move	major	0:7	7:7	733
+move	major	0:7	7:7sus4	22
+move	major	0:7	8:maj	17
+move	major	0:7	8:m7	15
+move	major	0:7	8:7	49
+move	major	0:7	9:maj	11
+move	major	0:7	9:m	36
+move	major	0:7	9:m7	102
+move	major	0:7	9:7	376
+move	major	0:7	9:m7b5	17
+move	major	0:7	10:maj	102
+move	major	0:7	10:maj7	11
+move	major	0:7	10:7	255
+move	major	0:7	10:7sus4	15
+move	major	0:7	11:maj7	20
+move	major	0:7	11:m7	42
+move	major	0:7	11:7	264
+move	major	0:7	11:m7b5	20
+move	major	0:m7b5	5:7	32
+move	major	0:dim	0:maj	155
+move	major	0:dim	0:6	36
+move	major	0:dim	0:maj7	26
+move	major	0:dim	0:7	23
+move	major	0:dim	0:dim	13
+move	major	0:dim	2:m	17
+move	major	0:dim	2:m7	138
+move	major	0:dim	5:m	13
+move	major	0:dim	5:m6	15
+move	major	0:dim	7:7	110
+move	major	0:dim	9:7	22
+move	major	0:dim7	0:6	46
+move	major	0:dim7	0:maj7	25
+move	major	0:dim7	0:dim7	11
+move	major	0:dim7	1:m7	10
+move	major	0:dim7	2:m7	27
+move	major	0:sus4	0:maj	368
+move	major	0:sus4	0:maj7	25
+move	major	0:sus4	0:7	16
+move	major	0:sus4	0:sus4	100
+move	major	0:sus4	2:m7	26
+move	major	0:sus4	4:m7	19
+move	major	0:sus4	5:maj	21
+move	major	0:sus4	5:6	10
+move	major	0:sus4	7:7sus4	8
+move	major	0:sus4	9:m7	40
+move	major	0:7sus4	0:maj	11
+move	major	0:7sus4	0:6	14
+move	major	0:7sus4	0:7	204
+move	major	0:7sus4	0:7sus4	135
+move	major	0:7sus4	2:m7	11
+move	major	0:7sus4	5:maj	50
+move	major	0:7sus4	5:maj7	70
+move	major	0:7sus4	5:m7	20
+move	major	0:7sus4	9:7sus4	37
+move	major	0:+	0:maj	55
+move	major	0:+	0:6	107
+move	major	0:+	0:maj7	14
+move	major	0:+	0:7	12
+move	major	0:+	2:m7	16
+move	major	0:+	5:maj	67
+move	major	0:+	5:6	10
+move	major	0:+	5:maj7	19
+move	major	0:+	9:m	12
+move	major	1:maj	0:maj	42
+move	major	1:maj	1:maj	133
+move	major	1:maj	1:maj7	10
+move	major	1:maj	1:7	21
+move	major	1:maj	1:+	12
+move	major	1:maj	2:maj	32
+move	major	1:maj	2:7	11
+move	major	1:maj	2:dim	17
+move	major	1:maj	3:maj	27
+move	major	1:maj	3:m	10
+move	major	1:maj	3:m7	11
+move	major	1:maj	3:7	11
+move	major	1:maj	5:maj	8
+move	major	1:maj	5:m7	8
+move	major	1:maj	6:maj	67
+move	major	1:maj	6:maj7	17
+move	major	1:maj	6:m7	10
+move	major	1:maj	6:7	9
+move	major	1:maj	7:maj	8
+move	major	1:maj	7:7	9
+move	major	1:maj	8:maj	52
+move	major	1:maj	8:7	28
+move	major	1:maj	10:m	16
+move	major	1:maj	10:m7	19
+move	major	1:maj	11:maj	17
+move	major	1:6	0:6	22
+move	major	1:6	0:maj7	11
+move	major	1:6	1:6	9
+move	major	1:6	1:7	9
+move	major	1:6	10:7	8
+move	major	1:6	11:maj	20
+move	major	1:maj7	0:maj	20
+move	major	1:maj7	0:6	43
+move	major	1:maj7	0:maj7	146
+move	major	1:maj7	0:m7	34
+move	major	1:maj7	0:7	22
+move	major	1:maj7	1:6	16
+move	major	1:maj7	1:maj7	123
+move	major	1:maj7	1:m7	24
+move	major	1:maj7	1:7	20
+move	major	1:maj7	2:maj7	9
+move	major	1:maj7	2:m7	61
+move	major	1:maj7	2:7	9
+move	major	1:maj7	2:m7b5	21
+move	major	1:maj7	3:m7	37
+move	major	1:maj7	3:7	9
+move	major	1:maj7	4:m7	8
+move	major	1:maj7	4:7	12
+move	major	1:maj7	5:maj7	10
+move	major	1:maj7	5:m7	14
+move	major	1:maj7	5:7	8
+move	major	1:maj7	6:maj7	47
+move	major	1:maj7	6:m7	12
+move	major	1:maj7	6:7	40
+move	major	1:maj7	7:m7	24
+move	major	1:maj7	7:7	44
+move	major	1:maj7	7:m7b5	11
+move	major	1:maj7	8:maj7	13
+move	major	1:maj7	8:7sus4	20
+move	major	1:maj7	10:m7	25
+move	major	1:maj7	11:maj7	11
+move	major	1:m	4:maj	12
+move	major	1:m	6:7	11
+move	major	1:m	11:maj	21
+move	major	1:m7	0:maj7	21
+move	major	1:m7	0:7	8
+move	major	1:m7	1:m7	25
+move	major	1:m7	2:maj	9
+move	major	1:m7	2:maj7	8
+move	major	1:m7	2:m7	20
+move	major	1:m7	4:maj7	9
+move	major	1:m7	4:m7	8
+move	major	1:m7	6:m7	108
+move	major	1:m7	6:7	249
+move	major	1:m7	8:m7	8
+move	major	1:m7	9:maj7	9
+move	major	1:m7	9:7	8
+move	major	1:m7	11:7	11
+move	major	1:7	0:maj	163
+move	major	1:7	0:6	160
+move	major	1:7	0:maj7	474
+move	major	1:7	0:m7	53
+move	major	1:7	0:7	324
+move	major	1:7	1:7	80
+move	major	1:7	2:m7	50
+move	major	1:7	2:7	63
+move	major	1:7	2:m7b5	13
+move	major	1:7	3:maj7	10
+move	major	1:7	3:m7	10
+move	major	1:7	3:7	9
+move	major	1:7	4:maj7	19
+move	major	1:7	4:m7	16
+move	major	1:7	4:7	11
+move	major	1:7	5:maj	8
+move	major	1:7	5:maj7	9
+move	major	1:7	5:7	18
+move	major	1:7	6:maj	51
+move	major	1:7	6:6	10
+move	major	1:7	6:maj7	100
+move	major	1:7	6:m7	82
+move	major	1:7	6:7	62
+move	major	1:7	6:m7b5	8
+move	major	1:7	7:m7	36
+move	major	1:7	7:7	43
+move	major	1:7	8:m7	16
+move	major	1:7	9:m7	10
+move	major	1:7	9:7	13
+move	major	1:7	10:7	19
+move	major	1:7	11:m7	11
+move	major	1:7	11:7	22
+move	major	1:m7b5	6:7	53
+move	major	1:m7b5	6:m7b5	10
+move	major	1:dim	0:7	8
+move	major	1:dim	2:m	62
+move	major	1:dim	2:m7	602
+move	major	1:dim	2:7	25
+move	major	1:dim	2:m7b5	17
+move	major	1:dim	5:6	13
+move	major	1:dim	7:maj	12
+move	major	1:dim	7:6	9
+move	major	1:dim	7:m7	11
+move	major	1:dim	7:7	173
+move	major	1:dim7	2:m7	252
+move	major	1:dim7	7:7	19
+move	major	1:dim7	9:7	10
+move	major	1:sus4	6:sus4	9
+move	major	1:7sus4	1:7	10
+move	major	1:7sus4	1:7sus4	14
+move	major	1:+	1:6	8
+move	major	1:+	2:m7	16
+move	major	2:maj	0:maj	256
+move	major	2:maj	0:maj7	13
+move	major	2:maj	1:maj	18
+move	major	2:maj	2:maj	199
+move	major	2:maj	2:maj7	16
+move	major	2:maj	2:m	13
+move	major	2:maj	2:m7	27
+move	major	2:maj	2:7	55
+move	major	2:maj	2:dim	8
+move	major	2:maj	2:sus4	19
+move	major	2:maj	3:maj	20
+move	major	2:maj	3:maj7	10
+move	major	2:maj	3:dim	9
+move	major	2:maj	4:maj	43
+move	major	2:maj	4:m	37
+move	major	2:maj	4:m7	59
+move	major	2:maj	4:7	42
+move	major	2:maj	5:maj	60
+move	major	2:maj	5:maj7	15
+move	major	2:maj	5:m7	8
+move	major	2:maj	5:7	10
+move	major	2:maj	6:m	23
+move	major	2:maj	7:maj	375
+move	major	2:maj	7:maj7	9
+move	major	2:maj	7:m	11
+move	major	2:maj	7:m7	26
+move	major	2:maj	7:7	87
+move	major	2:maj	7:sus4	12
+move	major	2:maj	7:7sus4	23
+move	major	2:maj	9:maj	147
+move	major	2:maj	9:6	8
+move	major	2:maj	9:m	115
+move	major	2:maj	9:m7	29
+move	major	2:maj	9:7	29
+move	major	2:maj	11:m	19
+move	major	2:maj	11:m7	35
+move	major	2:maj	11:7	8
+move	major	2:6	2:maj7	12
+move	major	2:6	2:m7	16
+move	major	2:6	2:7	8
+move	major	2:6	7:7	8
+move	major	2:6	9:6	15
+move	major	2:maj7	0:maj	8
+move	major	2:maj7	0:maj7	25
+move	major	2:maj7	1:maj7	15
+move	major	2:maj7	1:m7	23
+move	major	2:maj7	2:6	16
+move	major	2:maj7	2:maj7	37
+move	major	2:maj7	2:m7	45
+move	major	2:maj7	2:7	29
+move	major	2:maj7	2:m7b5	8
+move	major	2:maj7	3:7	10
+move	major	2:maj7	4:maj	41
+move	major	2:maj7	4:m7	41
+move	major	2:maj7	4:7	13
+move	major	2:maj7	6:m7	16
+move	major	2:maj7	7:maj7	51
+move	major	2:maj7	7:m	8
+move	major	2:maj7	7:m7	9
+move	major	2:maj7	7:7	35
+move	major	2:maj7	8:7	12
+move	major	2:maj7	9:m7	9
+move	major	2:maj7	11:maj7	8
+move	major	2:maj7	11:m7	38
+move	major	2:maj7	11:7	8
+move	major	2:m	0:maj	620
+move	major	2:m	0:maj7	19
+move	major	2:m	0:7	10
+move	major	2:m	0:dim	15
+move	major	2:m	1:7	26
+move	major	2:m	1:dim	23
+move	major	2:m	1:+	25
+move	major	2:m	2:maj	24
+move	major	2:m	2:m	455
+move	major	2:m	2:m6	57
+move	major	2:m	2:m7	330
+move	major	2:m	2:7	63
+move	major	2:m	2:m7b5	16
+move	major	2:m	3:dim	18
+move	major	2:m	4:maj	15
+move	major	2:m	4:m	206
+move	major	2:m	4:m7	29
+move	major	2:m	4:7	118
+move	major	2:m	4:dim	8
+move	major	2:m	5:maj	354
+move	major	2:m	5:6	17
+move	major	2:m	5:m	88
+move	major	2:m	5:m6	30
+move	major	2:m	5:7	14
+move	major	2:m	7:maj	353
+move	major	2:m	7:6	8
+move	major	2:m	7:m	68
+move	major	2:m	7:m7	17
+move	major	2:m	7:7	1163
+move	major	2:m	7:sus4	51
+move	major	2:m	7:7sus4	33
+move	major	2:m	7:+	11
+move	major	2:m	8:7	10
+move	major	2:m	9:maj	34
+move	major	2:m	9:m	206
+move	major	2:m	9:m7	19
+move	major	2:m	9:7	176
+move	major	2:m	9:+	18
+move	major	2:m	10:maj	83
+move	major	2:m	10:7	35
+move	major	2:m	11:7	18
+move	major	2:m6	0:maj	51
+move	major	2:m6	0:maj7	27
+move	major	2:m6	2:m	14
+move	major	2:m6	2:m6	14
+move	major	2:m6	2:m7	51
+move	major	2:m6	3:dim	15
+move	major	2:m6	4:maj	11
+move	major	2:m6	4:m7	16
+move	major	2:m6	4:7	35
+move	major	2:m6	7:7	73
+move	major	2:m6	7:7sus4	12
+move	major	2:m6	9:m	12
+move	major	2:m6	9:m7	13
+move	major	2:m7	0:maj	912
+move	major	2:m7	0:6	210
+move	major	2:m7	0:maj7	556
+move	major	2:m7	0:m7	111
+move	major	2:m7	0:7	70
+move	major	2:m7	0:dim	8
+move	major	2:m7	0:sus4	18
+move	major	2:m7	1:maj7	64
+move	major	2:m7	1:m7	18
+move	major	2:m7	1:7	356
+move	major	2:m7	1:dim	57
+move	major	2:m7	1:dim7	35
+move	major	2:m7	2:maj	47
+move	major	2:m7	2:m	98
+move	major	2:m7	2:m6	136
+move	major	2:m7	2:m7	1342
+move	major	2:m7	2:7	107
+move	major	2:m7	2:m7b5	111
+move	major	2:m7	2:dim	29
+move	major	2:m7	3:maj	12
+move	major	2:m7	3:maj7	14
+move	major	2:m7	3:m6	14
+move	major	2:m7	3:m7	77
+move	major	2:m7	3:7	32
+move	major	2:m7	3:dim	212
+move	major	2:m7	3:dim7	118
+move	major	2:m7	4:maj	9
+move	major	2:m7	4:m	55
+move	major	2:m7	4:m7	1213
+move	major	2:m7	4:7	216
+move	major	2:m7	4:m7b5	50
+move	major	2:m7	4:dim	17
+move	major	2:m7	4:7sus4	8
+move	major	2:m7	5:maj	434
+move	major	2:m7	5:6	19
+move	major	2:m7	5:maj7	200
+move	major	2:m7	5:m	72
+move	major	2:m7	5:m6	192
+move	major	2:m7	5:m7	188
+move	major	2:m7	5:7	60
+move	major	2:m7	5:sus4	8
+move	major	2:m7	6:m7	33
+move	major	2:m7	6:7	13
+move	major	2:m7	6:m7b5	25
+move	major	2:m7	6:dim	8
+move	major	2:m7	6:dim7	20
+move	major	2:m7	7:maj	358
+move	major	2:m7	7:6	62
+move	major	2:m7	7:m	23
+move	major	2:m7	7:m7	250
+move	major	2:m7	7:7	16005
+move	major	2:m7	7:dim	12
+move	major	2:m7	7:sus4	124
+move	major	2:m7	7:7sus4	799
+move	major	2:m7	7:+	28
+move	major	2:m7	8:maj	22
+move	major	2:m7	8:maj7	8
+move	major	2:m7	8:m7	35
+move	major	2:m7	8:7	139
+move	major	2:m7	9:maj	19
+move	major	2:m7	9:maj7	8
+move	major	2:m7	9:m	39
+move	major	2:m7	9:m7	239
+move	major	2:m7	9:7	324
+move	major	2:m7	9:7sus4	8
+move	major	2:m7	10:maj	27
+move	major	2:m7	10:6	21
+move	major	2:m7	10:maj7	68
+move	major	2:m7	10:m6	20
+move	major	2:m7	10:7	216
+move	major	2:m7	10:dim	9
+move	major	2:m7	11:m7	58
+move	major	2:m7	11:7	37
+move	major	2:m7	11:m7b5	215
+move	major	2:7	0:maj	233
+move	major	2:7	0:6	38
+move	major	2:7	0:maj7	67
+move	major	2:7	0:7	99
+move	major	2:7	1:maj	10
+move	major	2:7	1:maj7	90
+move	major	2:7	1:m7	13
+move	major	2:7	1:7	215
+move	major	2:7	2:maj	8
+move	major	2:7	2:6	13
+move	major	2:7	2:m	87
+move	major	2:7	2:m7	1718
+move	major	2:7	2:7	1011
+move	major	2:7	2:m7b5	35
+move	major	2:7	2:dim	21
+move	major	2:7	2:7sus4	14
+move	major	2:7	3:maj7	16
+move	major	2:7	3:m7	29
+move	major	2:7	3:7	183
+move	major	2:7	3:dim	58
+move	major	2:7	3:dim7	39
+move	major	2:7	4:maj	10
+move	major	2:7	4:maj7	24
+move	major	2:7	4:m7	53
+move	major	2:7	4:7	37
+move	major	2:7	5:maj	216
+move	major	2:7	5:6	24
+move	major	2:7	5:maj7	74
+move	major	2:7	5:m	51
+move	major	2:7	5:m6	75
+move	major	2:7	5:m7	46
+move	major	2:7	5:7	56
+move	major	2:7	5:dim	10
+move	major	2:7	6:m7b5	16
+move	major	2:7	6:dim	10
+move	major	2:7	7:maj	566
+move	major	2:7	7:6	77
+move	major	2:7	7:maj7	276
+move	major	2:7	7:m	44
+move	major	2:7	7:m7	271
+move	major	2:7	7:7	3902
+move	major	2:7	7:m7b5	9
+move	major	2:7	7:sus4	17
+move	major	2:7	7:7sus4	372
+move	major	2:7	8:m7	17
+move	major	2:7	8:7	184
+move	major	2:7	8:dim	13
+move	major	2:7	9:m	38
+move	major	2:7	9:m6	9
+move	major	2:7	9:m7	346
+move	major	2:7	9:7	65
+move	major	2:7	9:m7b5	10
+move	major	2:7	10:maj	14
+move	major	2:7	10:maj7	15
+move	major	2:7	10:m7	9
+move	major	2:7	10:7	33
+move	major	2:7	11:maj	9
+move	major	2:7	11:m7	75
+move	major	2:7	11:7	20
+move	major	2:7	11:m7b5	23
+move	major	2:m7b5	0:maj	98
+move	major	2:m7b5	0:maj7	22
+move	major	2:m7b5	1:maj7	9
+move	major	2:m7b5	2:m7	27
+move	major	2:m7b5	2:m7b5	27
+move	major	2:m7b5	4:m7	8
+move	major	2:m7b5	4:m7b5	10
+move	major	2:m7b5	7:7	735
+move	major	2:m7b5	7:7sus4	14
+move	major	2:m7b5	8:7	18
+move	major	2:dim	0:maj	13
+move	major	2:dim	1:m7	13
+move	major	2:dim	2:7	16
+move	major	2:dim	3:7	18
+move	major	2:dim	4:m7	26
+move	major	2:dim	5:maj	8
+move	major	2:dim	7:7	19
+move	major	2:dim	9:m	9
+move	major	2:sus4	2:maj	31
+move	major	2:sus4	2:maj7	8
+move	major	2:sus4	2:m	25
+move	major	2:sus4	2:7	12
+move	major	2:sus4	2:sus4	18
+move	major	2:7sus4	2:maj	17
+move	major	2:7sus4	2:7	160
+move	major	2:7sus4	2:7sus4	14
+move	major	2:7sus4	7:maj	9
+move	major	2:7sus4	7:maj7	19
+move	major	2:7sus4	7:7	10
+move	major	2:7sus4	7:7sus4	13
+move	major	2:7sus4	8:7	8
+move	major	3:maj	0:maj	36
+move	major	3:maj	0:m	23
+move	major	3:maj	0:m7	19
+move	major	3:maj	0:7	20
+move	major	3:maj	1:maj	31
+move	major	3:maj	1:maj7	8
+move	major	3:maj	2:maj	38
+move	major	3:maj	2:m	20
+move	major	3:maj	2:m7	37
+move	major	3:maj	2:7	25
+move	major	3:maj	3:maj	159
+move	major	3:maj	3:maj7	20
+move	major	3:maj	3:7	12
+move	major	3:maj	3:sus4	9
+move	major	3:maj	4:maj	13
+move	major	3:maj	4:m7	11
+move	major	3:maj	5:maj	128
+move	major	3:maj	5:m7	51
+move	major	3:maj	5:7	29
+move	major	3:maj	6:maj	8
+move	major	3:maj	7:maj	22
+move	major	3:maj	7:m7	25
+move	major	3:maj	7:7	61
+move	major	3:maj	8:maj	98
+move	major	3:maj	8:6	9
+move	major	3:maj	8:maj7	11
+move	major	3:maj	8:m	14
+move	major	3:maj	8:7	8
+move	major	3:maj	10:maj	116
+move	major	3:maj	10:maj7	12
+move	major	3:maj	10:7	36
+move	major	3:6	0:maj	11
+move	major	3:6	2:m7	27
+move	major	3:6	2:7	15
+move	major	3:6	3:6	12
+move	major	3:6	5:m7	10
+move	major	3:6	7:7	11
+move	major	3:maj7	0:maj7	46
+move	major	3:maj7	0:m7	61
+move	major	3:maj7	0:7	18
+move	major	3:maj7	1:maj7	33
+move	major	3:maj7	1:m7	9
+move	major	3:maj7	2:maj	12
+move	major	3:maj7	2:maj7	14
+move	major	3:maj7	2:m7	138
+move	major	3:maj7	2:7	55
+move	major	3:maj7	2:m7b5	20
+move	major	3:maj7	3:maj	10
+move	major	3:maj7	3:6	27
+move	major	3:maj7	3:maj7	146
+move	major	3:maj7	3:m7	67
+move	major	3:maj7	3:7	14
+move	major	3:maj7	3:7sus4	14
+move	major	3:maj7	4:m7	26
+move	major	3:maj7	4:7	10
+move	major	3:maj7	4:m7b5	10
+move	major	3:maj7	4:dim	15
+move	major	3:maj7	5:maj	9
+move	major	3:maj7	5:maj7	22
+move	major	3:maj7	5:m7	37
+move	major	3:maj7	5:7	11
+move	major	3:maj7	6:7	8
+move	major	3:maj7	7:m7	28
+move	major	3:maj7	7:7	33
+move	major	3:maj7	7:7sus4	10
+move	major	3:maj7	8:maj7	125
+move	major	3:maj7	8:7	33
+move	major	3:maj7	9:m7	17
+move	major	3:maj7	9:7	27
+move	major	3:maj7	10:maj7	13
+move	major	3:maj7	11:m7	8
+move	major	3:m	1:maj	11
+move	major	3:m	2:m	22
+move	major	3:m	2:m7	16
+move	major	3:m	3:m	27
+move	major	3:m	3:m7	10
+move	major	3:m	5:m	11
+move	major	3:m	6:maj	9
+move	major	3:m	8:m7	8
+move	major	3:m	8:7	32
+move	major	3:m	10:m	13
+move	major	3:m	10:7	17
+move	major	3:m6	2:m7	12
+move	major	3:m6	2:m7b5	9
+move	major	3:m6	11:m7b5	12
+move	major	3:m7	1:maj	17
+move	major	3:m7	1:maj7	17
+move	major	3:m7	1:m7	18
+move	major	3:m7	2:m7	266
+move	major	3:m7	2:7	18
+move	major	3:m7	3:m7	43
+move	major	3:m7	4:m7	35
+move	major	3:m7	5:m7	16
+move	major	3:m7	5:7	8
+move	major	3:m7	8:m7	18
+move	major	3:m7	8:7	620
+move	major	3:m7	8:7sus4	22
+move	major	3:m7	9:7	14
+move	major	3:7	0:maj7	10
+move	major	3:7	0:m7	11
+move	major	3:7	0:7	19
+move	major	3:7	1:7	34
+move	major	3:7	2:maj7	24
+move	major	3:7	2:m	43
+move	major	3:7	2:m7	366
+move	major	3:7	2:7	434
+move	major	3:7	2:m7b5	12
+move	major	3:7	2:7sus4	10
+move	major	3:7	3:m7	8
+move	major	3:7	3:7	61
+move	major	3:7	4:m7	12
+move	major	3:7	4:7	49
+move	major	3:7	4:m7b5	13
+move	major	3:7	5:7	23
+move	major	3:7	6:7	10
+move	major	3:7	7:maj	15
+move	major	3:7	7:7	9
+move	major	3:7	8:maj	76
+move	major	3:7	8:6	16
+move	major	3:7	8:maj7	466
+move	major	3:7	8:m7	23
+move	major	3:7	8:7	134
+move	major	3:7	9:m7	54
+move	major	3:7	9:7	18
+move	major	3:7	10:maj	41
+move	major	3:7	10:m7	27
+move	major	3:7	10:7	13
+move	major	3:7	11:7	28
+move	major	3:7	11:m7b5	9
+move	major	3:m7b5	8:7	12
+move	major	3:dim	0:maj	118
+move	major	3:dim	0:6	34
+move	major	3:dim	0:maj7	25
+move	major	3:dim	0:7	18
+move	major	3:dim	2:m	34
+move	major	3:dim	2:m6	15
+move	major	3:dim	2:m7	590
+move	major	3:dim	2:7	13
+move	major	3:dim	3:dim	14
+move	major	3:dim	4:m7	123
+move	major	3:dim	4:7	8
+move	major	3:dim	7:7	113
+move	major	3:dim7	0:maj	33
+move	major	3:dim7	0:6	18
+move	major	3:dim7	0:maj7	28
+move	major	3:dim7	2:m7	452
+move	major	3:dim7	3:dim7	15
+move	major	3:dim7	4:m7	105
+move	major	3:dim7	7:7	12
+move	major	3:sus4	3:maj	15
+move	major	3:7sus4	3:7	13
+move	major	3:7sus4	3:7sus4	43
+move	major	3:7sus4	5:7sus4	10
+move	major	3:7sus4	7:maj	14
+move	major	3:7sus4	8:maj7	17
+move	major	4:maj	0:maj	21
+move	major	4:maj	0:m	8
+move	major	4:maj	0:7	8
+move	major	4:maj	1:m	21
+move	major	4:maj	1:m7	17
+move	major	4:maj	2:maj	21
+move	major	4:maj	2:6	11
+move	major	4:maj	2:m7	15
+move	major	4:maj	2:7	10
+move	major	4:maj	3:maj	13
+move	major	4:maj	4:maj	100
+move	major	4:maj	4:maj7	16
+move	major	4:maj	4:7	32
+move	major	4:maj	5:maj	101
+move	major	4:maj	5:maj7	23
+move	major	4:maj	6:maj	15
+move	major	4:maj	6:m	28
+move	major	4:maj	6:m7	34
+move	major	4:maj	7:maj	24
+move	major	4:maj	7:7	19
+move	major	4:maj	7:dim7	8
+move	major	4:maj	8:maj	9
+move	major	4:maj	9:maj	117
+move	major	4:maj	9:m	140
+move	major	4:maj	9:m7	101
+move	major	4:maj	9:7	29
+move	major	4:maj	11:maj	21
+move	major	4:maj	11:7	36
+move	major	4:6	1:m7	10
+move	major	4:6	6:m7	15
+move	major	4:maj7	0:maj7	26
+move	major	4:maj7	1:m7	59
+move	major	4:maj7	1:7	11
+move	major	4:maj7	2:m7	33
+move	major	4:maj7	2:7	20
+move	major	4:maj7	3:maj7	11
+move	major	4:maj7	3:m7	9
+move	major	4:maj7	3:7	9
+move	major	4:maj7	4:6	12
+move	major	4:maj7	4:maj7	53
+move	major	4:maj7	4:m7	35
+move	major	4:maj7	4:7	12
+move	major	4:maj7	4:sus4	19
+move	major	4:maj7	5:m7	11
+move	major	4:maj7	5:7	11
+move	major	4:maj7	5:dim	8
+move	major	4:maj7	5:dim7	13
+move	major	4:maj7	6:m7	41
+move	major	4:maj7	6:7sus4	8
+move	major	4:maj7	7:7	85
+move	major	4:maj7	7:m7b5	10
+move	major	4:maj7	8:maj7	17
+move	major	4:maj7	8:7	12
+move	major	4:maj7	9:maj7	18
+move	major	4:maj7	9:m7	21
+move	major	4:maj7	9:7	22
+move	major	4:maj7	10:m7	18
+move	major	4:maj7	11:maj7	13
+move	major	4:maj7	11:m7	12
+move	major	4:maj7	11:7	12
+move	major	4:m	0:maj	123
+move	major	4:m	0:6	14
+move	major	4:m	0:maj7	9
+move	major	4:m	0:m6	8
+move	major	4:m	0:7	51
+move	major	4:m	2:maj	68
+move	major	4:m	2:m	201
+move	major	4:m	2:m7	96
+move	major	4:m	2:7	26
+move	major	4:m	3:m	14
+move	major	4:m	3:m7	8
+move	major	4:m	3:7	25
+move	major	4:m	3:dim	24
+move	major	4:m	4:maj	11
+move	major	4:m	4:m	185
+move	major	4:m	4:m6	12
+move	major	4:m	4:m7	91
+move	major	4:m	4:7	9
+move	major	4:m	5:maj	612
+move	major	4:m	5:6	42
+move	major	4:m	5:maj7	68
+move	major	4:m	5:m	10
+move	major	4:m	6:m7b5	17
+move	major	4:m	7:maj	93
+move	major	4:m	7:m	18
+move	major	4:m	7:7	102
+move	major	4:m	9:maj	11
+move	major	4:m	9:m	331
+move	major	4:m	9:m6	10
+move	major	4:m	9:m7	49
+move	major	4:m	9:7	101
+move	major	4:m	11:maj	10
+move	major	4:m	11:m	17
+move	major	4:m	11:7	93
+move	major	4:m6	0:m6	8
+move	major	4:m6	4:m7	12
+move	major	4:m6	5:maj7	8
+move	major	4:m7	0:maj	68
+move	major	4:m7	0:6	22
+move	major	4:m7	0:maj7	97
+move	major	4:m7	0:7	50
+move	major	4:m7	0:dim	12
+move	major	4:m7	0:7sus4	18
+move	major	4:m7	1:m7	8
+move	major	4:m7	1:7	10
+move	major	4:m7	1:m7b5	23
+move	major	4:m7	2:maj	39
+move	major	4:m7	2:maj7	41
+move	major	4:m7	2:m	8
+move	major	4:m7	2:m7	947
+move	major	4:m7	2:7	42
+move	major	4:m7	3:maj	17
+move	major	4:m7	3:maj7	73
+move	major	4:m7	3:m	10
+move	major	4:m7	3:m7	251
+move	major	4:m7	3:7	252
+move	major	4:m7	3:dim	274
+move	major	4:m7	3:dim7	262
+move	major	4:m7	4:m	10
+move	major	4:m7	4:m6	31
+move	major	4:m7	4:m7	373
+move	major	4:m7	4:7	43
+move	major	4:m7	4:m7b5	24
+move	major	4:m7	5:maj	298
+move	major	4:m7	5:6	57
+move	major	4:m7	5:maj7	555
+move	major	4:m7	5:m7	87
+move	major	4:m7	5:7	70
+move	major	4:m7	5:dim	10
+move	major	4:m7	6:m7	75
+move	major	4:m7	6:7	11
+move	major	4:m7	6:m7b5	47
+move	major	4:m7	7:maj	79
+move	major	4:m7	7:m	9
+move	major	4:m7	7:m6	22
+move	major	4:m7	7:m7	89
+move	major	4:m7	7:7	77
+move	major	4:m7	7:7sus4	46
+move	major	4:m7	8:7	10
+move	major	4:m7	9:maj	14
+move	major	4:m7	9:m	173
+move	major	4:m7	9:m7	1040
+move	major	4:m7	9:7	3557
+move	major	4:m7	9:sus4	17
+move	major	4:m7	9:7sus4	68
+move	major	4:m7	10:maj	11
+move	major	4:m7	10:maj7	14
+move	major	4:m7	10:7	62
+move	major	4:m7	11:m	14
+move	major	4:m7	11:m7	23
+move	major	4:m7	11:7	55
+move	major	4:m7	11:m7b5	13
+move	major	4:7	0:maj	52
+move	major	4:7	0:maj7	23
+move	major	4:7	0:m7	13
+move	major	4:7	0:7	26
+move	major	4:7	1:m7	29
+move	major	4:7	1:7	16
+move	major	4:7	2:maj	22
+move	major	4:7	2:m	25
+move	major	4:7	2:m7	48
+move	major	4:7	2:7	36
+move	major	4:7	2:7sus4	11
+move	major	4:7	3:maj7	24
+move	major	4:7	3:7	181
+move	major	4:7	4:m7	85
+move	major	4:7	4:7	492
+move	major	4:7	4:m7b5	30
+move	major	4:7	4:7sus4	8
+move	major	4:7	4:+	12
+move	major	4:7	5:maj	177
+move	major	4:7	5:6	25
+move	major	4:7	5:maj7	174
+move	major	4:7	5:7	91
+move	major	4:7	6:m7	26
+move	major	4:7	6:m7b5	10
+move	major	4:7	7:maj	15
+move	major	4:7	7:maj7	8
+move	major	4:7	7:m6	12
+move	major	4:7	7:m7	15
+move	major	4:7	7:7	40
+move	major	4:7	7:dim	16
+move	major	4:7	9:maj	117
+move	major	4:7	9:6	12
+move	major	4:7	9:maj7	184
+move	major	4:7	9:m	1315
+move	major	4:7	9:m6	110
+move	major	4:7	9:m7	2057
+move	major	4:7	9:7	1089
+move	major	4:7	9:m7b5	15
+move	major	4:7	9:sus4	9
+move	major	4:7	9:7sus4	56
+move	major	4:7	10:maj	10
+move	major	4:7	10:m7	22
+move	major	4:7	10:7	32
+move	major	4:7	11:m7	48
+move	major	4:7	11:7	31
+move	major	4:7	11:m7b5	68
+move	major	4:m7b5	0:7	10
+move	major	4:m7b5	2:m7	8
+move	major	4:m7b5	2:7	11
+move	major	4:m7b5	3:7	25
+move	major	4:m7b5	4:m7b5	32
+move	major	4:m7b5	5:7	15
+move	major	4:m7b5	9:7	1155
+move	major	4:m7b5	9:7sus4	18
+move	major	4:m7b5	10:7	17
+move	major	4:dim	2:m	12
+move	major	4:dim	2:m7	23
+move	major	4:dim	5:maj	81
+move	major	4:dim	5:6	14
+move	major	4:dim	5:m7	17
+move	major	4:dim	7:7	26
+move	major	4:dim	9:7	11
+move	major	4:dim7	2:m7	11
+move	major	4:dim7	4:maj	11
+move	major	4:dim7	5:m7	9
+move	major	4:sus4	4:maj	34
+move	major	4:sus4	4:maj7	13
+move	major	4:sus4	4:7	22
+move	major	4:sus4	4:sus4	9
+move	major	4:sus4	5:sus4	11
+move	major	4:7sus4	2:7	10
+move	major	4:7sus4	4:maj	8
+move	major	4:7sus4	4:7	59
+move	major	4:7sus4	4:7sus4	33
+move	major	4:7sus4	9:maj	8
+move	major	4:7sus4	9:m7	14
+move	major	4:+	4:7	20
+move	major	4:+	4:+	9
+move	major	4:+	5:maj	11
+move	major	4:+	5:maj7	10
+move	major	4:+	6:+	16
+move	major	4:+	9:m	19
+move	major	4:+	9:m7	27
+move	major	4:+	9:7	12
+move	major	5:maj	0:maj	6640
+move	major	5:maj	0:6	49
+move	major	5:maj	0:maj7	321
+move	major	5:maj	0:m	32
+move	major	5:maj	0:m7	12
+move	major	5:maj	0:7	310
+move	major	5:maj	0:dim	49
+move	major	5:maj	0:sus4	25
+move	major	5:maj	0:7sus4	23
+move	major	5:maj	0:+	20
+move	major	5:maj	1:maj	12
+move	major	5:maj	1:7	22
+move	major	5:maj	2:maj	73
+move	major	5:maj	2:m	371
+move	major	5:maj	2:m6	10
+move	major	5:maj	2:m7	349
+move	major	5:maj	2:7	253
+move	major	5:maj	2:m7b5	29
+move	major	5:maj	2:sus4	9
+move	major	5:maj	3:maj	148
+move	major	5:maj	3:6	10
+move	major	5:maj	3:7	14
+move	major	5:maj	4:maj	66
+move	major	5:maj	4:m	257
+move	major	5:maj	4:m7	103
+move	major	5:maj	4:7	140
+move	major	5:maj	4:m7b5	14
+move	major	5:maj	4:dim	10
+move	major	5:maj	4:sus4	8
+move	major	5:maj	5:maj	2245
+move	major	5:maj	5:6	96
+move	major	5:maj	5:maj7	127
+move	major	5:maj	5:m	587
+move	major	5:maj	5:m6	86
+move	major	5:maj	5:m7	63
+move	major	5:maj	5:7	198
+move	major	5:maj	5:dim	43
+move	major	5:maj	5:sus4	77
+move	major	5:maj	5:+	36
+move	major	5:maj	6:maj	20
+move	major	5:maj	6:m7	8
+move	major	5:maj	6:7	10
+move	major	5:maj	6:m7b5	21
+move	major	5:maj	6:dim	439
+move	major	5:maj	6:dim7	79
+move	major	5:maj	7:maj	2112
+move	major	5:maj	7:m	44
+move	major	5:maj	7:m7	91
+move	major	5:maj	7:7	1484
+move	major	5:maj	7:sus4	265
+move	major	5:maj	7:7sus4	103
+move	major	5:maj	8:maj	40
+move	major	5:maj	8:maj7	14
+move	major	5:maj	8:7	27
+move	major	5:maj	9:maj	41
+move	major	5:maj	9:m	495
+move	major	5:maj	9:m7	305
+move	major	5:maj	9:7	186
+move	major	5:maj	9:dim	32
+move	major	5:maj	9:+	8
+move	major	5:maj	10:maj	401
+move	major	5:maj	10:maj7	33
+move	major	5:maj	10:m6	16
+move	major	5:maj	10:m7	9
+move	major	5:maj	10:7	110
+move	major	5:maj	11:maj	14
+move	major	5:maj	11:m7	14
+move	major	5:maj	11:7	19
+move	major	5:maj	11:m7b5	22
+move	major	5:6	0:maj	168
+move	major	5:6	0:6	76
+move	major	5:6	0:maj7	35
+move	major	5:6	0:7	44
+move	major	5:6	2:m7	89
+move	major	5:6	2:7	64
+move	major	5:6	3:maj	8
+move	major	5:6	4:m7	52
+move	major	5:6	4:7	29
+move	major	5:6	4:m7b5	9
+move	major	5:6	5:maj	70
+move	major	5:6	5:6	122
+move	major	5:6	5:maj7	49
+move	major	5:6	5:m	18
+move	major	5:6	5:m6	97
+move	major	5:6	5:m7	41
+move	major	5:6	5:7	26
+move	major	5:6	5:+	16
+move	major	5:6	6:m7b5	25
+move	major	5:6	6:dim	168
+move	major	5:6	6:dim7	62
+move	major	5:6	7:maj	88
+move	major	5:6	7:6	10
+move	major	5:6	7:m7	34
+move	major	5:6	7:7	119
+move	major	5:6	7:sus4	29
+move	major	5:6	7:7sus4	20
+move	major	5:6	8:7	13
+move	major	5:6	9:m	22
+move	major	5:6	9:m7	35
+move	major	5:6	9:7	38
+move	major	5:6	10:7	129
+move	major	5:maj7	0:maj	282
+move	major	5:maj7	0:6	39
+move	major	5:maj7	0:maj7	367
+move	major	5:maj7	0:m7	16
+move	major	5:maj7	0:7	37
+move	major	5:maj7	0:7sus4	17
+move	major	5:maj7	2:m	37
+move	major	5:maj7	2:m7	507
+move	major	5:maj7	2:7	114
+move	major	5:maj7	2:m7b5	37
+move	major	5:maj7	3:maj7	33
+move	major	5:maj7	3:7	18
+move	major	5:maj7	4:maj	12
+move	major	5:maj7	4:maj7	12
+move	major	5:maj7	4:m	53
+move	major	5:maj7	4:m7	794
+move	major	5:maj7	4:7	209
+move	major	5:maj7	4:m7b5	66
+move	major	5:maj7	4:sus4	11
+move	major	5:maj7	4:7sus4	22
+move	major	5:maj7	4:+	17
+move	major	5:maj7	5:maj	200
+move	major	5:maj7	5:6	204
+move	major	5:maj7	5:maj7	732
+move	major	5:maj7	5:m	47
+move	major	5:maj7	5:m6	194
+move	major	5:maj7	5:m7	267
+move	major	5:maj7	5:7	43
+move	major	5:maj7	5:dim7	11
+move	major	5:maj7	6:m7	48
+move	major	5:maj7	6:7	21
+move	major	5:maj7	6:m7b5	108
+move	major	5:maj7	6:dim	60
+move	major	5:maj7	6:dim7	98
+move	major	5:maj7	7:maj	134
+move	major	5:maj7	7:6	19
+move	major	5:maj7	7:maj7	24
+move	major	5:maj7	7:m7	95
+move	major	5:maj7	7:7	349
+move	major	5:maj7	7:sus4	30
+move	major	5:maj7	7:7sus4	105
+move	major	5:maj7	8:maj	19
+move	major	5:maj7	8:maj7	54
+move	major	5:maj7	8:7	35
+move	major	5:maj7	9:m	36
+move	major	5:maj7	9:m7	166
+move	major	5:maj7	9:7	65
+move	major	5:maj7	10:maj7	72
+move	major	5:maj7	10:m7	24
+move	major	5:maj7	10:7	647
+move	major	5:maj7	10:7sus4	14
+move	major	5:maj7	11:m7	31
+move	major	5:maj7	11:7	91
+move	major	5:maj7	11:m7b5	123
+move	major	5:m	0:maj	764
+move	major	5:m	0:6	29
+move	major	5:m	0:maj7	67
+move	major	5:m	0:m	19
+move	major	5:m	0:7	27
+move	major	5:m	0:dim	10
+move	major	5:m	0:sus4	9
+move	major	5:m	1:maj7	9
+move	major	5:m	2:m7	19
+move	major	5:m	2:7	20
+move	major	5:m	2:m7b5	18
+move	major	5:m	3:maj	8
+move	major	5:m	3:m	19
+move	major	5:m	4:maj7	10
+move	major	5:m	4:m	18
+move	major	5:m	4:m7	59
+move	major	5:m	5:maj	27
+move	major	5:m	5:m	134
+move	major	5:m	5:m6	15
+move	major	5:m	5:m7	40
+move	major	5:m	7:maj	21
+move	major	5:m	7:m	10
+move	major	5:m	7:m7	12
+move	major	5:m	7:7	160
+move	major	5:m	9:m	10
+move	major	5:m	10:maj	33
+move	major	5:m	10:m	19
+move	major	5:m	10:7	79
+move	major	5:m6	0:maj	406
+move	major	5:m6	0:6	81
+move	major	5:m6	0:maj7	244
+move	major	5:m6	1:maj7	10
+move	major	5:m6	2:m7	10
+move	major	5:m6	2:7	18
+move	major	5:m6	2:m7b5	15
+move	major	5:m6	4:m7	203
+move	major	5:m6	4:7	35
+move	major	5:m6	4:m7b5	13
+move	major	5:m6	5:m	9
+move	major	5:m6	5:m6	47
+move	major	5:m6	5:m7	11
+move	major	5:m6	7:maj	8
+move	major	5:m6	7:7	146
+move	major	5:m6	7:7sus4	8
+move	major	5:m6	9:m7	19
+move	major	5:m6	10:7	69
+move	major	5:m7	0:maj	69
+move	major	5:m7	0:6	17
+move	major	5:m7	0:maj7	116
+move	major	5:m7	0:m7	57
+move	major	5:m7	0:7	18
+move	major	5:m7	1:maj7	8
+move	major	5:m7	1:7	12
+move	major	5:m7	2:m7	63
+move	major	5:m7	2:7	10
+move	major	5:m7	2:m7b5	29
+move	major	5:m7	3:maj	52
+move	major	5:m7	3:maj7	27
+move	major	5:m7	3:m7	23
+move	major	5:m7	3:7	12
+move	major	5:m7	4:m	10
+move	major	5:m7	4:m7	163
+move	major	5:m7	4:7	23
+move	major	5:m7	4:m7b5	15
+move	major	5:m7	5:maj7	8
+move	major	5:m7	5:m	18
+move	major	5:m7	5:m6	38
+move	major	5:m7	5:m7	246
+move	major	5:m7	6:maj7	12
+move	major	5:m7	6:m7	24
+move	major	5:m7	7:m	8
+move	major	5:m7	7:m7	149
+move	major	5:m7	7:7	93
+move	major	5:m7	7:7sus4	32
+move	major	5:m7	8:maj	27
+move	major	5:m7	8:maj7	64
+move	major	5:m7	8:m7	14
+move	major	5:m7	8:7	18
+move	major	5:m7	9:m7	15
+move	major	5:m7	10:maj	31
+move	major	5:m7	10:m7	73
+move	major	5:m7	10:7	1305
+move	major	5:m7	10:7sus4	59
+move	major	5:m7	11:7	21
+move	major	5:7	0:maj	732
+move	major	5:7	0:6	194
+move	major	5:7	0:maj7	164
+move	major	5:7	0:m	22
+move	major	5:7	0:m7	73
+move	major	5:7	0:7	1717
+move	major	5:7	1:7	17
+move	major	5:7	2:m	10
+move	major	5:7	2:m7	104
+move	major	5:7	2:7	133
+move	major	5:7	2:m7b5	16
+move	major	5:7	3:maj	12
+move	major	5:7	3:maj7	18
+move	major	5:7	3:m7	18
+move	major	5:7	3:7	68
+move	major	5:7	4:maj	18
+move	major	5:7	4:maj7	20
+move	major	5:7	4:m	11
+move	major	5:7	4:m7	648
+move	major	5:7	4:7	565
+move	major	5:7	4:m7b5	99
+move	major	5:7	5:maj	56
+move	major	5:7	5:6	9
+move	major	5:7	5:maj7	11
+move	major	5:7	5:m7	77
+move	major	5:7	5:7	846
+move	major	5:7	6:maj7	13
+move	major	5:7	6:m7	15
+move	major	5:7	6:7	53
+move	major	5:7	6:m7b5	18
+move	major	5:7	6:dim	247
+move	major	5:7	6:dim7	70
+move	major	5:7	7:maj	30
+move	major	5:7	7:maj7	21
+move	major	5:7	7:m7	17
+move	major	5:7	7:7	266
+move	major	5:7	7:7sus4	15
+move	major	5:7	7:+	17
+move	major	5:7	8:maj	18
+move	major	5:7	8:maj7	11
+move	major	5:7	8:7	53
+move	major	5:7	9:m	36
+move	major	5:7	9:m6	10
+move	major	5:7	9:m7	16
+move	major	5:7	9:7	14
+move	major	5:7	9:m7b5	10
+move	major	5:7	10:maj	218
+move	major	5:7	10:6	59
+move	major	5:7	10:maj7	264
+move	major	5:7	10:m	19
+move	major	5:7	10:m7	93
+move	major	5:7	10:7	384
+move	major	5:7	11:m7	33
+move	major	5:7	11:7	42
+move	major	5:7	11:m7b5	33
+move	major	5:m7b5	10:7	23
+move	major	5:m7b5	11:7	8
+move	major	5:m7b5	11:dim	8
+move	major	5:dim	0:maj	43
+move	major	5:dim	2:7	21
+move	major	5:dim	4:m7	22
+move	major	5:dim	5:maj	20
+move	major	5:dim	6:m7	17
+move	major	5:dim7	4:m7	20
+move	major	5:dim7	5:maj7	8
+move	major	5:dim7	6:m7	16
+move	major	5:sus4	0:maj	17
+move	major	5:sus4	4:sus4	17
+move	major	5:sus4	5:maj	78
+move	major	5:sus4	5:7	9
+move	major	5:sus4	7:7	8
+move	major	5:sus4	7:7sus4	14
+move	major	5:7sus4	0:maj	8
+move	major	5:7sus4	5:7	42
+move	major	5:7sus4	5:7sus4	44
+move	major	5:7sus4	7:7sus4	13
+move	major	5:7sus4	10:maj7	14
+move	major	5:+	5:maj	12
+move	major	5:+	5:6	18
+move	major	6:maj	0:maj	8
+move	major	6:maj	1:maj	64
+move	major	6:maj	1:maj7	8
+move	major	6:maj	2:m	10
+move	major	6:maj	3:m7	9
+move	major	6:maj	4:maj	33
+move	major	6:maj	5:maj	44
+move	major	6:maj	5:m	9
+move	major	6:maj	5:7	9
+move	major	6:maj	6:maj	33
+move	major	6:maj	6:maj7	13
+move	major	6:maj	6:7	9
+move	major	6:maj	7:maj	24
+move	major	6:maj	7:7	9
+move	major	6:maj	7:dim	21
+move	major	6:maj	8:maj	24
+move	major	6:maj	8:7	22
+move	major	6:maj	11:maj	20
+move	major	6:6	7:6	8
+move	major	6:maj7	0:maj	10
+move	major	6:maj7	0:m7	27
+move	major	6:maj7	1:maj	11
+move	major	6:maj7	1:maj7	27
+move	major	6:maj7	2:maj7	9
+move	major	6:maj7	3:m7	21
+move	major	6:maj7	5:maj7	8
+move	major	6:maj7	5:m	13
+move	major	6:maj7	5:m7	21
+move	major	6:maj7	5:7	12
+move	major	6:maj7	6:maj7	68
+move	major	6:maj7	7:maj7	15
+move	major	6:maj7	7:m7	15
+move	major	6:maj7	8:m7	12
+move	major	6:maj7	8:7	11
+move	major	6:maj7	9:maj7	8
+move	major	6:maj7	9:7	21
+move	major	6:maj7	10:maj7	11
+move	major	6:maj7	11:maj7	19
+move	major	6:maj7	11:7	18
+move	major	6:m	2:maj7	13
+move	major	6:m	4:maj	8
+move	major	6:m	4:m	13
+move	major	6:m	6:m	20
+move	major	6:m	6:m7	15
+move	major	6:m	11:m	26
+move	major	6:m	11:7	10
+move	major	6:m6	1:maj	12
+move	major	6:m7	0:maj	51
+move	major	6:m7	0:maj7	15
+move	major	6:m7	2:m7	11
+move	major	6:m7	4:maj	16
+move	major	6:m7	4:maj7	21
+move	major	6:m7	4:m7	42
+move	major	6:m7	4:7	15
+move	major	6:m7	5:maj7	34
+move	major	6:m7	5:m7	20
+move	major	6:m7	5:7	29
+move	major	6:m7	5:dim7	9
+move	major	6:m7	6:m6	11
+move	major	6:m7	6:m7	57
+move	major	6:m7	7:maj	12
+move	major	6:m7	7:maj7	26
+move	major	6:m7	7:m7	25
+move	major	6:m7	7:7	22
+move	major	6:m7	8:m7	28
+move	major	6:m7	9:m7	8
+move	major	6:m7	11:m7	80
+move	major	6:m7	11:7	688
+move	major	6:m7	11:7sus4	22
+move	major	6:7	0:maj	9
+move	major	6:7	0:6	8
+move	major	6:7	0:maj7	18
+move	major	6:7	0:m7	18
+move	major	6:7	0:7	27
+move	major	6:7	1:maj	8
+move	major	6:7	1:7	24
+move	major	6:7	2:m7	53
+move	major	6:7	3:7	22
+move	major	6:7	4:7	15
+move	major	6:7	5:maj	31
+move	major	6:7	5:6	19
+move	major	6:7	5:maj7	256
+move	major	6:7	5:m7	30
+move	major	6:7	5:7	231
+move	major	6:7	6:7	56
+move	major	6:7	7:6	11
+move	major	6:7	7:7	56
+move	major	6:7	9:m7	14
+move	major	6:7	11:maj	23
+move	major	6:7	11:6	10
+move	major	6:7	11:maj7	113
+move	major	6:7	11:m	17
+move	major	6:7	11:m7	116
+move	major	6:7	11:7	112
+move	major	6:7	11:m7b5	23
+move	major	6:7	11:7sus4	13
+move	major	6:m7b5	0:maj	12
+move	major	6:m7b5	0:maj7	8
+move	major	6:m7b5	2:m7	9
+move	major	6:m7b5	2:7	15
+move	major	6:m7b5	4:m7	12
+move	major	6:m7b5	4:m7b5	9
+move	major	6:m7b5	5:maj	11
+move	major	6:m7b5	5:maj7	34
+move	major	6:m7b5	5:m	31
+move	major	6:m7b5	5:m6	90
+move	major	6:m7b5	5:m7	102
+move	major	6:m7b5	5:7	128
+move	major	6:m7b5	5:dim	11
+move	major	6:m7b5	6:m7b5	15
+move	major	6:m7b5	7:7	42
+move	major	6:m7b5	7:sus4	12
+move	major	6:m7b5	7:7sus4	8
+move	major	6:m7b5	9:m	10
+move	major	6:m7b5	11:m7	8
+move	major	6:m7b5	11:7	676
+move	major	6:m7b5	11:m7b5	16
+move	major	6:dim	0:maj	517
+move	major	6:dim	0:6	113
+move	major	6:dim	0:maj7	56
+move	major	6:dim	0:7	109
+move	major	6:dim	2:m7	22
+move	major	6:dim	4:m7	45
+move	major	6:dim	5:maj	9
+move	major	6:dim	5:m7	22
+move	major	6:dim	5:7	19
+move	major	6:dim	7:maj	17
+move	major	6:dim	7:m	8
+move	major	6:dim	7:m6	8
+move	major	6:dim	7:m7	24
+move	major	6:dim	7:7	80
+move	major	6:dim	7:7sus4	22
+move	major	6:dim	11:7	10
+move	major	6:dim7	0:maj	103
+move	major	6:dim7	0:6	90
+move	major	6:dim7	0:maj7	46
+move	major	6:dim7	0:7	31
+move	major	6:dim7	2:m7	13
+move	major	6:dim7	4:m7	26
+move	major	6:dim7	5:6	9
+move	major	6:dim7	5:m7	9
+move	major	6:dim7	6:dim7	15
+move	major	6:dim7	7:maj	17
+move	major	6:dim7	7:m7	9
+move	major	6:dim7	7:7	19
+move	major	6:sus4	6:maj	14
+move	major	6:sus4	6:sus4	10
+move	major	6:7sus4	1:m7	8
+move	major	6:7sus4	6:7	18
+move	major	6:7sus4	11:7sus4	8
+move	major	6:+	4:+	11
+move	major	7:maj	0:maj	3421
+move	major	7:maj	0:6	100
+move	major	7:maj	0:maj7	158
+move	major	7:maj	0:m	23
+move	major	7:maj	0:m6	8
+move	major	7:maj	0:7	44
+move	major	7:maj	0:sus4	32
+move	major	7:maj	0:7sus4	13
+move	major	7:maj	1:maj	14
+move	major	7:maj	2:maj	219
+move	major	7:maj	2:m	248
+move	major	7:maj	2:m7	236
+move	major	7:maj	2:7	213
+move	major	7:maj	3:maj	24
+move	major	7:maj	3:maj7	10
+move	major	7:maj	4:maj	48
+move	major	7:maj	4:m	100
+move	major	7:maj	4:m7	91
+move	major	7:maj	4:7	70
+move	major	7:maj	5:maj	1525
+move	major	7:maj	5:6	25
+move	major	7:maj	5:maj7	80
+move	major	7:maj	5:m7	8
+move	major	7:maj	5:7	30
+move	major	7:maj	6:maj	35
+move	major	7:maj	6:m7	10
+move	major	7:maj	6:7	12
+move	major	7:maj	6:m7b5	20
+move	major	7:maj	7:maj	1136
+move	major	7:maj	7:6	56
+move	major	7:maj	7:maj7	20
+move	major	7:maj	7:m	23
+move	major	7:maj	7:m7	11
+move	major	7:maj	7:7	433
+move	major	7:maj	7:dim	17
+move	major	7:maj	7:sus4	108
+move	major	7:maj	7:7sus4	11
+move	major	7:maj	7:+	20
+move	major	7:maj	8:maj	77
+move	major	7:maj	8:maj7	21
+move	major	7:maj	8:7	16
+move	major	7:maj	8:m7b5	23
+move	major	7:maj	8:dim	39
+move	major	7:maj	8:dim7	10
+move	major	7:maj	9:maj	186
+move	major	7:maj	9:m	1135
+move	major	7:maj	9:m7	556
+move	major	7:maj	9:7	89
+move	major	7:maj	10:maj	98
+move	major	7:maj	10:maj7	30
+move	major	7:maj	10:7	10
+move	major	7:maj	11:m	48
+move	major	7:maj	11:m7	24
+move	major	7:maj	11:7	32
+move	major	7:6	0:maj	42
+move	major	7:6	0:6	17
+move	major	7:6	0:maj7	17
+move	major	7:6	0:7	14
+move	major	7:6	2:m7	33
+move	major	7:6	2:7	22
+move	major	7:6	4:m7	25
+move	major	7:6	4:7	12
+move	major	7:6	5:maj	22
+move	major	7:6	5:6	33
+move	major	7:6	6:7	14
+move	major	7:6	7:maj	20
+move	major	7:6	7:6	24
+move	major	7:6	7:7	52
+move	major	7:6	7:+	14
+move	major	7:6	9:6	13
+move	major	7:6	9:m	9
+move	major	7:6	9:m7	19
+move	major	7:6	9:7	10
+move	major	7:maj7	0:maj	9
+move	major	7:maj7	0:maj7	63
+move	major	7:maj7	0:7	25
+move	major	7:maj7	1:7	13
+move	major	7:maj7	2:maj	19
+move	major	7:maj7	2:maj7	9
+move	major	7:maj7	2:m7	22
+move	major	7:maj7	2:7	9
+move	major	7:maj7	3:m7	8
+move	major	7:maj7	4:maj7	19
+move	major	7:maj7	4:m7	62
+move	major	7:maj7	4:7	20
+move	major	7:maj7	5:maj7	9
+move	major	7:maj7	5:m7	13
+move	major	7:maj7	5:7	9
+move	major	7:maj7	6:maj7	8
+move	major	7:maj7	6:m7	44
+move	major	7:maj7	6:7	27
+move	major	7:maj7	6:m7b5	8
+move	major	7:maj7	7:maj	10
+move	major	7:maj7	7:6	20
+move	major	7:maj7	7:maj7	83
+move	major	7:maj7	7:m7	27
+move	major	7:maj7	7:7	26
+move	major	7:maj7	8:dim	17
+move	major	7:maj7	8:dim7	15
+move	major	7:maj7	9:maj7	12
+move	major	7:maj7	9:m7	50
+move	major	7:maj7	9:7	16
+move	major	7:maj7	10:m7	10
+move	major	7:maj7	10:7	25
+move	major	7:maj7	10:dim7	10
+move	major	7:maj7	11:m7	11
+move	major	7:maj7	11:7	23
+move	major	7:m	0:maj	32
+move	major	7:m	0:m	12
+move	major	7:m	0:7	101
+move	major	7:m	0:7sus4	8
+move	major	7:m	2:m	23
+move	major	7:m	2:7	12
+move	major	7:m	3:maj7	8
+move	major	7:m	4:m7b5	9
+move	major	7:m	5:maj	75
+move	major	7:m	5:maj7	11
+move	major	7:m	5:m	17
+move	major	7:m	5:m7	16
+move	major	7:m	7:m	47
+move	major	7:m	7:m7	35
+move	major	7:m	8:maj	8
+move	major	7:m	8:maj7	10
+move	major	7:m	9:maj	41
+move	major	7:m	9:m	16
+move	major	7:m	9:7	96
+move	major	7:m	10:maj	30
+move	major	7:m6	0:7	23
+move	major	7:m6	2:maj	10
+move	major	7:m6	6:m7b5	15
+move	major	7:m6	6:dim	9
+move	major	7:m6	9:m7	12
+move	major	7:m6	9:7	145
+move	major	7:m7	0:maj	142
+move	major	7:m7	0:6	27
+move	major	7:m7	0:maj7	88
+move	major	7:m7	0:m	31
+move	major	7:m7	0:m7	89
+move	major	7:m7	0:7	2620
+move	major	7:m7	0:7sus4	41
+move	major	7:m7	1:7	20
+move	major	7:m7	2:m	10
+move	major	7:m7	2:m7	36
+move	major	7:m7	2:7	12
+move	major	7:m7	3:maj	8
+move	major	7:m7	3:maj7	28
+move	major	7:m7	3:7	8
+move	major	7:m7	4:m7	17
+move	major	7:m7	4:m7b5	23
+move	major	7:m7	5:maj	129
+move	major	7:m7	5:maj7	100
+move	major	7:m7	5:m7	78
+move	major	7:m7	5:7	15
+move	major	7:m7	6:m7	68
+move	major	7:m7	6:7	81
+move	major	7:m7	6:m7b5	28
+move	major	7:m7	6:dim	9
+move	major	7:m7	6:dim7	8
+move	major	7:m7	7:m	16
+move	major	7:m7	7:m6	9
+move	major	7:m7	7:m7	195
+move	major	7:m7	7:7	54
+move	major	7:m7	7:dim7	8
+move	major	7:m7	7:7sus4	8
+move	major	7:m7	8:maj	24
+move	major	7:m7	8:maj7	40
+move	major	7:m7	8:7	10
+move	major	7:m7	8:dim	14
+move	major	7:m7	9:m7	112
+move	major	7:m7	9:7	39
+move	major	7:m7	9:m7b5	8
+move	major	7:m7	10:maj	40
+move	major	7:m7	10:maj7	26
+move	major	7:m7	10:m7	14
+move	major	7:m7	10:7	14
+move	major	7:m7	10:7sus4	21
+move	major	7:m7	11:m7	9
+move	major	7:7	0:maj	11315
+move	major	7:7	0:6	4090
+move	major	7:7	0:maj7	6434
+move	major	7:7	0:m	136
+move	major	7:7	0:m6	33
+move	major	7:7	0:m7	283
+move	major	7:7	0:7	1939
+move	major	7:7	0:m7b5	19
+move	major	7:7	0:dim	60
+move	major	7:7	0:dim7	37
+move	major	7:7	0:sus4	105
+move	major	7:7	0:7sus4	79
+move	major	7:7	1:maj7	25
+move	major	7:7	1:m7	26
+move	major	7:7	1:7	117
+move	major	7:7	1:dim	67
+move	major	7:7	2:maj	19
+move	major	7:7	2:m	239
+move	major	7:7	2:m6	16
+move	major	7:7	2:m7	1956
+move	major	7:7	2:7	222
+move	major	7:7	2:m7b5	65
+move	major	7:7	3:maj	22
+move	major	7:7	3:6	8
+move	major	7:7	3:maj7	17
+move	major	7:7	3:m7	28
+move	major	7:7	3:7	14
+move	major	7:7	3:dim	49
+move	major	7:7	4:maj	35
+move	major	7:7	4:m	101
+move	major	7:7	4:m7	1386
+move	major	7:7	4:7	305
+move	major	7:7	4:m7b5	265
+move	major	7:7	4:dim	10
+move	major	7:7	5:maj	543
+move	major	7:7	5:6	32
+move	major	7:7	5:maj7	118
+move	major	7:7	5:m	43
+move	major	7:7	5:m6	30
+move	major	7:7	5:m7	105
+move	major	7:7	5:7	615
+move	major	7:7	5:dim	13
+move	major	7:7	6:maj	20
+move	major	7:7	6:maj7	20
+move	major	7:7	6:m7	34
+move	major	7:7	6:7	152
+move	major	7:7	6:m7b5	103
+move	major	7:7	6:dim	28
+move	major	7:7	7:maj	131
+move	major	7:7	7:6	31
+move	major	7:7	7:maj7	11
+move	major	7:7	7:m	27
+move	major	7:7	7:m6	36
+move	major	7:7	7:m7	515
+move	major	7:7	7:7	3288
+move	major	7:7	7:m7b5	18
+move	major	7:7	7:dim	66
+move	major	7:7	7:sus4	12
+move	major	7:7	7:7sus4	85
+move	major	7:7	7:+	147
+move	major	7:7	8:maj	34
+move	major	7:7	8:maj7	39
+move	major	7:7	8:m7	16
+move	major	7:7	8:7	148
+move	major	7:7	8:dim	77
+move	major	7:7	8:dim7	35
+move	major	7:7	9:maj7	14
+move	major	7:7	9:m	231
+move	major	7:7	9:m6	12
+move	major	7:7	9:m7	244
+move	major	7:7	9:7	137
+move	major	7:7	9:dim	15
+move	major	7:7	9:7sus4	9
+move	major	7:7	10:maj	52
+move	major	7:7	10:6	11
+move	major	7:7	10:maj7	9
+move	major	7:7	10:7	142
+move	major	7:7	11:maj	23
+move	major	7:7	11:m7	39
+move	major	7:7	11:7	38
+move	major	7:7	11:m7b5	79
+move	major	7:7	11:dim	9
+move	major	7:m7b5	0:7	86
+move	major	7:m7b5	5:maj	10
+move	major	7:dim	2:m	27
+move	major	7:dim	2:m7	42
+move	major	7:dim	2:7	15
+move	major	7:dim	4:7	8
+move	major	7:dim	6:m7	8
+move	major	7:dim	7:7	117
+move	major	7:dim	8:7	14
+move	major	7:dim7	5:maj	10
+move	major	7:sus4	0:maj	207
+move	major	7:sus4	0:maj7	44
+move	major	7:sus4	0:sus4	9
+move	major	7:sus4	2:m7	8
+move	major	7:sus4	5:maj	108
+move	major	7:sus4	5:maj7	59
+move	major	7:sus4	5:7	14
+move	major	7:sus4	7:maj	354
+move	major	7:sus4	7:7	101
+move	major	7:sus4	7:sus4	65
+move	major	7:sus4	8:maj7	9
+move	major	7:sus4	9:m	14
+move	major	7:sus4	9:m7	41
+move	major	7:7sus4	0:maj	489
+move	major	7:7sus4	0:6	158
+move	major	7:7sus4	0:maj7	649
+move	major	7:7sus4	0:7	39
+move	major	7:7sus4	0:sus4	22
+move	major	7:7sus4	1:maj7	11
+move	major	7:7sus4	1:7	8
+move	major	7:7sus4	2:m7	46
+move	major	7:7sus4	3:maj7	8
+move	major	7:7sus4	4:m7	40
+move	major	7:7sus4	4:7	39
+move	major	7:7sus4	5:maj	26
+move	major	7:7sus4	5:maj7	22
+move	major	7:7sus4	5:m7	17
+move	major	7:7sus4	7:maj	36
+move	major	7:7sus4	7:m7	14
+move	major	7:7sus4	7:7	649
+move	major	7:7sus4	7:7sus4	278
+move	major	7:7sus4	7:+	8
+move	major	7:7sus4	8:7sus4	10
+move	major	7:7sus4	9:m	11
+move	major	7:7sus4	9:m7	35
+move	major	7:7sus4	9:7sus4	30
+move	major	7:7sus4	10:dim7	8
+move	major	7:7sus4	11:7	8
+move	major	7:+	0:maj	240
+move	major	7:+	0:6	40
+move	major	7:+	0:maj7	29
+move	major	7:+	0:m7	8
+move	major	7:+	4:m	15
+move	major	7:+	4:m7	8
+move	major	7:+	7:6	10
+move	major	7:+	7:7	15
+move	major	7:+	7:+	16
+move	major	8:maj	0:maj	49
+move	major	8:maj	0:maj7	9
+move	major	8:maj	0:m	17
+move	major	8:maj	1:maj	63
+move	major	8:maj	2:m7	9
+move	major	8:maj	3:maj	123
+move	major	8:maj	3:maj7	18
+move	major	8:maj	3:7	16
+move	major	8:maj	5:maj	22
+move	major	8:maj	5:m	18
+move	major	8:maj	5:m7	44
+move	major	8:maj	6:maj	25
+move	major	8:maj	7:maj	79
+move	major	8:maj	7:m	11
+move	major	8:maj	7:m7	24
+move	major	8:maj	7:7	76
+move	major	8:maj	7:sus4	10
+move	major	8:maj	8:maj	70
+move	major	8:maj	8:maj7	14
+move	major	8:maj	9:maj	9
+move	major	8:maj	9:m7	11
+move	major	8:maj	9:7	11
+move	major	8:maj	10:maj	104
+move	major	8:maj	10:m7	16
+move	major	8:maj	10:7	37
+move	major	8:maj	11:m7	11
+move	major	8:6	0:maj	11
+move	major	8:6	1:7	8
+move	major	8:6	10:maj	12
+move	major	8:6	10:7	10
+move	major	8:maj7	0:maj	33
+move	major	8:maj7	0:maj7	33
+move	major	8:maj7	0:m7	12
+move	major	8:maj7	1:maj7	98
+move	major	8:maj7	1:7	65
+move	major	8:maj7	2:m7	146
+move	major	8:maj7	2:7	32
+move	major	8:maj7	2:m7b5	39
+move	major	8:maj7	3:maj7	41
+move	major	8:maj7	3:7	17
+move	major	8:maj7	4:7	9
+move	major	8:maj7	5:maj	12
+move	major	8:maj7	5:maj7	10
+move	major	8:maj7	5:m7	116
+move	major	8:maj7	5:7	16
+move	major	8:maj7	6:maj7	11
+move	major	8:maj7	7:maj	18
+move	major	8:maj7	7:maj7	12
+move	major	8:maj7	7:m7	70
+move	major	8:maj7	7:7	161
+move	major	8:maj7	7:7sus4	37
+move	major	8:maj7	8:maj	8
+move	major	8:maj7	8:6	27
+move	major	8:maj7	8:maj7	187
+move	major	8:maj7	8:m7	14
+move	major	8:maj7	9:m7	20
+move	major	8:maj7	9:7	9
+move	major	8:maj7	10:maj	13
+move	major	8:maj7	10:maj7	33
+move	major	8:maj7	10:m7	16
+move	major	8:maj7	10:7	27
+move	major	8:maj7	10:sus4	10
+move	major	8:maj7	10:7sus4	12
+move	major	8:maj7	11:maj7	22
+move	major	8:maj7	11:7	71
+move	major	8:m	1:7	10
+move	major	8:m	3:maj	13
+move	major	8:m	7:m7	10
+move	major	8:m6	1:7	9
+move	major	8:m6	3:maj	13
+move	major	8:m6	8:m6	21
+move	major	8:m7	1:m7	25
+move	major	8:m7	1:7	206
+move	major	8:m7	2:m7	10
+move	major	8:m7	5:m7b5	10
+move	major	8:m7	6:m7	12
+move	major	8:m7	7:m7	41
+move	major	8:m7	7:7	25
+move	major	8:m7	8:m7	35
+move	major	8:m7	9:maj7	11
+move	major	8:m7	9:m7	13
+move	major	8:m7	10:m7	8
+move	major	8:7	0:maj	101
+move	major	8:7	0:6	39
+move	major	8:7	0:maj7	54
+move	major	8:7	0:7	25
+move	major	8:7	0:7sus4	8
+move	major	8:7	1:maj	110
+move	major	8:7	1:6	35
+move	major	8:7	1:maj7	240
+move	major	8:7	1:m7	40
+move	major	8:7	1:7	104
+move	major	8:7	2:m	16
+move	major	8:7	2:m7	450
+move	major	8:7	2:7	37
+move	major	8:7	2:m7b5	27
+move	major	8:7	3:m7	27
+move	major	8:7	3:7	10
+move	major	8:7	4:m7	18
+move	major	8:7	5:m	8
+move	major	8:7	5:m7	24
+move	major	8:7	6:m7	8
+move	major	8:7	6:7	16
+move	major	8:7	7:maj	21
+move	major	8:7	7:6	9
+move	major	8:7	7:maj7	34
+move	major	8:7	7:m7	75
+move	major	8:7	7:7	1016
+move	major	8:7	7:7sus4	48
+move	major	8:7	8:m7	10
+move	major	8:7	8:7	156
+move	major	8:7	9:m7	13
+move	major	8:7	9:7	61
+move	major	8:7	10:7	11
+move	major	8:7	11:7	8
+move	major	8:m7b5	1:7	32
+move	major	8:m7b5	8:m7b5	12
+move	major	8:m7b5	9:m	27
+move	major	8:m7b5	9:m7	8
+move	major	8:dim	0:maj	8
+move	major	8:dim	2:7	22
+move	major	8:dim	5:maj	9
+move	major	8:dim	7:m7	23
+move	major	8:dim	7:7	16
+move	major	8:dim	9:m	83
+move	major	8:dim	9:m7	75
+move	major	8:dim7	7:m7	23
+move	major	8:dim7	8:dim7	16
+move	major	8:dim7	9:m	11
+move	major	8:dim7	9:m7	63
+move	major	8:sus4	8:maj	10
+move	major	8:sus4	8:sus4	15
+move	major	8:7sus4	1:maj	13
+move	major	8:7sus4	1:maj7	23
+move	major	8:7sus4	6:7sus4	9
+move	major	8:7sus4	8:7	30
+move	major	8:7sus4	8:7sus4	17
+move	major	8:+	0:maj	12
+move	major	9:maj	0:maj	78
+move	major	9:maj	0:maj7	10
+move	major	9:maj	1:maj	9
+move	major	9:maj	1:m7	24
+move	major	9:maj	2:maj	154
+move	major	9:maj	2:maj7	13
+move	major	9:maj	2:m	92
+move	major	9:maj	2:m6	8
+move	major	9:maj	2:m7	79
+move	major	9:maj	2:7	11
+move	major	9:maj	2:sus4	9
+move	major	9:maj	4:maj	77
+move	major	9:maj	4:m7	21
+move	major	9:maj	4:7	23
+move	major	9:maj	5:maj	64
+move	major	9:maj	5:maj7	10
+move	major	9:maj	6:maj	14
+move	major	9:maj	6:m	8
+move	major	9:maj	6:m7	8
+move	major	9:maj	7:maj	121
+move	major	9:maj	7:maj7	11
+move	major	9:maj	8:maj	31
+move	major	9:maj	9:maj	135
+move	major	9:maj	9:maj7	11
+move	major	9:maj	9:m	14
+move	major	9:maj	9:m7	31
+move	major	9:maj	9:7	28
+move	major	9:maj	10:maj	12
+move	major	9:maj	10:dim	18
+move	major	9:maj	11:maj	40
+move	major	9:maj	11:m	12
+move	major	9:maj	11:m7	34
+move	major	9:maj	11:7	28
+move	major	9:6	2:m7	8
+move	major	9:6	7:maj	12
+move	major	9:6	7:6	12
+move	major	9:6	9:m7	8
+move	major	9:maj7	0:maj7	8
+move	major	9:maj7	0:7	10
+move	major	9:maj7	1:7	15
+move	major	9:maj7	2:maj	10
+move	major	9:maj7	2:maj7	25
+move	major	9:maj7	2:m7	39
+move	major	9:maj7	2:7	9
+move	major	9:maj7	4:maj	18
+move	major	9:maj7	4:7	9
+move	major	9:maj7	6:m7	37
+move	major	9:maj7	6:7	11
+move	major	9:maj7	8:m7	12
+move	major	9:maj7	8:7	27
+move	major	9:maj7	9:6	10
+move	major	9:maj7	9:maj7	42
+move	major	9:maj7	9:m7	42
+move	major	9:maj7	9:7	25
+move	major	9:maj7	10:m7	8
+move	major	9:maj7	11:maj7	10
+move	major	9:maj7	11:m7	18
+move	major	9:m	0:maj	583
+move	major	9:m	0:maj7	17
+move	major	9:m	0:7	138
+move	major	9:m	0:+	10
+move	major	9:m	1:dim	13
+move	major	9:m	2:maj	157
+move	major	9:m	2:m	469
+move	major	9:m	2:m6	12
+move	major	9:m	2:m7	395
+move	major	9:m	2:7	406
+move	major	9:m	2:7sus4	10
+move	major	9:m	3:7	11
+move	major	9:m	4:maj	43
+move	major	9:m	4:m	380
+move	major	9:m	4:m7	98
+move	major	9:m	4:7	283
+move	major	9:m	4:m7b5	13
+move	major	9:m	4:+	11
+move	major	9:m	5:maj	1130
+move	major	9:m	5:6	21
+move	major	9:m	5:maj7	75
+move	major	9:m	5:m	48
+move	major	9:m	5:m6	29
+move	major	9:m	5:m7	12
+move	major	9:m	5:7	60
+move	major	9:m	6:m7b5	40
+move	major	9:m	7:maj	882
+move	major	9:m	7:m	38
+move	major	9:m	7:m6	11
+move	major	9:m	7:m7	37
+move	major	9:m	7:7	167
+move	major	9:m	7:sus4	74
+move	major	9:m	8:maj	17
+move	major	9:m	8:maj7	9
+move	major	9:m	8:7	27
+move	major	9:m	8:dim	8
+move	major	9:m	8:+	22
+move	major	9:m	9:maj	22
+move	major	9:m	9:m	823
+move	major	9:m	9:m6	50
+move	major	9:m	9:m7	649
+move	major	9:m	9:7	72
+move	major	9:m	9:dim	15
+move	major	9:m	10:maj	31
+move	major	9:m	10:maj7	27
+move	major	9:m	10:7	12
+move	major	9:m	10:dim	9
+move	major	9:m	11:m	11
+move	major	9:m	11:m7	11
+move	major	9:m	11:7	46
+move	major	9:m	11:m7b5	34
+move	major	9:m6	0:6	8
+move	major	9:m6	2:m7	25
+move	major	9:m6	2:7	31
+move	major	9:m6	4:maj	13
+move	major	9:m6	4:m	9
+move	major	9:m6	4:7	13
+move	major	9:m6	5:maj	8
+move	major	9:m6	5:maj7	20
+move	major	9:m6	5:m6	8
+move	major	9:m6	5:7	37
+move	major	9:m6	6:m7b5	16
+move	major	9:m6	7:7	18
+move	major	9:m6	7:7sus4	14
+move	major	9:m6	9:m	24
+move	major	9:m6	9:m6	37
+move	major	9:m6	9:m7	42
+move	major	9:m6	9:7	11
+move	major	9:m6	11:7	35
+move	major	9:m6	11:m7b5	20
+move	major	9:m7	0:maj	206
+move	major	9:m7	0:6	11
+move	major	9:m7	0:maj7	61
+move	major	9:m7	0:m	9
+move	major	9:m7	0:m6	9
+move	major	9:m7	0:m7	23
+move	major	9:m7	0:7	93
+move	major	9:m7	0:7sus4	33
+move	major	9:m7	1:m7	8
+move	major	9:m7	1:dim	13
+move	major	9:m7	2:maj	113
+move	major	9:m7	2:6	12
+move	major	9:m7	2:maj7	10
+move	major	9:m7	2:m	77
+move	major	9:m7	2:m7	3054
+move	major	9:m7	2:7	2751
+move	major	9:m7	2:m7b5	39
+move	major	9:m7	2:7sus4	91
+move	major	9:m7	3:m7	16
+move	major	9:m7	3:7	54
+move	major	9:m7	3:dim	9
+move	major	9:m7	4:maj	21
+move	major	9:m7	4:m	28
+move	major	9:m7	4:m7	264
+move	major	9:m7	4:7	156
+move	major	9:m7	4:m7b5	27
+move	major	9:m7	4:7sus4	8
+move	major	9:m7	5:maj	675
+move	major	9:m7	5:6	25
+move	major	9:m7	5:maj7	457
+move	major	9:m7	5:m	9
+move	major	9:m7	5:m6	33
+move	major	9:m7	5:m7	76
+move	major	9:m7	5:7	102
+move	major	9:m7	5:dim	13
+move	major	9:m7	5:sus4	12
+move	major	9:m7	6:m7	49
+move	major	9:m7	6:7	45
+move	major	9:m7	6:m7b5	249
+move	major	9:m7	6:dim	8
+move	major	9:m7	6:dim7	9
+move	major	9:m7	7:maj	440
+move	major	9:m7	7:6	22
+move	major	9:m7	7:maj7	20
+move	major	9:m7	7:m	15
+move	major	9:m7	7:m7	259
+move	major	9:m7	7:7	156
+move	major	9:m7	7:sus4	66
+move	major	9:m7	7:7sus4	37
+move	major	9:m7	8:maj	18
+move	major	9:m7	8:6	9
+move	major	9:m7	8:maj7	28
+move	major	9:m7	8:m7	43
+move	major	9:m7	8:7	150
+move	major	9:m7	8:dim	12
+move	major	9:m7	8:dim7	17
+move	major	9:m7	9:maj	18
+move	major	9:m7	9:m	91
+move	major	9:m7	9:m6	121
+move	major	9:m7	9:m7	942
+move	major	9:m7	9:7	120
+move	major	9:m7	9:m7b5	13
+move	major	9:m7	9:7sus4	8
+move	major	9:m7	10:maj	20
+move	major	9:m7	10:maj7	73
+move	major	9:m7	10:m7	15
+move	major	9:m7	10:7	68
+move	major	9:m7	10:dim	16
+move	major	9:m7	11:m	16
+move	major	9:m7	11:m7	110
+move	major	9:m7	11:7	53
+move	major	9:m7	11:m7b5	134
+move	major	9:m7	11:+	14
+move	major	9:7	0:maj	71
+move	major	9:7	0:6	22
+move	major	9:7	0:maj7	43
+move	major	9:7	0:m7	19
+move	major	9:7	0:7	19
+move	major	9:7	1:7	8
+move	major	9:7	1:dim	8
+move	major	9:7	2:maj	168
+move	major	9:7	2:6	21
+move	major	9:7	2:maj7	214
+move	major	9:7	2:m	837
+move	major	9:7	2:m6	9
+move	major	9:7	2:m7	5756
+move	major	9:7	2:7	2770
+move	major	9:7	2:m7b5	144
+move	major	9:7	2:7sus4	45
+move	major	9:7	3:m	9
+move	major	9:7	3:m7	96
+move	major	9:7	3:7	41
+move	major	9:7	4:m7	168
+move	major	9:7	4:7	40
+move	major	9:7	4:m7b5	44
+move	major	9:7	5:maj	58
+move	major	9:7	5:6	25
+move	major	9:7	5:maj7	70
+move	major	9:7	5:m	21
+move	major	9:7	5:m6	29
+move	major	9:7	5:m7	35
+move	major	9:7	5:7	35
+move	major	9:7	6:maj	15
+move	major	9:7	6:m7	62
+move	major	9:7	6:7	35
+move	major	9:7	6:m7b5	76
+move	major	9:7	7:maj	84
+move	major	9:7	7:maj7	17
+move	major	9:7	7:m	9
+move	major	9:7	7:m6	13
+move	major	9:7	7:m7	17
+move	major	9:7	7:7	95
+move	major	9:7	7:dim	11
+move	major	9:7	7:sus4	13
+move	major	9:7	7:7sus4	20
+move	major	9:7	8:maj7	88
+move	major	9:7	8:m7	20
+move	major	9:7	8:7	251
+move	major	9:7	9:6	9
+move	major	9:7	9:m	13
+move	major	9:7	9:m7	179
+move	major	9:7	9:7	979
+move	major	9:7	9:+	19
+move	major	9:7	10:maj	17
+move	major	9:7	10:6	10
+move	major	9:7	10:maj7	29
+move	major	9:7	10:7	63
+move	major	9:7	11:m7	17
+move	major	9:7	11:7	9
+move	major	9:7	11:m7b5	16
+move	major	9:m7b5	2:m7	8
+move	major	9:m7b5	2:7	124
+move	major	9:m7b5	2:m7b5	10
+move	major	9:m7b5	8:maj7	10
+move	major	9:m7b5	8:7	19
+move	major	9:dim	0:maj	56
+move	major	9:dim	2:m7	15
+move	major	9:dim	7:7	33
+move	major	9:dim	10:m7	11
+move	major	9:sus4	9:maj	13
+move	major	9:sus4	9:m	8
+move	major	9:sus4	9:7	17
+move	major	9:sus4	9:sus4	14
+move	major	9:7sus4	0:7sus4	40
+move	major	9:7sus4	2:maj7	28
+move	major	9:7sus4	2:m7	65
+move	major	9:7sus4	5:maj7	13
+move	major	9:7sus4	8:7sus4	9
+move	major	9:7sus4	9:maj	11
+move	major	9:7sus4	9:7	117
+move	major	9:7sus4	9:7sus4	44
+move	major	9:7sus4	11:7sus4	13
+move	major	9:+	2:m	11
+move	major	9:+	2:m7	26
+move	major	9:+	9:7	23
+move	major	10:maj	0:maj	493
+move	major	10:maj	0:maj7	8
+move	major	10:maj	0:m	29
+move	major	10:maj	0:m7	50
+move	major	10:maj	0:7	120
+move	major	10:maj	0:sus4	12
+move	major	10:maj	0:7sus4	10
+move	major	10:maj	1:maj	10
+move	major	10:maj	2:maj	11
+move	major	10:maj	2:m	23
+move	major	10:maj	2:m7	17
+move	major	10:maj	3:maj	92
+move	major	10:maj	3:6	9
+move	major	10:maj	3:7	8
+move	major	10:maj	4:7	8
+move	major	10:maj	5:maj	752
+move	major	10:maj	5:6	15
+move	major	10:maj	5:maj7	15
+move	major	10:maj	5:m	27
+move	major	10:maj	5:m7	16
+move	major	10:maj	5:7	33
+move	major	10:maj	7:maj	74
+move	major	10:maj	7:m	15
+move	major	10:maj	7:m7	20
+move	major	10:maj	7:7	103
+move	major	10:maj	8:maj	59
+move	major	10:maj	8:maj7	29
+move	major	10:maj	9:maj	26
+move	major	10:maj	9:m	38
+move	major	10:maj	9:m7	25
+move	major	10:maj	9:7	33
+move	major	10:maj	10:maj	220
+move	major	10:maj	10:6	39
+move	major	10:maj	10:maj7	11
+move	major	10:maj	10:m	25
+move	major	10:maj	10:m7	13
+move	major	10:maj	10:7	37
+move	major	10:maj	11:maj	36
+move	major	10:maj	11:m7	8
+move	major	10:maj	11:dim	21
+move	major	10:maj	11:dim7	8
+move	major	10:6	0:maj	52
+move	major	10:6	0:6	24
+move	major	10:6	0:maj7	9
+move	major	10:6	0:7	13
+move	major	10:6	2:m7	8
+move	major	10:6	7:maj	8
+move	major	10:6	7:m7	9
+move	major	10:6	9:m7	15
+move	major	10:6	9:7	26
+move	major	10:6	10:maj	27
+move	major	10:6	10:6	10
+move	major	10:6	10:7	19
+move	major	10:6	11:6	18
+move	major	10:6	11:7	11
+move	major	10:maj7	0:maj	60
+move	major	10:maj7	0:6	10
+move	major	10:maj7	0:maj7	139
+move	major	10:maj7	0:m7	31
+move	major	10:maj7	0:7	18
+move	major	10:maj7	1:maj7	9
+move	major	10:maj7	1:7	20
+move	major	10:maj7	2:m7	75
+move	major	10:maj7	2:7	8
+move	major	10:maj7	3:maj	13
+move	major	10:maj7	3:maj7	35
+move	major	10:maj7	3:m7	16
+move	major	10:maj7	3:7	31
+move	major	10:maj7	4:m7	25
+move	major	10:maj7	4:m7b5	20
+move	major	10:maj7	5:maj	28
+move	major	10:maj7	5:maj7	29
+move	major	10:maj7	5:7	10
+move	major	10:maj7	6:maj7	35
+move	major	10:maj7	7:maj	17
+move	major	10:maj7	7:m7	52
+move	major	10:maj7	7:7	31
+move	major	10:maj7	7:7sus4	18
+move	major	10:maj7	8:maj7	22
+move	major	10:maj7	8:7	14
+move	major	10:maj7	9:maj	16
+move	major	10:maj7	9:maj7	24
+move	major	10:maj7	9:m	42
+move	major	10:maj7	9:m7	103
+move	major	10:maj7	9:7	83
+move	major	10:maj7	9:m7b5	11
+move	major	10:maj7	9:7sus4	12
+move	major	10:maj7	10:maj	8
+move	major	10:maj7	10:6	13
+move	major	10:maj7	10:maj7	228
+move	major	10:maj7	10:m7	69
+move	major	10:maj7	11:maj7	8
+move	major	10:maj7	11:m7	15
+move	major	10:maj7	11:7	24
+move	major	10:maj7	11:m7b5	17
+move	major	10:m	0:7	11
+move	major	10:m	3:m	20
+move	major	10:m	3:7	10
+move	major	10:m	5:maj	20
+move	major	10:m	5:m	11
+move	major	10:m	6:maj	9
+move	major	10:m	10:m	10
+move	major	10:m6	0:7	13
+move	major	10:m6	2:m7	10
+move	major	10:m6	5:maj	20
+move	major	10:m6	7:7	12
+move	major	10:m7	0:m7	27
+move	major	10:m7	3:m7	45
+move	major	10:m7	3:7	449
+move	major	10:m7	5:maj	9
+move	major	10:m7	6:maj	12
+move	major	10:m7	6:maj7	11
+move	major	10:m7	7:m7	12
+move	major	10:m7	8:maj	8
+move	major	10:m7	8:maj7	13
+move	major	10:m7	8:m7	8
+move	major	10:m7	8:7	16
+move	major	10:m7	9:m7	15
+move	major	10:m7	10:maj7	10
+move	major	10:m7	10:m7	83
+move	major	10:m7	11:m7	14
+move	major	10:7	0:maj	255
+move	major	10:7	0:6	217
+move	major	10:7	0:maj7	620
+move	major	10:7	0:m	14
+move	major	10:7	0:m7	10
+move	major	10:7	0:7	199
+move	major	10:7	1:7	12
+move	major	10:7	2:m	18
+move	major	10:7	2:m7	165
+move	major	10:7	2:7	42
+move	major	10:7	2:m7b5	16
+move	major	10:7	3:maj	175
+move	major	10:7	3:6	51
+move	major	10:7	3:maj7	449
+move	major	10:7	3:m	35
+move	major	10:7	3:m7	78
+move	major	10:7	3:7	141
+move	major	10:7	4:m	17
+move	major	10:7	4:m7	562
+move	major	10:7	4:7	55
+move	major	10:7	4:m7b5	32
+move	major	10:7	5:maj	34
+move	major	10:7	5:maj7	18
+move	major	10:7	5:m	8
+move	major	10:7	5:m7	56
+move	major	10:7	5:7	40
+move	major	10:7	7:maj7	14
+move	major	10:7	7:m	11
+move	major	10:7	7:m7	38
+move	major	10:7	7:7	109
+move	major	10:7	7:7sus4	9
+move	major	10:7	8:maj	21
+move	major	10:7	8:maj7	12
+move	major	10:7	8:7	76
+move	major	10:7	9:maj7	19
+move	major	10:7	9:m	44
+move	major	10:7	9:m7	195
+move	major	10:7	9:7	936
+move	major	10:7	9:m7b5	12
+move	major	10:7	9:7sus4	14
+move	major	10:7	10:maj	18
+move	major	10:7	10:m7	23
+move	major	10:7	10:7	266
+move	major	10:7	11:m7	17
+move	major	10:7	11:7	79
+move	major	10:7	11:m7b5	12
+move	major	10:7	11:dim	16
+move	major	10:m7b5	3:7	14
+move	major	10:dim	2:m7	20
+move	major	10:dim	2:7	9
+move	major	10:dim	7:7	41
+move	major	10:dim	11:m7	8
+move	major	10:dim	11:7	11
+move	major	10:dim7	7:7	8
+move	major	10:dim7	9:m7	16
+move	major	10:sus4	10:7	10
+move	major	10:sus4	10:sus4	74
+move	major	10:7sus4	0:maj7	19
+move	major	10:7sus4	0:7	10
+move	major	10:7sus4	0:7sus4	9
+move	major	10:7sus4	3:maj	13
+move	major	10:7sus4	3:maj7	17
+move	major	10:7sus4	5:m7	11
+move	major	10:7sus4	7:7sus4	14
+move	major	10:7sus4	9:maj	17
+move	major	10:7sus4	10:7	39
+move	major	10:7sus4	10:7sus4	43
+move	major	11:maj	0:maj	75
+move	major	11:maj	0:6	9
+move	major	11:maj	0:maj7	10
+move	major	11:maj	0:7	9
+move	major	11:maj	1:maj	19
+move	major	11:maj	1:m	17
+move	major	11:maj	2:maj	19
+move	major	11:maj	4:maj	24
+move	major	11:maj	4:m	29
+move	major	11:maj	5:maj	12
+move	major	11:maj	6:maj	12
+move	major	11:maj	7:maj	8
+move	major	11:maj	7:7	20
+move	major	11:maj	9:maj	30
+move	major	11:maj	9:maj7	20
+move	major	11:maj	10:maj	26
+move	major	11:maj	11:maj	39
+move	major	11:maj	11:7	9
+move	major	11:6	0:6	25
+move	major	11:6	10:6	12
+move	major	11:maj7	0:maj7	31
+move	major	11:maj7	1:maj	11
+move	major	11:maj7	1:m7	11
+move	major	11:maj7	1:7	16
+move	major	11:maj7	2:dim	13
+move	major	11:maj7	4:maj7	11
+move	major	11:maj7	4:m7	13
+move	major	11:maj7	4:7	11
+move	major	11:maj7	5:m7	8
+move	major	11:maj7	6:7	8
+move	major	11:maj7	7:maj7	16
+move	major	11:maj7	7:7	11
+move	major	11:maj7	8:maj7	8
+move	major	11:maj7	8:m7	9
+move	major	11:maj7	10:maj7	9
+move	major	11:maj7	10:m7	20
+move	major	11:maj7	10:7	9
+move	major	11:maj7	11:maj7	64
+move	major	11:maj7	11:m7	23
+move	major	11:m	0:maj	54
+move	major	11:m	0:maj7	9
+move	major	11:m	2:maj	9
+move	major	11:m	4:m	22
+move	major	11:m	4:m7	19
+move	major	11:m	4:7	23
+move	major	11:m	6:m	22
+move	major	11:m	9:maj	19
+move	major	11:m	9:m	21
+move	major	11:m	9:m7	20
+move	major	11:m	11:m	36
+move	major	11:m	11:m7	16
+move	major	11:m7	0:maj	30
+move	major	11:m7	0:maj7	54
+move	major	11:m7	1:m7	18
+move	major	11:m7	2:maj	15
+move	major	11:m7	2:m7	19
+move	major	11:m7	4:maj	14
+move	major	11:m7	4:m7	142
+move	major	11:m7	4:7	783
+move	major	11:m7	4:7sus4	23
+move	major	11:m7	6:m7	15
+move	major	11:m7	7:maj	17
+move	major	11:m7	7:maj7	15
+move	major	11:m7	7:7	11
+move	major	11:m7	8:m7b5	11
+move	major	11:m7	9:maj	28
+move	major	11:m7	9:m7	128
+move	major	11:m7	9:7sus4	10
+move	major	11:m7	10:maj7	11
+move	major	11:m7	10:m7	20
+move	major	11:m7	10:7	51
+move	major	11:m7	11:m6	8
+move	major	11:m7	11:m7	56
+move	major	11:m7	11:7	12
+move	major	11:7	0:maj	82
+move	major	11:7	0:6	42
+move	major	11:7	0:maj7	150
+move	major	11:7	0:m7	11
+move	major	11:7	0:7	63
+move	major	11:7	1:maj7	9
+move	major	11:7	1:7	21
+move	major	11:7	2:m	30
+move	major	11:7	2:m7	53
+move	major	11:7	4:maj	153
+move	major	11:7	4:6	59
+move	major	11:7	4:maj7	392
+move	major	11:7	4:m	242
+move	major	11:7	4:m7	741
+move	major	11:7	4:7	436
+move	major	11:7	4:m7b5	135
+move	major	11:7	4:7sus4	9
+move	major	11:7	4:+	12
+move	major	11:7	5:maj7	17
+move	major	11:7	5:m7	45
+move	major	11:7	5:7	21
+move	major	11:7	6:maj	9
+move	major	11:7	6:m7	33
+move	major	11:7	6:m7b5	13
+move	major	11:7	7:maj	12
+move	major	11:7	7:maj7	9
+move	major	11:7	7:m7	8
+move	major	11:7	7:7	39
+move	major	11:7	8:m7	29
+move	major	11:7	8:7	12
+move	major	11:7	9:m	8
+move	major	11:7	9:m7	27
+move	major	11:7	9:7	19
+move	major	11:7	10:maj	10
+move	major	11:7	10:maj7	92
+move	major	11:7	10:m7	10
+move	major	11:7	10:7	349
+move	major	11:7	11:m7	22
+move	major	11:7	11:7	137
+move	major	11:7	11:m7b5	28
+move	major	11:m7b5	0:maj	20
+move	major	11:m7b5	2:m7	8
+move	major	11:m7b5	4:m7	16
+move	major	11:m7b5	4:7	1310
+move	major	11:m7b5	5:7	11
+move	major	11:m7b5	9:m	8
+move	major	11:m7b5	9:m7	14
+move	major	11:m7b5	10:7	23
+move	major	11:m7b5	11:m7b5	18
+move	major	11:dim	0:maj	18
+move	major	11:dim	0:maj7	18
+move	major	11:dim	5:maj	20
+move	major	11:dim	9:m	14
+move	major	11:dim7	0:m	10
+move	major	11:sus4	11:maj	10
+move	major	11:7sus4	0:maj7	11
+move	major	11:7sus4	4:maj7	13
+move	major	11:7sus4	9:7sus4	14
+move	major	11:7sus4	11:7	44
+move	major	11:7sus4	11:7sus4	55
+move	major	11:+	4:m7	15
+move	minor	0:maj	0:maj	266
+move	minor	0:maj	0:m	19
+move	minor	0:maj	0:m6	8
+move	minor	0:maj	0:m7	32
+move	minor	0:maj	0:7	13
+move	minor	0:maj	0:7sus4	19
+move	minor	0:maj	1:maj	15
+move	minor	0:maj	3:maj	26
+move	minor	0:maj	5:maj	71
+move	minor	0:maj	5:m	39
+move	minor	0:maj	5:m7	14
+move	minor	0:maj	6:7	11
+move	minor	0:maj	7:maj	8
+move	minor	0:maj	7:7	14
+move	minor	0:maj	8:maj	63
+move	minor	0:maj	8:maj7	10
+move	minor	0:maj	10:maj	87
+move	minor	0:maj	10:m	10
+move	minor	0:6	0:6	11
+move	minor	0:6	2:m7b5	8
+move	minor	0:maj7	0:maj7	47
+move	minor	0:maj7	0:m7	29
+move	minor	0:maj7	0:7	19
+move	minor	0:maj7	2:m7	10
+move	minor	0:maj7	3:maj7	8
+move	minor	0:maj7	4:m7	8
+move	minor	0:maj7	5:maj	8
+move	minor	0:maj7	5:m7	22
+move	minor	0:maj7	5:7	8
+move	minor	0:maj7	9:m7	21
+move	minor	0:m	0:maj	28
+move	minor	0:m	0:m	2192
+move	minor	0:m	0:m6	76
+move	minor	0:m	0:m7	487
+move	minor	0:m	0:7	93
+move	minor	0:m	0:dim	20
+move	minor	0:m	0:7sus4	24
+move	minor	0:m	1:maj	19
+move	minor	0:m	1:maj7	24
+move	minor	0:m	1:7	32
+move	minor	0:m	2:m	14
+move	minor	0:m	2:m7	68
+move	minor	0:m	2:7	67
+move	minor	0:m	2:m7b5	187
+move	minor	0:m	3:maj	208
+move	minor	0:m	3:6	27
+move	minor	0:m	3:maj7	24
+move	minor	0:m	3:7	28
+move	minor	0:m	4:7	12
+move	minor	0:m	5:maj	70
+move	minor	0:m	5:m	386
+move	minor	0:m	5:m6	74
+move	minor	0:m	5:m7	175
+move	minor	0:m	5:7	121
+move	minor	0:m	6:dim	11
+move	minor	0:m	7:maj	72
+move	minor	0:m	7:m	141
+move	minor	0:m	7:m7	181
+move	minor	0:m	7:7	431
+move	minor	0:m	7:m7b5	14
+move	minor	0:m	8:maj	398
+move	minor	0:m	8:6	8
+move	minor	0:m	8:maj7	75
+move	minor	0:m	8:7	107
+move	minor	0:m	9:7	12
+move	minor	0:m	9:m7b5	22
+move	minor	0:m	10:maj	591
+move	minor	0:m	10:6	13
+move	minor	0:m	10:m	21
+move	minor	0:m	10:m7	44
+move	minor	0:m	10:7	33
+move	minor	0:m	11:+	23
+move	minor	0:m6	0:m	98
+move	minor	0:m6	0:m6	126
+move	minor	0:m6	0:m7	75
+move	minor	0:m6	0:7	17
+move	minor	0:m6	1:m6	8
+move	minor	0:m6	1:7	74
+move	minor	0:m6	2:m7	15
+move	minor	0:m6	2:7	26
+move	minor	0:m6	2:m7b5	107
+move	minor	0:m6	3:7	9
+move	minor	0:m6	5:m	14
+move	minor	0:m6	5:m6	26
+move	minor	0:m6	5:m7	38
+move	minor	0:m6	7:7	65
+move	minor	0:m6	7:m7b5	23
+move	minor	0:m6	8:maj	26
+move	minor	0:m6	8:maj7	34
+move	minor	0:m6	8:7	70
+move	minor	0:m6	9:m7b5	17
+move	minor	0:m6	10:m7	8
+move	minor	0:m7	0:maj	19
+move	minor	0:m7	0:maj7	29
+move	minor	0:m7	0:m	138
+move	minor	0:m7	0:m6	210
+move	minor	0:m7	0:m7	2528
+move	minor	0:m7	0:7	71
+move	minor	0:m7	1:maj7	118
+move	minor	0:m7	1:m7	60
+move	minor	0:m7	1:7	120
+move	minor	0:m7	1:7sus4	10
+move	minor	0:m7	2:m	32
+move	minor	0:m7	2:m7	311
+move	minor	0:m7	2:7	135
+move	minor	0:m7	2:m7b5	185
+move	minor	0:m7	3:maj	144
+move	minor	0:m7	3:6	38
+move	minor	0:m7	3:maj7	54
+move	minor	0:m7	3:m7	50
+move	minor	0:m7	3:7	78
+move	minor	0:m7	4:m7	35
+move	minor	0:m7	5:maj	272
+move	minor	0:m7	5:6	14
+move	minor	0:m7	5:maj7	8
+move	minor	0:m7	5:m	30
+move	minor	0:m7	5:m7	642
+move	minor	0:m7	5:7	673
+move	minor	0:m7	5:7sus4	39
+move	minor	0:m7	6:7	15
+move	minor	0:m7	7:maj	9
+move	minor	0:m7	7:m	18
+move	minor	0:m7	7:m7	285
+move	minor	0:m7	7:7	276
+move	minor	0:m7	7:m7b5	11
+move	minor	0:m7	7:7sus4	57
+move	minor	0:m7	8:maj	168
+move	minor	0:m7	8:6	10
+move	minor	0:m7	8:maj7	254
+move	minor	0:m7	8:m7	36
+move	minor	0:m7	8:7	182
+move	minor	0:m7	9:m7	46
+move	minor	0:m7	9:7	13
+move	minor	0:m7	9:m7b5	188
+move	minor	0:m7	10:maj	107
+move	minor	0:m7	10:6	24
+move	minor	0:m7	10:maj7	50
+move	minor	0:m7	10:m7	161
+move	minor	0:m7	10:7	93
+move	minor	0:m7	10:7sus4	23
+move	minor	0:m7	11:maj7	17
+move	minor	0:m7	11:m	8
+move	minor	0:m7	11:m7	59
+move	minor	0:m7	11:7	32
+move	minor	0:7	0:maj	10
+move	minor	0:7	0:m	14
+move	minor	0:7	0:m7	23
+move	minor	0:7	0:7	189
+move	minor	0:7	0:m7b5	9
+move	minor	0:7	1:7	18
+move	minor	0:7	2:m7	9
+move	minor	0:7	2:7	13
+move	minor	0:7	5:maj	36
+move	minor	0:7	5:6	24
+move	minor	0:7	5:maj7	44
+move	minor	0:7	5:m	142
+move	minor	0:7	5:m6	34
+move	minor	0:7	5:m7	295
+move	minor	0:7	5:7	165
+move	minor	0:7	6:m7	14
+move	minor	0:7	6:7	9
+move	minor	0:7	7:7	9
+move	minor	0:7	8:maj7	30
+move	minor	0:7	8:7	10
+move	minor	0:7	10:7	17
+move	minor	0:7	11:7	10
+move	minor	0:m7b5	5:7	61
+move	minor	0:dim	5:m7	10
+move	minor	0:sus4	0:maj	8
+move	minor	0:sus4	0:7	8
+move	minor	0:sus4	0:sus4	10
+move	minor	0:sus4	10:sus4	14
+move	minor	0:7sus4	0:maj	38
+move	minor	0:7sus4	0:m7	9
+move	minor	0:7sus4	0:7	12
+move	minor	0:7sus4	0:7sus4	38
+move	minor	0:7sus4	5:m7	58
+move	minor	0:7sus4	8:maj7	9
+move	minor	0:7sus4	10:7sus4	8
+move	minor	1:maj	0:maj	14
+move	minor	1:maj	0:m	21
+move	minor	1:maj	1:maj	12
+move	minor	1:maj	3:maj	31
+move	minor	1:maj	8:maj	14
+move	minor	1:maj	8:maj7	12
+move	minor	1:6	0:m7	8
+move	minor	1:maj7	0:maj	8
+move	minor	1:maj7	0:maj7	28
+move	minor	1:maj7	0:m	41
+move	minor	1:maj7	0:m7	132
+move	minor	1:maj7	0:7	23
+move	minor	1:maj7	1:maj7	91
+move	minor	1:maj7	2:m7	12
+move	minor	1:maj7	2:7	10
+move	minor	1:maj7	2:m7b5	31
+move	minor	1:maj7	5:m7	14
+move	minor	1:maj7	6:maj7	8
+move	minor	1:maj7	7:7	18
+move	minor	1:maj7	8:maj7	35
+move	minor	1:maj7	10:m7	16
+move	minor	1:m	1:m	28
+move	minor	1:m	1:m7	8
+move	minor	1:m	6:m	20
+move	minor	1:m6	1:m	20
+move	minor	1:m6	8:7	10
+move	minor	1:m7	0:m7	67
+move	minor	1:m7	1:m6	20
+move	minor	1:m7	1:m7	55
+move	minor	1:m7	3:m7	12
+move	minor	1:m7	6:7	58
+move	minor	1:7	0:m	41
+move	minor	1:7	0:m6	89
+move	minor	1:7	0:m7	151
+move	minor	1:7	0:7	29
+move	minor	1:7	0:m7b5	22
+move	minor	1:7	0:7sus4	9
+move	minor	1:7	1:7	29
+move	minor	1:7	2:m7	8
+move	minor	1:7	2:7	10
+move	minor	1:7	3:maj	21
+move	minor	1:7	5:7	9
+move	minor	1:7	6:maj7	16
+move	minor	1:7	6:m7	10
+move	minor	1:7	6:7	13
+move	minor	1:7	7:7	16
+move	minor	1:7	8:7	11
+move	minor	1:7	10:m7	10
+move	minor	1:m7b5	6:7	8
+move	minor	1:7sus4	0:m7	8
+move	minor	1:7sus4	1:7sus4	13
+move	minor	2:maj	7:maj	8
+move	minor	2:6	1:6	8
+move	minor	2:maj7	7:7	9
+move	minor	2:m	0:m	13
+move	minor	2:m	0:m7	15
+move	minor	2:m	2:m	17
+move	minor	2:m	3:maj7	12
+move	minor	2:m	7:maj	19
+move	minor	2:m	7:m	8
+move	minor	2:m	7:7	35
+move	minor	2:m	7:sus4	9
+move	minor	2:m7	0:m	48
+move	minor	2:m7	0:m7	140
+move	minor	2:m7	1:maj7	17
+move	minor	2:m7	1:7	10
+move	minor	2:m7	2:m6	10
+move	minor	2:m7	2:m7	179
+move	minor	2:m7	2:7	23
+move	minor	2:m7	3:6	21
+move	minor	2:m7	3:maj7	46
+move	minor	2:m7	4:m7	66
+move	minor	2:m7	4:m7b5	12
+move	minor	2:m7	5:maj	14
+move	minor	2:m7	5:7	10
+move	minor	2:m7	7:maj	9
+move	minor	2:m7	7:m	34
+move	minor	2:m7	7:m7	64
+move	minor	2:m7	7:7	274
+move	minor	2:m7	7:7sus4	41
+move	minor	2:m7	8:maj	10
+move	minor	2:m7	8:7	9
+move	minor	2:m7	11:m7b5	8
+move	minor	2:7	0:maj	9
+move	minor	2:7	0:m7	11
+move	minor	2:7	1:maj7	33
+move	minor	2:7	1:7	44
+move	minor	2:7	2:m7	10
+move	minor	2:7	2:7	62
+move	minor	2:7	2:m7b5	50
+move	minor	2:7	3:maj7	11
+move	minor	2:7	3:7	8
+move	minor	2:7	5:m7	8
+move	minor	2:7	7:maj7	27
+move	minor	2:7	7:m	38
+move	minor	2:7	7:m7	92
+move	minor	2:7	7:7	362
+move	minor	2:7	7:m7b5	15
+move	minor	2:7	7:7sus4	34
+move	minor	2:7	8:maj7	18
+move	minor	2:7	8:7	27
+move	minor	2:m7b5	0:m	52
+move	minor	2:m7b5	0:m7	19
+move	minor	2:m7b5	1:7	11
+move	minor	2:m7b5	2:m7b5	24
+move	minor	2:m7b5	7:7	1138
+move	minor	2:dim	7:7	22
+move	minor	3:maj	0:maj	27
+move	minor	3:maj	0:m	147
+move	minor	3:maj	0:m7	92
+move	minor	3:maj	0:7	19
+move	minor	3:maj	1:maj	14
+move	minor	3:maj	2:7	9
+move	minor	3:maj	2:m7b5	9
+move	minor	3:maj	3:maj	206
+move	minor	3:maj	3:maj7	10
+move	minor	3:maj	3:7	25
+move	minor	3:maj	5:maj	102
+move	minor	3:maj	5:m	95
+move	minor	3:maj	5:m6	9
+move	minor	3:maj	5:m7	26
+move	minor	3:maj	5:7	60
+move	minor	3:maj	6:maj	10
+move	minor	3:maj	6:6	8
+move	minor	3:maj	7:maj	31
+move	minor	3:maj	7:m	21
+move	minor	3:maj	7:m7	9
+move	minor	3:maj	7:7	74
+move	minor	3:maj	8:maj	166
+move	minor	3:maj	8:maj7	52
+move	minor	3:maj	8:7	13
+move	minor	3:maj	9:m7	10
+move	minor	3:maj	9:m7b5	25
+move	minor	3:maj	10:maj	323
+move	minor	3:maj	10:7	24
+move	minor	3:maj	10:sus4	23
+move	minor	3:maj	10:7sus4	10
+move	minor	3:6	2:6	8
+move	minor	3:6	2:m7	37
+move	minor	3:6	2:7	19
+move	minor	3:6	2:m7b5	19
+move	minor	3:6	3:6	41
+move	minor	3:6	5:maj	11
+move	minor	3:6	5:m7	14
+move	minor	3:6	5:7	13
+move	minor	3:6	6:7	8
+move	minor	3:6	7:7	13
+move	minor	3:6	8:maj7	11
+move	minor	3:6	10:maj	12
+move	minor	3:maj7	0:m	13
+move	minor	3:maj7	0:m7	62
+move	minor	3:maj7	0:7	17
+move	minor	3:maj7	1:maj7	47
+move	minor	3:maj7	2:m7	68
+move	minor	3:maj7	2:7	20
+move	minor	3:maj7	2:m7b5	76
+move	minor	3:maj7	3:maj	43
+move	minor	3:maj7	3:6	17
+move	minor	3:maj7	3:maj7	164
+move	minor	3:maj7	3:m7	9
+move	minor	3:maj7	3:7	10
+move	minor	3:maj7	4:dim	8
+move	minor	3:maj7	4:dim7	10
+move	minor	3:maj7	5:maj	11
+move	minor	3:maj7	5:m7	24
+move	minor	3:maj7	5:7	14
+move	minor	3:maj7	7:maj7	17
+move	minor	3:maj7	7:m7	36
+move	minor	3:maj7	7:7	26
+move	minor	3:maj7	8:maj	11
+move	minor	3:maj7	8:maj7	183
+move	minor	3:maj7	8:m6	8
+move	minor	3:maj7	8:7	26
+move	minor	3:maj7	9:m7	11
+move	minor	3:maj7	9:7	14
+move	minor	3:maj7	9:m7b5	15
+move	minor	3:maj7	10:7	13
+move	minor	3:m	3:m	20
+move	minor	3:m	3:7	8
+move	minor	3:m	5:7	10
+move	minor	3:m	10:maj	13
+move	minor	3:m	10:7	20
+move	minor	3:m6	9:7	10
+move	minor	3:m7	0:m7	55
+move	minor	3:m7	1:maj	8
+move	minor	3:m7	1:m7	15
+move	minor	3:m7	2:m7	12
+move	minor	3:m7	3:m7	50
+move	minor	3:m7	4:m7	8
+move	minor	3:m7	5:m7	48
+move	minor	3:m7	5:7	29
+move	minor	3:m7	7:m7	8
+move	minor	3:m7	8:m7	14
+move	minor	3:m7	8:7	125
+move	minor	3:m7	8:7sus4	10
+move	minor	3:m7	11:maj7	14
+move	minor	3:7	0:m7	29
+move	minor	3:7	0:m7b5	16
+move	minor	3:7	2:m7	8
+move	minor	3:7	2:7	53
+move	minor	3:7	2:m7b5	13
+move	minor	3:7	3:7	29
+move	minor	3:7	4:7	11
+move	minor	3:7	5:7	40
+move	minor	3:7	7:m7	9
+move	minor	3:7	7:7	11
+move	minor	3:7	8:maj	34
+move	minor	3:7	8:6	23
+move	minor	3:7	8:maj7	265
+move	minor	3:7	8:m	16
+move	minor	3:7	8:m7	14
+move	minor	3:7	8:7	57
+move	minor	3:7	9:m7b5	30
+move	minor	3:7	10:m7	34
+move	minor	3:m7b5	8:7	13
+move	minor	3:sus4	3:maj	15
+move	minor	3:sus4	5:sus4	20
+move	minor	3:sus4	10:sus4	12
+move	minor	3:7sus4	3:7	10
+move	minor	3:7sus4	3:7sus4	13
+move	minor	3:7sus4	5:maj7	10
+move	minor	3:7sus4	8:maj7	11
+move	minor	3:+	3:+	8
+move	minor	4:maj7	4:maj7	13
+move	minor	4:m	4:m7	13
+move	minor	4:m7	0:m7	22
+move	minor	4:m7	3:maj7	17
+move	minor	4:m7	3:7	13
+move	minor	4:m7	4:m7	10
+move	minor	4:m7	5:6	8
+move	minor	4:m7	5:m7	13
+move	minor	4:m7	7:7	12
+move	minor	4:m7	9:m7	9
+move	minor	4:m7	9:7	43
+move	minor	4:m7	9:7sus4	45
+move	minor	4:7	0:m7	10
+move	minor	4:7	3:maj7	13
+move	minor	4:7	3:7	9
+move	minor	4:7	4:7	22
+move	minor	4:7	9:maj7	15
+move	minor	4:7	9:m7	33
+move	minor	4:7	9:7	39
+move	minor	4:m7b5	9:7	72
+move	minor	4:dim	5:m7	9
+move	minor	4:dim7	5:m7	10
+move	minor	5:maj	0:maj	51
+move	minor	5:maj	0:maj7	12
+move	minor	5:maj	0:m	109
+move	minor	5:maj	0:m7	146
+move	minor	5:maj	0:7	21
+move	minor	5:maj	3:maj	31
+move	minor	5:maj	3:maj7	11
+move	minor	5:maj	5:maj	90
+move	minor	5:maj	5:m	11
+move	minor	5:maj	5:m7	11
+move	minor	5:maj	5:7	8
+move	minor	5:maj	5:sus4	21
+move	minor	5:maj	7:maj	58
+move	minor	5:maj	7:m	16
+move	minor	5:maj	7:m7	14
+move	minor	5:maj	7:7	38
+move	minor	5:maj	7:7sus4	10
+move	minor	5:maj	8:maj	44
+move	minor	5:maj	8:maj7	47
+move	minor	5:maj	8:7	24
+move	minor	5:maj	10:maj	43
+move	minor	5:maj	10:7	11
+move	minor	5:6	0:m7	30
+move	minor	5:6	2:m7b5	9
+move	minor	5:6	5:6	23
+move	minor	5:6	7:7	9
+move	minor	5:maj7	0:maj7	13
+move	minor	5:maj7	3:maj7	10
+move	minor	5:maj7	3:7sus4	10
+move	minor	5:maj7	5:maj7	27
+move	minor	5:maj7	5:m7	17
+move	minor	5:maj7	10:maj7	10
+move	minor	5:m	0:maj	10
+move	minor	5:m	0:m	259
+move	minor	5:m	0:m7	13
+move	minor	5:m	0:7	29
+move	minor	5:m	1:maj	19
+move	minor	5:m	2:7	9
+move	minor	5:m	2:m7b5	10
+move	minor	5:m	3:maj	86
+move	minor	5:m	3:maj7	12
+move	minor	5:m	5:m	159
+move	minor	5:m	5:m6	9
+move	minor	5:m	5:m7	46
+move	minor	5:m	5:7	18
+move	minor	5:m	7:maj	25
+move	minor	5:m	7:m	59
+move	minor	5:m	7:m7	14
+move	minor	5:m	7:7	199
+move	minor	5:m	8:maj	72
+move	minor	5:m	10:maj	147
+move	minor	5:m	10:m	21
+move	minor	5:m	10:7	55
+move	minor	5:m	10:sus4	9
+move	minor	5:m6	0:m	72
+move	minor	5:m6	0:m6	10
+move	minor	5:m6	0:m7	17
+move	minor	5:m6	0:7	11
+move	minor	5:m6	2:m7b5	21
+move	minor	5:m6	5:m6	35
+move	minor	5:m6	5:m7	12
+move	minor	5:m6	7:7	48
+move	minor	5:m6	7:sus4	19
+move	minor	5:m6	8:7	9
+move	minor	5:m6	8:sus4	9
+move	minor	5:m6	10:7	8
+move	minor	5:m7	0:maj	9
+move	minor	5:m7	0:m	127
+move	minor	5:m7	0:m7	331
+move	minor	5:m7	0:7	48
+move	minor	5:m7	0:7sus4	26
+move	minor	5:m7	1:maj7	36
+move	minor	5:m7	1:7	12
+move	minor	5:m7	2:m7	25
+move	minor	5:m7	2:7	11
+move	minor	5:m7	2:m7b5	110
+move	minor	5:m7	3:maj	58
+move	minor	5:m7	3:maj7	49
+move	minor	5:m7	3:m7	25
+move	minor	5:m7	3:7	8
+move	minor	5:m7	4:m7	8
+move	minor	5:m7	5:m6	24
+move	minor	5:m7	5:m7	378
+move	minor	5:m7	6:dim7	21
+move	minor	5:m7	7:m	22
+move	minor	5:m7	7:m7	272
+move	minor	5:m7	7:7	238
+move	minor	5:m7	7:7sus4	24
+move	minor	5:m7	8:maj	61
+move	minor	5:m7	8:maj7	55
+move	minor	5:m7	8:m7	9
+move	minor	5:m7	8:7	27
+move	minor	5:m7	9:m7	8
+move	minor	5:m7	9:7	13
+move	minor	5:m7	10:maj	86
+move	minor	5:m7	10:m7	16
+move	minor	5:m7	10:7	500
+move	minor	5:m7	10:sus4	12
+move	minor	5:m7	10:7sus4	79
+move	minor	5:7	0:maj	17
+move	minor	5:7	0:m	119
+move	minor	5:7	0:m7	331
+move	minor	5:7	0:7	60
+move	minor	5:7	2:7	11
+move	minor	5:7	2:m7b5	10
+move	minor	5:7	3:maj	9
+move	minor	5:7	3:6	11
+move	minor	5:7	3:maj7	20
+move	minor	5:7	3:m7	8
+move	minor	5:7	4:maj7	13
+move	minor	5:7	4:7	9
+move	minor	5:7	5:m	21
+move	minor	5:7	5:m7	84
+move	minor	5:7	5:7	197
+move	minor	5:7	5:7sus4	8
+move	minor	5:7	6:7	10
+move	minor	5:7	7:m7	9
+move	minor	5:7	7:7	60
+move	minor	5:7	8:maj	14
+move	minor	5:7	8:maj7	93
+move	minor	5:7	8:m7	10
+move	minor	5:7	8:7	33
+move	minor	5:7	9:m7	14
+move	minor	5:7	10:maj	14
+move	minor	5:7	10:maj7	100
+move	minor	5:7	10:m	16
+move	minor	5:7	10:m6	8
+move	minor	5:7	10:m7	104
+move	minor	5:7	10:7	114
+move	minor	5:7	10:7sus4	29
+move	minor	5:7	11:7	21
+move	minor	5:m7b5	10:7	29
+move	minor	5:sus4	3:maj	12
+move	minor	5:sus4	3:sus4	24
+move	minor	5:sus4	5:maj	11
+move	minor	5:7sus4	0:m7	15
+move	minor	5:7sus4	5:7	12
+move	minor	5:7sus4	5:7sus4	44
+move	minor	5:7sus4	7:maj	18
+move	minor	5:7sus4	7:m7	8
+move	minor	5:7sus4	8:maj7	8
+move	minor	5:7sus4	8:m7	8
+move	minor	6:maj	5:m	19
+move	minor	6:maj	9:maj	9
+move	minor	6:6	5:7	8
+move	minor	6:6	8:maj	8
+move	minor	6:maj7	0:m7	11
+move	minor	6:maj7	5:7	12
+move	minor	6:maj7	6:maj7	16
+move	minor	6:m	8:m	20
+move	minor	6:m7	11:7	34
+move	minor	6:7	0:maj	11
+move	minor	6:7	0:m7	14
+move	minor	6:7	5:m7	44
+move	minor	6:7	5:7	46
+move	minor	6:7	6:7	28
+move	minor	6:7	11:maj7	27
+move	minor	6:7	11:m7	17
+move	minor	6:7	11:7	20
+move	minor	6:7	11:7sus4	11
+move	minor	6:m7b5	11:7	10
+move	minor	6:dim	5:m7	12
+move	minor	6:dim7	0:m	8
+move	minor	7:maj	0:m	155
+move	minor	7:maj	0:m7	45
+move	minor	7:maj	2:m	13
+move	minor	7:maj	2:m7	8
+move	minor	7:maj	3:maj	13
+move	minor	7:maj	5:maj	22
+move	minor	7:maj	5:m	11
+move	minor	7:maj	5:7	8
+move	minor	7:maj	5:7sus4	20
+move	minor	7:maj	7:maj	51
+move	minor	7:maj	7:7	19
+move	minor	7:maj	7:sus4	31
+move	minor	7:maj	8:maj	30
+move	minor	7:maj	10:maj	9
+move	minor	7:maj	10:6	16
+move	minor	7:maj7	0:m7	12
+move	minor	7:maj7	5:maj7	8
+move	minor	7:maj7	8:maj7	18
+move	minor	7:m	0:m	123
+move	minor	7:m	0:m7	22
+move	minor	7:m	3:maj	8
+move	minor	7:m	5:m	97
+move	minor	7:m	5:m7	26
+move	minor	7:m	7:m	113
+move	minor	7:m	7:m7	58
+move	minor	7:m	8:maj	39
+move	minor	7:m	8:maj7	29
+move	minor	7:m	10:maj	8
+move	minor	7:m7	0:maj	8
+move	minor	7:m7	0:m	156
+move	minor	7:m7	0:m7	371
+move	minor	7:m7	0:7	138
+move	minor	7:m7	1:maj7	10
+move	minor	7:m7	2:m7	44
+move	minor	7:m7	2:7	13
+move	minor	7:m7	3:maj7	13
+move	minor	7:m7	3:m7	55
+move	minor	7:m7	4:m7	9
+move	minor	7:m7	4:m7b5	22
+move	minor	7:m7	5:maj	13
+move	minor	7:m7	5:maj7	9
+move	minor	7:m7	5:m	27
+move	minor	7:m7	5:m7	241
+move	minor	7:m7	6:maj7	15
+move	minor	7:m7	6:7	11
+move	minor	7:m7	7:m6	8
+move	minor	7:m7	7:m7	154
+move	minor	7:m7	7:7	14
+move	minor	7:m7	8:maj	19
+move	minor	7:m7	8:maj7	104
+move	minor	7:m7	10:maj	17
+move	minor	7:m7	10:m	13
+move	minor	7:m7	10:m7	26
+move	minor	7:m7	10:7	12
+move	minor	7:m7	11:maj7	23
+move	minor	7:7	0:maj	67
+move	minor	7:7	0:6	24
+move	minor	7:7	0:maj7	65
+move	minor	7:7	0:m	1557
+move	minor	7:7	0:m6	338
+move	minor	7:7	0:m7	1777
+move	minor	7:7	0:7	108
+move	minor	7:7	0:7sus4	14
+move	minor	7:7	1:7	27
+move	minor	7:7	2:m7	19
+move	minor	7:7	2:7	10
+move	minor	7:7	2:m7b5	52
+move	minor	7:7	3:maj	44
+move	minor	7:7	3:6	14
+move	minor	7:7	3:maj7	13
+move	minor	7:7	3:7	13
+move	minor	7:7	4:7	10
+move	minor	7:7	5:m	41
+move	minor	7:7	5:m7	87
+move	minor	7:7	5:7	40
+move	minor	7:7	6:maj7	14
+move	minor	7:7	6:7	31
+move	minor	7:7	7:maj	13
+move	minor	7:7	7:m7	24
+move	minor	7:7	7:7	568
+move	minor	7:7	7:m7b5	19
+move	minor	7:7	8:maj	28
+move	minor	7:7	8:maj7	49
+move	minor	7:7	8:7	68
+move	minor	7:7	9:7	10
+move	minor	7:7	9:m7b5	14
+move	minor	7:7	10:maj	12
+move	minor	7:7	10:m6	13
+move	minor	7:m7b5	0:7	157
+move	minor	7:sus4	0:m7	16
+move	minor	7:sus4	7:maj	45
+move	minor	7:sus4	7:7	35
+move	minor	7:sus4	7:sus4	32
+move	minor	7:7sus4	0:maj7	8
+move	minor	7:7sus4	0:m	8
+move	minor	7:7sus4	0:m7	101
+move	minor	7:7sus4	2:m7	18
+move	minor	7:7sus4	5:7	8
+move	minor	7:7sus4	5:7sus4	8
+move	minor	7:7sus4	6:7	9
+move	minor	7:7sus4	7:7	81
+move	minor	7:7sus4	10:maj7	14
+move	minor	8:maj	0:maj	13
+move	minor	8:maj	0:m	191
+move	minor	8:maj	0:m6	14
+move	minor	8:maj	0:m7	54
+move	minor	8:maj	1:maj	9
+move	minor	8:maj	2:m7b5	8
+move	minor	8:maj	3:maj	363
+move	minor	8:maj	3:maj7	9
+move	minor	8:maj	3:7	8
+move	minor	8:maj	5:m	84
+move	minor	8:maj	7:maj	59
+move	minor	8:maj	7:m	38
+move	minor	8:maj	7:m7	44
+move	minor	8:maj	7:7	208
+move	minor	8:maj	7:sus4	8
+move	minor	8:maj	7:7sus4	9
+move	minor	8:maj	8:maj	173
+move	minor	8:maj	8:6	8
+move	minor	8:maj	10:maj	320
+move	minor	8:maj	10:maj7	8
+move	minor	8:maj	10:7	38
+move	minor	8:maj	10:7sus4	19
+move	minor	8:6	7:m7	14
+move	minor	8:6	7:7	16
+move	minor	8:6	8:6	37
+move	minor	8:maj7	0:m	30
+move	minor	8:maj7	0:m7	144
+move	minor	8:maj7	0:7	9
+move	minor	8:maj7	1:maj7	58
+move	minor	8:maj7	1:7	25
+move	minor	8:maj7	2:m	16
+move	minor	8:maj7	2:m7	33
+move	minor	8:maj7	2:7	34
+move	minor	8:maj7	2:m7b5	134
+move	minor	8:maj7	3:maj	50
+move	minor	8:maj7	3:maj7	69
+move	minor	8:maj7	3:7	10
+move	minor	8:maj7	5:maj	11
+move	minor	8:maj7	5:m	11
+move	minor	8:maj7	5:m6	39
+move	minor	8:maj7	5:m7	165
+move	minor	8:maj7	5:7sus4	8
+move	minor	8:maj7	7:m7	124
+move	minor	8:maj7	7:7	375
+move	minor	8:maj7	7:m7b5	10
+move	minor	8:maj7	7:7sus4	39
+move	minor	8:maj7	8:6	16
+move	minor	8:maj7	8:maj7	255
+move	minor	8:maj7	8:m7	8
+move	minor	8:maj7	9:m7	9
+move	minor	8:maj7	9:m7b5	27
+move	minor	8:maj7	9:dim7	9
+move	minor	8:maj7	10:maj	39
+move	minor	8:maj7	10:6	20
+move	minor	8:maj7	10:maj7	16
+move	minor	8:maj7	10:m7	22
+move	minor	8:maj7	10:7	47
+move	minor	8:maj7	10:7sus4	19
+move	minor	8:m	9:maj	10
+move	minor	8:m	9:maj7	10
+move	minor	8:m6	0:m7	15
+move	minor	8:m6	8:m6	26
+move	minor	8:m7	1:m	17
+move	minor	8:m7	1:m7	11
+move	minor	8:m7	1:7	99
+move	minor	8:m7	7:m7	33
+move	minor	8:m7	7:7	10
+move	minor	8:m7	8:m7	23
+move	minor	8:m7	10:m7	10
+move	minor	8:7	0:m	81
+move	minor	8:7	0:m7	56
+move	minor	8:7	1:maj7	45
+move	minor	8:7	1:m6	12
+move	minor	8:7	1:m7	29
+move	minor	8:7	1:7	22
+move	minor	8:7	2:7	24
+move	minor	8:7	2:m7b5	79
+move	minor	8:7	2:dim	10
+move	minor	8:7	3:maj	11
+move	minor	8:7	3:m7	13
+move	minor	8:7	5:m7	14
+move	minor	8:7	6:7	12
+move	minor	8:7	7:m7	41
+move	minor	8:7	7:7	504
+move	minor	8:7	7:7sus4	15
+move	minor	8:7	8:7	62
+move	minor	8:7	9:7	12
+move	minor	8:7	9:dim	15
+move	minor	8:7	10:7	11
+move	minor	8:sus4	5:m6	9
+move	minor	8:7sus4	1:m7	9
+move	minor	9:maj	1:m7	13
+move	minor	9:6	8:m7	16
+move	minor	9:maj7	7:maj7	8
+move	minor	9:maj7	9:6	17
+move	minor	9:maj7	9:maj7	24
+move	minor	9:m	9:m7	8
+move	minor	9:m7	0:m7	25
+move	minor	9:m7	2:m7	32
+move	minor	9:m7	2:7	78
+move	minor	9:m7	5:7	16
+move	minor	9:m7	7:7	15
+move	minor	9:m7	8:maj7	18
+move	minor	9:m7	8:m7	25
+move	minor	9:m7	8:7	12
+move	minor	9:m7	9:m7	23
+move	minor	9:7	2:maj	10
+move	minor	9:7	2:maj7	18
+move	minor	9:7	2:m	19
+move	minor	9:7	2:m7	80
+move	minor	9:7	2:7	65
+move	minor	9:7	2:m7b5	14
+move	minor	9:7	8:maj7	9
+move	minor	9:7	8:7	68
+move	minor	9:7	9:7	15
+move	minor	9:7	10:m7	12
+move	minor	9:7	10:7	12
+move	minor	9:m7b5	0:m7	15
+move	minor	9:m7b5	2:7	157
+move	minor	9:m7b5	2:m7b5	63
+move	minor	9:m7b5	7:7	8
+move	minor	9:m7b5	8:maj7	37
+move	minor	9:m7b5	8:m6	13
+move	minor	9:m7b5	8:7	53
+move	minor	9:m7b5	9:m7b5	19
+move	minor	9:m7b5	10:m7	8
+move	minor	9:dim	3:m6	15
+move	minor	9:7sus4	2:m7	45
+move	minor	10:maj	0:maj	126
+move	minor	10:maj	0:m	628
+move	minor	10:maj	0:m7	130
+move	minor	10:maj	0:7	10
+move	minor	10:maj	0:7sus4	18
+move	minor	10:maj	1:maj	13
+move	minor	10:maj	3:maj	139
+move	minor	10:maj	3:maj7	27
+move	minor	10:maj	3:m	10
+move	minor	10:maj	5:maj	99
+move	minor	10:maj	5:m	86
+move	minor	10:maj	5:m7	25
+move	minor	10:maj	7:maj	15
+move	minor	10:maj	7:m	30
+move	minor	10:maj	7:m7	17
+move	minor	10:maj	7:7	35
+move	minor	10:maj	8:maj	296
+move	minor	10:maj	8:maj7	56
+move	minor	10:maj	8:m6	9
+move	minor	10:maj	8:7	13
+move	minor	10:maj	10:maj	225
+move	minor	10:maj	10:7	10
+move	minor	10:6	0:m7	15
+move	minor	10:6	5:m7	11
+move	minor	10:6	7:maj	16
+move	minor	10:6	8:maj7	28
+move	minor	10:maj7	0:m7	59
+move	minor	10:maj7	3:maj7	42
+move	minor	10:maj7	3:7	8
+move	minor	10:maj7	4:m7b5	9
+move	minor	10:maj7	7:maj7	16
+move	minor	10:maj7	7:m7	18
+move	minor	10:maj7	7:7sus4	11
+move	minor	10:maj7	8:maj	8
+move	minor	10:maj7	10:maj7	12
+move	minor	10:maj7	10:m7	9
+move	minor	10:m	0:maj	17
+move	minor	10:m	0:m	28
+move	minor	10:m	3:maj	11
+move	minor	10:m	10:m	11
+move	minor	10:m6	3:7	8
+move	minor	10:m6	10:m6	24
+move	minor	10:m7	0:m7	43
+move	minor	10:m7	0:7	13
+move	minor	10:m7	1:maj	16
+move	minor	10:m7	2:m7b5	12
+move	minor	10:m7	3:m7	19
+move	minor	10:m7	3:7	324
+move	minor	10:m7	3:7sus4	16
+move	minor	10:m7	5:m7	31
+move	minor	10:m7	6:7	10
+move	minor	10:m7	7:7	9
+move	minor	10:m7	8:maj	10
+move	minor	10:m7	8:maj7	19
+move	minor	10:m7	9:m7	35
+move	minor	10:m7	9:7	25
+move	minor	10:m7	9:m7b5	8
+move	minor	10:m7	10:m7	51
+move	minor	10:m7	11:m7	22
+move	minor	10:7	0:maj7	9
+move	minor	10:7	0:m	41
+move	minor	10:7	0:m7	96
+move	minor	10:7	0:7	16
+move	minor	10:7	3:maj	124
+move	minor	10:7	3:6	42
+move	minor	10:7	3:maj7	348
+move	minor	10:7	3:m	52
+move	minor	10:7	3:m7	91
+move	minor	10:7	3:7	57
+move	minor	10:7	5:m7	33
+move	minor	10:7	7:m7	15
+move	minor	10:7	7:7	33
+move	minor	10:7	8:maj	17
+move	minor	10:7	8:maj7	53
+move	minor	10:7	8:7	41
+move	minor	10:7	9:m7	8
+move	minor	10:7	9:7	36
+move	minor	10:7	10:m7	12
+move	minor	10:7	10:7	105
+move	minor	10:7	11:7	9
+move	minor	10:sus4	0:maj	12
+move	minor	10:sus4	0:m	8
+move	minor	10:sus4	0:sus4	19
+move	minor	10:sus4	3:sus4	16
+move	minor	10:sus4	10:maj	15
+move	minor	10:7sus4	0:m7	23
+move	minor	10:7sus4	3:maj	9
+move	minor	10:7sus4	3:maj7	16
+move	minor	10:7sus4	5:m	9
+move	minor	10:7sus4	7:7	11
+move	minor	10:7sus4	9:7sus4	13
+move	minor	10:7sus4	10:7	88
+move	minor	10:7sus4	10:7sus4	98
+move	minor	11:maj	0:m7	11
+move	minor	11:maj	11:maj	11
+move	minor	11:maj7	0:m7	17
+move	minor	11:maj7	3:m7	18
+move	minor	11:maj7	5:m7	9
+move	minor	11:maj7	11:maj7	45
+move	minor	11:m	10:m7	10
+move	minor	11:m7	0:m7	18
+move	minor	11:m7	4:7	23
+move	minor	11:m7	10:m7	55
+move	minor	11:m7	11:m7	11
+move	minor	11:7	0:m7	13
+move	minor	11:7	4:maj7	13
+move	minor	11:7	4:m7	24
+move	minor	11:7	5:m7	19
+move	minor	11:7	10:m7	36
+move	minor	11:7	10:7	30
+move	minor	11:7	10:7sus4	8
+move	minor	11:7	11:7	17
+move	minor	11:m7b5	4:7	11
+move	minor	11:dim	0:m	11
+move	minor	11:dim	0:m7	13
+move	minor	11:dim7	0:m7	12
+move	minor	11:7sus4	11:7sus4	8
+move	minor	11:+	0:m	9
+move	minor	11:+	3:maj	8

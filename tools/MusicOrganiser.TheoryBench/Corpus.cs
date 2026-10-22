@@ -211,82 +211,20 @@ static class CorpusBench
                           string.Join(", ", wrong.OrderByDescending(kv => kv.Value).Take(15).Select(kv => $"{kv.Key} ×{kv.Value}")));
     }
 
-    // ---------------------------------------------------------------- key from chords, tried out
+    // ---------------------------------------------------------------- key from chords (ChordKey), on tunes it didn't learn from
 
-    /// <summary>
-    /// How long each chord (its kind, on each note of the scale) sounds in major and minor tunes, and which chord tunes
-    /// end on: learned from charts with a written key.
-    /// </summary>
-    sealed class ChordKeyModel
+    /// <summary>The ChoCo charts with a written key the shipped ChordKey learns from (never the Treebank: NC-SA).</summary>
+    static IEnumerable<Tune> ChoCo(IEnumerable<Tune> tunes) => tunes.Where(t => t.HasKey && t.Source != "treebank");
+
+    static ChordKey Learn(IEnumerable<Tune> tunes) =>
+        ChordKey.Learn(tunes.Select(t => ((IReadOnlyList<ChordSymbol>)t.Chords, (IReadOnlyList<double>)t.Beats, t.Tonic, t.Minor)));
+
+    /// <summary>--save-chord-key: learns ChordKey from every ChoCo chart with a key and writes its table (ChordKey.tsv).</summary>
+    public static void SaveChordKey(string corpus, string to)
     {
-        static readonly string[] Kinds = ["", "6", "maj7", "m", "m6", "m7", "7", "m7b5", "dim", "dim7", "sus4", "7sus4", "+", "5"];
-        readonly double[,,] _held = new double[2, 12, Kinds.Length];
-        readonly double[,,] _last = new double[2, 12, Kinds.Length];
-        readonly double[,,] _first = new double[2, 12, Kinds.Length];
-        readonly double[] _tunes = new double[2];
-        readonly Dictionary<(int, int, int, int, int), double> _moves = [];
-        readonly double[] _movesTotal = new double[2];
-
-        static int K(ChordSymbol c) => Array.IndexOf(Kinds, ProgressionModel.Kind(c));
-
-        public static ChordKeyModel Learn(IEnumerable<Tune> tunes)
-        {
-            var m = new ChordKeyModel();
-            foreach (var t in tunes.Where(t => t.HasKey))
-            {
-                var mode = t.Minor ? 1 : 0;
-                m._tunes[mode]++;
-                for (var i = 0; i < t.Chords.Count; i++)
-                    m._held[mode, ChordSymbol.Mod(t.Chords[i].Root - t.Tonic), K(t.Chords[i])] += t.Beats[i];
-                for (var i = 0; i + 1 < t.Chords.Count; i++)
-                {
-                    var key = (mode, ChordSymbol.Mod(t.Chords[i].Root - t.Tonic), K(t.Chords[i]), ChordSymbol.Mod(t.Chords[i + 1].Root - t.Tonic), K(t.Chords[i + 1]));
-                    m._moves[key] = m._moves.GetValueOrDefault(key) + 1;
-                    m._movesTotal[mode]++;
-                }
-                m._last[mode, ChordSymbol.Mod(t.Chords[^1].Root - t.Tonic), K(t.Chords[^1])]++;
-                m._first[mode, ChordSymbol.Mod(t.Chords[0].Root - t.Tonic), K(t.Chords[0])]++;
-            }
-            return m;
-        }
-
-        static double LogShare(double[,,] table, int mode, int degree, int kind, double smooth)
-        {
-            double total = 0;
-            for (var d = 0; d < 12; d++) for (var k = 0; k < Kinds.Length; k++) total += table[mode, d, k];
-            return Math.Log((table[mode, degree, kind] + smooth) / (total + smooth * 12 * Kinds.Length));
-        }
-
-        /// <param name="lastWeight">How much the last chord counts, against the chords' shares (per beat, averaged).</param>
-        public (int Tonic, bool Minor, double Margin) Guess(IReadOnlyList<ChordSymbol> chords, IReadOnlyList<double> beats,
-                                                             double lastWeight, double firstWeight, double moveWeight = 0)
-        {
-            var scores = new List<(int, bool, double)>();
-            var total = beats.Sum();
-            for (var mode = 0; mode < 2; mode++)
-                for (var tonic = 0; tonic < 12; tonic++)
-                {
-                    double s = 0;
-                    for (var i = 0; i < chords.Count; i++)
-                        s += beats[i] / total * LogShare(_held, mode, ChordSymbol.Mod(chords[i].Root - tonic), K(chords[i]), 0.5);
-                    s += lastWeight * LogShare(_last, mode, ChordSymbol.Mod(chords[^1].Root - tonic), K(chords[^1]), 0.5);
-                    s += firstWeight * LogShare(_first, mode, ChordSymbol.Mod(chords[0].Root - tonic), K(chords[0]), 0.5);
-                    s += Math.Log(_tunes[mode] + 1) * 0.1;
-                    if (moveWeight > 0 && chords.Count > 1)
-                    {
-                        double m = 0;
-                        for (var i = 0; i + 1 < chords.Count; i++)
-                        {
-                            var key = (mode, ChordSymbol.Mod(chords[i].Root - tonic), K(chords[i]), ChordSymbol.Mod(chords[i + 1].Root - tonic), K(chords[i + 1]));
-                            m += Math.Log((_moves.GetValueOrDefault(key) + 0.1) / (_movesTotal[mode] + 0.1 * 28224));
-                        }
-                        s += moveWeight * m / (chords.Count - 1);
-                    }
-                    scores.Add((tonic, mode == 1, s));
-                }
-            scores.Sort((a, b) => b.Item3.CompareTo(a.Item3));
-            return (scores[0].Item1, scores[0].Item2, scores[0].Item3 - scores[1].Item3);
-        }
+        var tunes = ChoCo(Load(corpus)).ToList();
+        File.WriteAllText(to, Learn(tunes).Save());
+        Console.WriteLine($"learned from {tunes.Count} charts, wrote {to}");
     }
 
     /// <summary>A stretch of a chart: the first <paramref name="beats"/> beats (all of it when 0).</summary>
@@ -305,64 +243,45 @@ static class CorpusBench
         return (c, b);
     }
 
-    static KeyEstimate? HeardKey(List<ChordSymbol> chords, List<double> beats)
-    {
-        var section = new PlaygroundSection();
-        long at = 0;
-        for (var i = 0; i < chords.Count; i++)
-        {
-            var length = (long)Math.Max(1, Math.Round(beats[i] * Ppq));
-            section.ChordTrack.Add(new PlaygroundChord { Start = at, Length = length, Chord = chords[i] });
-            at += length;
-        }
-        section.Bars = (int)Math.Max(1, (at + 4 * Ppq - 1) / (4 * Ppq));
-        return SectionHarmony.Of(section).Key;
-    }
-
+    /// <summary>
+    /// The key ChordKey names, learned without the tunes it's tried on: jazz from the Real Book and iReal Pro playlists
+    /// (the Treebank's titles left out), gospel in 5 folds (plus that jazz).
+    /// </summary>
     static void KeyLab(List<Tune> tunes)
     {
         Console.WriteLine();
-        Console.WriteLine("=== KEY FROM CHORDS, tried out: % right (whole chart / first 8 bars / 8 bars from the middle) ===");
+        Console.WriteLine("=== KEY FROM CHORDS (ChordKey, learned without the tunes tried): % right (whole chart / first 8 bars / 8 bars from the middle) ===");
         var testTitles = tunes.Where(t => t.Source == "treebank").Select(t => Norm(t.Title)).ToHashSet();
-        var jazzTrain = tunes.Where(t => t.Source is "real-book" or "ireal-playlists" && !testTitles.Contains(Norm(t.Title))).ToList();
-        var model = ChordKeyModel.Learn(jazzTrain);
+        var jazzTrain = tunes.Where(t => t.HasKey && t.Source is "real-book" or "ireal-playlists" && !testTitles.Contains(Norm(t.Title))).ToList();
+        var jazz = Learn(jazzTrain);
         var gospel = tunes.Where(t => t.IsGospel && t.HasKey).ToList();
         var folds = Enumerable.Range(0, 5).Select(k => gospel.Where((_, i) => i % 5 == k).ToList()).ToList();
-        var gospelModels = folds.Select(f => ChordKeyModel.Learn(jazzTrain.Concat(gospel.Except(f)))).ToList();
-        var tests = new (string Name, List<Tune> Tunes, Func<Tune, ChordKeyModel> Model)[]
+        var gospelModels = folds.Select(f => Learn(jazzTrain.Concat(gospel.Except(f)))).ToList();
+        var tests = new (string Name, List<Tune> Tunes, Func<Tune, ChordKey> Model)[]
         {
-            ("treebank", tunes.Where(t => t.Source == "treebank" && t.HasKey).ToList(), _ => model),
-            ("weimar", tunes.Where(t => t.Source == "weimar" && t.HasKey && !testTitles.Contains(Norm(t.Title))).ToList(), _ => model),
+            ("treebank", tunes.Where(t => t.Source == "treebank" && t.HasKey).ToList(), _ => jazz),
+            ("weimar", tunes.Where(t => t.Source == "weimar" && t.HasKey && !testTitles.Contains(Norm(t.Title))).ToList(), _ => jazz),
             ("gospel (5 folds)", gospel, t => gospelModels[gospel.IndexOf(t) % 5]),
         };
-        var ways = new List<(string, Func<Tune, List<ChordSymbol>, List<double>, (int, bool)?>)>
+        var line = "";
+        foreach (var test in tests)
         {
-            ("the app now", (_, c, b) => HeardKey(c, b) is { } k ? (k.Tonic, k.Minor) : null),
-        };
-        foreach (var (last, first, moves) in new[] { (0.0, 0.0, 0.0), (0.0, 0.1, 0.0), (0.0, 0.0, 0.3), (0.0, 0.0, 0.6), (0.0, 0.0, 1.0), (0.0, 0.0, 2.0) })
-            ways.Add(($"shares, last {last}, first {first}, moves {moves}", (t, c, b) => { var g = tests.First(x => x.Tunes.Contains(t)).Model(t).Guess(c, b, last, first, moves); return (g.Tonic, g.Minor); }));
-        foreach (var (name, guess) in ways)
-        {
-            var line = $"{name,-40}";
-            foreach (var test in tests)
+            var cells = new List<string>();
+            foreach (var (beats, middle) in new[] { (0.0, false), (32.0, false), (32.0, true) })
             {
-                var cells = new List<string>();
-                foreach (var (beats, middle) in new[] { (0.0, false), (32.0, false), (32.0, true) })
+                int n = 0, right = 0;
+                foreach (var t in test.Tunes)
                 {
-                    int n = 0, right = 0;
-                    foreach (var t in test.Tunes)
-                    {
-                        var from = middle ? Math.Floor(t.Beats.Sum() / 2 / 4) * 4 : 0;
-                        var (c, b) = Window(t, beats, from);
-                        if (c.Count == 0) continue;
-                        n++;
-                        if (guess(t, c, b) is { } k && k.Item1 == t.Tonic && k.Item2 == t.Minor) right++;
-                    }
-                    cells.Add(Pct(right, n));
+                    var from = middle ? Math.Floor(t.Beats.Sum() / 2 / 4) * 4 : 0;
+                    var (c, b) = Window(t, beats, from);
+                    if (c.Count == 0) continue;
+                    n++;
+                    if (test.Model(t).Guess(c, b) is { } k && k.Tonic == t.Tonic && k.Minor == t.Minor) right++;
                 }
-                line += $"  {test.Name}: {string.Join("/", cells)}";
+                cells.Add(Pct(right, n));
             }
-            Console.WriteLine(line);
+            line += $"  {test.Name}: {string.Join("/", cells)}";
         }
+        Console.WriteLine(line.Trim());
     }
 }

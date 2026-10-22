@@ -265,4 +265,35 @@ public class ChordTrackTests : IDisposable
         Assert.True(p.RunShortcut("playground.fitAgain"));
         Assert.Equal(Dm7.Select(k => k + 12 - 2), keys.Layer.Notes.Where(n => n.Start == Bar).Select(n => n.Key));   // down a tone to C7, an octave up
     }
+
+    [Theory]
+    [InlineData("Cm7 F7 Bbmaj7 Bbmaj7", "Bb", false)]
+    [InlineData("Dm7b5 G7 Cm6 Cm6", "C", true)]
+    [InlineData("Ebmaj7 Ab7 Dm7 G7 Cm7 F7 Bb6 Bb6", "Bb", false)]
+    [InlineData("F7 Bb7 F7 F7 Bb7 Bb7 F7 D7 Gm7 C7 F7 C7", "F", false)]
+    public void With_only_chords_on_the_chord_track_the_key_is_the_one_real_tunes_with_those_chords_are_in(string chart, string tonic, bool minor)
+    {
+        var lane = ChordLane.ParseChart(chart, out _)!;
+        var section = new PlaygroundSection
+        {
+            Bars = lane.Count,
+            ChordTrack = lane.Select((c, i) => new PlaygroundChord { Start = i * (long)Bar, Length = Bar, Chord = c.Chord }).ToList(),
+        };
+        var key = SectionHarmony.Of(section).Key;
+        Assert.NotNull(key);
+        Assert.Equal((ChordSymbol.ParseNote(tonic, out _), minor), (key.Tonic, key.Minor));
+        Assert.True(key.Confidence >= SectionHarmony.MinKeyConfidence);
+        // A typed chart with no parts goes the same way.
+        Assert.Equal(key.Tonic, SectionHarmony.Of(new PlaygroundSection { Bars = lane.Count, Chart = chart }).Key?.Tonic);
+    }
+
+    [Fact]
+    public void The_key_counts_the_app_ships_with_read_back_the_same_as_they_were_written()
+    {
+        var again = ChordKey.Load(new StringReader(ChordKey.Default.Save()));
+        var chords = ChordLane.ParseChart("Am7 D7 Gmaj7 Em7 Am7 D7 Bm7 E7", out _)!.Select(c => c.Chord).ToList();
+        var lengths = chords.Select(_ => 4.0).ToList();
+        Assert.Equal(ChordKey.Default.Guess(chords, lengths), again.Guess(chords, lengths));
+        Assert.Equal((7, false), (again.Guess(chords, lengths)!.Tonic, again.Guess(chords, lengths)!.Minor));
+    }
 }
