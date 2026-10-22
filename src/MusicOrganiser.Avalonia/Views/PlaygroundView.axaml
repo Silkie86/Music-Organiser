@@ -5,6 +5,10 @@
              x:Class="MusicOrganiser.Avalonia.Views.PlaygroundView"
              x:DataType="vm:PlaygroundViewModel">
     <UserControl.Styles>
+        <!-- The side panel's six tabs fit on one line. -->
+        <Style Selector="TabControl.side TabItem">
+            <Setter Property="Padding" Value="7,0" />
+        </Style>
         <!-- A suggestion being heard: its card lights up (and glows softly while its sound is being made). -->
         <Style Selector="Border.tryCard">
             <Setter Property="Padding" Value="6,4" />
@@ -443,7 +447,7 @@
             <Border Grid.Column="1" Classes="grip" Width="3" Height="48" />
             <!-- Getting parts: suggestions, writing from the chords, reharmonising, and songs. -->
             <Border Grid.Column="2" Classes="panel" Padding="10,6,10,10">
-                <TabControl Padding="0,8,0,0" SelectedIndex="{Binding RightTab}">
+                <TabControl Classes="side" Padding="0,8,0,0" SelectedIndex="{Binding RightTab}">
                     <TabItem Header="{Binding SuggestTab}" FontSize="14">
                         <Panel>
                         <!-- An empty idea: the MIDI page's own list, smaller, with Add on each part. -->

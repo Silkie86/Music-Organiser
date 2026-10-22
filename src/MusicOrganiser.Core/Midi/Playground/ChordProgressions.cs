@@ -50,11 +50,12 @@ public static class ChordProgressions
             if (++n % 4096 == 0) ct.ThrowIfCancellationRequested();
             if (e.Role != MidiRoles.Chords || e.Chords.Count < 2) continue;
             var (tonic, minor) = KeyOf(e);
-            var chords = OneGoRound(e.Chords.Select(c => c.Transposed(-tonic)).ToList());
+            var played = Merged(e.Chords.Select(c => c.Transposed(-tonic)));
+            var chords = OneGoRound(played);
             if (chords.Count is < 2 or > MostChords) continue;
             var name = (minor ? "m|" : "M|") + string.Join(" ", chords.Select(c => $"{c.Root}:{ProgressionModel.Kind(c.Symbol)}"));
             if (!groups.TryGetValue(name, out var g)) groups[name] = g = new Group(chords, minor);
-            g.Add(e, tonic, e.Chords.Count);
+            g.Add(e, tonic, played.Count);
         }
         return groups.Values
             .OrderByDescending(g => g.Songs.Count).ThenByDescending(g => g.Parts).ThenBy(g => g.Chords.Count)
@@ -70,11 +71,12 @@ public static class ChordProgressions
     }
 
     /// <summary>
-    /// A progression played round more than once, once: "Dm7 G7 Dm7 G7" is "Dm7 G7", and "C Am F G C" (back home at the
-    /// end) is "C Am F G".
+    /// A progression played round more than once, once: "Dm7 G7 Dm7 G7" is "Dm7 G7". A chord that only changes its colour
+    /// (Fmaj7 then Fmaj7(#11)) is one chord.
     /// </summary>
-    public static List<PhraseChord> OneGoRound(IReadOnlyList<PhraseChord> chords)
+    public static List<PhraseChord> OneGoRound(IReadOnlyList<PhraseChord> played)
     {
+        var chords = Merged(played);
         for (var p = 2; p < chords.Count; p++)
         {
             var repeats = true;
@@ -82,6 +84,15 @@ public static class ChordProgressions
             if (repeats) return chords.Take(p).ToList();
         }
         return chords.ToList();
+    }
+
+    /// <summary>The chords with each one that only changes the colour of the one before (Fmaj7 to Fmaj7(#11)) left out.</summary>
+    static List<PhraseChord> Merged(IEnumerable<PhraseChord> played)
+    {
+        var chords = new List<PhraseChord>();
+        foreach (var c in played)
+            if (chords.Count == 0 || !Same(chords[^1], c)) chords.Add(c);
+        return chords;
     }
 
     static bool Same(PhraseChord a, PhraseChord b) => a.Root == b.Root && ProgressionModel.Kind(a.Symbol) == ProgressionModel.Kind(b.Symbol);
