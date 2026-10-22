@@ -453,8 +453,9 @@ public class ViewModelTests : IDisposable
             main.Activities.Items.CollectionChanged += (_, e) => { foreach (MusicOrganiser.ViewModels.Activity a in e.NewItems ?? Array.Empty<MusicOrganiser.ViewModels.Activity>()) cards.Enqueue(a.Title); };
             Fixtures.FlStudioProject(Directory.CreateDirectory(Path.Combine(songs, "auto-backups")).FullName, "Another");
             Fixtures.FlStudioProject(songs, "Zed");
-            await Until(() => cards.Any(t => t.StartsWith("Updated ")));
-            Assert.Equal("Updated Zed", cards.First(t => t.StartsWith("Updated ")));
+            // macOS can deliver Fresh Idea's change a moment late, after the cards start being collected: skip it.
+            await Until(() => cards.Any(t => t.StartsWith("Updated ") && t != "Updated Fresh Idea"));
+            Assert.Equal("Updated Zed", cards.First(t => t.StartsWith("Updated ") && t != "Updated Fresh Idea"));
 
             // Deleted: the song stays listed, marked missing; the sound is forgotten.
             File.Delete(Path.Combine(songs, "Fresh Idea.flp"));
