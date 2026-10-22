@@ -59,14 +59,15 @@ public sealed class PlaygroundPageTests : IDisposable
         window.Show();
         Settle();
 
-        var clip = p.SelectedClip!.Clip;
-        var up = window.GetVisualDescendants().OfType<Button>().Single(b => b.Command == p.SelectedClip.OctaveUpCommand);
-        var at = up.TranslatePoint(new Point(up.Bounds.Width / 2, up.Bounds.Height / 2), window)!.Value;
+        // The track's Mute (the inspector's Octave + went on 22 Oct: its values are dragged now).
+        var row = p.Layers[^1];
+        var mute = window.GetVisualDescendants().OfType<Button>().First(b => b.Command == row.MuteCommand);
+        var at = mute.TranslatePoint(new Point(mute.Bounds.Width / 2, mute.Bounds.Height / 2), window)!.Value;
         window.MouseDown(at, MouseButton.Left);
         window.MouseUp(at, MouseButton.Left);
         Settle();
-        Assert.Equal(12, clip.Transpose);
-        Assert.True(up.IsFocused);   // the button keeps the keyboard, as a clicked button does
+        Assert.True(row.Muted);
+        Assert.True(mute.IsFocused);   // the button keeps the keyboard, as a clicked button does
 
         void Space()
         {
@@ -77,10 +78,49 @@ public sealed class PlaygroundPageTests : IDisposable
 
         Space();
         Assert.True(p.IsPlaying);
-        Assert.Equal(12, clip.Transpose);
+        Assert.True(row.Muted);
         Space();
         Assert.False(p.IsPlaying);
-        Assert.Equal(12, clip.Transpose);
+        Assert.True(row.Muted);
+    }
+
+    [AvaloniaFact]
+    public void The_inspectors_values_change_by_dragging_up_or_down_or_typing()
+    {
+        // Solomon, 22 Oct: folding sections, values dragged or typed, no − and + buttons.
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F |");
+        p.WriteChordsCommand.Execute(null);
+        var track = p.Layers[^1].Layer;
+        p.SelectClipCommand.Execute(new ClipPick(track, track.Clips[0]));
+        var window = new Window { Content = new PlaygroundView { DataContext = p }, Width = 1400, Height = 900 };
+        window.Show();
+        Settle();
+
+        var clip = p.SelectedClip!.Clip;
+        var semis = window.GetVisualDescendants().OfType<DragValue>().Single(d => d.UpCommand == p.SelectedClip.UpCommand);
+        var at = semis.TranslatePoint(new Point(semis.Bounds.Width / 2, semis.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseMove(at - new Point(0, 17));   // up two steps
+        window.MouseUp(at - new Point(0, 17), MouseButton.Left);
+        Settle();
+        Assert.Equal(2, clip.Transpose);
+        Assert.Equal("+2 st", p.SelectedClip.SemitoneText);
+
+        // Double-click and type: 5 semitones.
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Settle();
+        var box = semis.GetVisualDescendants().OfType<TextBox>().Single();
+        Assert.True(box.IsVisible);
+        box.Text = "5";
+        window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, "");
+        Settle();
+        Assert.Equal(5, clip.Transpose);
+        Assert.False(box.IsVisible);
     }
 
     [AvaloniaFact]

@@ -70,6 +70,7 @@
         </LinearGradientBrush>
         <SolidColorBrush x:Key="StudioWellBrush" Color="#FF141414" />
         <SolidColorBrush x:Key="StudioEdgeBrush" Color="#FF0B0B0B" />
+        <SolidColorBrush x:Key="StudioTileBrush" Color="#FF2C2C2C" />
         <LinearGradientBrush x:Key="StudioGrooveBrush" StartPoint="0%,0%" EndPoint="0%,100%">
             <GradientStop Offset="0" Color="#FF0B0B0B" /><GradientStop Offset="0.5" Color="#FF0B0B0B" />
             <GradientStop Offset="0.5" Color="#FF2B2B2B" /><GradientStop Offset="1" Color="#FF2B2B2B" />

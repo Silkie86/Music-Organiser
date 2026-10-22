@@ -111,8 +111,11 @@ public static class Appearance
             EndPoint = across ? new RelativePoint(1, 0, RelativeUnit.Relative) : new RelativePoint(0, 1, RelativeUnit.Relative),
             GradientStops = { new GradientStop(dark, 0), new GradientStop(dark, 0.5), new GradientStop(lit, 0.5), new GradientStop(lit, 1) },
         };
-        app.Resources["StudioFaceBrush"] = Down(Mix(raised, white, light ? 0.55 : 0.1), Mix(raised, black, light ? 0.04 : 0.08));
-        app.Resources["StudioFaceHoverBrush"] = Down(Mix(raised, white, light ? 0.7 : 0.16), Mix(raised, black, light ? 0.0 : 0.02));
+        // Flat faces, only a breath of shading (2026-10-22: the lit ones looked "too bubbly").
+        app.Resources["StudioFaceBrush"] = Down(Mix(raised, white, light ? 0.5 : 0.03), Mix(raised, black, light ? 0.02 : 0.03));
+        app.Resources["StudioFaceHoverBrush"] = Down(Mix(raised, white, light ? 0.65 : 0.08), Mix(raised, white, light ? 0.4 : 0.04));
+        // The tile that's on inside a sunk strip.
+        Recolour(app, "StudioTileBrush", Mix(raised, white, light ? 0.6 : 0.05));
         app.Resources["StudioPressedBrush"] = Down(Mix(bg, black, light ? 0.1 : 0.3), Mix(bg, black, light ? 0.04 : 0.12));
         var edge = Mix(bg, black, light ? 0.35 : 0.5);
         Recolour(app, "StudioWellBrush", Mix(bg, black, light ? 0.05 : 0.3));

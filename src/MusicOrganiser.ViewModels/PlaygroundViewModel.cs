@@ -2697,6 +2697,17 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
             return moved == 0 ? "0 st" : $"{(moved > 0 ? "+" : "")}{moved} st";
         }
     }
+
+    // The inspector's values you drag or type (Solomon, 2026-10-22): how far it's moved, as whole octaves and the
+    // semitones left over (+14 is an octave and 2), and how far its chords are turned.
+    int Moved => clip.Pinned ? clip.Shift(0) : clip.Transpose;
+    public int OctaveValue => Moved / 12;
+    public int SemitoneValue => Moved % 12;
+    public int InversionValue => clip.Inversion;
+    public string OctaveText => Signed(OctaveValue);
+    public string SemitoneText => $"{Signed(SemitoneValue)} st";
+    public string InversionText => clip.Inversion switch { 0 => "Root", 1 => "1st", 2 => "2nd", 3 => "3rd", var i => Signed(i) };
+    static string Signed(int v) => v > 0 ? $"+{v}" : $"{v}";
     public string Colour => track.Colour;
 
     /// <summary>Where its first go round would start on the timeline.</summary>
@@ -2834,6 +2845,13 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     {
         OnPropertyChanged(nameof(Notes));
         OnPropertyChanged(nameof(Details));
+        OnPropertyChanged(nameof(MovedText));
+        OnPropertyChanged(nameof(OctaveValue));
+        OnPropertyChanged(nameof(OctaveText));
+        OnPropertyChanged(nameof(SemitoneValue));
+        OnPropertyChanged(nameof(SemitoneText));
+        OnPropertyChanged(nameof(InversionValue));
+        OnPropertyChanged(nameof(InversionText));
         OnPropertyChanged(nameof(Loop));
         OnPropertyChanged(nameof(FitText));
         OnPropertyChanged(nameof(CanFitAgain));
@@ -2866,6 +2884,12 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
 public sealed class ChordCell(TimedChord chord, ChordFunction? function, long length)
 {
     public string Name => chord.Chord.Name;
+    /// <summary>The name in parts, so a narrow chord can be written shorter (<see cref="ChordSymbol.ShortQuality"/>).</summary>
+    public string RootName => chord.Chord.RootName;
+    public string Quality => chord.Chord.Quality;
+    public string ShortQuality => ChordSymbol.ShortQuality(chord.Chord.Quality);
+    public string LeastQuality => ChordSymbol.LeastQuality(chord.Chord.Quality);
+    public string BassName => chord.Chord.BassName;
     public string Roman => function?.Roman ?? "";
     public string Label => function?.Label ?? "";
     /// <summary>T, S, D or blank: colours the cell.</summary>

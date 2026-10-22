@@ -26,7 +26,7 @@ public sealed class TimelineView : Control
     /// <summary>Right-clicked on a clip ("clip") or on empty bars ("timeline"), for the page to show its menu.</summary>
     public event EventHandler<string>? MenuAsked;
 
-    public const double LabelHeight = 20, RulerHeight = 18, Top = LabelHeight + RulerHeight, DefaultRowHeight = 46;
+    public const double LabelHeight = 16, RulerHeight = 16, Top = LabelHeight + RulerHeight, DefaultRowHeight = 46;
 
     /// <summary>How tall each track is (Solomon's design, point 18: dragged by the line under a track's name).</summary>
     public static readonly StyledProperty<double> RowHeightProperty = AvaloniaProperty.Register<TimelineView, double>(nameof(RowHeight), DefaultRowHeight);
@@ -588,6 +588,8 @@ public sealed class TimelineView : Control
     }
 
     static readonly IBrush strip = new SolidColorBrush(Color.FromArgb(0x38, 0, 0, 0));
+    /// <summary>Words and notes on a clip: dark on its colour.</summary>
+    static readonly IBrush ink = new SolidColorBrush(Color.FromArgb(0xD0, 0, 0, 0));
     static readonly IBrush edge = new SolidColorBrush(Color.FromArgb(0x80, 0, 0, 0));
     static readonly Dictionary<string, Color> Colours = [];
     static Color ColourOf(string hex) => Colours.TryGetValue(hex, out var c) ? c : Colours[hex] = Color.Parse(hex);
@@ -638,15 +640,18 @@ public sealed class TimelineView : Control
         if (Labels is { Count: > 0 } labels)
             foreach (var l in labels)
             {
-                var rect = new Rect(X(l.Start) + 1, 1, Math.Max(4, W(l.Length) - 2), LabelHeight - 3);
-                dc.DrawRectangle(l == SelectedLabel ? soft : faint, l == SelectedLabel ? new Pen(accent, 1.2) : null, new RoundedRect(rect, 4));
+                // A flag at the label's first bar, riding on the bar numbers (Solomon, 2026-10-22: quiet blocks), the
+                // picked one filled faintly across its bars.
+                var rect = new Rect(X(l.Start), 0, Math.Max(4, W(l.Length) - 1), LabelHeight);
+                if (l == SelectedLabel) dc.FillRectangle(soft, rect);
+                dc.FillRectangle(accent, new Rect(rect.X, 1, 2, LabelHeight - 1));
                 using (dc.PushClip(rect))
                 {
-                    var feel = l.Feel == SectionFeel.Any || l.Feel.ToString() == l.Name ? "" : $"  · {l.Feel}";
-                    dc.DrawText(Text(l.Name + feel, 11.5, text, bold), new Point(rect.X + 6, rect.Y + 1));
+                    var feel = l.Feel == SectionFeel.Any || l.Feel.ToString() == l.Name ? "" : $" · {l.Feel}";
+                    dc.DrawText(Text(l.Name + feel, 10.5, text, bold), new Point(rect.X + 6, 1));
                 }
             }
-        else dc.DrawText(Text("Labels go here: highlight some bars, then + Label", 11, muted), new Point(6, 3));
+        else dc.DrawText(Text("Labels go here: highlight some bars, then + Label", 10.5, muted), new Point(6, 1));
 
         // The highlight, under the clips.
         if ((_dragging ?? Highlight) is { } hl)
@@ -659,17 +664,18 @@ public sealed class TimelineView : Control
                 var track = tracks[r];
                 var y = Top + r * RowHeight;
                 var colour = ColourOf(track.Colour);
-                var fill = new SolidColorBrush(colour);
-                var notesBrush = new SolidColorBrush(Color.FromArgb(0x99, 0, 0, 0));
+                // The track's colour toned down a little toward the panel (Solomon, 2026-10-22: "solid, quieter").
+                var fill = new SolidColorBrush(Color.FromRgb((byte)(colour.R * 0.78 + 0x1A * 0.22), (byte)(colour.G * 0.78 + 0x1A * 0.22), (byte)(colour.B * 0.78 + 0x1A * 0.22)));
+                var notesBrush = new SolidColorBrush(Color.FromArgb(0x8C, 0, 0, 0));
                 using var _ = dc.PushOpacity(track.Muted ? 0.4 : 1);
                 foreach (var clip in track.Clips)
                 {
                     var rect = new Rect(X(clip.Start) + 0.5, y + 3, Math.Max(3, W(clip.Length) - 1), RowHeight - 6);
                     if (rect.Right < 0 || rect.X > w) continue;   // zoomed in: off the view
                     var picked = clip == Selected;
-                    // Flat, in the track's colour, with a darker strip for its name (Solomon, 2026-10-21: shaded ones were "too bubbly").
-                    dc.DrawRectangle(fill, new Pen(edge, 1), new RoundedRect(rect, 3));
-                    dc.FillRectangle(strip, new Rect(rect.X + 0.5, rect.Y + 0.5, rect.Width - 1, Math.Min(14, rect.Height - 1)));
+                    // Flat and solid in the track's colour, its name and notes in dark ink, no separate name bar (Solomon,
+                    // 2026-10-21: shaded ones were "too bubbly"; 2026-10-22: picked "solid, quieter").
+                    dc.DrawRectangle(fill, new Pen(edge, 1), new RoundedRect(rect, 2));
                     if (picked) dc.DrawRectangle(null, new Pen(text, 2), new RoundedRect(rect.Inflate(1), 4));
                     using (dc.PushClip(rect))
                     {
@@ -679,13 +685,13 @@ public sealed class TimelineView : Control
                             var rx = X(clip.RepeatAt(i));
                             if (rx > rect.X && rx < rect.Right) dc.FillRectangle(strip, new Rect(rx, rect.Y + 14, 1, rect.Height - 14));
                         }
-                        dc.DrawText(Text(clip.Name, 11, Brushes.White, bold), new Point(rect.X + 5, rect.Y + 1));
+                        dc.DrawText(Text(clip.Name, 11, ink, bold), new Point(rect.X + 5, rect.Y + 1));
                         // How far each go round moved to fit the chords under it (or, set by hand, how far it's moved in all).
                         for (var i = 0; i < clip.Repeats && i < clip.Fits.Count; i++)
                         {
                             var by = clip.Pinned ? clip.Shift(i) : clip.Fits[i];
                             if (by == 0) continue;
-                            var label = Text(by > 0 ? $"+{by}" : $"{by}", 10, Brushes.White, bold);
+                            var label = Text(by > 0 ? $"+{by}" : $"{by}", 10, ink, bold);
                             dc.DrawText(label, new Point(Math.Max(rect.X, X(clip.RepeatAt(i))) + 3, rect.Bottom - label.Height - 1));
                         }
                         // Changed by hand: a corner mark (bottom right) says it won't move to fit.
@@ -699,7 +705,7 @@ public sealed class TimelineView : Control
                                 gc.LineTo(new Point(rect.Right - 10, rect.Bottom));
                                 gc.EndFigure(true);
                             }
-                            dc.DrawGeometry(Brushes.White, null, corner);
+                            dc.DrawGeometry(ink, null, corner);
                         }
                         var notes = NotesOf(clip);
                         if (notes.Count > 0)

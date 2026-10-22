@@ -624,8 +624,10 @@ public sealed class PianoRollEditor : Control
                 var fill = strength is { } s ? fit![(int)s] : rubs ? clash : accent;
                 // Names stay readable: dark on the bright notes, the page's text colour on the faded ones.
                 var ink = strength is FitStrength.Colour or FitStrength.Weak ? text : Brushes.Black;
-                Note(dc, fill, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high,
-                     LabelOf(n, from + n.Start), ink);
+                // Shaded by velocity (Solomon, 2026-10-22): loud notes bright, quiet ones faded, each with a light attack edge.
+                using (dc.PushOpacity(0.4 + 0.6 * Math.Clamp(n.Velocity / 110.0, 0, 1)))
+                    Note(dc, fill, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high,
+                         LabelOf(n, from + n.Start), ink, attack: true);
             }
         }
 
@@ -692,14 +694,18 @@ public sealed class PianoRollEditor : Control
         return keys;
     }
 
-    void Note(DrawingContext dc, IBrush fill, IPen? pen, long start, long length, int key, int low, int high, string? label = null, IBrush? ink = null)
+    static readonly IBrush Attack = new SolidColorBrush(Color.FromArgb(0xB0, 0xFF, 0xFF, 0xFF));
+
+    void Note(DrawingContext dc, IBrush fill, IPen? pen, long start, long length, int key, int low, int high, string? label = null, IBrush? ink = null,
+              bool attack = false)
     {
         if (key < low || key > high) return;
         var x0 = X(start);
         var x1 = Math.Max(x0 + 2, X(start + length) - 1);
         var y = Y(key, low, high);
         var rowH = RowHeight(low, high);
-        dc.DrawRectangle(fill, pen, new RoundedRect(new Rect(x0, y + 0.5, x1 - x0, Math.Max(1.5, rowH - 1)), 2));
+        dc.DrawRectangle(fill, pen, new RoundedRect(new Rect(x0, y + 0.5, x1 - x0, Math.Max(1.5, rowH - 1)), 1.5));
+        if (attack && x1 - x0 > 5) dc.FillRectangle(Attack, new Rect(x0, y + 0.5, 1.5, Math.Max(1.5, rowH - 1)));
         // Its name (or what it is over the chord), when it fits.
         if (label is null || rowH < 8) return;
         var text = new FormattedText(label, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, Math.Min(10, rowH), ink ?? Brushes.Black);
