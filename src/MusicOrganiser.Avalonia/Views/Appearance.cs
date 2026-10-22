@@ -65,6 +65,9 @@ public static class Appearance
         app.Resources["RadiusM"] = new CornerRadius(m);
         app.Resources["RadiusL"] = new CornerRadius(l);
         app.Resources["RadiusPill"] = new CornerRadius(pill);
+        app.Resources["RadiusStart"] = new CornerRadius(s, 0, 0, s);
+        app.Resources["RadiusEnd"] = new CornerRadius(0, s, s, 0);
+        app.Resources["RadiusInner"] = new CornerRadius(s - 1);
         app.Resources["ControlCornerRadius"] = new CornerRadius(control);
         app.Resources["OverlayCornerRadius"] = new CornerRadius(overlay);
         Recolour(app, "OnAccentBrush", a.AccentText);

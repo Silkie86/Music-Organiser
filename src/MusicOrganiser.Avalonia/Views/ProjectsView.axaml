@@ -36,7 +36,7 @@
         </DockPanel>
 
         <!-- Filters as chips: the DAW, two quick toggles, the rest under More. -->
-        <WrapPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,12,0,14">
+        <WrapPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,12,0,14" ItemSpacing="6" LineSpacing="6">
             <ListBox Classes="chips group" ItemsSource="{Binding DawFilters}" SelectedItem="{Binding DawFilter}">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
@@ -51,7 +51,7 @@
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
-            <Border Width="1" Height="22" Background="{StaticResource StrokeBrush}" Margin="6,0,12,0" VerticalAlignment="Center" />
+            <Border Width="1" Height="22" Background="{StaticResource StrokeBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
             <ToggleButton Classes="chip" IsChecked="{Binding OnlyMissing}" ToolTip.Tip="Only projects with missing plugins or samples">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Ellipse Width="8" Height="8" Fill="{StaticResource MissingBrush}" VerticalAlignment="Center" />
@@ -116,7 +116,7 @@
                     Background="{StaticResource SurfaceRaisedBrush}" IsVisible="{Binding CheckingDoubts}">
                 <StackPanel Spacing="6">
                     <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Close" Classes="row" Command="{Binding CloseDoubtsCommand}" />
+                        <Button DockPanel.Dock="Right" Content="Close" Command="{Binding CloseDoubtsCommand}" />
                         <TextBlock Text="{Binding QuestionText}" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap" />
                     </DockPanel>
                     <TextBlock Text="{Binding Doubt.Why}" Classes="muted" FontSize="12" TextWrapping="Wrap" />

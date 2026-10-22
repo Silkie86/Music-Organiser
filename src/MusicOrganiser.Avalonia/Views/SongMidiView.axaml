@@ -151,13 +151,15 @@
                     <!-- One-click changes, each undone like any edit. The file it came from is never changed. -->
                     <WrapPanel>
                         <TextBlock Text="Change it:" Classes="small" VerticalAlignment="Center" Margin="0,0,8,6" />
-                        <StackPanel Classes="group" Margin="0,0,0,6">
+                        <StackPanel Classes="group" Margin="0,0,6,6">
                             <Button Content="▼ Semitone" Command="{Binding ToolCommand}" CommandParameter="down"
                                     ToolTip.Tip="Every note down a semitone" />
                             <Button Content="▲ Semitone" Command="{Binding ToolCommand}" CommandParameter="up"
                                     ToolTip.Tip="Every note up a semitone" />
                             <Button Content="Quantise" Command="{Binding ToolCommand}" CommandParameter="quantise"
                                     ToolTip.Tip="Every note onto the grid, for a tight feel: 16ths, or what Settings › MIDI says" />
+                        </StackPanel>
+                        <StackPanel Classes="group" Margin="0,0,6,6">
                             <Button Content="Play it twice" Command="{Binding ToolCommand}" CommandParameter="twice"
                                     ToolTip.Tip="The part again straight after itself: twice as long, to change the second time round" />
                             <Button Content="First half" Command="{Binding ToolCommand}" CommandParameter="half"

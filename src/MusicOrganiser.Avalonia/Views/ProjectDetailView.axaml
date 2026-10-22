@@ -85,10 +85,11 @@
     <UserControl.Resources>
         <DataTemplate x:Key="MatchTemplate" x:DataType="vm:MatchRow">
             <DockPanel Margin="12,3,0,3">
-                <Button DockPanel.Dock="Right" Content="Use this" Classes="accent" Command="{Binding RecoverCommand}"
-                        IsVisible="{Binding CanRecover}"
-                        ToolTip.Tip="Copy this file into the project folder under the name the project expects" />
-                <Button DockPanel.Dock="Right" Content="Show" Command="{Binding RevealCommand}" IsVisible="{Binding CanRecover}" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" IsVisible="{Binding CanRecover}">
+                    <Button Content="Show" Command="{Binding RevealCommand}" />
+                    <Button Content="Use this" Classes="accent" Command="{Binding RecoverCommand}"
+                            ToolTip.Tip="Copy this file into the project folder under the name the project expects" />
+                </StackPanel>
                 <TextBlock DockPanel.Dock="Right" Text="{Binding ScoreText}" Margin="8,0" VerticalAlignment="Center" FontSize="12"
                            Foreground="{StaticResource AccentBrush}" ToolTip.Tip="{Binding Reason}" />
                 <TextBlock Text="{Binding Candidate}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
@@ -311,7 +312,7 @@
                             <ItemsControl Classes="longList" ItemsSource="{Binding FixRows}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:FixRow">
-                                <Border Classes="row" Padding="10,7" Margin="-10,0">
+                                <Border Classes="row" Margin="-10,0">
                                     <DockPanel>
                                         <CheckBox DockPanel.Dock="Left" IsChecked="{Binding Ticked}" IsVisible="{Binding CanTick}" VerticalAlignment="Top"
                                                   Margin="0,0,6,0" MinWidth="0" ToolTip.Tip="Use this file in the fixed copy" />
@@ -362,14 +363,14 @@
             <TabItem Header="Plugins">
                     <DockPanel>
                         <TextBlock DockPanel.Dock="Top" Text="{Binding PluginHeader}" Classes="sectionHeader" Margin="12,14,12,6" />
-                        <Button Classes="flat" DockPanel.Dock="Bottom" Content="{Binding SilentToggleText}" Padding="8,4" Margin="4,4,12,12"
-                                HorizontalAlignment="Left" FontSize="12" Foreground="{StaticResource AccentBrush}"
+                        <Button Classes="link" DockPanel.Dock="Bottom" Content="{Binding SilentToggleText}" Padding="8,4" Margin="4,4,12,12"
+                                HorizontalAlignment="Left" FontSize="12"
                                 Command="{Binding ToggleSilentCommand}" ToolTip.Tip="Synths on channels that play no notes in the song"
                                 IsVisible="{Binding SilentCount, Converter={StaticResource NonZero}}" />
                         <ItemsControl Classes="longList" Padding="12,0,12,8" ItemsSource="{Binding VisiblePlugins}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:PluginRow">
-                                    <Border Classes="row" Padding="10,7" Margin="-10,0">
+                                    <Border Classes="row" Margin="-10,0">
                                         <StackPanel>
                                             <StackPanel>
                                                 <StackPanel VerticalAlignment="Center">
@@ -396,7 +397,7 @@
                                                                IsVisible="{Binding OtherVersion, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                                                 </StackPanel>
                                                 <WrapPanel Classes="rowActions" Margin="0,4,0,0" ItemSpacing="4" LineSpacing="4">
-                                                    <StackPanel Orientation="Horizontal" IsVisible="{Binding !Installed}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding !Installed}">
                                                         <Button Content="Find similar" Command="{Binding FindSimilarCommand}" />
                                                         <Button Content="Search online" Command="{Binding SearchOnlineCommand}" />
                                                     </StackPanel>
@@ -427,11 +428,11 @@
                         <ItemsControl Classes="longList" Padding="12,0,12,20" ItemsSource="{Binding Samples}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:SampleRow">
-                                    <Border Classes="row" Padding="10,7" Margin="-10,0">
+                                    <Border Classes="row" Margin="-10,0">
                                         <StackPanel>
                                             <DockPanel>
                                                 <StackPanel DockPanel.Dock="Right" Classes="rowActions">
-                                                    <StackPanel Orientation="Horizontal" IsVisible="{Binding !Found}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding !Found}">
                                                         <Button Content="Find matches" Command="{Binding FindMatchesCommand}" />
                                                         <Button Content="Search online" Command="{Binding SearchOnlineCommand}" />
                                                     </StackPanel>
