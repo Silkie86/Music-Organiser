@@ -17,6 +17,9 @@ public sealed class PlaygroundLayer
     /// <summary>The notes, packed as <see cref="MidiIndex.EncodeNotes"/> does (base64 in the saved file).</summary>
     public string Data { get; set; } = "";
     public int? Program { get; set; }
+    /// <summary>How loud it plays here, 1 as it is (0 dB), up to <see cref="MaxVolume"/>; a MIDI channel volume of 100 × this.</summary>
+    public double Volume { get; set; } = 1;
+    public const double MaxVolume = 1.27;
     public bool Muted { get; set; }
     public bool Solo { get; set; }
     /// <summary>The project or .mid file it came from, or "" for a part the playground wrote.</summary>

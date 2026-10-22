@@ -68,6 +68,12 @@ public static class ChordScales
     {
         var i = ChordSymbol.Mod(pc - chord.Root);
         bool seventh = chord.Has(10) || chord.Has(11);
+        // A sus chord's note in place of its 3rd is its 4 (or 2), as the chord's name says, not an 11 or 9.
+        if (chord.Family == ChordFamily.Sus && !chord.Has(3) && !chord.Has(4))
+        {
+            if (i == 5 && chord.Has(5)) return "4";
+            if (i == 2 && chord.Has(2) && !chord.Has(5)) return "2";
+        }
         return i switch
         {
             0 => "1",

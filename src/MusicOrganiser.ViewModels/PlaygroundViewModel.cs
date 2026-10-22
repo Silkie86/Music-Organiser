@@ -1063,6 +1063,19 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>The drag or typed value the last undo step was taken for: its other steps go in the same one.</summary>
     int _gesture;
 
+    /// <summary>
+    /// A track's volume moved (Solomon, 2026-10-22: "should be able to change the volume of the tracks individually"): the
+    /// fader follows the pointer, and letting go makes it one undo step and plays it so.
+    /// </summary>
+    internal void SetVolume(LayerRow row, FaderMove move)
+    {
+        if (move.Gesture == 0 || move.Gesture != _gesture) Remember();
+        _gesture = move.Gesture;
+        row.Layer.Volume = Math.Clamp(move.Value, 0, PlaygroundLayer.MaxVolume);
+        row.VolumeChanged();
+        if (move.Done) Changed(harmony: false);
+    }
+
     internal void EditClip(ClipRow row, Action<PlaygroundClip> change, bool harmony = true, int gesture = 0)
     {
         if (gesture == 0 || gesture != _gesture) Remember();
@@ -1085,6 +1098,41 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             row.Track.Layer.Written = "";
             row.Track.Layer.GrooveData = "";
         });
+
+    /// <summary>
+    /// What <paramref name="judge"/> makes of the idea's chords with <paramref name="note"/> (one go round, as the piano roll
+    /// shows it) put in the clip, as <see cref="SetClipNotes"/> would; the clip is put back as it was straight after.
+    /// </summary>
+    internal T WithNoteAdded<T>(ClipRow row, NoteEvent note, Func<SectionHarmony, T> judge)
+    {
+        var clip = row.Clip;
+        var layer = row.Track.Layer;
+        var (notes, inversion, written) = (clip.Data, clip.Inversion, layer.Written);
+        // The parts written from the chords, as they are: they follow when the note changes the chords.
+        var others = Section.Layers.Where(l => l != layer && l.Written.Length > 0).ToList();
+        var kept = others.SelectMany(l => l.Clips).Select(c => (Clip: c, c.Data, c.Loop, c.Offset, c.Fits)).ToList();
+        var shown = row.Notes.ToList();
+        shown.Add(note with { Start = (note.Start % clip.Loop + clip.Loop) % clip.Loop });
+        try
+        {
+            clip.Notes = shown.Select(n => n with { Key = Math.Clamp(n.Key - clip.Shift(0), 0, 127) }).ToList();
+            clip.Inversion = 0;
+            layer.Written = "";
+            layer.Render();
+            if (others.Count > 0 && LaneForWriting() is var lane && WrittenKey(lane) != _writtenFor) WriteAgain(lane);
+            return judge(SectionHarmony.Of(Section, _session.Key, _session.Style));
+        }
+        finally
+        {
+            (clip.Data, clip.Inversion, layer.Written) = (notes, inversion, written);
+            layer.Render();
+            if (kept.Count > 0)
+            {
+                foreach (var k in kept) (k.Clip.Data, k.Clip.Loop, k.Clip.Offset, k.Clip.Fits) = (k.Data, k.Loop, k.Offset, k.Fits);
+                foreach (var l in others) l.Render();
+            }
+        }
+    }
 
     /// <summary>Moved up or down by hand: it stays there instead of moving to fit, until Fit again.</summary>
     internal void MoveClip(ClipRow row, int semitones, int gesture = 0) => EditClip(row, c => { c.Transpose += semitones; c.Pinned = true; }, gesture: gesture);
@@ -1238,6 +1286,15 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _harmony = null;
         var lane = LaneForWriting();
         _writtenFor = WrittenKey(lane);
+        WriteAgain(lane);
+        foreach (var row in Layers) row.Changed();
+        SelectedClip?.Changed();
+    }
+
+
+    /// <summary>Every part written from the chords written again over <paramref name="lane"/>.</summary>
+    void WriteAgain(IReadOnlyList<TimedChord> lane)
+    {
         foreach (var l in Section.Layers.Where(l => l.Written.Length > 0))
         {
             foreach (var c in l.Clips)
@@ -1250,10 +1307,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             }
             l.Render();
         }
-        foreach (var row in Layers) row.Changed();
-        SelectedClip?.Changed();
     }
-
 
     /// <summary>A written part with the groove copied onto it put on again (after the chords changed and it was rewritten).</summary>
     static IReadOnlyList<NoteEvent> WithGroove(PlaygroundLayer layer, IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length) =>
@@ -1384,8 +1438,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (IsGroovePlaying) { StopPlaying(); return; }
         if (SelectedLayer is not { } row || Grooved(row) is not { } grooved) return;
         StopPlaying();
-        var channels = PlaygroundSession.Audible(Section).Where(l => l != row.Layer).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
-        channels.Add(Channel(row.Name, row.Layer.Program, grooved.Notes));
+        var channels = PlaygroundSession.Audible(Section).Where(l => l != row.Layer).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume)).ToList();
+        channels.Add(Channel(row.Name, row.Layer.Program, grooved.Notes, row.Layer.Volume));
         IsGroovePlaying = await PlayAsync(instead: channels);
     }
 
@@ -2253,7 +2307,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>The section (or the arrangement) going round, every part that plays, with its sound.</summary>
     /// <summary>Plays the idea (or <paramref name="instead"/>); true when this is what's playing now, false when a newer
     /// play or a stop came while the sound was being made, so a row only says "■ Stop" for what you hear.</summary>
-    async Task<bool> PlayAsync(bool keepPlace = false, IReadOnlyList<MidiChannel>? instead = null)
+    async Task<bool> PlayAsync(bool keepPlace = false, IReadOnlyList<MidiChannel>? instead = null, long? startAt = null)
     {
         StopBrowsing();
         var request = ++_request;
@@ -2296,7 +2350,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         }
         _clock ??= Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), Tick);
         var start = 0.0;
-        if (keepPlace && _player.Playing == _playKey && _player.Position is { } at)
+        if (startAt is { } tick)
+            start = MidiRender.TicksToSeconds(Math.Clamp(tick - (Loop?.Start ?? 0), 0, Math.Max(0, total - 1)), Ppq, tempo);
+        else if (keepPlace && _player.Playing == _playKey && _player.Position is { } at)
             start = MidiRender.TicksToSeconds((long)(MidiRender.SecondsToTicks(at, Ppq, _playTempo) % Math.Max(1, total)), Ppq, tempo);
         else if (instead is null)
         {
@@ -2322,7 +2378,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     List<MidiChannel> ChannelsToPlay(out long length)
     {
         length = PlayedTo(Section.Layers.SelectMany(l => l.Clips).Select(c => c.End).DefaultIfEmpty(0).Max());
-        var channels = PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
+        var channels = PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume)).ToList();
         return Looped(channels, ref length);
     }
 
@@ -2341,8 +2397,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         return channels.Select(c => c with { Notes = MidiBrowserViewModel.Cut(c.Notes, r.Start, r.End) }).ToList();
     }
 
-    static MidiChannel Channel(string name, int? program, IReadOnlyList<NoteEvent> notes) =>
-        new(program == GmSounds.DrumKit ? $"Drums · {name}" : name, "", Ppq, notes) { GmProgram = program };
+    static MidiChannel Channel(string name, int? program, IReadOnlyList<NoteEvent> notes, double volume = 1) =>
+        new(program == GmSounds.DrumKit ? $"Drums · {name}" : name, "", Ppq, notes) { GmProgram = program, Volume = (float)volume };
 
     void GoRound()
     {
@@ -2396,7 +2452,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     /// <summary>The idea with a suggestion playing on top where it would go (the highlight, or from bar 1), to hear it before adding it.</summary>
-    internal async Task PreviewMatch(PlaygroundMatchRow row)
+    internal async Task PreviewMatch(PlaygroundMatchRow row, bool carryOn = false)
     {
         if (row.IsPlaying || row.IsPreparing)
         {
@@ -2404,13 +2460,32 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             row.IsPlaying = row.IsPreparing = false;   // also a row no longer in the list
             return;
         }
+        // Moving on to another row while one plays carries on from where it got to, so parts can be compared bar by bar.
+        long? from = carryOn && _playing && Position >= 0 ? (long)Position : null;
+        _pickingToHear = true;
+        SelectedMatch = row;   // the arrow keys then go on from this row
+        _pickingToHear = false;
         StopPlaying();
         row.IsPreparing = true;   // making the sound takes a moment: say so straight away
-        try { await PreviewMatchAsync(row); }
+        try { await PreviewMatchAsync(row, from); }
         finally { row.IsPreparing = false; }
     }
 
-    async Task PreviewMatchAsync(PlaygroundMatchRow row)
+    /// <summary>The suggestion picked in the list (by a click or the arrow keys).</summary>
+    [ObservableProperty] PlaygroundMatchRow? _selectedMatch;
+    bool _pickingToHear;
+
+    /// <summary>
+    /// Another suggestion picked while one is being heard (Solomon, 2026-10-22: "press the arrow key or select another
+    /// clip and it starts playing straight away from where the playhead is"): that one plays instead, from there.
+    /// </summary>
+    partial void OnSelectedMatchChanged(PlaygroundMatchRow? value)
+    {
+        if (_pickingToHear || value is null || value.IsPlaying || value.IsPreparing) return;
+        if (Matches.Any(m => m.IsPlaying || m.IsPreparing)) _ = PreviewMatch(value, carryOn: true);
+    }
+
+    async Task PreviewMatchAsync(PlaygroundMatchRow row, long? from = null)
     {
         if (SwapTarget is { } target && SwapRange is { } bars)
         {
@@ -2421,7 +2496,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var swapped = LibraryClip(row.Match.Entry, row.Match.Notes, bars.Start, bars.End - bars.Start, row.Match.Period);
             layer.Clips.Add(swapped);
             layer.Render();
-            if (!await PlayAsync(instead: ChannelsOf(tried).ToList())) return;
+            if (!await PlayAsync(instead: ChannelsOf(tried).ToList(), startAt: from)) return;
             row.IsPlaying = true;
             Trying = new(row.Title, Layers.IndexOf(target.Track), bars.Start, bars.End - bars.Start,
                          layer.Notes.Where(n => n.Start >= bars.Start && n.Start < bars.End).ToList());
@@ -2433,7 +2508,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var (start, length) = Place;
         var placed = SectionMatcher.Loop(notes, period, length).Select(n => n with { Start = n.Start + start }).ToList();
         channels.Add(Channel(row.Title, GmSounds.DefaultFor(row.Match.Entry.Role), placed));
-        if (!await PlayAsync(instead: channels)) return;
+        if (!await PlayAsync(instead: channels, startAt: from)) return;
         row.IsPlaying = true;
         Trying = new(row.Title, Layers.Count, start, length, placed);
     }
@@ -2449,19 +2524,19 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var channels = new List<MidiChannel>();
         foreach (var l in PlaygroundSession.Audible(tried))
         {
-            if (l.Written.Length == 0) { channels.Add(Channel(l.Name, l.Program, l.Notes)); continue; }
+            if (l.Written.Length == 0) { channels.Add(Channel(l.Name, l.Program, l.Notes, l.Volume)); continue; }
             var notes = l.Clips.SelectMany(c =>
             {
                 var under = LaneAt(row.Idea.Lane, c.Start, c.End);
                 return WithGroove(l, Written(l.Written, under, c.Length), under, c.Length).Select(n => n with { Start = n.Start + c.Start });
             }).ToList();
-            channels.Add(Channel(l.Name, l.Program, notes));
+            channels.Add(Channel(l.Name, l.Program, notes, l.Volume));
         }
         row.IsPlaying = await PlayAsync(instead: channels);
     }
 
     IEnumerable<MidiChannel> ChannelsOf(PlaygroundSection section) =>
-        PlaygroundSession.Audible(section).Select(l => Channel(l.Name, l.Program, l.Notes));
+        PlaygroundSession.Audible(section).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume));
 
     // ---- out to the DAW ----
 
@@ -2622,6 +2697,18 @@ public sealed partial class LayerRow : ObservableObject
     public string Details => $"{RoleLabel} · {From}{(Layer.GrooveFrom.Length > 0 ? $" · groove of {Layer.GrooveFrom}" : "")}";
     public bool Muted => Layer.Muted;
     public bool Solo => Layer.Solo;
+
+    /// <summary>Its volume, 1 as it is, and in decibels as a mixer writes it ("-6.0 dB").</summary>
+    public double Volume => Layer.Volume;
+    public string VolumeText => Decibels(Layer.Volume);
+    internal void VolumeChanged()
+    {
+        OnPropertyChanged(nameof(Volume));
+        OnPropertyChanged(nameof(VolumeText));
+    }
+    // A General MIDI channel volume sounds as its square: 100 × v is 40·log10(v) dB from 100.
+    internal static string Decibels(double v) => v <= 0.001 ? "−∞ dB" : $"{40 * Math.Log10(v):+0.0;−0.0;0.0} dB";
+    [RelayCommand] void SetVolume(FaderMove move) => _owner.SetVolume(this, move);
 
     /// <summary>The notes as a channel for the small roll, the timeline's length wide.</summary>
     public MidiChannel Channel => new(Layer.Name, "", PhraseAnalyser.Ppq, Layer.Notes);
@@ -2811,16 +2898,14 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     internal void TryingChanged() => OnPropertyChanged(nameof(Overlay));
 
     /// <summary>Which notes fight the chords under them, judged as <see cref="LayerRow.Clashes"/> does.</summary>
-    public Func<NoteEvent, bool> Clashes
+    public Func<NoteEvent, bool> Clashes => ClashesIn(owner.Harmony);
+
+    Func<NoteEvent, bool> ClashesIn(SectionHarmony h)
     {
-        get
-        {
-            var h = owner.Harmony;
-            var style = h.Style;
-            var at = At;
-            if (clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => false;
-            return n => ChordLane.Fights(h.Lane, at + n.Start, n.Length, n.Key % 12, style, h.Length);
-        }
+        var style = h.Style;
+        var at = At;
+        if (clip.Role == MidiRoles.Drums || track.Role == MidiRoles.Drums || h.Lane.Count == 0) return _ => false;
+        return n => ChordLane.Fights(h.Lane, at + n.Start, n.Length, n.Key % 12, style, h.Length);
     }
 
     /// <summary>What each note is over the chord heard under it (3, ♭7, 9), for the piano roll's note labels.</summary>
@@ -2840,22 +2925,37 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     /// by; null when they're shown plain. A note that fights the chords there (<see cref="Clashes"/>) stays red, and one
     /// that only looks wrong on paper (a quick passing note) is weak.
     /// </summary>
-    public Func<NoteEvent, FitStrength?>? StrengthOf
+    public Func<NoteEvent, FitStrength?>? StrengthOf => owner.FitColours ? StrengthIn(owner.Harmony) : null;
+
+    Func<NoteEvent, FitStrength?>? StrengthIn(SectionHarmony h)
+    {
+        if (IsDrums || h.Lane.Count == 0) return null;
+        var at = At;
+        var role = Role;
+        var fights = ClashesIn(h);
+        return n =>
+        {
+            if (ChordLane.Heard(h.Lane, at + n.Start, n.Length, h.Length) is not { } chord) return null;
+            if (fights(n)) return FitStrength.Fights;
+            var strength = NoteStrength.Shown(chord, n.Key % 12, role, h.Style);
+            return strength == FitStrength.Fights ? FitStrength.Weak : strength;
+        };
+    }
+
+    /// <summary>
+    /// The colour a note clicked in would take, for the piano roll's preview of it (Solomon, 2026-10-22: "the preview colour
+    /// of the piano roll doesnt make the colour when you click the note in"). The chords are heard from the chord and bass
+    /// parts, so a note put in one can change the chord it's judged against (a low B♭ under Cmaj9 makes it B♭maj13): it's
+    /// judged against the chords as they'll be with it in. Each spot is worked out once, until the idea changes.
+    /// </summary>
+    public Func<NoteEvent, FitStrength?>? WouldBe
     {
         get
         {
-            var h = owner.Harmony;
-            if (!owner.FitColours || IsDrums || h.Lane.Count == 0) return null;
-            var at = At;
-            var role = Role;
-            var fights = Clashes;
-            return n =>
-            {
-                if (ChordLane.Heard(h.Lane, at + n.Start, n.Length, h.Length) is not { } chord) return null;
-                if (fights(n)) return FitStrength.Fights;
-                var strength = NoteStrength.Of(chord, n.Key % 12, role, h.Style);
-                return strength == FitStrength.Fights ? FitStrength.Weak : strength;
-            };
+            if (StrengthOf is not { } now) return null;
+            if (owner.Harmony.ChordsTyped) return now;   // typed chords don't change with the notes
+            var known = new Dictionary<NoteEvent, FitStrength?>();
+            return n => known.TryGetValue(n, out var s) ? s : known[n] = owner.WithNoteAdded(this, n, h => StrengthIn(h)?.Invoke(n));
         }
     }
 
@@ -2877,7 +2977,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
                 foreach (var c in h.Lane.Where(c => c.Start + lap < b && c.End + lap > a))
                 {
                     long start = Math.Max(c.Start + lap, a), end = Math.Min(c.End + lap, b);
-                    spans.Add(new FitSpan(start - from, end - start, NoteStrength.All(c.Chord, role, h.Style)));
+                    spans.Add(new FitSpan(start - from, end - start, NoteStrength.AllShown(c.Chord, role, h.Style)));
                 }
                 a = b;
             }
@@ -2902,7 +3002,9 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
 
     /// <summary>The playhead on the piano roll, while it's in the go round shown.</summary>
     [ObservableProperty] double _position = -1;
-    internal void PlayheadAt(double tick) => Position = tick < 0 ? -1 : tick >= At && tick < At + clip.Loop ? tick - At : -1;
+    // Round and round with the clip where it repeats (Solomon, 2026-10-22: "playhead goes one time through a looping clip").
+    internal void PlayheadAt(double tick) =>
+        Position = tick < 0 || tick < clip.Start || tick >= clip.End || clip.Loop <= 0 ? -1 : ((tick - At) % clip.Loop + clip.Loop) % clip.Loop;
 
     internal void Changed()
     {
@@ -2928,6 +3030,7 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         OnPropertyChanged(nameof(Clashes));
         OnPropertyChanged(nameof(DegreeOf));
         OnPropertyChanged(nameof(StrengthOf));
+        OnPropertyChanged(nameof(WouldBe));
         OnPropertyChanged(nameof(FitGuide));
     }
 
@@ -3036,3 +3139,6 @@ public static class TrackColours
 
 /// <summary>A value dragged or typed: how many steps it moves, and which drag or typing it's part of (one undo step for all of them).</summary>
 public readonly record struct ValueStep(int By, int Gesture);
+
+/// <summary>A fader moved to <see cref="Value"/>: which drag it's part of (one undo step), and whether it was let go.</summary>
+public readonly record struct FaderMove(double Value, int Gesture, bool Done);

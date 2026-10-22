@@ -258,6 +258,132 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public async Task Picking_another_suggestion_while_one_plays_plays_it_from_the_same_place()
+    {
+        // F12 note, 22 Oct 09:34: "press the arrow key or select another clip and it starts playing straight away from where the playhead is".
+        var ui = new Headless();
+        Ui.Current = ui;
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var other = Line(Bar, 36, 36, 43, 43);
+        var entries = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass"), Stored(2, @"K:\Else\Bass.flp", "Bass", other, "bass")]).Entries;
+        var first = new PlaygroundMatchRow(p, new PlaygroundMatch(entries[0], null, 0.8, bass, ""));
+        var second = new PlaygroundMatchRow(p, new PlaygroundMatch(entries[1], null, 0.7, other, ""));
+        p.Matches.Add(first);
+        p.Matches.Add(second);
+
+        await p.PreviewMatch(first);
+        Assert.True(first.IsPlaying);
+        Assert.Same(first, p.SelectedMatch);   // the arrow keys go on from here
+        p.Position = 2 * Bar;   // the playhead at bar 3
+
+        p.SelectedMatch = second;   // the down arrow
+        Assert.True(second.IsPlaying);
+        Assert.False(first.IsPlaying);
+        Assert.True(ui.Player!.StartedAt > 0);   // from bar 3, not from the start
+
+        p.StopPlaying();
+        p.SelectedMatch = first;   // nothing playing: picking a row doesn't start it
+        Assert.False(first.IsPlaying);
+    }
+
+    [Fact]
+    public void A_note_about_to_be_clicked_in_shows_the_colour_it_will_have()
+    {
+        // F12 note, 22 Oct 09:47: "the preview colour of the piano roll doesnt make the colour when you click the note in".
+        // The chords are heard from the chord part being edited, so a note put in it can change the chord.
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("Cmaj7 | Am7 D9 | Dm7 | G7");
+        p.WriteChordsCommand.Execute(null);
+        var track = p.Layers.Single(l => !l.IsWritten).Layer;
+        p.SelectClipCommand.Execute(new ClipPick(track, track.Clips[0]));
+        var row = p.SelectedClip!;
+        var before = row.Notes.ToList();
+        var lane = p.Harmony.Lane.Select(c => c.Chord.Name).ToList();
+        var checkedAny = false;
+        foreach (var note in new[] { new NoteEvent(24, Beat / 4, 34, 100), new NoteEvent(Bar + Beat / 4, Beat / 4, 44, 100), new NoteEvent(Bar + Beat / 4, Beat / 4, 41, 100) })
+        {
+            var now = p.SelectedClip!.StrengthOf!(note);
+            var would = p.SelectedClip.WouldBe!(note);
+            Assert.Equal(lane, p.Harmony.Lane.Select(c => c.Chord.Name));   // looking doesn't change anything
+            Assert.Equal(before, p.SelectedClip.Notes);
+            p.SelectedClip.EditedCommand.Execute(before.Append(note).ToList());
+            Assert.Equal(p.SelectedClip!.StrengthOf!(note), would);
+            checkedAny |= now != would;
+            p.UndoCommand.Execute(null);   // the idea as it was, read back afresh
+            track = p.Layers.Single(l => !l.IsWritten).Layer;
+            p.SelectClipCommand.Execute(new ClipPick(track, track.Clips[0]));
+        }
+        Assert.True(checkedAny);   // one of them did change the chord it's judged against
+    }
+
+    [Fact]
+    public void A_clips_own_playhead_goes_round_with_it_where_it_repeats()
+    {
+        // F12 note, 22 Oct 10:05: "playhead goes one time through a looping clip".
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        p.WriteChordsCommand.Execute(null);
+        var layer = p.Layers[^1];
+        var row = new ClipRow(p, layer, new PlaygroundClip { Start = Bar, Loop = Bar, Length = 3 * Bar });
+        row.PlayheadAt(Bar + Beat);
+        Assert.Equal(Beat, row.Position);
+        row.PlayheadAt(3 * Bar + 2 * Beat);   // its third go round
+        Assert.Equal(2 * Beat, row.Position);
+        row.PlayheadAt(Beat);                  // before it starts
+        Assert.Equal(-1, row.Position);
+        row.PlayheadAt(4 * Bar);               // after it ends
+        Assert.Equal(-1, row.Position);
+    }
+
+    [Fact]
+    public void A_tracks_volume_is_dragged_in_one_undo_step_and_kept_with_the_idea()
+    {
+        // F12 note, 22 Oct 09:40: "should be able to change the volume of the tracks individually".
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F |");
+        p.WriteChordsCommand.Execute(null);
+        var row = p.Layers[^1];
+        Assert.Equal(1, row.Volume);
+        Assert.Equal("0.0 dB", row.VolumeText);
+
+        row.SetVolumeCommand.Execute(new FaderMove(0.8, 7, false));
+        row.SetVolumeCommand.Execute(new FaderMove(0.5, 7, false));
+        row.SetVolumeCommand.Execute(new FaderMove(0.5, 7, true));
+        Assert.Equal(0.5, row.Layer.Volume);
+        Assert.Equal("−12.0 dB", row.VolumeText);
+        var saved = new PlaygroundSession { Sections = [new() { Name = "A", Bars = 2, Layers = [new PlaygroundLayer { Name = "Keys", Volume = 0.5 }] }] };
+        Assert.Equal(0.5, PlaygroundSession.FromJson(saved.ToJson())!.Sections[0].Layers[0].Volume);   // kept with the idea
+
+        p.RunShortcut("playground.undo");   // the whole drag at once
+        Assert.Equal(1, p.Layers[^1].Layer.Volume);
+    }
+
+    [Fact]
     public void The_menus_copy_cut_and_paste_clips_and_every_line_has_a_shortcut_entry()
     {
         // Solomon, 2026-10-21: "no right click menus or file edit view menus… it should look like a modern daw".
@@ -794,6 +920,27 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void A_notes_colour_matches_what_its_label_calls_it_over_the_chord()
+    {
+        // F12 note, 22 Oct 10:01: "colour doesnt match the what degree the note says". The legend: green root, 3rd, 5th;
+        // blue 7th, 6th; violet 9, 11, 13.
+        FitStrength S(string chord, int pc, string role = MidiRoles.Chords) => NoteStrength.Shown(ChordSymbol.Parse(chord)!.Value, pc, role);
+        string D(string chord, int pc) => ChordScales.Degree(ChordSymbol.Parse(chord)!.Value, pc);
+        Assert.Equal(("9", FitStrength.Colour), (D("Cmaj9", 2), S("Cmaj9", 2)));     // the chord's own 9 is still a 9
+        Assert.Equal(("11", FitStrength.Colour), (D("Cm11", 5), S("Cm11", 5)));
+        Assert.Equal(("13", FitStrength.Colour), (D("C13", 9), S("C13", 9)));
+        Assert.Equal(("7", FitStrength.Strong), (D("Cmaj9", 11), S("Cmaj9", 11)));
+        Assert.Equal(("6", FitStrength.Strong), (D("C", 9), S("C", 9)));             // a 6 over a plain triad is a 6
+        Assert.Equal(("4", FitStrength.Strongest), (D("Csus4", 5), S("Csus4", 5)));  // a sus chord's 4 in place of its 3rd
+        Assert.Equal(("2", FitStrength.Strongest), (D("Csus2", 2), S("Csus2", 2)));
+        Assert.Equal("11", D("C7", 5));                                                // not a sus: still an 11
+        Assert.Equal(FitStrength.Fights, S("Cmaj7", 5));                               // the avoid note still fights
+        // A bassline keeps its own legend (root and 5th, then the 3rd, then the 7th), and scoring keeps Of.
+        Assert.Equal(NoteStrength.Of(ChordSymbol.Parse("C7")!.Value, 4, MidiRoles.Bass), S("C7", 4, MidiRoles.Bass));
+        Assert.Equal(FitStrength.Strong, NoteStrength.Of(ChordSymbol.Parse("Cmaj9")!.Value, 2, MidiRoles.Chords));
+    }
+
+    [Fact]
     public void Swapping_a_bar_finds_the_bit_of_a_part_that_fits_there_and_joins_on()
     {
         // F12 note, 20 Oct: "select a part of a clip and have suggestions to replace that ... so it finds a fragment that
@@ -1147,7 +1294,8 @@ public class PlaygroundTests : IDisposable
     {
         public IItemsView CreateView(IList items) => new ListView(items);
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
-        public IAudioPlayer CreateAudioPlayer() => new Silence();
+        public Silence? Player { get; private set; }
+        public IAudioPlayer CreateAudioPlayer() => Player = new Silence();
         public Task<string?> PickFolder(string title) => Task.FromResult<string?>(null);
         public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult<string?>(null);
         public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);
@@ -1176,9 +1324,10 @@ public class PlaygroundTests : IDisposable
         public event Action? Stopped { add { } remove { } }
         public string? Playing { get; private set; }
         public double? Position => Playing is null ? null : 0;
+        public double StartedAt { get; private set; }
         public void Seek(double seconds) { }
         public void Play(string path, double startSeconds = 0) => Playing = path;
-        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) => Playing = key;
+        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) => (Playing, StartedAt) = (key, startSeconds);
         public void Stop() => Playing = null;
         public void Dispose() { }
     }
