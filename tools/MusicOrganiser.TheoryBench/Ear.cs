@@ -1,3 +1,4 @@
+using System.Globalization;
 using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Midi.Playground;
@@ -46,11 +47,27 @@ static class EarTable
         return lift;
     }
 
+    // Written with a full stop for the decimal point whatever the PC's number format, so tables can be shared.
     public static void Save(string path, double[]?[] lift) =>
-        File.WriteAllLines(path, lift.Select(row => row is null ? "-" : string.Join(" ", row.Select(v => v.ToString("0.0000")))));
+        File.WriteAllLines(path, lift.Select(row => row is null ? "-" : string.Join(" ", row.Select(v => v.ToString("0.0000", CultureInfo.InvariantCulture)))));
 
-    public static double[]?[] Load(string path) =>
-        File.ReadAllLines(path).Select(l => l == "-" ? null : l.Split(' ').Select(double.Parse).ToArray()).ToArray();
+    /// <summary>A table <see cref="Save"/> wrote; null (and why, on the console) when it's missing or not one.</summary>
+    public static double[]?[]? Load(string path)
+    {
+        try
+        {
+            var table = File.ReadAllLines(path)
+                .Select(l => l == "-" ? null : l.Split(' ').Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToArray()).ToArray();
+            if (table.Length != Families || table.Any(r => r is not null && r.Length != 12))
+                throw new FormatException($"expected {Families} rows of 12 numbers (or -), one per chord family");
+            return table;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatException)
+        {
+            Console.WriteLine($"Can't use the ear table {path}: {e.Message}. Carrying on without it.");
+            return null;
+        }
+    }
 
     /// <summary>The app's Sit, with a note that isn't the chord's own moved a share <paramref name="blend"/> towards 0.8 + slope × ln(lift).</summary>
     public static Func<ChordSymbol, int, double> Sit(double[]?[] lift, double blend, double slope) => (chord, pc) =>
@@ -64,49 +81,10 @@ static class EarTable
 
 static class EarFit
 {
-    const int Ppq = PhraseAnalyser.Ppq, Beat = Ppq, Bar = 4 * Ppq;
-
-    static double Metric(long start)
-    {
-        var inBar = start % Bar;
-        if (inBar == 0) return 1.5;
-        if (inBar == 2 * Beat) return 1.25;
-        if (inBar % Beat == 0) return 1.0;
-        if (inBar % (Beat / 2) == 0) return 0.75;
-        return 0.6;
-    }
-
-    /// <summary>SectionFit.Score for a melody with the jazz ear, with the note values and the strong-beat tension weight swappable.</summary>
+    /// <summary>The app's SectionFit.Score for a melody with the jazz ear, with the note values and the strong-beat tension weight swapped.</summary>
     public static double Score(IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length, Func<ChordSymbol, int, double> sit,
-                               double strong = 0.6)
-    {
-        if (notes.Count == 0 || lane.Count == 0) return 0;
-        var sorted = notes.Where(n => n.Start < length).OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
-        double sum = 0, total = 0;
-        for (var i = 0; i < sorted.Count; i++)
-        {
-            var n = sorted[i];
-            var pc = n.Key % 12;
-            foreach (var (chord, start, len, struck) in ChordLane.Under(lane, n.Start, Math.Min(n.Length, length - n.Start)))
-            {
-                var metric = Metric(start);
-                var w = Math.Clamp(len / (double)Beat, 0.25, 2) * metric * (struck ? 1 : 0.8);
-                var v = sit(chord, pc);
-                if (metric >= 1.25 && v > 0 && v < 1) v *= strong;
-                if (struck && v < 0.55 && n.Length <= Beat / 2 && metric < 1.25)
-                {
-                    var next = sorted.Skip(i + 1).FirstOrDefault(m => m.Start > n.Start);
-                    if (next.Length > 0 && Math.Abs(next.Key - n.Key) <= 2 && ChordLane.At(lane, next.Start + 1) is { } then &&
-                        sit(then, next.Key % 12) >= 0.75)
-                        v = Math.Max(v, 0.65);
-                    else v = Math.Max(v, 0.15);
-                }
-                sum += w * v;
-                total += w;
-            }
-        }
-        return total <= 0 ? 0 : Math.Clamp(sum / total, 0, 1);
-    }
+                               double strong = 0.6) =>
+        SectionFit.Score(notes, lane, length, MidiRoles.Melody, HarmonyStyle.JazzGospel, sit, strong) ?? 0;
 
     public static readonly (double Blend, double Slope, double Strong)[] Grid =
         [(0, 0, 0.6), (0, 0, 1), (0.5, 0.5, 0.6), (0.5, 1, 0.6), (1, 0.5, 0.6), (1, 1, 0.6), (1, 1.5, 0.6), (0.5, 1, 1), (1, 1, 1)];

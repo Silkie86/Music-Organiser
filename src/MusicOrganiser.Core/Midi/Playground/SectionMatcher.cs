@@ -186,10 +186,15 @@ public static class SectionFit
         return 0.6;
     }
 
-    /// <summary>0 to 1, or null when no note falls on a chord.</summary>
+    /// <summary>
+    /// 0 to 1, or null when no note falls on a chord. <paramref name="sit"/> and <paramref name="strongTension"/> swap in
+    /// other note values and strong-beat weights (the theory bench tries learned ones).
+    /// </summary>
     public static double? Score(IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> lane, long length, string role,
-                                HarmonyStyle style = HarmonyStyle.JazzGospel)
+                                HarmonyStyle style = HarmonyStyle.JazzGospel, Func<ChordSymbol, int, double>? sit = null,
+                                double strongTension = 0.6)
     {
+        double Sit(ChordSymbol chord, int pc) => sit?.Invoke(chord, pc) ?? ChordScales.Sit(chord, pc, style);
         if (notes.Count == 0 || lane.Count == 0) return null;
         var sorted = notes.Where(n => n.Start < length).OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
         var bass = role == MidiRoles.Bass;
@@ -209,10 +214,10 @@ public static class SectionFit
             {
                 var metric = Metric(start);
                 var w = (struck ? Math.Clamp(len / (double)Beat, 0.25, 2) : Math.Min(len / (double)Beat, 2) * 0.8) * metric;
-                var v = ChordScales.Sit(chord, pc, style);
+                var v = Sit(chord, pc);
                 // A tension on beat 1 or 3 of a tune counts less than a chord note there: melodies land on chord
                 // notes on the strong beats and colour the weak ones.
-                if (melody && jazz && metric >= 1.25 && v > 0 && v < 1) v *= 0.6;
+                if (melody && jazz && metric >= 1.25 && v > 0 && v < 1) v *= strongTension;
                 if (bass && metric >= 1.25)
                     v = pc == chord.Bass ? 1 : pc == chord.Root ? 0.9 : v * 0.75;
                 if (struck && v < 0.55 && n.Length <= Beat / 2 && metric < 1.25)
@@ -220,7 +225,7 @@ public static class SectionFit
                     // A short note between beats: a passing or approach note if the next note steps to one that sits.
                     var next = sorted.Skip(i + 1).FirstOrDefault(m => m.Start > n.Start);
                     if (next.Length > 0 && Math.Abs(next.Key - n.Key) <= 2 && ChordLane.At(lane, next.Start + 1) is { } then &&
-                        ChordScales.Sit(then, next.Key % 12, style) >= 0.75)
+                        Sit(then, next.Key % 12) >= 0.75)
                         v = Math.Max(v, jazz ? 0.65 : 0.55);
                     else v = Math.Max(v, 0.15);
                 }
@@ -436,14 +441,21 @@ public sealed class ProgressionModel
 
     public static ProgressionModel Learn(IEnumerable<MidiEntry> entries, IReadOnlyCollection<string> leaveSongs, CancellationToken ct = default)
     {
-        var model = new ProgressionModel();
         var n = 0;
-        foreach (var e in entries)
+        return Learn(entries.Where(e =>
+            {
+                if (++n % 4096 == 0) ct.ThrowIfCancellationRequested();
+                return e.Role == MidiRoles.Chords && e.Chords.Count >= 3 && (leaveSongs.Count == 0 || !leaveSongs.Any(e.IsInSong));
+            })
+            .Select(e => e.Chords.Select(c => ChordSpeller.Spell(c.Mask, c.Root)).OfType<ChordSymbol>().ToList()));
+    }
+
+    /// <summary>The same from chord parts' chords in order (the theory bench learns from packs this way).</summary>
+    public static ProgressionModel Learn(IEnumerable<IReadOnlyList<ChordSymbol>> parts)
+    {
+        var model = new ProgressionModel();
+        foreach (var chords in parts)
         {
-            if (++n % 4096 == 0) ct.ThrowIfCancellationRequested();
-            if (e.Role != MidiRoles.Chords || e.Chords.Count < 3) continue;
-            if (leaveSongs.Count > 0 && leaveSongs.Any(e.IsInSong)) continue;
-            var chords = e.Chords.Select(c => ChordSpeller.Spell(c.Mask, c.Root)).OfType<ChordSymbol>().ToList();
             for (var i = 1; i < chords.Count; i++)
             {
                 if (chords[i].Root == chords[i - 1].Root && Kind(chords[i]) == Kind(chords[i - 1])) continue;
@@ -466,8 +478,9 @@ public sealed class ProgressionModel
     /// <summary>
     /// The likeliest chords to follow <paramref name="last"/> (after <paramref name="before"/>), with how often (0 to 1).
     /// What followed both chords and what followed the last one alone are blended, the two-chord count weighing more
-    /// the more it has seen: on 77 gospel, jazz and soul packs, each guessed from the others, the chord played next was
-    /// the first guess 12 times in 100 and among the first three 21 (was 10 and 19 using one or the other).
+    /// the more it has seen: on 77 gospel, jazz and soul packs, each guessed from the others with their chords read as the
+    /// app reads them, the chord played next was the first guess 9 times in 100 and among the first six 28 (8 and 27
+    /// using one count or the other; tools/MusicOrganiser.TheoryBench --learn).
     /// </summary>
     public IReadOnlyList<(ChordSymbol Chord, double Share)> Next(ChordSymbol last, ChordSymbol? before, int most = 6)
     {

@@ -13,7 +13,10 @@ static class LearnBench
 {
     const int Beat = 96, Bar = 4 * Beat;
 
-    public sealed record Part(string Style, string Pack, string Name, List<NoteEvent> Notes, List<ChordSymbol> Chords, List<int[]> Voicings, int Tonic, bool Minor);
+    /// <param name="Chords">A chord per half bar where three or more notes are struck, with <paramref name="Voicings"/> the notes struck: for the voicing and groove checks.</param>
+    /// <param name="AppChords">The chords as the app reads and learns them (its chord reader, via PhraseAnalyser): for the chord moves.</param>
+    public sealed record Part(string Style, string Pack, string Name, List<NoteEvent> Notes, List<ChordSymbol> Chords, List<int[]> Voicings, int Tonic, bool Minor,
+                              List<ChordSymbol> AppChords);
 
     public static List<Part> Load(string root)
     {
@@ -31,7 +34,10 @@ static class LearnBench
             {
                 var name = p.TrackName.Length > 0 ? p.TrackName : p.Name;
                 var notes = PhraseAnalyser.Normalise(p.Notes, p.Ppq, keepPlace: true);
-                if (notes.Count < 8 || PhraseAnalyser.Analyse(notes, name).Role != MidiRoles.Chords) continue;
+                if (notes.Count < 8) continue;
+                var analysis = PhraseAnalyser.Analyse(notes, name);
+                if (analysis.Role != MidiRoles.Chords) continue;
+                var appChords = analysis.Chords.Select(c => ChordSpeller.Spell(c.Mask, c.Root)).OfType<ChordSymbol>().ToList();
                 // A chord per half bar, as the app reads them, with the notes struck there as the voicing.
                 var chords = new List<ChordSymbol>();
                 var voicings = new List<int[]>();
@@ -44,10 +50,8 @@ static class LearnBench
                     chords.Add(c);
                     voicings.Add(struck);
                 }
-                var chroma = new double[12];
-                foreach (var n in notes) chroma[n.Key % 12] += Math.Clamp(n.Length / (double)Bar, 1 / 16.0, 2);
-                var key = chords.Count == 0 ? null : MusicOrganiser.Core.Sounds.MusicTheory.EstimateMidiKey(chroma, chords[0].Root);
-                if (chords.Count >= 3) parts.Add(new Part(style, pack, rel, notes, chords, voicings, key?.Tonic ?? 0, key?.Minor ?? false));
+                var key = analysis.Key;
+                if (chords.Count >= 3) parts.Add(new Part(style, pack, rel, notes, chords, voicings, key?.Tonic ?? 0, key?.Minor ?? false, appChords));
             }
         }
         return parts;
@@ -56,6 +60,11 @@ static class LearnBench
     public static void Run(string root)
     {
         var parts = Load(root);
+        if (parts.Count == 0)
+        {
+            Console.WriteLine("No chord parts found (three or more chords each) to learn from.");
+            return;
+        }
         Console.WriteLine($"chord parts: {parts.Count} from {parts.Select(p => p.Pack).Distinct().Count()} packs ({string.Join(", ", parts.GroupBy(p => p.Style).Select(g => $"{g.Key} {g.Count()}"))})");
         Moves(parts);
         Voicings(parts);
@@ -75,12 +84,13 @@ static class LearnBench
         public void Learn(IEnumerable<Part> parts)
         {
             foreach (var p in parts)
-                for (var i = 1; i < p.Chords.Count; i++)
+                for (var i = 1; i < p.AppChords.Count; i++)
                 {
                     _p = p;
-                    if (p.Chords[i].Root == p.Chords[i - 1].Root && ProgressionModel.Kind(p.Chords[i]) == ProgressionModel.Kind(p.Chords[i - 1])) continue;
-                    Add(One, kind(p, p.Chords[i - 1]), Next(p.Chords[i - 1], p.Chords[i]));
-                    if (i >= 2) Add(Two, Ctx2(p.Chords[i - 2], p.Chords[i - 1]), Next(p.Chords[i - 1], p.Chords[i]));
+                    var c = p.AppChords;
+                    if (c[i].Root == c[i - 1].Root && ProgressionModel.Kind(c[i]) == ProgressionModel.Kind(c[i - 1])) continue;
+                    Add(One, kind(p, c[i - 1]), Next(c[i - 1], c[i]));
+                    if (i >= 2) Add(Two, Ctx2(c[i - 2], c[i - 1]), Next(c[i - 1], c[i]));
                 }
         }
 
@@ -90,7 +100,7 @@ static class LearnBench
             row[next] = row.GetValueOrDefault(next) + 1;
         }
 
-        /// <summary>The guesses in order, as ProgressionModel.Next makes them: two chords of context when it has 8 or more.</summary>
+        /// <summary>The guesses in order: two chords of context when it has 8 or more (the old rule), or both blended as ProgressionModel.Next does.</summary>
         public List<string> Guess(ChordSymbol last, ChordSymbol? before)
         {
             Dictionary<string, int>? two = null, one;
@@ -114,31 +124,43 @@ static class LearnBench
     {
         Console.WriteLine();
         Console.WriteLine("=== CHORD MOVES: the chord a player went to, among the app's first 1 / 3 / 6 guesses (each pack guessed from the other packs) ===");
-        Console.WriteLine("    (a change only counts when the root or the app's kind of chord changes; a guess counts when its root step and kind are right)");
+        Console.WriteLine("    (chords as the app reads them; a change only counts when the root or the app's kind of chord changes; a guess counts when its root step and kind are right)");
         var styles = parts.Select(p => p.Style).Distinct().Order().Append("ALL").ToList();
         static string Degree(Part p, ChordSymbol c) => $"{ChordSymbol.Mod(c.Root - p.Tonic)}{(p.Minor ? "m" : "M")}{ProgressionModel.Kind(c)}";
+        static string Step(ChordSymbol from, ChordSymbol to) => $"{ChordSymbol.Mod(to.Root - from.Root)}:{ProgressionModel.Kind(to)}";
+        // The app's own model, learned and asked exactly as the Playground does; then ideas tried beside it.
+        var rows = new List<(string Name, Func<List<Part>, Func<Part, ChordSymbol, ChordSymbol?, List<string>>> Train)>
+        {
+            ("app's model (ProgressionModel)", train =>
+            {
+                var model = ProgressionModel.Learn(train.Select(p => p.AppChords));
+                return (_, last, before) => model.Next(last, before).Select(g => Step(last, g.Chord)).ToList();
+            }),
+        };
         foreach (var (name, kind, blend) in new (string, Func<Part, ChordSymbol, string>, bool)[]
         {
-            ("app's model (kind only)", (_, c) => ProgressionModel.Kind(c), false),
-            ("kind only, contexts blended", (_, c) => ProgressionModel.Kind(c), true),
+            ("kind only, two chords when they've 8+ (the old rule)", (_, c) => ProgressionModel.Kind(c), false),
             ("kind + where it sits in the key", Degree, false),
             ("kind + where it sits in the key, blended", Degree, true),
         })
+            rows.Add((name, train =>
+            {
+                var model = new Model(kind, blend);
+                model.Learn(train);
+                return (p, last, before) => { model.For(p); return model.Guess(last, before); };
+            }));
+        foreach (var (name, train) in rows)
         {
             var hits = styles.ToDictionary(s => s, _ => new int[4]);
             foreach (var pack in parts.Select(p => p.Pack).Distinct())
             {
-                var model = new Model(kind, blend);
-                model.Learn(parts.Where(p => p.Pack != pack));
+                var guess = train(parts.Where(p => p.Pack != pack).ToList());
                 foreach (var p in parts.Where(p => p.Pack == pack))
-                    for (var i = 1; i < p.Chords.Count; i++)
+                    for (var i = 1; i < p.AppChords.Count; i++)
                     {
-                        model.For(p);
-                        if (p.Chords[i].Root == p.Chords[i - 1].Root && ProgressionModel.Kind(p.Chords[i]) == ProgressionModel.Kind(p.Chords[i - 1])) continue;
-                        var guesses = model.Guess(p.Chords[i - 1], i >= 2 ? p.Chords[i - 2] : null);
-                        var truth = $"{ChordSymbol.Mod(p.Chords[i].Root - p.Chords[i - 1].Root)}:{ProgressionModel.Kind(p.Chords[i])}";
-                        var list = guesses;
-                        var at = list.IndexOf(truth);
+                        var c = p.AppChords;
+                        if (c[i].Root == c[i - 1].Root && ProgressionModel.Kind(c[i]) == ProgressionModel.Kind(c[i - 1])) continue;
+                        var at = guess(p, c[i - 1], i >= 2 ? c[i - 2] : null).IndexOf(Step(c[i - 1], c[i]));
                         foreach (var s in new[] { p.Style, "ALL" })
                         {
                             hits[s][0]++;
@@ -148,9 +170,8 @@ static class LearnBench
                         }
                     }
             }
-            Console.WriteLine($"{name,-48} " + string.Join("  ", styles.Select(s => $"{s} {100.0 * hits[s][1] / Math.Max(1, hits[s][0]):0}/{100.0 * hits[s][2] / Math.Max(1, hits[s][0]):0}/{100.0 * hits[s][3] / Math.Max(1, hits[s][0]):0} (n {hits[s][0]})")));
+            Console.WriteLine($"{name,-52} " + string.Join("  ", styles.Select(s => $"{s} {100.0 * hits[s][1] / Math.Max(1, hits[s][0]):0}/{100.0 * hits[s][2] / Math.Max(1, hits[s][0]):0}/{100.0 * hits[s][3] / Math.Max(1, hits[s][0]):0} (n {hits[s][0]})")));
         }
-
     }
 
     // ---------------------------------------------------------------- voicings
@@ -315,7 +336,7 @@ static class LearnBench
         var styles = parts.Select(p => p.Style).Distinct().Order().Append("ALL").ToList();
         var rows = presets.Select(x => (x.Item1, (Func<Part, int>)(_ => x.Item2))).ToList();
         foreach (var (name, pick) in rows.Append(("learned: the style's commonest bar, other packs", (Func<Part, int>)(p =>
-                 parts.Where(o => o.Pack != p.Pack && o.Style == p.Style).SelectMany(o => BarPatterns(o.Notes)).GroupBy(m => m).OrderByDescending(x => x.Count()).First().Key))))
+                 parts.Where(o => o.Pack != p.Pack && o.Style == p.Style).SelectMany(o => BarPatterns(o.Notes)).GroupBy(m => m).OrderByDescending(x => x.Count()).Select(x => x.Key).FirstOrDefault(1)))))   // a style with one pack: once a bar
         {
             var score = styles.ToDictionary(x => x, _ => new List<double>());
             var cache = new Dictionary<(string, string), int>();
