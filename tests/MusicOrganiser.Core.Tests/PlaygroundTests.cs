@@ -210,6 +210,71 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public async Task Picking_another_suggestion_while_one_plays_plays_it_from_the_same_place()
+    {
+        // F12 note, 22 Oct 09:34: "press the arrow key or select another clip and it starts playing straight away from where the playhead is".
+        var ui = new Headless();
+        Ui.Current = ui;
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F | G | C");
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var other = Line(Bar, 36, 36, 43, 43);
+        var entries = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass"), Stored(2, @"K:\Else\Bass.flp", "Bass", other, "bass")]).Entries;
+        var first = new PlaygroundMatchRow(p, new PlaygroundMatch(entries[0], null, 0.8, bass, ""));
+        var second = new PlaygroundMatchRow(p, new PlaygroundMatch(entries[1], null, 0.7, other, ""));
+        p.Matches.Add(first);
+        p.Matches.Add(second);
+
+        await p.PreviewMatch(first);
+        Assert.True(first.IsPlaying);
+        Assert.Same(first, p.SelectedMatch);   // the arrow keys go on from here
+        p.Position = 2 * Bar;   // the playhead at bar 3
+
+        p.SelectedMatch = second;   // the down arrow
+        Assert.True(second.IsPlaying);
+        Assert.False(first.IsPlaying);
+        Assert.True(ui.Player!.StartedAt > 0);   // from bar 3, not from the start
+
+        p.StopPlaying();
+        p.SelectedMatch = first;   // nothing playing: picking a row doesn't start it
+        Assert.False(first.IsPlaying);
+    }
+
+    [Fact]
+    public void A_tracks_volume_is_dragged_in_one_undo_step_and_kept_with_the_idea()
+    {
+        // F12 note, 22 Oct 09:40: "should be able to change the volume of the tracks individually".
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F |");
+        p.WriteChordsCommand.Execute(null);
+        var row = p.Layers[^1];
+        Assert.Equal(1, row.Volume);
+        Assert.Equal("0.0 dB", row.VolumeText);
+
+        row.SetVolumeCommand.Execute(new FaderMove(0.8, 7, false));
+        row.SetVolumeCommand.Execute(new FaderMove(0.5, 7, false));
+        row.SetVolumeCommand.Execute(new FaderMove(0.5, 7, true));
+        Assert.Equal(0.5, row.Layer.Volume);
+        Assert.Equal("−12.0 dB", row.VolumeText);
+        var saved = new PlaygroundSession { Sections = [new() { Name = "A", Bars = 2, Layers = [new PlaygroundLayer { Name = "Keys", Volume = 0.5 }] }] };
+        Assert.Equal(0.5, PlaygroundSession.FromJson(saved.ToJson())!.Sections[0].Layers[0].Volume);   // kept with the idea
+
+        p.RunShortcut("playground.undo");   // the whole drag at once
+        Assert.Equal(1, p.Layers[^1].Layer.Volume);
+    }
+
+    [Fact]
     public void The_menus_copy_cut_and_paste_clips_and_every_line_has_a_shortcut_entry()
     {
         // Solomon, 2026-10-21: "no right click menus or file edit view menus… it should look like a modern daw".
@@ -1099,7 +1164,8 @@ public class PlaygroundTests : IDisposable
     {
         public IItemsView CreateView(IList items) => new ListView(items);
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
-        public IAudioPlayer CreateAudioPlayer() => new Silence();
+        public Silence? Player { get; private set; }
+        public IAudioPlayer CreateAudioPlayer() => Player = new Silence();
         public Task<string?> PickFolder(string title) => Task.FromResult<string?>(null);
         public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult<string?>(null);
         public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);
@@ -1128,9 +1194,10 @@ public class PlaygroundTests : IDisposable
         public event Action? Stopped { add { } remove { } }
         public string? Playing { get; private set; }
         public double? Position => Playing is null ? null : 0;
+        public double StartedAt { get; private set; }
         public void Seek(double seconds) { }
         public void Play(string path, double startSeconds = 0) => Playing = path;
-        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) => Playing = key;
+        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) => (Playing, StartedAt) = (key, startSeconds);
         public void Stop() => Playing = null;
         public void Dispose() { }
     }

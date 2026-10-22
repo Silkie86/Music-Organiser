@@ -423,6 +423,39 @@
     <Style Selector=".studio Button.trouble Path.buttonIcon">
         <Setter Property="Stroke" Value="{StaticResource MissingBrush}" />
     </Style>
+    <!-- In a strip, a symbol takes the colour of the strip's words: muted, the accent when it's on, dark on the accent
+         tile (Solomon, 2026-10-22: the transport's emoji-like ⏮ ▶ ⟲ looked borrowed and sat out of line). -->
+    <Style Selector=".studio StackPanel.group > Button Path.buttonIcon, .studio StackPanel.group > ToggleButton Path.buttonIcon">
+        <Setter Property="Width" Value="12" />
+        <Setter Property="Height" Value="12" />
+        <Setter Property="Stretch" Value="Uniform" />
+        <Setter Property="StrokeThickness" Value="1.5" />
+        <Setter Property="StrokeJoin" Value="Round" />
+        <Setter Property="StrokeLineCap" Value="Round" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ContentPresenter}}" />
+    </Style>
+    <Style Selector=".studio StackPanel.group > Button Path.buttonIcon.filled, .studio StackPanel.group > ToggleButton Path.buttonIcon.filled">
+        <Setter Property="Fill" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ContentPresenter}}" />
+        <Setter Property="StrokeThickness" Value="0" />
+    </Style>
+
+    <!-- A tool bar (the Playground's top bar): its boxes and read-outs are as tall as its strips, so one row lines up. -->
+    <Style Selector=".studio .toolbar Border.lcd, .studio .toolbar TextBox, .studio .toolbar NumericUpDown">
+        <Setter Property="Height" Value="24" />
+        <Setter Property="MinHeight" Value="24" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector=".studio .toolbar TextBox">
+        <Setter Property="Padding" Value="7,0" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector=".studio .toolbar Border.lcd TextBlock">
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
 
     <!-- A row in a list that lights up under the pointer; its buttons (rowActions) stay quiet until then. -->
     <Style Selector=".studio Border.row">

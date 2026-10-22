@@ -123,7 +123,7 @@
         <!-- The top bar, transport in the middle (Solomon, 2026-10-22): snapping on the left; play, position and tempo
              in the middle; the key, length and ideas on the right. -->
         <Border Grid.Row="1" Classes="panel" Margin="0,6,0,0" Padding="6">
-            <Grid ColumnDefinitions="*,Auto,*">
+            <Grid Classes="toolbar" ColumnDefinitions="*,Auto,*">
                 <WrapPanel VerticalAlignment="Center">
                     <ListBox Classes="chips group" ItemsSource="{x:Static vm:PlaygroundViewModel.GridChoices}" SelectedItem="{Binding GridPick}" Margin="0,0,6,0"
                              ToolTip.Tip="What clips snap to when you drag them. Hold Shift while dragging to place them freely.">
@@ -147,15 +147,20 @@
                 </WrapPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0">
                     <StackPanel Classes="group" Margin="0,0,6,0">
-                        <Button Content="⏮" MinWidth="34" Command="{Binding ToStartCommand}" ToolTip.Tip="Back to the start: Play starts from bar 1" />
+                        <!-- Drawn symbols, not emoji: they take the strip's colours and sit on one line. -->
+                        <Button MinWidth="34" Command="{Binding ToStartCommand}" ToolTip.Tip="Back to the start: Play starts from bar 1">
+                            <Path Classes="buttonIcon filled" Data="M1,1 H3 V11 H1 Z M11,1 V11 L4,6 Z" />
+                        </Button>
                         <Button Classes="accent" MinWidth="40" Command="{Binding PlayCommand}" ToolTip.Tip="Play or stop, from the marker on the bar numbers (Space)">
                             <Panel>
-                                <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
-                                <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
+                                <Path Classes="buttonIcon filled" Data="M2,0.5 L11,6 L2,11.5 Z" IsVisible="{Binding !IsPlaying}" />
+                                <Path Classes="buttonIcon filled" Data="M1.5,1.5 H10.5 V10.5 H1.5 Z" IsVisible="{Binding IsPlaying}" />
                             </Panel>
                         </Button>
-                        <ToggleButton Content="⟲" MinWidth="40" FontSize="15" IsChecked="{Binding LoopOn}"
-                                      ToolTip.Tip="Loop: Play goes round the highlighted bars, or the whole idea (Ctrl+L)" />
+                        <ToggleButton MinWidth="40" IsChecked="{Binding LoopOn}"
+                                      ToolTip.Tip="Loop: Play goes round the highlighted bars, or the whole idea (Ctrl+L)">
+                            <Path Classes="buttonIcon" Data="M1,7 V5.5 A2.5,2.5 0 0 1 3.5,3 H11 M9,1 L11,3 L9,5 M13,7 V8.5 A2.5,2.5 0 0 1 10.5,11 H3 M5,9 L3,11 L5,13" />
+                        </ToggleButton>
                     </StackPanel>
                     <Border Classes="lcd" MinWidth="70" Margin="0,0,6,0" ToolTip.Tip="Where it's playing, or where Play starts: bar, beat and sixteenth">
                         <TextBlock Text="{Binding PositionText}" HorizontalAlignment="Center" />
@@ -283,7 +288,13 @@
                                                              MinHeight="0" FontSize="12" KeyDown="OnTrackRenameKey" LostFocus="OnTrackRenameDone" />
                                                 </Panel>
                                             </DockPanel>
-                                            <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding Details}" />
+                                            <!-- Its volume, a small fader as on a mixer's channel (Solomon, 2026-10-22). -->
+                                            <DockPanel>
+                                                <views:VolumeFader DockPanel.Dock="Right" Width="54" Height="6" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                                   Value="{Binding Volume}" Fill="{Binding Colour}" Command="{Binding SetVolumeCommand}"
+                                                                   ToolTip.Tip="{Binding VolumeText, StringFormat='Volume {0}: drag along it, scroll over it, or double-click for 0 dB'}" />
+                                                <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding Details}" />
+                                            </DockPanel>
                                         </StackPanel>
                                         <Border Classes="trackEdge" PointerPressed="OnTrackEdgePressed" PointerMoved="OnTrackEdgeMoved"
                                                 PointerReleased="OnTrackEdgeReleased" PointerCaptureLost="OnTrackEdgeCaptureLost" DoubleTapped="OnTrackEdgeReset"
@@ -393,6 +404,12 @@
                                       FontSize="12" Width="132" ToolTip.Tip="The track's sound here (General MIDI)" />
                                         <TextBlock Text="Sound" Classes="label" />
                                     </DockPanel>
+                                    <DockPanel DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow">
+                                        <TextBlock DockPanel.Dock="Right" Text="{Binding VolumeText}" Width="52" TextAlignment="Right" Classes="small" VerticalAlignment="Center" />
+                                        <views:VolumeFader DockPanel.Dock="Right" Width="72" Height="8" Margin="6,0" VerticalAlignment="Center"
+                                                           Value="{Binding Volume}" Fill="{Binding Colour}" Command="{Binding SetVolumeCommand}" />
+                                        <TextBlock Text="Volume" Classes="label" />
+                                    </DockPanel>
                                     <DockPanel>
                                         <TextBox x:Name="TrackName" DockPanel.Dock="Right" DataContext="{Binding SelectedLayer}" x:DataType="vm:LayerRow" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Classes="commitOnEnter"
                                      Width="132" FontSize="12" ToolTip.Tip="The track's name: its name in your DAW" />
@@ -461,7 +478,7 @@
                                         ToolTip.Tip="The next lot under these, best first. How many come at a time is in Settings › Playground." />
                                 <TextBlock Text="{Binding MatchStatus}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
                             </DockPanel>
-                            <ListBox Grid.Row="4" ItemsSource="{Binding Matches}" Background="Transparent" Classes="longList matches"
+                            <ListBox Grid.Row="4" ItemsSource="{Binding Matches}" SelectedItem="{Binding SelectedMatch}" Background="Transparent" Classes="longList matches"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:PlaygroundMatchRow">

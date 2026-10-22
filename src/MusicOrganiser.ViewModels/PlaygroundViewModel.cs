@@ -1063,6 +1063,19 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>The drag or typed value the last undo step was taken for: its other steps go in the same one.</summary>
     int _gesture;
 
+    /// <summary>
+    /// A track's volume moved (Solomon, 2026-10-22: "should be able to change the volume of the tracks individually"): the
+    /// fader follows the pointer, and letting go makes it one undo step and plays it so.
+    /// </summary>
+    internal void SetVolume(LayerRow row, FaderMove move)
+    {
+        if (move.Gesture == 0 || move.Gesture != _gesture) Remember();
+        _gesture = move.Gesture;
+        row.Layer.Volume = Math.Clamp(move.Value, 0, PlaygroundLayer.MaxVolume);
+        row.VolumeChanged();
+        if (move.Done) Changed(harmony: false);
+    }
+
     internal void EditClip(ClipRow row, Action<PlaygroundClip> change, bool harmony = true, int gesture = 0)
     {
         if (gesture == 0 || gesture != _gesture) Remember();
@@ -1384,8 +1397,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (IsGroovePlaying) { StopPlaying(); return; }
         if (SelectedLayer is not { } row || Grooved(row) is not { } grooved) return;
         StopPlaying();
-        var channels = PlaygroundSession.Audible(Section).Where(l => l != row.Layer).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
-        channels.Add(Channel(row.Name, row.Layer.Program, grooved.Notes));
+        var channels = PlaygroundSession.Audible(Section).Where(l => l != row.Layer).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume)).ToList();
+        channels.Add(Channel(row.Name, row.Layer.Program, grooved.Notes, row.Layer.Volume));
         IsGroovePlaying = await PlayAsync(instead: channels);
     }
 
@@ -2257,7 +2270,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>The section (or the arrangement) going round, every part that plays, with its sound.</summary>
     /// <summary>Plays the idea (or <paramref name="instead"/>); true when this is what's playing now, false when a newer
     /// play or a stop came while the sound was being made, so a row only says "■ Stop" for what you hear.</summary>
-    async Task<bool> PlayAsync(bool keepPlace = false, IReadOnlyList<MidiChannel>? instead = null)
+    async Task<bool> PlayAsync(bool keepPlace = false, IReadOnlyList<MidiChannel>? instead = null, long? startAt = null)
     {
         StopBrowsing();
         var request = ++_request;
@@ -2300,7 +2313,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         }
         _clock ??= Ui.Current.CreateTimer(TimeSpan.FromMilliseconds(30), Tick);
         var start = 0.0;
-        if (keepPlace && _player.Playing == _playKey && _player.Position is { } at)
+        if (startAt is { } tick)
+            start = MidiRender.TicksToSeconds(Math.Clamp(tick - (Loop?.Start ?? 0), 0, Math.Max(0, total - 1)), Ppq, tempo);
+        else if (keepPlace && _player.Playing == _playKey && _player.Position is { } at)
             start = MidiRender.TicksToSeconds((long)(MidiRender.SecondsToTicks(at, Ppq, _playTempo) % Math.Max(1, total)), Ppq, tempo);
         else if (instead is null)
         {
@@ -2326,7 +2341,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     List<MidiChannel> ChannelsToPlay(out long length)
     {
         length = PlayedTo(Section.Layers.SelectMany(l => l.Clips).Select(c => c.End).DefaultIfEmpty(0).Max());
-        var channels = PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes)).ToList();
+        var channels = PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume)).ToList();
         return Looped(channels, ref length);
     }
 
@@ -2345,8 +2360,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         return channels.Select(c => c with { Notes = MidiBrowserViewModel.Cut(c.Notes, r.Start, r.End) }).ToList();
     }
 
-    static MidiChannel Channel(string name, int? program, IReadOnlyList<NoteEvent> notes) =>
-        new(program == GmSounds.DrumKit ? $"Drums · {name}" : name, "", Ppq, notes) { GmProgram = program };
+    static MidiChannel Channel(string name, int? program, IReadOnlyList<NoteEvent> notes, double volume = 1) =>
+        new(program == GmSounds.DrumKit ? $"Drums · {name}" : name, "", Ppq, notes) { GmProgram = program, Volume = (float)volume };
 
     void GoRound()
     {
@@ -2400,7 +2415,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     /// <summary>The idea with a suggestion playing on top where it would go (the highlight, or from bar 1), to hear it before adding it.</summary>
-    internal async Task PreviewMatch(PlaygroundMatchRow row)
+    internal async Task PreviewMatch(PlaygroundMatchRow row, bool carryOn = false)
     {
         if (row.IsPlaying || row.IsPreparing)
         {
@@ -2408,13 +2423,32 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             row.IsPlaying = row.IsPreparing = false;   // also a row no longer in the list
             return;
         }
+        // Moving on to another row while one plays carries on from where it got to, so parts can be compared bar by bar.
+        long? from = carryOn && _playing && Position >= 0 ? (long)Position : null;
+        _pickingToHear = true;
+        SelectedMatch = row;   // the arrow keys then go on from this row
+        _pickingToHear = false;
         StopPlaying();
         row.IsPreparing = true;   // making the sound takes a moment: say so straight away
-        try { await PreviewMatchAsync(row); }
+        try { await PreviewMatchAsync(row, from); }
         finally { row.IsPreparing = false; }
     }
 
-    async Task PreviewMatchAsync(PlaygroundMatchRow row)
+    /// <summary>The suggestion picked in the list (by a click or the arrow keys).</summary>
+    [ObservableProperty] PlaygroundMatchRow? _selectedMatch;
+    bool _pickingToHear;
+
+    /// <summary>
+    /// Another suggestion picked while one is being heard (Solomon, 2026-10-22: "press the arrow key or select another
+    /// clip and it starts playing straight away from where the playhead is"): that one plays instead, from there.
+    /// </summary>
+    partial void OnSelectedMatchChanged(PlaygroundMatchRow? value)
+    {
+        if (_pickingToHear || value is null || value.IsPlaying || value.IsPreparing) return;
+        if (Matches.Any(m => m.IsPlaying || m.IsPreparing)) _ = PreviewMatch(value, carryOn: true);
+    }
+
+    async Task PreviewMatchAsync(PlaygroundMatchRow row, long? from = null)
     {
         if (SwapTarget is { } target && SwapRange is { } bars)
         {
@@ -2425,7 +2459,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             var swapped = LibraryClip(row.Match.Entry, row.Match.Notes, bars.Start, bars.End - bars.Start, row.Match.Period);
             layer.Clips.Add(swapped);
             layer.Render();
-            if (!await PlayAsync(instead: ChannelsOf(tried).ToList())) return;
+            if (!await PlayAsync(instead: ChannelsOf(tried).ToList(), startAt: from)) return;
             row.IsPlaying = true;
             Trying = new(row.Title, Layers.IndexOf(target.Track), bars.Start, bars.End - bars.Start,
                          layer.Notes.Where(n => n.Start >= bars.Start && n.Start < bars.End).ToList());
@@ -2437,7 +2471,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var (start, length) = Place;
         var placed = SectionMatcher.Loop(notes, period, length).Select(n => n with { Start = n.Start + start }).ToList();
         channels.Add(Channel(row.Title, GmSounds.DefaultFor(row.Match.Entry.Role), placed));
-        if (!await PlayAsync(instead: channels)) return;
+        if (!await PlayAsync(instead: channels, startAt: from)) return;
         row.IsPlaying = true;
         Trying = new(row.Title, Layers.Count, start, length, placed);
     }
@@ -2453,19 +2487,19 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var channels = new List<MidiChannel>();
         foreach (var l in PlaygroundSession.Audible(tried))
         {
-            if (l.Written.Length == 0) { channels.Add(Channel(l.Name, l.Program, l.Notes)); continue; }
+            if (l.Written.Length == 0) { channels.Add(Channel(l.Name, l.Program, l.Notes, l.Volume)); continue; }
             var notes = l.Clips.SelectMany(c =>
             {
                 var under = LaneAt(row.Idea.Lane, c.Start, c.End);
                 return WithGroove(l, Written(l.Written, under, c.Length), under, c.Length).Select(n => n with { Start = n.Start + c.Start });
             }).ToList();
-            channels.Add(Channel(l.Name, l.Program, notes));
+            channels.Add(Channel(l.Name, l.Program, notes, l.Volume));
         }
         row.IsPlaying = await PlayAsync(instead: channels);
     }
 
     IEnumerable<MidiChannel> ChannelsOf(PlaygroundSection section) =>
-        PlaygroundSession.Audible(section).Select(l => Channel(l.Name, l.Program, l.Notes));
+        PlaygroundSession.Audible(section).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume));
 
     // ---- out to the DAW ----
 
@@ -2626,6 +2660,18 @@ public sealed partial class LayerRow : ObservableObject
     public string Details => $"{RoleLabel} · {From}{(Layer.GrooveFrom.Length > 0 ? $" · groove of {Layer.GrooveFrom}" : "")}";
     public bool Muted => Layer.Muted;
     public bool Solo => Layer.Solo;
+
+    /// <summary>Its volume, 1 as it is, and in decibels as a mixer writes it ("-6.0 dB").</summary>
+    public double Volume => Layer.Volume;
+    public string VolumeText => Decibels(Layer.Volume);
+    internal void VolumeChanged()
+    {
+        OnPropertyChanged(nameof(Volume));
+        OnPropertyChanged(nameof(VolumeText));
+    }
+    // A General MIDI channel volume sounds as its square: 100 × v is 40·log10(v) dB from 100.
+    internal static string Decibels(double v) => v <= 0.001 ? "−∞ dB" : $"{40 * Math.Log10(v):+0.0;−0.0;0.0} dB";
+    [RelayCommand] void SetVolume(FaderMove move) => _owner.SetVolume(this, move);
 
     /// <summary>The notes as a channel for the small roll, the timeline's length wide.</summary>
     public MidiChannel Channel => new(Layer.Name, "", PhraseAnalyser.Ppq, Layer.Notes);
@@ -3040,3 +3086,6 @@ public static class TrackColours
 
 /// <summary>A value dragged or typed: how many steps it moves, and which drag or typing it's part of (one undo step for all of them).</summary>
 public readonly record struct ValueStep(int By, int Gesture);
+
+/// <summary>A fader moved to <see cref="Value"/>: which drag it's part of (one undo step), and whether it was let go.</summary>
+public readonly record struct FaderMove(double Value, int Gesture, bool Done);
