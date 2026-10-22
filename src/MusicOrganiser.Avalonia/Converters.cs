@@ -145,6 +145,15 @@ public sealed class PercentAngle : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
 }
 
+/// <summary>A page's own size against the rest of the window (<see cref="NavItem.Scale"/>) as its scale; 1 draws it as is.</summary>
+public sealed class PageScaleTransform : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is double d && Math.Abs(d - 1) >= 0.001 ? new ScaleTransform(d, d) : null;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => BindingOperations.DoNothing;
+}
+
 /// <summary>"#RRGGBB" as a brush, for previews of a theme's colours; an empty string draws nothing.</summary>
 public sealed class HexBrush : IValueConverter
 {

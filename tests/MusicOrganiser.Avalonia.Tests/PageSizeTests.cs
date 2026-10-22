@@ -35,6 +35,7 @@ public sealed class PageSizeTests : IDisposable
         _sounds.Dispose();
         _soundDb.Dispose();
         _db.Dispose();
+        try { Directory.Delete(_root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
     static void Settle()
@@ -52,7 +53,7 @@ public sealed class PageSizeTests : IDisposable
         main.SelectedNav = main.Nav.First(n => n.Title == "Projects");
         Settle();
 
-        var sizeButton = window.GetVisualDescendants().OfType<Button>().Single(b => b.Flyout is not null && ToolTip.GetTip(b) is string tip && tip.Contains("size"));
+        var sizeButton = window.FindControl<Button>("PageSizeButton")!;
         sizeButton.Flyout!.ShowAt(sizeButton);
         Settle();
         var content = (Control)((Flyout)sizeButton.Flyout).Content!;
@@ -63,9 +64,43 @@ public sealed class PageSizeTests : IDisposable
         top.MouseUp(at, MouseButton.Left);
         Settle();
         Assert.Equal("90%", main.PageSizeText);
-        var scaler = window.FindControl<LayoutTransformControl>("PageScaler")!;
-        Assert.Equal(0.9, ((ScaleTransform)scaler.LayoutTransform!).ScaleX, 3);
+        Assert.Equal(0.9, ((ScaleTransform)PageScaler(window, main.Projects).LayoutTransform!).ScaleX, 3);
+
+        // The other pages stay as they are, and at the smallest size "−" greys out.
+        main.SelectedNav = main.Nav.First(n => n.Title == "Sound Lab");
+        Settle();
+        Assert.Null(PageScaler(window, main.Sounds).LayoutTransform);
+        while (main.PageSmallerCommand.CanExecute(null)) main.PageSmallerCommand.Execute(null);
+        Settle();
+        Assert.Equal("70%", main.PageSizeText);
+        Assert.False(smaller.IsEffectivelyEnabled);
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void The_sidebar_scrolls_when_it_cant_fit_so_Settings_stays_reachable()
+    {
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var window = new MainWindow { DataContext = main, Width = 1440, Height = 900 };
+        window.Show();
+        Settle();
+        var settings = window.GetVisualDescendants().OfType<ListBoxItem>().Single(i => i.DataContext is NavItem { Title: "Settings" });
+        var rail = settings.GetVisualAncestors().OfType<ScrollViewer>().Last();   // the nav list's own one is nearer
+        // Room to spare: no scrolling, and Settings sits at the bottom as before.
+        Assert.True(rail.Extent.Height <= rail.Viewport.Height + 0.5);
+        Assert.True(settings.TranslatePoint(default, rail)!.Value.Y > rail.Viewport.Height / 2);
+
+        // Settings' biggest size on a short screen: the rail scrolls.
+        window.Scaler.LayoutTransform = new ScaleTransform(1.5, 1.5);
+        window.Height = 560;
+        Settle();
+        Assert.True(rail.Extent.Height > rail.Viewport.Height);
+        window.Close();
+    }
+
+    /// <summary>The scaler around <paramref name="page"/>'s view (each page has its own, so one fading out keeps its size).</summary>
+    static LayoutTransformControl PageScaler(Window window, object page) =>
+        window.GetVisualDescendants().OfType<LayoutTransformControl>()
+            .Single(l => l.Classes.Contains("pageScaler") && l.GetVisualDescendants().OfType<UserControl>().Any(u => u.DataContext == page));
 
 }

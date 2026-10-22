@@ -95,11 +95,31 @@ public sealed partial class AppearanceViewModel : ObservableObject
     // ---- each page's own size (Solomon, 21 Oct: "every page should be individually or you can do it all together") ----
 
     readonly Dictionary<string, int> _pageSizes = [];
+    readonly Dictionary<string, string> _pageNames = [];
+
+    /// <summary>
+    /// The pages, by the key their sizes are saved under and their title in the sidebar. Sizes saved under a title (before
+    /// 22 Oct) move to the key, so they survive a page being renamed.
+    /// </summary>
+    public void NamePages(IEnumerable<(string Key, string Title)> pages)
+    {
+        var moved = false;
+        foreach (var (key, title) in pages)
+        {
+            _pageNames[key] = title;
+            if (title != key && _pageSizes.Remove(title, out var n))
+            {
+                _pageSizes.TryAdd(key, n);
+                moved = true;
+            }
+        }
+        if (moved) SavePageSizes();
+    }
 
     /// <summary>Raised when a page's own size changes, or goes back to <see cref="Size"/>.</summary>
     public event Action? PageSizesChanged;
 
-    /// <summary>The size of <paramref name="page"/> (its title in the sidebar): its own if it has one, else <see cref="Size"/>.</summary>
+    /// <summary>The size of <paramref name="page"/> (its key): its own if it has one, else <see cref="Size"/>.</summary>
     public int SizeFor(string page) => _pageSizes.TryGetValue(page, out var n) ? n : Size;
 
     /// <summary>Whether <paramref name="page"/> has a size of its own.</summary>
@@ -107,7 +127,7 @@ public sealed partial class AppearanceViewModel : ObservableObject
 
     /// <summary>The pages with a size of their own, and what it is.</summary>
     public string OwnSizesText => _pageSizes.Count == 0 ? ""
-        : $"Sized on their own: {string.Join(", ", _pageSizes.OrderBy(p => p.Key).Select(p => $"{p.Key} {p.Value}%"))}.";
+        : $"Sized on their own: {string.Join(", ", _pageSizes.OrderBy(p => _pageNames.GetValueOrDefault(p.Key, p.Key)).Select(p => $"{_pageNames.GetValueOrDefault(p.Key, p.Key)} {p.Value}%"))}.";
     public bool HasOwnSizes => _pageSizes.Count > 0;
 
     /// <summary>One page a size up (<paramref name="by"/> 1) or down (-1), staying at the ends; landing on <see cref="Size"/> it follows that again.</summary>
@@ -170,7 +190,14 @@ public sealed partial class AppearanceViewModel : ObservableObject
     partial void OnThemeChanged(AppTheme value) => _db.SetSetting(ThemeKey, value.Name);
     partial void OnAccentChanged(AccentChoice value) => _db.SetSetting(AccentKey, value.Colour);
     partial void OnFontChanged(string value) => _db.SetSetting(FontKey, value);
-    partial void OnSizeChanged(int value) => _db.SetSetting(SizeKey, value.ToString());
+    partial void OnSizeChanged(int value)
+    {
+        _db.SetSetting(SizeKey, value.ToString());
+        // A page whose own size the rest has now caught up with follows the rest again.
+        var same = _pageSizes.Where(p => p.Value == value).Select(p => p.Key).ToList();
+        foreach (var page in same) _pageSizes.Remove(page);
+        if (same.Count > 0) SavePageSizes();
+    }
     partial void OnLessMotionChanged(bool value) => _db.SetSetting(MotionKey, value ? "1" : "0");
 
     [RelayCommand]

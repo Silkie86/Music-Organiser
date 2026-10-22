@@ -357,6 +357,42 @@ public class ViewModelTests : IDisposable
         later.Settings.Appearance.SameSizeEverywhereCommand.Execute(null);
         Assert.False(later.Settings.Appearance.HasOwnSizes);
         Assert.Equal("125%", later.PageSizeText);
+
+        // The ends: no bigger than 150%, no smaller than 70%.
+        while (later.PageBiggerCommand.CanExecute(null)) later.PageBiggerCommand.Execute(null);
+        Assert.Equal("150%", later.PageSizeText);
+        while (later.PageSmallerCommand.CanExecute(null)) later.PageSmallerCommand.Execute(null);
+        Assert.Equal("70%", later.PageSizeText);
+    }
+
+    [Fact]
+    public void A_page_whose_size_everything_catches_up_with_follows_everything_again()
+    {
+        static void Go(MainViewModel m, string page) => m.SelectedNav = m.Nav.First(n => n.Title == page);
+        var main = Main();
+        var look = main.Settings.Appearance;
+        Go(main, "Projects");
+        main.PageSmallerCommand.Execute(null);
+        main.PageSmallerCommand.Execute(null);
+        Assert.Equal(("80%", true), (main.PageSizeText, main.PageHasOwnSize));
+
+        look.Size = 80;
+        Assert.False(main.PageHasOwnSize);
+        look.Size = 110;
+        Assert.Equal("110%", main.PageSizeText);   // it follows the next change
+        Assert.False(new AppearanceViewModel(_db).HasOwnSizes);
+    }
+
+    [Fact]
+    public void Page_sizes_saved_under_the_sidebar_title_are_kept()
+    {
+        // Before 22 Oct sizes were saved under the page's title; now under a key that survives renaming the page.
+        _db.SetList(AppearanceViewModel.PageSizesKey, ["Sound Lab=90"]);
+        var main = Main();
+        main.SelectedNav = main.Nav.First(n => n.Title == "Sound Lab");
+        Assert.Equal(("90%", true), (main.PageSizeText, main.PageHasOwnSize));
+        Assert.Equal(["sounds=90"], _db.GetList(AppearanceViewModel.PageSizesKey));
+        Assert.Equal("Sized on their own: Sound Lab 90%.", main.Settings.Appearance.OwnSizesText);
     }
 
     [Fact]

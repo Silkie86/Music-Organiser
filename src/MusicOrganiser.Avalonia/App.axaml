@@ -30,6 +30,7 @@
         <local:DawChipText x:Key="DawChipText" />
         <local:NotAny x:Key="NotAny" />
         <local:PercentAngle x:Key="PercentAngle" />
+        <local:PageScaleTransform x:Key="PageScaleTransform" />
         <local:Scale x:Key="Scale" />
         <local:TypeBrush x:Key="TypeBrush" />
         <local:HexBrush x:Key="HexBrush" />
