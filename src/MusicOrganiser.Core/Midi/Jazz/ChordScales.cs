@@ -102,7 +102,8 @@ public static class ChordScales
         return Colour(chord.Family, i, chord.Intervals, style);
     }
 
-    static bool AlteredFifth(ChordSymbol chord) =>
+    /// <summary>A ♭5 or ♯5 in place of its 5th, as its name spells it (C7♭5, Cm♯5), not a ♯11 or ♭13 over a 5th.</summary>
+    internal static bool AlteredFifth(ChordSymbol chord) =>
         !chord.Has(7) && (chord.Has(6) && ChordSpeller.Role(chord.Intervals, chord.Family, 6) != ToneRole.Tension ||
                           chord.Has(8) && ChordSpeller.Role(chord.Intervals, chord.Family, 8) != ToneRole.Tension);
 

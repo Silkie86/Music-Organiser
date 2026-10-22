@@ -443,6 +443,9 @@ public class PlaygroundTests : IDisposable
                      new[] { 0, 7, 4, 10, 2, 11 }.Select(pc => S("C7", pc, MidiRoles.Bass)));   // C G E Bb D B
         Assert.Equal(FitStrength.Strongest, S("C/E", 4, MidiRoles.Bass));          // a slash chord's bass note
         Assert.Equal(FitStrength.Strongest, S("Cm7b5", 6, MidiRoles.Bass));        // its 5th is flat
+        Assert.Equal(FitStrength.Strongest, S("C7b5", 6, MidiRoles.Bass));         // a dominant's flat 5th too
+        Assert.NotEqual(FitStrength.Strongest, S("C7b5", 7, MidiRoles.Bass));      // not the natural 5th it replaces
+        Assert.Equal(FitStrength.Strongest, S("C7", 7, MidiRoles.Bass));           // a shell voicing's 5th, left out, still counts
         // Any other part: root, 3rd and 5th, then the 7th and the chord's other notes, then tensions; the avoid note fights.
         Assert.Equal([FitStrength.Strongest, FitStrength.Strongest, FitStrength.Strongest, FitStrength.Strong, FitStrength.Colour, FitStrength.Fights],
                      new[] { 0, 4, 7, 11, 2, 5 }.Select(pc => S("Cmaj7", pc, MidiRoles.Melody)));   // C E G B D F
@@ -474,6 +477,12 @@ public class PlaygroundTests : IDisposable
         var line = new SwapAround(Line(Beat, 60, 62).Select(n => n with { Start = n.Start - 2 * Beat }).ToList(), Line(Beat, 67), 0, 64, 4);
         Assert.True(SectionMatcher.Joins(Line(Beat, 64, 65, 64, 65), line, MidiRoles.Melody, Bar) >
                     SectionMatcher.Joins(Line(Beat, 76, 77, 76, 77), line, MidiRoles.Melody, Bar) + 0.3);
+
+        // Drums join on by playing the same kit, not by how far apart their note numbers are: kick, snare and hats around
+        // it, a crash going to a kick is no leap.
+        var kit = new SwapAround(Line(Beat, 36, 38, 42, 38).Select(n => n with { Start = n.Start - Bar }).ToList(), Line(Beat, 49, 36), 0, null, 4);
+        Assert.True(SectionMatcher.Joins(Line(Beat, 36, 42, 38, 42), kit, MidiRoles.Drums, Bar) >
+                    SectionMatcher.Joins(Line(Beat, 60, 61, 62, 63), kit, MidiRoles.Drums, Bar) + 0.3);
     }
 
     [Fact]

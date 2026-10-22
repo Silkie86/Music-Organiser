@@ -492,8 +492,12 @@ public sealed class PianoRollEditor : Control
     internal static IBrush[] FitBrushes(Control c)
     {
         var fights = c.TryFindResource("MissingBrush", c.ActualThemeVariant, out var v) && v is ISolidColorBrush b ? b.Color : Color.FromRgb(0xF0, 0x61, 0x6D);
-        return [new SolidColorBrush(fights), Weak, ColourBrush, Strong, Strongest];
+        // Made again only when the theme's red changes, not on every repaint.
+        if (_fit is not { } fit || fit.Fights != fights) _fit = fit = (fights, [new SolidColorBrush(fights), Weak, ColourBrush, Strong, Strongest]);
+        return fit.Brushes;
     }
+
+    static (Color Fights, IBrush[] Brushes)? _fit;
 
     static readonly IBrush Strongest = new SolidColorBrush(Color.FromRgb(0x4A, 0xD0, 0x8A)),
                            Strong = new SolidColorBrush(Color.FromRgb(0x5C, 0xA4, 0xF5)),
