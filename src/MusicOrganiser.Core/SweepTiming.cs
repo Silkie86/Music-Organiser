@@ -11,6 +11,7 @@ namespace MusicOrganiser.Core;
 public static class SweepTiming
 {
     const double Every = 10;   // seconds between notes
+    const double StaleMs = 2000;   // no sweep keeps a star waiting this long
 
     static readonly object Gate = new();
     // Each sound on its way: when the mouse reached its star, how late the app heard about that move, when it was asked for.
@@ -56,7 +57,9 @@ public static class SweepTiming
         lock (Gate)
         {
             var now = Stopwatch.GetTimestamp();
-            Pending[path] = Pending.TryGetValue(path, out var p) ? p with { Asked = now } : (now, 0, now, 0);
+            // Reached long ago and passed by (a click on it now, say, never reaches it again): its wait starts now.
+            // Counted from the old pass, one such star once read as a 42 s wait and made a 10 s average 1.8 s.
+            Pending[path] = Pending.TryGetValue(path, out var p) && Ms(p.Reached, now) < StaleMs ? p with { Asked = now } : (now, 0, now, 0);
         }
     }
 
