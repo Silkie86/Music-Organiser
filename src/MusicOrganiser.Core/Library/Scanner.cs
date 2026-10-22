@@ -72,6 +72,10 @@ public sealed class Scanner(LibraryDb db)
         samples ??= new SampleLocator();
         var fi = new FileInfo(path);
         var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+        // The details and the notes come from one read of the file, into memory borrowed for it and handed back after:
+        // a big new block for every read, twice per song, is what filled memory re-reading every old FL song (Solomon's
+        // log, 2026-10-22: the app up to 14.4 GB, and pauses of up to 4 s while it was cleaned up).
+        using var once = ReadOnce.Scope();
         try
         {
             var info = Readers.For(path)!.Read(path);

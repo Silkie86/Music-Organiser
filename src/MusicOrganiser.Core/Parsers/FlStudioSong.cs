@@ -223,7 +223,9 @@ public sealed partial class FlStudioReader
         return (ReadSong(flp, path), ReadPlaylist(flp));
     }
 
-    FlSong ReadSong(Flp flp, string path)
+    /// <param name="sounds">Whether to copy out each plugin's sound (<see cref="FlPlugin.State"/>), which can be megabytes;
+    /// listing a project only asks what plays.</param>
+    FlSong ReadSong(Flp flp, string path, bool sounds = true)
     {
         var title = "";
         double? tempo = null;
@@ -326,7 +328,7 @@ public sealed partial class FlStudioReader
                     if (channel is not null && !inMixer) names.TryAdd(channel.Value, pluginName);
                     break;
                 case EvPluginState when e.Payload.Length > 0 && pendingInternal.Length > 0:
-                    var plugin = SongPlugin(pendingInternal, e.Payload, pluginName);
+                    var plugin = SongPlugin(pendingInternal, e.Payload, pluginName, sounds);
                     if (!inMixer && channel is not null) instruments.TryAdd(channel.Value, plugin);
                     else if (inMixer && insert >= 0)
                     {
@@ -634,27 +636,28 @@ public sealed partial class FlStudioReader
             : Throughout(clip.Start, clip.Start + clip.Length, on: true) ? clip : clip with { PartlyOff = true };
     }
 
-    static FlPlugin SongPlugin(string internalName, ReadOnlyMemory<byte> payload, string displayName)
+    static FlPlugin SongPlugin(string internalName, ReadOnlyMemory<byte> payload, string displayName, bool sounds)
     {
         if (!internalName.Equals("Fruity Wrapper", StringComparison.OrdinalIgnoreCase))
             return new FlPlugin(internalName, "Image-Line", "FL", "", null);
 
-        var f = WrapperFields(payload.Span);
+        var f = WrapperFields(payload);
         var name = WrapperText(f, VstName) is { Length: > 0 } n ? n : TextScan.PluginNameFromPath(WrapperText(f, VstPath));
-        var isVst3 = (f.TryGetValue(VstKind, out var k) && k.Length > 0 && k[0] == KindVst3) ||
+        var isVst3 = (f.TryGetValue(VstKind, out var k) && k.Length > 0 && k.Span[0] == KindVst3) ||
                      WrapperText(f, VstPath).EndsWith(".vst3", StringComparison.OrdinalIgnoreCase);
         var id = isVst3
-            ? f.TryGetValue(VstClassId, out var cid) && cid.Length == 16 ? VstPreset.ClassIdString(cid) : ""
-            : f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4 ? BinaryPrimitives.ReadInt32LittleEndian(cc).ToString() : "";
+            ? f.TryGetValue(VstClassId, out var cid) && cid.Length == 16 ? VstPreset.ClassIdString(cid.Span) : ""
+            : f.TryGetValue(VstFourCc, out var cc) && cc.Length == 4 ? BinaryPrimitives.ReadInt32LittleEndian(cc.Span).ToString() : "";
         PresetBlob? state = null;
-        f.TryGetValue(VstState, out var raw);
-        var nothing = !isVst3 && raw is not null && SavedNothing(raw);
-        if (raw is { Length: > 0 } && !nothing)
+        var saved = f.TryGetValue(VstState, out var raw);
+        var nothing = !isVst3 && saved && SavedNothing(raw.Span);
+        var copy = sounds && raw.Length > 0 ? raw.ToArray() : null;
+        if (copy is not null && !nothing)
         {
-            state = WrapperPreset(f, raw, displayName.Length > 0 ? displayName : name, name);
+            state = WrapperPreset(f, copy, displayName.Length > 0 ? displayName : name, name);
             if (state.Extension is not (".fxp" or ".vstpreset")) state = null;   // raw states other DAWs can't load
         }
         return new FlPlugin(name, WrapperText(f, VstVendor), isVst3 ? "VST3" : "VST2", id, state, WrapperText(f, VstPath),
-                            isVst3 && raw is { Length: > 0 } ? Vst3ParameterIds(raw) : null) { NothingSaved = nothing };
+                            isVst3 && copy is not null ? Vst3ParameterIds(copy) : null) { NothingSaved = nothing };
     }
 }
