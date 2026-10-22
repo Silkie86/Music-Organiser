@@ -548,8 +548,10 @@ public class FlStudio9Tests
         Assert.Empty(LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(alone), alone).Taken);
     }
 
-    [Fact]
-    public void ReadsFl8AndOlder20ByteNotesWhenThePatternIsAlsoAWholeNumberOf24ByteOnes()
+    [Theory]
+    [InlineData("7.0.0")]
+    [InlineData(null)]   // no version: told from the notes being in time order
+    public void ReadsFl8AndOlder20ByteNotesWhenThePatternIsAlsoAWholeNumberOf24ByteOnes(string? version)
     {
         // Six of FL 7's 20-byte notes are 120 bytes, five 24-byte ones too. Read as 24, Solomon's "i dont know_8" had notes
         // at jumbled times lasting 2^31 ticks, its pan and velocity bytes (40 80 80 80) landing in the length.
@@ -564,7 +566,9 @@ public class FlStudio9Tests
             return b;
         }
         var path = Path.Combine(Fixtures.TempDir(), "i dont know_8.flp");
-        File.WriteAllBytes(path, new Fixtures.FlpBuilder().Ascii(199, "7.0.0").Word(64, 0).Byte(21, 0).Ascii(192, "Kick")
+        var flp = new Fixtures.FlpBuilder();
+        if (version is not null) flp.Ascii(199, version);
+        File.WriteAllBytes(path, flp.Word(64, 0).Byte(21, 0).Ascii(192, "Kick")
             .Word(65, 1).Data(224, [.. Enumerable.Range(0, 6).SelectMany(i => Note20((uint)i * 24, (ushort)(36 + i)))]).Build());
 
         var notes = new FlStudioReader().ExtractMidi(path).Single().Tracks.Single().Value;
