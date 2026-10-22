@@ -54,7 +54,14 @@ public static class Parallelism
     static void Update()
     {
         _workers = LimitFor(_pace, _inBackground);
-        lock (Gate) Monitor.PulseAll(Gate);   // more room: the work waiting for a slot can go
+        // More room: the work waiting for a slot can go. Said from a pool thread, never the caller's: the window calls this
+        // each time it's clicked into or away from, and the lock can be held by a low-priority reader the busy processor
+        // isn't running, which kept the window frozen for 6 s at a time (Solomon's log, 2026-10-22, MIDI being read while
+        // the sample scan ran). Work waiting for a slot reads the new limit when it wakes, so nothing is missed.
+        ThreadPool.UnsafeQueueUserWorkItem(static _ =>
+        {
+            lock (Gate) Monitor.PulseAll(Gate);
+        }, null);
     }
 
     /// <summary>How many pieces of background work may run at once, across every job together (see <see cref="Mode"/>).</summary>
@@ -124,6 +131,16 @@ public static class Parallelism
     }
 
     public static void Background(Action work) => Background(() => { work(); return 0; });
+
+    /// <summary>
+    /// The "._" file a Mac leaves beside each file it copies to a shared drive: Finder details only, never the sound, song
+    /// or MIDI its name says.
+    /// </summary>
+    public static bool IsMacShadow(string path) => Path.GetFileName(path).StartsWith("._", StringComparison.Ordinal);
+
+    /// <summary>A hidden folder (".git"), or the "__MACOSX" folder a zip made on a Mac holds its "._" files in.</summary>
+    public static bool IsHiddenFolder(string name) =>
+        name.StartsWith('.') || name.Equals("__MACOSX", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>A file found by <see cref="FindFileStamps"/>: its size and last-modified time (Unix seconds) came with the folder listing.</summary>
     public readonly record struct FoundFile(string Path, long Size, long Mtime);

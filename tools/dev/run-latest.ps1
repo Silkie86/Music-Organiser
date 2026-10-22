@@ -31,7 +31,7 @@ param(
 )
 
 # Raised whenever this script changes, so an older branch's copy never replaces a newer installed one.
-$LauncherVersion = 7
+$LauncherVersion = 10
 
 $ErrorActionPreference = 'Continue'   # git writes progress to stderr, which Windows PowerShell would treat as failure
 $GitHubRepo = 'Silkie86/Music-Organiser'
@@ -70,9 +70,16 @@ function Git {
     if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' ') didn't work (see above)." }
 }
 
+function Get-LauncherVersion([string]$Path) {
+    $line = Select-String -Path $Path -Pattern '^\$LauncherVersion\s*=\s*(\d+)' -List -ErrorAction SilentlyContinue
+    if ($line) { [int]$line.Matches[0].Groups[1].Value } else { 0 }
+}
+
 # --- First run: set up home -------------------------------------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $Home_ | Out-Null
-if ($PSCommandPath -ne $Installed) {
+# An older copy of this script (say, from an old branch) never replaces a newer installed launcher.
+if ($PSCommandPath -ne $Installed -and
+    (-not (Test-Path $Installed) -or (Get-LauncherVersion $Installed) -le $LauncherVersion)) {
     Copy-Item -Force $PSCommandPath $Installed
     $cmd = Join-Path $Home_ 'Run latest.cmd'
     Set-Content -Path $cmd -Encoding Ascii -Value "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0run-latest.ps1`" %*`r`nif errorlevel 1 pause"
@@ -93,14 +100,18 @@ if ($PSCommandPath -ne $Installed) {
 # --- One launcher per copy of the code ---------------------------------------------------------------------------
 # Two launcher windows on the same folder fight: each one's update and clean-up closes the other's app (it exits
 # with -1 straight after starting). So a second one stops and says why.
-$LockFile = "$Repo.launcher.lock"
-$other = 0
-if ((Test-Path $LockFile) -and [int]::TryParse(((Get-Content $LockFile -Raw -ErrorAction SilentlyContinue) + '').Trim(), [ref]$other) -and
-    $other -ne $PID -and (Get-Process -Id $other -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(powershell|pwsh)$' })) {
+# A named mutex (a lock Windows keeps for us) is held for as long as this window is open and let go the moment it
+# closes, however it closes, so there's no file to clean up and no stale lock. It's named after the full folder path.
+$repoKey = [IO.Path]::GetFullPath($Repo).TrimEnd('\', '/').ToLowerInvariant()
+$sha = [Security.Cryptography.SHA256]::Create()
+$hash = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($repoKey)) | ForEach-Object { $_.ToString('x2') })
+$LauncherLock = New-Object System.Threading.Mutex($false, "Local\MusicOrganiserLauncher-$($hash.Substring(0, 32))")
+try { $gotLock = $LauncherLock.WaitOne(0) }
+catch [System.Threading.AbandonedMutexException] { $gotLock = $true }   # the last holder closed without letting go
+if (-not $gotLock) {
     Stop-WithMessage ("Another Music Organiser launcher window is already running (it may be behind other windows). " +
         "Close that one first, or keep using it: two at once close each other's app.")
 }
-Set-Content -Path $LockFile -Value $PID -ErrorAction SilentlyContinue
 
 if (-not (Test-Path (Join-Path $Repo '.git'))) {
     Say "Downloading the code from GitHub into $Repo (only the first time)..." 'Cyan'
@@ -196,10 +207,6 @@ Update-ToRemote | Out-Null
 Say ("Now on: " + (& $GitExe -C $Repo log -1 --format='%h  %s  (%cr)')) 'Green'
 
 # A newer copy of this script in that version is used from the next run (never an older one, from an older branch).
-function Get-LauncherVersion([string]$Path) {
-    $line = Select-String -Path $Path -Pattern '^\$LauncherVersion\s*=\s*(\d+)' -List -ErrorAction SilentlyContinue
-    if ($line) { [int]$line.Matches[0].Groups[1].Value } else { 0 }
-}
 $newer = Join-Path $Repo 'tools/dev/run-latest.ps1'
 if ((Test-Path $newer) -and (Test-Path $Installed) -and $PSCommandPath -eq $Installed -and
     (Get-LauncherVersion $newer) -gt $LauncherVersion) {
@@ -266,10 +273,39 @@ function Start-Watch {
         -NoNewWindow -PassThru -WorkingDirectory $Repo
 }
 
+function Get-OurProcesses([int]$Root) {
+    # dotnet watch's own helpers and the app, found by walking down from dotnet watch. Anything else the app
+    # started (Bitwig, FL Studio, an Explorer window) isn't ours: it and everything under it are left running, so
+    # a restart never closes a DAW with unsaved work. (Killing the whole tree with taskkill /T did exactly that.)
+    $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $repoPath = [IO.Path]::GetFullPath($Repo).TrimEnd('\') + '\'
+    $tools = @('dotnet.exe', 'MSBuild.exe', 'VBCSCompiler.exe', 'conhost.exe', 'MusicOrganiser.Avalonia.exe')
+    $ours = @()
+    $queue = New-Object System.Collections.Queue
+    $queue.Enqueue($Root)
+    while ($queue.Count -gt 0) {
+        $parent = $queue.Dequeue()
+        foreach ($child in $all | Where-Object { $_.ParentProcessId -eq $parent -and $_.ProcessId -ne $parent }) {
+            $path = $child.ExecutablePath
+            if (-not $path) { continue }
+            if (-not ($path.StartsWith($repoPath, [StringComparison]::OrdinalIgnoreCase) -or
+                    ($path -split '[\\/]')[-1] -in $tools)) { continue }
+            $ours += [int]$child.ProcessId
+            $queue.Enqueue([int]$child.ProcessId)
+        }
+    }
+    $ours
+}
+
 function Stop-Watch($Process) {
-    # dotnet watch and the app it started.
+    # dotnet watch and the app it started, but not what the app started (see Get-OurProcesses).
     if ($Process.HasExited) { return }
-    if ($OnWindows) { & taskkill /PID $Process.Id /T /F 2>$null | Out-Null }
+    if ($OnWindows) {
+        $ours = @(Get-OurProcesses $Process.Id)
+        # dotnet watch first, so it can't start the app again while the rest are being closed.
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        foreach ($id in $ours) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+    }
     else { Stop-Process -Id $Process.Id -ErrorAction SilentlyContinue }
     $Process.WaitForExit(10000) | Out-Null
     Stop-StrayApps
@@ -277,14 +313,16 @@ function Stop-Watch($Process) {
 
 function Wait-ForNote {
     # The app puts notes\writing.lock up while an F12 note is open (Diagnostics/NoteForClaude.cs). A restart then
-    # would close it half-written, so the restart waits until the note is saved or cancelled.
+    # would close it half-written, so new code waits until the note is saved or cancelled.
     $lock = Join-Path (Join-Path (Join-Path $DataRoot 'MusicOrganiser') 'notes') 'writing.lock'
     $said = $false
     while (Test-Path $lock) {
         $id = 0
         if (-not [int]::TryParse(((Get-Content $lock -Raw -ErrorAction SilentlyContinue) + '').Trim(), [ref]$id) -or
-            -not (Get-Process -Id $id -ErrorAction SilentlyContinue)) { break }   # left by an app that has gone
-        if (-not $said) { Say 'Waiting for the F12 note to be saved before restarting the app...' 'Yellow'; $said = $true }
+            -not (Get-Process -Id $id -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'MusicOrganiser*' })) {
+            break   # left by an app that has gone (its number may since belong to another program)
+        }
+        if (-not $said) { Say 'An F12 note is open: new code waits until it is saved or cancelled...' 'Yellow'; $said = $true }
         Start-Sleep -Seconds 2
     }
 }
@@ -321,6 +359,10 @@ try {
         $news = @(& $GitExe -C $Repo log --format='  %h %s' "$here..$there")
         $changed = @(& $GitExe -C $Repo diff --name-only $here $there)
         $restart = Test-NeedsRestart $here $there
+        # Not while an F12 note is open: dotnet watch restarts the app by itself on some changes (a rude edit, or a
+        # screen naming something new), and that restart doesn't ask. Holding the new code back until the note is
+        # saved or cancelled covers every kind of restart.
+        Wait-ForNote
         if (-not (Update-ToRemote)) { continue }
         Say ''
         Say "$(Get-Date -Format 'HH:mm:ss')  New from GitHub ($($news.Count) change(s)), now in the app:" 'Green'
@@ -328,7 +370,6 @@ try {
 
         if ($restart) {
             Say "Restarting the app with a fresh build, because $restart (live reload can't take those in)." 'Yellow'
-            Wait-ForNote
             Stop-Watch $watch
             $watch = Start-Watch
             continue
@@ -349,5 +390,5 @@ try {
 }
 finally {
     Stop-Watch $watch
-    Remove-Item $LockFile -ErrorAction SilentlyContinue
+    try { $LauncherLock.ReleaseMutex() } catch { }
 }

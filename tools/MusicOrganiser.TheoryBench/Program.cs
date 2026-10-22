@@ -78,9 +78,10 @@ if (args.Contains("--chords"))
         // How long each reader takes over a 16-bar phrase (the most the MIDI index keeps in one), the piano part.
         var phrases = songs.SelectMany(s => Enumerable.Range(0, (int)(s.Length / (16 * Bar))).Select(i => Cut(s.Piano, i * 16L * Bar, 16 * Bar)))
                            .Where(p => p.Count > 0).ToList();
+        if (phrases.Count == 0) { Console.WriteLine("No 16-bar piano phrases to time."); return; }
         foreach (var (name, read) in readers)
         {
-            for (var i = 0; i < 20; i++) read(phrases[i], 16 * Bar);   // warm up
+            foreach (var p in phrases.Take(20)) read(p, 16 * Bar);   // warm up
             var sw = System.Diagnostics.Stopwatch.StartNew();
             foreach (var p in phrases) read(p, 16 * Bar);
             Console.WriteLine($"{name,-44} {sw.Elapsed.TotalMilliseconds / phrases.Count,6:0.000} ms per 16-bar phrase ({phrases.Count} phrases)");
@@ -117,23 +118,6 @@ if (args.Contains("--keylab"))
 // ======================================================================= keys on 8-bar clips (what the MIDI page sees)
 if (args.Contains("--clips"))
 {
-    double[] AEmaj = [17.7661, 0.145624, 14.9265, 0.160186, 19.8049, 11.3587, 0.291248, 22.062, 0.145624, 8.15494, 0.232998, 4.95122], AEmin = [18.2648, 0.737619, 14.0499, 16.8599, 0.702494, 14.4362, 0.702494, 18.6161, 4.56621, 1.93186, 7.37619, 1.75623];
-    static double CorrC(double[] x, double[] prof, int tonic)
-    {
-        double mx = x.Average(), my = prof.Average(), sxy = 0, sxx = 0, syy = 0;
-        for (var i = 0; i < 12; i++) { var a = x[(i + tonic) % 12] - mx; var b = prof[i] - my; sxy += a * b; sxx += a * a; syy += b * b; }
-        return sxx <= 0 ? 0 : sxy / Math.Sqrt(sxx * syy);
-    }
-    static (int T, bool M) BestC(double[] ch, double[] maj, double[] min)
-    {
-        var best = (0, false); var r = double.MinValue;
-        for (var t = 0; t < 12; t++)
-        {
-            var a = CorrC(ch, maj, t); if (a > r) { r = a; best = (t, false); }
-            var b = CorrC(ch, min, t); if (b > r) { r = b; best = (t, true); }
-        }
-        return best;
-    }
     static (int T, bool M) Flip((int T, bool M) k, IReadOnlyList<PhraseChord> chords)
     {
         if (chords.Count == 0) return k;
@@ -165,7 +149,7 @@ if (args.Contains("--clips"))
                 if (a.Key is not { } page) continue;
                 var chroma = a.Chroma.Select(c => (double)c).ToArray();
                 if (MusicTheory.EstimateKey(chroma) is not { } kk) continue;
-                var ae = BestC(chroma, AEmaj, AEmin);
+                var ae = Best(chroma, AEmaj, AEmin);
                 var aeFlip = Flip(ae, a.Chords);
                 bool Exact(int t, bool m) => t == refKey.Tonic && m == refKey.Minor;
                 bool Rel(int t, bool m) => m != refKey.Minor && (refKey.Minor ? Mod(refKey.Tonic + 3) == t : Mod(refKey.Tonic + 9) == t);
@@ -195,14 +179,6 @@ static int Mod(int n) => ((n % 12) + 12) % 12;
 // ======================================================================= keys
 if (!args.Contains("--fitonly"))
 {
-    double Mirex(int t, bool m, int rt, bool rm)
-    {
-        if (t == rt && m == rm) return 1;
-        if (m == rm && (Mod(t - rt) == 7 || Mod(t - rt) == 5)) return 0.5;
-        if (m != rm && (rm ? Mod(rt + 3) == t : Mod(rt + 9) == t)) return 0.3;   // relative
-        if (t == rt && m != rm) return 0.2;                                         // parallel
-        return 0;
-    }
     var rows = new List<(string Method, bool OneKey, double Score, bool Exact, bool Shown, string Relation)>();
     foreach (var s in songs)
     {
@@ -241,24 +217,7 @@ if (!args.Contains("--fitonly"))
 {
     double[] KKmaj = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88], KKmin = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
     double[] TKPmaj = [0.748, 0.060, 0.488, 0.082, 0.670, 0.460, 0.096, 0.715, 0.104, 0.366, 0.057, 0.400], TKPmin = [0.712, 0.084, 0.474, 0.618, 0.049, 0.460, 0.105, 0.747, 0.404, 0.067, 0.133, 0.330];
-    double[] AEmaj = [17.7661, 0.145624, 14.9265, 0.160186, 19.8049, 11.3587, 0.291248, 22.062, 0.145624, 8.15494, 0.232998, 4.95122], AEmin = [18.2648, 0.737619, 14.0499, 16.8599, 0.702494, 14.4362, 0.702494, 18.6161, 4.56621, 1.93186, 7.37619, 1.75623];
     double[] BBmaj = [16.80, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 20.28, 1.80, 8.04, 0.62, 10.57], BBmin = [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 21.07, 7.49, 1.53, 0.92, 10.21];
-    static double Corr(double[] x, double[] prof, int tonic)
-    {
-        double mx = x.Average(), my = prof.Average(), sxy = 0, sxx = 0, syy = 0;
-        for (var i = 0; i < 12; i++) { var a = x[(i + tonic) % 12] - mx; var b = prof[i] - my; sxy += a * b; sxx += a * a; syy += b * b; }
-        return sxx <= 0 ? 0 : sxy / Math.Sqrt(sxx * syy);
-    }
-    static (int T, bool M) Best(double[] ch, double[] maj, double[] min)
-    {
-        var best = (0, false); var r = double.MinValue;
-        for (var t = 0; t < 12; t++)
-        {
-            var a = Corr(ch, maj, t); if (a > r) { r = a; best = (t, false); }
-            var b = Corr(ch, min, t); if (b > r) { r = b; best = (t, true); }
-        }
-        return best;
-    }
     static double[] ChromaOf(IEnumerable<NoteEvent> ns, bool bass)
     {
         var ch = new double[12];
@@ -270,14 +229,6 @@ if (!args.Contains("--fitonly"))
                 low.Add(g.MinBy(n => n.Key));
         foreach (var n in list) ch[n.Key % 12] += Math.Clamp(n.Length / 384.0, 1 / 16.0, 2) * (low.Contains(n) ? 2 : 1);
         return ch;
-    }
-    double Mirex(int t, bool m, int rt, bool rm)
-    {
-        if (t == rt && m == rm) return 1;
-        if (m == rm && (Mod(t - rt) == 7 || Mod(t - rt) == 5)) return 0.5;
-        if (m != rm && (rm ? Mod(rt + 3) == t : Mod(rt + 9) == t)) return 0.3;
-        if (t == rt && m != rm) return 0.2;
-        return 0;
     }
     var methods = new (string Name, Func<Song, (int, bool)> Key)[]
     {
@@ -415,7 +366,8 @@ if (!args.Contains("--keysonly"))
     {
         var a = cases[i];
         var pool = Enumerable.Range(0, cases.Count).Where(j => j != i && cases[j].S.MainKey.Minor == a.S.MainKey.Minor).ToList();
-        var b = cases[pool[rng.Next(pool.Count)]];
+        if (pool.Count == 0) pool = Enumerable.Range(0, cases.Count).Where(j => j != i).ToList();
+        var b = cases[pool.Count == 0 ? i : pool[rng.Next(pool.Count)]];   // one song alone: its own melody stands in
         var d = Mod(a.S.MainKey.Tonic - b.S.MainKey.Tonic);
         if (d > 6) d -= 12;
         var moved = b.Mel.Select(n => n with { Key = n.Key + d }).ToList();

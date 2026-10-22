@@ -1,4 +1,7 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace MusicOrganiser.Core;
 
@@ -13,6 +16,7 @@ public static class Shell
     {
         if (OperatingSystem.IsMacOS()) Run("open", path);
         else if (OperatingSystem.IsLinux()) Run("xdg-open", path);
+        else if (File.Exists(path)) StartDetached(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), path);
         else Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
     }
 
@@ -21,6 +25,8 @@ public static class Shell
     {
         if (OperatingSystem.IsMacOS() && exe.TrimEnd('/').EndsWith(".app", StringComparison.OrdinalIgnoreCase))
             Run("open", "-a", exe, path);
+        else if (OperatingSystem.IsWindows())
+            StartDetached(exe, path);
         else
             Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, ArgumentList = { path } });
     }
@@ -70,6 +76,66 @@ public static class Shell
         "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems",
         "array:string:" + new UriBuilder { Scheme = Uri.UriSchemeFile, Host = "", Path = path }.Uri.AbsoluteUri.Replace(",", "%2C"), "string:",
     ];
+
+    /// <summary>
+    /// Starts a program on Windows with nothing tying it to this app: no shared console window, its own Ctrl+C
+    /// group, and out of any job this app runs in. A DAW the app opens otherwise goes down with the app when its
+    /// console gets Ctrl+C or is closed, or when dotnet watch restarts it, losing unsaved work.
+    /// (Opening a file through Explorer does the same for "open with its default app".)
+    /// </summary>
+    static void StartDetached(string exe, string argument)
+    {
+        const uint DetachedProcess = 0x8, NewProcessGroup = 0x200, BreakawayFromJob = 0x0100_0000;
+        var line = new StringBuilder(WindowsCommandLine(exe, argument));
+        var startup = new StartupInfo { cb = Marshal.SizeOf<StartupInfo>() };
+        if (!CreateProcessW(null, line, IntPtr.Zero, IntPtr.Zero, false, DetachedProcess | NewProcessGroup | BreakawayFromJob,
+                IntPtr.Zero, null, ref startup, out var info) &&
+            // a job that doesn't allow leaving it: start it detached anyway
+            !CreateProcessW(null, line, IntPtr.Zero, IntPtr.Zero, false, DetachedProcess | NewProcessGroup,
+                IntPtr.Zero, null, ref startup, out info))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        CloseHandle(info.hProcess);
+        CloseHandle(info.hThread);
+    }
+
+    /// <summary>A Windows command line that runs <paramref name="exe"/> with each argument passed through exactly.</summary>
+    public static string WindowsCommandLine(string exe, params string[] args) =>
+        string.Join(' ', new[] { exe }.Concat(args).Select(Quote));
+
+    static string Quote(string arg)
+    {
+        if (arg.Length > 0 && arg.IndexOfAny([' ', '\t', '"']) < 0) return arg;
+        var quoted = new StringBuilder("\"");
+        var slashes = 0;
+        foreach (var c in arg)
+        {
+            if (c == '\\') { slashes++; continue; }
+            // backslashes only need doubling right before a quote
+            quoted.Append('\\', c == '"' ? slashes * 2 + 1 : slashes).Append(c);
+            slashes = 0;
+        }
+        return quoted.Append('\\', slashes * 2).Append('"').ToString();
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct StartupInfo
+    {
+        public int cb;
+        public string? lpReserved, lpDesktop, lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct ProcessInformation { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool CreateProcessW(string? applicationName, StringBuilder commandLine, IntPtr processAttributes,
+        IntPtr threadAttributes, bool inheritHandles, uint creationFlags, IntPtr environment, string? currentDirectory,
+        ref StartupInfo startupInfo, out ProcessInformation processInformation);
+
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
 
     static void Run(string tool, params string[] args)
     {

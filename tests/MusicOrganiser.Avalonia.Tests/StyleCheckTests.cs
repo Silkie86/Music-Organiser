@@ -64,6 +64,17 @@ public sealed partial class StyleCheckTests
                 if (!body.Contains("Classes.Add(\"studio\")")) missing.Add($"{Path.GetFileName(file)} ({m.Groups[1].Value})");
             }
         }
+        // Windows made on the spot (the arrangement's full-size window), in any code file.
+        foreach (var file in SourceFiles())
+        {
+            var code = File.ReadAllText(file);
+            foreach (Match m in NewWindow().Matches(code))
+            {
+                var name = m.Groups[1].Value;
+                if (!Regex.IsMatch(code[m.Index..], $@"\b{name}\.Classes\.Add\(""studio""\)"))
+                    missing.Add($"{Path.GetFileName(file)} ({name} = new Window)");
+            }
+        }
         Assert.True(missing.Count == 0, "These windows don't have the class \"studio\", so they miss the app's look: " + string.Join(", ", missing));
     }
 
@@ -149,6 +160,9 @@ public sealed partial class StyleCheckTests
     [GeneratedRegex(@"\bclass\s+(\w+)\s*(?:\([^)]*\))?\s*:\s*Window\b")]
     private static partial Regex WindowClass();
 
+    [GeneratedRegex(@"\b(\w+)\s*=\s*new\s+Window\b")]
+    private static partial Regex NewWindow();
+
     [GeneratedRegex(@"<Style\s+Selector=""([^""]*)""\s*>(.*?)</Style>", RegexOptions.Singleline)]
     private static partial Regex StyleBlock();
 
@@ -181,6 +195,83 @@ public sealed class StudioPopupTests
 
         Assert.True(inside.IsVisible && inside.Bounds.Height > 0, "The flyout's button should be shown");
         Assert.Equal(24, inside.MinHeight); // Studio.axaml's button height, so the studio look reached it
+        window.Close();
+    }
+}
+
+/// <summary>The shared look on real controls: the parts the markup checks above can't see.</summary>
+public sealed class StudioLookTests
+{
+    static global::Avalonia.Controls.Window Show(global::Avalonia.Controls.Control content)
+    {
+        var window = new global::Avalonia.Controls.Window { Content = content, Width = 600, Height = 400, Classes = { "studio" } };
+        window.Show();
+        global::Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        return window;
+    }
+
+    static global::Avalonia.Thickness WellEdge(global::Avalonia.Controls.Button b) =>
+        global::Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(b).OfType<global::Avalonia.Controls.Border>().First(x => x.Name == "PART_Well").BorderThickness;
+
+    [global::Avalonia.Headless.XUnit.AvaloniaFact]
+    public void A_strip_closes_after_its_last_shown_button()
+    {
+        // Like a song's Open strip when it isn't an FL song and has no older saves.
+        var open = new global::Avalonia.Controls.Button { Content = "Open" };
+        var fl = new global::Avalonia.Controls.Button { Content = "Open in FL Studio", IsVisible = false };
+        var older = new global::Avalonia.Controls.Button { Content = "Older saves", IsVisible = false };
+        var window = Show(new global::Avalonia.Controls.StackPanel { Classes = { "group" }, Children = { open, fl, older } });
+
+        Assert.Equal(new global::Avalonia.Thickness(1), WellEdge(open));
+
+        older.IsVisible = true; // and when it shows again, the strip's end moves to it
+        global::Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Assert.Equal(new global::Avalonia.Thickness(1, 1, 0, 1), WellEdge(open));
+        Assert.Equal(new global::Avalonia.Thickness(0, 1, 1, 1), WellEdge(older));
+        window.Close();
+    }
+
+    [global::Avalonia.Headless.XUnit.AvaloniaFact]
+    public void A_main_button_that_is_off_doesnt_look_lit()
+    {
+        var off = new global::Avalonia.Controls.Button { Content = "Find duplicates", Classes = { "accent" }, IsEnabled = false };
+        var on = new global::Avalonia.Controls.Button { Content = "Find duplicates", Classes = { "accent" } };
+        var window = Show(new global::Avalonia.Controls.StackPanel { Children = { off, on } });
+
+        static global::Avalonia.Media.IBrush? Face(global::Avalonia.Controls.Button b) =>
+            global::Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(b).OfType<global::Avalonia.Controls.Presenters.ContentPresenter>().First().Background;
+        Assert.NotEqual(Face(on), Face(off));
+        Assert.True(global::Avalonia.Controls.ResourceNodeExtensions.TryFindResource(window, "AccentBrush", out var accent));
+        Assert.Same(accent, Face(on));
+        window.Close();
+    }
+
+    [global::Avalonia.Headless.XUnit.AvaloniaFact]
+    public void A_search_box_cross_stays_quiet()
+    {
+        var box = new global::Avalonia.Controls.TextBox { Text = "techno", Classes = { "clearButton" }, Width = 200 };
+        var window = Show(box);
+        box.Focus();
+        global::Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+        var cross = global::Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(box).OfType<global::Avalonia.Controls.Button>().Single();
+        Assert.Equal(0, cross.MinHeight);
+        Assert.Equal(global::Avalonia.Media.Brushes.Transparent, cross.Background);
+        window.Close();
+    }
+
+    public sealed record Row(string Name, string Group);
+
+    [global::Avalonia.Headless.XUnit.AvaloniaFact]
+    public void A_grouped_lists_fold_arrow_keeps_its_size()
+    {
+        var rows = new global::Avalonia.Collections.DataGridCollectionView(new[] { new Row("kick", "Drums"), new Row("pad", "Synths") });
+        rows.GroupDescriptions.Add(new global::Avalonia.Collections.DataGridPathGroupDescription(nameof(Row.Group)));
+        var grid = new global::Avalonia.Controls.DataGrid { ItemsSource = rows, Height = 200, AutoGenerateColumns = true };
+        var window = Show(grid);
+
+        var arrow = global::Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(grid).OfType<global::Avalonia.Controls.Primitives.ToggleButton>().First();
+        Assert.Equal(0, arrow.MinHeight);
         window.Close();
     }
 }

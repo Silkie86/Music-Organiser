@@ -33,11 +33,12 @@ public readonly record struct ChordSymbol(int Root, int Mask, int Bass, ChordFam
     /// <summary>
     /// The quality the way a lead sheet writes it when room is short (Solomon, 2026-10-22: chord names cut off on a crowded
     /// chord lane): Δ for maj, ° for dim, ø for m7b5, sus for sus4, and no bracketed tensions. "maj7" is "Δ7", "13(b9)" is
-    /// "13", "dim7" is "°7".
+    /// "13", "dim7" is "°7". A bracketed major seventh says what the chord is, so it stays, as Δ: "m(maj7)" is "mΔ7".
     /// </summary>
     public static string ShortQuality(string quality)
     {
-        var q = System.Text.RegularExpressions.Regex.Replace(quality, @"\([^)]*\)", "");
+        var q = System.Text.RegularExpressions.Regex.Replace(quality, @"\(maj(\d+)\)", "maj$1");
+        q = System.Text.RegularExpressions.Regex.Replace(q, @"\([^)]*\)", "");
         q = q.Replace("m7b5", "ø").Replace("m9b5", "ø9").Replace("m11b5", "ø11");
         q = q.Replace("dim", "°").Replace("maj", "Δ").Replace("sus4", "sus");
         return q;

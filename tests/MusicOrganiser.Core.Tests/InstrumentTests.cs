@@ -152,4 +152,24 @@ public class InstrumentTests
         Assert.Equal("“Keyscape” is a piano plugin", MidiCatalogue.InstrumentOf(parts["Night drive.mid"])?.Why);
         Assert.Null(MidiCatalogue.InstrumentOf(parts["Idea.mid"]));
     }
+
+    [Fact]
+    public void A_macs_dot_underscore_copy_of_a_midi_file_is_not_read_or_counted_as_failed()
+    {
+        // A Mac leaves "._Idea.mid" beside each file on a shared drive, holding only Finder details (Niko's MIDI Pack had
+        // 1,221, each an error with its whole stack in the log, 2026-10-21).
+        var dir = Fixtures.TempDir();
+        File.WriteAllBytes(Path.Combine(dir, "Idea.mid"), FileWithProgram(0, 38));
+        File.WriteAllBytes(Path.Combine(dir, "._Idea.mid"), [0, 5, 22, 7, 0, 2, 0, 0, .. new byte[200]]);
+        Directory.CreateDirectory(Path.Combine(dir, "__MACOSX"));   // where a zip made on a Mac keeps them
+        File.WriteAllBytes(Path.Combine(dir, "__MACOSX", "Idea.mid"), FileWithProgram(0, 38));
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.SetList(MidiIndexer.FoldersKey, [dir]);
+        using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));
+        var result = new MidiIndexer(index, db).Run();
+        Assert.Equal(0, result.Failed);
+        Assert.Equal("Idea.mid", Path.GetFileName(Assert.Single(index.All()).Source.Path));
+        Assert.Empty(index.Failures());
+    }
 }
+

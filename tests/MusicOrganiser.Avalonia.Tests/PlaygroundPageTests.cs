@@ -123,6 +123,38 @@ public sealed class PlaygroundPageTests : IDisposable
         Settle();
         Assert.Equal(5, clip.Transpose);
         Assert.False(box.IsVisible);
+
+        // Typed or dragged, each is one undo step (code review, 22 Oct: typing 11 made 11).
+        p.RunShortcut("playground.undo");
+        Assert.Equal(2, p.SelectedClip!.Clip.Transpose);
+        p.RunShortcut("playground.undo");
+        Assert.Equal(0, p.SelectedClip!.Clip.Transpose);
+    }
+
+    [AvaloniaFact]
+    public void Rename_puts_a_name_box_in_the_tracks_header_with_no_clip_picked()
+    {
+        // Code review, 22 Oct: the track menu's Rename focused a box in the inspector, hidden with no clip picked.
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.PutChords("C | F |");
+        p.WriteChordsCommand.Execute(null);
+        var window = new Window { Content = new PlaygroundView { DataContext = p }, Width = 1400, Height = 900 };
+        window.Show();
+        var row = p.Layers[^1];
+        p.PickClip(null, null);
+        p.SelectedLayer = row;
+        Settle();
+
+        Assert.True(p.RunShortcut("playground.rename"));
+        Settle();
+        var box = window.GetVisualDescendants().OfType<TextBox>().Single(b => b.Classes.Contains("trackRename") && b.IsVisible);
+        Assert.True(box.IsFocused);
+        box.Text = "Pads";
+        window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.Enter, "");
+        Settle();
+        Assert.Equal("Pads", row.Name);
+        Assert.False(box.IsVisible);
     }
 
     [AvaloniaFact]
@@ -166,6 +198,50 @@ public sealed class PlaygroundPageTests : IDisposable
         Settle();
         Assert.Null(p.Loop);
         Assert.Null(roll.Section);
+
+        // F12 note, 21 Oct: "right clicking should remove the loop/selection". Off the notes in the roll it does too.
+        void Pick()
+        {
+            p.SetLoopCommand.Execute(new RollRange(Bar, 3 * Bar));
+            Settle();
+            Assert.NotNull(p.Loop);
+        }
+        void RightClick(Control on, Point at)
+        {
+            var spot = on.TranslatePoint(at, window)!.Value;
+            window.MouseDown(spot, MouseButton.Right);
+            window.MouseUp(spot, MouseButton.Right);
+            Settle();
+        }
+        Pick();
+        var notes = track.Clips[0].Notes.Count;
+        RightClick(roll, new Point(roll.Bounds.Width - 3, roll.Bounds.Height - 3));
+        Assert.Null(p.Loop);
+        Assert.Equal(notes, track.Clips[0].Notes.Count);   // no note was there to remove
+        // And anywhere on the timeline, over a clip or not.
+        var timeline = window.GetVisualDescendants().OfType<TimelineView>().Single();
+        Pick();
+        RightClick(timeline, new Point(timeline.Bounds.Width - 3, timeline.Bounds.Height - 3));
+        Assert.Null(p.Loop);
+    }
+
+    [AvaloniaFact]
+    public void With_nothing_highlighted_play_goes_round_at_the_end_of_the_last_clip()
+    {
+        // F12 note, 21 Oct: "it should automatically loop at the end of all the clips", not run on into empty bars.
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        p.Bars = 8;
+        p.SetLoopCommand.Execute(new RollRange(0, 2 * 384));
+        p.PutChords("C | F");
+        p.SetLoopCommand.Execute(null);
+        Assert.Equal(8, p.Bars);
+        p.PlayCommand.Execute(null);
+        Settle();
+        Assert.True(p.IsPlaying);
+        var seconds = Silence.Last!.Value.Samples / (double)Silence.Last.Value.Rate;
+        Assert.Equal(2 * 4 * 60.0 / p.Tempo, seconds, 2);   // two bars, not eight
+        p.StopPlaying();
     }
 
     /// <summary>The app's Avalonia screens, with a player that makes no sound.</summary>
@@ -192,7 +268,13 @@ public sealed class PlaygroundPageTests : IDisposable
         public double? Position => Playing is null ? null : 0;
         public void Seek(double seconds) { }
         public void Play(string path, double startSeconds = 0) => Playing = path;
-        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) => Playing = key;
+        /// <summary>The last sound played: how long it was.</summary>
+        public static (int Samples, int Rate)? Last;
+        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0)
+        {
+            Playing = key;
+            Last = (mono.Length, sampleRate);
+        }
         public void Stop() => Playing = null;
         public void Dispose() { }
     }

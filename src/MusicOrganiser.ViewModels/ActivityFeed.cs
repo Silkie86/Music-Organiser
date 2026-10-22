@@ -10,8 +10,10 @@ public enum ActivityState { Running, Done, Failed, Stopped }
 /// <summary>
 /// The window's activity cards (bottom right): one per job, so it's always clear that something started, how far it
 /// has got, and that it finished. A card for a finished job fades away by itself; a failed one stays a little longer.
+/// A running job's card can be put away without stopping the job (Solomon, 2026-10-22: they sat over buttons); a small
+/// "N running" button brings them back.
 /// </summary>
-public sealed class ActivityFeed
+public sealed partial class ActivityFeed : ObservableObject
 {
     /// <summary>How long a card stays once its job is done (failed jobs stay three times as long). Tests set it to zero.</summary>
     public TimeSpan Linger { get; set; } = TimeSpan.FromSeconds(5);
@@ -29,6 +31,28 @@ public sealed class ActivityFeed
 
     /// <summary>The cards showing now, oldest first.</summary>
     public ObservableCollection<Activity> Items { get; } = [];
+
+    /// <summary>Jobs still running whose cards were put away.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasHidden), nameof(HiddenText))] int _hiddenCount;
+
+    public bool HasHidden => HiddenCount > 0;
+    public string HiddenText => HiddenCount == 1 ? "1 job running" : $"{HiddenCount} jobs running";
+
+    /// <summary>Brings the put-away cards back.</summary>
+    [RelayCommand]
+    void ShowHidden()
+    {
+        List<Activity> cards;
+        lock (_lock) cards = [.. Items];
+        foreach (var a in cards) a.IsHidden = false;
+    }
+
+    internal void Recount()
+    {
+        int hidden;
+        lock (_lock) hidden = Items.Count(a => a.IsHidden && a.IsRunning);
+        HiddenCount = hidden;
+    }
 
     /// <summary>Most cards on screen at once: the oldest finished ones make way.</summary>
     const int MaxCards = 4;
@@ -85,6 +109,7 @@ public sealed class ActivityFeed
         try
         {
             lock (_lock) Items.Remove(a);
+            Recount();
         }
         catch (Exception e)
         {
@@ -120,11 +145,21 @@ public sealed partial class Activity : ObservableObject
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasPercent))] double _percent = -1;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsRunning), nameof(IsDone), nameof(IsFailed), nameof(IsStopped), nameof(CanCancel), nameof(HasPercent))]
+    [NotifyPropertyChangedFor(nameof(IsRunning), nameof(IsDone), nameof(IsFailed), nameof(IsStopped), nameof(CanCancel), nameof(HasPercent), nameof(CloseTip))]
     ActivityState _state;
 
     /// <summary>The card is fading out.</summary>
     [ObservableProperty] bool _isLeaving;
+
+    /// <summary>Put away while its job carries on: the card doesn't show until the feed's "running" button brings it back.</summary>
+    [ObservableProperty] bool _isHidden;
+
+    partial void OnIsHiddenChanged(bool value) => _feed.Recount();
+
+    partial void OnStateChanged(ActivityState value) => _feed.Recount();
+
+    /// <summary>What the card's ✕ does: closes a finished card, puts a running one away.</summary>
+    public string CloseTip => IsRunning ? "Hide this card. The job carries on: the button at the bottom right brings it back." : "Close";
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasAction))] string? _actionLabel;
 
@@ -160,6 +195,7 @@ public sealed partial class Activity : ObservableObject
     {
         Title = title ?? Title;
         Detail = detail ?? "";
+        IsHidden = false;   // put away while it ran, but a failure should be seen
         return End(ActivityState.Failed, _feed.Linger * 3);
     }
 
@@ -199,10 +235,17 @@ public sealed partial class Activity : ObservableObject
 
     [RelayCommand] void RunAction() => _action?.Invoke();
 
+    /// <summary>The ✕: a running job's card is put away (the job carries on); a finished one goes.</summary>
     [RelayCommand]
     void Dismiss()
     {
+        if (IsRunning)
+        {
+            IsHidden = true;
+            return;
+        }
         Version++;
         _feed.Items.Remove(this);
+        _feed.Recount();
     }
 }

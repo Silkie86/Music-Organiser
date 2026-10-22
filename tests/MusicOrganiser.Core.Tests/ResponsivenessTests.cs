@@ -83,6 +83,39 @@ public class ResponsivenessTests
     }
 
     [Fact]
+    public async Task Clicking_into_or_away_from_the_window_never_waits_for_background_work()
+    {
+        // A reader holding the slots' lock while the busy processor isn't running it (Solomon's log, 2026-10-22: the
+        // window froze 6 s twice, each ending as a MIDI file's read did). The window says it's in front or behind
+        // through these, so they must return at once.
+        var gate = typeof(Parallelism).GetField("Gate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+        using var held = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var holder = Task.Run(() =>
+        {
+            lock (gate)
+            {
+                held.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+            }
+        });
+        held.Wait();
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            Parallelism.AppInBackground = true;
+            Parallelism.AppInBackground = false;
+            Parallelism.Mode = Parallelism.Pace.Gentle;
+            Assert.True(clock.ElapsedMilliseconds < 500, $"took {clock.ElapsedMilliseconds} ms");
+        }
+        finally
+        {
+            release.Set();
+            await holder;
+        }
+    }
+
+    [Fact]
     public async Task Reading_the_library_never_waits_for_a_long_write()
     {
         var dir = Fixtures.TempDir();

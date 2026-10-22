@@ -253,6 +253,57 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void A_cut_clip_pasted_onto_a_new_track_keeps_its_moves_and_undoes_on_its_own()
+    {
+        // Code review, 22 Oct: the new-track paste rebuilt the clip plain and took no undo step.
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var p = main.Playground;
+        var bass = Line(Bar, 36, 41, 43, 36);
+        var entry = new MidiCatalogue([Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0];
+        p.AddFromLibrary(entry, bass);
+        var track = Assert.Single(p.Layers);
+        p.PickClip(track, track.Layer.Clips[0]);
+        p.SelectedClip!.SemitoneByCommand.Execute(new ValueStep(5, 1));
+        p.SelectedClip.OctaveDownCommand.Execute(null);
+        // +5 st an octave down: one octave down and up 5, not "octave 0, -7 st".
+        Assert.Equal(-1, p.SelectedClip.OctaveValue);
+        Assert.Equal("+5 st", p.SelectedClip.SemitoneText);
+
+        Assert.True(p.RunShortcut("playground.cut"));   // its only clip: the track goes too
+        Assert.Empty(p.Layers);
+        Assert.True(p.RunShortcut("playground.paste"));
+        var pasted = Assert.Single(Assert.Single(p.Layers).Layer.Clips);
+        Assert.Equal(-7, pasted.Transpose);
+        Assert.True(pasted.Pinned);
+        p.RunShortcut("playground.undo");   // takes the paste back, not the cut too
+        Assert.Empty(p.Layers);
+    }
+
+    [Fact]
+    public void Show_more_lists_the_same_parts_as_asking_for_more_from_scratch()
+    {
+        // Code review, 22 Oct: Show more scored every part again; the ones scored already are kept.
+        var keys = Chords(TwoFiveOne);
+        var notes = Enumerable.Range(1, 5).ToDictionary(i => (long)i, i => Line(2 * Beat, 65 + i, 69, 65, 64));
+        var catalogue = new MidiCatalogue([.. notes.Select(n => Stored(n.Key, $@"K:\Song{n.Key}\Song.flp", "Lead", n.Value))]);
+        var harmony = SectionHarmony.Of(SectionWith(("Keys", MidiRoles.Chords, keys, @"K:\Mine\Idea.flp")));
+        var scored = new System.Collections.Concurrent.ConcurrentDictionary<MidiEntry, PlaygroundMatch?>(ReferenceEqualityComparer.Instance);
+        SectionMatcher.Rank(catalogue, harmony, MidiRoles.Melody, e => notes[e.Id], out _, limit: 2, scored: scored);
+        var kept = scored.Where(k => k.Value is not null).ToDictionary(k => k.Key, k => k.Value!);
+        Assert.NotEmpty(kept);
+        var more = SectionMatcher.Rank(catalogue, harmony, MidiRoles.Melody, e => notes[e.Id], out _, limit: 4, scored: scored);
+        var fresh = SectionMatcher.Rank(catalogue, harmony, MidiRoles.Melody, e => notes[e.Id], out _, limit: 4);
+        Assert.Equal(fresh.Select(m => m.Entry.Id), more.Select(m => m.Entry.Id));
+        foreach (var m in more)
+            if (kept.TryGetValue(m.Entry, out var was)) Assert.Same(was, m);   // not scored again
+    }
+
+    [Fact]
     public void Suggestions_say_how_many_parts_they_were_picked_from()
     {
         var keys = Chords(TwoFiveOne);
@@ -682,6 +733,9 @@ public class PlaygroundTests : IDisposable
                      new[] { 0, 7, 4, 10, 2, 11 }.Select(pc => S("C7", pc, MidiRoles.Bass)));   // C G E Bb D B
         Assert.Equal(FitStrength.Strongest, S("C/E", 4, MidiRoles.Bass));          // a slash chord's bass note
         Assert.Equal(FitStrength.Strongest, S("Cm7b5", 6, MidiRoles.Bass));        // its 5th is flat
+        Assert.Equal(FitStrength.Strongest, S("C7b5", 6, MidiRoles.Bass));         // a dominant's flat 5th too
+        Assert.NotEqual(FitStrength.Strongest, S("C7b5", 7, MidiRoles.Bass));      // not the natural 5th it replaces
+        Assert.Equal(FitStrength.Strongest, S("C7", 7, MidiRoles.Bass));           // a shell voicing's 5th, left out, still counts
         // Any other part: root, 3rd and 5th, then the 7th and the chord's other notes, then tensions; the avoid note fights.
         Assert.Equal([FitStrength.Strongest, FitStrength.Strongest, FitStrength.Strongest, FitStrength.Strong, FitStrength.Colour, FitStrength.Fights],
                      new[] { 0, 4, 7, 11, 2, 5 }.Select(pc => S("Cmaj7", pc, MidiRoles.Melody)));   // C E G B D F
@@ -713,6 +767,12 @@ public class PlaygroundTests : IDisposable
         var line = new SwapAround(Line(Beat, 60, 62).Select(n => n with { Start = n.Start - 2 * Beat }).ToList(), Line(Beat, 67), 0, 64, 4);
         Assert.True(SectionMatcher.Joins(Line(Beat, 64, 65, 64, 65), line, MidiRoles.Melody, Bar) >
                     SectionMatcher.Joins(Line(Beat, 76, 77, 76, 77), line, MidiRoles.Melody, Bar) + 0.3);
+
+        // Drums join on by playing the same kit, not by how far apart their note numbers are: kick, snare and hats around
+        // it, a crash going to a kick is no leap.
+        var kit = new SwapAround(Line(Beat, 36, 38, 42, 38).Select(n => n with { Start = n.Start - Bar }).ToList(), Line(Beat, 49, 36), 0, null, 4);
+        Assert.True(SectionMatcher.Joins(Line(Beat, 36, 42, 38, 42), kit, MidiRoles.Drums, Bar) >
+                    SectionMatcher.Joins(Line(Beat, 60, 61, 62, 63), kit, MidiRoles.Drums, Bar) + 0.3);
     }
 
     [Fact]

@@ -260,7 +260,7 @@
                     <Grid ColumnDefinitions="210,*">
                         <StackPanel>
                             <Border Height="32" />
-                            <ListBox Classes="tracks" ItemsSource="{Binding Layers}" SelectedItem="{Binding SelectedLayer}" Background="Transparent"
+                            <ListBox x:Name="TrackList" Classes="tracks" ItemsSource="{Binding Layers}" SelectedItem="{Binding SelectedLayer}" Background="Transparent"
                                      ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:LayerRow">
@@ -275,7 +275,13 @@
                                                     <ToggleButton Classes="tiny" Content="S" IsChecked="{Binding Solo, Mode=OneWay}" Command="{Binding ToggleSoloCommand}" ToolTip.Tip="Solo: hear only the soloed parts" />
                                                     <Button Classes="tiny" Content="✕" Command="{Binding RemoveCommand}" ToolTip.Tip="Take this track and its clips out (Undo brings it back)" />
                                                 </StackPanel>
-                                                <TextBlock Text="{Binding Name}" FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip.Tip="{Binding Details}" />
+                                                <!-- Renamed in place: double-click the name, or Rename on the track's right-click menu. -->
+                                                <Panel>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip.Tip="{Binding Details}"
+                                                               DoubleTapped="OnTrackNameDoubleTapped" />
+                                                    <TextBox Classes="commitOnEnter trackRename" IsVisible="False" Text="{Binding Name, UpdateSourceTrigger=LostFocus}"
+                                                             MinHeight="0" FontSize="12" KeyDown="OnTrackRenameKey" LostFocus="OnTrackRenameDone" />
+                                                </Panel>
                                             </DockPanel>
                                             <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding Details}" />
                                         </StackPanel>
@@ -353,17 +359,17 @@
                                 <StackPanel Spacing="5" IsVisible="{Binding #NotesOpen.IsChecked}">
                                     <DockPanel>
                                         <views:DragValue DockPanel.Dock="Right" MinWidth="72" Text="{Binding SelectedClip.OctaveText}" Value="{Binding SelectedClip.OctaveValue}"
-                                                         UpCommand="{Binding SelectedClip.OctaveUpCommand}" DownCommand="{Binding SelectedClip.OctaveDownCommand}" />
+                                                         UpCommand="{Binding SelectedClip.OctaveUpCommand}" DownCommand="{Binding SelectedClip.OctaveDownCommand}" ByCommand="{Binding SelectedClip.OctaveByCommand}" />
                                         <TextBlock Text="Octave" Classes="label" />
                                     </DockPanel>
                                     <DockPanel>
                                         <views:DragValue DockPanel.Dock="Right" MinWidth="72" Text="{Binding SelectedClip.SemitoneText}" Value="{Binding SelectedClip.SemitoneValue}"
-                                                         UpCommand="{Binding SelectedClip.UpCommand}" DownCommand="{Binding SelectedClip.DownCommand}" />
+                                                         UpCommand="{Binding SelectedClip.UpCommand}" DownCommand="{Binding SelectedClip.DownCommand}" ByCommand="{Binding SelectedClip.SemitoneByCommand}" />
                                         <TextBlock Text="Transpose" Classes="label" ToolTip.Tip="Semitones up or down, on top of its octave" />
                                     </DockPanel>
                                     <DockPanel IsVisible="{Binding SelectedClip.IsChords}">
                                         <views:DragValue DockPanel.Dock="Right" MinWidth="72" Text="{Binding SelectedClip.InversionText}" Value="{Binding SelectedClip.InversionValue}"
-                                                         UpCommand="{Binding SelectedClip.TurnUpCommand}" DownCommand="{Binding SelectedClip.TurnDownCommand}" />
+                                                         UpCommand="{Binding SelectedClip.TurnUpCommand}" DownCommand="{Binding SelectedClip.TurnDownCommand}" ByCommand="{Binding SelectedClip.TurnByCommand}" />
                                         <TextBlock Text="Inversion" Classes="label" ToolTip.Tip="Turn its chords up (each chord's bottom note up an octave) or down (its top note down an octave)" />
                                     </DockPanel>
                                     <DockPanel ToolTip.Tip="Write each note's name on it and on the keys (C4, F#3), or what it is over the chord heard there (3, ♭7, 9, 13): handy for jazz and gospel tensions">

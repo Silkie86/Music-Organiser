@@ -25,10 +25,6 @@ public static class MusicTheory
         return brief ? note + (minor ? "m" : "") : note + (minor ? " minor" : " major");
     }
 
-    /// <summary>A key written any way ParseKey reads ("D# minor", "Ebm") in the app's spelling; other text unchanged.</summary>
-    public static string Respell(string key) =>
-        ParseKey(key) is { } k ? KeyName(k.Tonic, k.Minor, !key.Contains(' ')) : key;
-
     public static string NoteName(int midi) => NoteNames[((midi % 12) + 12) % 12] + (midi / 12 - 1);
 
     public static double MidiToHz(double midi) => 440.0 * Math.Pow(2, (midi - 69) / 12.0);
@@ -55,10 +51,16 @@ public static class MusicTheory
 
     // How long each note sounds in real songs, tonic first: the average of 335 pop songs (POP909) and 95 gospel, jazz,
     // neo soul and soul construction kits, counted by tools/MusicOrganiser.TheoryBench (--keylab). On 8-bar clips of the
-    // pop songs this finds the key 79% of the time where the profiles above get 66%. The minor one leans on the b7, as
-    // soul and gospel minor does.
+    // pop songs this finds the key 79% of the time where the profiles above get 66%, measured on the songs it was
+    // learned from (in-sample, so a little flattering). The minor one leans on the b7, as soul and gospel minor does.
     static readonly double[] MidiMajorProfile = [17.91, 1.30, 12.96, 2.03, 14.03, 8.23, 1.84, 17.60, 1.96, 12.91, 2.72, 6.50];
     static readonly double[] MidiMinorProfile = [20.41, 1.69, 7.63, 13.60, 1.69, 12.15, 1.50, 17.53, 6.78, 2.45, 12.13, 2.46];
+
+    /// <summary>
+    /// Below this a key from MIDI notes (<see cref="EstimateMidiKey"/>) is a guess: the MIDI page doesn't show it and a
+    /// Playground section has no key.
+    /// </summary>
+    public const double SureMidiKey = 0.05;
 
     /// <summary>A major key and its relative minor this close in fit are a toss-up the first chord may settle.</summary>
     const double TossUp = 0.05;
@@ -68,12 +70,16 @@ public static class MusicTheory
 
     /// <summary>
     /// The key of MIDI notes (a part, a song, a section) from how long each note sounds. When the relative major or
-    /// minor fits almost as well and the music starts on its chord (Cm – Ab – Eb – Bb), it's that one.
+    /// minor fits almost as well and the music starts on its chord (Cm – Ab – Eb – Bb), it's that one: its tonic chord,
+    /// minor for a minor key and major for a major one. A C major tune opening on A7 (gospel and jazz do) stays in C.
     /// </summary>
-    public static KeyEstimate? EstimateMidiKey(double[] chroma, int? firstChordRoot = null) =>
-        Estimate(chroma, MidiMajorProfile, MidiMinorProfile, firstChordRoot);
+    public static KeyEstimate? EstimateMidiKey(double[] chroma, (int Root, bool Minor)? firstChord = null) =>
+        Estimate(chroma, MidiMajorProfile, MidiMinorProfile, firstChord);
 
-    static KeyEstimate? Estimate(double[] chroma, double[] major, double[] minor, int? firstChordRoot)
+    /// <summary>Whether a chord (as a pitch-class mask) is a minor one for <see cref="EstimateMidiKey"/>: a minor 3rd and no major one.</summary>
+    public static bool IsMinorChord(int root, int mask) => (mask >> (root + 3) % 12 & 1) != 0 && (mask >> (root + 4) % 12 & 1) == 0;
+
+    static KeyEstimate? Estimate(double[] chroma, double[] major, double[] minor, (int Root, bool Minor)? firstChord)
     {
         if (chroma.Sum() <= 1e-9) return null;
         var scores = new List<(int Tonic, bool Minor, double R)>();
@@ -89,7 +95,7 @@ public static class MusicTheory
         var relative = best.Minor ? ((best.Tonic + 3) % 12, false) : ((best.Tonic + 9) % 12, true);
         var runner = scores.Skip(1).First(s => (s.Tonic, s.Minor) != relative);
         var conf = Math.Clamp(best.R, 0, 1) * Math.Clamp((best.R - runner.R) * 5, 0, 1);
-        if (firstChordRoot == relative.Item1 && best.R - scores.First(s => (s.Tonic, s.Minor) == relative).R <= TossUp)
+        if (firstChord is { } first && first.Root == relative.Item1 && first.Minor == relative.Item2 && best.R - scores.First(s => (s.Tonic, s.Minor) == relative).R <= TossUp)
             return new KeyEstimate(relative.Item1, relative.Item2, Math.Round(conf, 3));
         return new KeyEstimate(best.Tonic, best.Minor, Math.Round(conf, 3));
     }

@@ -177,7 +177,9 @@ public sealed class ChordLaneView : Control
         var surface = Res("SurfaceRaisedBrush", Brushes.Transparent);
         var text = Res("TextBrush", Brushes.White);
         var muted = Res("MutedBrush", Brushes.Gray);
-        if (Items is not { Count: > 0 } items)
+        // An idea being tried still shows on a lane with no chords yet: Harmonise is mostly for that.
+        var items = Items ?? [];
+        if (items.Count == 0 && Proposed is not { Count: > 0 })
         {
             var empty = new FormattedText("No chords yet", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, 12, muted);
             dc.DrawText(empty, new Point(Inset + 10, (h - empty.Height) / 2));

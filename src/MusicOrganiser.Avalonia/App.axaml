@@ -88,6 +88,10 @@
         <CornerRadius x:Key="RadiusM">4</CornerRadius>
         <CornerRadius x:Key="RadiusL">6</CornerRadius>
         <CornerRadius x:Key="RadiusPill">6</CornerRadius>
+        <!-- A joined strip's two ends, and a tile sitting inside a well (Studio.axaml). -->
+        <CornerRadius x:Key="RadiusStart">3,0,0,3</CornerRadius>
+        <CornerRadius x:Key="RadiusEnd">0,3,3,0</CornerRadius>
+        <CornerRadius x:Key="RadiusInner">2</CornerRadius>
 
         <!-- Tables: no black header bar, soft violet for the selected row and no box around the clicked cell. -->
         <SolidColorBrush x:Key="DataGridColumnHeaderBackgroundBrush" Color="Transparent" />

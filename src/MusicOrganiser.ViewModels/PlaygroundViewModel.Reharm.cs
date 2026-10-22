@@ -118,13 +118,20 @@ public sealed partial class PlaygroundViewModel
     [ObservableProperty] string _harmoniseText = "";
     public bool CanHarmonise => HarmoniseIdeas.Count > 0;
 
-    void RefreshHarmonise()
+    int _harmoniseRequest;
+
+    /// <summary>
+    /// Works the chord lanes out away from the screen (five searches through the chords for every edit), with what your
+    /// chord parts usually do next once that's learned. The rows already there stay until the new ones are ready.
+    /// </summary>
+    async Task RefreshHarmoniseAsync()
     {
-        HarmoniseIdeas.Clear();
+        var request = ++_harmoniseRequest;
         var layers = PlaygroundSession.Audible(Section).Where(l => l.Role != MidiRoles.Drums).ToList();
         var chordParts = layers.Any(l => l.Clips.Any(c => c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords));
         if (IsQuick || chordParts || layers.Count == 0)
         {
+            HarmoniseIdeas.Clear();
             HarmoniseText = "";
             OnPropertyChanged(nameof(CanHarmonise));
             return;
@@ -134,9 +141,13 @@ public sealed partial class PlaygroundViewModel
         var melody = layers.Where(l => !IsBass(l)).SelectMany(l => l.Notes).Where(n => !n.Muted && n.Start < length).ToList();
         var bass = layers.Where(IsBass).SelectMany(l => l.Notes).Where(n => !n.Muted && n.Start < length).ToList();
         var (tonic, minor) = HarmoniseKey(melody.Concat(bass));
-        var model = _model;
-        foreach (var idea in Harmoniser.Harmonise(melody, bass, length, tonic, minor, model is null ? null : model.Chance))
-            HarmoniseIdeas.Add(new ReharmRow(this, idea));
+        var model = await ModelAsync();
+        if (request != _harmoniseRequest) return;
+        var ideas = await UiWork.Run(() => Harmoniser.Harmonise(melody, bass, length, tonic, minor, model is null ? null : model.Chance).ToList());
+        if (request != _harmoniseRequest) return;   // edited again meanwhile: the newer call shows its own
+        if (TryingIdea is { } t && HarmoniseIdeas.Contains(t)) BackIdea();
+        HarmoniseIdeas.Clear();
+        foreach (var idea in ideas) HarmoniseIdeas.Add(new ReharmRow(this, idea));
         HarmoniseText = HarmoniseIdeas.Count == 0 ? "" : $"Chords for {HarmoniseIdeas[0].Idea.Before}, in {ChordSymbol.Names[tonic]} {(minor ? "minor" : "major")}";
         OnPropertyChanged(nameof(CanHarmonise));
     }

@@ -145,14 +145,19 @@ public sealed partial class PlaygroundViewModel
         var track = SelectedClip?.Track ?? SelectedLayer ?? Layers.FirstOrDefault(l => l.Layer.Name == _clipboardTrack);
         var copy = _clipboard.Copy();
         copy.Start = Cursor / Grid * Grid;
+        Remember();
         if (track is null)
         {
-            var layer = AddLayer(copy.Name, copy.Role, copy.Notes, copy.SourcePath, copy.SourceHash, start: copy.Start, length: copy.Length, loop: copy.Loop);
+            var layer = AddLayer(_clipboardTrack.Length > 0 ? _clipboardTrack : copy.Name, copy.Role, copy.Notes, copy.SourcePath, copy.SourceHash,
+                                 start: copy.Start, length: copy.Length, loop: copy.Loop);
+            layer.Clips[0] = copy;   // with its moves, inversion and pin, not rebuilt from its notes
+            layer.Render();
+            var row = Layers.First(l => l.Layer == layer);
+            row.Changed();
+            SelectedClip = new ClipRow(this, row, copy);
             Changed();
-            PickClip(Layers.FirstOrDefault(l => l.Layer == layer), layer.Clips.FirstOrDefault());
             return;
         }
-        Remember();
         CutOut(track.Layer, copy.Start, copy.End);
         track.Layer.Clips.Add(copy);
         Reach(copy.End);

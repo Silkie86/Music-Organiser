@@ -115,15 +115,17 @@
             </TransitioningContentControl.PageTransition>
         </TransitioningContentControl>
 
-        <!-- Activity cards, bottom right: what's running, how far it has got, and what just finished. -->
-        <ItemsControl Grid.Column="1" ItemsSource="{Binding Activities.Items}" Width="380" Margin="0,0,24,20"
-                      HorizontalAlignment="Right" VerticalAlignment="Bottom" ZIndex="10">
+        <!-- Activity cards, bottom right: what's running, how far it has got, and what just finished. A running job's ✕
+             puts its card away without stopping it; "N jobs running" under them brings them back. -->
+        <StackPanel Grid.Column="1" Width="380" Margin="0,0,24,20" Spacing="10"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom" ZIndex="10">
+        <ItemsControl ItemsSource="{Binding Activities.Items}">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate><StackPanel Spacing="10" /></ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:Activity">
-                    <Border Classes="toast" Classes.leaving="{Binding IsLeaving}">
+                    <Border Classes="toast" Classes.leaving="{Binding IsLeaving}" IsVisible="{Binding !IsHidden}">
                         <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
                             <Panel Width="26" Height="26" VerticalAlignment="Top">
                                 <Arc Classes="spinner" Width="20" Height="20" IsVisible="{Binding IsRunning}" />
@@ -149,8 +151,7 @@
                                 <Button Classes="toastButton accent" Content="{Binding ActionLabel}" Command="{Binding RunActionCommand}"
                                         IsVisible="{Binding HasAction}" />
                                 <Button Classes="toastButton" Content="Stop" Command="{Binding CancelCommand}" IsVisible="{Binding CanCancel}" />
-                                <Button Classes="toastButton flat" Command="{Binding DismissCommand}" IsVisible="{Binding !IsRunning}"
-                                        ToolTip.Tip="Close">
+                                <Button Classes="toastButton flat" Command="{Binding DismissCommand}" ToolTip.Tip="{Binding CloseTip}">
                                     <Path Data="M1,1 L9,9 M9,1 L1,9" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.6" StrokeLineCap="Round" />
                                 </Button>
                             </StackPanel>
@@ -161,6 +162,14 @@
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
         </ItemsControl>
+        <Button HorizontalAlignment="Right" Command="{Binding Activities.ShowHiddenCommand}"
+                IsVisible="{Binding Activities.HasHidden}" ToolTip.Tip="Show the cards you put away">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Arc Classes="spinner" Width="12" Height="12" />
+                <TextBlock Text="{Binding Activities.HiddenText}" VerticalAlignment="Center" />
+            </StackPanel>
+        </Button>
+        </StackPanel>
 
         <!-- The keys sheet (? or F1): this page's keys, then the ones that work everywhere. Esc, ? or a click outside closes it. -->
         <Border x:Name="KeySheet" Grid.ColumnSpan="2" ZIndex="20" IsVisible="{Binding Shortcuts.SheetOpen}" Background="#99000000" PointerPressed="OnSheetBackdrop">

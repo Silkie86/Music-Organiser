@@ -1,6 +1,8 @@
 using Avalonia.Controls;
+using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
 using MusicOrganiser.ViewModels;
 
@@ -105,10 +107,48 @@ public partial class PlaygroundView
         e.Handled = true;
     }
 
+    /// <summary>Rename (menu or key): the track's name becomes a box in its header, as in a DAW, so it works with no clip picked too.</summary>
     void OnRenameAsked(object? sender, EventArgs e)
     {
-        TrackName.Focus();
-        TrackName.SelectAll();
+        if (_vm is not { } vm || (vm.SelectedClip?.Track ?? vm.SelectedLayer) is not { } row) return;
+        TrackList.ScrollIntoView(row);
+        TrackList.UpdateLayout();
+        if (TrackList.ContainerFromItem(row) is not { } item ||
+            item.GetVisualDescendants().OfType<TextBox>().FirstOrDefault(b => b.Classes.Contains("trackRename")) is not { } box) return;
+        box.IsVisible = true;
+        box.Focus();
+        box.SelectAll();
+    }
+
+    void OnTrackNameDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (sender is not Control { DataContext: LayerRow row } || _vm is not { } vm) return;
+        vm.PickClip(null, null);
+        vm.SelectedLayer = row;
+        OnRenameAsked(this, EventArgs.Empty);
+        e.Handled = true;
+    }
+
+    void OnTrackRenameKey(object? sender, KeyEventArgs e)
+    {
+        if (sender is not TextBox box) return;
+        if (e.Key == Key.Escape)
+        {
+            BindingOperations.GetBindingExpressionBase(box, TextBox.TextProperty)?.UpdateTarget();   // back to the name it had
+            box.IsVisible = false;
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Enter)
+        {
+            BindingOperations.GetBindingExpressionBase(box, TextBox.TextProperty)?.UpdateSource();
+            box.IsVisible = false;
+            e.Handled = true;
+        }
+    }
+
+    void OnTrackRenameDone(object? sender, RoutedEventArgs e)
+    {
+        if (sender is TextBox box) box.IsVisible = false;
     }
 
     void OnIdeasAsked(object? sender, EventArgs e) => IdeasButton.Flyout?.ShowAt(IdeasButton);
