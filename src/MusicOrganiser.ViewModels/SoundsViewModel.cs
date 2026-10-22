@@ -144,7 +144,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     public const string SimilarCountKey = "similar_count", SweepKey = "galaxy_sweep_ms";
     public static IReadOnlyList<int> SimilarCountChoices { get; } = [6, 12, 24, 48];
-    public static IReadOnlyList<int> SweepChoices { get; } = [60, 90, 150, 250];
+    public static IReadOnlyList<int> SweepChoices { get; } = [15, 30, 45, 60, 90, 150, 250];
     /// <summary>How many sounds "Sounds like this" shows (Settings › Sounds).</summary>
     [ObservableProperty] int _similarCount;
     /// <summary>How long each star plays when the mouse sweeps across the galaxy, in milliseconds (Settings › Sounds).</summary>
