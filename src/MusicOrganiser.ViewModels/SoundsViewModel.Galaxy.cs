@@ -261,6 +261,13 @@ public sealed partial class SoundsViewModel
         Trail = [s, .. Trail.Where(t => t != s).Take(TrailLength - 1)];
     }
 
+    /// <summary>The sweep is heading for these sounds: their files are read ahead, so they open at once when reached.</summary>
+    [RelayCommand]
+    void WarmAhead(IReadOnlyList<Sound>? ahead)
+    {
+        if (ahead is { Count: > 0 }) Previews.Warm(ahead.Select(s => s.Path));
+    }
+
     /// <summary>The mouse was let go after sweeping: the preview stops.</summary>
     [RelayCommand]
     void EndSweep()

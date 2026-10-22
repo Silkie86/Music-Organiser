@@ -95,6 +95,7 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
     {
         const int AlcConnected = 0x313, AlcFrequency = 0x1007, AlcRefresh = 0x1008;
         const int AlcAllDevices = 0x1013;
+        const int AlcDeviceLatency = 0x1601;   // ALC_DEVICE_LATENCY_SOFT, in nanoseconds
 
         public required AL Al { get; init; }
         public required ALContext Alc { get; init; }
@@ -103,6 +104,7 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
         delegate* unmanaged[Cdecl]<nint, int, int, int*, void> _getIntegers;
         delegate* unmanaged[Cdecl]<nint, int, byte*> _getString;
         delegate* unmanaged[Cdecl]<nint, byte*, int*, byte> _reopen;
+        delegate* unmanaged[Cdecl]<nint, int, int, long*, void> _getIntegers64;
 
         public bool CanReconnect => _reopen != null;
 
@@ -116,6 +118,8 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
             // An extension's call is asked of OpenAL by name: the Linux library doesn't list it among its exports.
             if (Alc.IsExtensionPresent((Device*)Device, "ALC_SOFT_reopen_device"))
                 _reopen = (delegate* unmanaged[Cdecl]<nint, byte*, int*, byte>)Alc.GetProcAddress((Device*)Device, "alcReopenDeviceSOFT");
+            if (Alc.IsExtensionPresent((Device*)Device, "ALC_SOFT_device_clock"))
+                _getIntegers64 = (delegate* unmanaged[Cdecl]<nint, int, int, long*, void>)Alc.GetProcAddress((Device*)Device, "alcGetInteger64vSOFT");
         }
 
         /// <summary>
@@ -143,6 +147,25 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
 
         public int Frequency => Integer(AlcFrequency);
         public int Refresh => Integer(AlcRefresh);
+
+        /// <summary>
+        /// How long sound mixed now takes to come out, in milliseconds, as OpenAL Soft works it out: what it has queued
+        /// ahead of Windows plus the delay Windows reports for the output (its own and the interface's). Negative when
+        /// this OpenAL can't say.
+        /// </summary>
+        public double DelayMs
+        {
+            get
+            {
+                if (_getIntegers64 == null) return -1;
+                long ns = 0;
+                _getIntegers64(Device, AlcDeviceLatency, 1, &ns);
+                return ns / 1e6;
+            }
+        }
+
+        /// <summary>How long OpenAL mixes ahead each time, in milliseconds.</summary>
+        public double PeriodMs => Refresh > 0 ? 1000.0 / Refresh : -1;
 
         public string Name => Plain(_getString != null && Strings(Device, AlcAllDevices).FirstOrDefault() is { } name
             ? name : Alc.GetContextProperty((Device*)Device, GetContextString.DeviceSpecifier));
@@ -253,6 +276,12 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
             AudioLog.Write($"Output: \"{output.Name}\" ({(_openedAs is null ? "the default" : "chosen in Settings")}) at {output.Frequency} Hz, " +
                            $"mixed {output.Refresh} times a second" + (output.CanReconnect ? "" : " (it can't be moved or reconnected)"));
             AudioLog.Write($"Default output: \"{_defaultSeen}\"; all outputs: {string.Join(", ", all.Select(n => $"\"{n}\""))}");
+            // Read once here, where the output opens (or reopens on another device): it only changes then, and asking
+            // OpenAL on every play would sit outside the device lock while an output was being reopened.
+            var delay = output.DelayMs;
+            SweepTiming.Output(output.PeriodMs / 2, delay);
+            AudioLog.Write($"Output delay: sound mixed now comes out after {delay:0.0} ms (OpenAL's queue, Windows' and the interface's " +
+                           $"delay), mixed every {output.PeriodMs:0.0} ms");
             return output;
         }
         catch (Exception e) when (e is DllNotFoundException or FileNotFoundException or EntryPointNotFoundException or InvalidOperationException)
@@ -302,6 +331,9 @@ public sealed unsafe class OpenAlPlayer : IAudioPlayer
 
     internal const string NoOutputMessage = "No sound output would open. If a DAW has your audio interface to itself, close it or " +
                                             "choose another output in Settings › Sound output, then play again.";
+
+    /// <summary>How often the output mixes and how long mixed sound takes to come out, in milliseconds (null before it's open).</summary>
+    internal static (double PeriodMs, double DelayMs)? OutputTiming => _output is { } o ? (o.PeriodMs, o.DelayMs) : null;
 
     /// <summary>True when there's somewhere to play sound.</summary>
     internal static bool HasOutput => TryOutput() is not null;
