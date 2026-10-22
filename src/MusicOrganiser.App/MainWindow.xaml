@@ -4,7 +4,7 @@
                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-                 xmlns:vm="clr-namespace:MusicOrganiser.App.ViewModels"
+                 xmlns:vm="clr-namespace:MusicOrganiser.ViewModels;assembly=MusicOrganiser.ViewModels"
                  xmlns:views="clr-namespace:MusicOrganiser.App.Views"
                  mc:Ignorable="d"
                  d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
@@ -67,6 +67,36 @@
                                        Foreground="{StaticResource FaintBrush}"
                                        ToolTip="Re-read every project, even unchanged ones" />
                         </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- What Bitwig and FL Studio have open now, through their links -->
+                <Border DockPanel.Dock="Bottom" Style="{StaticResource Card}" Padding="8,10" Margin="0,0,0,10"
+                        Background="{StaticResource SurfaceBrush}">
+                    <StackPanel>
+                        <TextBlock Text="IN YOUR DAWS" Style="{StaticResource FilterLabel}" Margin="4,0,0,4" />
+                        <ItemsControl ItemsSource="{Binding Live.Rows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:LiveDawRow}">
+                                    <ui:Button Command="{Binding OpenCommand}" Appearance="Transparent" BorderThickness="0"
+                                               HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                               Padding="4" ToolTip="{Binding Tip}">
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse Width="7" Height="7" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                         Fill="{Binding Colour, Converter={StaticResource DawBrush}}" />
+                                                <TextBlock Text="{Binding Name}" FontSize="11.5" Foreground="{StaticResource FaintBrush}" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Text}" FontSize="12.5" Margin="15,1,0,0" TextTrimming="CharacterEllipsis"
+                                                       Foreground="{StaticResource TextBrush}" />
+                                            <TextBlock Text="{Binding Detail}" FontSize="11" Margin="15,0,0,0" TextTrimming="CharacterEllipsis"
+                                                       Foreground="{StaticResource MutedBrush}"
+                                                       Visibility="{Binding Detail, Converter={StaticResource NullToVisibility}}" />
+                                        </StackPanel>
+                                    </ui:Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
                 </Border>
 

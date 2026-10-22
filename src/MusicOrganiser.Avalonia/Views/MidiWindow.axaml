@@ -1,0 +1,79 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:MusicOrganiser.ViewModels"
+        xmlns:views="using:MusicOrganiser.Avalonia.Views"
+        x:Class="MusicOrganiser.Avalonia.Views.MidiWindow"
+        x:DataType="vm:MidiPreviewViewModel"
+        Title="{Binding Title, StringFormat='MIDI in {0}'}" Width="760" Height="620" MinWidth="520" MinHeight="360"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource AppBackgroundBrush}">
+    <DockPanel>
+        <DockPanel DockPanel.Dock="Bottom" Margin="16,8,16,16">
+            <Button DockPanel.Dock="Right" Content="Export all channels" Classes="accent"
+                    Command="{Binding ExportAllCommand}" IsEnabled="{Binding HasChannels}" />
+            <Button DockPanel.Dock="Right" Content="Send all to Bitwig" Margin="0,0,8,0" Command="{Binding SendAllToBitwigCommand}"
+                    ToolTip.Tip="Put every channel on its own new track in the project open in Bitwig: its sample or plugin, the settings saved for it, and its notes as a clip" />
+            <ProgressBar DockPanel.Dock="Left" IsIndeterminate="True" Width="60" Margin="0,0,8,0" IsVisible="{Binding IsBusy}" />
+            <TextBlock Text="{Binding Message}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0"
+                       Foreground="{StaticResource MutedBrush}" />
+        </DockPanel>
+
+        <TextBlock DockPanel.Dock="Top" Text="{Binding Summary}" Margin="16,12,16,8" Foreground="{StaticResource MutedBrush}" />
+
+        <!-- Listen to the whole song, or drag channels out into a DAW. -->
+        <WrapPanel DockPanel.Dock="Top" Margin="16,0,16,10" IsVisible="{Binding HasChannels}">
+            <Button Command="{Binding PlayAllCommand}" Margin="0,0,12,0" Padding="10,5"
+                    ToolTip.Tip="Hear every channel together. Click along any channel to jump.">
+                <Panel>
+                    <TextBlock Text="▶  Play all" IsVisible="{Binding !IsPlayingAll}" />
+                    <TextBlock Text="■  Stop" IsVisible="{Binding IsPlayingAll}" />
+                </Panel>
+            </Button>
+            <Border Classes="dragChip" views:FileDrag.Source="{Binding}" views:FileDrag.AllOf="{Binding #ChannelList}"
+                    ToolTip.Tip="Drag into your DAW: one MIDI file per channel, landing as tracks in this order">
+                <TextBlock Text="Drag all as tracks" />
+            </Border>
+            <Border Classes="dragChip" views:FileDrag.Source="{Binding AsOneFile}" views:FileDrag.AllOf="{Binding #ChannelList}"
+                    ToolTip.Tip="Drag into your DAW as a single multi-track MIDI file">
+                <TextBlock Text="Drag as one file" />
+            </Border>
+            <TextBlock Text="{x:Static views:Keys.PickSeveralChannels}" VerticalAlignment="Center"
+                       FontSize="12" Foreground="{StaticResource MutedBrush}" />
+        </WrapPanel>
+
+        <ListBox x:Name="ChannelList" ItemsSource="{Binding Channels}" SelectionMode="Multiple" Margin="12,0,8,0" Background="Transparent"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:MidiChannelRow">
+                    <Grid ColumnDefinitions="Auto,Auto,190,*,Auto" RowDefinitions="Auto,Auto">
+                        <Path Classes="grip" />
+                        <Button Grid.Column="1" Command="{Binding PlayCommand}" Padding="9,5" Margin="2,0,10,0" VerticalAlignment="Center"
+                                ToolTip.Tip="Listen to this channel">
+                            <Panel>
+                                <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
+                                <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
+                            </Panel>
+                        </Button>
+                        <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,0,12,0">
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
+                            <TextBlock Text="{Binding Source}" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Source}"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       IsVisible="{Binding Source, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            <TextBlock Text="{Binding Details}" FontSize="12" Foreground="{StaticResource MutedBrush}" />
+                        </StackPanel>
+                        <views:NoteRoll Grid.Column="3" Height="48" Channel="{Binding Channel}" SongEnd="{Binding SongEnd}"
+                                        Position="{Binding Position}" SeekCommand="{Binding SeekCommand}" />
+                        <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                            <Button Content="Export" Command="{Binding ExportCommand}" ToolTip.Tip="Save just this channel as a MIDI file" />
+                            <Button Content="To Bitwig" Margin="6,0,0,0" Command="{Binding SendToBitwigCommand}"
+                                    ToolTip.Tip="Put this channel on a new track in the project open in Bitwig: its sample or plugin, the settings saved for it, and its notes as a clip" />
+                        </StackPanel>
+                        <!-- What happened when it went to Bitwig. -->
+                        <TextBlock Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="3" Text="{Binding Sent}" FontSize="12"
+                                   TextWrapping="Wrap" Margin="0,4,0,2" Foreground="{StaticResource MutedBrush}"
+                                   IsVisible="{Binding Sent, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</Window>

@@ -5,7 +5,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using MusicOrganiser.App.ViewModels;
+using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.App.Views;
 

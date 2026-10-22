@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins.Serum;
 using MusicOrganiser.Core.Sounds;
 using static MusicOrganiser.Core.Parsers.BitwigFormat;
 
@@ -31,7 +32,13 @@ public static class BitwigProject
     public sealed record SampleFile(long Bytes, byte[] Md5, int Rate, int Channels, double Seconds);
 
     /// <param name="Notes">What couldn't come across.</param>
-    public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes);
+    /// <param name="Upgraded">
+    /// The synths swapped for newer versions: the name to save each under (its channel's, numbered when channels share
+    /// one) and the older synth's own settings.
+    /// </param>
+    /// <param name="Serum1">Each Serum 1 sound swapped for Serum 2, as a Serum 1 preset (<see cref="Serum1To2.KeepOriginals"/>).</param>
+    public sealed record Result(byte[] Bytes, IReadOnlyList<string> Notes, IReadOnlyList<(string Channel, PresetBlob Sound)>? Upgraded = null,
+                                IReadOnlyList<(string Name, byte[] Fxp)>? Serum1 = null);
 
     const string SamplerId = "468bc14b-b2e7-45a1-9666-e83117fe404e";
     const string NoteTransposeId = "0815cd9e-3a31-4429-a268-dabd952a3b68";
@@ -39,6 +46,20 @@ public static class BitwigProject
     const int AudioEffect = 0, Instrument = 2;            // device kinds (field 0x9d)
     const int AudioClipClass = 0xee;                      // an arrangement audio clip (a clip of notes is 0x47)
     const int AudioEntry = 0x287;                         // an audio track in the project's summary (instrument tracks are 0x288)
+
+    /// <summary>Why a project can't be the template (for example "The Bitwig template needs a VST2 instrument track"), or null when it can.</summary>
+    public static string? TemplateProblem(byte[] template)
+    {
+        try
+        {
+            _ = new Template(template);
+            return null;
+        }
+        catch (Exception e) when (e is InvalidDataException or ArgumentException or IndexOutOfRangeException or EndOfStreamException)
+        {
+            return e.Message.StartsWith("The Bitwig template", StringComparison.Ordinal) ? e.Message : $"The Bitwig template couldn't be read ({e.Message})";
+        }
+    }
 
     /// <summary>
     /// Reads what Bitwig records about a sample, or null when the file can't be read. When it can be read but not
@@ -78,15 +99,27 @@ public static class BitwigProject
     /// Steps from FL's step sequencer on a Sampler last until the next note on their key or the end of their
     /// clip, as on a plugin track. Otherwise they also end when their sample does.
     /// </param>
-    public static Result FromFl(FlSong song, byte[] template, Func<string, SampleFile?>? readSample = null, bool stepsUntilNextNote = false)
+    /// <param name="upgrade">
+    /// An older version of the template's VST3 synth (Serum for the template's Serum 2) is swapped for the template's.
+    /// Serum 1's sounds are translated for Serum 2 (<see cref="Serum1To2"/>); others open at the newer one's default.
+    /// </param>
+    /// <param name="serumAudio">
+    /// Finds Serum 1's wavetables for the translation; Serum's own folders (<see cref="Serum1To2.XferAudio"/>) unless given.
+    /// </param>
+    public static Result FromFl(FlSong song, byte[] template, Func<string, SampleFile?>? readSample = null, bool stepsUntilNextNote = false,
+                                bool upgrade = false, Func<string, Serum1To2.AudioInfo?>? serumAudio = null)
     {
+        serumAudio ??= Serum1To2.XferAudio();
         readSample ??= ReadSample;
         var t = new Template(template);
         var notes = new List<string>();
         var states = new List<(string Name, byte[] Data)>();
+        var upgraded = new HashSet<int>();
+        var sounds = new List<(string Channel, PresetBlob Sound)>();
+        var serum1Sounds = new List<(string Name, byte[] Fxp)>();
 
         // A plugin as a Bitwig device: a copy of the template's VST3 or VST2 device with this plugin's identity and settings.
-        BwObject? Plugin(FlPlugin p, int kind, List<string> skipped)
+        BwObject? Plugin(FlPlugin p, int kind, List<string> skipped, bool fresh = false)
         {
             if (p.Native || p.Format is not ("VST2" or "VST3"))
             {
@@ -131,8 +164,8 @@ public static class BitwigProject
                 state = $"{Guid.NewGuid()}{extension}";
                 states.Add((state, data));
             }
-            else skipped.Add(p.NothingSaved ? $"{p.Name}'s sound (FL Studio saved none in this file, so it opens at its default)"
-                                            : $"{p.Name}'s settings (opens at its defaults)");
+            else if (p.NothingSaved) skipped.Add($"{p.Name}'s sound (FL Studio saved none in this file, so it opens at its default)");
+            else if (!fresh) skipped.Add($"{p.Name}'s settings (opens at its defaults)");
             def.Set(0xbe5, state);
             return device;
         }
@@ -206,10 +239,30 @@ public static class BitwigProject
             }
             else
             {
-                track = t.Copy(c.Instrument.Format == "VST2" ? t.Vst2Track : t.Vst3Track);
-                if (Plugin(c.Instrument, Instrument, skipped) is { } plugin)
+                var instrument = upgrade && Upgrade(c.Instrument, t) is { } newer ? newer : c.Instrument;
+                var swapped = instrument != c.Instrument;
+                if (swapped)
                 {
-                    instruments[c.Index] = (plugin, c.Instrument);
+                    upgraded.Add(c.Index);
+                    // Channels often share a name ("Serum" twice): each gets its own file, numbered.
+                    var saveAs = c.Name;
+                    for (var n = 2; sounds.Any(s => s.Channel.Equals(saveAs, StringComparison.OrdinalIgnoreCase)); n++) saveAs = $"{c.Name} ({n})";
+                    sounds.Add((saveAs, c.Instrument.State!));
+                    var backup = $"The original is saved as \"{saveAs} ({c.Instrument.Name})\" in the \"{UpgradedFolder}\" folder next to this project, " +
+                                 $"to load in {instrument.Name}'s preset browser";
+                    if (Translate(c.Instrument, instrument, serumAudio) is var (state, rough, serum1))
+                    {
+                        instrument = instrument with { State = state };
+                        serum1Sounds.Add((saveAs, serum1.ToFxp(saveAs)));
+                        notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, with its sound translated" +
+                                  (rough.Count > 0 ? $" (only roughly: {Serum1To2.Describe(rough)})" : "") + $". {backup}");
+                    }
+                    else notes.Add($"{c.Name}: {c.Instrument.Name} swapped for {instrument.Name}, which opens with its default sound. {backup}");
+                }
+                track = t.Copy(instrument.Format == "VST2" ? t.Vst2Track : t.Vst3Track);
+                if (Plugin(instrument, Instrument, skipped, fresh: swapped) is { } plugin)
+                {
+                    instruments[c.Index] = (plugin, instrument);
                     // FL plays a plugin's root key as C5, so a moved root key transposes it, as does the pitch knob.
                     var shift = FlStudioReader.DefaultRoot - c.RootKey + (int)Math.Round(c.PitchCents / 100.0);
                     if (shift != 0) devices.Add(Transpose(t.Copy(t.NoteTranspose), shift));
@@ -351,6 +404,9 @@ public static class BitwigProject
                     }
                     break;
                 // The plugin is on the channel's instrument track, its first.
+                case FlControl.PluginParameter when upgraded.Contains(a.Channel):
+                    why = "its plugin was swapped for a newer version, whose settings are numbered differently";
+                    break;
                 case FlControl.PluginParameter when instruments.TryGetValue(a.Channel, out var instrument):
                     if (SettingPath(instrument.Plugin, a.Parameter) is not { } setting)
                         why = "FL didn't save which of the plugin's settings it moves";
@@ -368,7 +424,44 @@ public static class BitwigProject
         }
 
         // A channel's notes about its insert or sample can come from each of its tracks.
-        return new Result(t.Finish(tracks, song.Tempo, states), notes.Distinct().ToList());
+        return new Result(t.Finish(tracks, song.Tempo, states), notes.Distinct().ToList(), sounds, serum1Sounds);
+    }
+
+    /// <summary>Where the original synths' sounds are saved, next to a converted project, when they were swapped for newer versions.</summary>
+    public const string UpgradedFolder = "Sounds from older plugins";
+
+    /// <summary>
+    /// The template's VST3 synth in place of an older version of it (Serum 2 for Serum, by name with the version left
+    /// off), with no settings yet. The older one's settings can't be handed to it as they are: Serum 2 refuses Serum's
+    /// as its own state and then won't load at all (seen on Solomon's PC). So the old sound is translated where the
+    /// app can (<see cref="Translate"/>), and also saved beside the project, since Serum 2's browser opens Serum's
+    /// presets. Null when it isn't an older version (a project's Kontakt 8 stays, beside a template's Kontakt 7), or has
+    /// no sound to save.
+    /// </summary>
+    static FlPlugin? Upgrade(FlPlugin p, Template t)
+    {
+        var newer = Def(t.Vst3Device)!;
+        var name = newer.Str(0x9a);
+        if (p.Native || p.State is null || name.Length == 0 || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+            PluginCatalog.Family(p.Name) != PluginCatalog.Family(name) || PluginCatalog.VersionOf(name) <= PluginCatalog.VersionOf(p.Name) ||
+            newer[0xce4] is not string classId || classId.Length != 32)
+            return null;
+        var path = newer.Obj(0xc5a)?[0xc5b] is List<object?> { Count: > 0 } location && newer.Obj(0xc5a)!.Resolve(location[0]) is { } file
+            ? file.Str(0x3b) : "";
+        return new FlPlugin(name, newer.Str(0x9b), "VST3", classId, null, path);
+    }
+
+    /// <summary>
+    /// The older synth's sound for the newer one, when the app can translate it (Serum 1's for Serum 2, which won't
+    /// take Serum 1's as its own), as a VST3 preset; what came across only roughly; and the Serum 1 sound it came from.
+    /// Null otherwise.
+    /// </summary>
+    static (PresetBlob State, IReadOnlyList<string> Rough, Serum1State Original)? Translate(FlPlugin older, FlPlugin newer, Func<string, Serum1To2.AudioInfo?>? audio)
+    {
+        if (!newer.Name.Contains('2') || older.State is not { } state || Serum1State.Read(state.Data) is not { } serum1) return null;
+        var result = Serum1To2.Translate(serum1, audio);
+        // Bitwig hands Serum 2 the component state; its controller rebuilds its own from that.
+        return (new PresetBlob(state.Name, newer.Name, ".vstpreset", VstPreset.Build(newer.DeviceId, result.State.Write(), [])), result.Rough, serum1);
     }
 
     /// <summary>An automation clip's points for a lane, with where the FL clip each one belongs to starts (see <see cref="FlAutomation.StartOf"/>).</summary>

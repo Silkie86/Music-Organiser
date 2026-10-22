@@ -1,4 +1,5 @@
 using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Plugins;
 
 namespace MusicOrganiser.Core.Library;
 
@@ -48,11 +49,18 @@ public sealed class Scanner(LibraryDb db)
 
     /// <summary>Every project file under these folders, found with all cores at once and sorted by path.</summary>
     public static List<string> FindProjects(IEnumerable<string> roots, CancellationToken ct = default) =>
-        Parallelism.FindFiles(roots, f =>
-        {
-            var name = Path.GetFileName(f);
-            return Readers.For(f) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
-        }, SkipDir, ct: ct);
+        FindProjectStamps(roots, ct).Select(f => f.Path).ToList();
+
+    /// <summary>The project files under these folders, with the size and modified time the folder listing gave.</summary>
+    public static List<Parallelism.FoundFile> FindProjectStamps(IEnumerable<string> roots, CancellationToken ct = default) =>
+        Parallelism.FindFileStamps(roots, IsProjectFile, SkipDir, ct: ct);
+
+    /// <summary>A file the library lists: one the readers know, leaving out macOS "._" shadows and DAW autosaves.</summary>
+    public static bool IsProjectFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        return Readers.For(path) is not null && !name.StartsWith("._") && !IsAutosaveFile(name);
+    }
 
     /// <summary>
     /// Reads one project. Whether each of its samples is on this PC is decided by <paramref name="samples"/> (see
@@ -71,7 +79,11 @@ public sealed class Scanner(LibraryDb db)
             var hardware = info.Plugins.Select(p => p.Name).Concat(info.Hardware)
                                .Select(PluginCatalog.ElektronDevice)
                                .OfType<string>().Distinct().Order().ToList();
-            return new(path, fi.Length, mtime, info, null, found, hardware);
+            var notes = info.CanExtractMidi ? ProjectKey.Read(path) : new SongNotes("", -1, -1);
+            return new(path, fi.Length, mtime, info, null, found, hardware)
+            {
+                DetectedKey = notes?.Key, NoteCount = notes?.Notes ?? -1, LengthBars = notes?.Bars ?? -1,
+            };
         }
         catch (Exception e)   // one unreadable file must never stop a scan
         {
@@ -79,8 +91,8 @@ public sealed class Scanner(LibraryDb db)
         }
     }
 
-    /// <summary>Index new and changed projects under every library folder.</summary>
-    public void ScanProjects(IProgress<ScanProgress>? progress = null, bool full = false, CancellationToken ct = default)
+    /// <summary>Index new and changed projects under every library folder. Returns how many project files were new.</summary>
+    public int ScanProjects(IProgress<ScanProgress>? progress = null, bool full = false, CancellationToken ct = default)
     {
         Readers.Bitwig.KnownPlugins = db.InstalledNames() is { Count: > 0 } names
             ? names.Union(PluginCatalog.AlwaysKnown, StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase)
@@ -88,27 +100,20 @@ public sealed class Scanner(LibraryDb db)
 
         var roots = db.Roots().Where(Directory.Exists).ToList();
         progress?.Report(new("Finding projects", 0, 0, ""));
-        var files = FindProjects(roots, ct);
+        var found = FindProjectStamps(roots, ct);
+        var files = found.Select(f => f.Path).ToList();
         var known = db.KnownFiles();
         // DAWs whose reader has got better since the library last read their projects: read those again.
         var reread = Readers.All.Where(r => db.GetSetting(ReaderVersionKey(r)) != r.Version.ToString()).Select(r => r.Daw).ToHashSet();
-        var todo = files.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
-            .Where(f =>
-            {
-                try
-                {
-                    var fi = new FileInfo(f);
-                    var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
-                    return full || reread.Contains(Readers.For(f)!.Daw) ||
-                           !known.TryGetValue(f, out var k) || k.Mtime != mtime || k.Size != fi.Length;
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
-            }).ToList();
+        // The folder listing already says each file's size and modified time: only new or changed files are read.
+        var todo = found.Where(f => full || reread.Contains(Readers.For(f.Path)!.Daw) ||
+                                    !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
+                        .Select(f => f.Path).ToList();
 
         // Read the projects on every core; save them here, in path order, a batch at a time,
         // so a new numbered save always finds the earlier ones it takes its status from.
         var samples = new SampleLocator();
-        var analysed = todo.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Cores).WithCancellation(ct)
+        var analysed = todo.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).WithCancellation(ct)
             .Select(f =>
             {
                 try { return Parallelism.Background(() => Analyse(f, samples)); }
@@ -133,17 +138,110 @@ public sealed class Scanner(LibraryDb db)
         foreach (var r in Readers.All) db.SetSetting(ReaderVersionKey(r), r.Version.ToString());
         db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
         progress?.Report(new("Done", files.Count, files.Count, ""));
+        return todo.Count(f => !known.ContainsKey(f));
+    }
+
+    /// <summary>
+    /// Brings the library up to date with project files the folder watcher saw change (<see cref="FolderWatch"/>): new
+    /// or changed ones are read, gone ones marked missing, and nothing else is looked at. Returns how many of each.
+    /// </summary>
+    public (int Read, int Gone) Update(IEnumerable<string> paths)
+    {
+        var roots = db.Roots();
+        var known = db.KnownFiles();
+        var read = new List<LibraryDb.IndexedFile>();
+        var gone = 0;
+        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!IsProjectFile(path) || IsIgnored(path, roots)) continue;
+            try
+            {
+                var fi = new FileInfo(path);
+                if (!fi.Exists)
+                {
+                    if (known.ContainsKey(path) && db.MarkFileMissing(path)) gone++;
+                    continue;
+                }
+                var mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+                if (known.TryGetValue(path, out var k) && k.Mtime == mtime && k.Size == fi.Length) continue;   // already read
+                read.Add(Parallelism.Background(() => Analyse(path)));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // still being written, or locked: the next change or scan gets it
+        }
+        db.UpsertMany(read);
+        return (read.Count, gone);
     }
 
     static string ReaderVersionKey(IProjectReader r) => $"reader_version:{r.Daw}";
 
     /// <summary>Refresh the list of plugins installed on this PC.</summary>
-    public int ScanInstalledPlugins()
+    public int ScanInstalledPlugins() => ScanInstalledPlugins(out _);
+
+    /// <summary>
+    /// Refresh the list of plugins installed on this PC: the plugin files in the plugin folders, and
+    /// the plugins the native scanner found inside them (a Waves shell holds hundreds).
+    /// <paramref name="toRead"/> gets the files the scanner hasn't read since they last changed.
+    /// </summary>
+    public int ScanInstalledPlugins(out IReadOnlyList<string> toRead)
     {
         var folders = db.GetList(PluginFoldersKey) is { Count: > 0 } custom ? custom : PluginCatalog.DefaultFolders().ToList();
-        var names = PluginCatalog.Scan(folders);
+        var files = PluginCatalog.ScanFiles(folders);
+        db.ForgetPluginScans(files.Select(f => f.Path));
+        var read = db.PluginScanStamps();
+        toRead = files.Select(f => f.Path).Where(PluginScanner.CanRead)
+                      .Where(f => !read.TryGetValue(f, out var stamp) || stamp != PluginScanner.Stamp(f))
+                      .ToList();
+        var names = new HashSet<string>(PluginCatalog.AlwaysKnown, StringComparer.OrdinalIgnoreCase);
+        names.UnionWith(files.Select(f => f.Name));
+        names.UnionWith(db.ScannedPluginNames());
         db.ReplaceInstalledPlugins(names);
         return names.Count;
+    }
+
+    /// <summary>
+    /// How many plugins load at once, each in its own low-priority mo-scan process: up to four, fewer when the app is
+    /// set to be gentle, but always two, so one slow plugin (or one waiting on a licence dialog) can't hold up the rest
+    /// on a small processor.
+    /// </summary>
+    static int PluginLoads => Math.Clamp(Parallelism.Workers, 2, 4);
+
+    /// <summary>
+    /// Reads plugin files with the native scanner, a few at a time (<see cref="PluginLoads"/>), and stores the plugins inside each
+    /// one: exact ID, name, vendor, version and kind. Parameters are read later (<see cref="ReadAllParametersAsync"/>).
+    /// </summary>
+    public async Task ReadPluginFilesAsync(PluginScanner scanner, IReadOnlyList<string> paths,
+                                           IProgress<ScanProgress>? progress = null, CancellationToken ct = default)
+    {
+        var done = 0;
+        await Parallel.ForEachAsync(paths, new ParallelOptions { MaxDegreeOfParallelism = PluginLoads, CancellationToken = ct }, async (path, token) =>
+        {
+            var stamp = PluginScanner.Stamp(path);
+            var scan = await scanner.ScanAsync(path, ct: token);
+            db.SavePluginScan(scan, stamp);
+            progress?.Report(new("Reading plugins", Interlocked.Increment(ref done), paths.Count, Path.GetFileName(path.TrimEnd('\\', '/'))));
+        });
+    }
+
+    /// <summary>
+    /// Reads the parameters of every installed plugin that doesn't have them yet: each plugin is loaded in
+    /// the native scanner, a few at a time. Stopped part way, it carries on from there next time. A plugin
+    /// that can't be loaded keeps why, and is left out after that.
+    /// </summary>
+    public async Task<(int Read, int Failed)> ReadAllParametersAsync(PluginScanner scanner, IProgress<ScanProgress>? progress = null,
+                                                                     CancellationToken ct = default)
+    {
+        var todo = db.PluginsWithoutParameters();
+        int done = 0, read = 0, failed = 0;
+        progress?.Report(new("Reading parameters", 0, todo.Count, ""));
+        await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = PluginLoads, CancellationToken = ct }, async (plugin, token) =>
+        {
+            var result = await scanner.ReadParametersAsync(plugin, token);
+            db.SaveScannedPlugin(result);
+            if (result.Params is null) Interlocked.Increment(ref failed);
+            else Interlocked.Increment(ref read);
+            progress?.Report(new("Reading parameters", Interlocked.Increment(ref done), todo.Count, plugin.Name));
+        });
+        return (read, failed);
     }
 
     /// <summary>Index audio files in your sample folders, so missing samples can be matched.</summary>

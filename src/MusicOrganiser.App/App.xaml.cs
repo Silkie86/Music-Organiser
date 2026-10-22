@@ -1,7 +1,8 @@
 using System.Windows;
 using System.Windows.Threading;
-using MusicOrganiser.App.ViewModels;
+using MusicOrganiser.ViewModels;
 using MusicOrganiser.App.Audio;
+using MusicOrganiser.App.Platform;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Sounds;
 
@@ -12,22 +13,25 @@ public partial class App : Application
     LibraryDb? _db;
     SoundLibrary? _soundDb;
     SoundOrganiser? _sounds;
+    MainViewModel? _main;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         DispatcherUnhandledException += OnUnhandled;
+        Ui.Current = new WpfUi();
         _db = new LibraryDb(LibraryDb.DefaultPath);
         AudioPlayer.RegisterDecoders();
         _soundDb = new SoundLibrary(SoundLibrary.DefaultPath);
         _sounds = new SoundOrganiser(_soundDb);
-        var window = new MainWindow { DataContext = new MainViewModel(_db, _sounds) };
+        var window = new MainWindow { DataContext = _main = new MainViewModel(_db, _sounds, midiPage: false) };   // no MIDI page in the WPF app (Avalonia only)
         MainWindow = window;
         window.Show();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _main?.Shutdown();
         _sounds?.Dispose();
         _soundDb?.Dispose();
         _db?.Dispose();

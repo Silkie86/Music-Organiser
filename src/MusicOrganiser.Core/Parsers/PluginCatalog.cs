@@ -44,8 +44,8 @@ public static partial class PluginCatalog
         ImageLine.Contains(name.Trim()) ||
         name.StartsWith("IL ", StringComparison.OrdinalIgnoreCase) && ImageLine.Contains(name[3..].Trim()) ||
         vendor.StartsWith("Image-Line", StringComparison.OrdinalIgnoreCase) ||
-        path.Contains(@"\Image-Line\", StringComparison.OrdinalIgnoreCase) ||
-        FlStudioPluginFolder().IsMatch(path);
+        path.Replace('/', '\\').Contains(@"\Image-Line\", StringComparison.OrdinalIgnoreCase) ||
+        FlStudioPluginFolder().IsMatch(path.Replace('/', '\\'));
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\\FL Studio[^\\]*\\Plugins\\", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FlStudioPluginFolder();
@@ -74,6 +74,15 @@ public static partial class PluginCatalog
         }
         return new string(n.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"v?(\d+(\.\d+)*)\s*(x64|x86|vst3?|\(.*\))?$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex VersionNumber();
+
+    /// <summary>A plugin's version from its name: "Kontakt 8" is 8, "Mini V4" 4, "Serum 2" 2; none ("Serum") is 0.</summary>
+    public static Version VersionOf(string name) =>
+        VersionNumber().Match(name.Trim()) is { Success: true } m && Version.TryParse(m.Groups[1].Value.Contains('.') ? m.Groups[1].Value : m.Groups[1].Value + ".0", out var v)
+            ? v : new Version(0, 0);
 
     /// <summary>
     /// For a plugin that isn't installed, another version of it that is ("Ozone 12" for "Ozone 8").
@@ -104,8 +113,31 @@ public static partial class PluginCatalog
     public static PluginKind KindOf(string name) =>
         ElektronDevice(name) is not null ? PluginKind.Instrument : PluginKind.Unknown;
 
+    /// <summary>The standard plugin folders for this operating system.</summary>
     public static IEnumerable<string> DefaultFolders()
     {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (OperatingSystem.IsMacOS())
+        {
+            foreach (var root in new[] { "/Library/Audio/Plug-Ins", Path.Combine(home, "Library", "Audio", "Plug-Ins") })
+                foreach (var kind in new[] { "VST3", "CLAP", "VST", "Components" })
+                    yield return Path.Combine(root, kind);
+            yield break;
+        }
+        if (OperatingSystem.IsLinux())
+        {
+            yield return Path.Combine(home, ".vst3");
+            yield return Path.Combine(home, ".clap");
+            yield return Path.Combine(home, ".vst");
+            foreach (var root in new[] { "/usr/lib", "/usr/local/lib" })
+            {
+                yield return Path.Combine(root, "vst3");
+                yield return Path.Combine(root, "clap");
+                yield return Path.Combine(root, "vst");
+            }
+            yield break;
+        }
+
         var common = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
         var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         if (common.Length > 0)
@@ -126,6 +158,14 @@ public static partial class PluginCatalog
     public static HashSet<string> Scan(IEnumerable<string> folders)
     {
         var names = new HashSet<string>(AlwaysKnown, StringComparer.OrdinalIgnoreCase);
+        names.UnionWith(ScanFiles(folders).Select(p => p.Name));
+        return names;
+    }
+
+    /// <summary>Every plugin file under the given folders, with its format.</summary>
+    public static List<InstalledPlugin> ScanFiles(IEnumerable<string> folders)
+    {
+        var found = new Dictionary<string, InstalledPlugin>(StringComparer.OrdinalIgnoreCase);
         foreach (var folder in folders.Where(Directory.Exists))
         {
             IEnumerable<string> entries;
@@ -136,17 +176,26 @@ public static partial class PluginCatalog
             {
                 foreach (var e in entries)
                 {
-                    // .vst3 bundles are folders; skip what's inside them.
-                    if (e.Contains(".vst3" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
+                    // .vst3 bundles (and on a Mac .component, .clap and .vst too) are folders; skip what's inside them.
+                    if (InsideBundle(e)) continue;
                     if (TextScan.IsPluginPath(e))
                     {
+                        // Two letters is a real name: KORG's M1 is M1.vst3 and M1.dll.
                         var name = TextScan.PluginNameFromPath(e);
-                        if (name.Length >= 3) names.Add(name);
+                        if (name.Length >= 2) found.TryAdd(Path.GetFullPath(e), new(name, TextScan.PluginFormatFromPath(e), e));
                     }
                 }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
-        return names;
+        return found.Values.ToList();
     }
+
+    static readonly string[] BundleExtensions = [".vst3", ".component", ".clap", ".vst"];
+
+    static bool InsideBundle(string path) =>
+        BundleExtensions.Any(b => path.Contains(b + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
 }
+
+/// <summary>A plugin file on this PC (or in a friend's list): its name, format and where it lives.</summary>
+public sealed record InstalledPlugin(string Name, string Format, string Path = "");

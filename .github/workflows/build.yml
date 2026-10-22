@@ -1,8 +1,17 @@
 name: Build
 
+# Each push to a pull request runs once (not again for the push itself), and a newer push stops the run it replaces.
+# The repo is public, so GitHub's runners are free for it, Mac included. If it goes private again, its minutes go
+# quickly (a Windows minute counts as two, a Mac minute as ten): keep Mac to main and by-hand runs then.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -12,5 +21,162 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: dotnet build MusicOrganiser.sln -c Release
+      # MoBuildNative: also build the plugin scanner the way Visual Studio does when you press F5.
+      - run: dotnet build MusicOrganiser.sln -c Release -p:MoBuildNative=true
       - run: dotnet test tests/MusicOrganiser.Core.Tests -c Release --no-build
+      - run: dotnet test tests/MusicOrganiser.Avalonia.Tests -c Release --no-build
+        env:
+          ALSOFT_DRIVERS: 'null'   # OpenAL Soft's silent output, so the player tests can play
+
+  # Core (readers, writers, library, Sound Lab), the shared view models and the Avalonia app
+  # must keep building, and the tests passing, on macOS and Linux.
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      # These take about 2 minutes. On macOS the runner has sometimes been lost a few minutes in, and GitHub then keeps
+      # no log, only which step was running. So the tests run in groups, one step each (.github/scripts/core-tests.sh),
+      # and the next loss names its group. A test that hangs fails after 5 minutes and is named. On macOS memory is
+      # written down every 20 seconds and shown at the end, with any program macOS stopped for lack of memory. The
+      # blame files (which tests ran, in order) are kept as a download on failure.
+      - id: build
+        run: dotnet build tests/MusicOrganiser.Core.Tests -c Release
+      - name: Watch memory
+        continue-on-error: true   # only for finding the Mac stalls; never fails the run
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          nohup bash -c 'while true; do
+            echo "--- $(date -u +%T) free $(sysctl -n kern.memorystatus_level)%"
+            vm_stat | grep -E "free|compressor|Swap" | tr -s " " | tr "\n" ";"; echo
+            ps -Ao pid,rss,%cpu,etime,comm -m | head -5
+            sleep 20
+          done' > "$RUNNER_TEMP/memory.log" 2>&1 &
+      - name: Core tests (DAW links)
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh links
+      - name: Core tests (live tests and probes)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh live
+      - name: Core tests (view models)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh viewmodels
+      - name: Core tests (sounds)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh sounds
+      - name: Core tests (the rest)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: bash
+        run: .github/scripts/core-tests.sh rest
+      - name: Memory log
+        continue-on-error: true
+        if: always() && runner.os == 'macOS'
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          cat "$RUNNER_TEMP/memory.log" || true
+          echo "--- Programs macOS stopped for lack of memory in the last 20 minutes (the kernel's own lines):"
+          sudo -n log show --last 20m --style compact \
+            --predicate 'process == "kernel" AND (eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus")' | tail -40 || true
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-results-${{ matrix.os }}
+          path: TestResults/
+          if-no-files-found: ignore
+          retention-days: 14
+      # Builds the Avalonia app too, and runs its tests without a screen (or a sound card).
+      - run: dotnet test tests/MusicOrganiser.Avalonia.Tests -c Release
+        env:
+          ALSOFT_DRIVERS: 'null'
+
+  # The DAW scripts: the Bitwig controller script, type-checked against Bitwig's API and run in a stand-in
+  # Bitwig, and the FL Studio script, run in a stand-in FL Studio. (The app's own tests above also talk to
+  # both through their stand-ins, when Node.js and Python are there.)
+  extensions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Bitwig script
+        working-directory: extensions/bitwig
+        run: |
+          npm ci
+          npm test
+      - name: FL Studio script
+        run: |
+          # FL Studio 2024 and later run Python 3.12; FL Studio 21 ran 3.9, so the script keeps to 3.9's syntax.
+          python -c "import ast, sys; ast.parse(open(sys.argv[1], encoding='utf-8').read(), feature_version=(3, 9))" extensions/fl-studio/device_MusicOrganiser.py
+          python -m unittest discover -s extensions/fl-studio/test -v
+
+  # The Bitwig extension (Java): built and tested with Maven, which gets Bitwig's API from Bitwig's own
+  # repository (maven.bitwig.com). Each run keeps MusicOrganiser.bwextension as a download.
+  bitwig-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: extensions/bitwig-java/pom.xml
+      # For ParityTest, which runs the JavaScript script beside the extension and compares their answers.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build and test
+        working-directory: extensions/bitwig-java
+        run: mvn -B package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: music-organiser-bitwig-extension
+          path: extensions/bitwig-java/target/MusicOrganiser.bwextension
+          if-no-files-found: error
+
+  # The native tools (C++): the plugin scanner and the probe plugin as CLAP, VST3 and (macOS) AU.
+  # Tested by hosting the probe and scanning it. Each run keeps the built tools as a download.
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        shell: bash
+        run: |
+          extra=""
+          if [ "$RUNNER_OS" = "macOS" ]; then extra='-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'; fi
+          cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release -DMO_PROBE_WRAPPERS=ON ${extra:+"$extra"}
+      - name: Build
+        run: cmake --build native/build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir native/build -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: music-organiser-native-${{ runner.os }}
+          path: |
+            native/build/bin/
+            native/build/plugins/

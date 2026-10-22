@@ -45,7 +45,7 @@ public static partial class BitwigFormat
         w.Inline(doc.Root);
 
         var originalZip = Convert.ToInt64(header[20..36], 16);
-        zip ??= originalZip > 0 ? doc.Raw[doc.ZipOffset..] : [];
+        zip ??= originalZip > 0 ? doc.Raw[doc.ZipOffset..doc.Length] : [];
         var bodyOffset = 42 + (int)meta.Length;
         var zipOffset = zip.Length > 0 ? bodyOffset + body.Length : 0;
 

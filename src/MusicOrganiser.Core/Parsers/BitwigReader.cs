@@ -70,21 +70,35 @@ public sealed partial class BitwigReader : IProjectReader
     /// </summary>
     public IReadOnlySet<string> KnownPlugins { get; set; } = PluginCatalog.AlwaysKnown;
 
-    static Document? TryDecode(string path, out byte[] raw)
+    static Document? TryDecode(string path) => Load(path).Doc;
+
+    static Decoded Load(string path) =>
+        ReadOnce.Get(path, p =>
+        {
+            // While the MIDI page reads song after song, into a buffer borrowed for the song: a big project is a big
+            // block of memory left behind each time otherwise, and cleaning those up pauses the window.
+            if (ReadOnce.Bytes(p, out var length) is { } borrowed)
+                return new Decoded(borrowed, length, IsBitwig(borrowed.AsSpan(0, length)) ? BitwigFormat.Decode(borrowed, length) : null);
+            var bytes = File.ReadAllBytes(p);
+            return new Decoded(bytes, bytes.Length, IsBitwig(bytes) ? BitwigFormat.Decode(bytes) : null);
+        });
+
+    sealed record Decoded(byte[] Raw, int Length, Document? Doc)
     {
-        raw = File.ReadAllBytes(path);
-        return IsBitwig(raw) ? BitwigFormat.Decode(raw) : null;
+        /// <summary>Just the file's bytes (a copy, when it was read into a longer borrowed buffer).</summary>
+        public byte[] Bytes => Length == Raw.Length ? Raw : Raw[..Length];
     }
 
     public ProjectInfo Read(string path)
     {
-        var doc = TryDecode(path, out var raw);
+        var file = Load(path);
+        var doc = file.Doc;
         var info = new ProjectInfo { Daw = Daw };
 
         if (doc?.Root is not null && doc.BodyError is null)
             ReadDecoded(doc, path, info);
         else
-            ReadByTextScan(raw, Path.GetDirectoryName(path) ?? ".", info, doc?.BodyError,
+            ReadByTextScan(file.Bytes, Path.GetDirectoryName(path) ?? ".", info, doc?.BodyError,
                            doc?.MetaList("used_files").SelectMany(CollectedNames).ToHashSet(StringComparer.OrdinalIgnoreCase));
 
         if (doc is not null)
@@ -295,7 +309,7 @@ public sealed partial class BitwigReader : IProjectReader
     /// <summary>One MIDI clip per Bitwig note clip, named after its track.</summary>
     public IReadOnlyList<MidiClip> ExtractMidi(string path)
     {
-        var doc = TryDecode(path, out _);
+        var doc = TryDecode(path);
         if (doc?.Root is null || doc.BodyError is not null) return [];
 
         var names = TrackNames(doc);
@@ -339,7 +353,7 @@ public sealed partial class BitwigReader : IProjectReader
     /// </summary>
     public IReadOnlyList<PresetBlob> ExtractPresets(string path)
     {
-        var doc = TryDecode(path, out _);
+        var doc = TryDecode(path);
         using var zip = doc?.OpenZip();
         if (doc is null || zip is null) return [];
 

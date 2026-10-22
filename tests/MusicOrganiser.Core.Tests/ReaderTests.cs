@@ -166,6 +166,53 @@ public class FlStudioTests
         Assert.Empty(a.Warnings);
         Assert.Equal(["Saved by an old FL Studio that garbled the start of its data; everything after it was read as usual."], b.Warnings);
         Assert.Single(Readers.FlStudio.ReadSong(Path.Combine(dir, "side.flp")).Channels.Single().Notes);
+
+        // Fix can relink one too, even when the junk "length" reads as a negative number.
+        new byte[] { 0x60, 0xfb, 0x12, 0x00, 0xd9, 0x4a, 0x06, 0x91 }.CopyTo(garbled, 14);
+        var (data, changed, _) = FlStudioReader.RelinkSamples(garbled, Path.Combine(dir, "side.flp"),
+            new Dictionary<string, string> { [@"C:\Samples\Kick.wav"] = @"D:\Packs\Kick 2.wav" });
+        Assert.Equal(1, changed);
+        Assert.Equal(garbled.AsSpan(0, 22).ToArray(), data.AsSpan(0, 22).ToArray());
+        File.WriteAllBytes(Path.Combine(dir, "relinked.flp"), data);
+        Assert.Equal([@"D:\Packs\Kick 2.wav"], new FlStudioReader().Read(Path.Combine(dir, "relinked.flp")).Samples);
+
+        // FL 7 keeps paths one byte a letter: a file named in letters it can't store is left as it was, and said.
+        var (same, none, cantWrite) = FlStudioReader.RelinkSamples(garbled, Path.Combine(dir, "side.flp"),
+            new Dictionary<string, string> { [@"C:\Samples\Kick.wav"] = @"D:\Łódź\Kick.wav" });
+        Assert.Equal(0, none);
+        Assert.Equal([@"D:\Łódź\Kick.wav"], cantWrite);
+        Assert.Equal(garbled, same);
+        // Western European letters it can store.
+        Assert.Equal(1, FlStudioReader.RelinkSamples(garbled, Path.Combine(dir, "side.flp"),
+            new Dictionary<string, string> { [@"C:\Samples\Kick.wav"] = @"D:\Café\Kick.wav" }).Changed);
+    }
+
+    [Fact]
+    public void Fix_relinks_an_FL_4_save_with_step_sequencer_dots()
+    {
+        // Solomon's "grimey" (FL 4, 2003): the reader turns old step sequencer dots into notes of its own, which aren't in
+        // the file, and the relink writer went backwards at them ("Offset and length were out of bounds").
+        var dir = Fixtures.TempDir();
+        var path = Path.Combine(dir, "grimey.flp");
+        var flp = new Fixtures.FlpBuilder()
+            .Ascii(199, "4.0.1").Word(66, 139).Ascii(194, "grimey")
+            .Word(64, 0).Byte(21, 0).Ascii(192, "Kick").Ascii(196, @"C:\Documents and Settings\samples\Kick.wav")
+            .Word(65, 1).Word(91, 256).Word(91, 260).Word(91, 264)
+            .Word(64, 1).Byte(21, 0).Ascii(192, "Snare").Ascii(196, @"C:\Documents and Settings\samples\Snare.wav")
+            .Word(65, 1).Word(91, 260)
+            .Build().ToArray();
+        File.WriteAllBytes(path, flp);
+
+        var (data, changed, _) = FlStudioReader.RelinkSamples(flp, path, new Dictionary<string, string>
+        {
+            [@"C:\Documents and Settings\samples\Kick.wav"] = @"J:\Recover\Older windows\samples\Kick.wav",
+            [@"C:\Documents and Settings\samples\Snare.wav"] = @"J:\S.wav",
+        });
+        Assert.Equal(2, changed);
+        File.WriteAllBytes(path, data);
+        Assert.Equal([@"J:\Recover\Older windows\samples\Kick.wav", @"J:\S.wav"], new FlStudioReader().Read(path).Samples);
+        // Everything else is as it was: the events the reader adds aren't written into the file.
+        Assert.Equal(FlStudioReader.ReadEvents(flp).Events.Select(e => e.Id), FlStudioReader.ReadEvents(data).Events.Select(e => e.Id));
     }
 
     [Fact]
@@ -338,6 +385,18 @@ public class FlStudio25Tests
         var plugins = new FlStudioReader().Read(_path).Plugins.ToDictionary(p => p.Name);
         Assert.Equal(("Xfer Records", "VST2", PluginKind.Instrument), (plugins["Serum"].Vendor, plugins["Serum"].Format, plugins["Serum"].Kind));
         Assert.Equal(("Output", "VST3"), (plugins["Arcade"].Vendor, plugins["Arcade"].Format));
+    }
+
+    [Fact]
+    public void Says_which_samples_a_save_holds_without_playing()
+    {
+        var info = new FlStudioReader().Read(Fixtures.FlStudio25Unplayed(Fixtures.TempDir(), "Beat"));
+        Assert.Equal(3, info.Samples.Count);
+        Assert.Equal([("Hat 01.wav", SampleUse.Muted), ("Kick 01.wav", SampleUse.NoNotes)],
+                     info.Unplayed.Select(u => (Path.GetFileName(u.Key.Replace('\\', '/')), u.Value)).Order());
+
+        var playing = new FlStudioReader().Read(Fixtures.FlStudio25Unplayed(Fixtures.TempDir(), "Beat", hatPlays: true));
+        Assert.Equal([SampleUse.NoNotes], playing.Unplayed.Values);
     }
 
     [Fact]
@@ -711,12 +770,12 @@ public class MidiWriterTests
 
         Assert.Equal("MThd", Encoding.ASCII.GetString(bytes, 0, 4));
         Assert.Equal(1, bytes[9]);                 // format 1
-        Assert.Equal(2, bytes[11]);                // tempo track + 1 instrument track
+        Assert.Equal(2, bytes[11]);                // the clip's name + 1 instrument track
         Assert.Equal(96, bytes[13]);               // PPQ
         var tracks = Encoding.Latin1.GetString(bytes).Split("MTrk").Length - 1;
         Assert.Equal(2, tracks);
-        // Tempo 120 bpm = 500000 µs per quarter.
-        Assert.Contains("\xFF\x51\x03\x07\xA1\x20", Encoding.Latin1.GetString(bytes));
+        // No tempo, though one was given, so a DAW doesn't ask to take it for the project.
+        Assert.DoesNotContain("\xFF\x51", Encoding.Latin1.GetString(bytes));
         // At tick 96 the first note's off must come before the second note's on.
         var s = Encoding.Latin1.GetString(bytes);
         Assert.True(s.IndexOf("\x80\x3C\x00", StringComparison.Ordinal) < s.LastIndexOf("\x90\x3C\x64", StringComparison.Ordinal));

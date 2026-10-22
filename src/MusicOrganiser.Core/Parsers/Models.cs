@@ -47,8 +47,20 @@ public sealed record PresetBlob(string Name, string Plugin, string Extension, by
     public bool Native { get; init; }
     /// <summary>Where it sits when that tells copies apart, e.g. "Insert 3 · Vocals" or "Master".</summary>
     public string Where { get; init; } = "";
+    /// <summary>FL Studio: the channel an instrument is on (its place in the channel rack, from 0).</summary>
+    public int? Channel { get; init; }
     /// <summary>A VST2's program that was selected when it was saved (FL Studio), which the host selects again after loading it.</summary>
     public int Program { get; init; }
+}
+
+/// <summary>Whether a project plays a sample it holds (see <see cref="ProjectInfo.Unplayed"/>).</summary>
+public enum SampleUse
+{
+    Plays = 0,
+    /// <summary>Its channel or track has no notes or clips.</summary>
+    NoNotes = 1,
+    /// <summary>It has notes or clips, but all of them are muted.</summary>
+    Muted = 2,
 }
 
 public sealed class ProjectInfo
@@ -64,9 +76,16 @@ public sealed class ProjectInfo
     /// <summary>External instruments the project talks to (e.g. Bitwig's HW Instrument devices).</summary>
     public List<string> Hardware { get; } = new();
     public Dictionary<string, string> Details { get; } = new();
+    /// <summary>When the project was first made, as the project file itself records it (FL Studio keeps this through every re-save).</summary>
+    public DateTime? Created { get; set; }
     public List<string> Warnings { get; } = new();
     public bool CanExtractMidi { get; set; }
     public bool CanExtractPresets { get; set; }
+    /// <summary>
+    /// Samples in <see cref="Samples"/> that this save doesn't play, and why. Only readers that can tell fill it in
+    /// (FL Studio so far); a sample not listed plays, or its reader can't say.
+    /// </summary>
+    public Dictionary<string, SampleUse> Unplayed { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public ProjectInfo Dedupe()
     {
