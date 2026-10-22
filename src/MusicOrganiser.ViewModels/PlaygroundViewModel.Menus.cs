@@ -45,10 +45,12 @@ public sealed partial class PlaygroundViewModel
         new("Track", [M("Mute", "playground.mute"), M("Solo", "playground.solo"), Sep,
                       M("Duplicate track", "playground.duplicateTrack"), M("Delete track", "playground.deleteTrack")]),
         new("Harmony", [M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"), Sep,
-                        M("Reharmonise…", "playground.reharm")]),
+                        M("Reharmonise…", "playground.reharm"), Sep, M("Chord progressions…", "playground.tabChords"),
+                        M("Put the chords heard on the chord track", "playground.keepHeardChords"), M("Clear the chord track", "playground.clearChordTrack"), Sep,
+                        M("Hear the chord track", "playground.hearChordTrack")]),
         new("View", [M("Zoom in", "playground.zoomIn"), M("Zoom out", "playground.zoomOut"), M("Zoom to fit", "playground.zoomFit"), Sep,
                      M("Loop", "playground.loop"), M("Piano roll", "playground.foldRoll"), Sep,
-                     M("Your MIDI", "playground.tabMidi"), M("Write", "playground.tabWrite"), M("Groove", "playground.tabGroove"),
+                     M("Your MIDI", "playground.tabMidi"), M("Chords", "playground.tabChords"), M("Write", "playground.tabWrite"), M("Groove", "playground.tabGroove"),
                      M("Reharm", "playground.reharm"), M("Song", "playground.tabSong")]),
         new("Help", [M("Keyboard shortcuts: see and change them…", "playground.help")]),
     ];
@@ -80,10 +82,13 @@ public sealed partial class PlaygroundViewModel
     /// <summary>Right-click on the chord lane.</summary>
     public static IReadOnlyList<PlaygroundMenuItem> ChordMenu { get; } =
     [
-        M("Reharmonise…", "playground.reharm"), Sep, M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"), Sep, Keys,
+        M("Reharmonise…", "playground.reharm"), M("Remove this chord", "playground.removeChord"), Sep,
+        M("Chord progressions…", "playground.tabChords"), M("Put the chords heard on the chord track", "playground.keepHeardChords"),
+        M("Clear the chord track", "playground.clearChordTrack"), M("Hear the chord track", "playground.hearChordTrack"), Sep,
+        M("Jazz and gospel", "playground.jazz"), M("Classical", "playground.classical"), Sep, Keys,
     ];
 
-    public const int SuggestTabIndex = 0, WriteTab = 1, ReharmTab = 3, SongTab = 4;
+    public const int SuggestTabIndex = 0, ChordsTab = 1, WriteTab = 2, GrooveTab = 3, ReharmTab = 4, SongTab = 5;
 
     /// <summary>Whether <paramref name="id"/> can be done now: menu lines that can't are greyed.</summary>
     public bool CanRun(string id)
@@ -95,6 +100,9 @@ public sealed partial class PlaygroundViewModel
             "playground.undo" => CanUndo,
             "playground.redo" => CanRedo,
             "playground.paste" => _clipboard is not null,
+            "playground.removeChord" => PickedChord is { IsSet: true },
+            "playground.clearChordTrack" => HasChordTrack,
+            "playground.keepHeardChords" => Harmony.Lane.Count > 0,
             "playground.sendToBitwig" => SendToBitwigCommand.CanExecute(null),
             "playground.fitAgain" => clip is { CanFitAgain: true },
             "playground.smooth" or "playground.copyGroove" => track is not null,
@@ -112,6 +120,7 @@ public sealed partial class PlaygroundViewModel
         "playground.jazz" => !IsClassical,
         "playground.classical" => IsClassical,
         "playground.loop" => LoopOn,
+        "playground.hearChordTrack" => HearChordTrack,
         "playground.foldRoll" => !PianoFolded,
         "playground.mute" => (SelectedClip?.Track ?? SelectedLayer)?.Layer.Muted == true,
         "playground.solo" => (SelectedClip?.Track ?? SelectedLayer)?.Layer.Solo == true,
@@ -120,7 +129,7 @@ public sealed partial class PlaygroundViewModel
 
     /// <summary>Whether a menu line has a tick box at all.</summary>
     public static bool IsToggle(string id) =>
-        id is "playground.jazz" or "playground.classical" or "playground.loop" or "playground.foldRoll" or "playground.mute" or "playground.solo";
+        id is "playground.jazz" or "playground.classical" or "playground.loop" or "playground.hearChordTrack" or "playground.foldRoll" or "playground.mute" or "playground.solo";
 
     // ---- copy and paste ----
 
@@ -199,6 +208,11 @@ public sealed partial class PlaygroundViewModel
             case "playground.classical": IsClassical = true; return true;
             case "playground.reharm": OpenReharm(); return true;
             case "playground.tabMidi": RightTab = SuggestTabIndex; return true;
+            case "playground.tabChords": RightTab = ChordsTab; return true;
+            case "playground.removeChord": RemoveChord(); return true;
+            case "playground.clearChordTrack": ClearChordTrack(); return true;
+            case "playground.keepHeardChords": KeepHeardChords(); return true;
+            case "playground.hearChordTrack": HearChordTrack = !HearChordTrack; return true;
             case "playground.tabWrite": RightTab = WriteTab; return true;
             case "playground.tabGroove": RightTab = GrooveTab; return true;
             case "playground.tabSong": RightTab = SongTab; return true;

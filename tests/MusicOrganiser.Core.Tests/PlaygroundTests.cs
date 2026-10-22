@@ -1290,7 +1290,7 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(before, Sets(chords.Notes));
     }
 
-    sealed class Headless : IPlatformUi
+    internal sealed class Headless : IPlatformUi
     {
         public IItemsView CreateView(IList items) => new ListView(items);
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
@@ -1319,7 +1319,7 @@ public class PlaygroundTests : IDisposable
 
     sealed class NoTimer : IUiTimer { public void Start() { } public void Stop() { } }
 
-    sealed class Silence : IAudioPlayer
+    internal sealed class Silence : IAudioPlayer
     {
         public event Action? Stopped { add { } remove { } }
         public string? Playing { get; private set; }

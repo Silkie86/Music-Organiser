@@ -84,6 +84,11 @@ public sealed class PlaygroundSection
     public List<PlaygroundLayer> Layers { get; set; } = [];
     /// <summary>Names over stretches of bars (Verse, Build, Drop…) and what each is for.</summary>
     public List<PlaygroundLabel> Labels { get; set; } = [];
+    /// <summary>
+    /// Chords put on the chord track with no MIDI (the Chords tab's Use, or typed by dragging blocks): where they are,
+    /// they're the harmony every part is judged and written against; elsewhere the chords are heard from the parts.
+    /// </summary>
+    public List<PlaygroundChord> ChordTrack { get; set; } = [];
 
     [JsonIgnore]
     public long Length => (long)Math.Max(1, Bars) * ChordLane.Bar;
@@ -193,6 +198,7 @@ public sealed class PlaygroundSession
                 track.Clips.Add(PlaygroundClip.Of("Chords", MidiRoles.Chords, Voicer.Plain(typed), length, at, length));
             }
             timeline.Labels.AddRange(section.Labels.Select(l => { var copy = l.Copy(); copy.Start += at; return copy; }));
+            timeline.ChordTrack.AddRange(section.ChordTrack.Select(c => { var copy = c.Copy(); copy.Start += at; return copy; }));
             if (labelled) timeline.Labels.Add(new PlaygroundLabel { Name = section.Name, Start = at, Length = length, Feel = section.Feel });
             at += length;
         }

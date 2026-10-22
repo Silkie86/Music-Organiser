@@ -44,6 +44,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         RoleChips = new[] { MidiRoles.Chords, MidiRoles.Bass, MidiRoles.Melody, MidiRoles.Arp, MidiRoles.Drums }
             .Select(r => new RoleChip(MidiRoles.Plural(r), r)).ToList();
         _suggestRole = RoleChips[0];
+        // More MIDI read (a folder or project added, or the list read again): the progressions are found again.
+        if (!quick) main.Midi.Read += (_, _) => _ = RefreshProgressionsAsync();
         Show();
         _wasEmpty = IsEmpty;   // nothing looked up while being made: Opened does that
     }
@@ -146,11 +148,17 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var key = h.Key;
         var funcs = key is { } k ? ChordFunctions.Analyse(h.Lane.Select(c => c.Chord).ToList(), k.Tonic, k.Minor) : null;
         for (var i = 0; i < h.Lane.Count; i++)
-            Chords.Add(new ChordCell(h.Lane[i], funcs?[i], h.Length));
+        {
+            var c = h.Lane[i];
+            Chords.Add(new ChordCell(c, funcs?[i], h.Length, Section.ChordTrack.Any(t => t.Start <= c.Start && t.End >= c.End)));
+        }
         KeySummary = key is null ? "Key: not sure yet" : $"Key: {key.Name}{(h.KeyTyped ? "" : " (heard)")}";
         KeyHint = key is null ? "Key" : key.Name;
-        ChordSummary = h.Lane.Count == 0 ? "No chords yet: add a chord or bass part"
+        ChordSummary = h.Lane.Count == 0 ? "No chords yet: use a progression on the Chords tab, or add a chord or bass part"
+            : HasChordTrack ? "Chords from the chord track, and heard from the parts where it has none"
             : "Chords heard live from the chord and bass parts (everything playing, where there are none)";
+        OnPropertyChanged(nameof(HasChordTrack));
+        if (_progressionsKey != key?.Name) ShowProgressions();
         foreach (var row in Layers) row.GuideChanged();
         SelectedClip?.GuideChanged();
         RefreshIdeas();
@@ -203,6 +211,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         SnapGrid = _db.GetSetting(SnapGridKey) != "0";
         SnapRelative = _db.GetSetting(SnapRelativeKey) != "0";
         SnapObjects = _db.GetSetting(SnapObjectsKey) != "0";
+        HearChordTrack = _db.GetSetting(HearChordTrackKey) != "0";
         NoteLabelPick = NoteLabelChoices.Contains(_db.GetSetting(NoteLabelsKey) ?? "") ? _db.GetSetting(NoteLabelsKey)! : "Off";
         NoteColourPick = NoteColourChoices.Contains(_db.GetSetting(NoteColoursKey) ?? "") ? _db.GetSetting(NoteColoursKey)! : ByFit;
         double Size(string key, double fallback, double min, double max) =>
@@ -1452,9 +1461,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Message = $"Copying from {row.Title}. Pick how much on the Groove tab, then Copy the groove.";
     }
 
-    /// <summary>The tab showing on the right: Suggest, Write, Groove, Reharm, Song.</summary>
+    /// <summary>The tab showing on the right: Suggest, Chords, Write, Groove, Reharm, Song.</summary>
     [ObservableProperty] int _rightTab;
-    const int GrooveTab = 2;
 
     // ---- smooth inversions ----
 
@@ -1593,6 +1601,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     public void Opened()
     {
         _ = LearnThenRefreshAsync();
+        _ = RefreshProgressionsAsync(load: true);
         if (IsEmpty) Midi.Opened();   // its list shows here
         else if (Matches.Count == 0 && !IsMatching) _ = FindMatchesAsync();
     }
@@ -1605,22 +1614,23 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         var request = ++_nextRequest;
         NextChords.Clear();
-        var lane = Harmony.Lane;
+        // After the chord track's last chord when it has some: that's where a chord added goes.
+        var lane = HasChordTrack ? Section.ChordTrack.OrderBy(c => c.Start).Select(c => c.Timed).ToList() : Harmony.Lane;
         if (lane.Count == 0) { NextChordsText = ""; return; }
         await ModelAsync();
         if (_model is null || request != _nextRequest) return;   // the chords changed while it learned; the newer call shows its own
         var last = lane[^1].Chord;
         ChordSymbol? before = lane.Count > 1 ? lane[^2].Chord : null;
         NextChords.Clear();
-        foreach (var (chord, share) in _model.Next(last, before)) NextChords.Add(new NextChordRow(this, chord, share));
-        NextChordsText = _model.Learned == 0 ? "" : $"After {last.Name}, in your {_model.Learned:N0} chord parts (other songs):";
+        foreach (var (chord, share) in _model.Next(last, before)) NextChords.Add(new NextChordRow(this, chord, share, Harmony.Key));
+        NextChordsText = _model.Learned == 0 ? "" : $"After {last.NameIn(Harmony.Key)}, in your {_model.Learned:N0} chord parts (other songs):";
     }
 
     internal void ApplyIdea(Reharm idea)
     {
         if (RangeOf(idea) is not { } range) return;
         Remember();
-        if (Rechord(Section, idea.Lane, range.From, range.To)) ShowSection();   // a new chord track to show
+        if (SetChords(Section, idea.Lane, range.From, range.To)) ShowSection();   // a new chord part's track to show
         Changed();
         Message = idea.Whole ? $"{idea.Title}: {idea.After}, on a Chords track under {idea.Before}. Undo takes it back."
                              : $"{idea.Title}: {idea.Before} → {idea.After}, played by the chord parts there. Undo takes it back.";
@@ -1654,6 +1664,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// <summary>The chord goes on the end as a new bar, played by the chord parts that reach the end.</summary>
     internal void AddNextChord(ChordSymbol chord)
     {
+        if (HasChordTrack) { AddToChordTrack(chord); return; }
         if (Section.Bars >= MaxBars) { Message = $"The timeline is full ({MaxBars} bars)."; return; }
         Remember();
         var end = Section.Length;
@@ -1895,6 +1906,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             {
                 Message = $"{songName} has no notes from bar {FromBar} for {length / Bar} bars.";
                 return false;
+            }
+            if (SongChordsOnly)
+            {
+                PutSongChords(parts, start, length, songName);
+                return true;
             }
             Remember();
             foreach (var (name, role, notes) in parts) AddLayer(name, role, notes, path, start: start, length: length);
@@ -2377,8 +2393,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     List<MidiChannel> ChannelsToPlay(out long length)
     {
-        length = PlayedTo(Section.Layers.SelectMany(l => l.Clips).Select(c => c.End).DefaultIfEmpty(0).Max());
+        length = PlayedTo(Section.Layers.SelectMany(l => l.Clips).Select(c => c.End).Concat(Section.ChordTrack.Select(c => c.End)).DefaultIfEmpty(0).Max());
         var channels = PlaygroundSession.Audible(Section).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume)).ToList();
+        if (ChordTrackChannel(Section) is { } chords) channels.Add(chords);
         return Looped(channels, ref length);
     }
 
@@ -2519,7 +2536,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (row.IsPlaying) { StopPlaying(); return; }
         StopPlaying();
         var tried = PlaygroundSession.FromJson(_session.ToJson())!.Timeline;
-        if (RangeOf(row.Idea) is { } range) Rechord(tried, row.Idea.Lane, range.From, range.To);
+        if (RangeOf(row.Idea) is { } range) SetChords(tried, row.Idea.Lane, range.From, range.To);
         // What plays then (soloed parts only, when any are), with the written parts playing the idea's chords.
         var channels = new List<MidiChannel>();
         foreach (var l in PlaygroundSession.Audible(tried))
@@ -2532,11 +2549,13 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             }).ToList();
             channels.Add(Channel(l.Name, l.Program, notes, l.Volume));
         }
+        if (ChordTrackChannel(tried) is { } chords) channels.Add(chords);
         row.IsPlaying = await PlayAsync(instead: channels);
     }
 
     IEnumerable<MidiChannel> ChannelsOf(PlaygroundSection section) =>
-        PlaygroundSession.Audible(section).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume));
+        PlaygroundSession.Audible(section).Select(l => Channel(l.Name, l.Program, l.Notes, l.Volume))
+                         .Concat(ChordTrackChannel(section) is { } chords ? [chords] : []);
 
     // ---- out to the DAW ----
 
@@ -3051,8 +3070,10 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
 }
 
 /// <summary>One chord on the chord lane: its name, Roman numeral and what it's doing, as wide as it lasts.</summary>
-public sealed class ChordCell(TimedChord chord, ChordFunction? function, long length)
+public sealed class ChordCell(TimedChord chord, ChordFunction? function, long length, bool set = false)
 {
+    /// <summary>On the chord track (no MIDI of its own): it can be stretched and moved. Otherwise heard from the parts.</summary>
+    public bool IsSet => set;
     public string Name => chord.Chord.Name;
     /// <summary>The name in parts, so a narrow chord can be written shorter (<see cref="ChordSymbol.ShortQuality"/>).</summary>
     public string RootName => chord.Chord.RootName;
@@ -3066,7 +3087,8 @@ public sealed class ChordCell(TimedChord chord, ChordFunction? function, long le
     public string Kind => function is { Kind: not ' ' } f ? f.Kind.ToString() : "";
     public double Start => chord.Start / (double)Math.Max(1, length);
     public double Share => chord.Length / (double)Math.Max(1, length);
-    public string Tip => $"{Name}{(Roman.Length > 0 ? $"  ({Roman})" : "")}{(Label.Length > 0 ? $": {Label}" : "")}";
+    public string Tip => $"{Name}{(Roman.Length > 0 ? $"  ({Roman})" : "")}{(Label.Length > 0 ? $": {Label}" : "")}" +
+                         (set ? "\nOn the chord track: drag an edge to stretch it, the middle to move it" : "\nHeard from the parts");
     public TimedChord Timed => chord;
     public int Bar => (int)(chord.Start / (4 * PhraseAnalyser.Ppq)) + 1;
 }
@@ -3116,9 +3138,9 @@ public sealed partial class ReharmRow(PlaygroundViewModel owner, Reharm idea) : 
 }
 
 /// <summary>A chord your library often plays next.</summary>
-public sealed partial class NextChordRow(PlaygroundViewModel owner, ChordSymbol chord, double share)
+public sealed partial class NextChordRow(PlaygroundViewModel owner, ChordSymbol chord, double share, KeyEstimate? key = null)
 {
-    public string Name => chord.Name;
+    public string Name => chord.NameIn(key);
     public string ShareText => $"{share * 100:0}%";
     [RelayCommand] void Add() => owner.AddNextChord(chord);
 }

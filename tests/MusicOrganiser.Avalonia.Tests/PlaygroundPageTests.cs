@@ -169,7 +169,7 @@ public sealed class PlaygroundPageTests : IDisposable
         p.WriteChordsCommand.Execute(null);
         var track = p.Layers.Single(l => !l.IsWritten).Layer;   // the chords themselves: a written part follows them, so isn't swapped
         p.SelectClipCommand.Execute(new ClipPick(track, track.Clips[0]));
-        p.RightTab = 2;
+        p.RightTab = PlaygroundViewModel.GrooveTab;
         var window = new Window { Content = new PlaygroundView { DataContext = p }, Width = 1400, Height = 900 };
         window.Show();
         Settle();

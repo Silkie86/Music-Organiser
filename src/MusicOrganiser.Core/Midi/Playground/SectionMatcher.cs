@@ -55,6 +55,7 @@ public sealed class SectionHarmony
             lane = ChordReader.Read(source.Where(n => n.Start < length).ToList(), length, cuts);
             typed = false;
         }
+        if (section.ChordTrack.Count > 0) lane = Overlay(lane, section.ChordTrack.Select(c => c.Timed), length);
 
         KeyEstimate? key = null;
         var keyTyped = false;
@@ -87,6 +88,29 @@ public sealed class SectionHarmony
             Hashes = section.Layers.Select(l => l.SourceHash).Concat(section.Layers.SelectMany(l => l.Clips).Select(c => c.SourceHash))
                                 .Where(h => h.Length > 0).ToHashSet(),
         };
+    }
+
+    /// <summary>
+    /// The chord track laid over the chords heard (or typed): where a set chord plays it's the chord, and a heard chord it
+    /// overlaps is cut back to the stretches the track leaves free. In time order; nothing past the section's end.
+    /// </summary>
+    public static List<TimedChord> Overlay(IReadOnlyList<TimedChord> heard, IEnumerable<TimedChord> set, long length)
+    {
+        var track = set.Where(c => c.Length > 0 && c.Start < length)
+                       .Select(c => c with { Length = Math.Min(c.Length, length - c.Start) })
+                       .OrderBy(c => c.Start).ToList();
+        var lane = new List<TimedChord>(track);
+        foreach (var c in heard)
+        {
+            // What's left of the heard chord once every set chord over it is taken out.
+            var pieces = new List<(long Start, long End)> { (c.Start, c.End) };
+            foreach (var t in track)
+                pieces = pieces.SelectMany(p => t.End <= p.Start || t.Start >= p.End
+                    ? [p]
+                    : new[] { (p.Start, Math.Min(p.End, t.Start)), (Math.Max(p.Start, t.End), p.End) }.Where(q => q.Item2 > q.Item1)).ToList();
+            lane.AddRange(pieces.Select(p => c with { Start = p.Start, Length = p.End - p.Start }));
+        }
+        return lane.OrderBy(c => c.Start).ToList();
     }
 
     /// <summary>

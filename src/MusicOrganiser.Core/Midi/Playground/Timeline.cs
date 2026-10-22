@@ -117,6 +117,37 @@ public sealed class PlaygroundLabel
 }
 
 /// <summary>
+/// One chord on the chord track (Solomon, 2026-10-22: "extract chord progressions from your chord library so it will go
+/// on the chord track but not place any MIDI"): a chord and when it plays, with no notes of its own. Where the track has
+/// chords they're the harmony; everywhere else the chords are heard from the parts.
+/// </summary>
+public sealed class PlaygroundChord
+{
+    public long Start { get; set; }
+    public long Length { get; set; } = ChordLane.Bar;
+    public int Root { get; set; }
+    /// <summary>Every note in the chord, a 12-bit set (bit 0 = C), as <see cref="ChordSymbol.Mask"/>.</summary>
+    public int Mask { get; set; }
+    public int Bass { get; set; }
+    public ChordFamily Family { get; set; }
+
+    [JsonIgnore] public long End => Start + Length;
+
+    [JsonIgnore]
+    public ChordSymbol Chord
+    {
+        get => new(Root, Mask, Bass, Family);
+        set { Root = value.Root; Mask = value.Mask; Bass = value.Bass; Family = value.Family; }
+    }
+
+    [JsonIgnore] public TimedChord Timed => new(Start, Length, Chord);
+
+    public static PlaygroundChord Of(TimedChord c) => new() { Start = c.Start, Length = c.Length, Chord = c.Chord };
+
+    public PlaygroundChord Copy() => (PlaygroundChord)MemberwiseClone();
+}
+
+/// <summary>
 /// Shift to fit (Solomon, 2026-10-19: "a clip moved to new chords transposes itself to the best fit"): how far to move
 /// a clip so it sits best on the chords under it, judged go round by go round with the same chord-scale ear as the
 /// red clash marks.

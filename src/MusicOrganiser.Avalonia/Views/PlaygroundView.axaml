@@ -247,8 +247,9 @@
                 <StackPanel Spacing="2" Margin="6,6,6,6">
                     <Panel>
                     <TextBlock Text="Chords" Classes="laneName" Margin="12,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent"
-                               ToolTip.Tip="Chords are heard, never typed: from the chord and bass parts where there are some, from everything playing where there aren't. Green: home. Red: pulling home. Faint: moving away. Click one to change it (Reharm)." />
+                               ToolTip.Tip="The chords. Tinted ones are on the chord track (from the Chords tab, no MIDI): drag an edge to stretch one, the middle to move it, everything follows. The rest are heard from the chord and bass parts (everything playing where there are none). Green: home. Red: pulling home. Click one to change it (Reharm)." />
                     <views:ChordLaneView Height="28" ContextRequested="OnChordMenu" Items="{Binding Chords}" PickCommand="{Binding PickChordCommand}"
+                                         DragCommand="{Binding DragChordCommand}" Grid="{Binding Grid}" SnapGrid="{Binding SnapGrid}"
                                          Picked="{Binding PickedChord}" Proposed="{Binding ProposedChords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
                                          ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}" />
                     </Panel>
@@ -519,6 +520,67 @@
                         </Panel>
                     </TabItem>
 
+                    <!-- Chords first (Solomon, 2026-10-22): progressions from every chord part read, put on the chord track with no MIDI,
+                         and what usually comes next after the chord track's last chord. -->
+                    <TabItem Header="Chords" FontSize="14" ToolTip.Tip="Chord progressions from your own chord parts, to put on the chord track (no MIDI)">
+                        <Grid RowDefinitions="Auto,Auto,Auto,*">
+                            <StackPanel Spacing="4" Margin="0,0,0,8" IsVisible="{Binding NextChords.Count}">
+                                <TextBlock Text="{Binding NextChordsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                                <ItemsControl ItemsSource="{Binding NextChords}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:NextChordRow">
+                                            <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}"
+                                                    ToolTip.Tip="Add it after the last chord, a bar long (on the chord track when it has chords)">
+                                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding ShareText}" Classes="small" />
+                                                </StackPanel>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                            <DockPanel Grid.Row="1">
+                                <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.ProgressionBarChoices}" SelectedItem="{Binding ProgressionBars}"
+                                          Width="118" FontSize="12" Margin="6,0,0,0" ToolTip.Tip="How long one go round of the progression lasts" />
+                                <TextBox Text="{Binding ProgressionSearch}" PlaceholderText="Chords or numerals: Dm7, ii V, minor" Classes="clearButton" />
+                            </DockPanel>
+                            <DockPanel Grid.Row="2" Margin="0,6">
+                                <ToggleButton DockPanel.Dock="Right" Content="Hear" Classes="tiny" IsChecked="{Binding HearChordTrack}" Margin="6,0,0,0" VerticalAlignment="Top"
+                                              ToolTip.Tip="Hear the chord track's chords, played plainly, with the idea. They're never sent to the DAW." />
+                                <TextBlock Text="{Binding ProgressionsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                            </DockPanel>
+                            <ListBox Grid.Row="3" ItemsSource="{Binding Progressions}" Background="Transparent" Classes="longList"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ProgressionRow">
+                                        <Border Classes="tryCard" Classes.playing="{Binding IsPlaying}" ToolTip.Tip="{Binding Tip}">
+                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                                <Button Classes="tiny" Command="{Binding PlayCommand}" Width="26" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                        ToolTip.Tip="Hear it, moved into the idea's key">
+                                                    <TextBlock Text="{Binding PlayText}" />
+                                                </Button>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Names}" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Romans}" Classes="small" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="8,0">
+                                                    <TextBlock Text="{Binding SongsText}" Classes="small" HorizontalAlignment="Right" />
+                                                    <TextBlock Text="{Binding BarsText}" Classes="small" HorizontalAlignment="Right" />
+                                                </StackPanel>
+                                                <Button Grid.Column="3" Content="Use" Classes="tiny accent" Command="{Binding UseCommand}" VerticalAlignment="Center"
+                                                        ToolTip.Tip="Put these chords on the chord track, with no MIDI: over the highlight, else after its last chord (from bar 1 when it's empty)" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </TabItem>
+
                     <TabItem Header="Write" FontSize="14">
                         <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                             <StackPanel Spacing="8">
@@ -704,6 +766,8 @@
                                 <TextBlock Text="From bar" Classes="label" />
                                 <NumericUpDown Value="{Binding FromBar}" Minimum="1" Maximum="999" Increment="1" FormatString="0" Width="110" />
                             </StackPanel>
+                            <CheckBox Content="Chords only" IsChecked="{Binding SongChordsOnly}"
+                                      ToolTip.Tip="Bring in just the song's chords, onto the chord track, with none of its parts" />
                             <TextBox Text="{Binding SongSearch}" PlaceholderText="Search your songs" Classes="clearButton" />
                             <ItemsControl ItemsSource="{Binding SongChoices}">
                                 <ItemsControl.ItemTemplate>
