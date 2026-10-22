@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using MusicOrganiser.Core.Midi;
+using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.ViewModels;
 
@@ -73,9 +74,22 @@ public sealed class PianoRollEditor : Control
     public NoteLabelKind NoteLabels { get => GetValue(NoteLabelsProperty); set => SetValue(NoteLabelsProperty, value); }
     public Func<NoteEvent, string?>? DegreeOf { get => GetValue(DegreeOfProperty); set => SetValue(DegreeOfProperty, value); }
 
+    /// <summary>
+    /// When set, how strongly a note (placed at its time on the roll) fits the chord under it: the notes are coloured by
+    /// it, brightest for the strongest and red where it fights, and so is the note a click would put down.
+    /// </summary>
+    public static readonly StyledProperty<Func<NoteEvent, FitStrength?>?> StrengthOfProperty =
+        AvaloniaProperty.Register<PianoRollEditor, Func<NoteEvent, FitStrength?>?>(nameof(StrengthOf));
+    /// <summary>The chords under the roll, each with how strongly each note fits it: the rows of the strongest notes are lit faintly behind.</summary>
+    public static readonly StyledProperty<IReadOnlyList<FitSpan>?> FitGuideProperty =
+        AvaloniaProperty.Register<PianoRollEditor, IReadOnlyList<FitSpan>?>(nameof(FitGuide));
+    public Func<NoteEvent, FitStrength?>? StrengthOf { get => GetValue(StrengthOfProperty); set => SetValue(StrengthOfProperty, value); }
+    public IReadOnlyList<FitSpan>? FitGuide { get => GetValue(FitGuideProperty); set => SetValue(FitGuideProperty, value); }
+
     static PianoRollEditor() =>
         AffectsRender<PianoRollEditor>(NotesProperty, GuideProperty, PeriodProperty, LengthProperty, PositionProperty,
-                                       PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty, NoteLabelsProperty, DegreeOfProperty);
+                                       PartStartProperty, PartEndProperty, SectionProperty, ClashTestProperty, NoteLabelsProperty, DegreeOfProperty,
+                                       StrengthOfProperty, FitGuideProperty);
 
     public Func<NoteEvent, bool>? ClashTest { get => GetValue(ClashTestProperty); set => SetValue(ClashTestProperty, value); }
 
@@ -279,6 +293,8 @@ public sealed class PianoRollEditor : Control
         if (point.IsRightButtonPressed || (e.ClickCount == 2 && hit >= 0))
         {
             if (hit >= 0) Commit(Current.Where((_, i) => i != hit).ToList());
+            // Off the notes, a right-click lets go of the picked bars, as it does on the bar numbers and the timeline.
+            else if (point.IsRightButtonPressed && Section is not null && SectionCommand?.CanExecute(null) == true) SectionCommand.Execute(null);
             e.Handled = true;
             return;
         }
@@ -467,6 +483,27 @@ public sealed class PianoRollEditor : Control
 
     IBrush Res(string key, IBrush fallback) => this.TryFindResource(key, ActualThemeVariant, out var v) && v is IBrush b ? b : fallback;
 
+    /// <summary>
+    /// The colours notes take by how strongly they fit, weakest first (by <see cref="FitStrength"/>): a colour each, far
+    /// enough apart to tell at a glance (2026-10-21: shades of the theme's accent were too alike). Green for the strongest,
+    /// blue for strong, violet for the tensions that colour a chord, grey for weak and the theme's red where a note fights
+    /// the chord. The same in every theme, like traffic lights. <see cref="FitLegend"/> uses them too.
+    /// </summary>
+    internal static IBrush[] FitBrushes(Control c)
+    {
+        var fights = c.TryFindResource("MissingBrush", c.ActualThemeVariant, out var v) && v is ISolidColorBrush b ? b.Color : Color.FromRgb(0xF0, 0x61, 0x6D);
+        // Made again only when the theme's red changes, not on every repaint.
+        if (_fit is not { } fit || fit.Fights != fights) _fit = fit = (fights, [new SolidColorBrush(fights), Weak, ColourBrush, Strong, Strongest]);
+        return fit.Brushes;
+    }
+
+    static (Color Fights, IBrush[] Brushes)? _fit;
+
+    static readonly IBrush Strongest = new SolidColorBrush(Color.FromRgb(0x4A, 0xD0, 0x8A)),
+                           Strong = new SolidColorBrush(Color.FromRgb(0x5C, 0xA4, 0xF5)),
+                           ColourBrush = new SolidColorBrush(Color.FromRgb(0xB5, 0x8C, 0xF5)),
+                           Weak = new SolidColorBrush(Color.FromRgb(0x8C, 0x8C, 0x8C));
+
     static readonly bool[] Black = [false, true, false, true, false, false, true, false, true, false, true, false];
 
     public override void Render(DrawingContext dc)
@@ -505,6 +542,19 @@ public sealed class PianoRollEditor : Control
 
         // Everything from here on stays right of the keyboard, however far it's zoomed and moved along.
         using var noteArea = dc.PushClip(new Rect(Keys, 0, w - Keys, h));
+
+        // Under the chord the pointer is over, the rows of its strongest notes lit faintly (Solomon, 2026-10-20: "a system to
+        // visually tell which notes are the strongest fit"), so it shows where a note would go best. Only there, so the roll
+        // stays clean (2026-10-21: lit under every chord, the stripes looked "quite messy").
+        var fit = StrengthOf is null ? null : FitBrushes(this);
+        if (fit is not null && FitGuide is { } spans && _working is null && _hover is { } over
+            && spans.FirstOrDefault(s => over.Tick >= s.Start && over.Tick < s.Start + s.Length) is { } span)
+        {
+            double a = Math.Max(Keys, X(span.Start)), b = Math.Min(w, X(span.Start + span.Length));
+            for (var k = low; k <= high; k++)
+                if (span.Strengths[k % 12] == FitStrength.Strongest)
+                    using (dc.PushOpacity(0.14)) dc.FillRectangle(fit[(int)FitStrength.Strongest], new Rect(a, Y(k, low, high), b - a, rowH));
+        }
 
         // Beats and bars, and the bar numbers along the top.
         var shown = Shown;
@@ -551,7 +601,7 @@ public sealed class PianoRollEditor : Control
             foreach (var n in guide)
                 Note(dc, muted, null, n.Start, n.Length, n.Key, low, high);
 
-        // The part: its own go full strength, repeats faint; red where it rubs a semitone against the guide.
+        // The part: its own go full strength, repeats faint; red where it rubs a half step above the guide.
         var notes = Current;
         for (long from = From; from < To; from += loop)
         {
@@ -560,16 +610,22 @@ public sealed class PianoRollEditor : Control
             {
                 var n = notes[i];
                 if (from + n.Start >= To) continue;
-                var rubs = ClashTest is { } test ? test(n with { Start = from + n.Start }) : Rubs(n, from, guide);
+                var strength = fit is null ? null : StrengthOf!(n with { Start = from + n.Start });
+                var rubs = strength is null && (ClashTest is { } test ? test(n with { Start = from + n.Start }) : Rubs(n, from, guide));
                 var picked = _working is not null && i == _index;
-                Note(dc, rubs ? clash : accent, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high,
+                var fill = strength is { } s ? fit![(int)s] : rubs ? clash : accent;
+                Note(dc, fill, picked ? new Pen(text, 1.5) : null, from + n.Start, Math.Min(n.Length, To - from - n.Start), n.Key, low, high,
                      LabelOf(n, from + n.Start));
             }
         }
 
         // Where a click would put a note.
         if (_working is null && _hover is { } hov)
-            using (dc.PushOpacity(0.25)) Note(dc, accent, null, hov.Tick, _lastLength, hov.Key, low, high);
+        {
+            // Coloured by how well it would fit there, when the notes are.
+            var would = fit is null ? null : StrengthOf!(new NoteEvent(hov.Tick, _lastLength, hov.Key, _lastVelocity));
+            using (dc.PushOpacity(would is null ? 0.25 : 0.55)) Note(dc, would is { } s ? fit![(int)s] : accent, null, hov.Tick, _lastLength, hov.Key, low, high);
+        }
 
         if (Position >= 0)
         {
@@ -599,9 +655,22 @@ public sealed class PianoRollEditor : Control
         _ => null,
     };
 
-    /// <summary>A semitone (or a major seventh) from a guide note that sounds at the same time.</summary>
-    static bool Rubs(NoteEvent n, long from, IReadOnlyList<NoteEvent> guide) =>
-        HarmonyMatcher.Rubs(from + n.Start, n.Length, n.Key, guide);
+    IReadOnlyList<NoteEvent>? _laneOf;
+    List<TimedChord> _lane = [];
+
+    /// <summary>
+    /// A half step above a guide note that sounds at the same time, and not a note of the chord the guide plays then
+    /// (the chords are worked out once per guide).
+    /// </summary>
+    bool Rubs(NoteEvent n, long from, IReadOnlyList<NoteEvent> guide)
+    {
+        if (!ReferenceEquals(guide, _laneOf))
+        {
+            _laneOf = guide;
+            _lane = guide.Count == 0 ? [] : ChordLane.Detect(guide, guide.Max(g => g.Start + g.Length));
+        }
+        return HarmonyMatcher.Rubs(from + n.Start, n.Length, n.Key, guide, _lane);
+    }
 
     protected override void OnKeyDown(KeyEventArgs e)
     {

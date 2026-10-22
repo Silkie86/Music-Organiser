@@ -2,8 +2,8 @@ namespace MusicOrganiser.Core.Sounds;
 
 public sealed record KeyEstimate(int Tonic, bool Minor, double Confidence)
 {
-    public string Name => MusicTheory.NoteNames[Tonic] + (Minor ? " minor" : " major");
-    public string Short => MusicTheory.NoteNames[Tonic] + (Minor ? "m" : "");
+    public string Name => MusicTheory.KeyName(Tonic, Minor);
+    public string Short => MusicTheory.KeyName(Tonic, Minor, true);
     public string Camelot => MusicTheory.Camelot(Tonic, Minor);
 }
 
@@ -13,6 +13,17 @@ public sealed record ChordSpan(double Start, double End, string Name);
 public static class MusicTheory
 {
     public static readonly string[] NoteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+    // How keys are written: flat keys with flats (Eb major, Bb minor), as charts and pack names write them.
+    static readonly string[] MajorKeyNames = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+    static readonly string[] MinorKeyNames = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"];
+
+    /// <summary>A key's name, such as "Eb major" or, short, "Ebm".</summary>
+    public static string KeyName(int tonic, bool minor, bool brief = false)
+    {
+        var note = (minor ? MinorKeyNames : MajorKeyNames)[((tonic % 12) + 12) % 12];
+        return brief ? note + (minor ? "m" : "") : note + (minor ? " minor" : " major");
+    }
 
     public static string NoteName(int midi) => NoteNames[((midi % 12) + 12) % 12] + (midi / 12 - 1);
 
@@ -34,19 +45,48 @@ public static class MusicTheory
         return (((idx % 12) + 12) % 12, minor);
     }
 
-    // Krumhansl–Kessler key profiles.
+    // Krumhansl–Kessler key profiles, from listeners rating how well each note fits a key. Audio samples use these.
     static readonly double[] MajorProfile = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
     static readonly double[] MinorProfile = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 
+    // How long each note sounds in real songs, tonic first: the average of 335 pop songs (POP909) and 95 gospel, jazz,
+    // neo soul and soul construction kits, counted by tools/MusicOrganiser.TheoryBench (--keylab). On 8-bar clips of the
+    // pop songs this finds the key 79% of the time where the profiles above get 66%, measured on the songs it was
+    // learned from (in-sample, so a little flattering). The minor one leans on the b7, as soul and gospel minor does.
+    static readonly double[] MidiMajorProfile = [17.91, 1.30, 12.96, 2.03, 14.03, 8.23, 1.84, 17.60, 1.96, 12.91, 2.72, 6.50];
+    static readonly double[] MidiMinorProfile = [20.41, 1.69, 7.63, 13.60, 1.69, 12.15, 1.50, 17.53, 6.78, 2.45, 12.13, 2.46];
+
+    /// <summary>
+    /// Below this a key from MIDI notes (<see cref="EstimateMidiKey"/>) is a guess: the MIDI page doesn't show it and a
+    /// Playground section has no key.
+    /// </summary>
+    public const double SureMidiKey = 0.05;
+
+    /// <summary>A major key and its relative minor this close in fit are a toss-up the first chord may settle.</summary>
+    const double TossUp = 0.05;
+
     /// <summary>Best-matching key for a 12-bin chroma vector, with a 0..1 confidence.</summary>
-    public static KeyEstimate? EstimateKey(double[] chroma)
+    public static KeyEstimate? EstimateKey(double[] chroma) => Estimate(chroma, MajorProfile, MinorProfile, null);
+
+    /// <summary>
+    /// The key of MIDI notes (a part, a song, a section) from how long each note sounds. When the relative major or
+    /// minor fits almost as well and the music starts on its chord (Cm – Ab – Eb – Bb), it's that one: its tonic chord,
+    /// minor for a minor key and major for a major one. A C major tune opening on A7 (gospel and jazz do) stays in C.
+    /// </summary>
+    public static KeyEstimate? EstimateMidiKey(double[] chroma, (int Root, bool Minor)? firstChord = null) =>
+        Estimate(chroma, MidiMajorProfile, MidiMinorProfile, firstChord);
+
+    /// <summary>Whether a chord (as a pitch-class mask) is a minor one for <see cref="EstimateMidiKey"/>: a minor 3rd and no major one.</summary>
+    public static bool IsMinorChord(int root, int mask) => (mask >> (root + 3) % 12 & 1) != 0 && (mask >> (root + 4) % 12 & 1) == 0;
+
+    static KeyEstimate? Estimate(double[] chroma, double[] major, double[] minor, (int Root, bool Minor)? firstChord)
     {
         if (chroma.Sum() <= 1e-9) return null;
         var scores = new List<(int Tonic, bool Minor, double R)>();
         for (var t = 0; t < 12; t++)
         {
-            scores.Add((t, false, Correlate(chroma, MajorProfile, t)));
-            scores.Add((t, true, Correlate(chroma, MinorProfile, t)));
+            scores.Add((t, false, Correlate(chroma, major, t)));
+            scores.Add((t, true, Correlate(chroma, minor, t)));
         }
         scores.Sort((a, b) => b.R.CompareTo(a.R));
         var best = scores[0];
@@ -55,6 +95,8 @@ public static class MusicTheory
         var relative = best.Minor ? ((best.Tonic + 3) % 12, false) : ((best.Tonic + 9) % 12, true);
         var runner = scores.Skip(1).First(s => (s.Tonic, s.Minor) != relative);
         var conf = Math.Clamp(best.R, 0, 1) * Math.Clamp((best.R - runner.R) * 5, 0, 1);
+        if (firstChord is { } first && first.Root == relative.Item1 && first.Minor == relative.Item2 && best.R - scores.First(s => (s.Tonic, s.Minor) == relative).R <= TossUp)
+            return new KeyEstimate(relative.Item1, relative.Item2, Math.Round(conf, 3));
         return new KeyEstimate(best.Tonic, best.Minor, Math.Round(conf, 3));
     }
 

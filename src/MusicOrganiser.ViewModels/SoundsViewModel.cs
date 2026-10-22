@@ -30,7 +30,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     public DuplicatesViewModel Duplicates { get; }
 
     public static IReadOnlyList<string> AllTypes { get; } = [.. SoundTypes.All, SoundTypes.Unknown];
-    public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. MusicTheory.NoteNames.Select(n => n), .. MusicTheory.NoteNames.Select(n => n + "m")];
+    public static IReadOnlyList<string> KeyChoices { get; } = ["Any key", .. Enumerable.Range(0, 12).Select(t => MusicTheory.KeyName(t, false, true)), .. Enumerable.Range(0, 12).Select(t => MusicTheory.KeyName(t, true, true))];
 
     [ObservableProperty] IReadOnlyList<Sound> _items = [];
     [ObservableProperty] IItemsView? _view;
@@ -797,7 +797,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         FindSimilar(value);
         SelectedTypeLabel = value?.Type ?? "";
         KeyDetail = value?.Analysis is { KeyTonic: { } t } a
-            ? $"{MusicTheory.NoteNames[t]} {(a.KeyMinor ? "minor" : "major")} · Camelot {MusicTheory.Camelot(t, a.KeyMinor)} · {a.KeySource}" +
+            ? $"{MusicTheory.KeyName(t, a.KeyMinor)} · Camelot {MusicTheory.Camelot(t, a.KeyMinor)} · {a.KeySource}" +
               (a.KeySource == "detected" ? $" ({a.KeyConfidence:P0} sure)" : "")
             : "";
     }
