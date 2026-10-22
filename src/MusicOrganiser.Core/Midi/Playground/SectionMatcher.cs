@@ -106,23 +106,27 @@ public sealed class SectionHarmony
         var chordNotes = pieces.Where(p => p.Role == MidiRoles.Chords).SelectMany(p => p.Notes).Where(n => !n.Muted).ToList();
         // The bassline counts while the chords sound, passing notes and all: the chord reader hears a walking bass's
         // passing and approach notes as passing (Dm7 stays Dm7, not D7#9), and a bass on the one under chords pushed onto
-        // the and of four still names them. Where the chord part rests, an 808 line on its own isn't read as chords.
-        var sounding = Sounding(chordNotes);
+        // the and of four still names them. Where the chord part rests a bar or more, an 808 line on its own isn't read
+        // as chords; a shorter gap is still the chords playing, so short stabs let go before the bass on the one (or an
+        // offbeat skank) are still read over their bass: Dm9, not Fmaj7. A bass struck up to half a beat before the
+        // chords come in counts with them.
+        var sounding = Sounding(chordNotes, joinUnder: ChordLane.Bar);
         var notes = chordNotes.Concat(pieces.Where(p => p.Role == MidiRoles.Bass).SelectMany(p => p.Notes)
-                                            .Where(n => !n.Muted && Sounds(sounding, n.Start, n.Start + Math.Max(1, n.Length))))
+                                            .Where(n => !n.Muted && Sounds(sounding, n.Start, n.Start + Math.Max(PhraseAnalyser.Ppq / 2 + 1, n.Length))))
                               .Where(UnderChords)
                               .Concat(all.Where(n => !UnderChords(n))).OrderBy(n => n.Start).ToList();
         return (notes, chordSpans.SelectMany(s => new[] { s.Start, s.End }).Distinct().ToList());
     }
 
     /// <summary>Where at least one of the notes sounds: stretches in order, none touching the next.</summary>
-    static List<(long Start, long End)> Sounding(IEnumerable<NoteEvent> notes)
+    /// <param name="joinUnder">A gap shorter than this (ticks) between two stretches counts as sounding too.</param>
+    static List<(long Start, long End)> Sounding(IEnumerable<NoteEvent> notes, long joinUnder = 0)
     {
         var spans = new List<(long Start, long End)>();
         foreach (var n in notes.OrderBy(n => n.Start))
         {
             var end = n.Start + Math.Max(1, n.Length);
-            if (spans.Count > 0 && n.Start <= spans[^1].End) spans[^1] = (spans[^1].Start, Math.Max(spans[^1].End, end));
+            if (spans.Count > 0 && n.Start <= spans[^1].End || spans.Count > 0 && n.Start - spans[^1].End < joinUnder) spans[^1] = (spans[^1].Start, Math.Max(spans[^1].End, end));
             else spans.Add((n.Start, end));
         }
         return spans;

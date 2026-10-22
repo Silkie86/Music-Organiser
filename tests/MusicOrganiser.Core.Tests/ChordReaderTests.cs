@@ -177,6 +177,22 @@ public class ChordReaderTests
     }
 
     [Fact]
+    public void Short_stabs_off_the_beat_are_read_over_the_bass_on_the_beat()
+    {
+        // Rootless F A C E stabs on the ands, a D bass on the beats: the two never sound together, and it's Dm9.
+        var section = new PlaygroundSection
+        {
+            Bars = 2,
+            Layers =
+            [
+                new PlaygroundLayer { Name = "Keys", Role = MidiRoles.Chords, Notes = Enumerable.Range(0, 8).SelectMany(b => Held(b * (long)Beat + Beat / 2, Beat / 2, 53, 57, 60, 64)).ToList() },
+                new PlaygroundLayer { Name = "Bass", Role = MidiRoles.Bass, Notes = Enumerable.Range(0, 8).Select(b => new NoteEvent(b * (long)Beat, Beat / 2, 38, 100)).ToList() },
+            ],
+        };
+        Assert.Equal(["Dm9"], SectionHarmony.Of(section).Lane.Select(c => c.Chord.Name));
+    }
+
+    [Fact]
     public void A_chord_keeps_its_bass_in_the_index_and_reads_older_entries()
     {
         var chords = PhraseChord.Decode("9:291 0:091/4");
