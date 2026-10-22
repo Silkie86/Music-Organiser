@@ -62,7 +62,7 @@ public sealed partial class ProjectDetailViewModel
         try
         {
             var path = Item.Path;
-            Arrangements = await Task.Run(() => ArrangementReader.Read(path));
+            Arrangements = await Task.Run(() => ArrangementReader.ReadNewestWhole(path));
             Arrangement = Arrangements.FirstOrDefault();
             if (Arrangement is null) ArrangementMessage = "This project has no arrangement to draw.";
         }

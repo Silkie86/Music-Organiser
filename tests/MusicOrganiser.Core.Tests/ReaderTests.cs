@@ -151,6 +151,7 @@ public class FlStudioTests
             .Ascii(199, "7.0.2").Word(66, 140).Ascii(194, "Side")
             .Word(64, 0).Byte(21, 0).Ascii(192, "Kick").Ascii(196, @"C:\Samples\Kick.wav")
             .Word(65, 1).Data(224, Fixtures.Note(0, 0, 96, 60, 100))
+            .Data(236, new byte[12])   // its mixer: FL got to the end (one that didn't is FlRepairTests')
             .Build();
         var garbled = good.ToArray();
         new byte[] { 0x60, 0xfb, 0x12, 0x00, 0xd9, 0x4a, 0x06, 0x01 }.CopyTo(garbled, 14);
@@ -164,7 +165,7 @@ public class FlStudioTests
         Assert.Equal(a.Samples, b.Samples);
         Assert.Equal(a.Details, b.Details);
         Assert.Empty(a.Warnings);
-        Assert.Equal(["Saved by an old FL Studio that garbled the start of its data; everything after it was read as usual."], b.Warnings);
+        Assert.Equal([FlStudioReader.GarbledHeader], b.Warnings);
         Assert.Single(Readers.FlStudio.ReadSong(Path.Combine(dir, "side.flp")).Channels.Single().Notes);
 
         // Fix can relink one too, even when the junk "length" reads as a negative number.
