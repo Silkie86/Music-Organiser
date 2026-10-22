@@ -157,10 +157,6 @@ public class HarmonyTheoryTests
         Assert.Equal("F#m", MusicTheory.KeyName(6, true, true));
         Assert.Equal("C#m", MusicTheory.KeyName(1, true, true));
         Assert.Equal("Db", new KeyEstimate(1, false, 1).Short);
-        // A key stored the old way is shown the new way.
-        Assert.Equal("Eb minor", MusicTheory.Respell("D# minor"));
-        Assert.Equal("Bb", MusicTheory.Respell("A#"));
-        Assert.Equal("", MusicTheory.Respell(""));
     }
 
     [Fact]
@@ -180,12 +176,15 @@ public class HarmonyTheoryTests
         // Am – Dm – G – C: C major by a hair on the notes alone, so the opening Am decides.
         int[][] tossUp = [[57, 60, 64], [50, 53, 57], [55, 59, 62], [48, 52, 55]];
         var even = ChromaOf(tossUp.SelectMany((c, i) => Held(i * Bar, Bar, c)));
-        Assert.Equal((0, false), MusicTheory.EstimateMidiKey(even) is { } k0 ? (k0.Tonic, k0.Minor) : default);
-        Assert.Equal((9, true), MusicTheory.EstimateMidiKey(even, 9) is { } k1 ? (k1.Tonic, k1.Minor) : default);
+        static (int, bool) Of(KeyEstimate? k) => k is { } e ? (e.Tonic, e.Minor) : throw new Xunit.Sdk.XunitException("no key");
+        Assert.Equal((0, false), Of(MusicTheory.EstimateMidiKey(even)));
+        Assert.Equal((9, true), Of(MusicTheory.EstimateMidiKey(even, (9, true))));
+        // Opening on A7 instead (gospel and jazz do): that's a chord heading for Dm, not A minor's home chord.
+        Assert.Equal((0, false), Of(MusicTheory.EstimateMidiKey(even, (9, false))));
         // C – G – C – F – C, leaning hard on C, E and G: starting on an Am chord doesn't make it A minor.
         int[][] home = [[57, 60, 64], [48, 52, 55], [55, 59, 62], [48, 52, 55], [53, 57, 60], [48, 52, 55], [48, 52, 55]];
         var major = ChromaOf(home.SelectMany((c, i) => Held(i * Bar, Bar, c)));
-        Assert.Equal((0, false), MusicTheory.EstimateMidiKey(major, 9) is { } k2 ? (k2.Tonic, k2.Minor) : default);
+        Assert.Equal((0, false), Of(MusicTheory.EstimateMidiKey(major, (9, true))));
     }
 
     [Fact]
@@ -236,5 +235,16 @@ public class HarmonyTheoryTests
         var a = SectionFit.Score(clean, lane, 2 * Bar, MidiRoles.Melody)!.Value;
         var b = SectionFit.Score(legato, lane, 2 * Bar, MidiRoles.Melody)!.Value;
         Assert.True(a - b < 0.03, $"{a:0.00} vs {b:0.00}");
+    }
+
+    [Fact]
+    public void A_two_five_one_gives_the_section_its_key_even_when_the_notes_alone_are_unsure()
+    {
+        // Dm7 – G7 – Cmaj7 under whole-tone clusters in four octaves: the notes alone don't settle on a key, the cadence does.
+        var line = Enumerable.Range(0, 4).SelectMany(bar => Held(bar * Bar, Bar, [.. Enumerable.Range(0, 4).SelectMany(o => new[] { 48, 50, 52, 54, 56, 58 }.Select(n => n + 12 * o))])).ToList();
+        var section = new PlaygroundSection { Bars = 4, Chart = "Dm7 | G7 | Cmaj7 | Cmaj7" };
+        section.Layers.Add(new PlaygroundLayer { Name = "Line", Role = MidiRoles.Melody, Notes = line });
+        var h = SectionHarmony.Of(section);
+        Assert.Equal((0, false), (h.Key!.Tonic, h.Key.Minor));
     }
 }

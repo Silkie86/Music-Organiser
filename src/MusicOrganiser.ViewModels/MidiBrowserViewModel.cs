@@ -1669,7 +1669,7 @@ public sealed partial class MidiRow : ObservableObject
     {
         get
         {
-            if (Entry.Phrase.Key is not { Confidence: >= 0.05 } k) return "";
+            if (Entry.Phrase.Key is not { Confidence: >= MusicTheory.SureMidiKey } k) return "";
             if (Fit is not { Semitones: not 0 } f) return k.Short;
             var moved = new KeyEstimate(((k.Tonic + f.Semitones) % 12 + 12) % 12, k.Minor, k.Confidence);
             return $"{k.Short} → {moved.Short}";

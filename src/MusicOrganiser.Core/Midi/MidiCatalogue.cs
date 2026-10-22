@@ -64,7 +64,7 @@ public sealed class MidiEntry
         ? string.Join(" · ", new[] { Phrase.Part, Phrase.Clip }.Where(s => s.Length > 0))
         : string.Join(" · ", new[] { Phrase.Clip, Phrase.Part }.Where(s => s.Length > 0));
 
-    public string KeyText => Phrase.Key is { Confidence: >= 0.05 } k ? k.Short : "";
+    public string KeyText => Phrase.Key is { Confidence: >= MusicTheory.SureMidiKey } k ? k.Short : "";
 }
 
 /// <summary>What to look for.</summary>
@@ -188,7 +188,7 @@ public sealed class MidiCatalogue
         if (p.Program is { } program and > 0 and < 128 && !p.Drums) parts.Add(Instruments.GeneralMidi[program]);
         // The folders it's in (the last few): MIDI packs are sorted into folders like "Chords" and "Trap Melodies".
         parts.AddRange((Path.GetDirectoryName(p.Source.Path) ?? "").Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).TakeLast(4));
-        if (p.Key is { Confidence: >= 0.05 } k) parts.AddRange([k.Name, k.Short]);
+        if (p.Key is { Confidence: >= MusicTheory.SureMidiKey } k) parts.AddRange([k.Name, k.Short]);
         parts.AddRange(chords.Select(c => c.Name).Distinct());
         if (role == MidiRoles.Bass) parts.Add("bassline");
         if (role == MidiRoles.Chords) parts.Add("progression");

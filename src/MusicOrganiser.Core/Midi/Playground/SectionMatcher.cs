@@ -11,7 +11,7 @@ namespace MusicOrganiser.Core.Midi.Playground;
 public sealed class SectionHarmony
 {
     /// <summary>Below this a heard key is a guess (see <see cref="MusicTheory.EstimateMidiKey"/>): the MIDI page hides it too.</summary>
-    public const double MinKeyConfidence = 0.05;
+    public const double MinKeyConfidence = MusicTheory.SureMidiKey;
 
     public required IReadOnlyList<NoteEvent> Notes { get; init; }
     public required IReadOnlyList<TimedChord> Lane { get; init; }
@@ -70,9 +70,12 @@ public sealed class SectionHarmony
                 for (var p = 0; p < 12; p++)
                     if ((c.Chord.Mask >> p & 1) != 0) chroma[p] += 0.5 * c.Length / ChordLane.Bar + (p == c.Chord.Root ? 0.25 : 0);
             // A key the notes don't clearly point at (a gospel lift, half in C and half in Db) is no key at all.
-            key = MusicTheory.EstimateMidiKey(chroma, lane.Count > 0 ? lane[0].Chord.Root : null) is { Confidence: >= MinKeyConfidence } heard ? heard : null;
-            // A ii–V–I lane says its key louder than the notes do: home is where the last V resolves.
-            if (HomeOf(lane) is { } home && key is { } est && est.Tonic != home.Tonic) key = new KeyEstimate(home.Tonic, home.Minor, est.Confidence);
+            var heard = MusicTheory.EstimateMidiKey(chroma, lane.Count > 0 ? (lane[0].Chord.Root, MusicTheory.IsMinorChord(lane[0].Chord.Root, lane[0].Chord.Mask)) : null);
+            key = heard is { Confidence: >= MinKeyConfidence } ? heard : null;
+            // A ii–V–I lane says its key louder than the notes do: home is where the last V resolves, even where the
+            // notes alone are too busy to be sure.
+            if (HomeOf(lane) is { } home && key?.Tonic != home.Tonic)
+                key = new KeyEstimate(home.Tonic, home.Minor, Math.Max(heard?.Confidence ?? 0, MinKeyConfidence));
         }
         return new SectionHarmony
         {
