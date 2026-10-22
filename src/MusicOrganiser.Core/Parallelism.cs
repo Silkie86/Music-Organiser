@@ -54,7 +54,14 @@ public static class Parallelism
     static void Update()
     {
         _workers = LimitFor(_pace, _inBackground);
-        lock (Gate) Monitor.PulseAll(Gate);   // more room: the work waiting for a slot can go
+        // More room: the work waiting for a slot can go. Said from a pool thread, never the caller's: the window calls this
+        // each time it's clicked into or away from, and the lock can be held by a low-priority reader the busy processor
+        // isn't running, which kept the window frozen for 6 s at a time (Solomon's log, 2026-10-22, MIDI being read while
+        // the sample scan ran). Work waiting for a slot reads the new limit when it wakes, so nothing is missed.
+        ThreadPool.UnsafeQueueUserWorkItem(static _ =>
+        {
+            lock (Gate) Monitor.PulseAll(Gate);
+        }, null);
     }
 
     /// <summary>How many pieces of background work may run at once, across every job together (see <see cref="Mode"/>).</summary>

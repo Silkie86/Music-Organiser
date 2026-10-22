@@ -131,7 +131,9 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             catch (InvalidOperationException) { }   // the saver stopped taking results
         })
         {
-            IsBackground = true, Priority = ThreadPriority.Lowest, Name = $"MIDI index {i + 1}",
+            // Below normal like the app's other background work, not lowest: the lowest is never run while the sample scan keeps
+            // the processor busy, and everything waiting on a reader (the next free slot, the log) waited seconds with it.
+            IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = $"MIDI index {i + 1}",
         }).ToList();
         foreach (var t in threads) t.Start();
         var waiter = Task.Run(() =>

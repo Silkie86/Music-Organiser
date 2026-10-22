@@ -117,18 +117,20 @@ public sealed class SessionLog : IDisposable
 
     void Write(string level, string area, string message)
     {
+        // Avalonia pads some messages with spaces; they only make the log wide. Tidied before the lock, so it's held as
+        // briefly as can be: every thread logs, the window's too, and a background thread the busy processor isn't
+        // running while it holds the lock makes the window wait with it.
+        message = Regex.Replace(message, @"[ \t]+(?=\r?\n|$)", "");
+        var key = level + area + message;
         lock (_gate)
         {
             // A warning that keeps coming (a binding each time a row draws) is written a few times, then counted.
-            var key = level + area + message;
             var times = _seen[key] = _seen.GetValueOrDefault(key) + 1;
             if (times > RepeatsWritten)
             {
                 if (IsPowerOfTen(times)) message = $"(said {times} times now) {FirstLine(message)}";
                 else return;
             }
-            // Avalonia pads some messages with spaces; they only make the log wide.
-            message = Regex.Replace(message, @"[ \t]+(?=\r?\n|$)", "");
             var line = $"{DateTime.Now:HH:mm:ss.fff} {level,-7} [{area}] {message}";
             _recent.Enqueue(line);
             while (_recent.Count > 60) _recent.Dequeue();
