@@ -723,44 +723,5 @@
                 </TabControl>
             </Border>
         </Grid>
-        <!-- The ? cheat sheet: this page's keys from Settings › Shortcuts, and what the mouse does. -->
-        <Border Grid.RowSpan="5" IsVisible="{Binding CheatSheetOpen}" Background="#99000000" PointerPressed="OnCheatSheetBackdrop">
-            <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="760" Padding="22,18"
-                    Background="{StaticResource SurfaceBrush}" PointerPressed="OnCheatSheetCard">
-                <DockPanel>
-                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-                        <Button DockPanel.Dock="Right" Content="Close" Command="{Binding CloseCheatSheetCommand}" />
-                        <StackPanel>
-                            <TextBlock Text="Playground keys" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock Text="Click a key, then press the one you want: every action can have one. Esc leaves it as it is. Settings › Shortcuts has the same list. Press ? or Esc to close."
-                                       Classes="small" TextTrimming="None" TextWrapping="Wrap" />
-                        </StackPanel>
-                    </DockPanel>
-                    <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0" Spacing="3">
-                        <TextBlock Text="With the mouse" FontWeight="SemiBold" Margin="0,0,0,2" />
-                        <TextBlock Classes="small" TextTrimming="None" Text="Hold Shift while dragging: no snapping" />
-                        <TextBlock Classes="small" TextTrimming="None" Text="Ctrl + scroll: zoom round the pointer · Alt + scroll: taller or shorter · Shift + scroll or middle-drag: move along" />
-                        <TextBlock Classes="small" TextTrimming="None" Text="Click the bar numbers: play from there · drag them: highlight bars · double-click: show it all" />
-                        <TextBlock Classes="small" TextTrimming="None" Text="Drag a clip's right edge to repeat it, its left edge to trim it, or pull it off the timeline into your DAW" />
-                    </StackPanel>
-                    <ScrollViewer MaxHeight="480" HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding CheatSheet}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:ShortcutRow">
-                                <DockPanel Width="340" Margin="0,2,10,2">
-                                    <views:ShortcutBox DockPanel.Dock="Left" Width="120" MinWidth="120" Margin="0,0,10,0" Padding="6,2" FontSize="12"
-                                                       FontFamily="{DynamicResource NumberFont}" />
-                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="13" />
-                                </DockPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    </ScrollViewer>
-                </DockPanel>
-            </Border>
-        </Border>
     </Grid>
 </UserControl>

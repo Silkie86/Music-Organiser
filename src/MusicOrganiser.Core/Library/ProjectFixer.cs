@@ -23,17 +23,24 @@ public sealed record FixLine(bool IsSample, string Missing, FixAction Action, st
 {
     /// <summary>A plugin the fixed copy swaps for <see cref="Use"/>, with its sound translated (Serum for Serum 2).</summary>
     public bool IsSwap { get; init; }
+    /// <summary>The save itself is damaged (FL stopped writing it part-way): the fixed copy is repaired, finished from
+    /// <see cref="Use"/>, an older save of the song, when there is one.</summary>
+    public bool IsRepair { get; init; }
     /// <summary>The other files it could use instead of <see cref="Use"/> (Use first), best first.</summary>
     public IReadOnlyList<string> Choices { get; init; } = Use is null ? [] : [Use];
     /// <summary>The file name or plugin name, for the line's title.</summary>
     public string Name => IsSample ? Missing.Split('\\', '/')[^1] : Missing;
     /// <summary>Whether the fixed copy can use <see cref="Use"/>: a sample, when there's one, or a plugin swap.</summary>
-    public bool CanWrite => IsSwap || IsSample && Use is not null && Action != FixAction.StillMissing;
+    public bool CanWrite => IsSwap || IsRepair || IsSample && Use is not null && Action != FixAction.StillMissing;
 }
 
 /// <summary>What <see cref="ProjectFixer.Write"/> did: where the fixed copy went, how many samples it relinked and
 /// plugins it swapped, and anything to tell you about the swaps.</summary>
-public sealed record FixResult(string Path, int Relinked, int Swapped, IReadOnlyList<string> Notes);
+public sealed record FixResult(string Path, int Relinked, int Swapped, IReadOnlyList<string> Notes)
+{
+    /// <summary>Whether the save itself was repaired.</summary>
+    public bool Repaired { get; init; }
+}
 
 /// <summary>
 /// Fix: repairs what it can of a project's missing samples into a new file next to the original
@@ -48,10 +55,16 @@ public static partial class ProjectFixer
     public static bool CanWrite(string path) =>
         Path.GetExtension(path).ToLowerInvariant() is ".flp" or ".bwproject";
 
-    /// <summary>One line per missing sample and plugin, with the best guess for each.</summary>
+    /// <summary>Whether the save itself is damaged in a way Fix repairs: an FL Studio save FL didn't finish writing.</summary>
+    public static bool NeedsRepair(ProjectDetail project) =>
+        project.Summary.Path.EndsWith(".flp", StringComparison.OrdinalIgnoreCase) &&
+        project.Warnings.Any(w => w is FlStudioReader.StoppedPartWay or FlStudioReader.GarbledHeader);
+
+    /// <summary>One line per missing sample and plugin, with the best guess for each, after a line for repairing the save itself if it's damaged.</summary>
     public static IReadOnlyList<FixLine> Plan(LibraryDb db, ProjectDetail project)
     {
         var lines = new List<FixLine>();
+        if (Repair(project.Summary.Path) is { } repair) lines.Add(repair);
         var indexed = db.SampleIndexCount() > 0;
         var why = db.GetList(Scanner.SampleFoldersKey).Count > 0
             ? "No sound files were found in your sample folders, so there was nowhere to look for it."
@@ -65,6 +78,22 @@ public static partial class ProjectFixer
         foreach (var p in project.Plugins.Where(p => !p.Installed && !(swap is not null && IsSerum1(p.Name))))
             lines.Add(ForPlugin(db, p.Name, installed));
         return lines;
+    }
+
+    /// <summary>The line for repairing a save FL didn't finish writing, or null when it isn't damaged.</summary>
+    static FixLine? Repair(string path)
+    {
+        if (!path.EndsWith(".flp", StringComparison.OrdinalIgnoreCase) || FlStudioReader.Damage(path) is not { } damage) return null;
+        if (!damage.EndsEarly)
+            return new FixLine(false, "This save", FixAction.Relink, null,
+                "FL Studio didn't finish writing the start of its data. The fixed copy writes it in; nothing else changes.") { IsRepair = true };
+        var older = FlStudioReader.WholeOlderSave(path);
+        return new FixLine(false, "This save", FixAction.Relink, older, older is null
+            ? $"FL Studio stopped part-way through writing it, after {damage.Channels} channels. No earlier save of this song was found "
+              + "to finish it from, so the fixed copy has what it got as far as, without a mixer or playlist."
+            : $"FL Studio stopped part-way through writing it, after {damage.Channels} channels. The fixed copy keeps everything it got as far as "
+              + $"(your newest changes) and takes the rest, its last channels, mixer and playlist, from {Path.GetFileNameWithoutExtension(older)}.")
+            { IsRepair = true };
     }
 
     /// <summary>Whether Fix can swap this project's Serum for Serum 2: an FL Studio or Bitwig project with Serum in it, and Serum 2 installed.</summary>
@@ -147,12 +176,29 @@ public static partial class ProjectFixer
         var relink = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var line in lines.Where(l => l.IsSample)) relink[line.Missing] = line.Use!;
         var swap = lines.Any(l => l.IsSwap);
-        if (relink.Count == 0 && !swap) throw new InvalidOperationException("There's nothing to relink.");
+        var repair = lines.FirstOrDefault(l => l.IsRepair);
+        if (relink.Count == 0 && !swap && repair is null) throw new InvalidOperationException("There's nothing to relink.");
 
         var data = File.ReadAllBytes(projectPath);
         var changed = 0;
         IReadOnlyList<string> cantWrite = [];
         var kind = Path.GetExtension(projectPath).ToLowerInvariant();
+        string? repaired = null;
+        if (repair is not null)
+        {
+            if (kind != ".flp") throw new NotSupportedException("Fix can only repair FL Studio saves.");
+            var (fixedData, fromOlder) = FlStudioReader.Repair(data, repair.Use is { } older ? File.ReadAllBytes(older) : null);
+            data = fixedData;
+            var from = repair.Use is { } o ? Path.GetFileNameWithoutExtension(o) : null;
+            repaired = (from, fromOlder) switch
+            {
+                (null, _) => "Repaired the save.",
+                (_, -1) => $"Repaired the save, but its channels didn't line up with {from}'s, so nothing was taken from it: it has no mixer or playlist.",
+                (_, 0) => $"Repaired the save, with its mixer and playlist from {from}.",
+                (_, 1) => $"Repaired the save, with its last channel, mixer and playlist from {from}.",
+                _ => $"Repaired the save, with its last {fromOlder} channels, mixer and playlist from {from}.",
+            };
+        }
         if (relink.Count > 0)
         {
             (data, changed, cantWrite) = kind switch
@@ -183,6 +229,7 @@ public static partial class ProjectFixer
             originals = result.Originals ?? [];
         }
         if (cantWrite.Count > 0) notes = [CantWriteNote(cantWrite), .. notes];
+        if (repaired is not null) notes = [repaired, .. notes];
 
         var target = FixedPath(projectPath);
         using (var f = new FileStream(target, FileMode.CreateNew)) f.Write(data);
@@ -199,7 +246,7 @@ public static partial class ProjectFixer
         // Serum 1's own sounds, saved only once the copy is known to be good: a failed Fix leaves nothing behind.
         if (Serum1To2.KeepOriginals(Path.GetFileNameWithoutExtension(projectPath), originals, serum2User ?? Serum1To2.Serum2UserFolder()) is { } kept)
             notes = [.. notes, kept];
-        return new FixResult(target, changed, swapped, notes);
+        return new FixResult(target, changed, swapped, notes) { Repaired = repair is not null };
     }
 
     static string CantWriteNote(IReadOnlyList<string> files) =>

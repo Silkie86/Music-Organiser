@@ -541,12 +541,12 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel MaxWidth="920" HorizontalAlignment="Left" Margin="0,14,16,16" DataContext="{Binding Shortcuts}" x:DataType="vm:ShortcutsViewModel">
                         <TextBlock Classes="pageSubtitle" Margin="0,0,0,14" TextWrapping="Wrap"
-                                   Text="The keyboard shortcuts start as Bitwig's. Click a key and press the one you want; press ? on a page to see its keys. Keys without Ctrl don't work while you're typing in a box." />
+                                   Text="Keys that work on every page come first, then each page's own. They start as the ones Bitwig and Windows use for the same job, and the same idea has the same key on every page (Ctrl+B is Bitwig, Ctrl+Shift+E shows the file). Click a key and press the one you want; press ? or F1 on a page to see its keys. Keys without Ctrl don't work while you're typing in a box, and F12 stays the note for Claude." />
                         <Border Classes="card settingsCard">
                             <StackPanel>
                                 <DockPanel Margin="0,0,0,8">
-                                    <Button DockPanel.Dock="Right" Content="Back to Bitwig's" Command="{Binding ResetAllCommand}" IsEnabled="{Binding AnyChanged}"
-                                            ToolTip.Tip="Every key back to the one Bitwig uses" />
+                                    <Button DockPanel.Dock="Right" Content="All back to the defaults" Command="{Binding ResetAllCommand}" IsEnabled="{Binding AnyChanged}"
+                                            ToolTip.Tip="Every key back to the one it started with" />
                                     <TextBlock Text="{Binding Message}" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
                                 </DockPanel>
                                 <ItemsControl ItemsSource="{Binding Rows}">
@@ -558,11 +558,11 @@
                                                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
                                                         <views:ShortcutBox FontFamily="{DynamicResource NumberFont}" />
                                                         <Button Content="None" Command="{Binding ClearCommand}" ToolTip.Tip="Take the key off this" />
-                                                        <Button Content="Bitwig's" Command="{Binding ResetCommand}" IsEnabled="{Binding IsChanged}" ToolTip.Tip="{Binding BitwigText}" />
+                                                        <Button Content="Default" Command="{Binding ResetCommand}" IsEnabled="{Binding IsChanged}" ToolTip.Tip="{Binding DefaultText}" />
                                                     </StackPanel>
                                                     <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                                                         <TextBlock Text="{Binding Name}" TextWrapping="Wrap" />
-                                                        <TextBlock Text="{Binding BitwigText}" FontSize="11.5" Foreground="{StaticResource MutedBrush}" IsVisible="{Binding IsChanged}" />
+                                                        <TextBlock Text="{Binding DefaultText}" FontSize="11.5" Foreground="{StaticResource MutedBrush}" IsVisible="{Binding IsChanged}" />
                                                     </StackPanel>
                                                 </DockPanel>
                                             </StackPanel>

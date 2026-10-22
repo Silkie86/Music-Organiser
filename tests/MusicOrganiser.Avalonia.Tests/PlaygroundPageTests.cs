@@ -55,8 +55,10 @@ public sealed class PlaygroundPageTests : IDisposable
         p.WriteChordsCommand.Execute(null);
         var track = p.Layers[^1].Layer;
         p.SelectClipCommand.Execute(new ClipPick(track, track.Clips[0]));
-        var window = new Window { Content = new PlaygroundView { DataContext = p }, Width = 1400, Height = 900 };
+        // the real window: it answers the keys and hands the Playground its own
+        var window = new MainWindow { DataContext = main, Width = 1400, Height = 900 };
         window.Show();
+        main.GoTo(ShortcutsViewModel.Playground);
         Settle();
 
         // The track's Mute (the inspector's Octave + went on 22 Oct: its values are dragged now).

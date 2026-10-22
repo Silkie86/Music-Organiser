@@ -43,7 +43,7 @@
     <Grid RowDefinitions="Auto,Auto,*">
         <!-- Search, where from, and what kind of part. -->
         <Grid x:Name="SearchRow" ColumnDefinitions="*,Auto,Auto" Margin="0,14,0,0">
-            <TextBox Classes="clearButton bigSearch" Text="{Binding Search}"
+            <TextBox x:Name="SearchBox" Classes="clearButton bigSearch" Text="{Binding Search}"
                      PlaceholderText="{Binding SearchHint}"
                      ToolTip.Tip="Words match part, pattern, project and file names, folders, the kind of part, its key and its chords. With the MIDI model installed you can also describe how a part sounds, and the closest come first.">
                 <TextBox.InnerLeftContent>

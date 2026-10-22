@@ -979,6 +979,16 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         FollowPlayback();
     }
 
+    /// <summary>Whether a sound is playing now (Esc stops it).</summary>
+    public bool IsSounding => _player.Playing is not null;
+
+    /// <summary>Puts where the sound (or the selected one) is on the clipboard.</summary>
+    [RelayCommand]
+    void CopyPath(Sound? s)
+    {
+        if ((s ?? Selected) is { } x) Ui.Current.CopyText(x.Path);
+    }
+
     [RelayCommand]
     void Reveal(Sound? s)
     {
