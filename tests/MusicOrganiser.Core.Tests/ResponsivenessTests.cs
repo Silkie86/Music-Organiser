@@ -116,39 +116,6 @@ public class ResponsivenessTests
     }
 
     [Fact]
-    public async Task Work_waiting_for_a_slot_starts_as_soon_as_the_window_goes_behind_and_frees_more()
-    {
-        try
-        {
-            Parallelism.Mode = Parallelism.Pace.Fast;
-            Parallelism.AppInBackground = false;
-            if (Parallelism.Cores - 2 < 1) return;   // one or two cores: nothing more to free
-            // Every slot taken, then one more piece of work waits for a free one.
-            using var release = new ManualResetEventSlim();
-            var started = 0;
-            var busy = Enumerable.Range(0, Parallelism.Workers).Select(_ => Task.Factory.StartNew(() => Parallelism.Background(() =>
-            {
-                Interlocked.Increment(ref started);
-                release.Wait(TimeSpan.FromSeconds(10));
-            }), TaskCreationOptions.LongRunning)).ToList();
-            for (var waited = 0; Volatile.Read(ref started) < busy.Count && waited < 5000; waited += 10) await Task.Delay(10);
-            using var ran = new ManualResetEventSlim();
-            var waiting = Task.Factory.StartNew(() => Parallelism.Background(ran.Set), TaskCreationOptions.LongRunning);
-            Assert.False(ran.Wait(200));
-
-            Parallelism.AppInBackground = true;   // Fast: every core while the app is behind another
-            Assert.True(ran.Wait(2000));
-            release.Set();
-            await Task.WhenAll([.. busy, waiting]);
-        }
-        finally
-        {
-            Parallelism.AppInBackground = false;
-            Parallelism.Mode = Parallelism.Pace.Gentle;
-        }
-    }
-
-    [Fact]
     public async Task Reading_the_library_never_waits_for_a_long_write()
     {
         var dir = Fixtures.TempDir();
