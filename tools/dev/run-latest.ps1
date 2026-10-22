@@ -31,7 +31,7 @@ param(
 )
 
 # Raised whenever this script changes, so an older branch's copy never replaces a newer installed one.
-$LauncherVersion = 8
+$LauncherVersion = 9
 
 $ErrorActionPreference = 'Continue'   # git writes progress to stderr, which Windows PowerShell would treat as failure
 $GitHubRepo = 'Silkie86/Music-Organiser'
@@ -273,10 +273,39 @@ function Start-Watch {
         -NoNewWindow -PassThru -WorkingDirectory $Repo
 }
 
+function Get-OurProcesses([int]$Root) {
+    # dotnet watch's own helpers and the app, found by walking down from dotnet watch. Anything else the app
+    # started (Bitwig, FL Studio, an Explorer window) isn't ours: it and everything under it are left running, so
+    # a restart never closes a DAW with unsaved work. (Killing the whole tree with taskkill /T did exactly that.)
+    $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $repoPath = [IO.Path]::GetFullPath($Repo).TrimEnd('\') + '\'
+    $tools = @('dotnet.exe', 'MSBuild.exe', 'VBCSCompiler.exe', 'conhost.exe', 'MusicOrganiser.Avalonia.exe')
+    $ours = @()
+    $queue = New-Object System.Collections.Queue
+    $queue.Enqueue($Root)
+    while ($queue.Count -gt 0) {
+        $parent = $queue.Dequeue()
+        foreach ($child in $all | Where-Object { $_.ParentProcessId -eq $parent -and $_.ProcessId -ne $parent }) {
+            $path = $child.ExecutablePath
+            if (-not $path) { continue }
+            if (-not ($path.StartsWith($repoPath, [StringComparison]::OrdinalIgnoreCase) -or
+                    ($path -split '[\\/]')[-1] -in $tools)) { continue }
+            $ours += [int]$child.ProcessId
+            $queue.Enqueue([int]$child.ProcessId)
+        }
+    }
+    $ours
+}
+
 function Stop-Watch($Process) {
-    # dotnet watch and the app it started.
+    # dotnet watch and the app it started, but not what the app started (see Get-OurProcesses).
     if ($Process.HasExited) { return }
-    if ($OnWindows) { & taskkill /PID $Process.Id /T /F 2>$null | Out-Null }
+    if ($OnWindows) {
+        $ours = @(Get-OurProcesses $Process.Id)
+        # dotnet watch first, so it can't start the app again while the rest are being closed.
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        foreach ($id in $ours) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+    }
     else { Stop-Process -Id $Process.Id -ErrorAction SilentlyContinue }
     $Process.WaitForExit(10000) | Out-Null
     Stop-StrayApps
