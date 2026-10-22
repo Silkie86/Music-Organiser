@@ -13,6 +13,22 @@ public class JazzHarmonyTests
     // ---- naming chords ----
 
     [Theory]
+    [InlineData("Cmaj7", "Δ7", "")]
+    [InlineData("Dm7", "m7", "m")]
+    [InlineData("F#m7b5", "ø", "ø")]
+    [InlineData("C#dim7", "°7", "°")]
+    [InlineData("G7(b9)", "7", "")]
+    [InlineData("G7sus4", "7sus", "")]
+    [InlineData("Cmaj9", "Δ9", "")]
+    public void A_crowded_chord_lane_writes_qualities_the_way_a_lead_sheet_does(string name, string shorter, string least)
+    {
+        var chord = ChordSymbol.Parse(name)!.Value;
+        Assert.Equal(shorter, ChordSymbol.ShortQuality(chord.Quality));
+        Assert.Equal(least, ChordSymbol.LeastQuality(chord.Quality));
+        Assert.Equal(name, chord.RootName + chord.Quality + (chord.BassName.Length > 0 ? "/" + chord.BassName : ""));
+    }
+
+    [Theory]
     [InlineData("C", 48, 52, 55)]
     [InlineData("Am7", 45, 52, 55, 60)]
     [InlineData("C6", 48, 52, 55, 57)]

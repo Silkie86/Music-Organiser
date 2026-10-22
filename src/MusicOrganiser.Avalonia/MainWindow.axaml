@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:MusicOrganiser.ViewModels"
         xmlns:views="using:MusicOrganiser.Avalonia.Views"
-        x:Class="MusicOrganiser.Avalonia.MainWindow"
+        x:Class="MusicOrganiser.Avalonia.MainWindow" Classes="studio"
         x:DataType="vm:MainViewModel"
         Title="Music Organiser" Width="1440" Height="900" MinWidth="1080" MinHeight="640"
         WindowStartupLocation="CenterScreen" WindowState="Maximized"
@@ -20,13 +20,11 @@
     </Window.DataTemplates>
 
     <Window.Resources>
-        <!-- One key on the keys sheet: the key in a box, then what it does. -->
+        <!-- One key on the keys sheet: the key (click it, then press another to change it), then what it does. -->
         <DataTemplate x:Key="ShortcutChip" x:DataType="vm:ShortcutRow">
             <DockPanel Width="352" Margin="0,2,10,2">
-                <Border DockPanel.Dock="Left" Width="118" Margin="0,0,10,0" CornerRadius="4" Padding="6,2"
-                        Background="{StaticResource StrokeBrush}" HorizontalAlignment="Left" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding KeyText}" FontFamily="{DynamicResource NumberFont}" FontSize="12" HorizontalAlignment="Center" />
-                </Border>
+                <views:ShortcutBox DockPanel.Dock="Left" Width="120" MinWidth="120" Margin="0,0,10,0" Padding="6,2" FontSize="12"
+                                   FontFamily="{DynamicResource NumberFont}" />
                 <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="13" />
             </DockPanel>
         </DataTemplate>
@@ -46,7 +44,7 @@
                 <!-- Scanning: one button; its tooltip says when the library was last brought up to date. -->
                 <StackPanel DockPanel.Dock="Bottom" HorizontalAlignment="Center" Spacing="6" Margin="0,10,0,0">
                     <!-- While scanning: a ring that fills as it goes, around a stop square. -->
-                    <Button Classes="railButton" Command="{Binding CancelScanCommand}" IsVisible="{Binding IsScanning}"
+                    <Button Classes="railButton flat" Command="{Binding CancelScanCommand}" IsVisible="{Binding IsScanning}"
                             ToolTip.Tip="{Binding ScanStatus, StringFormat='{}{0}&#10;Click to stop.'}">
                         <Panel Width="30" Height="30">
                             <Arc Classes="ringTrack" Width="30" Height="30" />
@@ -56,7 +54,7 @@
                                     HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Panel>
                     </Button>
-                    <Button Classes="railButton" Command="{Binding RescanCommand}" IsVisible="{Binding !IsScanning}"
+                    <Button Classes="railButton flat" Command="{Binding RescanCommand}" IsVisible="{Binding !IsScanning}"
                             ToolTip.Tip="{Binding ScanStatus, StringFormat='{}{0}&#10;Click to look for new and changed projects. Right-click to re-read everything.'}">
                         <Button.ContextMenu>
                             <ContextMenu>
@@ -72,7 +70,7 @@
                 <ItemsControl DockPanel.Dock="Bottom" ItemsSource="{Binding Live.Rows}" HorizontalAlignment="Center">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:LiveDawRow">
-                            <Button Command="{Binding OpenCommand}" Classes="dawLight">
+                            <Button Command="{Binding OpenCommand}" Classes="dawLight flat">
                                 <ToolTip.Tip>
                                     <StackPanel MaxWidth="280">
                                         <TextBlock Text="{Binding Text}" FontWeight="SemiBold" TextWrapping="Wrap" />
@@ -148,10 +146,10 @@
                                            MaxLines="2" TextTrimming="CharacterEllipsis" IsVisible="{Binding HasDetail}" />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2" VerticalAlignment="Top">
-                                <Button Classes="toastButton primary" Content="{Binding ActionLabel}" Command="{Binding RunActionCommand}"
+                                <Button Classes="toastButton accent" Content="{Binding ActionLabel}" Command="{Binding RunActionCommand}"
                                         IsVisible="{Binding HasAction}" />
                                 <Button Classes="toastButton" Content="Stop" Command="{Binding CancelCommand}" IsVisible="{Binding CanCancel}" />
-                                <Button Classes="toastButton" Command="{Binding DismissCommand}" IsVisible="{Binding !IsRunning}"
+                                <Button Classes="toastButton flat" Command="{Binding DismissCommand}" IsVisible="{Binding !IsRunning}"
                                         ToolTip.Tip="Close">
                                     <Path Data="M1,1 L9,9 M9,1 L1,9" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.6" StrokeLineCap="Round" />
                                 </Button>
@@ -165,18 +163,32 @@
         </ItemsControl>
 
         <!-- The keys sheet (? or F1): this page's keys, then the ones that work everywhere. Esc, ? or a click outside closes it. -->
-        <Border Grid.ColumnSpan="2" ZIndex="20" IsVisible="{Binding Shortcuts.SheetOpen}" Background="#99000000" PointerPressed="OnSheetBackdrop">
+        <Border x:Name="KeySheet" Grid.ColumnSpan="2" ZIndex="20" IsVisible="{Binding Shortcuts.SheetOpen}" Background="#99000000" PointerPressed="OnSheetBackdrop">
             <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="780" Padding="22,18" Margin="24"
-                    Background="{StaticResource SurfaceBrush}" PointerPressed="OnSheetCard" DataContext="{Binding Shortcuts}" x:DataType="vm:ShortcutsViewModel">
+                    Background="{StaticResource SurfaceBrush}" PointerPressed="OnSheetCard" DataContext="{Binding Shortcuts}" x:DataType="vm:ShortcutsViewModel"
+                    KeyboardNavigation.TabNavigation="Cycle">
                 <DockPanel>
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-                        <Button DockPanel.Dock="Right" Content="Close" Command="{Binding CloseSheetCommand}" VerticalAlignment="Top" />
+                        <Button x:Name="SheetClose" DockPanel.Dock="Right" Content="Close" Command="{Binding CloseSheetCommand}" VerticalAlignment="Top" />
                         <StackPanel>
                             <TextBlock Text="{Binding SheetTitle}" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock Text="Change any of them in Settings › Shortcuts. Press ? or Esc to close. F12 writes a note for Claude."
+                            <TextBlock Text="Click a key, then press the one you want (Esc leaves it as it is). Settings › Shortcuts has the same list. Press ? or Esc to close. F12 writes a note for Claude."
                                        FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Message}" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0"
+                                       IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                         </StackPanel>
                     </DockPanel>
+                    <!-- What the mouse does on the page, under its keys. -->
+                    <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0" Spacing="3" IsVisible="{Binding SheetHasHints}">
+                        <TextBlock Text="With the mouse" FontWeight="SemiBold" Margin="0,0,0,2" />
+                        <ItemsControl ItemsSource="{Binding SheetHints}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                    <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="0,1" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
                     <ScrollViewer MaxHeight="560" VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="6">
                             <TextBlock Text="On this page" FontWeight="SemiBold" IsVisible="{Binding SheetHasPage}" />

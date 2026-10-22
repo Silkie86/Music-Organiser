@@ -17,13 +17,16 @@ public interface IShortcutPage
     /// <summary>Does <paramref name="id"/>; false when it doesn't apply now, so the key goes on to whatever has the focus.</summary>
     /// <param name="repeat">The key is being held down.</param>
     bool RunShortcut(string id, bool repeat);
+
+    /// <summary>Whether the control the key was pressed in keeps <paramref name="key"/> for itself (the piano roll its Delete).</summary>
+    bool KeepsKey(KeyEventArgs e, string key) => false;
 }
 
 /// <summary>
 /// The window's keyboard shortcuts (Solomon, 2026-10-21: "logical shortcuts and function keys around the app"). Keys are
 /// looked at by the window on the way in, so they work wherever the focus is: the ones that work everywhere are done
-/// here, and a page's own go to its view (<see cref="IShortcutPage"/>). The Playground still answers its own keys.
-/// While typing in a box only Ctrl keys count, lists and sliders keep their arrows, and F12 stays the note for Claude.
+/// here, and a page's own go to its view (<see cref="IShortcutPage"/>). While typing in a box only Ctrl and function keys
+/// count, lists and sliders keep their arrows, a focused button keeps Space, and F12 stays the note for Claude.
 /// </summary>
 public sealed class AppShortcuts
 {
@@ -47,9 +50,15 @@ public sealed class AppShortcuts
     /// <summary>The page's name in the shortcut list: its title in the sidebar.</summary>
     static string PageOf(MainViewModel main) => main.SelectedNav?.Title ?? ShortcutsViewModel.Everywhere;
 
-    /// <summary>The page on show (not the one fading out).</summary>
-    Control? CurrentView() =>
-        Main?.SelectedNav?.Page is { } page ? _pages.GetVisualDescendants().OfType<UserControl>().FirstOrDefault(u => u.DataContext == page) : null;
+    Control? _view;
+
+    /// <summary>The page on show (not the one fading out): found once per visit, not on every key.</summary>
+    Control? CurrentView(MainViewModel main)
+    {
+        if (main.SelectedNav?.Page is not { } page) return null;
+        if (_view is { } kept && kept.DataContext == page && TopLevel.GetTopLevel(kept) == _window) return kept;
+        return _view = _pages.GetVisualDescendants().OfType<UserControl>().FirstOrDefault(u => u.DataContext == page);
+    }
 
     void OnKeyUp(object? sender, KeyEventArgs e)
     {
@@ -63,8 +72,17 @@ public sealed class AppShortcuts
         _taken.Add(e.Key);
     }
 
-    /// <summary>Keys that do their job again and again while held: stepping through a list, moving an octave.</summary>
-    static bool Repeats(string id) => id is "app.prevItem" or "app.nextItem" or "midi.octaveUp" or "midi.octaveDown";
+    /// <summary>
+    /// Keys that do their job again and again while held: stepping through a list, moving an octave, and on the Playground
+    /// all but the ones that would flip back and forth or pile things up.
+    /// </summary>
+    static bool Repeats(string id) => id.StartsWith("playground.")
+        ? id is not ("playground.play" or "playground.help" or "playground.loop" or "playground.save" or "playground.split"
+            or "playground.duplicate" or "playground.paste" or "playground.new" or "playground.ideas" or "playground.rename")
+        : id is "app.prevItem" or "app.nextItem" or "midi.octaveUp" or "midi.octaveDown";
+
+    /// <summary>Whether the key was pressed on a button, toggle or tick box, which Space presses.</summary>
+    static bool OnButton(KeyEventArgs e) => e.Source is Visual v && v.FindAncestorOfType<Button>(includeSelf: true) is not null;
 
     void OnKeyDown(object? sender, KeyEventArgs e)
     {
@@ -76,25 +94,30 @@ public sealed class AppShortcuts
         var id = keys.Find(page, key);
         if (keys.SheetOpen)
         {
-            // only closing it works while the sheet covers the window
+            // Esc, ? or F1 close it. Other shortcuts wait until it's shut (Ctrl+1 doesn't change the page behind it), while
+            // plain keys go on to the sheet: Tab to a key, Space or Enter to press it.
             if (key == "Esc" || id is "app.help" or "app.helpF1" or "playground.help") { if (!repeat) keys.SheetOpen = false; Take(e); }
-            else if (key != "F12") Take(e);
+            else if (id is not null && ShortcutsViewModel.WorksWhileTyping(key)) Take(e);
             return;
         }
         if (id is null) return;
-        var view = CurrentView();
-        var everywhere = ShortcutsViewModel.IsEverywhere(id);
-        if (!everywhere && view is not IShortcutPage) return;   // the Playground answers its own keys
+        // the cheap checks first, so typing in a box costs nothing
         var box = ShortcutKeys.Box(e);
         if (box is not null && (!ShortcutsViewModel.WorksWhileTyping(key) || ShortcutKeys.IsTextKey(key))) return;
         if (ShortcutKeys.UsedByControl(e, key)) return;
+        if (key == "Space" && id != "playground.play" && OnButton(e)) return;   // the Playground's transport keeps Space, as in a DAW
+        var everywhere = ShortcutsViewModel.IsEverywhere(id);
+        var view = CurrentView(main);
+        var own = view as IShortcutPage;
+        if (!everywhere && own is null) return;
+        if (own is not null && own.KeepsKey(e, key)) return;
         if (repeat && !Repeats(id))
         {
             if (_taken.Contains(e.Key)) e.Handled = true;   // held down, it did its job once
             return;
         }
         if (box is not null) BindingOperations.GetBindingExpressionBase(box, TextBox.TextProperty)?.UpdateSource();   // what's typed counts first
-        var done = view is IShortcutPage own && own.RunShortcut(id, repeat) || everywhere && RunEverywhere(main, id, view, page);
+        var done = own is not null && own.RunShortcut(id, repeat) || everywhere && RunEverywhere(main, id, view, page);
         if (done) Take(e);
     }
 
@@ -103,12 +126,12 @@ public sealed class AppShortcuts
         switch (id)
         {
             case "app.help" or "app.helpF1": main.Shortcuts.OpenSheet(page); return true;
-            case "app.goProjects": return main.GoTo("Projects");
-            case "app.goSounds": return main.GoTo("Sound Lab");
-            case "app.goMidi": return main.GoTo("MIDI");
-            case "app.goPlayground": return main.GoTo("Playground");
-            case "app.goPlugins": return main.GoTo("Plugins");
-            case "app.goSettings": return main.GoTo("Settings");
+            case "app.goProjects": return main.GoTo(ShortcutsViewModel.Projects);
+            case "app.goSounds": return main.GoTo(ShortcutsViewModel.Sounds);
+            case "app.goMidi": return main.GoTo(ShortcutsViewModel.Midi);
+            case "app.goPlayground": return main.GoTo(ShortcutsViewModel.Playground);
+            case "app.goPlugins": return main.GoTo(ShortcutsViewModel.Plugins);
+            case "app.goSettings": return main.GoTo(ShortcutsViewModel.Settings);
             case "app.prevPage": main.StepPage(-1); return true;
             case "app.nextPage": main.StepPage(1); return true;
             case "app.back": main.Back(); return true;
@@ -160,11 +183,10 @@ public sealed class AppShortcuts
         {
             case DataGrid grid:
             {
-                if (grid.ItemsSource?.Cast<object>().ToList() is not { Count: > 0 } items) return false;
-                var at = grid.SelectedItem is { } picked ? items.IndexOf(picked) : -1;
-                var next = at < 0 ? 0 : Math.Clamp(at + by, 0, items.Count - 1);
-                grid.SelectedItem = items[next];
-                grid.ScrollIntoView(items[next], null);
+                // the rows as shown (sorted by a column, maybe), counted without copying 16,000 songs on every step
+                if ((grid.CollectionView as System.Collections.IList ?? grid.ItemsSource as System.Collections.IList) is not { Count: > 0 } rows) return false;
+                grid.SelectedIndex = grid.SelectedIndex < 0 ? 0 : Math.Clamp(grid.SelectedIndex + by, 0, rows.Count - 1);
+                if (grid.SelectedItem is { } picked) grid.ScrollIntoView(picked, null);
                 return true;
             }
             case ListBox box when box.ItemCount > 0:

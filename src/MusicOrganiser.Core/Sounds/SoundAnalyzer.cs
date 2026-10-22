@@ -39,7 +39,7 @@ public sealed class SoundAnalysis
     /// <summary>Hand-crafted feature vector (timbre, envelope, spectrum) used when no neural model is installed.</summary>
     public float[] Features { get; set; } = [];
 
-    public string? KeyName => KeyTonic is { } t ? MusicTheory.NoteNames[t] + (KeyMinor ? "m" : "") : null;
+    public string? KeyName => KeyTonic is { } t ? MusicTheory.KeyName(t, KeyMinor, true) : null;
     public string? RootNoteName => Pitch is { } p ? MusicTheory.NoteName((int)Math.Round(p)) : null;
 }
 

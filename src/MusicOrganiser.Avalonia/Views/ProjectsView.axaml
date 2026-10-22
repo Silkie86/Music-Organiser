@@ -26,7 +26,7 @@
                 </TextBox.InnerLeftContent>
                 <!-- The X shows whenever there's a search to clear, not only while the box has the focus. -->
                 <TextBox.InnerRightContent>
-                    <Button x:Name="ClearSearch" Click="OnClearSearch" Background="Transparent" BorderThickness="0" Padding="10,6" Margin="0,0,4,0"
+                    <Button Classes="flat" x:Name="ClearSearch" Click="OnClearSearch" Padding="10,6" Margin="0,0,4,0"
                             VerticalAlignment="Center" Cursor="Hand" ToolTip.Tip="Clear the search (Esc)"
                             IsVisible="{Binding SearchText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                         <Path Data="M1,1 L11,11 M11,1 L1,11" Classes="navIcon" Width="12" Height="12" />
@@ -37,7 +37,7 @@
 
         <!-- Filters as chips: the DAW, two quick toggles, the rest under More. -->
         <WrapPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,12,0,14">
-            <ListBox Classes="chips" ItemsSource="{Binding DawFilters}" SelectedItem="{Binding DawFilter}">
+            <ListBox Classes="chips group" ItemsSource="{Binding DawFilters}" SelectedItem="{Binding DawFilter}">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>
                 </ListBox.ItemsPanel>

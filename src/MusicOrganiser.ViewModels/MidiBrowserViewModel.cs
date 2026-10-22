@@ -7,6 +7,7 @@ using MusicOrganiser.Core;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Midi;
+using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
 using Microsoft.ML.OnnxRuntime;
@@ -52,6 +53,13 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     public event EventHandler? NewSearchShown;
     bool _loading, _indexAgain, _retryFailed;
 
+    /// <summary>The MIDI page's list this one copies (null for the MIDI page itself), and the parts it last read.</summary>
+    readonly MidiBrowserViewModel? _source;
+    (MidiCatalogue Catalogue, IReadOnlyDictionary<string, int> Counts, int Files)? _read;
+
+    /// <summary>The parts have been read (again), for copies of this list to show them too.</summary>
+    event EventHandler? Read;
+
     public MidiBrowserViewModel(LibraryDb db, MainViewModel main, MidiIndex? index = null)
     {
         _db = db;
@@ -68,6 +76,22 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         GmSounds.ChosenFile = db.GetSetting(SoundFontKey) is { Length: > 0 } chosen ? chosen : null;
         _hasGoodSounds = GmSounds.IsInstalled;
         LoadOptions(db);
+    }
+
+    /// <summary>
+    /// A copy of the MIDI page's list with a search, kind and pick of its own (the Playground's, while its idea is empty;
+    /// Solomon, 2026-10-21): it shows the parts the MIDI page has read and leaves reading them, and the folders, to it.
+    /// </summary>
+    public MidiBrowserViewModel(MidiBrowserViewModel source) : this(source._db, source._main, source._index)
+    {
+        _source = source;
+        source.Read += (_, _) => _ = TakeFromSourceAsync();
+    }
+
+    async Task TakeFromSourceAsync()
+    {
+        if (_source?._read is not { } read || ReferenceEquals(read.Catalogue, _catalogue)) return;
+        await ShowAsync(read.Catalogue, read.Counts, read.Files);
     }
 
     // ---- sounds ----
@@ -167,6 +191,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [ObservableProperty] string _search = "";
     [ObservableProperty] RoleChip _selectedRole;
     [ObservableProperty] string _from = Everything;
+    /// <summary>Where <see cref="From"/> looks, as a <see cref="MidiQuery"/> says it: "projects", "files" or null for both.</summary>
+    public string? FromQuery => From == YourProjects ? "projects" : From == YourLibraries ? "files" : null;
     [ObservableProperty] IReadOnlyList<MidiRow> _results = [];
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasSelection))] MidiRow? _selected;
     [ObservableProperty] string _summary = "Reading your MIDI…";
@@ -674,6 +700,9 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// <summary>A small playground started playing: what the page plays stops, so two loops never play at once.</summary>
     internal void StopForQuick() => StopPlaying();
 
+    /// <summary>A part started playing here: the Playground showing this list stops its own sound, so two never play at once.</summary>
+    internal event Action? StartedPlaying;
+
     /// <summary>Another page is showing: nothing keeps playing behind it.</summary>
     public void Left()
     {
@@ -709,6 +738,12 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     /// <summary>The page has come into view: the first time, read the index (and bring it up to date).</summary>
     public void Opened()
     {
+        if (_source is not null)
+        {
+            if (_source._read is null) _source.Opened();   // its Read brings the parts here
+            else _ = TakeFromSourceAsync();
+            return;
+        }
         if (_db.GetSetting(UsedKey) != "1") _db.SetSetting(UsedKey, "1");
         if (_catalogue is null && !_loading) _ = LoadAsync(thenIndex: true);
     }
@@ -734,6 +769,26 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
                 sorted = clock.Elapsed;
                 return r;
             });
+            _read = (catalogue, counts, files);
+            await ShowAsync(catalogue, counts, files);
+            Read?.Invoke(this, EventArgs.Empty);
+            var shown = clock.Elapsed;
+            // Where the time went when it's slow, for Solomon's log: on his PC it varied from 3 s to 51 s.
+            if (clock.Elapsed.TotalSeconds >= MidiIndexer.SlowSeconds)
+                AppLog.Info("MIDI", $"Showing the list took {clock.Elapsed.TotalSeconds:0.0} s ({catalogue.Entries.Count:N0} parts): " +
+                                    $"waited {started.TotalSeconds:0.0} s to start, read them in {(read - started).TotalSeconds:0.0} s, " +
+                                    $"sorted in {(sorted - read).TotalSeconds:0.0} s, shown and searched {(shown - sorted).TotalSeconds:0.0} s later; " +
+                                    $"{poolThreads} shared threads with {poolWaiting} jobs " +
+                                    $"waiting when it began, the app paused {GC.GetTotalPauseDuration().TotalSeconds:0.0} s cleaning memory since it opened");
+        }
+        finally { _loading = false; }
+        if (thenIndex) _ = IndexAsync();
+    }
+
+    /// <summary>Shows parts just read: the picks kept where they're still there, the counts, the summary, and the list.</summary>
+    async Task ShowAsync(MidiCatalogue catalogue, IReadOnlyDictionary<string, int> counts, int files)
+    {
+        {
             _catalogue = catalogue;
             // The parts picked before the reload, found again in the new list (gone parts are let go).
             if (_fitSource is { } source) _fitSource = catalogue.Find(source.Phrase.Hash);
@@ -757,18 +812,8 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
                 : $"{catalogue.Entries.Count:N0} MIDI parts from {files:N0} files" +
                   (IncludeOlderSaves ? "" : " · newest save of each song") +
                   (catalogue.PhraseCount > catalogue.Entries.Count ? $" · {catalogue.PhraseCount - catalogue.Entries.Count:N0} copies kept as one" : "");
-            var shown = clock.Elapsed;
             await RefreshAsync();
-            // Where the time went when it's slow, for Solomon's log: on his PC it varied from 3 s to 51 s.
-            if (clock.Elapsed.TotalSeconds >= MidiIndexer.SlowSeconds)
-                AppLog.Info("MIDI", $"Showing the list took {clock.Elapsed.TotalSeconds:0.0} s ({catalogue.Entries.Count:N0} parts): " +
-                                    $"waited {started.TotalSeconds:0.0} s to start, read them in {(read - started).TotalSeconds:0.0} s, " +
-                                    $"sorted in {(sorted - read).TotalSeconds:0.0} s, back on screen after {(shown - sorted).TotalSeconds:0.0} s, " +
-                                    $"searched in {(clock.Elapsed - shown).TotalSeconds:0.0} s; {poolThreads} shared threads with {poolWaiting} jobs " +
-                                    $"waiting when it began, the app paused {GC.GetTotalPauseDuration().TotalSeconds:0.0} s cleaning memory since it opened");
         }
-        finally { _loading = false; }
-        if (thenIndex) _ = IndexAsync();
     }
 
     /// <summary>Runs the search (after a short pause while typing) in the background, newest request winning.</summary>
@@ -781,7 +826,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         var words = text.Length > 0 && (_sectionTarget ?? Fit) is null && Like is null && PhrasesOf is null ? await WordsAsync(text) : null;
         if (request != _searchRequest) return;
         var query = new MidiQuery(text, SelectedRole.Role == "All" ? null : SelectedRole.Role,
-                                  From == YourProjects ? "projects" : From == YourLibraries ? "files" : null, _sectionTarget ?? Fit, Like, Leave: _fitPath,
+                                  FromQuery, _sectionTarget ?? Fit, Like, Leave: _fitPath,
                                   Words: words, Within: PhrasesOf, NameWeight: (float)NameWeight, Notes: NotesOf, Shuffle: _shuffle);
         query = query with { Limit = ListLimit };
         // A new search stops the one before: scoring every part against a harmony is the heavy part, and only the
@@ -845,6 +890,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
 
     public Task IndexAsync(bool retryFailed = false)
     {
+        if (_source is not null) return _source.IndexAsync(retryFailed);   // one reader, the MIDI page's
         _retryFailed |= retryFailed;
         if (_indexing is { IsCompleted: false })
         {
@@ -1077,6 +1123,11 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     [RelayCommand]
     async Task AddFolder()
     {
+        if (_source is not null)
+        {
+            await _source.AddFolder();
+            return;
+        }
         if (await Ui.Current.PickFolder("Choose a folder of MIDI files (they stay where they are)") is not { } f || Folders.Contains(f)) return;
         Folders.Add(f);
         _db.SetList(MidiIndexer.FoldersKey, Folders);
@@ -1323,6 +1374,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
         _plan = plan;
         _playing = row;
         row.IsPlaying = true;
+        StartedPlaying?.Invoke();
         // The button pressed shows Stop, even where the song is silent for the stretch shown and the part plays alone.
         row.IsPlayingTogether = both;
         Tick();
@@ -1728,15 +1780,25 @@ public sealed partial class MidiRow : ObservableObject
     }
     public string FitWhy => Fit is not { } f ? "" : string.Join(" ", new[]
     {
-        $"{f.Percent}% fit, {MoveText}.",
-        f.Together is { } t ? $"Played together, {Math.Round(t * 100)}% of its notes sit with what sounds at the same moment." : "",
+        // With the notes played together, that is the fit itself, so it's said once.
+        f.Together is not null ? $"{f.Percent}% fit, {MoveText}: played together, that share of its notes sit with what sounds at the same moment."
+                               : $"{f.Percent}% fit, {MoveText}.",
         With is { Loops: false } && f.Together is not null && Frame is null ? $"Fits best from bar {f.At / Bar + 1} of the song." : "",
         f.ChordScore is { } c ? $"Its chords follow {(With is { Loops: true } ? "the part's" : "the song's")} {Math.Round(c * 100)}%." : "",
         f.Clash > 0.02 ? $"{Math.Round(f.Clash * 100)}% of its notes are on notes the other hardly plays." : "Its notes are all ones the other plays too.",
     }.Where(s => s.Length > 0));
-    public string ChordsText => Entry.Chords.Count == 0 ? ""
-        : string.Join(" – ", Entry.Chords.Take(8).Select(c => (Fit is { Semitones: var s and not 0 } ? c.Transposed(s) : c).Name)) +
-          (Entry.Chords.Count > 8 ? " …" : "");
+    /// <summary>Its chords, spelled in its key (moved with it when fitting): "C#m7 – A – E – B" in E major.</summary>
+    public string ChordsText
+    {
+        get
+        {
+            if (Entry.Chords.Count == 0) return "";
+            var shift = Fit?.Semitones ?? 0;
+            var key = Entry.Phrase.Key is { } k && shift != 0 ? k with { Tonic = ((k.Tonic + shift) % 12 + 12) % 12 } : Entry.Phrase.Key;
+            return string.Join(" – ", Entry.Chords.Take(8).Select(c => (shift != 0 ? c.Transposed(shift) : c).NameIn(key))) +
+                   (Entry.Chords.Count > 8 ? " …" : "");
+        }
+    }
 
     /// <summary>Its notes, moved into the fitted key when fitting; read when first shown.</summary>
     /// <summary>
@@ -1883,11 +1945,12 @@ public sealed partial class MidiRow : ObservableObject
             var theirs = MidiBrowserViewModel.Cut(guide, range.Start, range.End);
             var where = LoopPoints is null ? "" : $"Looping {range.Describe()}: ";
             if (HarmonyMatcher.SitsWithin(mine, theirs, range.Length) is not { } sits) return where + "they hardly play at the same time.";
-            var rubs = mine.Count(n => HarmonyMatcher.Rubs(n.Start, n.Length, n.Key, theirs));
+            var lane = ChordLane.Detect(theirs, range.Length);
+            var rubs = mine.Count(n => HarmonyMatcher.Rubs(n.Start, n.Length, n.Key, theirs, lane));
             // Two different checks: the score is per half bar (the harmony around a note), the red is note against note.
             return where + $"{Math.Round(sits * 100)}% of its notes fit the other part's harmony" +
-                   (rubs == 0 ? "." : rubs == 1 ? ". 1 note rubs a semitone against the chord playing with it (red)."
-                                                : $". {rubs} notes rub a semitone against the chord playing with them (red).");
+                   (rubs == 0 ? "." : rubs == 1 ? ". 1 note sits a half step above a note of the chord playing with it (red)."
+                                                : $". {rubs} notes sit a half step above a note of the chord playing with them (red).");
         }
     }
 

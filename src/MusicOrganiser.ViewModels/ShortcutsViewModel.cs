@@ -33,6 +33,7 @@ public sealed partial class ShortcutsViewModel : ObservableObject
     public const string Midi = "MIDI";
     public const string Playground = "Playground";
     public const string Plugins = "Plugins";
+    public const string Settings = "Settings";
 
     /// <summary>Keys the app keeps for itself: F12 writes a note for Claude, Tab moves between the boxes and buttons.</summary>
     public static IReadOnlyList<string> Kept { get; } = ["F12", "Tab", "Shift+Tab"];
@@ -65,9 +66,9 @@ public sealed partial class ShortcutsViewModel : ObservableObject
         new("app.play", Everywhere, "Play or stop the picked sound or MIDI part", "Space", "Bitwig's browser"),
         new("app.rescan", Everywhere, "Look for new and changed projects", "F5", "Windows' refresh key"),
         new("app.fullScreen", Everywhere, "Full screen on or off", "F11", "Windows"),
-        new("app.sizeUp", Everywhere, "Make everything bigger (Settings › Appearance › Size)", "Ctrl+=", "the browsers' zoom"),
-        new("app.sizeDown", Everywhere, "Make everything smaller, to fit more on screen", "Ctrl+-", "the browsers' zoom"),
-        new("app.sizeReset", Everywhere, "Everything back to normal size", "Ctrl+0", "the browsers' zoom"),
+        new("app.sizeUp", Everywhere, "Make this page bigger", "Ctrl+=", "the browsers' zoom"),
+        new("app.sizeDown", Everywhere, "Make this page smaller, to fit more on screen", "Ctrl+-", "the browsers' zoom"),
+        new("app.sizeReset", Everywhere, "This page back to the size of the rest", "Ctrl+0", "the browsers' zoom"),
 
         new("projects.open", Projects, "Open the picked song (FL Studio songs go to Bitwig)", "Ctrl+O", "Windows"),
         new("projects.openInBitwig", Projects, "Open the picked song in Bitwig", "Ctrl+B", "Music Organiser"),
@@ -114,6 +115,34 @@ public sealed partial class ShortcutsViewModel : ObservableObject
         new("playground.zoomOut", Playground, "Zoom out", "Ctrl+-"),
         new("playground.zoomFit", Playground, "Zoom to the highlight, or the whole idea", "Z"),
         new("playground.help", Playground, "Show these shortcuts", "?"),
+        // The Playground's menus (2026-10-21): every line is an action here, so its key can be changed. Bitwig's keys
+        // for copy, cut, paste, rename and new; the rest have none until one is picked.
+        new("playground.copy", Playground, "Copy the picked clip", "Ctrl+C"),
+        new("playground.cut", Playground, "Cut the picked clip", "Ctrl+X"),
+        new("playground.paste", Playground, "Paste a clip at the play marker", "Ctrl+V"),
+        new("playground.rename", Playground, "Rename the picked clip or track", "Ctrl+R"),
+        new("playground.new", Playground, "New idea", "Ctrl+N"),
+        new("playground.ideas", Playground, "Open an idea", "Ctrl+O"),
+        new("playground.sendToBitwig", Playground, "Send the idea to Bitwig", ""),
+        new("playground.addLabel", Playground, "Label over the highlight", ""),
+        new("playground.writeChords", Playground, "Write chords", ""),
+        new("playground.writeBass", Playground, "Write a bassline", ""),
+        new("playground.writeGuideTones", Playground, "Write guide tones", ""),
+        new("playground.smooth", Playground, "Smooth inversions on the picked track", ""),
+        new("playground.alternatives", Playground, "Find alternatives for the picked clip", ""),
+        new("playground.copyGroove", Playground, "Copy the picked track's groove", ""),
+        new("playground.mute", Playground, "Mute the picked track", ""),
+        new("playground.solo", Playground, "Solo the picked track", ""),
+        new("playground.duplicateTrack", Playground, "Duplicate the picked track", ""),
+        new("playground.deleteTrack", Playground, "Delete the picked track", ""),
+        new("playground.jazz", Playground, "Jazz and gospel harmony", ""),
+        new("playground.classical", Playground, "Classical harmony", ""),
+        new("playground.reharm", Playground, "Reharmonise", ""),
+        new("playground.foldRoll", Playground, "Show or hide the piano roll", ""),
+        new("playground.tabMidi", Playground, "Show your MIDI or suggestions", ""),
+        new("playground.tabWrite", Playground, "Show Write", ""),
+        new("playground.tabGroove", Playground, "Show Groove", ""),
+        new("playground.tabSong", Playground, "Show Song", ""),
 
         new("plugins.projects", Plugins, "Show the songs that use the picked plugin", "Ctrl+O", "Music Organiser"),
         new("plugins.searchOnline", Plugins, "Search the web for the picked plugin", "Ctrl+Shift+O", "Music Organiser"),
@@ -141,8 +170,22 @@ public sealed partial class ShortcutsViewModel : ObservableObject
     /// <summary>What the last change did, such as which action lost its key to it.</summary>
     [ObservableProperty] string _message = "";
 
+    static readonly Dictionary<string, ShortcutAction> ById = Actions.ToDictionary(a => a.Id);
+
     public string KeyOf(string id) =>
-        _changed.TryGetValue(id, out var k) ? k : Actions.FirstOrDefault(a => a.Id == id)?.Default ?? "";
+        _changed.TryGetValue(id, out var k) ? k : ById.GetValueOrDefault(id)?.Default ?? "";
+
+    /// <summary>Which action each key does on each page, worked out again after a key is changed (looked up on every key press).</summary>
+    Dictionary<(string Page, string Key), string>? _byKey;
+
+    Dictionary<(string Page, string Key), string> ByKey()
+    {
+        if (_byKey is { } made) return made;
+        made = [];
+        foreach (var a in Actions)
+            if (KeyOf(a.Id) is { Length: > 0 } k) made.TryAdd((a.Page, k), a.Id);
+        return _byKey = made;
+    }
 
     /// <summary>
     /// The action <paramref name="key"/> does on <paramref name="page"/>: the page's own first, then one that works
@@ -152,7 +195,8 @@ public sealed partial class ShortcutsViewModel : ObservableObject
     {
         if (key.Length == 0) return null;
         key = Normalise(key);
-        string? Look(string on, string k) => Actions.FirstOrDefault(a => a.Page == on && KeyOf(a.Id) == k)?.Id;
+        var byKey = ByKey();
+        string? Look(string on, string k) => byKey.GetValueOrDefault((on, k));
         // ? where the keyboard doesn't say what it types, and Ctrl and the + key with Shift held (Bitwig's "Ctrl++")
         string? On(string on) => Look(on, key) ?? key switch
         {
@@ -174,25 +218,54 @@ public sealed partial class ShortcutsViewModel : ObservableObject
 
     // ---- the ? sheet ----
 
-    /// <summary>The keys sheet over the window (? or F1), for the page it was opened on.</summary>
+    /// <summary>The keys sheet over the window (? or F1, or the Playground's Keys button), for the page it was opened on.</summary>
     [ObservableProperty] bool _sheetOpen;
     [ObservableProperty] string _sheetPage = Everywhere;
     [ObservableProperty] IReadOnlyList<ShortcutRow> _sheetRows = [];
     [ObservableProperty] IReadOnlyList<ShortcutRow> _sheetEverywhere = [];
+    [ObservableProperty] IReadOnlyList<string> _sheetHints = [];
 
     public string SheetTitle => SheetPage == Everywhere ? "Keys" : $"{SheetPage} keys";
     public bool SheetHasPage => SheetRows.Count > 0;
+    public bool SheetHasHints => SheetHints.Count > 0;
 
-    /// <summary>Opens the keys sheet on <paramref name="page"/>: its own keys, then the ones that work everywhere (less any the page gives a job of its own).</summary>
+    /// <summary>What the mouse does on a page, under its keys on the sheet.</summary>
+    public static IReadOnlyList<string> MouseHints(string page) => page switch
+    {
+        Playground =>
+        [
+            "Hold Shift while dragging: no snapping",
+            "Ctrl + scroll: zoom round the pointer · Alt + scroll: taller or shorter · Shift + scroll or middle-drag: move along",
+            "Click the bar numbers: play from there · drag them: highlight bars · double-click: show it all",
+            "Drag a clip's right edge to repeat it, its left edge to trim it, or pull it off the timeline into your DAW",
+        ],
+        Sounds => ["In the Galaxy: arrows hop between stars, Space pulses the picked star, + and − zoom, F or Home shows it all"],
+        _ => [],
+    };
+
+    /// <summary>
+    /// Opens the keys sheet on <paramref name="page"/>: every one of its actions, keyed or not, so a key can be given to any
+    /// of them right there; then the keys that work everywhere (less any the page gives a job of its own).
+    /// </summary>
     public void OpenSheet(string page)
     {
         SheetPage = page;
-        SheetRows = page == Everywhere ? [] : For(page);
-        var own = SheetRows.Select(r => r.Key).ToHashSet();
+        SheetRows = page == Everywhere ? [] : Rows.Where(r => r.Page == page).ToList();
+        var own = SheetRows.Select(r => r.Key).Where(k => k.Length > 0).ToHashSet();
         SheetEverywhere = For(Everywhere).Where(r => !own.Contains(r.Key)).ToList();
+        SheetHints = MouseHints(page);
+        Message = "";
         OnPropertyChanged(nameof(SheetTitle));
         OnPropertyChanged(nameof(SheetHasPage));
+        OnPropertyChanged(nameof(SheetHasHints));
         SheetOpen = true;
+    }
+
+    /// <summary>Opens the sheet on <paramref name="page"/>, or closes it when it's open there already (? and F1 both do this).</summary>
+    public void ToggleSheet(string page)
+    {
+        if (SheetOpen && SheetPage == page) SheetOpen = false;
+        else OpenSheet(page);
     }
 
     [RelayCommand] void CloseSheet() => SheetOpen = false;
@@ -204,7 +277,7 @@ public sealed partial class ShortcutsViewModel : ObservableObject
     /// </summary>
     public void Set(string id, string key)
     {
-        if (Actions.FirstOrDefault(a => a.Id == id) is not { } action) return;
+        if (ById.GetValueOrDefault(id) is not { } action) return;
         key = Normalise(key);
         Message = "";
         if (Kept.Contains(key))
@@ -227,6 +300,7 @@ public sealed partial class ShortcutsViewModel : ObservableObject
 
     void Store(ShortcutAction action, string key)
     {
+        _byKey = null;
         if (key == action.Default) _changed.Remove(action.Id);
         else _changed[action.Id] = key;
         Rows.FirstOrDefault(r => r.Action == action)?.Refresh();
@@ -245,6 +319,7 @@ public sealed partial class ShortcutsViewModel : ObservableObject
     public void ResetAll()
     {
         _changed.Clear();
+        _byKey = null;
         foreach (var r in Rows) r.Refresh();
         Message = "All keys are back to the ones they started with.";
         Save();
@@ -273,12 +348,21 @@ public sealed partial class ShortcutsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Whether a key can fire while typing in a box: only ones held with Ctrl (Solomon's design, point 13), and Alt with
-    /// an arrow (back and forward), which a box has no use for, so they work from the Projects search box too. Not on a
-    /// Mac, where Option and an arrow move along the text a word at a time.
+    /// Whether a key can fire while typing in a box: ones held with Ctrl (Solomon's design, point 13), the function keys
+    /// (F1, F5, F11: they never type anything, and Projects opens with the keyboard in its search box), and Alt with an
+    /// arrow (back and forward), which a box has no use for. Not Alt and an arrow on a Mac, where Option and an arrow move
+    /// along the text a word at a time.
     /// </summary>
     public static bool WorksWhileTyping(string key) =>
-        key.StartsWith("Ctrl+") || !OperatingSystem.IsMacOS() && key is "Alt+Left" or "Alt+Right" or "Alt+Up" or "Alt+Down";
+        key.StartsWith("Ctrl+") || IsFunctionKey(key)
+        || !OperatingSystem.IsMacOS() && key is "Alt+Left" or "Alt+Right" or "Alt+Up" or "Alt+Down";
+
+    /// <summary>F1 to F24, with or without Ctrl, Shift or Alt.</summary>
+    static bool IsFunctionKey(string key)
+    {
+        var last = key[(key.LastIndexOf('+') + 1)..];
+        return last.Length is 2 or 3 && last[0] == 'F' && char.IsAsciiDigit(last[1]) && (last.Length == 2 || char.IsAsciiDigit(last[2]));
+    }
 }
 
 /// <summary>One action on the Settings › Shortcuts tab and the ? cheat sheet.</summary>

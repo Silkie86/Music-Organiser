@@ -75,9 +75,6 @@ public sealed class ShortcutBox : Button
 
     bool _listening;
 
-    /// <summary>Waiting for the key to give this action, so the window's shortcuts leave the key alone.</summary>
-    public bool IsListening => _listening;
-
     public ShortcutBox()
     {
         MinWidth = 130;
@@ -88,6 +85,9 @@ public sealed class ShortcutBox : Button
     }
 
     ShortcutRow? Row => DataContext as ShortcutRow;
+
+    /// <summary>Waiting for the new key: the page's own keys stand aside until it's pressed.</summary>
+    public bool IsListening => _listening;
 
     protected override void OnClick()
     {

@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace MusicOrganiser.Core.Midi.Jazz;
 
 /// <summary>
@@ -13,6 +15,11 @@ namespace MusicOrganiser.Core.Midi.Jazz;
 public static class ChordSpeller
 {
     static bool Bit(int intervals, int i) => (intervals >> ChordSymbol.Mod(i) & 1) != 0;
+
+    // Every set of intervals' family and what each note does in it, worked out once: the chord reader spells thousands
+    // of note sets a phrase.
+    static readonly ChordFamily[] Families = Enumerable.Range(0, 4096).Select(FamilyOf).ToArray();
+    static readonly ToneRole[] Roles = Enumerable.Range(0, 4096 * 12).Select(x => Role(x / 12, Families[x / 12], x % 12)).ToArray();
 
     /// <summary>What sort of chord these intervals (from the root) make.</summary>
     public static ChordFamily FamilyOf(int iv)
@@ -98,21 +105,27 @@ public static class ChordSpeller
     /// fifth; a little for each tension; off for notes that don't belong, a missing root and a bass note that isn't
     /// part of the chord.
     /// </summary>
-    static double Score(int mask, int root, int bass, float[]? weights, out ChordFamily family)
+    static double Score(int mask, int root, int bass, float[]? weights, out ChordFamily family, int lowest = -1)
     {
-        var iv = ChordSymbol.Rotate(mask, -root);
-        family = FamilyOf(iv);
-        var rootless = !Bit(iv, 0);
+        var iv = root == 0 ? mask : ((mask >> root) | (mask << (12 - root))) & 0xFFF;
+        family = Families[iv];
+        var roles = Roles.AsSpan(iv * 12, 12);
+        var rootless = (iv & 1) == 0;
+        // A 6 makes a 6 chord with a fifth or a seventh beside it; on its own it's an added note: C E A is Am before
+        // C6, A C F# is F#dim before Am6.
+        var bareSix = family is ChordFamily.Major or ChordFamily.Minor && (iv & (1 << 7 | 1 << 9 | 1 << 10 | 1 << 11)) == 1 << 9;
         double score = 0;
         var thirdOrSeventh = 0;
-        for (var i = 0; i < 12; i++)
+        for (var bits = iv; bits != 0; bits &= bits - 1)
         {
-            if (!Bit(iv, i)) continue;
-            var w = weights is null ? 1.0 : 0.6 + 0.4 * weights[ChordSymbol.Mod(root + i)];
-            switch (Role(iv, family, i))
+            var i = BitOperations.TrailingZeroCount(bits);
+            var pc = root + i;
+            var w = weights is null ? 1.0 : 0.6 + 0.4 * weights[pc >= 12 ? pc - 12 : pc];
+            switch (roles[i])
             {
                 case ToneRole.Root: score += 2 * w; break;
                 case ToneRole.Third: score += 2.5 * w; thirdOrSeventh++; break;
+                case ToneRole.Seventh when bareSix && i == 9: score += 0.25 * w; break;
                 case ToneRole.Seventh: score += 1.6 * w; thirdOrSeventh++; break;
                 case ToneRole.Fifth: score += 0.6 * w; break;
                 case ToneRole.Tension: score += 0.25 * w; break;
@@ -121,7 +134,7 @@ public static class ChordSpeller
         }
         if (family is ChordFamily.Power) score -= 1.5;
         if (family is ChordFamily.Sus) score -= 0.4;   // a third, when there is one, is the likelier reading
-        if (family is ChordFamily.Diminished && Bit(iv, 9)) score -= 0.3;   // dim7 is the same from four roots: let the bass pick
+        if (family is ChordFamily.Diminished && (iv >> 9 & 1) != 0) score -= 0.3;   // dim7 is the same from four roots: let the bass pick
         if (rootless)
         {
             // A rootless voicing (3-7-9-13) only when the notes make a chord without it.
@@ -133,7 +146,7 @@ public static class ChordSpeller
             if (bass == root) score += 1.6;
             else
             {
-                var role = Role(iv, family, bass - root);
+                var role = roles[bass >= root ? bass - root : bass - root + 12];
                 score -= role switch
                 {
                     ToneRole.Third or ToneRole.Fifth or ToneRole.Seventh => 0.5,   // an inversion
@@ -141,6 +154,14 @@ public static class ChordSpeller
                     _ => 1.6,
                 };
             }
+        }
+        else
+        {
+            // A right hand on its own has no bass, but its lowest note still leans the root (E G B D is Em7).
+            if (lowest >= 0 && lowest == root) score += 0.3;
+            // With no bass to say, the same four notes read as a minor seventh before a major sixth: A C E G and G A C E
+            // are Am7, G B D E is Em7 (C6 and G6 need the bass to say so).
+            if (family is ChordFamily.Major && (iv >> 9 & 7) == 1) score -= 0.4;
         }
         // Simpler chords win near ties (C6 over Am7/C needs the bass to choose, Am7 over C6/A).
         score -= 0.02 * ChordSymbol.Count(mask);
@@ -153,7 +174,8 @@ public static class ChordSpeller
     /// <param name="mask">The pitch classes sounding (bit 0 = C), the bass note among them.</param>
     /// <param name="bass">The lowest note's pitch class, or -1 when unknown.</param>
     /// <param name="weights">How strongly each pitch class sounds (0 to 1), to lean the choice; null when all count the same.</param>
-    public static ChordSymbol? Spell(int mask, int bass = -1, float[]? weights = null)
+    /// <param name="lowest">With no bass: the lowest note's pitch class, which leans the root a little (no slash chord); -1 when unknown.</param>
+    public static ChordSymbol? Spell(int mask, int bass = -1, float[]? weights = null, int lowest = -1)
     {
         mask &= 0xFFF;
         if (bass >= 0) mask |= 1 << bass;
@@ -163,7 +185,7 @@ public static class ChordSpeller
         ChordSymbol? chord = null;
         for (var root = 0; root < 12; root++)
         {
-            var s = Score(mask, root, bass, weights, out var family);
+            var s = Score(mask, root, bass, weights, out var family, lowest);
             if (s <= best) continue;
             best = s;
             chord = new ChordSymbol(root, mask, bass >= 0 ? bass : root, family);

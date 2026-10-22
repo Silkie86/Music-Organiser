@@ -26,8 +26,59 @@ public readonly record struct ChordSymbol(int Root, int Mask, int Bass, ChordFam
     /// <summary>"Dm9", "G13(b9)", "Cmaj7/E".</summary>
     public string Name => (Family == ChordFamily.Diminished ? Sharps : Names)[Root] + Quality + (Bass != Root ? "/" + Names[Bass] : "");
 
+    /// <summary>The root as <see cref="Name"/> spells it, and the bass under a slash ("" when the root is in the bass).</summary>
+    public string RootName => (Family == ChordFamily.Diminished ? Sharps : Names)[Root];
+    public string BassName => Bass != Root ? Names[Bass] : "";
+
+    /// <summary>
+    /// The quality the way a lead sheet writes it when room is short (Solomon, 2026-10-22: chord names cut off on a crowded
+    /// chord lane): Δ for maj, ° for dim, ø for m7b5, sus for sus4, and no bracketed tensions. "maj7" is "Δ7", "13(b9)" is
+    /// "13", "dim7" is "°7".
+    /// </summary>
+    public static string ShortQuality(string quality)
+    {
+        var q = System.Text.RegularExpressions.Regex.Replace(quality, @"\([^)]*\)", "");
+        q = q.Replace("m7b5", "ø").Replace("m9b5", "ø9").Replace("m11b5", "ø11");
+        q = q.Replace("dim", "°").Replace("maj", "Δ").Replace("sus4", "sus");
+        return q;
+    }
+
+    /// <summary>
+    /// The least of a quality that still says what kind of chord it is, for when even the shorthand won't fit: "m" for a
+    /// minor chord, ° for diminished, ø for half-diminished, + for augmented, and nothing for major and dominant ones.
+    /// </summary>
+    public static string LeastQuality(string quality)
+    {
+        var q = ShortQuality(quality);
+        if (q.StartsWith('m')) return "m";
+        return q.Length > 0 && q[0] is '°' or 'ø' or '+' ? q[..1] : "";
+    }
+
     /// <summary>A diminished chord on a black note is usually a passing chord climbing to the next, so it's named sharp: C#dim7.</summary>
     static readonly string[] Sharps = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    static readonly string[] Flats = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+
+    /// <summary>
+    /// The name spelled the way the key is written: with sharps in the sharp keys (G, D, A, E and B major and their
+    /// relative minors, so C#m in A major, not Dbm), with flats in the flat keys (Gb in Db major), and as <see cref="Name"/>
+    /// in C major, A minor or with no key. A diminished chord stays sharp, as it climbs to the chord after it.
+    /// </summary>
+    public string NameIn(Sounds.KeyEstimate? key)
+    {
+        if (key is null) return Name;
+        var names = Mod(key.Minor ? key.Tonic + 3 : key.Tonic) switch
+        {
+            7 or 2 or 9 or 4 or 11 => Sharps,
+            0 => Names,
+            _ => Flats,
+        };
+        return Spelled(Family == ChordFamily.Diminished ? Sharps : names, names);
+    }
+
+    /// <summary>Every way the name is written, for searching: "C#m7" and "Dbm7".</summary>
+    public IEnumerable<string> Spellings => new[] { Name, Spelled(Sharps, Sharps), Spelled(Flats, Flats) }.Distinct();
+
+    string Spelled(string[] roots, string[] basses) => roots[Root] + Quality + (Bass != Root ? "/" + basses[Bass] : "");
 
     public override string ToString() => Name;
 

@@ -17,26 +17,11 @@
         <Style Selector="ListBox.copies ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
         </Style>
-        <!-- An "install this" card: a big number, the plugin, and ways to find it. -->
-        <Style Selector="Border.needed">
-            <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource StrokeBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="{DynamicResource RadiusM}" />
+        <!-- An "install this" tile: a big number, the plugin, and ways to find it. -->
+        <Style Selector="Border.tile.needed">
             <Setter Property="Padding" Value="14,10" />
             <Setter Property="Margin" Value="0,0,10,10" />
             <Setter Property="Cursor" Value="Hand" />
-        </Style>
-        <Style Selector="Border.needed:pointerover">
-            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
-        </Style>
-        <Style Selector="Border.needed.picked">
-            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
-            <Setter Property="Background" Value="{StaticResource AccentFaintBrush}" />
-        </Style>
-        <Style Selector="Button.small">
-            <Setter Property="Padding" Value="9,3,9,4" />
-            <Setter Property="FontSize" Value="12" />
         </Style>
         <Style Selector="ListBox.projects ListBoxItem">
             <Setter Property="Padding" Value="8,6" />
@@ -77,9 +62,9 @@
                         </DockPanel>
                         <TextBlock Text="{Binding SelectedDetails}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                         <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
-                            <Button Classes="small" Content="Show in Projects" Command="{Binding ShowProjectsCommand}"
+                            <Button Content="Show in Projects" Command="{Binding ShowProjectsCommand}"
                                     ToolTip.Tip="The Projects page, showing only the projects that use this plugin" />
-                            <Button Classes="small" Content="Search online" Command="{Binding SearchOnlineCommand}"
+                            <Button Content="Search online" Command="{Binding SearchOnlineCommand}"
                                     IsVisible="{Binding !Selected.Installed, FallbackValue=False}" />
                         </StackPanel>
                     </StackPanel>
@@ -87,7 +72,7 @@
                         <TabItem Header="{Binding ProjectsTitle}">
                             <DockPanel>
                                 <!-- Which DAW's songs, and songs or every save: Solomon's 18 Oct notes. -->
-                                <ListBox DockPanel.Dock="Top" x:Name="ProjectDawChips" Classes="chips" ItemsSource="{Binding ProjectDaws}"
+                                <ListBox DockPanel.Dock="Top" x:Name="ProjectDawChips" Classes="chips group" ItemsSource="{Binding ProjectDaws}"
                                          SelectedItem="{Binding ProjectsDaw}" IsVisible="{Binding HasProjectDaws}" Margin="0,8,0,0">
                                     <ListBox.ItemsPanel>
                                         <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
@@ -202,7 +187,7 @@
                         <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:NeededPlugin">
-                                <Border Classes="needed" PointerPressed="OnNeededPressed">
+                                <Border Classes="tile needed" PointerPressed="OnNeededPressed">
                                     <StackPanel Spacing="2">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <TextBlock Text="{Binding Count}" FontSize="26" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}"
@@ -214,9 +199,9 @@
                                         <TextBlock Text="{Binding OtherVersion}" Foreground="{StaticResource OkBrush}" FontSize="11.5" TextWrapping="Wrap"
                                                    IsVisible="{Binding HasOtherVersion}" />
                                         <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,8,0,0">
-                                            <Button Classes="small" Content="Find similar" Command="{Binding FindSimilarCommand}"
+                                            <Button Content="Find similar" Command="{Binding FindSimilarCommand}"
                                                     ToolTip.Tip="Installed plugins with a close name: a newer version, or the same plugin renamed" />
-                                            <Button Classes="small" Content="Search online" Command="{Binding SearchOnlineCommand}" />
+                                            <Button Content="Search online" Command="{Binding SearchOnlineCommand}" />
                                         </StackPanel>
                                         <TextBlock Text="{Binding SimilarNote}" Classes="muted" FontSize="11.5" Margin="0,4,0,0"
                                                    IsVisible="{Binding SimilarNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
@@ -243,7 +228,7 @@
                 </StackPanel>
             </Border>
 
-            <ListBox Grid.Row="1" Classes="chips" ItemsSource="{x:Static vm:PluginsViewModel.FilterChoices}" SelectedItem="{Binding Filter}" Margin="0,0,0,10">
+            <ListBox Grid.Row="1" Classes="chips group" ItemsSource="{x:Static vm:PluginsViewModel.FilterChoices}" SelectedItem="{Binding Filter}" Margin="0,0,0,10">
                 <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
             </ListBox>
 
@@ -279,7 +264,7 @@
                                             <Border Classes="pill" Background="{StaticResource MissingSoftBrush}">
                                                 <TextBlock Text="Missing" Classes="pillText" Foreground="{StaticResource MissingBrush}" />
                                             </Border>
-                                            <Button Classes="small" Content="Search" ToolTip.Tip="Search online for it"
+                                            <Button Content="Search" ToolTip.Tip="Search online for it"
                                                     Command="{Binding $parent[UserControl].((vm:PluginsViewModel)DataContext).SearchOnlineCommand}"
                                                     CommandParameter="{Binding}" />
                                         </StackPanel>

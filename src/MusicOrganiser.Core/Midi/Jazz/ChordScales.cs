@@ -92,6 +92,12 @@ public static class ChordScales
         if (i == 0 || (chord.Mask >> ChordSymbol.Mod(pc) & 1) != 0)
             // Its own notes. An avoid note that's in the chord (an add11) still sounds, but less sweetly.
             return ChordSpeller.Role(chord.Intervals, chord.Family, i) == ToneRole.Avoid ? 0.6 : 1;
+        // The 5th is a chord note even when the voicing leaves it out (a shell voicing plays only root, 3rd and 7th):
+        // the ear hears it as part of the chord. Not on chords whose 5th is altered (diminished, half-diminished,
+        // augmented), nor on a dominant that has a ♭5 or ♯5 and no natural 5th (an altered dominant).
+        if (i == 7 && chord.Family is not (ChordFamily.Diminished or ChordFamily.HalfDiminished or ChordFamily.Augmented) &&
+            !(chord.Family == ChordFamily.Dominant && (chord.Has(6) || chord.Has(8)) && !chord.Has(7)))
+            return 1;
         return Colour(chord.Family, i, chord.Intervals, style);
     }
 

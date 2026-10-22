@@ -6,12 +6,6 @@
              x:DataType="vm:SongMidiViewModel">
     <!-- A song's "MIDI that fits": parts from your other projects and MIDI folders that fit its harmony, already moved into its key. -->
     <UserControl.Styles>
-        <Style Selector="TextBlock.fitScore">
-            <Setter Property="FontSize" Value="16" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
-            <Setter Property="HorizontalAlignment" Value="Right" />
-        </Style>
         <!-- A part open in the quick view: the list narrows, so its little rolls make way. -->
         <Style Selector="ListBox.open views|NoteRoll">
             <Setter Property="IsVisible" Value="False" />
@@ -25,11 +19,6 @@
         <Style Selector="ListBox.open TextBlock.move">
             <Setter Property="IsVisible" Value="False" />
         </Style>
-        <Style Selector="TextBlock.small">
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
-            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-        </Style>
     </UserControl.Styles>
 
     <DockPanel>
@@ -38,7 +27,7 @@
                     ToolTip.Tip="Work the idea up on the Playground: the picked part on top of the bars of this song it fits, in a new section" />
             <StackPanel Spacing="6">
                 <TextBlock Text="{Binding Status}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                <ListBox Classes="chips" ItemsSource="{x:Static vm:SongMidiViewModel.Kinds}" SelectedItem="{Binding Kind}">
+                <ListBox Classes="chips group" ItemsSource="{x:Static vm:SongMidiViewModel.Kinds}" SelectedItem="{Binding Kind}">
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
                     </ListBox.ItemsPanel>
@@ -111,7 +100,7 @@
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Spacing="10" DataContext="{Binding Open}" x:DataType="vm:MidiRow">
                     <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="✕" Padding="8,2" VerticalAlignment="Top" Background="Transparent"
+                        <Button Classes="flat" DockPanel.Dock="Right" Content="✕" Padding="8,2" VerticalAlignment="Top"
                                 Command="{Binding $parent[UserControl].((vm:SongMidiViewModel)DataContext).CloseCommand}" ToolTip.Tip="Close (Esc)" />
                         <StackPanel DockPanel.Dock="Right" Margin="10,0" VerticalAlignment="Top" ToolTip.Tip="{Binding FitWhy}">
                             <TextBlock Classes="fitScore" Text="{Binding FitText}" />
@@ -162,18 +151,20 @@
                     <!-- One-click changes, each undone like any edit. The file it came from is never changed. -->
                     <WrapPanel>
                         <TextBlock Text="Change it:" Classes="small" VerticalAlignment="Center" Margin="0,0,8,6" />
-                        <Button Content="▼ Semitone" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="down"
-                                ToolTip.Tip="Every note down a semitone" />
-                        <Button Content="▲ Semitone" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="up"
-                                ToolTip.Tip="Every note up a semitone" />
-                        <Button Content="Quantise" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="quantise"
-                                ToolTip.Tip="Every note onto the grid, for a tight feel: 16ths, or what Settings › MIDI says" />
-                        <Button Content="Play it twice" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="twice"
-                                ToolTip.Tip="The part again straight after itself: twice as long, to change the second time round" />
-                        <Button Content="First half" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="half"
-                                ToolTip.Tip="Just its first half: for a part that plays the same idea twice" />
-                        <Button Content="Reverse" Padding="8,2" FontSize="12" Margin="0,0,6,6" Command="{Binding ToolCommand}" CommandParameter="reverse"
-                                ToolTip.Tip="Back to front: the last note first" />
+                        <StackPanel Classes="group" Margin="0,0,0,6">
+                            <Button Content="▼ Semitone" Command="{Binding ToolCommand}" CommandParameter="down"
+                                    ToolTip.Tip="Every note down a semitone" />
+                            <Button Content="▲ Semitone" Command="{Binding ToolCommand}" CommandParameter="up"
+                                    ToolTip.Tip="Every note up a semitone" />
+                            <Button Content="Quantise" Command="{Binding ToolCommand}" CommandParameter="quantise"
+                                    ToolTip.Tip="Every note onto the grid, for a tight feel: 16ths, or what Settings › MIDI says" />
+                            <Button Content="Play it twice" Command="{Binding ToolCommand}" CommandParameter="twice"
+                                    ToolTip.Tip="The part again straight after itself: twice as long, to change the second time round" />
+                            <Button Content="First half" Command="{Binding ToolCommand}" CommandParameter="half"
+                                    ToolTip.Tip="Just its first half: for a part that plays the same idea twice" />
+                            <Button Content="Reverse" Command="{Binding ToolCommand}" CommandParameter="reverse"
+                                    ToolTip.Tip="Back to front: the last note first" />
+                        </StackPanel>
                     </WrapPanel>
                     <!-- Listening, its sound and octave, and taking it out to the DAW. -->
                     <WrapPanel>

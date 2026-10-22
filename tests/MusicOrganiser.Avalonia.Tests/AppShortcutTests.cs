@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -111,7 +112,8 @@ public sealed class AppShortcutTests : IDisposable
                 Key.D1 => PhysicalKey.Digit1, Key.D0 => PhysicalKey.Digit0, Key.OemPlus => PhysicalKey.Equal, Key.OemMinus => PhysicalKey.Minus, Key.D2 => PhysicalKey.Digit2, Key.PageDown => PhysicalKey.PageDown,
                 Key.Left => PhysicalKey.ArrowLeft, Key.Right => PhysicalKey.ArrowRight, Key.Up => PhysicalKey.ArrowUp,
                 Key.Down => PhysicalKey.ArrowDown, Key.OemComma => PhysicalKey.Comma, Key.F => PhysicalKey.F, Key.F1 => PhysicalKey.F1,
-                Key.Escape => PhysicalKey.Escape, Key.OemQuestion => PhysicalKey.Slash, _ => PhysicalKey.None,
+                Key.Escape => PhysicalKey.Escape, Key.OemQuestion => PhysicalKey.Slash, Key.Tab => PhysicalKey.Tab, Key.Space => PhysicalKey.Space,
+                _ => PhysicalKey.None,
             };
             window.KeyPress(key, mods, physical, text);
             window.KeyRelease(key, mods, physical, text);
@@ -160,7 +162,7 @@ public sealed class AppShortcutTests : IDisposable
         Press(Key.Left, RawInputModifiers.Control);
         Assert.Equal(tab, tabs.SelectedIndex);
 
-        // Ctrl+= and Ctrl+- make everything bigger and smaller, Ctrl+0 puts it back
+        // Ctrl+= and Ctrl+- make the page bigger and smaller, Ctrl+0 puts it back
         Press(Key.OemPlus, RawInputModifiers.Control, "=");
         Assert.Equal(110, main.Settings.Appearance.Size);
         Press(Key.OemMinus, RawInputModifiers.Control, "-");
@@ -169,14 +171,29 @@ public sealed class AppShortcutTests : IDisposable
         Press(Key.D0, RawInputModifiers.Control, "0");
         Assert.Equal(100, main.Settings.Appearance.Size);
 
-        // F1 shows this page's keys and everywhere's; while it's up other keys do nothing; Esc closes it
+        // F1 shows this page's keys and everywhere's, even from the search box (function keys never type). The keyboard goes
+        // onto the sheet, where Tab moves round it; other shortcuts wait until it's shut; Esc closes it and the keyboard goes back
+        search.Focus();
         Press(Key.F1);
         Assert.True(main.Shortcuts.SheetOpen);
         Assert.Equal("Projects keys", main.Shortcuts.SheetTitle);
+        var sheet = window.FindControl<Border>("KeySheet")!;
+        bool OnSheet() => window.FocusManager?.GetFocusedElement() is Visual v && sheet.IsVisualAncestorOf(v);
+        Assert.True(OnSheet());
+        Press(Key.Tab);
+        Assert.True(OnSheet());
         Press(Key.D2, RawInputModifiers.Control, "2");
         Assert.Equal("Projects", main.SelectedNav.Title);
         Press(Key.Escape);
         Assert.False(main.Shortcuts.SheetOpen);
+        Assert.True(search.IsFocused);
+
+        // The Playground's ? (and its Help menu) open the same sheet, on the Playground's keys
+        Assert.True(main.Playground.RunShortcut("playground.help"));
+        Assert.Equal("Playground keys", main.Shortcuts.SheetTitle);
+        Assert.True(main.Playground.CheatSheetOpen);
+        Press(Key.Escape);
+        Assert.False(main.Playground.CheatSheetOpen);
 
         // Typing a plain key in the search box types it, even one that's a shortcut
         search.Focus();
@@ -184,6 +201,26 @@ public sealed class AppShortcutTests : IDisposable
         window.KeyTextInput("?");
         Press(Key.OemQuestion, RawInputModifiers.Shift, "?");
         Assert.False(main.Shortcuts.SheetOpen);
+
+        // Space on a focused button presses the button, even with a sound picked that Space would otherwise play
+        main.GoTo(ShortcutsViewModel.Sounds);
+        Settle();
+        main.Sounds.Selected = new Sound { Id = 1, Path = Path.Combine(_root, "kick.wav") };
+        Settle();
+        var page = window.GetVisualDescendants().OfType<Views.SoundsView>().First();
+        var button = page.GetVisualDescendants().OfType<Button>().First(b => b.IsEffectivelyVisible && b.IsEffectivelyEnabled && b.Focusable);
+        button.Focus();
+        bool? takenByShortcut = null;
+        void Watch(object? sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Space) return;
+            takenByShortcut = e.Handled;
+            e.Handled = true;   // not clicked for real: only whether the app's keys left it alone matters here
+        }
+        // looked at on the button, after the window's keys have had their go
+        button.AddHandler(InputElement.KeyDownEvent, Watch, global::Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+        Press(Key.Space, text: " ");
+        Assert.False(takenByShortcut);
         window.Close();
     }
 }

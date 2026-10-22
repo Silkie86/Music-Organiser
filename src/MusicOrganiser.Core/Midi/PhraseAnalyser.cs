@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using MusicOrganiser.Core.Midi.Jazz;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Sounds;
 
@@ -23,12 +24,22 @@ public static class MidiRoles
 }
 
 /// <summary>
-/// One chord: its root and every pitch class sounding, as a 12-bit set (bit 0 = C). Keeping the notes rather than just a
-/// name lets two chords be compared by how many notes they share, so Am7 and C are close and Am and F# are not.
+/// One chord: its root, every pitch class sounding, as a 12-bit set (bit 0 = C), and its bass note. Keeping the notes
+/// rather than just a name lets two chords be compared by how many notes they share, so Am7 and C are close and Am and
+/// F# are not.
 /// </summary>
-public readonly record struct PhraseChord(int Root, int Mask)
+public readonly record struct PhraseChord(int Root, int Mask, int Bass)
 {
-    public PhraseChord Transposed(int semitones) => new(Mod12(Root + semitones), Rotate(Mask, semitones));
+    /// <summary>A chord with its root in the bass (or no bass of its own).</summary>
+    public PhraseChord(int root, int mask) : this(root, mask, root) { }
+
+    /// <summary>A chord as the chord reader spelled it (<see cref="ChordReader"/>).</summary>
+    public static PhraseChord Of(ChordSymbol chord) => new(chord.Root, chord.Mask, chord.Bass);
+
+    public PhraseChord Transposed(int semitones) => new(Mod12(Root + semitones), Rotate(Mask, semitones), Mod12(Bass + semitones));
+
+    /// <summary>The chord spelled out, the way a jazz or gospel player names it: "Am9", "G13(b9)", "C/E".</summary>
+    public ChordSymbol Symbol => new(Root, Mask, Bass, ChordSpeller.FamilyOf(Rotate(Mask, -Root)));
 
     public static int Rotate(int mask, int semitones)
     {
@@ -50,19 +61,14 @@ public readonly record struct PhraseChord(int Root, int Mask)
         return Math.Min(1, shared + (Root == other.Root ? 0.25 : 0));
     }
 
-    /// <summary>The chord's name, such as "Am7", or its root with a "?" when it isn't a chord with a name.</summary>
-    public string Name
-    {
-        get
-        {
-            var chroma = new double[12];
-            for (var i = 0; i < 12; i++) if ((Mask >> i & 1) != 0) chroma[i] = 1;
-            chroma[Root] += 0.5;
-            return MusicTheory.NameChord(chroma, 0.6)?.Name ?? MusicTheory.NoteNames[Root] + "?";
-        }
-    }
+    /// <summary>The chord's name, such as "Am7", "Dm9" or "C/E".</summary>
+    public string Name => Symbol.Name;
 
-    public override string ToString() => $"{Root}:{Mask:x3}";
+    /// <summary>The name spelled the way the key is written (C#m in A major, Dbm in Gb major), <see cref="ChordSymbol.NameIn"/>.</summary>
+    public string NameIn(KeyEstimate? key) => Symbol.NameIn(key);
+
+    /// <summary>"9:291" (A with C, E and G), with "/4" after it for a bass that isn't the root (over E).</summary>
+    public override string ToString() => Bass == Root ? $"{Root}:{Mask:x3}" : $"{Root}:{Mask:x3}/{Bass}";
 
     public static string Encode(IEnumerable<PhraseChord> chords) => string.Join(" ", chords);
 
@@ -73,9 +79,12 @@ public readonly record struct PhraseChord(int Root, int Mask)
         foreach (var part in text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
             var colon = part.IndexOf(':');
-            if (colon > 0 && int.TryParse(part[..colon], out var root) &&
-                int.TryParse(part[(colon + 1)..], System.Globalization.NumberStyles.HexNumber, null, out var mask))
-                list.Add(new PhraseChord(root, mask));
+            var slash = part.IndexOf('/');
+            if (slash < 0) slash = part.Length;
+            if (colon > 0 && slash > colon && int.TryParse(part[..colon], out var root) &&
+                int.TryParse(part[(colon + 1)..slash], System.Globalization.NumberStyles.HexNumber, null, out var mask))
+                list.Add(slash < part.Length && int.TryParse(part[(slash + 1)..], out var bass) && bass is >= 0 and < 12
+                    ? new PhraseChord(root, mask, bass) : new PhraseChord(root, mask));
         }
         return list;
     }
@@ -325,17 +334,12 @@ public static partial class PhraseAnalyser
         if (total > 0) for (var i = 0; i < 12; i++) chroma[i] /= total;
 
         var pitched = role is not MidiRoles.Drums;
+        // Chords are read from parts that play them: a melody's or a bassline's notes go by one at a time.
+        var chords = role is MidiRoles.Chords or MidiRoles.Arp or MidiRoles.Other ? Progression(notes) : [];
+        // A key and its relative major or minor share every note; when they fit about the same, the first chord decides.
         var key = pitched && notes.Count >= 4 && chroma.Count(c => c > 0) >= 3
-            ? MusicTheory.EstimateKey(chroma.Select(c => (double)c).ToArray())
+            ? MusicTheory.EstimateMidiKey(chroma.Select(c => (double)c).ToArray(), chords.Count > 0 ? chords[0].Root : null)
             : null;
-        var chords = pitched ? Progression(notes, role == MidiRoles.Chords) : [];
-        // A key and its relative major or minor share every note; a progression that starts on the other one's root
-        // (Cm – Ab – Eb – Bb) is in that one.
-        if (key is not null && chords.Count > 0)
-        {
-            var relative = key.Minor ? (key.Tonic + 3) % 12 : (key.Tonic + 9) % 12;
-            if (chords[0].Root == relative) key = key with { Tonic = relative, Minor = !key.Minor };
-        }
         return new PhraseAnalysis(role, why, BarsOf(notes), notes.Count == 0 ? 0 : notes.Min(n => n.Key),
                                   notes.Count == 0 ? 0 : notes.Max(n => n.Key), key, chroma, chords,
                                   Features(shape, notes, chroma, key), HashOf(notes));
@@ -454,58 +458,25 @@ public static partial class PhraseAnalyser
     // ---- harmony ----
 
     /// <summary>
-    /// The chords, a half bar at a time, in order: the notes that sound for a good share of each half bar (short stabs count). A chord
-    /// held for four bars is one chord, the same as one struck once, so only the harmony counts, not the rhythm.
+    /// The chords in order, as <see cref="ChordReader"/> reads them, a chord coming straight after itself once: what
+    /// harmony matching compares. A chord held for four bars is one chord, the same as one struck once, so only the
+    /// harmony counts, not the rhythm.
     /// </summary>
-    /// <param name="twoNoteChords">Count two notes as a chord too (power chords and thirds in a chord part).</param>
-    public static IReadOnlyList<PhraseChord> Progression(IReadOnlyList<NoteEvent> notes, bool twoNoteChords = false, int window = 2 * Ppq)
+    public static IReadOnlyList<PhraseChord> Progression(IReadOnlyList<NoteEvent> notes)
     {
         if (notes.Count == 0) return [];
-        var sorted = notes.OrderBy(n => n.Start).ToList();
-        var end = sorted.Max(n => n.Start + n.Length);
         var chords = new List<PhraseChord>();
-        var longest = sorted.Max(n => n.Length);
-        var first = 0;
-        var weights = new double[12];
-        for (long w = 0; w < end; w += window)
+        foreach (var c in ChordReader.Read(notes, notes.Max(n => n.Start + n.Length)))
         {
-            Array.Clear(weights);
-            var lowest = int.MaxValue;
-            // Notes sorted by start: none before here can still be sounding.
-            while (first < sorted.Count && sorted[first].Start + longest <= w) first++;
-            for (var i = first; i < sorted.Count && sorted[i].Start < w + window; i++)
-            {
-                var n = sorted[i];
-                var overlap = Math.Min(n.Start + n.Length, w + window) - Math.Max(n.Start, w);
-                if (overlap < window / 16) continue;   // a grace note or a flam, not part of the harmony
-                weights[n.Key % 12] += overlap;
-                lowest = Math.Min(lowest, n.Key);
-            }
-            var max = weights.Max();
-            if (max <= 0) continue;
-            var mask = 0;
-            for (var p = 0; p < 12; p++) if (weights[p] >= 0.25 * max) mask |= 1 << p;
-            var count = BitOperations.PopCount((uint)mask);
-            if (count < (twoNoteChords ? 2 : 3)) continue;
-            var chord = new PhraseChord(RootOf(weights, lowest % 12), mask);
-            if (chords.Count == 0 || chords[^1].Mask != chord.Mask) chords.Add(chord);
+            var chord = PhraseChord.Of(c.Chord);
+            if (chords.Count == 0 || chords[^1] != chord) chords.Add(chord);
         }
         return chords;
     }
 
-    /// <summary>The root a chord's notes name (the bass note leans it), else the bass note itself.</summary>
-    static int RootOf(double[] weights, int bass)
-    {
-        var chroma = (double[])weights.Clone();
-        chroma[bass] += chroma.Max() * 0.5;
-        if (MusicTheory.NameChord(chroma, 0.6) is { } named)
-        {
-            var name = named.Name;
-            var root = Array.IndexOf(MusicTheory.NoteNames, name.Length > 1 && name[1] == '#' ? name[..2] : name[..1]);
-            if (root >= 0) return root;
-        }
-        return bass;
-    }
+    /// <summary>What a part is for (<see cref="MidiRoles"/>), from its notes and names alone, as <see cref="Analyse"/> decides it.</summary>
+    public static string RoleOf(IReadOnlyList<NoteEvent> notes, string hints = "", bool drums = false) =>
+        Role(Shape.Of(notes), notes, hints, drums).Role;
 
     // ---- likeness ----
 

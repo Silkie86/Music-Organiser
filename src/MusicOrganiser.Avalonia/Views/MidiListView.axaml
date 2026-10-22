@@ -1,0 +1,221 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
+             x:Class="MusicOrganiser.Avalonia.Views.MidiListView"
+             x:DataType="vm:MidiBrowserViewModel">
+    <!--
+        The MIDI page's list: search, kind of part, the parts found and the side card (Side). The Playground shows the
+        same list, smaller (Classes="compact"), while its idea is empty, so what's added here shows there too.
+    -->
+    <UserControl.Styles>
+        <Style Selector="Button.rowAdd">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <!-- Smaller, for the Playground's side panel: the roll goes under the names, and each part gets Add. -->
+        <Style Selector="views|MidiListView.compact :is(Control).full">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <Style Selector="views|MidiListView.compact ComboBox.fromPick">
+            <Setter Property="MinWidth" Value="118" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="6,0,0,0" />
+        </Style>
+        <Style Selector="views|MidiListView.compact TextBox.bigSearch">
+            <Setter Property="FontSize" Value="14" />
+        </Style>
+        <Style Selector="views|MidiListView.compact StackPanel.rowFit">
+            <Setter Property="IsVisible" Value="False" />
+        </Style>
+        <Style Selector="views|MidiListView.compact Button.rowAdd">
+            <Setter Property="IsVisible" Value="True" />
+        </Style>
+        <Style Selector="views|MidiListView.compact views|NoteRoll.rowRoll">
+            <Setter Property="Grid.Row" Value="1" />
+            <Setter Property="Grid.Column" Value="1" />
+            <Setter Property="Grid.ColumnSpan" Value="3" />
+            <Setter Property="Width" Value="NaN" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*">
+        <!-- Search, where from, and what kind of part. -->
+        <Grid x:Name="SearchRow" ColumnDefinitions="*,Auto,Auto" Margin="0,14,0,0">
+            <TextBox x:Name="SearchBox" Classes="clearButton bigSearch" Text="{Binding Search}"
+                     PlaceholderText="{Binding SearchHint}"
+                     ToolTip.Tip="Words match part, pattern, project and file names, folders, the kind of part, its key and its chords. With the MIDI model installed you can also describe how a part sounds, and the closest come first.">
+                <TextBox.InnerLeftContent>
+                    <Path Data="M11,4 A7,7 0 1 1 10.99,4 Z M20,20 L16.5,16.5" Classes="navIcon" Margin="16,0,4,0" />
+                </TextBox.InnerLeftContent>
+            </TextBox>
+            <ComboBox Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center" MinWidth="160" Classes="fromPick"
+                      ItemsSource="{x:Static vm:MidiBrowserViewModel.FromChoices}" SelectedItem="{Binding From}"
+                      ToolTip.Tip="MIDI from your projects, from your MIDI library folders, or both" />
+            <!-- Fit to a project: type part of its name and pick it. -->
+            <Panel Grid.Column="2" Margin="10,0,0,0" VerticalAlignment="Center" Classes="full">
+                <TextBox x:Name="FitBox" Classes="clearButton" Width="280" Text="{Binding FitSearch}"
+                         PlaceholderText="Fit to a project…"
+                         ToolTip.Tip="Pick one of your projects: every part is ranked by how well its harmony fits that song once moved into the right key (rhythm doesn't count), and shown already moved." />
+                <Popup IsOpen="{Binding FitChoicesOpen}" PlacementTarget="{Binding #FitBox}" Placement="BottomEdgeAlignedLeft"
+                       IsLightDismissEnabled="True">
+                    <Border Classes="card" Padding="4" Width="280">
+                        <ItemsControl ItemsSource="{Binding FitChoices}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ProjectItem">
+                                    <Button Classes="flat" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,6"
+                                            Command="{Binding $parent[UserControl].((vm:MidiBrowserViewModel)DataContext).FitToCommand}"
+                                            CommandParameter="{Binding}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Classes="small" Text="{Binding Daw}" />
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Border>
+                </Popup>
+            </Panel>
+        </Grid>
+
+        <StackPanel Grid.Row="1" Margin="0,12,0,8" Spacing="8">
+            <ListBox Classes="chips group" ItemsSource="{Binding RoleChips}" SelectedItem="{Binding SelectedRole}">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:RoleChip">
+                        <TextBlock Text="{Binding Text}" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <!-- What the list is ranked by, when it's fitting a song or finding parts like one. -->
+            <Border Classes="targetPill" IsVisible="{Binding IsFitting}">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding FitName, StringFormat='Fitting to {0}'}" />
+                    <TextBlock VerticalAlignment="Center" Classes="small" Text="{Binding FitText}" />
+                    <Button Content="All bars" Padding="8,2" FontSize="12" Command="{Binding WholeFitCommand}" IsVisible="{Binding IsFittingSection}"
+                            ToolTip.Tip="Back to parts that fit all of it" />
+                    <Button Content="✕" Padding="8,2" Command="{Binding ClearFitCommand}" ToolTip.Tip="Stop fitting" />
+                </StackPanel>
+            </Border>
+            <Border Classes="targetPill" IsVisible="{Binding IsShowingPhrases}">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding PhrasesText}" />
+                    <Button Content="✕" Padding="8,2" Command="{Binding ClearPhrasesCommand}" ToolTip.Tip="Back to the whole list" />
+                </StackPanel>
+            </Border>
+            <Border Classes="targetPill" IsVisible="{Binding IsLiking}">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding LikeText}" />
+                    <Button Content="✕" Padding="8,2" Command="{Binding ClearLikeCommand}" ToolTip.Tip="Back to the whole list" />
+                </StackPanel>
+            </Border>
+            <!-- Search by description: the MIDI model (CLaMP 3), a one-time download that runs on this computer. -->
+            <!-- In a Panel because the IsVisible binding on the card would win over the compact style. -->
+            <Panel Classes="full">
+            <Border Classes="card" Padding="12,8" HorizontalAlignment="Left" IsVisible="{Binding CanDownloadMeaning}">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="560" FontSize="12.5"
+                               Text="Search by how parts sound (&quot;dark pad chords&quot;, &quot;bouncy funk bassline&quot;) and find parts that sound alike: download the MIDI model once (about 430 MB). It runs on this computer." />
+                    <Button Content="Download MIDI model" Classes="accent" VerticalAlignment="Center" Command="{Binding DownloadMeaningCommand}"
+                            ToolTip.Tip="CLaMP 3, a free music-and-words model (MIT licence). Saved in the app's data folder." />
+                </StackPanel>
+            </Border>
+            </Panel>
+            <Border Classes="card" Padding="12,8" HorizontalAlignment="Left" Width="420" IsVisible="{Binding IsDownloadingMeaning}">
+                <StackPanel>
+                    <TextBlock Text="{Binding MeaningText, StringFormat='Downloading the MIDI model · {0}'}" Classes="small" />
+                    <ProgressBar Height="4" MinHeight="4" Margin="0,6,0,0" Maximum="100" Value="{Binding MeaningPercent}" />
+                </StackPanel>
+            </Border>
+            <!-- How much names count against what the model reads in the notes; right is the notes only. -->
+            <StackPanel Orientation="Horizontal" Spacing="10" IsVisible="{Binding MeaningInstalled}"
+                        ToolTip.Tip="When you describe what you want: how much words in a part's track name, file, folder and kind count, against how its notes play to the MIDI model. All the way right uses the notes only.">
+                <TextBlock Text="Names" Classes="small" VerticalAlignment="Center" />
+                <Slider Width="180" Minimum="0" Maximum="3" TickFrequency="0.5" IsSnapToTickEnabled="True" IsDirectionReversed="True"
+                        VerticalAlignment="Center" Margin="0,-10" Value="{Binding NameWeight}" />
+                <TextBlock Text="Notes" Classes="small" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding NameWeightText}" Classes="small" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsHearing}">
+                <ProgressBar IsIndeterminate="True" Width="80" Height="3" MinHeight="3" VerticalAlignment="Center" />
+                <TextBlock Text="Listening to your MIDI so it can be found by description…" Classes="small" VerticalAlignment="Center" />
+                <Button Content="Stop" Padding="8,2" FontSize="12" Command="{Binding StopHearingCommand}" />
+            </StackPanel>
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                    <!-- The order: best match first (or newest, or most alike), or shuffled. -->
+                    <ToggleButton Classes="chip" FontSize="12" Content="{Binding OrderText}" Command="{Binding UnshuffleCommand}"
+                                  IsChecked="{Binding !IsShuffled, Mode=OneWay}" ToolTip.Tip="List them in this order" />
+                    <ToggleButton Classes="chip" FontSize="12" Command="{Binding ShuffleCommand}" IsChecked="{Binding IsShuffled, Mode=OneWay}"
+                                  ToolTip.Tip="A random pick from everything that matches, in a random order. Press again for another.">
+                        <TextBlock Text="⤨  Shuffle" />
+                    </ToggleButton>
+                    <ToggleButton Classes="chip" IsChecked="{Binding Loop}" FontSize="12"
+                                  ToolTip.Tip="Play parts round and round until you stop them">
+                        <TextBlock Text="↻  Loop" />
+                    </ToggleButton>
+                </StackPanel>
+                <TextBlock Text="{Binding ResultText}" Classes="small" VerticalAlignment="Center" />
+            </DockPanel>
+        </StackPanel>
+
+        <!-- Nothing yet: how to get MIDI in. -->
+        <Border Grid.Row="2" Classes="card" VerticalAlignment="Top" HorizontalAlignment="Left" MaxWidth="560" Padding="22" IsVisible="{Binding IsEmpty}">
+            <StackPanel Spacing="10">
+                <TextBlock Text="No MIDI here yet" FontSize="16" FontWeight="SemiBold" />
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}"
+                           Text="The MIDI in your projects shows up here once they've been scanned (add project folders in Settings). Add the folders where you keep MIDI packs too: their files are read where they are and never changed." />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Add a MIDI folder…" Classes="accent" Command="{Binding AddFolderCommand}" />
+                    <Button Content="Read MIDI now" Command="{Binding ReindexCommand}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+
+        <Grid x:Name="Body" Grid.Row="2" ColumnDefinitions="*,Auto" IsVisible="{Binding !IsEmpty}">
+            <ListBox x:Name="Parts" ItemsSource="{Binding Results}" SelectedItem="{Binding Selected}" Background="Transparent"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" views:FileDrag.Source="{Binding}"
+                     DoubleTapped="OnDoubleTapped" KeyDown="OnKeyDown">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:MidiRow">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" RowDefinitions="Auto,Auto" Margin="0,3">
+                            <Button Command="{Binding PlayCommand}" Padding="9,5" Margin="0,0,10,0" VerticalAlignment="Center"
+                                    ToolTip.Tip="Listen (with a stand-in sound)">
+                                <Panel>
+                                    <TextBlock Text="▶" IsVisible="{Binding !IsPlaying}" />
+                                    <TextBlock Text="■" IsVisible="{Binding IsPlaying}" />
+                                </Panel>
+                            </Button>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
+                                <TextBlock Text="{Binding From}" Classes="small" ToolTip.Tip="{Binding Entry.Phrase.Source.Path}" />
+                                <TextBlock Text="{Binding Details}" Classes="small" ToolTip.Tip="{Binding RoleWhy}" />
+                                <TextBlock Text="{Binding PhraseText}" Classes="small" Foreground="{DynamicResource AccentBrush}"
+                                           IsVisible="{Binding HasPhrase}" ToolTip.Tip="{Binding PhraseWhy}" />
+                            </StackPanel>
+                            <views:NoteRoll Grid.Column="2" Height="44" Width="180" Classes="rowRoll" Channel="{Binding Channel}" Position="{Binding Position}"
+                                            Spans="{Binding Spans}" SeekCommand="{Binding SeekCommand}"
+                                            IsVisible="{Binding !$parent[UserControl].((vm:MidiBrowserViewModel)DataContext).IsPairing}" />
+                            <StackPanel Grid.Column="3" Width="124" Margin="10,0,4,0" VerticalAlignment="Center" Classes="rowFit"
+                                        IsVisible="{Binding FitText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                        ToolTip.Tip="{Binding FitWhy}">
+                                <TextBlock Classes="fitScore" Text="{Binding FitText}" />
+                                <TextBlock Classes="small" HorizontalAlignment="Right" Text="{Binding MoveText}" />
+                            </StackPanel>
+                            <Button Grid.Column="3" Classes="tiny accent rowAdd" Content="Add" VerticalAlignment="Center" Margin="8,0,0,0"
+                                    Command="{Binding $parent[views:MidiListView].AddCommand}" CommandParameter="{Binding}"
+                                    ToolTip.Tip="Put it on a new track in your idea" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <ContentPresenter Grid.Column="1" Content="{Binding $parent[views:MidiListView].Side}" />
+        </Grid>
+    </Grid>
+</UserControl>

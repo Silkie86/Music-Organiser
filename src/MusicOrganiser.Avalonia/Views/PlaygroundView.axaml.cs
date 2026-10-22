@@ -4,16 +4,19 @@ using Avalonia.VisualTree;
 using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
 
-public partial class PlaygroundView : UserControl
+public partial class PlaygroundView : UserControl, IShortcutPage
 {
     public PlaygroundView()
     {
         InitializeComponent();
         KeyDown += OnKeyDown;
+        Timeline.MenuAsked += OnTimelineMenu;
+        AddHandler(PointerWheelChangedEvent, OnWheel, RoutingStrategies.Tunnel);
         LeftPane.SizeChanged += (_, e) => { if (e.HeightChanged) LayOutRows(); };   // not while the side panel's edge is dragged
     }
 
@@ -27,6 +30,7 @@ public partial class PlaygroundView : UserControl
         if (_vm is not null) _vm.PropertyChanged -= OnVmChanged;
         _vm = DataContext as PlaygroundViewModel;
         if (_vm is not null) _vm.PropertyChanged += OnVmChanged;
+        BuildMenus();
         LayOut();
     }
 
@@ -140,63 +144,61 @@ public partial class PlaygroundView : UserControl
 
     // ---- keyboard shortcuts ----
 
-    // The keys are looked at by the window, on the way in, while this page is on show: so they work straight after the
-    // page is picked in the sidebar (which keeps the keyboard), and a focused button doesn't take Space first.
+    // The window answers the keys (AppShortcuts) and hands this page its own: so there's one key system and one keys sheet.
+
+    /// <summary>Does a Playground shortcut; the ones that work everywhere are left to the window.</summary>
+    public bool RunShortcut(string id, bool repeat) => id.StartsWith("playground.") && DataContext is PlaygroundViewModel vm && vm.RunShortcut(id);
+
+    /// <summary>The piano roll keeps Delete and Backspace for the note under the pointer.</summary>
+    public bool KeepsKey(KeyEventArgs e, string key) => e.Source is PianoRollEditor && key is "Delete" or "Backspace";
+
     TopLevel? _top;
-    readonly HashSet<Key> _held = [];
 
     protected override void OnAttachedToVisualTree(global::Avalonia.VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
         _top = TopLevel.GetTopLevel(this);
-        _top?.AddHandler(KeyDownEvent, OnShortcut, RoutingStrategies.Tunnel);
         _top?.AddHandler(KeyUpEvent, OnKeyLifted, RoutingStrategies.Tunnel, handledEventsToo: true);
-        if (_top is not null) _top.LostFocus += OnTopLostFocus;
     }
 
     protected override void OnDetachedFromVisualTree(global::Avalonia.VisualTreeAttachmentEventArgs e)
     {
         base.OnDetachedFromVisualTree(e);
-        _top?.RemoveHandler(KeyDownEvent, OnShortcut);
         _top?.RemoveHandler(KeyUpEvent, OnKeyLifted);
-        if (_top is not null) _top.LostFocus -= OnTopLostFocus;
         _top = null;
-        _held.Clear();
     }
 
-    void OnKeyLifted(object? sender, KeyEventArgs e) => _held.Remove(e.Key);
-    void OnTopLostFocus(object? sender, RoutedEventArgs e) => _held.Clear();
-
-    /// <summary>
-    /// The Playground's keys, from the app's shortcut list (Settings › Shortcuts): Bitwig's unless changed. While typing in
-    /// a box only Ctrl keys count (the box keeps its own Ctrl+Z, Ctrl+C and the like, and what's typed is put in first);
-    /// lists, drop-downs and sliders keep their arrows, and the piano roll its Delete. Holding a key down does it once.
-    /// </summary>
-    void OnShortcut(object? sender, KeyEventArgs e)
+    // Letting go of Alt opens the menu bar's keys, unless Alt was only held to zoom with the wheel.
+    void OnKeyLifted(object? sender, KeyEventArgs e)
     {
-        if (!IsEffectivelyVisible || DataContext is not PlaygroundViewModel vm || ShortcutKeys.Of(e) is not { } key) return;
-        if (e.Source is Visual v && !this.IsVisualAncestorOf(v) && e.Source != _top && !IsSidebar(v)) return;   // a key for another part of the window
-        var repeat = !_held.Add(e.Key);
-        var id = vm.Shortcuts.Find(ShortcutsViewModel.Playground, key);
-        if (vm.CheatSheetOpen)
+        if (e.Key is Key.LeftAlt or Key.RightAlt && _altWheeled)
         {
-            // only closing it works while the sheet covers the page
-            if (key == "Esc" || id == "playground.help") { if (!repeat) vm.CheatSheetOpen = false; e.Handled = true; }
-            return;
+            _altWheeled = false;
+            Dispatcher.UIThread.Post(() => MenuBar.Close());
         }
-        if (id is null) return;
-        var box = ShortcutKeys.Box(e);
-        if (box is not null && (!ShortcutsViewModel.WorksWhileTyping(key) || ShortcutKeys.IsTextKey(key))) return;
-        if (ShortcutKeys.UsedByControl(e, key)) return;
-        if (e.Source is PianoRollEditor && key is "Delete" or "Backspace") return;   // deletes the note under the pointer
-        e.Handled = true;
-        if (repeat && id is "playground.play" or "playground.help" or "playground.loop" or "playground.save" or "playground.split" or "playground.duplicate") return;
-        if (box is not null) BindingOperations.GetBindingExpressionBase(box, TextBox.TextProperty)?.UpdateSource();   // Ctrl+S saves the name as typed
-        if (!vm.RunShortcut(id)) e.Handled = false;
     }
 
-    /// <summary>The page list down the side, which keeps the keyboard after the Playground is picked in it.</summary>
-    bool IsSidebar(Visual v) => v.FindAncestorOfType<ListBox>(includeSelf: true) is { } list && !this.IsVisualAncestorOf(list) && list.Classes.Contains("nav");
+    // ---- Alt + wheel: taller or shorter tracks (the piano roll does its own notes) ----
+
+    bool _altWheeled;
+
+    void OnWheel(object? sender, PointerWheelEventArgs e)
+    {
+        if (!e.KeyModifiers.HasFlag(KeyModifiers.Alt) || e.Delta.Y == 0) return;
+        _altWheeled = true;
+        if (_vm is null || e.Source is not Visual v || !TrackScroll.IsVisualAncestorOf(v)) return;
+        var old = _vm.TrackHeight;
+        var height = Math.Round(Math.Clamp(old * Math.Pow(1.15, e.Delta.Y), PlaygroundViewModel.MinTrackHeight, PlaygroundViewModel.MaxTrackHeight));
+        e.Handled = true;   // not scrolled as well
+        if (height == old) return;
+        // the track under the pointer stays under it
+        var y = e.GetPosition(TrackScroll).Y;
+        var offset = TrackScroll.Offset;
+        _vm.TrackHeight = height;
+        _vm.KeepTrackHeight();
+        var to = Math.Max(0, (offset.Y + y) * height / old - y);
+        Dispatcher.UIThread.Post(() => TrackScroll.Offset = TrackScroll.Offset.WithY(to), DispatcherPriority.Background);   // once the rows are laid out at their new height
+    }
 
     /// <summary>Enter in the chord chart or a part's name puts what's typed in (those boxes take it when you leave them,
     /// not on every key, so a half-typed chord isn't read).</summary>
@@ -208,11 +210,4 @@ public partial class PlaygroundView : UserControl
             e.Handled = true;
         }
     }
-
-    void OnCheatSheetBackdrop(object? sender, PointerPressedEventArgs e)
-    {
-        if (DataContext is PlaygroundViewModel vm) vm.CheatSheetOpen = false;
-    }
-
-    void OnCheatSheetCard(object? sender, PointerPressedEventArgs e) => e.Handled = true;   // a click on the sheet itself leaves it open
 }

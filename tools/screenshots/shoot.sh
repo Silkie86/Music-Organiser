@@ -7,6 +7,7 @@
 #   Env: SCREEN=1600x1000  WAIT=10 (seconds for the first scan)  NO_BUILD=1 (skip dotnet build)
 #        MIDI=<folder of .mid files> (copied in and added as a MIDI library folder, for the MIDI page)
 #        PLAYGROUND=<a playground idea .json> (opened on the Playground page)
+#        SETTING="key=value ..." (options set before it starts, e.g. appearance_theme=Paper)
 #        PLAYGROUND_STEPS=<file of xdotool and shot lines> (only the Playground page, then those steps)
 set -euo pipefail
 
@@ -52,11 +53,21 @@ Xvfb :99 -screen 0 "${SCREEN}x24" >/dev/null 2>&1 & XVFB_PID=$!
 sleep 1
 
 # First run creates the database; then point it at the throwaway folders.
-"$APP" >/dev/null 2>&1 & APP_PID=$!; sleep 6; kill $APP_PID; wait $APP_PID 2>/dev/null || true
+"$APP" >/dev/null 2>&1 & APP_PID=$!
+# Wait for its tables (a slow first start can take longer than a few seconds), up to a minute.
+for _ in $(seq 60); do
+  sleep 1
+  sqlite3 "$XDG_DATA_HOME/MusicOrganiser/library.db" "SELECT 1 FROM roots LIMIT 1" >/dev/null 2>&1 && break
+done
+kill $APP_PID; wait $APP_PID 2>/dev/null || true
 sqlite3 "$XDG_DATA_HOME/MusicOrganiser/library.db" \
   "INSERT OR IGNORE INTO roots(path) VALUES('$WORK/Projects');
    INSERT OR REPLACE INTO settings(key,value) VALUES('sample_folders','[\"$WORK/Samples\"]');
    INSERT OR REPLACE INTO settings(key,value) VALUES('midi_folders','[\"$WORK/MIDI\"]');"
+# SETTING="appearance_theme=Paper" (several with spaces between) sets options first, e.g. to photograph another theme.
+for kv in ${SETTING:-}; do
+  sqlite3 "$XDG_DATA_HOME/MusicOrganiser/library.db" "INSERT OR REPLACE INTO settings(key,value) VALUES('${kv%%=*}','${kv#*=}');"
+done
 
 if [[ -n ${PLAYGROUND:-} && -f $PLAYGROUND ]]; then
   mkdir -p "$XDG_DATA_HOME/MusicOrganiser/playground"; cp "$PLAYGROUND" "$XDG_DATA_HOME/MusicOrganiser/playground/current.json"
@@ -129,8 +140,8 @@ xdotool mousemove ${PLAYGROUND_TAB_X:-466} ${PLAYGROUND_TAB_Y:-86} click 1 mouse
 # The search box with text in it, showing its clear (X) button.
 nav 0; sleep 1; xdotool key ctrl+f; sleep 0.3; xdotool type --delay 40 "test 2026"; xdotool mousemove 1430 892; shot 9-projects-search
 xdotool key ctrl+a BackSpace
-# Settings › Appearance: each theme (tiles four to a row), photographed on Projects; Studio again after.
-theme() { local col=$(($1 % 4)) row=$(($1 / 4)); nav 5; sleep 1; xdotool mousemove $((240 + col * 210)) $((365 + row * 212)) click 1 mousemove 1430 892; }
+# Settings › General › Appearance: each theme (tiles four to a row), photographed on Projects; Graphite again after.
+theme() { local col=$(($1 % 4)) row=$(($1 / 4)); nav 5; sleep 1; xdotool mousemove ${GENERAL_TAB_X:-153} ${GENERAL_TAB_Y:-86} click 1; sleep 0.5; xdotool mousemove 800 500; for _ in $(seq 20); do xdotool click 4; done; sleep 0.3; xdotool mousemove $((249 + col * 210)) $((317 + row * 212)) click 1 mousemove 1430 892; }
 shot 11-appearance 0.5
 for t in 1 2 3 4 5 6 7 8; do
   theme $t; sleep 0.5; [[ $t == 4 ]] && shot "11-appearance-light" 0.5

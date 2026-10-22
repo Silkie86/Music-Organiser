@@ -140,11 +140,20 @@ public partial class SoundsView : UserControl, IShortcutPage
         };
         if (next == int.MinValue) return;
         e.Handled = true;
-        next = Math.Clamp(next, 0, shown.Count - 1);
-        if (next == at || !vm.MayStep(Held(e))) return;   // held down, it waits until the tile it's on has played
+        StepTo(vm, shown, at, Math.Clamp(next, 0, shown.Count - 1), Held(e));
+    }
+
+    /// <summary>
+    /// Picks the sound at <paramref name="next"/> (from <paramref name="at"/>), keeps it in sight and plays a little of it,
+    /// so each one passed while a key is held plays; held down, it waits until the one it's on has played.
+    /// </summary>
+    void StepTo(SoundsViewModel vm, IReadOnlyList<Sound> shown, int at, int next, bool held)
+    {
+        if (next == at || !vm.MayStep(held)) return;
         vm.Selected = shown[next];
-        if (vm.RowOf(shown[next]) is { } row) TileList.ScrollIntoView(row);
-        vm.PlayPassing();   // held down, each tile it passes plays a little
+        if (vm.IsTiles && vm.RowOf(shown[next]) is { } row) TileList.ScrollIntoView(row);
+        else if (vm.IsList) SoundGrid.ScrollIntoView(shown[next], null);
+        vm.PlayPassing();
     }
 
     void OnTilesKeyUp(object? sender, KeyEventArgs e)
@@ -204,19 +213,21 @@ public partial class SoundsView : UserControl, IShortcutPage
         return false;
     }
 
-    /// <summary>The sound before or after the picked one in the library, kept in sight and played (Autoplay on).</summary>
+    /// <summary>The sound before or after the picked one (in the library or the history), kept in sight and played.</summary>
     bool StepSound(SoundsViewModel vm, int by, bool held)
     {
-        if (vm.IsHistory) return AppShortcuts.Step(HistoryList, by);
+        if (vm.IsHistory)
+        {
+            if (HistoryList.ItemCount == 0) return false;
+            var was = HistoryList.SelectedIndex;
+            if (!vm.MayStep(held) || !AppShortcuts.Step(HistoryList, by) || HistoryList.SelectedIndex == was) return true;
+            vm.PlayPassing();
+            return true;
+        }
         var shown = vm.Shown;
         if (shown.Count == 0) return false;
         var at = vm.Selected is { } s ? IndexOf(shown, s) : -1;
-        var next = at < 0 ? 0 : Math.Clamp(at + by, 0, shown.Count - 1);
-        if (next == at || !vm.MayStep(held)) return true;   // held down, it waits until the sound it's on has played
-        vm.Selected = shown[next];
-        if (vm.IsTiles && vm.RowOf(shown[next]) is { } row) TileList.ScrollIntoView(row);
-        else if (vm.IsList) SoundGrid.ScrollIntoView(shown[next], null);
-        vm.PlayPassing();
+        StepTo(vm, shown, at, at < 0 ? 0 : Math.Clamp(at + by, 0, shown.Count - 1), held);
         return true;
     }
 }
