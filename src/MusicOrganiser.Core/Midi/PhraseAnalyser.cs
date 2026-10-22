@@ -107,11 +107,12 @@ public static partial class PhraseAnalyser
     public const int MaxNotes = 4096;
     public const int FeatureCount = 48;
     /// <summary>
-    /// No note is held longer than this (64 bars). Some FL Studio 6 patterns say a note lasts about two billion ticks
-    /// (millions of bars), and cutting such a part into phrases went through every one of those bars: 6 to 17 GB of memory
-    /// for one old song, whose clean-ups paused the app while MIDI was read (Solomon's log, 2026-10-21).
+    /// No note is held longer than this: 1,024 bars, over half an hour at 120 BPM, so a real note (an 80-bar pad) is never
+    /// cut. Some FL Studio 6 patterns say a note lasts about two billion ticks (millions of bars), and cutting such a part
+    /// into phrases went through every one of those bars: 6 to 17 GB of memory for one old song, whose clean-ups paused the
+    /// app while MIDI was read (Solomon's log, 2026-10-21).
     /// </summary>
-    public const long MaxHold = 64 * Bar;
+    public const long MaxHold = 1024 * Bar;
 
     /// <summary>
     /// The notes at <see cref="Ppq"/>, muted ones left out, moved so the phrase starts in its first bar (a pattern
@@ -151,6 +152,8 @@ public static partial class PhraseAnalyser
     public static IEnumerable<(string Where, List<NoteEvent> Notes, long From)> Split(List<NoteEvent> notes, IReadOnlySet<long>? clipStarts = null)
     {
         if (notes.Count == 0) yield break;
+        // Parts that didn't come through Normalise (a Bitwig song's tracks) are held to the same limit.
+        if (notes.Any(n => n.Length > MaxHold)) notes = notes.Select(n => n with { Length = Math.Min(n.Length, MaxHold) }).ToList();
         var sections = Sections(notes);
         var whole = sections.Count == 1 && BarsOf(notes) <= MaxBars;
         var seen = new HashSet<string>();

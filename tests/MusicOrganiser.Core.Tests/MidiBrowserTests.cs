@@ -810,9 +810,35 @@ public class MidiBrowserTests
         var normal = PhraseAnalyser.Normalise(notes, 96);
         Assert.Equal(PhraseAnalyser.MaxHold, normal.Max(n => n.Length));
         var before = GC.GetAllocatedBytesForCurrentThread();
-        var pieces = PhraseAnalyser.Split(normal).ToList();
-        Assert.NotEmpty(pieces);
+        Assert.NotEmpty(PhraseAnalyser.Split(normal).ToList());
+        // A part that didn't come through Normalise (a Bitwig song's track) is held to the same limit.
+        var raw = notes.Select(n => n with { Start = n.Start * 4, Length = n.Length }).ToList();
+        Assert.All(PhraseAnalyser.Split(raw).SelectMany(p => p.Notes), n => Assert.True(n.Length <= PhraseAnalyser.MaxHold));
         Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 50_000_000);
+
+        // A real long note, an 80-bar pad dragged into the Playground, keeps every bar.
+        var pad = PhraseAnalyser.Normalise([new NoteEvent(0, 80 * Bar, 48, 90), new(0, 80 * Bar, 55, 90), new(0, 80 * Bar, 60, 90)], 96);
+        Assert.All(pad, n => Assert.Equal(80 * Bar, n.Length));
+    }
+
+    [Fact]
+    public void A_songs_midi_is_read_again_when_its_daws_reader_gets_better()
+    {
+        // A reader fix (FL Studio 8 and older notes at their right size, 2026-10-22) has to reach the MIDI index too, not
+        // only the library, so a song's stored version counts its reader's.
+        var dir = Fixtures.TempDir();
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.Upsert(Scanner.Analyse(FlProjectWithChords(dir)));
+        using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));
+        Assert.Equal(1, new MidiIndexer(index, db).Run().Read);
+        var (path, stored) = Assert.Single(index.Sources());
+        Assert.Equal(MidiIndexer.Version * 100 + Readers.For(path)!.Version, stored.Version);
+        Assert.Equal(0, new MidiIndexer(index, db).Run().Read);   // nothing changed: nothing read again
+
+        // As if it was read before the reader's last fix.
+        var source = index.All().First(p => p.Source.Path == path).Source;
+        index.Replace(source, stored.Version - 1, []);
+        Assert.Equal(1, new MidiIndexer(index, db).Run().Read);
     }
 }
 

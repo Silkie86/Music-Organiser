@@ -161,6 +161,8 @@ public class InstrumentTests
         var dir = Fixtures.TempDir();
         File.WriteAllBytes(Path.Combine(dir, "Idea.mid"), FileWithProgram(0, 38));
         File.WriteAllBytes(Path.Combine(dir, "._Idea.mid"), [0, 5, 22, 7, 0, 2, 0, 0, .. new byte[200]]);
+        Directory.CreateDirectory(Path.Combine(dir, "__MACOSX"));   // where a zip made on a Mac keeps them
+        File.WriteAllBytes(Path.Combine(dir, "__MACOSX", "Idea.mid"), FileWithProgram(0, 38));
         using var db = new LibraryDb(Path.Combine(dir, "library.db"));
         db.SetList(MidiIndexer.FoldersKey, [dir]);
         using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));

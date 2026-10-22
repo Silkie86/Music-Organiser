@@ -25,7 +25,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     public const string OlderSavesKey = "midi_older_saves";
 
     /// <summary>Raised when the analysis changes, so every file is read again once.</summary>
-    public const int Version = 5;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes; 4: low basslines and chords no longer taken for GM drums (2026-10-17); 5: parts named after a drum sound ("Tamb") are drums (2026-10-18)
+    public const int Version = 8;   // 2: empty bars trimmed and long gaps split (2026-10-15); 3: clips joined into phrases, cut where the music breathes; 4: low basslines and chords no longer taken for GM drums (2026-10-17); 5: parts named after a drum sound ("Tamb") are drums (2026-10-18); 6: keys from the MIDI key profile, the first chord only settling a toss-up (2026-10-20); 7: chords from the one chord reader, with their bass, and none for melodies and basslines (2026-10-20); 8: no note held for millions of bars (2026-10-22)
     /// <summary>
     /// .mid files have their own changes on top, counted here: 1 keeps the General MIDI sound each part's channel is set
     /// to and a file's only track's name (which the part leaves out, but may say "Keyscape"), 2026-10-16. Raising either
@@ -34,7 +34,13 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
     public const int FileRevision = 1;
     public const int FileVersion = Version + FileRevision;
 
-    static int VersionFor(MidiSource s) => s.Kind == MidiSource.File ? FileVersion : Version;
+    /// <summary>
+    /// What a file was read with. A song's also counts its DAW's reader (<see cref="IProjectReader.Version"/>), so when a
+    /// reader reads that DAW's songs better (FL Studio 8 and older notes at their right size, 2026-10-22), their MIDI is
+    /// read again too, not only the library's view of them.
+    /// </summary>
+    static int VersionFor(MidiSource s) =>
+        s.Kind == MidiSource.File ? FileVersion : Version * 100 + (Readers.For(s.Path)?.Version ?? 0);
 
     /// <summary>At most this many files are read at once: a quarter of the cores, and never more than 3.</summary>
     public static int Workers => Math.Clamp(Environment.ProcessorCount / 4, 1, 3);
@@ -57,7 +63,9 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             wanted[p.Path] = new MidiSource(p.Path, MidiSource.Project, p.Daw, p.Mtime, p.Size, p.Tempo);
         var folders = library.GetList(FoldersKey).Where(Directory.Exists).ToList();
         // Sizes and times come with the folder listing: no extra look at each of tens of thousands of files.
-        foreach (var f in Parallelism.FindFileStamps(folders, IsMidiFile, (name, _) => name.StartsWith('.'), ct: ct))
+        // Not the "._" copies a Mac leaves beside each file (Niko's MIDI Pack had 1,221, each an error in the log).
+        foreach (var f in Parallelism.FindFileStamps(folders, p => MidiFileReader.IsMidiPath(p) && !Parallelism.IsMacShadow(p),
+                                                     (name, _) => Parallelism.IsHiddenFolder(name), ct: ct))
         {
             // Too short to hold a single note (an empty or never-finished download): nothing to read, and not a failure.
             if (f.Size < MinMidiBytes) continue;
@@ -114,9 +122,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                     catch (Exception e)   // one unreadable file never stops the rest
                     {
                         Interlocked.Increment(ref failed);
-                        // A damaged file needs only its reason; anything else, where it went wrong too.
-                        AppLog.Info("MIDI", $"Couldn't read {source.Path}: " +
-                                            (e is InvalidDataException or EndOfStreamException or IOException or UnauthorizedAccessException ? e.Message : $"{e}"));
+                        AppLog.Info("MIDI", $"Couldn't read {source.Path}: {Brief(e)}");
                         try { results.Add((source, VersionFor(source), [], Why(e)), ct); }
                         catch (OperationCanceledException) { break; }
                     }
@@ -165,12 +171,6 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         return new(read, failed, forget.Count, phrases);
     }
 
-    /// <summary>
-    /// A .mid file, but not the "._" copy a Mac leaves beside each file on a shared drive, which holds only Finder details
-    /// (Niko's MIDI Pack had 1,221 of them, each one an error in the log).
-    /// </summary>
-    static bool IsMidiFile(string path) => MidiFileReader.IsMidiPath(path) && !Path.GetFileName(path).StartsWith("._", StringComparison.Ordinal);
-
     /// <summary>A file that takes this long (or waits this long for a free slot) is noted in the log, with why.</summary>
     public const double SlowSeconds = 2;
 
@@ -187,6 +187,17 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
         if (cleaning.TotalSeconds >= 0.5) why.Add($"the app paused {cleaning.TotalSeconds:0.0} s cleaning up memory meanwhile");
         AppLog.Info("MIDI", $"Slow read: {source.Path} took {took.TotalSeconds:0.0} s ({string.Join("; ", why)})");
     }
+
+    /// <summary>
+    /// For the log: a damaged or unreadable file's reason and the one place it was found, rather than the whole stack, so
+    /// a pack of broken files doesn't fill the log; anything else in full.
+    /// </summary>
+    static string Brief(Exception e) =>
+        e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException or
+             ArgumentOutOfRangeException or IndexOutOfRangeException
+            ? $"{e.GetType().Name}: {e.Message}" +
+              (new StackTrace(e, false).GetFrame(0)?.GetMethod() is { } at ? $" (in {at.DeclaringType?.Name}.{at.Name})" : "")
+            : $"{e}";
 
     /// <summary>Why a file couldn't be read, in a few plain words, for the list of failed ones.</summary>
     public static string Why(Exception e) => e switch
