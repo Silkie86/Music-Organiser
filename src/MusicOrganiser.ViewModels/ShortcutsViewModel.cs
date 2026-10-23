@@ -310,9 +310,13 @@ public sealed partial class ShortcutsViewModel : ObservableObject
     {
         _db?.SetSetting(SettingKey, JsonSerializer.Serialize(_changed));
         OnPropertyChanged(nameof(AnyChanged));
+        OnPropertyChanged(nameof(FullScreenTip));
     }
 
     public bool AnyChanged => _changed.Count > 0;
+
+    /// <summary>The sidebar's way out of full screen, with its key.</summary>
+    public string FullScreenTip => KeyOf("app.fullScreen") is { Length: > 0 } key ? $"Leave full screen ({Display(key)})" : "Leave full screen";
 
     /// <summary>Every key back to the one it started with.</summary>
     [RelayCommand]

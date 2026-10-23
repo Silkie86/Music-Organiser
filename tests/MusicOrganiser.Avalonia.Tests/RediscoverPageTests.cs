@@ -101,5 +101,10 @@ public sealed class RediscoverPageTests : IDisposable
         Settle();
         Assert.Equal(sound.Path, PlaygroundPageTests.Silence.LastPath);
         Assert.Equal(sound, main.Sounds.Selected);
+
+        // A year box beside the type ("should be able to filter by year here")
+        var re = main.Sounds.Rediscover;
+        Assert.Equal([RediscoverViewModel.AnyYear, DateTime.Now.Year.ToString()], re.Years);
+        Assert.Contains(window.GetVisualDescendants().OfType<ComboBox>(), c => c.IsEffectivelyVisible && ReferenceEquals(c.ItemsSource, re.Years));
     }
 }
