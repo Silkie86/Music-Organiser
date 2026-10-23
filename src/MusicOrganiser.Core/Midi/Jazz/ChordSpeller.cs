@@ -194,6 +194,43 @@ public static class ChordSpeller
         return best > 0 ? chord : null;
     }
 
+    /// <summary>
+    /// Every name the same notes could have, the likeliest first: one for each of the notes as the root, when it makes a
+    /// chord of them (Solomon, 2026-10-23: "if the harmony engine gets it wrong should be able to tell it what the root
+    /// is"). With a bass, a reading on another root is written over it (A6/F#). Readings whose name would leave a note
+    /// out are skipped.
+    /// </summary>
+    public static List<ChordSymbol> Readings(int mask, int bass = -1, int lowest = -1)
+    {
+        mask &= 0xFFF;
+        if (bass >= 0) mask |= 1 << bass;
+        if (ChordSymbol.Count(mask) < 2) return [];
+        var list = new List<(ChordSymbol Chord, double Score)>();
+        for (var root = 0; root < 12; root++)
+        {
+            if ((mask >> root & 1) == 0) continue;
+            var s = Score(mask, root, bass, null, out var family, lowest);
+            if (s <= 0) continue;
+            var chord = new ChordSymbol(root, mask, bass >= 0 ? bass : root, family);
+            // Only a name that says every note: C E G is never offered as an "Em" that leaves its C out.
+            if (IntervalsOf(chord.Quality) is not { } named || (chord.Intervals & ~named) != 0) continue;
+            list.Add((chord, s));
+        }
+        return list.OrderByDescending(p => p.Score).Select(p => p.Chord).ToList();
+    }
+
+    /// <summary>
+    /// <paramref name="chord"/>'s notes heard on <paramref name="root"/>, the root added when it isn't one of them. A bass
+    /// under another root stays under it; a chord with none of its own takes the new root as its bass.
+    /// </summary>
+    public static ChordSymbol On(ChordSymbol chord, int root)
+    {
+        root = ChordSymbol.Mod(root);
+        var mask = chord.Mask | 1 << root;
+        var iv = ((mask >> root) | (mask << (12 - root))) & 0xFFF;
+        return new ChordSymbol(root, mask, chord.Bass != chord.Root ? chord.Bass : root, Families[iv]);
+    }
+
     /// <summary>The chord in a set of MIDI notes, the lowest as the bass.</summary>
     public static ChordSymbol? Spell(IEnumerable<int> midiNotes)
     {

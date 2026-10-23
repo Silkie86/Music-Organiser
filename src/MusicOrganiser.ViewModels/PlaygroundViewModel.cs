@@ -737,6 +737,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     internal void PickClip(LayerRow? track, PlaygroundClip? clip)
     {
+        _chordLaneLast = false;   // Delete is for the clip now
         if (track is null || clip is null) { SelectedClip = null; return; }
         if (SelectedClip?.Clip == clip) return;
         SelectedLayer = track;
@@ -1114,7 +1115,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         });
         Message = way == FollowWay.None ? $"{row.Clip.Name} stays as it is, whatever the chords."
             : HasChordTrack ? $"{row.Clip.Name} follows the chord track: {ChordFollow.Label(way).ToLowerInvariant()}."
-            : $"{row.Clip.Name} will {ChordFollow.Label(way).ToLowerInvariant()} when there are chords on the chord track.";
+            : $"{row.Clip.Name} will {ChordFollow.Label(way).ToLowerInvariant()} once the chord track has chords under it: Put the chords heard there (under Follows the chords) to start.";
     }
 
     /// <summary>Its chords turned over by hand, up or down: it stays like that until Fit again.</summary>
@@ -2250,6 +2251,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             case "playground.zoomOut": Zoom(2); return true;
             case "playground.zoomFit": ZoomToFit(); return true;
         }
+        // After clicking the chord lane, Delete is for the chord picked there, never the clip picked before.
+        if (id == "playground.delete" && _chordLaneLast) { RemoveChord(); return true; }
         if (RunMenuAction(id, clip)) return true;
         if (clip is null) return false;
         switch (id)
@@ -2926,6 +2929,17 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
     }
     public bool CanFollow => !IsDrums && !track.IsWritten;
 
+    /// <summary>
+    /// A way to follow picked by hand with no chords on the chord track under the clip, so there's nothing to follow yet
+    /// (Solomon, 2026-10-23: "changing follow the chords doesnt seem to do anything"): the inspector says so, with the
+    /// chords heard to put there.
+    /// </summary>
+    public bool NothingToFollow => CanFollow && !clip.Pinned && clip.Follow is not (FollowWay.Auto or FollowWay.None) && clip.Under.Count == 0;
+    public string NothingToFollowText => owner.HasChordTrack
+        ? "No chords on the chord track under it, so there's nothing to follow yet."
+        : "The chord track is empty, so there's nothing to follow yet.";
+    [RelayCommand] void PutChordsUnder() => owner.KeepHeardChordsUnder(this);
+
     /// <summary>Every other part playing during that go round, grey behind it on the piano roll.</summary>
     public IReadOnlyList<NoteEvent> Guide
     {
@@ -3078,6 +3092,8 @@ public sealed partial class ClipRow(PlaygroundViewModel owner, LayerRow track, P
         OnPropertyChanged(nameof(FitText));
         OnPropertyChanged(nameof(CanFitAgain));
         OnPropertyChanged(nameof(FollowPick));
+        OnPropertyChanged(nameof(NothingToFollow));
+        OnPropertyChanged(nameof(NothingToFollowText));
         OnPropertyChanged(nameof(Highlight));
         GuideChanged();
     }
@@ -3180,6 +3196,18 @@ public sealed partial class NextChordRow(PlaygroundViewModel owner, ChordSymbol 
     public string Name => chord.NameIn(key);
     public string ShareText => $"{share * 100:0}%";
     [RelayCommand] void Add() => owner.AddNextChord(chord);
+}
+
+/// <summary>
+/// Another way to hear the picked chord (another name for its notes, or another of them as its root), to put on the chord
+/// track; named as the chord lane names it.
+/// </summary>
+public sealed partial class ChordReadingRow(PlaygroundViewModel owner, ChordSymbol chord, string text)
+{
+    public ChordSymbol Chord => chord;
+    public string Text => text;
+    public string Tip => $"Hear it as {chord.Name}: it goes on the chord track here, and the parts follow it";
+    [RelayCommand] void Pick() => owner.HearAs(chord);
 }
 
 /// <summary>A colour for each kind of part, the same in every theme, as a DAW gives its tracks colours.</summary>

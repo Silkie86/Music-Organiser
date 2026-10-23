@@ -80,14 +80,23 @@ public static class ChordFollow
             // A chord part's own chords, as the app's ear hears them; each hit is played on the track's chord instead,
             // a chord held over a change of the track's changing with it.
             var own = ChordReader.Read(sorted, sorted.Max(n => n.Start + n.Length));
-            foreach (var hit in Groove.Hits(Split(sorted, track)))
+            var hits = Groove.Hits(Split(sorted, track)).ToList();
+            var heardOver = hits.Select(h => (T: Over(track, h.Start, h.Length), S: Over(own, h.Start, h.Length))).ToList();
+            // Moving with the root moves a riff or an arp note for note (Solomon, 2026-10-23: ARP House on "Move with root"):
+            // whether it already sits on the track's chord is judged for everything it plays over that chord, not a note at a
+            // time, which would leave the notes that happen to fit behind.
+            var together = way != FollowWay.Root ? null
+                : Enumerable.Range(0, hits.Count).Where(i => heardOver[i] is { T: not null, S: not null })
+                    .GroupBy(i => (T: heardOver[i].T!.Value, S: heardOver[i].S!.Value))
+                    .ToDictionary(g => g.Key, g => SitsOn(g.SelectMany(i => hits[i].Notes).ToList(), track[g.Key.T].Chord, own[g.Key.S].Chord, style));
+            for (var i = 0; i < hits.Count; i++)
             {
-                var t = Over(track, hit.Start, hit.Length);
-                var s = Over(own, hit.Start, hit.Length);
+                var hit = hits[i];
+                var (t, s) = heardOver[i];
                 if (t is null || s is null) { list.AddRange(hit.Notes.Select(n => t is { } c ? Nudge(n, track[c].Chord, style) : n)); continue; }
                 // A hit that already sits on the track's chord stays as it is, as a line does: a rootless voicing over the
                 // bass's root (E G B D over C) is heard alone as another chord (Em7), but it is already the track's Cmaj9.
-                if (SitsOn(hit.Notes, track[t.Value].Chord, own[s.Value].Chord, style)) { list.AddRange(hit.Notes); continue; }
+                if (together?[(t.Value, s.Value)] ?? SitsOn(hit.Notes, track[t.Value].Chord, own[s.Value].Chord, style)) { list.AddRange(hit.Notes); continue; }
                 list.AddRange(Play(hit.Notes, own[s.Value].Chord, track[t.Value].Chord, way));
             }
             return Sorted(list);
@@ -112,6 +121,8 @@ public static class ChordFollow
     static bool SitsOn(IReadOnlyList<NoteEvent> notes, ChordSymbol target, ChordSymbol heard, HarmonyStyle style)
     {
         if (target.Root == heard.Root && target.Mask == heard.Mask) return true;
+        // Every note one of the target's: it's a voicing of it already (the same notes named on another root, say).
+        if (notes.All(n => (target.Mask >> (n.Key % 12) & 1) != 0)) return true;
         double Fit(ChordSymbol c) => notes.Average(n => ChordScales.Sit(c, n.Key % 12, style));
         return Fit(target) + 0.1 >= Fit(heard) - 1e-9;
     }

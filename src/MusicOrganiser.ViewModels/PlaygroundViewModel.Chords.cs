@@ -170,10 +170,15 @@ public sealed partial class PlaygroundViewModel
         return false;
     }
 
-    /// <summary>The chord-lane menu's "Remove this chord": the picked chord off the chord track.</summary>
+    /// <summary>The chord-lane menu's "Remove this chord", and Delete or Backspace after clicking it: the picked chord off the chord track.</summary>
     void RemoveChord()
     {
-        if (PickedChord is not { IsSet: true } picked) return;
+        if (PickedChord is not { } picked) return;
+        if (!picked.IsSet)
+        {
+            Message = $"{picked.Name} is heard from the parts, so it isn't on the chord track to take off. Change the notes, or hear it as another chord in Reharm.";
+            return;
+        }
         Remember();
         Section.ChordTrack = CutOut(Section.ChordTrack, picked.Timed.Start, picked.Timed.End).ToList();
         Changed();
@@ -193,13 +198,31 @@ public sealed partial class PlaygroundViewModel
     void KeepHeardChords()
     {
         var (start, length) = Place;
-        var (from, to) = (start, start + length);
+        if (KeepHeardChords(start, start + length))
+            Message = "The chords heard are on the chord track now: drag their edges to stretch them. Undo takes them back off.";
+    }
+
+    bool KeepHeardChords(long from, long to)
+    {
         var lane = Harmony.Lane.Where(c => c.Start < to && c.End > from).ToList();
-        if (lane.Count == 0) { Message = "No chords heard there to keep."; return; }
+        if (lane.Count == 0) { Message = "No chords heard there to keep."; return false; }
         Remember();
         PutOnChordTrack(Section, lane, from, to);
         Changed();
-        Message = "The chords heard are on the chord track now: drag their edges to stretch them. Undo takes them back off.";
+        return true;
+    }
+
+    /// <summary>
+    /// The inspector's "Put the chords heard there", for a clip with no chord-track chords under it: all the chords heard
+    /// when the chord track is empty (the menu's "Put the chords heard on the chord track"), else just those under the
+    /// clip, so the way it follows them shows as soon as one is changed.
+    /// </summary>
+    internal void KeepHeardChordsUnder(ClipRow row)
+    {
+        var (from, to) = HasChordTrack ? (row.Clip.Start, row.Clip.End) : (Place.Start, Place.Start + Place.Length);
+        if (!KeepHeardChords(from, to)) return;
+        Message = $"The chords heard are on the chord track now, and {row.Clip.Name} follows them: " +
+                  $"{ChordFollow.Label(row.Clip.Way).ToLowerInvariant()}. Click a chord to change it and hear it follow.";
     }
 
     /// <summary>A chord on the end of the chord track, a bar long, after its last chord.</summary>

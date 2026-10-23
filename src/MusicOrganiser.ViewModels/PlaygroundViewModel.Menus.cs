@@ -107,7 +107,7 @@ public sealed partial class PlaygroundViewModel
             "playground.undo" => CanUndo,
             "playground.redo" => CanRedo,
             "playground.paste" => _clipboard is not null,
-            "playground.removeChord" => PickedChord is { IsSet: true },
+            "playground.removeChord" => _chordLaneLast && PickedChord is { IsSet: true },
             "playground.clearChordTrack" => HasChordTrack,
             "playground.keepHeardChords" => Harmony.Lane.Count > 0,
             "playground.chordsFromBitwig" => ChordsFromBitwigCommand.CanExecute(null),
@@ -117,7 +117,8 @@ public sealed partial class PlaygroundViewModel
             "playground.smooth" => track is not null,
             "playground.mute" or "playground.solo" or "playground.duplicateTrack" or "playground.deleteTrack" => track is not null,
             "playground.rename" => clip is not null || track is not null,
-            "playground.cut" or "playground.copy" or "playground.duplicate" or "playground.delete" or "playground.split" or
+            "playground.delete" => _chordLaneLast ? PickedChord is { IsSet: true } : clip is not null,
+            "playground.cut" or "playground.copy" or "playground.duplicate" or "playground.split" or
             "playground.up" or "playground.down" or "playground.octaveUp" or "playground.octaveDown" or "playground.alternatives" => clip is not null,
             "playground.followNudge" or "playground.followDegree" or "playground.followRoot" or "playground.followNone" => clip is { IsDrums: false },
             _ => true,
@@ -236,7 +237,7 @@ public sealed partial class PlaygroundViewModel
             case "playground.harmonise": if (CanHarmonise) OpenReharm(); return true;
             case "playground.tabMidi": RightTab = SuggestTabIndex; return true;
             case "playground.tabChords": RightTab = ChordsTab; return true;
-            case "playground.removeChord": RemoveChord(); return true;
+            case "playground.removeChord": if (!_chordLaneLast) return false; RemoveChord(); return true;
             case "playground.clearChordTrack": ClearChordTrack(); return true;
             case "playground.keepHeardChords": KeepHeardChords(); return true;
             case "playground.chordsFromBitwig": _ = ChordsFromBitwigCommand.ExecuteAsync(null); return true;

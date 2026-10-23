@@ -22,6 +22,19 @@
                 </DataTemplate>
             </Setter>
         </Style>
+        <!-- Other ways to hear the chord picked in Reharm: another name for its notes, or another of them as its root. -->
+        <Style Selector="ItemsControl.readings">
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+            </Setter>
+            <Setter Property="ItemTemplate">
+                <DataTemplate x:DataType="vm:ChordReadingRow">
+                    <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding PickCommand}" ToolTip.Tip="{Binding Tip}">
+                        <TextBlock Text="{Binding Text}" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" />
+                    </Button>
+                </DataTemplate>
+            </Setter>
+        </Style>
         <!-- The side panel's six tabs fit on one line. -->
         <Style Selector="TabControl.side TabItem">
             <Setter Property="Padding" Value="7,0" />
@@ -386,6 +399,12 @@
                                         <TextBlock Text="Follows the chords" Classes="label" />
                                         <ComboBox HorizontalAlignment="Stretch" ItemsSource="{x:Static vm:ClipRow.FollowWays}" SelectedItem="{Binding SelectedClip.FollowPick}"
                                                   ToolTip.Tip="How it follows the chords on the chord track. Nudge clashes: the line stays as written, only notes that clash move (melodies, soul, pop). Keep its place (in the chord): a root stays a root and a 3rd a 3rd, so it reshapes for each chord (chord parts, gospel and funk bass, arps). Move with root: the whole riff moves with the chord, note for note (riffs, EDM, hip hop). Don't follow: it stays exactly as it is (a pedal note, a drone)." />
+                                        <!-- nothing on the chord track under it to follow yet (Solomon, 2026-10-23: "changing follow the chords doesnt seem to do anything") -->
+                                        <StackPanel Spacing="3" IsVisible="{Binding SelectedClip.NothingToFollow}">
+                                            <TextBlock Text="{Binding SelectedClip.NothingToFollowText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                                            <Button Content="Put the chords heard there" Classes="tiny" HorizontalAlignment="Left" Command="{Binding SelectedClip.PutChordsUnderCommand}"
+                                                    ToolTip.Tip="The chords heard from the parts go on the chord track, and this clip follows them the way picked above when you change one (click a chord, then Reharm). Undo takes them back off." />
+                                        </StackPanel>
                                     </StackPanel>
                                     <DockPanel ToolTip.Tip="A clip follows the chords where it's put: on the chord track the way picked above, elsewhere it moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Follow again.">
                                         <Button DockPanel.Dock="Right" Content="Follow again" Classes="tiny" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
@@ -671,6 +690,15 @@
                                         <Button DockPanel.Dock="Right" Content="✕" Classes="tiny" Command="{Binding ClearPickedChordCommand}" ToolTip.Tip="Pick no chord" />
                                         <TextBlock Text="{Binding PickedChordText}" FontSize="16" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" VerticalAlignment="Center" />
                                     </DockPanel>
+                                    <!-- heard wrongly? the same notes named another way, or on another root (Solomon, 2026-10-23) -->
+                                    <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,6" IsVisible="{Binding ChordRoots.Count}">
+                                        <StackPanel Spacing="2" IsVisible="{Binding ChordReadings.Count}">
+                                            <TextBlock Text="Hear it as" Classes="small" ToolTip.Tip="The same notes named another way: pick one and it goes on the chord track here, and the parts follow it" />
+                                            <ItemsControl ItemsSource="{Binding ChordReadings}" Classes="readings" />
+                                        </StackPanel>
+                                        <TextBlock Text="Or say its root" Classes="small" ToolTip.Tip="Which of its notes is the root: the chord is named from it, goes on the chord track here, and the parts follow it" />
+                                        <ItemsControl ItemsSource="{Binding ChordRoots}" Classes="readings" />
+                                    </StackPanel>
                                     <TextBlock DockPanel.Dock="Top" Text="No ideas for this chord. Try another." Classes="small" IsVisible="{Binding !ChordIdeas.Count}" />
                                     <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                                         <ItemsControl ItemsSource="{Binding ChordIdeas}">
