@@ -574,7 +574,9 @@
                             <StackPanel DockPanel.Dock="Top">
                                 <TextBlock Text="Sounds you haven't used much, picked to fit your taste and kept varied." Classes="muted" />
                                 <WrapPanel Margin="0,8,0,8">
-                                    <ComboBox ItemsSource="{Binding Types}" SelectedItem="{Binding Type}" Width="170" Margin="0,0,12,0" VerticalAlignment="Center" />
+                                    <ComboBox ItemsSource="{Binding Types}" SelectedItem="{Binding Type}" Width="170" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                    <ComboBox ItemsSource="{Binding Years}" SelectedItem="{Binding Year}" Width="120" Margin="0,0,12,0" VerticalAlignment="Center"
+                                              ToolTip.Tip="Only sounds whose file is dated this year: usually when the pack was made, or when you got it" />
                                     <TextBlock Text="Safe" VerticalAlignment="Center" />
                                     <Slider Width="140" Minimum="0" Maximum="1" Value="{Binding Adventure}" Margin="8,0" VerticalAlignment="Center"
                                             ToolTip.Tip="How adventurous: left sticks close to what you already use, right goes further afield" />
@@ -620,6 +622,7 @@
                                                             <Run Text="{Binding Sound.Name, Mode=OneWay}" FontWeight="SemiBold" />
                                                             <Run Text="{Binding Sound.Type, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
                                                             <Run Text="{Binding Sound.Key, Mode=OneWay}" Foreground="{StaticResource MutedBrush}" />
+                                                            <Run Text="{Binding Sound.Added.Year, Mode=OneWay}" Foreground="{StaticResource FaintBrush}" />
                                                         </TextBlock>
                                                         <TextBlock Text="{Binding Reason}" FontSize="12" Foreground="{StaticResource MutedBrush}" />
                                                     </StackPanel>

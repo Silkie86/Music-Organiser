@@ -11,7 +11,12 @@ public sealed record FolderUse(string Folder, int Sounds, int Used, double Share
 /// </summary>
 public static class Rediscover
 {
-    public sealed record Options(string? Type = null, int Count = 30, double Adventure = 0.3, int Seed = 0, int MaxUses = 0);
+    /// <param name="Year">Only sounds whose file is dated that year (<see cref="Sound.Added"/>): when the pack was made, or when you got it.</param>
+    public sealed record Options(string? Type = null, int Count = 30, double Adventure = 0.3, int Seed = 0, int MaxUses = 0, int? Year = null);
+
+    /// <summary>The years the sounds' files are dated, newest first, for the page's year filter.</summary>
+    public static IReadOnlyList<int> Years(SoundOrganiser org) =>
+        org.Sounds.Select(s => s.Added.Year).Where(y => y > 1980).Distinct().OrderDescending().ToList();
 
     public static IReadOnlyList<Suggestion> Suggest(SoundOrganiser org, Options o)
     {
@@ -25,7 +30,8 @@ public static class Rediscover
         var taste = sounds.Where(s => s.UsedIn > 0 || s.Favourite || s.Rating >= 4 || s.Plays >= 3)
                           .Select(s => (s, W: s.UsedIn + (s.Favourite ? 3 : 0) + Math.Max(0, s.Rating - 3) * 2 + Math.Min(s.Plays, 10) * 0.2))
                           .ToList();
-        var candidates = sounds.Where(s => s.UsedIn <= o.MaxUses).ToList();
+        // The year narrows what's suggested, not what your taste is learned from.
+        var candidates = sounds.Where(s => s.UsedIn <= o.MaxUses && (o.Year is not { } y || s.Added.Year == y)).ToList();
         if (candidates.Count == 0) return [];
 
         // Per-type taste centroids, so a hat is compared with hats you like.
@@ -81,6 +87,11 @@ public static class Rediscover
             return "None of your sounds have been listened to yet. Let the scan of your sample folders finish, then shuffle again.";
         var ofType = o.Type is null ? analysed : analysed.Where(s => s.Type == o.Type).ToList();
         if (ofType.Count == 0) return $"No sounds are sorted as {o.Type} yet. Pick another type, or Any type.";
+        if (o.Year is { } year)
+        {
+            ofType = ofType.Where(s => s.Added.Year == year).ToList();
+            if (ofType.Count == 0) return $"No {(o.Type is null ? "" : o.Type + " ")}sounds are dated {year}. Pick another year, or Any year.";
+        }
         return o.MaxUses == 0
             ? $"Every {(o.Type is null ? "" : o.Type + " ")}sound is used in a project already. Tick \"Include rarely used\" to see ones used once."
             : $"Every {(o.Type is null ? "" : o.Type + " ")}sound is used in more than one project already.";

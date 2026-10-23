@@ -1304,6 +1304,10 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     public IReadOnlyList<string> Types => ["Any type", .. SoundTypes.All];
 
     [ObservableProperty] string _type = "Any type";
+    /// <summary>Only sounds whose file is dated this year (Solomon, 2026-10-23: "should be able to filter by year here").</summary>
+    [ObservableProperty] string _year = AnyYear;
+    public const string AnyYear = "Any year";
+    [ObservableProperty] IReadOnlyList<string> _years = [AnyYear];
     [ObservableProperty] double _adventure = 0.3;
     [ObservableProperty] bool _includeRarelyUsed;
     /// <summary>How many sounds a shuffle picks: the last number picked here or in Settings › Sounds.</summary>
@@ -1323,7 +1327,8 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
     async Task Shuffle()
     {
         _changes++;   // whatever was waiting to shuffle is covered by this one
-        var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, HowMany, Adventure, 0, IncludeRarelyUsed ? 1 : 0);
+        var o = new Core.Sounds.Rediscover.Options(Type == "Any type" ? null : Type, HowMany, Adventure, 0, IncludeRarelyUsed ? 1 : 0,
+                                                   int.TryParse(Year, out var year) ? year : null);
         var org = parent.Org;
         IsBusy = true;
         Intro = $"Looking through {org.Sounds.Count:N0} sounds…";
@@ -1333,6 +1338,13 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
             // The folders are quick: they show while the sounds are still being picked.
             var suggesting = Task.Run(() => Core.Sounds.Rediscover.Suggest(org, o));
             Folders = await Task.Run(() => Core.Sounds.Rediscover.Folders(org).Take(40).ToList());
+            var years = await Task.Run(() => Core.Sounds.Rediscover.Years(org).Select(y => y.ToString()).ToList());
+            if (!years.SequenceEqual(Years.Skip(1)))
+            {
+                var keep = Year;
+                Years = [AnyYear, .. years];
+                Year = Years.Contains(keep) ? keep : AnyYear;
+            }
             Suggestions = await suggesting;
             if (Suggestions.Count == 0)
             {
@@ -1366,6 +1378,11 @@ public sealed partial class RediscoverViewModel(SoundsViewModel parent) : Observ
 
     // Once there's a list, changing what it's picked by picks it again, so the slider visibly does something.
     partial void OnTypeChanged(string value) => ShuffleSoon();
+    partial void OnYearChanged(string value)
+    {
+        if (value is null) Year = AnyYear;   // the list of years was replaced under the box
+        else ShuffleSoon();
+    }
     partial void OnAdventureChanged(double value) => ShuffleSoon();
     partial void OnIncludeRarelyUsedChanged(bool value) => ShuffleSoon();
     partial void OnHowManyChanged(int value)
