@@ -91,12 +91,18 @@ public sealed partial class PlaygroundViewModel
 
     /// <summary>Step 3: the tried idea becomes the chords. Undo takes it back.</summary>
     [RelayCommand]
-    void KeepIdea()
+    void KeepIdea() => Keep(asPart: false);
+
+    /// <summary>Step 3 for chords made for a melody or bassline: kept as a plain Chords part instead of on the chord track.</summary>
+    [RelayCommand]
+    void KeepIdeaAsPart() => Keep(asPart: true);
+
+    void Keep(bool asPart)
     {
         if (TryingIdea is not { } row) return;
         StopPlaying();
-        ApplyIdea(row.Idea);   // the chords change, which picks the chord now at the same place
-        Message = $"Kept {row.Title}: {row.Swap}. Undo takes it back.";
+        ApplyIdea(row.Idea, asPart);   // the chords change, which picks the chord now at the same place
+        if (!row.Idea.Whole) Message = $"Kept {row.Title}: {row.Swap}. Undo takes it back.";
     }
 
     /// <summary>Step 3: back to the chords as they were, to try another idea.</summary>
@@ -129,7 +135,8 @@ public sealed partial class PlaygroundViewModel
         var request = ++_harmoniseRequest;
         var layers = PlaygroundSession.Audible(Section).Where(l => l.Role != MidiRoles.Drums).ToList();
         var chordParts = layers.Any(l => l.Clips.Any(c => c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords));
-        if (IsQuick || chordParts || layers.Count == 0)
+        // Chords on the chord track are the harmony already: they're reharmonised a chord at a time, as a chord part's are.
+        if (IsQuick || chordParts || HasChordTrack || layers.Count == 0)
         {
             HarmoniseIdeas.Clear();
             HarmoniseText = "";

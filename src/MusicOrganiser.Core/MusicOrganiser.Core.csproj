@@ -27,6 +27,8 @@
     <EmbeddedResource Include="Formats\Registry\*.json" LogicalName="MusicOrganiser.Formats.%(Filename)%(Extension)" />
     <!-- The Serum 2 sound a translated Serum 1 sound starts from (see Plugins/Serum/Serum1To2.cs). -->
     <EmbeddedResource Include="Plugins\Serum\Serum2FromSerum1.json" LogicalName="MusicOrganiser.Serum.Serum2FromSerum1.json" />
+    <EmbeddedResource Include="Midi\Jazz\ChordKey.tsv" LogicalName="MusicOrganiser.Harmony.ChordKey.tsv" />
+    <EmbeddedResource Include="Midi\Jazz\ChordMoves.tsv" LogicalName="MusicOrganiser.Harmony.ChordMoves.tsv" />
   </ItemGroup>
 
   <ItemGroup>

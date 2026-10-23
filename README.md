@@ -79,3 +79,10 @@ Hot Reload works for most changes while the app is running.
 - `tests/MusicOrganiser.Core.Tests` – xUnit tests using small generated project files. Run with `dotnet test`.
 
 Your library lives in `%LOCALAPPDATA%\MusicOrganiser\library.db`.
+
+## Credits
+
+- The Playground's "what comes next" chord chips and its key-from-chords guess start from counts made from
+  [ChoCo, the Chord Corpus](https://github.com/smashub/choco) (de Berardinis et al., CC BY 4.0): the Real Book, iReal
+  Pro jazz playlists and gospel, worship and soul charts, the Weimar Jazz Database and the Jazz Corpus. Only the counts
+  ship (`src/MusicOrganiser.Core/Midi/Jazz/ChordMoves.tsv` and `ChordKey.tsv`, made by the theory bench); no charts do.

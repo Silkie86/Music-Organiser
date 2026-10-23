@@ -28,7 +28,7 @@ public static class MidiWriter
                 events.Add((n.Start, [(byte)(0x90 | ch), (byte)n.Key, (byte)n.Velocity]));
                 events.Add((n.Start + n.Length, [(byte)(0x80 | ch), (byte)n.Key, 0]));
             }
-            tracks.Add(Track(events));
+            tracks.Add(Track(events, clip.End ?? 0));
         }
 
         using var ms = new MemoryStream();
@@ -41,7 +41,8 @@ public static class MidiWriter
         return ms.ToArray();
     }
 
-    static byte[] Track(List<(long Tick, byte[] Msg)> events)
+    /// <param name="end">Where the track ends, if after its last event: a DAW makes the clip that long.</param>
+    static byte[] Track(List<(long Tick, byte[] Msg)> events, long end = 0)
     {
         // Stable sort by time; at equal times note-offs go before note-ons so repeated notes don't cut each other.
         var ordered = events.Select((e, idx) => (e, idx))
@@ -57,7 +58,8 @@ public static class MidiWriter
             body.Write(msg);
             last = tick;
         }
-        body.Write([0x00, 0xFF, 0x2F, 0x00]);
+        WriteVlq(body, Math.Max(0, end - last));
+        body.Write([0xFF, 0x2F, 0x00]);
 
         using var ms = new MemoryStream();
         ms.Write("MTrk"u8);

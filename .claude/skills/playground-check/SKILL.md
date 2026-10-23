@@ -39,7 +39,7 @@ SCREEN=1440x900 MIDI=$D/midi PLAYGROUND=$D/playground.json PLAYGROUND_STEPS=step
 It opens the MIDI page first (so parts are read for Suggest), then the Playground (`5b-playground`), then your
 steps. Positions that worked at 1440x900 (check a shot before trusting a new one):
 - `?` key: shortcut cheat sheet; Escape closes it.
-- Suggest's Find button 1371,380; side tabs along y=240 (Suggest 1058, Write 1124, Groove 1188, Reharm 1259, Song 1324).
+- Side tabs along y=138 (Suggest 1050, Chords 1113, Write 1166, Reharm 1222, Song 1277); Suggest's Find button 1374,215.
 - Timeline tracks start at y=360, 46 px apart; ruler bar numbers at y=341; piano roll below y=690.
 - Move the mouse to 1430,892 before each shot so no hover hides anything.
 

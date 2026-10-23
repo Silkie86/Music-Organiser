@@ -499,6 +499,29 @@
 
                         <Border Classes="card settingsCard">
                             <StackPanel>
+                                <TextBlock Text="Playing along with Bitwig" Classes="sectionHeader" />
+                                <DockPanel>
+                                    <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.FollowNudgeChoices}" SelectedItem="{Binding PlaygroundPage.FollowNudge}" MinWidth="130"
+                                              ToolTip.Tip="If the Playground sounds late against Bitwig while following it, play it earlier; if it sounds early, play it later">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} ms'}" /></DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <TextBlock Text="With Follow Bitwig, play this much earlier (later below 0)" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Where the chord know-how comes from" Classes="sectionHeader" />
+                                <TextBlock Classes="small" TextWrapping="Wrap"
+                                           Text="What usually comes next after a chord, and the key guessed from chords, start from counts made from ChoCo, the Chord Corpus (de Berardinis et al., CC BY 4.0, github.com/smashub/choco): the Real Book, iReal Pro jazz playlists and gospel, worship and soul charts, the Weimar Jazz Database and the Jazz Corpus. Only the counts are kept. Your own chord parts count for more the more of them there are." />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
                                 <TextBlock Text="A new idea starts with" Classes="sectionHeader" />
                                 <DockPanel Margin="0,0,0,10">
                                     <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.NewTempoChoices}" SelectedItem="{Binding PlaygroundPage.NewTempo}" MinWidth="130"

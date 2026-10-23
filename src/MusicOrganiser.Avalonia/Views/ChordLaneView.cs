@@ -14,7 +14,10 @@ namespace MusicOrganiser.Avalonia.Views;
 /// and its Roman numeral beside it where there's room, with a line under it for what it does (green: home, red: pulling
 /// home, none: moving away). Solomon picked these "quiet blocks" on 2026-10-22. Hovering one says what it's doing ("tritone sub: slides down a
 /// semitone to Cmaj9"). A playhead follows playback. Clicking a chord picks it for Reharm (<see cref="PickCommand"/>); the
-/// idea being tried is drawn striped over the chords it changes (<see cref="Proposed"/>).
+/// idea being tried is drawn striped over the chords it changes (<see cref="Proposed"/>). Chords on the chord track (no MIDI
+/// of their own, tinted) stretch by either edge and slide by the middle, on the grid unless Shift is held (Solomon,
+/// 2026-10-22: "resize the chord clips in the chord track and everything updates on the fly"): each step goes to
+/// <see cref="DragCommand"/> as it's dragged.
 /// </summary>
 public sealed class ChordLaneView : Control
 {
@@ -33,6 +36,16 @@ public sealed class ChordLaneView : Control
     public static readonly StyledProperty<ChordCell?> PickedProperty = AvaloniaProperty.Register<ChordLaneView, ChordCell?>(nameof(Picked));
     public static readonly StyledProperty<IReadOnlyList<ChordCell>?> ProposedProperty =
         AvaloniaProperty.Register<ChordLaneView, IReadOnlyList<ChordCell>?>(nameof(Proposed));
+
+    /// <summary>Run with a <see cref="ChordDrag"/> at each step of stretching or sliding a chord-track chord, the last one marked done.</summary>
+    public static readonly StyledProperty<ICommand?> DragCommandProperty = AvaloniaProperty.Register<ChordLaneView, ICommand?>(nameof(DragCommand));
+    /// <summary>The grid dragged chords land on, in ticks, while <see cref="SnapGrid"/> is on.</summary>
+    public static readonly StyledProperty<long> GridProperty = AvaloniaProperty.Register<ChordLaneView, long>(nameof(Grid), 4 * 96);
+    public static readonly StyledProperty<bool> SnapGridProperty = AvaloniaProperty.Register<ChordLaneView, bool>(nameof(SnapGrid), true);
+
+    public ICommand? DragCommand { get => GetValue(DragCommandProperty); set => SetValue(DragCommandProperty, value); }
+    public long Grid { get => GetValue(GridProperty); set => SetValue(GridProperty, value); }
+    public bool SnapGrid { get => GetValue(SnapGridProperty); set => SetValue(SnapGridProperty, value); }
 
     static ChordLaneView() => AffectsRender<ChordLaneView>(ItemsProperty, PositionProperty, LengthProperty, InsetProperty, ViewFromProperty, ViewToProperty,
                                                            PickedProperty, ProposedProperty);
@@ -87,23 +100,113 @@ public sealed class ChordLaneView : Control
 
     ChordCell? HitAt(double x) => x < Inset ? null : Items?.FirstOrDefault(c => { var (cx, w) = Place(c); return x >= cx && x < cx + w; });
 
+    /// <summary>Which part of a chord-track chord the pointer is on: its left edge, its right edge or its middle.</summary>
+    enum Grip { Left, Right, Middle }
+
+    /// <summary>Within this many pixels of a chord-track chord's edge, dragging stretches it.</summary>
+    const double EdgeWidth = 6;
+
+    /// <summary>A chord-track chord being dragged: how it was, where the pointer went down, and what was last sent.</summary>
+    sealed class Drag(ChordCell cell, Grip grip, double x, int gesture)
+    {
+        public ChordCell Cell { get; } = cell;
+        public Grip Grip { get; } = grip;
+        public double X { get; } = x;
+        public int Gesture { get; } = gesture;
+        public bool Moved { get; set; }
+        public (long Start, long Length) Sent { get; set; } = (cell.Timed.Start, cell.Timed.Length);
+    }
+
+    static int _gestures;
+    Drag? _drag;
+
+    Grip? GripAt(ChordCell c, double x)
+    {
+        if (!c.IsSet || DragCommand is null) return null;
+        var (cx, w) = Place(c);
+        var edge = Math.Min(EdgeWidth, w / 3);
+        return x < cx + edge ? Grip.Left : x >= cx + w - edge ? Grip.Right : Grip.Middle;
+    }
+
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (HitAt(e.GetPosition(this).X) is not { } hit || PickCommand is not { } pick || !pick.CanExecute(hit)) return;
+        var x = e.GetPosition(this).X;
+        if (HitAt(x) is not { } hit) return;
+        var point = e.GetCurrentPoint(this).Properties;
+        if (point.IsLeftButtonPressed && GripAt(hit, x) is { } grip)
+        {
+            // Picked on letting go, if it wasn't dragged: a drag only stretches or moves it.
+            _drag = new Drag(hit, grip, x, ++_gestures);
+            e.Pointer.Capture(this);
+            e.Handled = true;
+            return;
+        }
+        if (PickCommand is not { } pick || !pick.CanExecute(hit)) return;
         pick.Execute(hit);
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) e.Handled = true;   // a right-click goes on to open the menu
+        if (point.IsLeftButtonPressed) e.Handled = true;   // a right-click goes on to open the menu
     }
+
+    // Made once: the pointer over a chord's edge, and over the rest of it.
+    static readonly Cursor Stretch = new(StandardCursorType.SizeWestEast), Pointing = new(StandardCursorType.Hand);
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {
-        var hit = HitAt(e.GetPosition(this).X);
+        var x = e.GetPosition(this).X;
+        if (_drag is { } drag)
+        {
+            if (!drag.Moved && Math.Abs(x - drag.X) < 3) return;
+            drag.Moved = true;
+            Send(drag, x, e.KeyModifiers.HasFlag(KeyModifiers.Shift), done: false);
+            return;
+        }
+        var hit = HitAt(x);
+        Cursor = hit is null || PickCommand is null ? null
+            : GripAt(hit, x) is Grip.Left or Grip.Right ? Stretch
+            : Pointing;
         if (hit == _hover) return;
         _hover = hit;
-        Cursor = hit is null || PickCommand is null ? null : new Cursor(StandardCursorType.Hand);
         ToolTip.SetTip(this, hit is null ? null : PickCommand is null ? hit.Tip : $"{hit.Tip}\nClick for ways to change it");
         ToolTip.SetIsOpen(this, hit is not null);
         InvalidateVisual();
+    }
+
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+        if (_drag is not { } drag) return;
+        _drag = null;
+        e.Pointer.Capture(null);
+        if (drag.Moved) Send(drag, e.GetPosition(this).X, e.KeyModifiers.HasFlag(KeyModifiers.Shift), done: true);
+        else if (PickCommand is { } pick && pick.CanExecute(drag.Cell)) pick.Execute(drag.Cell);
+    }
+
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        base.OnPointerCaptureLost(e);
+        if (_drag is not { Moved: true } drag) { _drag = null; return; }
+        _drag = null;
+        DragCommand?.Execute(new ChordDrag(drag.Cell.Timed.Start, drag.Sent.Start, drag.Sent.Length, drag.Gesture, true));
+    }
+
+    /// <summary>Where the dragged chord would be with the pointer at <paramref name="x"/>, sent on when it's somewhere new (or the drag is over).</summary>
+    void Send(Drag drag, double x, bool free, bool done)
+    {
+        var width = Math.Max(1, Bounds.Width - Inset);
+        var ticks = (x - drag.X) / width * Shown * Length;
+        var grid = Math.Max(1, Grid);
+        long Snap(double t) => free || !SnapGrid ? (long)Math.Round(t) : (long)Math.Round(t / grid) * grid;
+        var (start, end) = (drag.Cell.Timed.Start, drag.Cell.Timed.End);
+        (long Start, long Length) to = drag.Grip switch
+        {
+            Grip.Left => (Snap(start + ticks), end - Snap(start + ticks)),
+            Grip.Right => (start, Snap(end + ticks) - start),
+            _ => (Snap(start + ticks), end - start),
+        };
+        if (to == drag.Sent && !done) return;
+        drag.Sent = to;
+        var move = new ChordDrag(start, to.Start, to.Length, drag.Gesture, done);
+        if (DragCommand is { } c && c.CanExecute(move)) c.Execute(move);
     }
 
     protected override void OnPointerExited(PointerEventArgs e)
@@ -186,6 +289,10 @@ public sealed class ChordLaneView : Control
             return;
         }
         var accent = Res("AccentBrush", Brushes.White);
+        // Chords on the chord track are tinted with the accent and have grips at their edges: they can be stretched and moved.
+        var accentColour = (accent as ISolidColorBrush)?.Color ?? Colors.White;
+        var setFill = new SolidColorBrush(accentColour, 0.14);
+        var grip = new SolidColorBrush(accentColour, 0.55);
         using var clip = dc.PushClip(new Rect(Inset, 0, Math.Max(0, Bounds.Width - Inset), h));
         foreach (var c in items)
         {
@@ -201,6 +308,12 @@ public sealed class ChordLaneView : Control
             var picked = Picked is { } p && p.Timed.Start == c.Timed.Start;
             var pen = picked ? new Pen(accent, 1.5) : c == _hover ? new Pen(muted, 1) : null;
             dc.DrawRectangle(surface, pen, new RoundedRect(rect, 2));
+            if (c.IsSet)
+            {
+                dc.DrawRectangle(setFill, null, new RoundedRect(rect, 2));
+                dc.FillRectangle(grip, new Rect(rect.X + 1.5, rect.Y + h / 4, 1.5, h / 2 - 2));
+                dc.FillRectangle(grip, new Rect(rect.Right - 3, rect.Y + h / 4, 1.5, h / 2 - 2));
+            }
             if (line is not null) dc.FillRectangle(line, new Rect(rect.X + 1, rect.Bottom - 2, Math.Max(1, rect.Width - 2), 2));
             DrawName(dc, c, rect, text, muted);
         }
