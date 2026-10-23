@@ -67,13 +67,7 @@ static class CorpusBench
     static string Step(ChordSymbol from, ChordSymbol to) => $"{ChordSymbol.Mod(to.Root - from.Root)}:{Kind(to)}";
 
     /// <summary>The chords as "what chord next?" learns them: a change only when the root or the kind of chord changes.</summary>
-    static List<ChordSymbol> Changes(IReadOnlyList<ChordSymbol> chords)
-    {
-        var list = new List<ChordSymbol>();
-        foreach (var c in chords)
-            if (list.Count == 0 || list[^1].Root != c.Root || Kind(list[^1]) != Kind(c)) list.Add(c);
-        return list;
-    }
+    static List<ChordSymbol> Changes(IReadOnlyList<ChordSymbol> chords) => ProgressionModel.Changes(chords);
 
     static string Norm(string title) => new(title.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
 

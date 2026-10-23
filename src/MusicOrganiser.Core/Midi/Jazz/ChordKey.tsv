@@ -476,7 +476,6 @@ held	minor	11:dim7	93.84
 held	minor	11:sus4	6
 held	minor	11:7sus4	110.33
 held	minor	11:+	77.07
-move	major	0:maj	0:maj	8854
 move	major	0:maj	0:6	413
 move	major	0:maj	0:maj7	760
 move	major	0:maj	0:m	78
@@ -567,7 +566,6 @@ move	major	0:maj	11:7	181
 move	major	0:maj	11:m7b5	68
 move	major	0:maj	11:dim	20
 move	major	0:6	0:maj	370
-move	major	0:6	0:6	1006
 move	major	0:6	0:maj7	444
 move	major	0:6	0:m6	15
 move	major	0:6	0:m7	64
@@ -629,7 +627,6 @@ move	major	0:6	11:m7b5	80
 move	major	0:6	11:7sus4	11
 move	major	0:maj7	0:maj	202
 move	major	0:maj7	0:6	841
-move	major	0:maj7	0:maj7	1809
 move	major	0:maj7	0:m	19
 move	major	0:maj7	0:m6	12
 move	major	0:maj7	0:m7	210
@@ -711,7 +708,6 @@ move	major	0:maj7	11:7sus4	10
 move	major	0:maj7	11:+	9
 move	major	0:m	0:maj	31
 move	major	0:m	0:maj7	9
-move	major	0:m	0:m	234
 move	major	0:m	0:m6	20
 move	major	0:m	0:m7	62
 move	major	0:m	0:7	13
@@ -735,7 +731,6 @@ move	major	0:m	10:7	12
 move	major	0:m	11:m	11
 move	major	0:m6	0:maj	9
 move	major	0:m6	0:m	15
-move	major	0:m6	0:m6	13
 move	major	0:m6	0:m7	34
 move	major	0:m6	2:m7	9
 move	major	0:m6	2:7	30
@@ -749,7 +744,6 @@ move	major	0:m6	11:m7	8
 move	major	0:m7	0:6	8
 move	major	0:m7	0:maj7	36
 move	major	0:m7	0:m6	73
-move	major	0:m7	0:m7	215
 move	major	0:m7	0:7	16
 move	major	0:m7	1:maj7	24
 move	major	0:m7	1:m7	9
@@ -786,7 +780,6 @@ move	major	0:7	0:maj	251
 move	major	0:7	0:6	127
 move	major	0:7	0:maj7	37
 move	major	0:7	0:m7	59
-move	major	0:7	0:7	2911
 move	major	0:7	0:dim	30
 move	major	0:7	0:7sus4	36
 move	major	0:7	0:+	30
@@ -851,7 +844,6 @@ move	major	0:dim	0:maj	155
 move	major	0:dim	0:6	36
 move	major	0:dim	0:maj7	26
 move	major	0:dim	0:7	23
-move	major	0:dim	0:dim	13
 move	major	0:dim	2:m	17
 move	major	0:dim	2:m7	138
 move	major	0:dim	5:m	13
@@ -860,13 +852,11 @@ move	major	0:dim	7:7	110
 move	major	0:dim	9:7	22
 move	major	0:dim7	0:6	46
 move	major	0:dim7	0:maj7	25
-move	major	0:dim7	0:dim7	11
 move	major	0:dim7	1:m7	10
 move	major	0:dim7	2:m7	27
 move	major	0:sus4	0:maj	368
 move	major	0:sus4	0:maj7	25
 move	major	0:sus4	0:7	16
-move	major	0:sus4	0:sus4	100
 move	major	0:sus4	2:m7	26
 move	major	0:sus4	4:m7	19
 move	major	0:sus4	5:maj	21
@@ -876,7 +866,6 @@ move	major	0:sus4	9:m7	40
 move	major	0:7sus4	0:maj	11
 move	major	0:7sus4	0:6	14
 move	major	0:7sus4	0:7	204
-move	major	0:7sus4	0:7sus4	135
 move	major	0:7sus4	2:m7	11
 move	major	0:7sus4	5:maj	50
 move	major	0:7sus4	5:maj7	70
@@ -892,7 +881,6 @@ move	major	0:+	5:6	10
 move	major	0:+	5:maj7	19
 move	major	0:+	9:m	12
 move	major	1:maj	0:maj	42
-move	major	1:maj	1:maj	133
 move	major	1:maj	1:maj7	10
 move	major	1:maj	1:7	21
 move	major	1:maj	1:+	12
@@ -918,7 +906,6 @@ move	major	1:maj	10:m7	19
 move	major	1:maj	11:maj	17
 move	major	1:6	0:6	22
 move	major	1:6	0:maj7	11
-move	major	1:6	1:6	9
 move	major	1:6	1:7	9
 move	major	1:6	10:7	8
 move	major	1:6	11:maj	20
@@ -928,7 +915,6 @@ move	major	1:maj7	0:maj7	146
 move	major	1:maj7	0:m7	34
 move	major	1:maj7	0:7	22
 move	major	1:maj7	1:6	16
-move	major	1:maj7	1:maj7	123
 move	major	1:maj7	1:m7	24
 move	major	1:maj7	1:7	20
 move	major	1:maj7	2:maj7	9
@@ -957,7 +943,6 @@ move	major	1:m	6:7	11
 move	major	1:m	11:maj	21
 move	major	1:m7	0:maj7	21
 move	major	1:m7	0:7	8
-move	major	1:m7	1:m7	25
 move	major	1:m7	2:maj	9
 move	major	1:m7	2:maj7	8
 move	major	1:m7	2:m7	20
@@ -974,7 +959,6 @@ move	major	1:7	0:6	160
 move	major	1:7	0:maj7	474
 move	major	1:7	0:m7	53
 move	major	1:7	0:7	324
-move	major	1:7	1:7	80
 move	major	1:7	2:m7	50
 move	major	1:7	2:7	63
 move	major	1:7	2:m7b5	13
@@ -1018,13 +1002,11 @@ move	major	1:dim7	7:7	19
 move	major	1:dim7	9:7	10
 move	major	1:sus4	6:sus4	9
 move	major	1:7sus4	1:7	10
-move	major	1:7sus4	1:7sus4	14
 move	major	1:+	1:6	8
 move	major	1:+	2:m7	16
 move	major	2:maj	0:maj	256
 move	major	2:maj	0:maj7	13
 move	major	2:maj	1:maj	18
-move	major	2:maj	2:maj	199
 move	major	2:maj	2:maj7	16
 move	major	2:maj	2:m	13
 move	major	2:maj	2:m7	27
@@ -1068,7 +1050,6 @@ move	major	2:maj7	0:maj7	25
 move	major	2:maj7	1:maj7	15
 move	major	2:maj7	1:m7	23
 move	major	2:maj7	2:6	16
-move	major	2:maj7	2:maj7	37
 move	major	2:maj7	2:m7	45
 move	major	2:maj7	2:7	29
 move	major	2:maj7	2:m7b5	8
@@ -1094,7 +1075,6 @@ move	major	2:m	1:7	26
 move	major	2:m	1:dim	23
 move	major	2:m	1:+	25
 move	major	2:m	2:maj	24
-move	major	2:m	2:m	455
 move	major	2:m	2:m6	57
 move	major	2:m	2:m7	330
 move	major	2:m	2:7	63
@@ -1130,7 +1110,6 @@ move	major	2:m	11:7	18
 move	major	2:m6	0:maj	51
 move	major	2:m6	0:maj7	27
 move	major	2:m6	2:m	14
-move	major	2:m6	2:m6	14
 move	major	2:m6	2:m7	51
 move	major	2:m6	3:dim	15
 move	major	2:m6	4:maj	11
@@ -1155,7 +1134,6 @@ move	major	2:m7	1:dim7	35
 move	major	2:m7	2:maj	47
 move	major	2:m7	2:m	98
 move	major	2:m7	2:m6	136
-move	major	2:m7	2:m7	1342
 move	major	2:m7	2:7	107
 move	major	2:m7	2:m7b5	111
 move	major	2:m7	2:dim	29
@@ -1226,7 +1204,6 @@ move	major	2:7	2:maj	8
 move	major	2:7	2:6	13
 move	major	2:7	2:m	87
 move	major	2:7	2:m7	1718
-move	major	2:7	2:7	1011
 move	major	2:7	2:m7b5	35
 move	major	2:7	2:dim	21
 move	major	2:7	2:7sus4	14
@@ -1278,7 +1255,6 @@ move	major	2:m7b5	0:maj	98
 move	major	2:m7b5	0:maj7	22
 move	major	2:m7b5	1:maj7	9
 move	major	2:m7b5	2:m7	27
-move	major	2:m7b5	2:m7b5	27
 move	major	2:m7b5	4:m7	8
 move	major	2:m7b5	4:m7b5	10
 move	major	2:m7b5	7:7	735
@@ -1296,10 +1272,8 @@ move	major	2:sus4	2:maj	31
 move	major	2:sus4	2:maj7	8
 move	major	2:sus4	2:m	25
 move	major	2:sus4	2:7	12
-move	major	2:sus4	2:sus4	18
 move	major	2:7sus4	2:maj	17
 move	major	2:7sus4	2:7	160
-move	major	2:7sus4	2:7sus4	14
 move	major	2:7sus4	7:maj	9
 move	major	2:7sus4	7:maj7	19
 move	major	2:7sus4	7:7	10
@@ -1315,7 +1289,6 @@ move	major	3:maj	2:maj	38
 move	major	3:maj	2:m	20
 move	major	3:maj	2:m7	37
 move	major	3:maj	2:7	25
-move	major	3:maj	3:maj	159
 move	major	3:maj	3:maj7	20
 move	major	3:maj	3:7	12
 move	major	3:maj	3:sus4	9
@@ -1339,7 +1312,6 @@ move	major	3:maj	10:7	36
 move	major	3:6	0:maj	11
 move	major	3:6	2:m7	27
 move	major	3:6	2:7	15
-move	major	3:6	3:6	12
 move	major	3:6	5:m7	10
 move	major	3:6	7:7	11
 move	major	3:maj7	0:maj7	46
@@ -1354,7 +1326,6 @@ move	major	3:maj7	2:7	55
 move	major	3:maj7	2:m7b5	20
 move	major	3:maj7	3:maj	10
 move	major	3:maj7	3:6	27
-move	major	3:maj7	3:maj7	146
 move	major	3:maj7	3:m7	67
 move	major	3:maj7	3:7	14
 move	major	3:maj7	3:7sus4	14
@@ -1379,7 +1350,6 @@ move	major	3:maj7	11:m7	8
 move	major	3:m	1:maj	11
 move	major	3:m	2:m	22
 move	major	3:m	2:m7	16
-move	major	3:m	3:m	27
 move	major	3:m	3:m7	10
 move	major	3:m	5:m	11
 move	major	3:m	6:maj	9
@@ -1395,7 +1365,6 @@ move	major	3:m7	1:maj7	17
 move	major	3:m7	1:m7	18
 move	major	3:m7	2:m7	266
 move	major	3:m7	2:7	18
-move	major	3:m7	3:m7	43
 move	major	3:m7	4:m7	35
 move	major	3:m7	5:m7	16
 move	major	3:m7	5:7	8
@@ -1414,7 +1383,6 @@ move	major	3:7	2:7	434
 move	major	3:7	2:m7b5	12
 move	major	3:7	2:7sus4	10
 move	major	3:7	3:m7	8
-move	major	3:7	3:7	61
 move	major	3:7	4:m7	12
 move	major	3:7	4:7	49
 move	major	3:7	4:m7b5	13
@@ -1443,7 +1411,6 @@ move	major	3:dim	2:m	34
 move	major	3:dim	2:m6	15
 move	major	3:dim	2:m7	590
 move	major	3:dim	2:7	13
-move	major	3:dim	3:dim	14
 move	major	3:dim	4:m7	123
 move	major	3:dim	4:7	8
 move	major	3:dim	7:7	113
@@ -1451,12 +1418,10 @@ move	major	3:dim7	0:maj	33
 move	major	3:dim7	0:6	18
 move	major	3:dim7	0:maj7	28
 move	major	3:dim7	2:m7	452
-move	major	3:dim7	3:dim7	15
 move	major	3:dim7	4:m7	105
 move	major	3:dim7	7:7	12
 move	major	3:sus4	3:maj	15
 move	major	3:7sus4	3:7	13
-move	major	3:7sus4	3:7sus4	43
 move	major	3:7sus4	5:7sus4	10
 move	major	3:7sus4	7:maj	14
 move	major	3:7sus4	8:maj7	17
@@ -1470,7 +1435,6 @@ move	major	4:maj	2:6	11
 move	major	4:maj	2:m7	15
 move	major	4:maj	2:7	10
 move	major	4:maj	3:maj	13
-move	major	4:maj	4:maj	100
 move	major	4:maj	4:maj7	16
 move	major	4:maj	4:7	32
 move	major	4:maj	5:maj	101
@@ -1499,7 +1463,6 @@ move	major	4:maj7	3:maj7	11
 move	major	4:maj7	3:m7	9
 move	major	4:maj7	3:7	9
 move	major	4:maj7	4:6	12
-move	major	4:maj7	4:maj7	53
 move	major	4:maj7	4:m7	35
 move	major	4:maj7	4:7	12
 move	major	4:maj7	4:sus4	19
@@ -1534,7 +1497,6 @@ move	major	4:m	3:m7	8
 move	major	4:m	3:7	25
 move	major	4:m	3:dim	24
 move	major	4:m	4:maj	11
-move	major	4:m	4:m	185
 move	major	4:m	4:m6	12
 move	major	4:m	4:m7	91
 move	major	4:m	4:7	9
@@ -1580,7 +1542,6 @@ move	major	4:m7	3:dim	274
 move	major	4:m7	3:dim7	262
 move	major	4:m7	4:m	10
 move	major	4:m7	4:m6	31
-move	major	4:m7	4:m7	373
 move	major	4:m7	4:7	43
 move	major	4:m7	4:m7b5	24
 move	major	4:m7	5:maj	298
@@ -1626,7 +1587,6 @@ move	major	4:7	2:7sus4	11
 move	major	4:7	3:maj7	24
 move	major	4:7	3:7	181
 move	major	4:7	4:m7	85
-move	major	4:7	4:7	492
 move	major	4:7	4:m7b5	30
 move	major	4:7	4:7sus4	8
 move	major	4:7	4:+	12
@@ -1662,7 +1622,6 @@ move	major	4:m7b5	0:7	10
 move	major	4:m7b5	2:m7	8
 move	major	4:m7b5	2:7	11
 move	major	4:m7b5	3:7	25
-move	major	4:m7b5	4:m7b5	32
 move	major	4:m7b5	5:7	15
 move	major	4:m7b5	9:7	1155
 move	major	4:m7b5	9:7sus4	18
@@ -1680,16 +1639,13 @@ move	major	4:dim7	5:m7	9
 move	major	4:sus4	4:maj	34
 move	major	4:sus4	4:maj7	13
 move	major	4:sus4	4:7	22
-move	major	4:sus4	4:sus4	9
 move	major	4:sus4	5:sus4	11
 move	major	4:7sus4	2:7	10
 move	major	4:7sus4	4:maj	8
 move	major	4:7sus4	4:7	59
-move	major	4:7sus4	4:7sus4	33
 move	major	4:7sus4	9:maj	8
 move	major	4:7sus4	9:m7	14
 move	major	4:+	4:7	20
-move	major	4:+	4:+	9
 move	major	4:+	5:maj	11
 move	major	4:+	5:maj7	10
 move	major	4:+	6:+	16
@@ -1725,7 +1681,6 @@ move	major	5:maj	4:7	140
 move	major	5:maj	4:m7b5	14
 move	major	5:maj	4:dim	10
 move	major	5:maj	4:sus4	8
-move	major	5:maj	5:maj	2245
 move	major	5:maj	5:6	96
 move	major	5:maj	5:maj7	127
 move	major	5:maj	5:m	587
@@ -1776,7 +1731,6 @@ move	major	5:6	4:m7	52
 move	major	5:6	4:7	29
 move	major	5:6	4:m7b5	9
 move	major	5:6	5:maj	70
-move	major	5:6	5:6	122
 move	major	5:6	5:maj7	49
 move	major	5:6	5:m	18
 move	major	5:6	5:m6	97
@@ -1820,7 +1774,6 @@ move	major	5:maj7	4:7sus4	22
 move	major	5:maj7	4:+	17
 move	major	5:maj7	5:maj	200
 move	major	5:maj7	5:6	204
-move	major	5:maj7	5:maj7	732
 move	major	5:maj7	5:m	47
 move	major	5:maj7	5:m6	194
 move	major	5:maj7	5:m7	267
@@ -1868,7 +1821,6 @@ move	major	5:m	4:maj7	10
 move	major	5:m	4:m	18
 move	major	5:m	4:m7	59
 move	major	5:m	5:maj	27
-move	major	5:m	5:m	134
 move	major	5:m	5:m6	15
 move	major	5:m	5:m7	40
 move	major	5:m	7:maj	21
@@ -1890,7 +1842,6 @@ move	major	5:m6	4:m7	203
 move	major	5:m6	4:7	35
 move	major	5:m6	4:m7b5	13
 move	major	5:m6	5:m	9
-move	major	5:m6	5:m6	47
 move	major	5:m6	5:m7	11
 move	major	5:m6	7:maj	8
 move	major	5:m6	7:7	146
@@ -1918,7 +1869,6 @@ move	major	5:m7	4:m7b5	15
 move	major	5:m7	5:maj7	8
 move	major	5:m7	5:m	18
 move	major	5:m7	5:m6	38
-move	major	5:m7	5:m7	246
 move	major	5:m7	6:maj7	12
 move	major	5:m7	6:m7	24
 move	major	5:m7	7:m	8
@@ -1960,7 +1910,6 @@ move	major	5:7	5:maj	56
 move	major	5:7	5:6	9
 move	major	5:7	5:maj7	11
 move	major	5:7	5:m7	77
-move	major	5:7	5:7	846
 move	major	5:7	6:maj7	13
 move	major	5:7	6:m7	15
 move	major	5:7	6:7	53
@@ -2009,7 +1958,6 @@ move	major	5:sus4	7:7	8
 move	major	5:sus4	7:7sus4	14
 move	major	5:7sus4	0:maj	8
 move	major	5:7sus4	5:7	42
-move	major	5:7sus4	5:7sus4	44
 move	major	5:7sus4	7:7sus4	13
 move	major	5:7sus4	10:maj7	14
 move	major	5:+	5:maj	12
@@ -2023,7 +1971,6 @@ move	major	6:maj	4:maj	33
 move	major	6:maj	5:maj	44
 move	major	6:maj	5:m	9
 move	major	6:maj	5:7	9
-move	major	6:maj	6:maj	33
 move	major	6:maj	6:maj7	13
 move	major	6:maj	6:7	9
 move	major	6:maj	7:maj	24
@@ -2043,7 +1990,6 @@ move	major	6:maj7	5:maj7	8
 move	major	6:maj7	5:m	13
 move	major	6:maj7	5:m7	21
 move	major	6:maj7	5:7	12
-move	major	6:maj7	6:maj7	68
 move	major	6:maj7	7:maj7	15
 move	major	6:maj7	7:m7	15
 move	major	6:maj7	8:m7	12
@@ -2056,7 +2002,6 @@ move	major	6:maj7	11:7	18
 move	major	6:m	2:maj7	13
 move	major	6:m	4:maj	8
 move	major	6:m	4:m	13
-move	major	6:m	6:m	20
 move	major	6:m	6:m7	15
 move	major	6:m	11:m	26
 move	major	6:m	11:7	10
@@ -2073,7 +2018,6 @@ move	major	6:m7	5:m7	20
 move	major	6:m7	5:7	29
 move	major	6:m7	5:dim7	9
 move	major	6:m7	6:m6	11
-move	major	6:m7	6:m7	57
 move	major	6:m7	7:maj	12
 move	major	6:m7	7:maj7	26
 move	major	6:m7	7:m7	25
@@ -2098,7 +2042,6 @@ move	major	6:7	5:6	19
 move	major	6:7	5:maj7	256
 move	major	6:7	5:m7	30
 move	major	6:7	5:7	231
-move	major	6:7	6:7	56
 move	major	6:7	7:6	11
 move	major	6:7	7:7	56
 move	major	6:7	9:m7	14
@@ -2123,7 +2066,6 @@ move	major	6:m7b5	5:m6	90
 move	major	6:m7b5	5:m7	102
 move	major	6:m7b5	5:7	128
 move	major	6:m7b5	5:dim	11
-move	major	6:m7b5	6:m7b5	15
 move	major	6:m7b5	7:7	42
 move	major	6:m7b5	7:sus4	12
 move	major	6:m7b5	7:7sus4	8
@@ -2155,12 +2097,10 @@ move	major	6:dim7	2:m7	13
 move	major	6:dim7	4:m7	26
 move	major	6:dim7	5:6	9
 move	major	6:dim7	5:m7	9
-move	major	6:dim7	6:dim7	15
 move	major	6:dim7	7:maj	17
 move	major	6:dim7	7:m7	9
 move	major	6:dim7	7:7	19
 move	major	6:sus4	6:maj	14
-move	major	6:sus4	6:sus4	10
 move	major	6:7sus4	1:m7	8
 move	major	6:7sus4	6:7	18
 move	major	6:7sus4	11:7sus4	8
@@ -2193,7 +2133,6 @@ move	major	7:maj	6:maj	35
 move	major	7:maj	6:m7	10
 move	major	7:maj	6:7	12
 move	major	7:maj	6:m7b5	20
-move	major	7:maj	7:maj	1136
 move	major	7:maj	7:6	56
 move	major	7:maj	7:maj7	20
 move	major	7:maj	7:m	23
@@ -2231,7 +2170,6 @@ move	major	7:6	5:maj	22
 move	major	7:6	5:6	33
 move	major	7:6	6:7	14
 move	major	7:6	7:maj	20
-move	major	7:6	7:6	24
 move	major	7:6	7:7	52
 move	major	7:6	7:+	14
 move	major	7:6	9:6	13
@@ -2259,7 +2197,6 @@ move	major	7:maj7	6:7	27
 move	major	7:maj7	6:m7b5	8
 move	major	7:maj7	7:maj	10
 move	major	7:maj7	7:6	20
-move	major	7:maj7	7:maj7	83
 move	major	7:maj7	7:m7	27
 move	major	7:maj7	7:7	26
 move	major	7:maj7	8:dim	17
@@ -2284,7 +2221,6 @@ move	major	7:m	5:maj	75
 move	major	7:m	5:maj7	11
 move	major	7:m	5:m	17
 move	major	7:m	5:m7	16
-move	major	7:m	7:m	47
 move	major	7:m	7:m7	35
 move	major	7:m	8:maj	8
 move	major	7:m	8:maj7	10
@@ -2325,7 +2261,6 @@ move	major	7:m7	6:dim	9
 move	major	7:m7	6:dim7	8
 move	major	7:m7	7:m	16
 move	major	7:m7	7:m6	9
-move	major	7:m7	7:m7	195
 move	major	7:m7	7:7	54
 move	major	7:m7	7:dim7	8
 move	major	7:m7	7:7sus4	8
@@ -2396,7 +2331,6 @@ move	major	7:7	7:maj7	11
 move	major	7:7	7:m	27
 move	major	7:7	7:m6	36
 move	major	7:7	7:m7	515
-move	major	7:7	7:7	3288
 move	major	7:7	7:m7b5	18
 move	major	7:7	7:dim	66
 move	major	7:7	7:sus4	12
@@ -2443,7 +2377,6 @@ move	major	7:sus4	5:maj7	59
 move	major	7:sus4	5:7	14
 move	major	7:sus4	7:maj	354
 move	major	7:sus4	7:7	101
-move	major	7:sus4	7:sus4	65
 move	major	7:sus4	8:maj7	9
 move	major	7:sus4	9:m	14
 move	major	7:sus4	9:m7	41
@@ -2464,7 +2397,6 @@ move	major	7:7sus4	5:m7	17
 move	major	7:7sus4	7:maj	36
 move	major	7:7sus4	7:m7	14
 move	major	7:7sus4	7:7	649
-move	major	7:7sus4	7:7sus4	278
 move	major	7:7sus4	7:+	8
 move	major	7:7sus4	8:7sus4	10
 move	major	7:7sus4	9:m	11
@@ -2480,7 +2412,6 @@ move	major	7:+	4:m	15
 move	major	7:+	4:m7	8
 move	major	7:+	7:6	10
 move	major	7:+	7:7	15
-move	major	7:+	7:+	16
 move	major	8:maj	0:maj	49
 move	major	8:maj	0:maj7	9
 move	major	8:maj	0:m	17
@@ -2498,7 +2429,6 @@ move	major	8:maj	7:m	11
 move	major	8:maj	7:m7	24
 move	major	8:maj	7:7	76
 move	major	8:maj	7:sus4	10
-move	major	8:maj	8:maj	70
 move	major	8:maj	8:maj7	14
 move	major	8:maj	9:maj	9
 move	major	8:maj	9:m7	11
@@ -2534,7 +2464,6 @@ move	major	8:maj7	7:7	161
 move	major	8:maj7	7:7sus4	37
 move	major	8:maj7	8:maj	8
 move	major	8:maj7	8:6	27
-move	major	8:maj7	8:maj7	187
 move	major	8:maj7	8:m7	14
 move	major	8:maj7	9:m7	20
 move	major	8:maj7	9:7	9
@@ -2551,7 +2480,6 @@ move	major	8:m	3:maj	13
 move	major	8:m	7:m7	10
 move	major	8:m6	1:7	9
 move	major	8:m6	3:maj	13
-move	major	8:m6	8:m6	21
 move	major	8:m7	1:m7	25
 move	major	8:m7	1:7	206
 move	major	8:m7	2:m7	10
@@ -2559,7 +2487,6 @@ move	major	8:m7	5:m7b5	10
 move	major	8:m7	6:m7	12
 move	major	8:m7	7:m7	41
 move	major	8:m7	7:7	25
-move	major	8:m7	8:m7	35
 move	major	8:m7	9:maj7	11
 move	major	8:m7	9:m7	13
 move	major	8:m7	10:m7	8
@@ -2591,13 +2518,11 @@ move	major	8:7	7:m7	75
 move	major	8:7	7:7	1016
 move	major	8:7	7:7sus4	48
 move	major	8:7	8:m7	10
-move	major	8:7	8:7	156
 move	major	8:7	9:m7	13
 move	major	8:7	9:7	61
 move	major	8:7	10:7	11
 move	major	8:7	11:7	8
 move	major	8:m7b5	1:7	32
-move	major	8:m7b5	8:m7b5	12
 move	major	8:m7b5	9:m	27
 move	major	8:m7b5	9:m7	8
 move	major	8:dim	0:maj	8
@@ -2608,16 +2533,13 @@ move	major	8:dim	7:7	16
 move	major	8:dim	9:m	83
 move	major	8:dim	9:m7	75
 move	major	8:dim7	7:m7	23
-move	major	8:dim7	8:dim7	16
 move	major	8:dim7	9:m	11
 move	major	8:dim7	9:m7	63
 move	major	8:sus4	8:maj	10
-move	major	8:sus4	8:sus4	15
 move	major	8:7sus4	1:maj	13
 move	major	8:7sus4	1:maj7	23
 move	major	8:7sus4	6:7sus4	9
 move	major	8:7sus4	8:7	30
-move	major	8:7sus4	8:7sus4	17
 move	major	8:+	0:maj	12
 move	major	9:maj	0:maj	78
 move	major	9:maj	0:maj7	10
@@ -2641,7 +2563,6 @@ move	major	9:maj	6:m7	8
 move	major	9:maj	7:maj	121
 move	major	9:maj	7:maj7	11
 move	major	9:maj	8:maj	31
-move	major	9:maj	9:maj	135
 move	major	9:maj	9:maj7	11
 move	major	9:maj	9:m	14
 move	major	9:maj	9:m7	31
@@ -2670,7 +2591,6 @@ move	major	9:maj7	6:7	11
 move	major	9:maj7	8:m7	12
 move	major	9:maj7	8:7	27
 move	major	9:maj7	9:6	10
-move	major	9:maj7	9:maj7	42
 move	major	9:maj7	9:m7	42
 move	major	9:maj7	9:7	25
 move	major	9:maj7	10:m7	8
@@ -2714,7 +2634,6 @@ move	major	9:m	8:7	27
 move	major	9:m	8:dim	8
 move	major	9:m	8:+	22
 move	major	9:m	9:maj	22
-move	major	9:m	9:m	823
 move	major	9:m	9:m6	50
 move	major	9:m	9:m7	649
 move	major	9:m	9:7	72
@@ -2741,7 +2660,6 @@ move	major	9:m6	6:m7b5	16
 move	major	9:m6	7:7	18
 move	major	9:m6	7:7sus4	14
 move	major	9:m6	9:m	24
-move	major	9:m6	9:m6	37
 move	major	9:m6	9:m7	42
 move	major	9:m6	9:7	11
 move	major	9:m6	11:7	35
@@ -2805,7 +2723,6 @@ move	major	9:m7	8:dim7	17
 move	major	9:m7	9:maj	18
 move	major	9:m7	9:m	91
 move	major	9:m7	9:m6	121
-move	major	9:m7	9:m7	942
 move	major	9:m7	9:7	120
 move	major	9:m7	9:m7b5	13
 move	major	9:m7	9:7sus4	8
@@ -2867,7 +2784,6 @@ move	major	9:7	8:7	251
 move	major	9:7	9:6	9
 move	major	9:7	9:m	13
 move	major	9:7	9:m7	179
-move	major	9:7	9:7	979
 move	major	9:7	9:+	19
 move	major	9:7	10:maj	17
 move	major	9:7	10:6	10
@@ -2888,7 +2804,6 @@ move	major	9:dim	10:m7	11
 move	major	9:sus4	9:maj	13
 move	major	9:sus4	9:m	8
 move	major	9:sus4	9:7	17
-move	major	9:sus4	9:sus4	14
 move	major	9:7sus4	0:7sus4	40
 move	major	9:7sus4	2:maj7	28
 move	major	9:7sus4	2:m7	65
@@ -2896,7 +2811,6 @@ move	major	9:7sus4	5:maj7	13
 move	major	9:7sus4	8:7sus4	9
 move	major	9:7sus4	9:maj	11
 move	major	9:7sus4	9:7	117
-move	major	9:7sus4	9:7sus4	44
 move	major	9:7sus4	11:7sus4	13
 move	major	9:+	2:m	11
 move	major	9:+	2:m7	26
@@ -2932,7 +2846,6 @@ move	major	10:maj	9:maj	26
 move	major	10:maj	9:m	38
 move	major	10:maj	9:m7	25
 move	major	10:maj	9:7	33
-move	major	10:maj	10:maj	220
 move	major	10:maj	10:6	39
 move	major	10:maj	10:maj7	11
 move	major	10:maj	10:m	25
@@ -2952,7 +2865,6 @@ move	major	10:6	7:m7	9
 move	major	10:6	9:m7	15
 move	major	10:6	9:7	26
 move	major	10:6	10:maj	27
-move	major	10:6	10:6	10
 move	major	10:6	10:7	19
 move	major	10:6	11:6	18
 move	major	10:6	11:7	11
@@ -2990,7 +2902,6 @@ move	major	10:maj7	9:m7b5	11
 move	major	10:maj7	9:7sus4	12
 move	major	10:maj7	10:maj	8
 move	major	10:maj7	10:6	13
-move	major	10:maj7	10:maj7	228
 move	major	10:maj7	10:m7	69
 move	major	10:maj7	11:maj7	8
 move	major	10:maj7	11:m7	15
@@ -3002,7 +2913,6 @@ move	major	10:m	3:7	10
 move	major	10:m	5:maj	20
 move	major	10:m	5:m	11
 move	major	10:m	6:maj	9
-move	major	10:m	10:m	10
 move	major	10:m6	0:7	13
 move	major	10:m6	2:m7	10
 move	major	10:m6	5:maj	20
@@ -3020,7 +2930,6 @@ move	major	10:m7	8:m7	8
 move	major	10:m7	8:7	16
 move	major	10:m7	9:m7	15
 move	major	10:m7	10:maj7	10
-move	major	10:m7	10:m7	83
 move	major	10:m7	11:m7	14
 move	major	10:7	0:maj	255
 move	major	10:7	0:6	217
@@ -3064,7 +2973,6 @@ move	major	10:7	9:m7b5	12
 move	major	10:7	9:7sus4	14
 move	major	10:7	10:maj	18
 move	major	10:7	10:m7	23
-move	major	10:7	10:7	266
 move	major	10:7	11:m7	17
 move	major	10:7	11:7	79
 move	major	10:7	11:m7b5	12
@@ -3078,7 +2986,6 @@ move	major	10:dim	11:7	11
 move	major	10:dim7	7:7	8
 move	major	10:dim7	9:m7	16
 move	major	10:sus4	10:7	10
-move	major	10:sus4	10:sus4	74
 move	major	10:7sus4	0:maj7	19
 move	major	10:7sus4	0:7	10
 move	major	10:7sus4	0:7sus4	9
@@ -3088,7 +2995,6 @@ move	major	10:7sus4	5:m7	11
 move	major	10:7sus4	7:7sus4	14
 move	major	10:7sus4	9:maj	17
 move	major	10:7sus4	10:7	39
-move	major	10:7sus4	10:7sus4	43
 move	major	11:maj	0:maj	75
 move	major	11:maj	0:6	9
 move	major	11:maj	0:maj7	10
@@ -3105,7 +3011,6 @@ move	major	11:maj	7:7	20
 move	major	11:maj	9:maj	30
 move	major	11:maj	9:maj7	20
 move	major	11:maj	10:maj	26
-move	major	11:maj	11:maj	39
 move	major	11:maj	11:7	9
 move	major	11:6	0:6	25
 move	major	11:6	10:6	12
@@ -3126,7 +3031,6 @@ move	major	11:maj7	8:m7	9
 move	major	11:maj7	10:maj7	9
 move	major	11:maj7	10:m7	20
 move	major	11:maj7	10:7	9
-move	major	11:maj7	11:maj7	64
 move	major	11:maj7	11:m7	23
 move	major	11:m	0:maj	54
 move	major	11:m	0:maj7	9
@@ -3138,7 +3042,6 @@ move	major	11:m	6:m	22
 move	major	11:m	9:maj	19
 move	major	11:m	9:m	21
 move	major	11:m	9:m7	20
-move	major	11:m	11:m	36
 move	major	11:m	11:m7	16
 move	major	11:m7	0:maj	30
 move	major	11:m7	0:maj7	54
@@ -3161,7 +3064,6 @@ move	major	11:m7	10:maj7	11
 move	major	11:m7	10:m7	20
 move	major	11:m7	10:7	51
 move	major	11:m7	11:m6	8
-move	major	11:m7	11:m7	56
 move	major	11:m7	11:7	12
 move	major	11:7	0:maj	82
 move	major	11:7	0:6	42
@@ -3201,7 +3103,6 @@ move	major	11:7	10:maj7	92
 move	major	11:7	10:m7	10
 move	major	11:7	10:7	349
 move	major	11:7	11:m7	22
-move	major	11:7	11:7	137
 move	major	11:7	11:m7b5	28
 move	major	11:m7b5	0:maj	20
 move	major	11:m7b5	2:m7	8
@@ -3211,7 +3112,6 @@ move	major	11:m7b5	5:7	11
 move	major	11:m7b5	9:m	8
 move	major	11:m7b5	9:m7	14
 move	major	11:m7b5	10:7	23
-move	major	11:m7b5	11:m7b5	18
 move	major	11:dim	0:maj	18
 move	major	11:dim	0:maj7	18
 move	major	11:dim	5:maj	20
@@ -3222,9 +3122,7 @@ move	major	11:7sus4	0:maj7	11
 move	major	11:7sus4	4:maj7	13
 move	major	11:7sus4	9:7sus4	14
 move	major	11:7sus4	11:7	44
-move	major	11:7sus4	11:7sus4	55
 move	major	11:+	4:m7	15
-move	minor	0:maj	0:maj	266
 move	minor	0:maj	0:m	19
 move	minor	0:maj	0:m6	8
 move	minor	0:maj	0:m7	32
@@ -3242,9 +3140,7 @@ move	minor	0:maj	8:maj	63
 move	minor	0:maj	8:maj7	10
 move	minor	0:maj	10:maj	87
 move	minor	0:maj	10:m	10
-move	minor	0:6	0:6	11
 move	minor	0:6	2:m7b5	8
-move	minor	0:maj7	0:maj7	47
 move	minor	0:maj7	0:m7	29
 move	minor	0:maj7	0:7	19
 move	minor	0:maj7	2:m7	10
@@ -3255,7 +3151,6 @@ move	minor	0:maj7	5:m7	22
 move	minor	0:maj7	5:7	8
 move	minor	0:maj7	9:m7	21
 move	minor	0:m	0:maj	28
-move	minor	0:m	0:m	2192
 move	minor	0:m	0:m6	76
 move	minor	0:m	0:m7	487
 move	minor	0:m	0:7	93
@@ -3297,7 +3192,6 @@ move	minor	0:m	10:m7	44
 move	minor	0:m	10:7	33
 move	minor	0:m	11:+	23
 move	minor	0:m6	0:m	98
-move	minor	0:m6	0:m6	126
 move	minor	0:m6	0:m7	75
 move	minor	0:m6	0:7	17
 move	minor	0:m6	1:m6	8
@@ -3320,7 +3214,6 @@ move	minor	0:m7	0:maj	19
 move	minor	0:m7	0:maj7	29
 move	minor	0:m7	0:m	138
 move	minor	0:m7	0:m6	210
-move	minor	0:m7	0:m7	2528
 move	minor	0:m7	0:7	71
 move	minor	0:m7	1:maj7	118
 move	minor	0:m7	1:m7	60
@@ -3371,7 +3264,6 @@ move	minor	0:m7	11:7	32
 move	minor	0:7	0:maj	10
 move	minor	0:7	0:m	14
 move	minor	0:7	0:m7	23
-move	minor	0:7	0:7	189
 move	minor	0:7	0:m7b5	9
 move	minor	0:7	1:7	18
 move	minor	0:7	2:m7	9
@@ -3394,18 +3286,15 @@ move	minor	0:m7b5	5:7	61
 move	minor	0:dim	5:m7	10
 move	minor	0:sus4	0:maj	8
 move	minor	0:sus4	0:7	8
-move	minor	0:sus4	0:sus4	10
 move	minor	0:sus4	10:sus4	14
 move	minor	0:7sus4	0:maj	38
 move	minor	0:7sus4	0:m7	9
 move	minor	0:7sus4	0:7	12
-move	minor	0:7sus4	0:7sus4	38
 move	minor	0:7sus4	5:m7	58
 move	minor	0:7sus4	8:maj7	9
 move	minor	0:7sus4	10:7sus4	8
 move	minor	1:maj	0:maj	14
 move	minor	1:maj	0:m	21
-move	minor	1:maj	1:maj	12
 move	minor	1:maj	3:maj	31
 move	minor	1:maj	8:maj	14
 move	minor	1:maj	8:maj7	12
@@ -3415,7 +3304,6 @@ move	minor	1:maj7	0:maj7	28
 move	minor	1:maj7	0:m	41
 move	minor	1:maj7	0:m7	132
 move	minor	1:maj7	0:7	23
-move	minor	1:maj7	1:maj7	91
 move	minor	1:maj7	2:m7	12
 move	minor	1:maj7	2:7	10
 move	minor	1:maj7	2:m7b5	31
@@ -3424,14 +3312,12 @@ move	minor	1:maj7	6:maj7	8
 move	minor	1:maj7	7:7	18
 move	minor	1:maj7	8:maj7	35
 move	minor	1:maj7	10:m7	16
-move	minor	1:m	1:m	28
 move	minor	1:m	1:m7	8
 move	minor	1:m	6:m	20
 move	minor	1:m6	1:m	20
 move	minor	1:m6	8:7	10
 move	minor	1:m7	0:m7	67
 move	minor	1:m7	1:m6	20
-move	minor	1:m7	1:m7	55
 move	minor	1:m7	3:m7	12
 move	minor	1:m7	6:7	58
 move	minor	1:7	0:m	41
@@ -3440,7 +3326,6 @@ move	minor	1:7	0:m7	151
 move	minor	1:7	0:7	29
 move	minor	1:7	0:m7b5	22
 move	minor	1:7	0:7sus4	9
-move	minor	1:7	1:7	29
 move	minor	1:7	2:m7	8
 move	minor	1:7	2:7	10
 move	minor	1:7	3:maj	21
@@ -3453,13 +3338,11 @@ move	minor	1:7	8:7	11
 move	minor	1:7	10:m7	10
 move	minor	1:m7b5	6:7	8
 move	minor	1:7sus4	0:m7	8
-move	minor	1:7sus4	1:7sus4	13
 move	minor	2:maj	7:maj	8
 move	minor	2:6	1:6	8
 move	minor	2:maj7	7:7	9
 move	minor	2:m	0:m	13
 move	minor	2:m	0:m7	15
-move	minor	2:m	2:m	17
 move	minor	2:m	3:maj7	12
 move	minor	2:m	7:maj	19
 move	minor	2:m	7:m	8
@@ -3470,7 +3353,6 @@ move	minor	2:m7	0:m7	140
 move	minor	2:m7	1:maj7	17
 move	minor	2:m7	1:7	10
 move	minor	2:m7	2:m6	10
-move	minor	2:m7	2:m7	179
 move	minor	2:m7	2:7	23
 move	minor	2:m7	3:6	21
 move	minor	2:m7	3:maj7	46
@@ -3491,7 +3373,6 @@ move	minor	2:7	0:m7	11
 move	minor	2:7	1:maj7	33
 move	minor	2:7	1:7	44
 move	minor	2:7	2:m7	10
-move	minor	2:7	2:7	62
 move	minor	2:7	2:m7b5	50
 move	minor	2:7	3:maj7	11
 move	minor	2:7	3:7	8
@@ -3507,7 +3388,6 @@ move	minor	2:7	8:7	27
 move	minor	2:m7b5	0:m	52
 move	minor	2:m7b5	0:m7	19
 move	minor	2:m7b5	1:7	11
-move	minor	2:m7b5	2:m7b5	24
 move	minor	2:m7b5	7:7	1138
 move	minor	2:dim	7:7	22
 move	minor	3:maj	0:maj	27
@@ -3517,7 +3397,6 @@ move	minor	3:maj	0:7	19
 move	minor	3:maj	1:maj	14
 move	minor	3:maj	2:7	9
 move	minor	3:maj	2:m7b5	9
-move	minor	3:maj	3:maj	206
 move	minor	3:maj	3:maj7	10
 move	minor	3:maj	3:7	25
 move	minor	3:maj	5:maj	102
@@ -3544,7 +3423,6 @@ move	minor	3:6	2:6	8
 move	minor	3:6	2:m7	37
 move	minor	3:6	2:7	19
 move	minor	3:6	2:m7b5	19
-move	minor	3:6	3:6	41
 move	minor	3:6	5:maj	11
 move	minor	3:6	5:m7	14
 move	minor	3:6	5:7	13
@@ -3561,7 +3439,6 @@ move	minor	3:maj7	2:7	20
 move	minor	3:maj7	2:m7b5	76
 move	minor	3:maj7	3:maj	43
 move	minor	3:maj7	3:6	17
-move	minor	3:maj7	3:maj7	164
 move	minor	3:maj7	3:m7	9
 move	minor	3:maj7	3:7	10
 move	minor	3:maj7	4:dim	8
@@ -3580,7 +3457,6 @@ move	minor	3:maj7	9:m7	11
 move	minor	3:maj7	9:7	14
 move	minor	3:maj7	9:m7b5	15
 move	minor	3:maj7	10:7	13
-move	minor	3:m	3:m	20
 move	minor	3:m	3:7	8
 move	minor	3:m	5:7	10
 move	minor	3:m	10:maj	13
@@ -3590,7 +3466,6 @@ move	minor	3:m7	0:m7	55
 move	minor	3:m7	1:maj	8
 move	minor	3:m7	1:m7	15
 move	minor	3:m7	2:m7	12
-move	minor	3:m7	3:m7	50
 move	minor	3:m7	4:m7	8
 move	minor	3:m7	5:m7	48
 move	minor	3:m7	5:7	29
@@ -3604,7 +3479,6 @@ move	minor	3:7	0:m7b5	16
 move	minor	3:7	2:m7	8
 move	minor	3:7	2:7	53
 move	minor	3:7	2:m7b5	13
-move	minor	3:7	3:7	29
 move	minor	3:7	4:7	11
 move	minor	3:7	5:7	40
 move	minor	3:7	7:m7	9
@@ -3622,16 +3496,12 @@ move	minor	3:sus4	3:maj	15
 move	minor	3:sus4	5:sus4	20
 move	minor	3:sus4	10:sus4	12
 move	minor	3:7sus4	3:7	10
-move	minor	3:7sus4	3:7sus4	13
 move	minor	3:7sus4	5:maj7	10
 move	minor	3:7sus4	8:maj7	11
-move	minor	3:+	3:+	8
-move	minor	4:maj7	4:maj7	13
 move	minor	4:m	4:m7	13
 move	minor	4:m7	0:m7	22
 move	minor	4:m7	3:maj7	17
 move	minor	4:m7	3:7	13
-move	minor	4:m7	4:m7	10
 move	minor	4:m7	5:6	8
 move	minor	4:m7	5:m7	13
 move	minor	4:m7	7:7	12
@@ -3641,7 +3511,6 @@ move	minor	4:m7	9:7sus4	45
 move	minor	4:7	0:m7	10
 move	minor	4:7	3:maj7	13
 move	minor	4:7	3:7	9
-move	minor	4:7	4:7	22
 move	minor	4:7	9:maj7	15
 move	minor	4:7	9:m7	33
 move	minor	4:7	9:7	39
@@ -3655,7 +3524,6 @@ move	minor	5:maj	0:m7	146
 move	minor	5:maj	0:7	21
 move	minor	5:maj	3:maj	31
 move	minor	5:maj	3:maj7	11
-move	minor	5:maj	5:maj	90
 move	minor	5:maj	5:m	11
 move	minor	5:maj	5:m7	11
 move	minor	5:maj	5:7	8
@@ -3672,12 +3540,10 @@ move	minor	5:maj	10:maj	43
 move	minor	5:maj	10:7	11
 move	minor	5:6	0:m7	30
 move	minor	5:6	2:m7b5	9
-move	minor	5:6	5:6	23
 move	minor	5:6	7:7	9
 move	minor	5:maj7	0:maj7	13
 move	minor	5:maj7	3:maj7	10
 move	minor	5:maj7	3:7sus4	10
-move	minor	5:maj7	5:maj7	27
 move	minor	5:maj7	5:m7	17
 move	minor	5:maj7	10:maj7	10
 move	minor	5:m	0:maj	10
@@ -3689,7 +3555,6 @@ move	minor	5:m	2:7	9
 move	minor	5:m	2:m7b5	10
 move	minor	5:m	3:maj	86
 move	minor	5:m	3:maj7	12
-move	minor	5:m	5:m	159
 move	minor	5:m	5:m6	9
 move	minor	5:m	5:m7	46
 move	minor	5:m	5:7	18
@@ -3707,7 +3572,6 @@ move	minor	5:m6	0:m6	10
 move	minor	5:m6	0:m7	17
 move	minor	5:m6	0:7	11
 move	minor	5:m6	2:m7b5	21
-move	minor	5:m6	5:m6	35
 move	minor	5:m6	5:m7	12
 move	minor	5:m6	7:7	48
 move	minor	5:m6	7:sus4	19
@@ -3730,7 +3594,6 @@ move	minor	5:m7	3:m7	25
 move	minor	5:m7	3:7	8
 move	minor	5:m7	4:m7	8
 move	minor	5:m7	5:m6	24
-move	minor	5:m7	5:m7	378
 move	minor	5:m7	6:dim7	21
 move	minor	5:m7	7:m	22
 move	minor	5:m7	7:m7	272
@@ -3761,7 +3624,6 @@ move	minor	5:7	4:maj7	13
 move	minor	5:7	4:7	9
 move	minor	5:7	5:m	21
 move	minor	5:7	5:m7	84
-move	minor	5:7	5:7	197
 move	minor	5:7	5:7sus4	8
 move	minor	5:7	6:7	10
 move	minor	5:7	7:m7	9
@@ -3785,7 +3647,6 @@ move	minor	5:sus4	3:sus4	24
 move	minor	5:sus4	5:maj	11
 move	minor	5:7sus4	0:m7	15
 move	minor	5:7sus4	5:7	12
-move	minor	5:7sus4	5:7sus4	44
 move	minor	5:7sus4	7:maj	18
 move	minor	5:7sus4	7:m7	8
 move	minor	5:7sus4	8:maj7	8
@@ -3796,14 +3657,12 @@ move	minor	6:6	5:7	8
 move	minor	6:6	8:maj	8
 move	minor	6:maj7	0:m7	11
 move	minor	6:maj7	5:7	12
-move	minor	6:maj7	6:maj7	16
 move	minor	6:m	8:m	20
 move	minor	6:m7	11:7	34
 move	minor	6:7	0:maj	11
 move	minor	6:7	0:m7	14
 move	minor	6:7	5:m7	44
 move	minor	6:7	5:7	46
-move	minor	6:7	6:7	28
 move	minor	6:7	11:maj7	27
 move	minor	6:7	11:m7	17
 move	minor	6:7	11:7	20
@@ -3820,7 +3679,6 @@ move	minor	7:maj	5:maj	22
 move	minor	7:maj	5:m	11
 move	minor	7:maj	5:7	8
 move	minor	7:maj	5:7sus4	20
-move	minor	7:maj	7:maj	51
 move	minor	7:maj	7:7	19
 move	minor	7:maj	7:sus4	31
 move	minor	7:maj	8:maj	30
@@ -3834,7 +3692,6 @@ move	minor	7:m	0:m7	22
 move	minor	7:m	3:maj	8
 move	minor	7:m	5:m	97
 move	minor	7:m	5:m7	26
-move	minor	7:m	7:m	113
 move	minor	7:m	7:m7	58
 move	minor	7:m	8:maj	39
 move	minor	7:m	8:maj7	29
@@ -3857,7 +3714,6 @@ move	minor	7:m7	5:m7	241
 move	minor	7:m7	6:maj7	15
 move	minor	7:m7	6:7	11
 move	minor	7:m7	7:m6	8
-move	minor	7:m7	7:m7	154
 move	minor	7:m7	7:7	14
 move	minor	7:m7	8:maj	19
 move	minor	7:m7	8:maj7	104
@@ -3890,7 +3746,6 @@ move	minor	7:7	6:maj7	14
 move	minor	7:7	6:7	31
 move	minor	7:7	7:maj	13
 move	minor	7:7	7:m7	24
-move	minor	7:7	7:7	568
 move	minor	7:7	7:m7b5	19
 move	minor	7:7	8:maj	28
 move	minor	7:7	8:maj7	49
@@ -3903,7 +3758,6 @@ move	minor	7:m7b5	0:7	157
 move	minor	7:sus4	0:m7	16
 move	minor	7:sus4	7:maj	45
 move	minor	7:sus4	7:7	35
-move	minor	7:sus4	7:sus4	32
 move	minor	7:7sus4	0:maj7	8
 move	minor	7:7sus4	0:m	8
 move	minor	7:7sus4	0:m7	101
@@ -3929,7 +3783,6 @@ move	minor	8:maj	7:m7	44
 move	minor	8:maj	7:7	208
 move	minor	8:maj	7:sus4	8
 move	minor	8:maj	7:7sus4	9
-move	minor	8:maj	8:maj	173
 move	minor	8:maj	8:6	8
 move	minor	8:maj	10:maj	320
 move	minor	8:maj	10:maj7	8
@@ -3937,7 +3790,6 @@ move	minor	8:maj	10:7	38
 move	minor	8:maj	10:7sus4	19
 move	minor	8:6	7:m7	14
 move	minor	8:6	7:7	16
-move	minor	8:6	8:6	37
 move	minor	8:maj7	0:m	30
 move	minor	8:maj7	0:m7	144
 move	minor	8:maj7	0:7	9
@@ -3960,7 +3812,6 @@ move	minor	8:maj7	7:7	375
 move	minor	8:maj7	7:m7b5	10
 move	minor	8:maj7	7:7sus4	39
 move	minor	8:maj7	8:6	16
-move	minor	8:maj7	8:maj7	255
 move	minor	8:maj7	8:m7	8
 move	minor	8:maj7	9:m7	9
 move	minor	8:maj7	9:m7b5	27
@@ -3974,13 +3825,11 @@ move	minor	8:maj7	10:7sus4	19
 move	minor	8:m	9:maj	10
 move	minor	8:m	9:maj7	10
 move	minor	8:m6	0:m7	15
-move	minor	8:m6	8:m6	26
 move	minor	8:m7	1:m	17
 move	minor	8:m7	1:m7	11
 move	minor	8:m7	1:7	99
 move	minor	8:m7	7:m7	33
 move	minor	8:m7	7:7	10
-move	minor	8:m7	8:m7	23
 move	minor	8:m7	10:m7	10
 move	minor	8:7	0:m	81
 move	minor	8:7	0:m7	56
@@ -3998,7 +3847,6 @@ move	minor	8:7	6:7	12
 move	minor	8:7	7:m7	41
 move	minor	8:7	7:7	504
 move	minor	8:7	7:7sus4	15
-move	minor	8:7	8:7	62
 move	minor	8:7	9:7	12
 move	minor	8:7	9:dim	15
 move	minor	8:7	10:7	11
@@ -4008,7 +3856,6 @@ move	minor	9:maj	1:m7	13
 move	minor	9:6	8:m7	16
 move	minor	9:maj7	7:maj7	8
 move	minor	9:maj7	9:6	17
-move	minor	9:maj7	9:maj7	24
 move	minor	9:m	9:m7	8
 move	minor	9:m7	0:m7	25
 move	minor	9:m7	2:m7	32
@@ -4018,7 +3865,6 @@ move	minor	9:m7	7:7	15
 move	minor	9:m7	8:maj7	18
 move	minor	9:m7	8:m7	25
 move	minor	9:m7	8:7	12
-move	minor	9:m7	9:m7	23
 move	minor	9:7	2:maj	10
 move	minor	9:7	2:maj7	18
 move	minor	9:7	2:m	19
@@ -4027,7 +3873,6 @@ move	minor	9:7	2:7	65
 move	minor	9:7	2:m7b5	14
 move	minor	9:7	8:maj7	9
 move	minor	9:7	8:7	68
-move	minor	9:7	9:7	15
 move	minor	9:7	10:m7	12
 move	minor	9:7	10:7	12
 move	minor	9:m7b5	0:m7	15
@@ -4037,7 +3882,6 @@ move	minor	9:m7b5	7:7	8
 move	minor	9:m7b5	8:maj7	37
 move	minor	9:m7b5	8:m6	13
 move	minor	9:m7b5	8:7	53
-move	minor	9:m7b5	9:m7b5	19
 move	minor	9:m7b5	10:m7	8
 move	minor	9:dim	3:m6	15
 move	minor	9:7sus4	2:m7	45
@@ -4061,7 +3905,6 @@ move	minor	10:maj	8:maj	296
 move	minor	10:maj	8:maj7	56
 move	minor	10:maj	8:m6	9
 move	minor	10:maj	8:7	13
-move	minor	10:maj	10:maj	225
 move	minor	10:maj	10:7	10
 move	minor	10:6	0:m7	15
 move	minor	10:6	5:m7	11
@@ -4075,14 +3918,11 @@ move	minor	10:maj7	7:maj7	16
 move	minor	10:maj7	7:m7	18
 move	minor	10:maj7	7:7sus4	11
 move	minor	10:maj7	8:maj	8
-move	minor	10:maj7	10:maj7	12
 move	minor	10:maj7	10:m7	9
 move	minor	10:m	0:maj	17
 move	minor	10:m	0:m	28
 move	minor	10:m	3:maj	11
-move	minor	10:m	10:m	11
 move	minor	10:m6	3:7	8
-move	minor	10:m6	10:m6	24
 move	minor	10:m7	0:m7	43
 move	minor	10:m7	0:7	13
 move	minor	10:m7	1:maj	16
@@ -4098,7 +3938,6 @@ move	minor	10:m7	8:maj7	19
 move	minor	10:m7	9:m7	35
 move	minor	10:m7	9:7	25
 move	minor	10:m7	9:m7b5	8
-move	minor	10:m7	10:m7	51
 move	minor	10:m7	11:m7	22
 move	minor	10:7	0:maj7	9
 move	minor	10:7	0:m	41
@@ -4119,7 +3958,6 @@ move	minor	10:7	8:7	41
 move	minor	10:7	9:m7	8
 move	minor	10:7	9:7	36
 move	minor	10:7	10:m7	12
-move	minor	10:7	10:7	105
 move	minor	10:7	11:7	9
 move	minor	10:sus4	0:maj	12
 move	minor	10:sus4	0:m	8
@@ -4133,18 +3971,14 @@ move	minor	10:7sus4	5:m	9
 move	minor	10:7sus4	7:7	11
 move	minor	10:7sus4	9:7sus4	13
 move	minor	10:7sus4	10:7	88
-move	minor	10:7sus4	10:7sus4	98
 move	minor	11:maj	0:m7	11
-move	minor	11:maj	11:maj	11
 move	minor	11:maj7	0:m7	17
 move	minor	11:maj7	3:m7	18
 move	minor	11:maj7	5:m7	9
-move	minor	11:maj7	11:maj7	45
 move	minor	11:m	10:m7	10
 move	minor	11:m7	0:m7	18
 move	minor	11:m7	4:7	23
 move	minor	11:m7	10:m7	55
-move	minor	11:m7	11:m7	11
 move	minor	11:7	0:m7	13
 move	minor	11:7	4:maj7	13
 move	minor	11:7	4:m7	24
@@ -4152,11 +3986,9 @@ move	minor	11:7	5:m7	19
 move	minor	11:7	10:m7	36
 move	minor	11:7	10:7	30
 move	minor	11:7	10:7sus4	8
-move	minor	11:7	11:7	17
 move	minor	11:m7b5	4:7	11
 move	minor	11:dim	0:m	11
 move	minor	11:dim	0:m7	13
 move	minor	11:dim7	0:m7	12
-move	minor	11:7sus4	11:7sus4	8
 move	minor	11:+	0:m	9
 move	minor	11:+	3:maj	8

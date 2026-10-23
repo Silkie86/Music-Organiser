@@ -52,6 +52,8 @@ public sealed class ChordKey
             k._first[mode, ChordSymbol.Mod(chords[0].Root - tonic), KindOf(chords[0])]++;
             for (var i = 0; i + 1 < chords.Count; i++)
             {
+                // A chord that only changes its colour isn't a move, as Guess reads them.
+                if (ProgressionModel.SameChord(chords[i], chords[i + 1])) continue;
                 var key = (mode, ChordSymbol.Mod(chords[i].Root - tonic), KindOf(chords[i]), ChordSymbol.Mod(chords[i + 1].Root - tonic), KindOf(chords[i + 1]));
                 k._moves[key] = k._moves.GetValueOrDefault(key) + 1;
             }
@@ -157,7 +159,7 @@ public sealed class ChordKey
         // A chord that only changes its colour (Fmaj7 to Fmaj7(#11)) isn't a move.
         var moves = new List<(ChordSymbol From, ChordSymbol To)>();
         for (var i = 0; i + 1 < chords.Count; i++)
-            if (chords[i].Root != chords[i + 1].Root || KindOf(chords[i]) != KindOf(chords[i + 1])) moves.Add((chords[i], chords[i + 1]));
+            if (!ProgressionModel.SameChord(chords[i], chords[i + 1])) moves.Add((chords[i], chords[i + 1]));
         var scores = new List<(int Tonic, bool Minor, double Score)>(24);
         for (var mode = 0; mode < 2; mode++)
             for (var tonic = 0; tonic < 12; tonic++)

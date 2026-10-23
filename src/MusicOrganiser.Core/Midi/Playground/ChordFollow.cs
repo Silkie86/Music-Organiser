@@ -85,6 +85,9 @@ public static class ChordFollow
                 var t = Over(track, hit.Start, hit.Length);
                 var s = Over(own, hit.Start, hit.Length);
                 if (t is null || s is null) { list.AddRange(hit.Notes.Select(n => t is { } c ? Nudge(n, track[c].Chord, style) : n)); continue; }
+                // A hit that already sits on the track's chord stays as it is, as a line does: a rootless voicing over the
+                // bass's root (E G B D over C) is heard alone as another chord (Em7), but it is already the track's Cmaj9.
+                if (SitsOn(hit.Notes, track[t.Value].Chord, own[s.Value].Chord, style)) { list.AddRange(hit.Notes); continue; }
                 list.AddRange(Play(hit.Notes, own[s.Value].Chord, track[t.Value].Chord, way));
             }
             return Sorted(list);
@@ -102,6 +105,17 @@ public static class ChordFollow
         return Sorted(list);
     }
 
+    /// <summary>
+    /// Whether <paramref name="notes"/> sit on the track's chord <paramref name="target"/> about as well as on the chord
+    /// they were heard as (<paramref name="heard"/>): then there is nothing to change.
+    /// </summary>
+    static bool SitsOn(IReadOnlyList<NoteEvent> notes, ChordSymbol target, ChordSymbol heard, HarmonyStyle style)
+    {
+        if (target.Root == heard.Root && target.Mask == heard.Mask) return true;
+        double Fit(ChordSymbol c) => notes.Average(n => ChordScales.Sit(c, n.Key % 12, style));
+        return Fit(target) + 0.1 >= Fit(heard) - 1e-9;
+    }
+
     /// <summary>Notes held over a change of chord on the track cut in two there (more than an eighth either side).</summary>
     static List<NoteEvent> Split(IReadOnlyList<NoteEvent> notes, IReadOnlyList<TimedChord> track)
     {
@@ -110,7 +124,7 @@ public static class ChordFollow
         {
             var piece = n;
             foreach (var c in track)
-                if (c.Start > piece.Start + Ppq / 8 && c.Start < piece.Start + piece.Length - Ppq / 8)
+                if (c.Start > piece.Start + Ppq / 2 && c.Start < piece.Start + piece.Length - Ppq / 2)
                 {
                     list.Add(piece with { Length = c.Start - piece.Start });
                     piece = piece with { Start = c.Start, Length = piece.Start + piece.Length - c.Start };
@@ -126,8 +140,11 @@ public static class ChordFollow
         return list;
     }
 
-    static bool Polyphonic(IReadOnlyList<NoteEvent> notes) =>
-        Groove.Hits(notes).Count(h => h.Notes.Count >= 3) * 3 >= Groove.Hits(notes).Count();
+    static bool Polyphonic(IReadOnlyList<NoteEvent> notes)
+    {
+        var hits = Groove.Hits(notes).ToList();
+        return hits.Count(h => h.Notes.Count >= 3) * 3 >= hits.Count;
+    }
 
     /// <summary>Notes struck over chord <paramref name="from"/> played on <paramref name="to"/>.</summary>
     static List<NoteEvent> Play(IReadOnlyList<NoteEvent> hit, ChordSymbol from, ChordSymbol to, FollowWay way)
@@ -180,7 +197,11 @@ public static class ChordFollow
         return null;
     }
 
-    static readonly string[] Kinds = ["", "m", "7", "m7", "maj7", "m7b5"];
+    /// <summary>The chords a line can imply, on each of the 12 roots: made once, as they're tried for every chord a line plays over.</summary>
+    static readonly (ChordSymbol Chord, int Plainness)[][] Implies = Enumerable.Range(0, 12).Select(root =>
+        new[] { "", "m", "7", "m7", "maj7", "m7b5" }
+            .Select(kind => (Chord: ChordSymbol.Parse(ChordSymbol.Names[root] + kind), kind.Length))
+            .Where(k => k.Chord is not null).Select(k => (k.Chord!.Value, k.Length)).ToArray()).ToArray();
 
     /// <summary>
     /// The chord a line's notes imply (what they were written over): the one they sit on best, held longest weighing
@@ -195,11 +216,10 @@ public static class ChordFollow
         ChordSymbol? best = null;
         var bestScore = double.MinValue;
         foreach (var root in roots)
-            foreach (var kind in Kinds)
+            foreach (var (c, plainness) in Implies[root])
             {
-                if (ChordSymbol.Parse(ChordSymbol.Names[root] + kind) is not { } c) continue;
                 var score = notes.Sum(n => Math.Min(n.Length, Bar) * ChordScales.Sit(c, n.Key % 12)) / weight;
-                score -= 0.02 * kind.Length;   // the plainer chord, when a seventh adds nothing
+                score -= 0.02 * plainness;   // the plainer chord, when a seventh adds nothing
                 if (score > bestScore) { best = c; bestScore = score; }
             }
         // The track's chord itself, when the notes sit on it as well as on anything (and, for a bassline, start on or

@@ -1375,6 +1375,57 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public async Task Following_Bitwig_waits_out_a_go_round_spaces_out_tempo_changes_and_lets_go_of_its_tempo()
+    {
+        var ui = new Headless();
+        Ui.Current = ui;
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data")).Playground;
+        var tune = Line(Beat, 72, 74, 76, 77);
+        p.AddFromLibrary(new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", tune, "melody lead")]).Entries[0], tune, "Lead");
+        p.ClearLoopCommand.Execute(null);
+        p.Tempo = 120;
+        var now = TimeSpan.FromSeconds(100);
+        p.Clock = () => now;
+        await p.PlayCommand.ExecuteAsync(null);
+        var ownLength = ui.Player!.Samples;
+        await p.PlayCommand.ExecuteAsync(null);   // stop
+
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 100, "4/4"));
+        Assert.True(p.IsPlaying);
+        var plays = ui.Player.Plays;
+
+        // Going round again, the sound seems stopped for a moment: it isn't started again on top of the next go round.
+        ui.Player.Stop();
+        for (var i = 0; i < 3; i++) await p.FollowLook(new BitwigTransport(true, 4 + i * 0.1, 0, 100, "4/4"));
+        Assert.Equal(plays, ui.Player.Plays);
+
+        // A tempo ramp in Bitwig: the sound is made again at most every half second, but at once for a big jump.
+        ui.Player.At = 0;
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 100.2, "4/4"));
+        var afterFirst = ui.Player.Plays;
+        Assert.Equal(plays + 1, afterFirst);
+        now += TimeSpan.FromMilliseconds(100);
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 100.4, "4/4"));
+        Assert.Equal(afterFirst, ui.Player.Plays);
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 104, "4/4"));
+        Assert.Equal(afterFirst + 1, ui.Player.Plays);
+
+        // A song in 3/4 is said to follow Bitwig's beats, not its bars.
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 104, "3/4"));
+        Assert.Contains("3/4", p.Message);
+
+        // Bitwig stops: the Playground stops, and Play here plays at the idea's own tempo again.
+        await p.FollowLook(new BitwigTransport(false, 0, 0, 104, "3/4"));
+        Assert.False(p.IsPlaying);
+        await p.PlayCommand.ExecuteAsync(null);
+        Assert.Equal(ownLength, ui.Player.Samples);
+    }
+
+    [Fact]
     public async Task Play_in_Bitwig_puts_each_part_on_a_track_of_its_own_there_and_sends_only_what_changed()
     {
         Ui.Current = new Headless();
@@ -1409,8 +1460,8 @@ public class PlaygroundTests : IDisposable
             return Task.CompletedTask;
         };
         p.SendAfter = TimeSpan.FromHours(1);
-        p.FollowBitwig = true;
         p.BitwigTransport = _ => Task.FromException<BitwigTransport>(new OperationCanceledException());
+        p.FollowBitwig = true;
 
         // On: a track for each part, its notes there as a clip a bar long; Follow Bitwig goes off, as both would play twice.
         p.PlayInBitwig = true;
@@ -1492,10 +1543,18 @@ public class PlaygroundTests : IDisposable
         /// <summary>Where a test says it's got to (else the start).</summary>
         public double? At { get; set; }
         public double StartedAt { get; private set; }
+        /// <summary>How long the last sound played was, in samples: longer at a slower tempo.</summary>
+        public int Samples { get; private set; }
+        /// <summary>How many sounds were played.</summary>
+        public int Plays { get; private set; }
         public List<double> Seeks { get; } = [];
         public void Seek(double seconds) => Seeks.Add(seconds);
         public void Play(string path, double startSeconds = 0) => Playing = path;
-        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) => (Playing, StartedAt) = (key, startSeconds);
+        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0)
+        {
+            (Playing, StartedAt, Samples) = (key, startSeconds, mono.Length);
+            Plays++;
+        }
         public void Stop() => Playing = null;
         public void Dispose() { }
     }

@@ -185,6 +185,7 @@ public sealed partial class PlaygroundViewModel
             var layer = AddLayer(_clipboardTrack.Length > 0 ? _clipboardTrack : copy.Name, copy.Role, copy.Notes, copy.SourcePath, copy.SourceHash,
                                  start: copy.Start, length: copy.Length, loop: copy.Loop);
             layer.Clips[0] = copy;   // with its moves, inversion and pin, not rebuilt from its notes
+            if (!copy.Pinned) Refit(layer, copy);   // on the chords where it's pasted, not where it was copied
             layer.Render();
             var row = Layers.First(l => l.Layer == layer);
             row.Changed();

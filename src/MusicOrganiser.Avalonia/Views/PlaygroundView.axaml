@@ -5,6 +5,23 @@
              x:Class="MusicOrganiser.Avalonia.Views.PlaygroundView"
              x:DataType="vm:PlaygroundViewModel">
     <UserControl.Styles>
+        <!-- What could come next after the last chord, as chips: the same on the Chords and Harmony tabs. -->
+        <Style Selector="ItemsControl.nextChords">
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+            </Setter>
+            <Setter Property="ItemTemplate">
+                <DataTemplate x:DataType="vm:NextChordRow">
+                    <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}"
+                            ToolTip.Tip="Add it after the last chord, a bar long (on the chord track when it has chords)">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding ShareText}" Classes="small" />
+                        </StackPanel>
+                    </Button>
+                </DataTemplate>
+            </Setter>
+        </Style>
         <!-- The side panel's six tabs fit on one line. -->
         <Style Selector="TabControl.side TabItem">
             <Setter Property="Padding" Value="7,0" />
@@ -542,22 +559,7 @@
                         <Grid RowDefinitions="Auto,Auto,Auto,*">
                             <StackPanel Spacing="4" Margin="0,0,0,8" IsVisible="{Binding NextChords.Count}">
                                 <TextBlock Text="{Binding NextChordsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                                <ItemsControl ItemsSource="{Binding NextChords}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:NextChordRow">
-                                            <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}"
-                                                    ToolTip.Tip="Add it after the last chord, a bar long (on the chord track when it has chords)">
-                                                <StackPanel Orientation="Horizontal" Spacing="5">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                                    <TextBlock Text="{Binding ShareText}" Classes="small" />
-                                                </StackPanel>
-                                            </Button>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                                <ItemsControl ItemsSource="{Binding NextChords}" Classes="nextChords" />
                             </StackPanel>
                             <DockPanel Grid.Row="1">
                                 <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.ProgressionBarChoices}" SelectedItem="{Binding ProgressionBars}"
@@ -566,7 +568,7 @@
                             </DockPanel>
                             <DockPanel Grid.Row="2" Margin="0,6">
                                 <ToggleButton DockPanel.Dock="Right" Content="Hear" Classes="tiny" IsChecked="{Binding HearChordTrack}" Margin="6,0,0,0" VerticalAlignment="Top"
-                                              ToolTip.Tip="Hear the chord track's chords, played plainly, with the idea. They're never sent to the DAW." />
+                                              ToolTip.Tip="Hear the chord track's chords, played plainly, with the idea. Play in Bitwig sends them too; To Bitwig and the files don't." />
                                 <Button DockPanel.Dock="Right" Content="From Bitwig" Classes="tiny" Command="{Binding ChordsFromBitwigCommand}" Margin="6,0,0,0" VerticalAlignment="Top"
                                         ToolTip.Tip="Get chords from Bitwig: click your chord clip in Bitwig (arranger or clip launcher) first. Its chords, read from its notes, go on the chord track. Needs the Music Organiser extension 3.15." />
                                 <TextBlock Text="{Binding ProgressionsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
@@ -718,21 +720,7 @@
                             <!-- what could come next, smaller, under the steps -->
                             <StackPanel Grid.Row="2" Spacing="4" Margin="0,8,0,0" IsVisible="{Binding NextChords.Count}">
                                 <TextBlock Text="{Binding NextChordsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                                <ItemsControl ItemsSource="{Binding NextChords}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:NextChordRow">
-                                            <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add it as the next bar">
-                                                <StackPanel Orientation="Horizontal" Spacing="5">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                                    <TextBlock Text="{Binding ShareText}" Classes="small" />
-                                                </StackPanel>
-                                            </Button>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                                <ItemsControl ItemsSource="{Binding NextChords}" Classes="nextChords" />
                             </StackPanel>
                         </Grid>
                     </TabItem>

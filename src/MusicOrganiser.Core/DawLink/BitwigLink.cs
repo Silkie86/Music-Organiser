@@ -594,6 +594,9 @@ public sealed class BitwigLink : IDisposable
     public const string NeedsTransport = "Playing along with Bitwig needs the Music Organiser extension 3.16 in Bitwig. " +
                                          "Install it again from Settings > DAW links, then restart Bitwig.";
 
+    /// <summary>Whether what answers in Bitwig can play along with the Playground: the extension, 3.16 or later.</summary>
+    public bool CanPlayAlong => Hello is { Runtime: "java" } h && System.Version.TryParse(h.Extension, out var v) && v >= new System.Version(3, 16);
+
     /// <summary>
     /// Whether Bitwig is playing, where and how fast (the Java extension 3.16), for the Playground's Follow Bitwig, which
     /// asks many times a second. It only reads.

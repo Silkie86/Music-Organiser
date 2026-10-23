@@ -513,6 +513,14 @@
                         </Border>
 
                         <Border Classes="card settingsCard">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Where the chord know-how comes from" Classes="sectionHeader" />
+                                <TextBlock Classes="small" TextWrapping="Wrap"
+                                           Text="What usually comes next after a chord, and the key guessed from chords, start from counts made from ChoCo, the Chord Corpus (de Berardinis et al., CC BY 4.0, github.com/smashub/choco): the Real Book, iReal Pro jazz playlists and gospel, worship and soul charts, the Weimar Jazz Database and the Jazz Corpus. Only the counts are kept. Your own chord parts count for more the more of them there are." />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="card settingsCard">
                             <StackPanel>
                                 <TextBlock Text="A new idea starts with" Classes="sectionHeader" />
                                 <DockPanel Margin="0,0,0,10">

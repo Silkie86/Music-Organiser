@@ -368,7 +368,16 @@ class NewerApiTest {
                       .get("result"));
         assertEquals(List.of("C:\\MIDI\\Bass.mid"), bitwig.state.tracks.get(1).slots);
         assertTrue(bitwig.calls.contains(List.of("launch", 1, 0)), String.valueOf(bitwig.calls));
+        // In step with the song, so a swapped clip carries on with the parts that didn't change (extension 3.17).
+        assertTrue(bitwig.calls.contains(List.of("launchWithOptions", 1, 0, "default", "synced")), String.valueOf(bitwig.calls));
         assertTrue(bitwig.playingNow);
+
+        // Swapped for the other file and launched again: launched once the new clip is there, not after a fixed wait.
+        assertJson(obj("slot", 0, "launched", true),
+                   app.waitFor(obj("id", 4, "cmd", "clip", "trackId", "bass-id", "slot", 0, "path", "C:\\MIDI\\Bass 3.mid", "replace", true, "launch", true))
+                      .get("result"));
+        assertEquals(List.of("C:\\MIDI\\Bass 3.mid"), bitwig.state.tracks.get(1).slots);
+        assertEquals(2, bitwig.calls.stream().filter(c -> c.get(0).equals("launchWithOptions")).count(), String.valueOf(bitwig.calls));
 
         // Swapping it again without launching leaves it as it is; replacing needs the slot said.
         assertJson(obj("slot", 0), app.waitFor(obj("id", 2, "cmd", "clip", "trackId", "bass-id", "slot", 0, "path", "C:\\MIDI\\Bass 2.mid", "replace", true))

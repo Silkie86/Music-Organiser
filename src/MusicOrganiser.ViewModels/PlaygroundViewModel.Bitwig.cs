@@ -115,6 +115,7 @@ public sealed partial class PlaygroundViewModel
                     _follow.End();
                     StopPlaying();
                 }
+                _followTempo = null;
                 try { await Task.Delay(TimeSpan.FromSeconds(1), ct); }
                 catch (OperationCanceledException) { return; }
                 continue;
@@ -129,9 +130,14 @@ public sealed partial class PlaygroundViewModel
     {
         if (_followStarting) return;
         if (bitwig.Playing && !_follow.Following && !HasSomethingToPlay()) return;
-        if (bitwig.Playing && _follow.Following && _playing && Math.Abs(bitwig.Tempo - _playTempo) > 0.005)
+        TellTimeSignature(bitwig.TimeSignature);
+        var now = Clock();
+        if (bitwig.Playing && _follow.Following && _playing && Math.Abs(bitwig.Tempo - _playTempo) > 0.005 &&
+            (Math.Abs(bitwig.Tempo - _playTempo) >= TempoJump || now - _tempoAt >= TempoEvery))
         {
-            // Bitwig's tempo changed: the sound is made again at it, from where it was.
+            // Bitwig's tempo changed: the sound is made again at it, from where it was. Not at every look while it ramps,
+            // which would stutter: a small change waits a moment, and the jumps meanwhile keep it with Bitwig.
+            _tempoAt = now;
             _followTempo = bitwig.Tempo;
             _follow.Reset();
             await StartFollowing(() => PlayAsync(keepPlace: true));
@@ -140,6 +146,10 @@ public sealed partial class PlaygroundViewModel
         long? at = _playing && _player is { } p && p.Playing == _playKey && p.Position is { } seconds
             ? (long)MidiRender.SecondsToTicks(seconds, Ppq, _playTempo) % Math.Max(1, _playLength)
             : null;
+        // Going round again: the player lets go of the sound before the screen hears it ended, so a look just then sees
+        // it stopped. That's waited out for a few looks, rather than starting it again on top of the next go round.
+        if (at is null && _playing && _follow.Following && bitwig.Playing && ++_unplacedLooks <= UnplacedLooks) return;
+        if (at is not null) _unplacedLooks = 0;
         var step = _follow.Next(bitwig.Playing, bitwig.Position, bitwig.Tempo, Ppq, _playing ? _playLength : LengthToPlay(), at, FollowNudge / 1000.0);
         switch (step.Move)
         {
@@ -153,6 +163,7 @@ public sealed partial class PlaygroundViewModel
                 break;
             case FollowMove.Stop:
                 StopPlaying();
+                _followTempo = null;   // Play here plays at the idea's own tempo again
                 break;
         }
     }
@@ -160,11 +171,42 @@ public sealed partial class PlaygroundViewModel
     async Task StartFollowing(Func<Task<bool>> play)
     {
         _followStarting = true;
+        _unplacedLooks = 0;
         try
         {
-            if (!await play()) _follow.End();
+            if (!await play())
+            {
+                _follow.End();
+                _followTempo = null;
+            }
         }
         finally { _followStarting = false; }
+    }
+
+    /// <summary>A tempo change this big (BPM) makes the sound again straight away; a smaller one waits <see cref="TempoEvery"/>.</summary>
+    const double TempoJump = 1;
+    static readonly TimeSpan TempoEvery = TimeSpan.FromMilliseconds(500);
+    TimeSpan _tempoAt = TimeSpan.MinValue / 2;
+
+    /// <summary>How many looks in a row the sound may seem stopped while Bitwig plays before it's started again.</summary>
+    const int UnplacedLooks = 4;
+    int _unplacedLooks;
+
+    /// <summary>The time now, for spacing out tempo changes. Tests put a stand-in here.</summary>
+    internal Func<TimeSpan> Clock { get; set; } = () => TimeSpan.FromMilliseconds(Environment.TickCount64);
+
+    string _toldSignature = "";
+
+    /// <summary>
+    /// Bitwig's song in another time signature than 4/4: the Playground's bars are 4/4, so it follows Bitwig's beats, and
+    /// its bars won't fall on Bitwig's. Said once for each signature.
+    /// </summary>
+    void TellTimeSignature(string? signature)
+    {
+        if (string.IsNullOrEmpty(signature) || signature == _toldSignature) return;
+        _toldSignature = signature;
+        if (signature != "4/4")
+            Message = $"Bitwig's song is in {signature} and the Playground plays in 4/4, so it follows Bitwig's beats: its bars won't line up with Bitwig's.";
     }
 
     bool HasSomethingToPlay() =>
@@ -189,7 +231,7 @@ public sealed partial class PlaygroundViewModel
     readonly Dictionary<string, (string Notes, int Times)> _inBitwig = [];
     BitwigLink? _playLink;
     CancellationTokenSource? _sendSoon;
-    bool _sendingToPlay, _sendAgain, _toldPlaying;
+    bool _sendAgain, _toldPlaying;
 
     /// <summary>Makes a track in Bitwig and says its ID. Tests put a stand-in here, and in the two below.</summary>
     internal Func<string, CancellationToken, Task<string>> BitwigNewTrack { get; set; }
@@ -209,7 +251,19 @@ public sealed partial class PlaygroundViewModel
         BitwigStopTracks = async (tracks, ct) => await (await PlayLinkAsync(ct)).StopTracksAsync(tracks, ct);
     }
 
-    async Task<BitwigLink> PlayLinkAsync(CancellationToken ct) => _playLink ??= await _main.Live.Watch.ConnectBitwigAsync(ct);
+    async Task<BitwigLink> PlayLinkAsync(CancellationToken ct)
+    {
+        if (_playLink is { } open) return open;
+        var link = await _main.Live.Watch.ConnectBitwigAsync(ct);
+        // An older extension takes the first parts into empty slots without playing them, so it would say it's playing
+        // while Bitwig stays silent.
+        if (!link.CanPlayAlong)
+        {
+            link.Dispose();
+            throw new DawLinkException(BitwigLink.NeedsTransport);
+        }
+        return _playLink = link;
+    }
 
     partial void OnPlayInBitwigChanged(bool value)
     {
@@ -241,15 +295,16 @@ public sealed partial class PlaygroundViewModel
     }
 
     /// <summary>Puts each part that changed since it last went across into Bitwig, and stops the tracks of parts no longer playing.</summary>
-    internal async Task SendToPlayAsync()
+    internal Task SendToPlayAsync()
     {
-        if (_sendingToPlay)
+        if (_sending is { IsCompleted: false })
         {
             _sendAgain = true;
-            return;
+            return _sending;
         }
-        _sendingToPlay = true;
-        try
+        return _sending = SendAllAsync();
+
+        async Task SendAllAsync()
         {
             do
             {
@@ -257,8 +312,10 @@ public sealed partial class PlaygroundViewModel
                 await SendChangedAsync();
             } while (_sendAgain && PlayInBitwig);
         }
-        finally { _sendingToPlay = false; }
     }
+
+    /// <summary>The parts going across now, if they are.</summary>
+    Task? _sending;
 
     async Task SendChangedAsync()
     {
@@ -280,9 +337,11 @@ public sealed partial class PlaygroundViewModel
                 if (had.Notes == notes) continue;
                 if (!PlayInBitwig) return;
                 // Two files a part, taken in turn, so the one Bitwig may still be reading isn't written over.
-                var file = Path.Combine(dir, TextScan.SafeFileName($"{name} (Playground{(had.Times % 2 == 1 ? " 2" : "")})") + ".mid");
-                var clip = new MidiClip { Name = name, Ppq = Ppq, End = length };
-                clip.Track(name).AddRange(c.Notes);
+                var title = TextScan.SafeFileName($"{name} (Playground{(had.Times % 2 == 1 ? " 2" : "")})");
+                var file = Path.Combine(dir, title + ".mid");
+                // Named as its file, so the clip's name in Bitwig changes at each swap: that's how the extension sees it's in.
+                var clip = new MidiClip { Name = title, Ppq = Ppq, End = length };
+                clip.Track(title).AddRange(c.Notes);
                 File.WriteAllBytes(file, MidiWriter.Write(clip));
                 if (!_bitwigTracks.TryGetValue(name, out var track))
                     track = _bitwigTracks[name] = await BitwigNewTrack($"{name} (Playground)", limit.Token);
@@ -331,6 +390,11 @@ public sealed partial class PlaygroundViewModel
 
     async Task StopInBitwigAsync()
     {
+        // A part going across as it's turned off finishes first (it stops before the next), so its track is stopped too.
+        if (_sending is { IsCompleted: false } sending)
+            try { await sending; }
+            catch (Exception e) when (e is DawLinkException or IOException or SocketException or OperationCanceledException or TimeoutException) { }
+        if (PlayInBitwig) return;   // turned on again meanwhile
         var tracks = _inBitwig.Keys.Select(k => _bitwigTracks[k]).ToList();
         _inBitwig.Clear();
         if (tracks.Count == 0) return;

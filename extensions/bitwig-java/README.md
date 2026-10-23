@@ -172,6 +172,9 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   each whether its panel showed before and after each go (`visible`), whether the route `ran` it, and whether
   the link put the panel back as it was (`restored`). A panel that shows and hides with them means Bitwig
   carried them out for the link.
+- From 3.17, `clip` with `launch` launches the clip in step with the song (synced), so a swapped part carries on
+  with the others instead of starting again from its own start, and a `replace` waits for the clip's name to change
+  (the app names each file it swaps in differently) rather than a fixed moment, before it launches.
 - From 3.16, `transport` says where Bitwig is playing, `stoptracks` stops tracks' launcher clips, and `clip` takes
   `replace` (swap a slot's clip for the file) and `launch`, for the Playground playing along with Bitwig.
 - From 3.15, `notes` answers with the notes of the clip selected in the arranger and in the clip launcher, for the

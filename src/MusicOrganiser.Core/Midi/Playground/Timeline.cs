@@ -48,6 +48,8 @@ public sealed class PlaygroundClip
     /// track changes. A clip changed by hand keeps the ones it had, so it stays as it is, wherever it's moved.
     /// </summary>
     public List<PlaygroundChord> Under { get; set; } = [];
+    /// <summary>Which idea of a clash it follows the chords by (the idea's Classical box), set with <see cref="Under"/>.</summary>
+    public HarmonyStyle Style { get; set; }
 
     /// <summary>Its start moved by <paramref name="by"/> with its notes staying where they are (trimmed, or cut in two).</summary>
     public void StartMoved(long by)
@@ -88,7 +90,8 @@ public sealed class PlaygroundClip
     public List<NoteEvent> Render(IReadOnlyList<NoteEvent> source)
     {
         if (Under.Count == 0 || Way == FollowWay.None) return Place(source, Transpose);
-        var followed = ChordFollow.Apply(Place(source, 0), Under.Select(c => new TimedChord(Start + c.Start, c.Length, c.Chord)).ToList(), Way, PlaysAs.Length > 0 ? PlaysAs : Role);
+        var followed = ChordFollow.Apply(Place(source, 0), Under.Select(c => new TimedChord(Start + c.Start, c.Length, c.Chord)).ToList(), Way,
+                                         PlaysAs.Length > 0 ? PlaysAs : Role, Style);
         return Transpose == 0 ? followed : followed.Select(n => n with { Key = Math.Clamp(n.Key + Transpose, 0, 127) }).ToList();
     }
 
@@ -122,6 +125,7 @@ public sealed class PlaygroundClip
     {
         var c = Copy();
         c.Start = RepeatAt(0);
+        c.StartMoved(c.Start - Start);   // the chords it follows stay where they are on the timeline
         c.Offset = Offset - Offset % Math.Max(1, Loop);
         c.Length = Loop;
         return c.Render().Select(n => n with { Start = n.Start - c.Start }).ToList();

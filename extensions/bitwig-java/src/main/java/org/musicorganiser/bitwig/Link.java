@@ -126,8 +126,11 @@ final class Link {
     static final long DEVICE_WAIT = 2000;
     /** How long to wait for Bitwig to make a change the app asked for (a track, a device, a clip). */
     static final long CHANGE_WAIT = 5000;
-    /** How long a replaced clip gets to be swapped before it's launched (extension 3.16). */
-    static final long REPLACE_WAIT = 250;
+    /**
+     * How long a replaced clip gets to be swapped (its name changing) before it's launched anyway (extension 3.16; from
+     * 3.17 it's launched as soon as the new one is seen).
+     */
+    static final long REPLACE_WAIT = 2000;
     /** When to write the first self-check: once Bitwig has sent the values the link watches. */
     static final long SELF_CHECK_DELAY = 1000;
     /** Bitwig's own devices the app tunes, by the IDs Bitwig saves them under. */
@@ -391,7 +394,7 @@ final class Link {
         commands.put("notes", Command.answer(false, this::notes));
         // Extension 3.16: for the Playground playing along with Bitwig. transport says whether Bitwig is playing, where and
         // how fast (it only reads, and the app asks many times a second); stoptracks stops the clips the Playground launched
-        // on its tracks. clip takes "replace" and "launch" from 3.16 too.
+        // on its tracks. clip takes "replace" and "launch" from 3.16 too (from 3.17 launched in step with the song).
         commands.put("transport", Command.answer(false, this::transportNow));
         commands.put("stoptracks", Command.job(this::stopTracks));
     }
@@ -522,6 +525,7 @@ final class Link {
                     ClipLauncherSlot slot = (ClipLauncherSlot) slots.getItemAt(s);
                     slot.exists().markInterested();
                     slot.hasContent().markInterested();
+                    slot.name().markInterested();
                     trackSlots[t][s] = slot;
                     slotInserts[t][s] = slot.replaceInsertionPoint();
                 }
@@ -1855,31 +1859,31 @@ final class Link {
             index = emptySlot(slots);
             if (index < 0) throw new LinkError("The track's first " + SCENES + " clip slots are full.");
         }
+        // A replaced clip is there all along, so it's the clip's name that changes (the app names each file it swaps in
+        // differently from the one before, extension 3.17).
+        String before = replace ? str(slots[index].name().get()) : "";
         slotInserts[t][index].insertFile(path);
         // The track's slot, found by its ID when Bitwig has said it, in case a track goes in above it meanwhile.
         String id = idOf(t);
         waitFor(() -> {
             int now = id.isEmpty() ? t : indexOf(id);
-            return now >= 0 && trackSlots[now][index].hasContent().get();
-        }, CHANGE_WAIT, made -> {
-            if (!made) throw new LinkError("Bitwig didn't make a clip from " + path + ".");
+            return now >= 0 && trackSlots[now][index].hasContent().get()
+                   && (!replace || !str(trackSlots[now][index].name().get()).equals(before));
+        }, replace ? REPLACE_WAIT : CHANGE_WAIT, made -> {
+            int now = id.isEmpty() ? t : indexOf(id);
+            // A replace whose name didn't change (the same file again) still has its clip: it goes ahead.
+            if (!made && !(replace && now >= 0 && trackSlots[now][index].hasContent().get()))
+                throw new LinkError("Bitwig didn't make a clip from " + path + ".");
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("slot", index);
-            if (!replace && !launch) {
-                finish.ok(m);
-                return;
+            if (launch) {
+                if (now < 0) throw new LinkError("The track went before its clip could be launched.");
+                // In step with the song (extension 3.17): a swapped clip carries on from where Bitwig is, not from its own
+                // start, so it stays with the parts that didn't change.
+                trackSlots[now][index].launchWithOptions("default", "synced");
+                m.put("launched", true);
             }
-            // A replaced clip is there all along, so there's nothing to see change: it waits a moment for Bitwig to swap it,
-            // then launches it (extension 3.16), which with Bitwig stopped starts it playing.
-            waitFor(() -> false, REPLACE_WAIT, ignored -> {
-                if (launch) {
-                    int now = id.isEmpty() ? t : indexOf(id);
-                    if (now < 0) throw new LinkError("The track went before its clip could be launched.");
-                    trackSlots[now][index].launch();
-                    m.put("launched", true);
-                }
-                finish.ok(m);
-            }, finish);
+            finish.ok(m);
         }, finish);
     }
 

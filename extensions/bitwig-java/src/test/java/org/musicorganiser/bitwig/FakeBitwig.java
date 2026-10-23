@@ -2255,6 +2255,8 @@ final class FakeBitwig {
         final Value playingClip = new Value(BooleanValue.class, false);
         final Value queued = new Value(BooleanValue.class, false);
         final Value recordingClip = new Value(BooleanValue.class, false);
+        /** The clip's name: its file's, without the folder or the extension, as Bitwig names a clip made from a file. */
+        final Value clipName = new Value(StringValue.class, "");
         /** The clip's colour. Setting it colours the clip a moment later, unless the model says Bitwig ignores that. */
         final Colour colour;
         private final int track;
@@ -2266,6 +2268,13 @@ final class FakeBitwig {
             this.scene = scene;
             playingClip.live = () -> clipPlaying(trackSpec(track), scene);
             queued.live = () -> clipQueued(trackSpec(track), scene);
+            clipName.live = () -> {
+                TrackSpec t = trackSpec(track);
+                String file = t == null || scene >= t.slots.size() ? null : t.slots.get(scene);
+                if (file == null) return "";
+                String name = file.substring(Math.max(file.lastIndexOf('\\'), file.lastIndexOf('/')) + 1);
+                return name.contains(".") ? name.substring(0, name.lastIndexOf('.')) : name;
+            };
             colour = new Colour(rgb -> {
                 calls.add(Arrays.asList("clipColour", track, scene, hex(rgb)));
                 String made = hex(model.colourSnaps ? snapped(rgb) : rgb);
@@ -2315,6 +2324,16 @@ final class FakeBitwig {
         }
 
         void launch() {
+            FakeBitwig.this.launch(track, scene);
+        }
+
+        Value name() {
+            return clipName;
+        }
+
+        /** Launched with options (extension 3.17 launches the Playground's clips "synced"): recorded, then launched as above. */
+        void launchWithOptions(String quantization, String mode) {
+            calls.add(Arrays.asList("launchWithOptions", track, scene, quantization, mode));
             FakeBitwig.this.launch(track, scene);
         }
 

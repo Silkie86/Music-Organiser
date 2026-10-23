@@ -802,6 +802,21 @@ public sealed class ProgressionModel
         _ => "5",
     };
 
+    /// <summary>
+    /// Whether two chords are the same as far as moves go: the same root and kind, only the colour changing (Fmaj7 to
+    /// Fmaj7(#11)), which isn't a move.
+    /// </summary>
+    public static bool SameChord(ChordSymbol a, ChordSymbol b) => a.Root == b.Root && Kind(a) == Kind(b);
+
+    /// <summary>The chords with each one that only repeats the one before (<see cref="SameChord"/>) left out: the changes.</summary>
+    public static List<ChordSymbol> Changes(IEnumerable<ChordSymbol> chords)
+    {
+        var list = new List<ChordSymbol>();
+        foreach (var c in chords)
+            if (list.Count == 0 || !SameChord(list[^1], c)) list.Add(c);
+        return list;
+    }
+
     public int Learned { get; private set; }
 
     public static ProgressionModel Learn(IEnumerable<MidiEntry> entries, IReadOnlyCollection<string> leaveSongs, CancellationToken ct = default)
@@ -854,7 +869,7 @@ public sealed class ProgressionModel
     }
 
     /// <summary>
-    /// What to start from before your own chord parts have taught it much: the chord moves of 6,479 charts gathered by ChoCo
+    /// What to start from before your own chord parts have taught it much: the chord moves of 6,503 charts gathered by ChoCo
     /// (Chord Corpus, de Berardinis et al., CC BY 4.0, github.com/smashub/choco: the Real Book, iReal Pro jazz playlists
     /// and gospel, worship and soul charts, the Weimar Jazz Database and the Jazz Corpus). Only the counts are kept
     /// (ChordMoves.tsv, made by the theory bench's --save-chord-moves). Your own parts count for more the more of them

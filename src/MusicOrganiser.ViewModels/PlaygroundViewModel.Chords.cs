@@ -49,12 +49,15 @@ public sealed partial class PlaygroundViewModel
 
     List<PlaygroundChord>? _chordDragBase;
     int _chordGesture;
+    /// <summary>The idea as it was when the drag began, remembered for Undo once the drag changes something.</summary>
+    string? _chordDragBefore;
 
     /// <summary>
     /// A chord block stretched by either edge or slid along (Solomon, 2026-10-22: "resize the chord clips in the chord track
     /// and everything updates on the fly"): each step is worked out from the track as it was when the drag began, so going
     /// back over a neighbour gives it back. A neighbour touching the edge being dragged follows it; one it's dragged over is
-    /// cut back. The whole drag is one Undo.
+    /// cut back. The whole drag is one Undo, and nothing at all when it ends where it began. Parts follow at each step;
+    /// the idea is saved and the sound made again when it's let go.
     /// </summary>
     [RelayCommand]
     void DragChord(ChordDrag? drag)
@@ -63,38 +66,72 @@ public sealed partial class PlaygroundViewModel
         if (_chordDragBase is null || drag.Gesture != _chordGesture)
         {
             if (Section.ChordTrack.All(c => c.Start != drag.From)) return;
-            Remember();
+            _chordDragBefore = _session.ToJson();
             _chordDragBase = Section.ChordTrack.Select(c => c.Copy()).ToList();
             _chordGesture = drag.Gesture;
+            _chordDragRemembered = false;
         }
-        var track = _chordDragBase.Select(c => c.Copy()).ToList();
-        if (drag.Done) _chordDragBase = null;
+        var original = _chordDragBase;
+        var track = original.Select(c => c.Copy()).ToList();
+        var before = _chordDragBefore;
+        if (drag.Done) { _chordDragBase = null; _chordDragBefore = null; }
         if (track.FirstOrDefault(c => c.Start == drag.From) is not { } moved) return;
         var least = Math.Min(Grid, (long)Ppq);
-        var start = Math.Clamp(drag.Start, 0, Math.Max(0, Length - least));
-        var length = Math.Clamp(drag.Length, least, Length - start);
         var (was, wasEnd) = (moved.Start, moved.End);
-        if (start != was && start + length == wasEnd && track.FirstOrDefault(c => c != moved && c.End == was) is { } before)
+        long start, length;
+        if (drag.Start != was && drag.Start + drag.Length == wasEnd)
         {
-            // Its left edge dragged: the chord before it ends where it now starts.
-            start = Math.Max(start, before.Start + least);
+            // Its left edge dragged: its end stays put, and the chord before it ends where it now starts.
+            var left = track.FirstOrDefault(c => c != moved && c.End == was);
+            start = Math.Clamp(drag.Start, Math.Min(left is null ? 0 : left.Start + least, wasEnd - least), wasEnd - least);
             length = wasEnd - start;
-            before.Length = start - before.Start;
+            if (left is not null) left.Length = start - left.Start;
         }
-        else if (start == was && start + length != wasEnd && track.FirstOrDefault(c => c != moved && c.Start == wasEnd) is { } after)
+        else if (drag.Start == was && drag.Start + drag.Length != wasEnd)
         {
             // Its right edge: the chord after it starts where it now ends.
-            length = Math.Min(length, after.End - least - start);
-            after.Length = after.End - (start + length);
-            after.Start = start + length;
+            var right = track.FirstOrDefault(c => c != moved && c.Start == wasEnd);
+            start = was;
+            var end = Math.Clamp(drag.Start + drag.Length, was + least, Math.Max(was + least, right is null ? Length : right.End - least));
+            length = end - start;
+            if (right is not null)
+            {
+                right.Length = right.End - end;
+                right.Start = end;
+            }
+        }
+        else
+        {
+            // Slid along.
+            start = Math.Clamp(drag.Start, 0, Math.Max(0, Length - least));
+            length = Math.Clamp(drag.Length, least, Math.Max(least, Length - start));
         }
         moved.Start = start;
         moved.Length = length;
         track = CutOut(track.Where(c => c != moved), start, start + length).Append(moved).OrderBy(c => c.Start).ToList();
-        if (Same(track, Section.ChordTrack)) return;
-        Section.ChordTrack = track;
-        Changed();
+        var changed = !Same(track, Section.ChordTrack);
+        if (changed)
+        {
+            if (before is not null && !_chordDragRemembered) Remember(before);
+            _chordDragRemembered = true;
+            Section.ChordTrack = track;
+        }
+        if (drag.Done)
+        {
+            var any = _chordDragRemembered;
+            _chordDragRemembered = false;
+            // Back where it began: the step taken off again, so there's nothing to undo.
+            if (any && Same(track, original) && _undo.Count > 0 && ReferenceEquals(_undo[^1], before))
+            {
+                _undo.RemoveAt(_undo.Count - 1);
+                CanUndo = _undo.Count > 0;
+            }
+            if (any) Changed();
+        }
+        else if (changed) Changed(settled: false);
     }
+
+    bool _chordDragRemembered;
 
     static bool Same(IReadOnlyList<PlaygroundChord> a, IReadOnlyList<PlaygroundChord> b) =>
         a.Count == b.Count && a.Zip(b).All(p => p.First.Start == p.Second.Start && p.First.Length == p.Second.Length && p.First.Chord == p.Second.Chord);
@@ -165,10 +202,7 @@ public sealed partial class PlaygroundViewModel
         Message = "The chords heard are on the chord track now: drag their edges to stretch them. Undo takes them back off.";
     }
 
-    /// <summary>
-    /// A chord on the end of the chord track, a bar long: after its last chord, or (with a highlight) at its start when
-    /// the track has none there yet.
-    /// </summary>
+    /// <summary>A chord on the end of the chord track, a bar long, after its last chord.</summary>
     void AddToChordTrack(ChordSymbol chord)
     {
         var at = Section.ChordTrack.Max(c => c.End);
@@ -261,9 +295,11 @@ public sealed partial class PlaygroundViewModel
     /// One go round of the progression with its timing, read from the example part as the chord lane reads parts, and
     /// starting on bar 1. Its chords in plain bars when the part can't be read.
     /// </summary>
-    async Task<List<TimedChord>> ProgressionLaneAsync(Progression p)
+    async Task<List<TimedChord>> ProgressionLaneAsync(Progression p) => ProgressionLane(p, await ProgressionNotesAsync(p));
+
+    /// <summary>The same from the example part's <paramref name="notes"/>, already read.</summary>
+    List<TimedChord> ProgressionLane(Progression p, List<NoteEvent> notes)
     {
-        var notes = await ProgressionNotesAsync(p);
         var lane = notes.Count == 0 ? [] : ChordReader.Read(notes, Math.Max(Bar, PhraseAnalyser.BarsOf(notes) * (long)Bar));
         var shift = p.ShiftInto(Harmony.Key);
         if (lane.Count == 0)
@@ -274,7 +310,7 @@ public sealed partial class PlaygroundViewModel
         var changes = 0;
         foreach (var c in lane)
         {
-            if (round.Count == 0 || !SameKind(round[^1].Chord, c.Chord)) changes++;
+            if (round.Count == 0 || !ProgressionModel.SameChord(round[^1].Chord, c.Chord)) changes++;
             if (changes > p.Chords.Count) break;
             round.Add(c with { Start = c.Start - from });
         }
@@ -283,16 +319,13 @@ public sealed partial class PlaygroundViewModel
         return round;
     }
 
-    static bool SameKind(ChordSymbol a, ChordSymbol b) => a.Root == b.Root && ProgressionModel.Kind(a) == ProgressionModel.Kind(b);
-
     /// <summary>A progression heard on its own, its example part moved into the idea's key; clicked again, it stops.</summary>
     internal async Task PreviewProgression(ProgressionRow row)
     {
         if (row.IsPlaying) { StopPlaying(); return; }
         StopPlaying();
         var notes = await ProgressionNotesAsync(row.Progression);
-        if (notes.Count == 0)
-            notes = Voicer.Plain(await ProgressionLaneAsync(row.Progression));
+        if (notes.Count == 0) notes = Voicer.Plain(ProgressionLane(row.Progression, notes));   // its chords, plainly
         if (!await PlayAsync(instead: [Channel(row.Names, GmSounds.DefaultFor(MidiRoles.Chords), notes)])) return;
         foreach (var r in Progressions) r.IsPlaying = r == row;
     }
@@ -381,7 +414,7 @@ public sealed partial class PlaygroundViewModel
             var names = string.Join(" ", Changes(lane).Take(8).Select(c => c.NameIn(Harmony.Key)));
             Message = $"The chords of {where} are on the chord track, bars {from / Bar + 1}–{(to + Bar - 1) / Bar}: {names}" +
                       (Changes(lane).Count > 8 ? " …" : "") + "." +
-                      (clip.Cut ? " The clip is longer than 64 bars, so only its first 64 came across." : "") + " Undo takes them off.";
+                      (clip.Cut ? " Its loop ends past its first 64 bars, and notes after those didn't come across." : "") + " Undo takes them off.";
         }
         catch (DawLinkException e)
         {
@@ -402,13 +435,7 @@ public sealed partial class PlaygroundViewModel
     static string Capital(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>The chords as they change: a chord that only changes its colour (Fmaj7 to Fmaj7(#11)) isn't a new one.</summary>
-    static List<ChordSymbol> Changes(IEnumerable<TimedChord> lane)
-    {
-        var list = new List<ChordSymbol>();
-        foreach (var c in lane)
-            if (list.Count == 0 || !SameKind(list[^1], c.Chord)) list.Add(c.Chord);
-        return list;
-    }
+    static List<ChordSymbol> Changes(IEnumerable<TimedChord> lane) => ProgressionModel.Changes(lane.Select(c => c.Chord));
 
     // ---- a song's chords only ----
 

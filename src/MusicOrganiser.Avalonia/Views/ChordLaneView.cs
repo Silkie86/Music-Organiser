@@ -147,6 +147,9 @@ public sealed class ChordLaneView : Control
         if (point.IsLeftButtonPressed) e.Handled = true;   // a right-click goes on to open the menu
     }
 
+    // Made once: the pointer over a chord's edge, and over the rest of it.
+    static readonly Cursor Stretch = new(StandardCursorType.SizeWestEast), Pointing = new(StandardCursorType.Hand);
+
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         var x = e.GetPosition(this).X;
@@ -159,8 +162,8 @@ public sealed class ChordLaneView : Control
         }
         var hit = HitAt(x);
         Cursor = hit is null || PickCommand is null ? null
-            : GripAt(hit, x) is Grip.Left or Grip.Right ? new Cursor(StandardCursorType.SizeWestEast)
-            : new Cursor(StandardCursorType.Hand);
+            : GripAt(hit, x) is Grip.Left or Grip.Right ? Stretch
+            : Pointing;
         if (hit == _hover) return;
         _hover = hit;
         ToolTip.SetTip(this, hit is null ? null : PickCommand is null ? hit.Tip : $"{hit.Tip}\nClick for ways to change it");
