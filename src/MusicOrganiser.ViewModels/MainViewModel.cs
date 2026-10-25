@@ -565,8 +565,10 @@ public sealed partial class MainViewModel : ObservableObject
             if (plugins)
             {
                 card = Activities.Start("Measuring plugin sizes", cancel: cts.Cancel);
-                await Task.Run(() => meter.MeasurePlugins(ct: cts.Token), cts.Token);
-                await Plugins.ReloadAsync();
+                var before = SpaceSignature(_db.PluginSpaces().Values);
+                var after = SpaceSignature(await Task.Run(() => meter.MeasurePlugins(ct: cts.Token), cts.Token));
+                // Only when a size changed: the page keeps its rows (and your place in them) otherwise.
+                if (before != after) await Plugins.ReloadAsync();
             }
             var progress = new Progress<(int Done, int Total)>(p =>
             {
@@ -591,6 +593,9 @@ public sealed partial class MainViewModel : ObservableObject
             _measuringSpace = false;
         }
     }
+
+    static string SpaceSignature(IEnumerable<Core.Space.PluginSpaceInfo> spaces) =>
+        string.Join("|", spaces.OrderBy(s => s.Key, StringComparer.Ordinal).Select(s => $"{s.Key}:{s.Bytes}:{s.SharedBytes}:{s.Folders.Count}"));
 }
 
 /// <summary>A place in the sidebar. <paramref name="key"/> names it in saved settings, so renaming the page keeps them.</summary>

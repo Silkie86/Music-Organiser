@@ -60,8 +60,8 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         var measure = ++_measures;
         var saves = _item.OlderSaves.Prepend(_item.Summary).Where(s => !s.FileMissing)
                          .Select(s => new SongSpace.Save(s.Path, s.Size, s.Modified)).ToList();
-        if (_keepBackups == 0)
-            _keepBackups = int.TryParse(_db.GetSetting(LibraryDb.KeepBackupsKey), out var k) && KeepBackupsChoices.Contains(k) ? k : SongSpace.DefaultKeepBackups;
+        if (KeepBackups == 0)
+            KeepBackups = int.TryParse(_db.GetSetting(LibraryDb.KeepBackupsKey), out var k) && KeepBackupsChoices.Contains(k) ? k : SongSpace.DefaultKeepBackups;
         var keep = KeepBackups;
         var ids = _item.OlderSaves.Prepend(_item.Summary).Select(s => s.Id).ToList();
         SongSpaceReport report;
