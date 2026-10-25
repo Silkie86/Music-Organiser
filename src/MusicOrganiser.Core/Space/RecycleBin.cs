@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace MusicOrganiser.Core.Space;
@@ -25,6 +26,86 @@ public static class RecycleBin
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return e.Message;
+        }
+    }
+
+    /// <summary>What <see cref="Send"/> says when Windows wants administrator rights (plugin files in Program Files).</summary>
+    public const string NeedsAdmin = "Windows needs administrator rights to remove this. Uninstall it instead, or remove it in Explorer.";
+
+    /// <summary>
+    /// Puts several files or folders in the bin. The ones Windows guards (plugin files in Program Files) go in one more
+    /// step, with one administrator question for all of them (see <see cref="RunHelper"/>). Returns what couldn't go, and why.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> SendMany(IReadOnlyList<string> paths)
+    {
+        var problems = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var guarded = new List<string>();
+        foreach (var path in paths)
+        {
+            var problem = Send(path);
+            if (problem == NeedsAdmin) guarded.Add(path);
+            else if (problem.Length > 0) problems[path] = problem;
+        }
+        if (guarded.Count > 0)
+            foreach (var (path, problem) in OperatingSystem.IsWindows() ? SendAsAdmin(guarded) : guarded.Select(p => (p, NeedsAdmin)))
+                if (problem.Length > 0) problems[path] = problem;
+        return problems;
+    }
+
+    /// <summary>The app started for <see cref="SendAsAdmin"/>: <c>--recycle-bin list result</c>.</summary>
+    public const string HelperFlag = "--recycle-bin";
+
+    /// <summary>
+    /// Runs the administrator step when the app was started for it: bins each path in the list file and writes
+    /// "path, tab, problem" lines to the result file. Returns false when the app wasn't started for this.
+    /// </summary>
+    public static bool RunHelper(string[] args)
+    {
+        if (args.Length != 3 || args[0] != HelperFlag) return false;
+        try
+        {
+            var lines = File.ReadAllLines(args[1]).Where(l => l.Length > 0).Select(p => $"{p}\t{Send(p)}");
+            File.WriteAllLines(args[2], lines);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return true;
+    }
+
+    /// <summary>
+    /// Starts the app again with administrator rights (Windows asks you once) to bin files in folders that need them, and
+    /// waits for it: the same as Explorer's "You'll need to provide administrator permission" step.
+    /// </summary>
+    static IEnumerable<(string Path, string Problem)> SendAsAdmin(IReadOnlyList<string> paths)
+    {
+        var list = Path.Combine(Path.GetTempPath(), $"mo-recycle-{Guid.NewGuid():N}.txt");
+        var result = list + ".result";
+        try
+        {
+            File.WriteAllLines(list, paths);
+            if (Environment.ProcessPath is not { } exe) return paths.Select(p => (p, NeedsAdmin));
+            var args = $"{HelperFlag} \"{list}\" \"{result}\"";
+            // Run with `dotnet app.dll`, the app is the dll after dotnet.
+            if (Path.GetFileNameWithoutExtension(exe).Equals("dotnet", StringComparison.OrdinalIgnoreCase) &&
+                System.Reflection.Assembly.GetEntryAssembly()?.Location is { Length: > 0 } dll)
+                args = $"\"{dll}\" {args}";
+            using (var helper = Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden }))
+                helper?.WaitForExit();
+            if (!File.Exists(result)) return paths.Select(p => (p, "The administrator step didn't finish."));
+            var said = File.ReadAllLines(result).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)
+                           .ToDictionary(x => x[0], x => x[1], StringComparer.OrdinalIgnoreCase);
+            return paths.Select(p => (p, said.TryGetValue(p, out var problem) ? problem : "The administrator step skipped it.")).ToList();
+        }
+        catch (System.ComponentModel.Win32Exception e) when (e.NativeErrorCode == 1223)
+        {
+            return paths.Select(p => (p, "You said no to Windows' administrator question, so it stayed."));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            return paths.Select(p => (p, e.Message));
+        }
+        finally
+        {
+            try { File.Delete(list); File.Delete(result); } catch (IOException) { }
         }
     }
 
@@ -84,7 +165,7 @@ public static class RecycleBin
         if (result == 0) return File.Exists(path) || Directory.Exists(path) ? "Windows left some of it, probably files in use." : "";
         return result switch
         {
-            5 or 0x78 => "Windows needs administrator rights to remove this. Uninstall it instead, or remove it in Explorer.",
+            5 or 0x78 => NeedsAdmin,
             32 or 0x20 => "A program is using it. Close your DAW and try again.",
             _ => $"Windows couldn't move it to the Recycle Bin (code {result}).",
         };

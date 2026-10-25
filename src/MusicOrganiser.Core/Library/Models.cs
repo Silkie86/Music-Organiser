@@ -85,6 +85,10 @@ public sealed record PluginUsage(string Name, string Vendor, string Format, int 
     public bool Unused { get; init; }
     /// <summary>The list's "Installed" pill: installed and not flagged as good to remove.</summary>
     public bool InstalledInUse => Installed && !Unused;
+    /// <summary>Installed, and not one project uses it.</summary>
+    public bool NeverUsed => Installed && Projects == 0;
+    /// <summary>Unused, though older projects use it: removing it leaves those projects missing it.</summary>
+    public bool UnusedLately => Unused && Projects > 0;
     /// <summary>"Mar 2022", or "Never" for an installed plugin no project uses.</summary>
     public string LastUsedText => LastUsed is { } t ? t.ToString("MMM yyyy") : Projects == 0 ? "Never" : "";
 }

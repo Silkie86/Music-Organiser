@@ -24,6 +24,26 @@ public sealed partial class LibraryDb
     public static string AddedFoldersKey(string key) => $"plugin_space_added:{key}";
     public static string RuledOutKey(string key) => $"plugin_space_not:{key}";
 
+    /// <summary>Setting: the spare plugin copies found when plugins were last measured (JSON).</summary>
+    public const string SpareCopiesKey = "space_spare_copies";
+
+    /// <summary>Each plugin your projects use, by name key (devices of a DAW's own aside), with how many projects use each format.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> PluginFormatsUsed() =>
+        Query("""
+            SELECT pl.name_key, COALESCE(pl.format, '') AS format, COUNT(DISTINCT pl.project_id) AS n
+            FROM plugins pl JOIN projects p ON p.id = pl.project_id
+            WHERE p.file_missing = 0 AND COALESCE(pl.format, '') <> 'Native'
+            GROUP BY pl.name_key, COALESCE(pl.format, '')
+            """, r => (Key: Str(r, "name_key"), Format: Str(r, "format"), N: (int)Long(r, "n")))
+            .GroupBy(x => x.Key)
+            .ToDictionary(g => g.Key, g => (IReadOnlyDictionary<string, int>)g.ToDictionary(x => x.Format, x => x.N, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>The spare copies found at the last measure (see <see cref="SpareCopies"/>).</summary>
+    public IReadOnlyList<SpareCopy> SpareCopyList() =>
+        GetSetting(SpareCopiesKey) is { Length: > 0 } json ? JsonSerializer.Deserialize<List<SpareCopy>>(json) ?? [] : [];
+
+    public void SaveSpareCopies(IEnumerable<SpareCopy> copies) => SetSetting(SpareCopiesKey, JsonSerializer.Serialize(copies.ToList()));
+
     long _spaceRevision;
     /// <summary>Goes up when sizes are measured again, so the pages show the new ones.</summary>
     public long SpaceRevision => Interlocked.Read(ref _spaceRevision);

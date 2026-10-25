@@ -20,12 +20,13 @@ public sealed partial class PluginsViewModel : ObservableObject
 
     public const string All = "All", Missing = "Missing", Installed_ = "Installed", Instruments = "Instruments", Effects = "Effects";
     /// <summary>The chips over the list, like the ones on Projects and Sounds.</summary>
-    public static IReadOnlyList<string> FilterChoices { get; } = [All, Missing, Installed_, BigUnused, Instruments, Effects, "VST2", "VST3", "CLAP", "Native"];
+    public static IReadOnlyList<string> FilterChoices { get; } = [All, Missing, Installed_, BigUnused, NeverUsed, Instruments, Effects, "VST2", "VST3", "CLAP", "Native"];
     /// <summary>How many missing plugins the "install these" cards show (Settings › Plugins).</summary>
     [ObservableProperty] int _neededCount;
     public const string NeededCountKey = "plugins_needed_cards";
     public const int DefaultNeededCount = 6;
-    public static IReadOnlyList<int> NeededCountChoices { get; } = [3, 6, 9, 12];
+    /// <summary>0 hides the cards (their ✕ does that too).</summary>
+    public static IReadOnlyList<int> NeededCountChoices { get; } = [0, 3, 6, 9, 12];
 
     [ObservableProperty] IReadOnlyList<PluginUsage> _items = [];
     [ObservableProperty] IItemsView? _view;
@@ -39,7 +40,7 @@ public sealed partial class PluginsViewModel : ObservableObject
     /// <summary>"Install these 6 and 23 projects open with nothing missing."</summary>
     [ObservableProperty] string _neededSummary = "";
     public bool HasNeeded => Needed.Count > 0;
-    public bool AllInstalled => Items.Count > 0 && Needed.Count == 0;
+    public bool AllInstalled => Items.Count > 0 && Needed.Count == 0 && NeededCount > 0;
 
     /// <summary>
     /// The songs using the picked plugin, newest first: one row per song with its newest save that uses it, or every save
@@ -73,7 +74,7 @@ public sealed partial class PluginsViewModel : ObservableObject
     {
         _db = db;
         _main = main;
-        _neededCount = int.TryParse(db.GetSetting(NeededCountKey), out var n) && n > 0 ? n : DefaultNeededCount;
+        _neededCount = int.TryParse(db.GetSetting(NeededCountKey), out var n) && NeededCountChoices.Contains(n) ? n : DefaultNeededCount;
         _unusedYears = ReadUnusedYears(db);
         Reload();
     }
@@ -86,10 +87,10 @@ public sealed partial class PluginsViewModel : ObservableObject
     /// <summary>What the page shows, read from the database (on any thread).</summary>
     sealed record Loaded(IReadOnlyList<PluginUsage> Items, HashSet<string> InstalledNames,
                          IReadOnlyDictionary<long, HashSet<string>> MissingBy, (int Files, int Plugins, int Failed) Scans, (int Read, int Left) Parameters,
-                         IReadOnlyDictionary<string, PluginSpaceInfo> Spaces);
+                         IReadOnlyDictionary<string, PluginSpaceInfo> Spaces, IReadOnlyList<SpareCopy> Spares);
 
     Loaded Load() => new(_db.PluginUsage(), _db.InstalledNames(), _db.MissingPluginsByProject(), _db.PluginScanCounts(), _db.ParameterCounts(),
-                         _db.PluginSpaces());
+                         _db.PluginSpaces(), _db.SpareCopyList().Where(c => File.Exists(c.Path) || Directory.Exists(c.Path)).ToList());
 
     /// <summary>What the page last read, so changing how many cards to show doesn't read the database again.</summary>
     Loaded? _loaded;
@@ -99,7 +100,9 @@ public sealed partial class PluginsViewModel : ObservableObject
         _loaded = loaded;
         var selected = Selected;
         Items = WithSpace(loaded.Items, loaded.Spaces, UnusedYears);
+        var earlier = View;
         View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
+        View.KeepSortOf(earlier);
         View.Filter = o => o is PluginUsage p && Matches(p);
         var missing = Items.Count(p => !p.Installed);
         var neverUsed = Items.Count(p => p.Projects == 0);
@@ -107,6 +110,7 @@ public sealed partial class PluginsViewModel : ObservableObject
                   (neverUsed > 0 ? $", {neverUsed} installed that no project uses" : "");
         BuildNeeded(loaded);
         BuildCandidates();
+        BuildSpares(loaded.Spares);
         Selected = selected is null ? null : Items.FirstOrDefault(p => p.Name == selected.Name && p.Own == selected.Own);
 
         if (!_main.PluginScanner.Available)
@@ -136,6 +140,7 @@ public sealed partial class PluginsViewModel : ObservableObject
             Missing => !p.Installed,
             Installed_ => p.Installed,
             BigUnused => p.Unused && p.Bytes > 0,
+            NeverUsed => p.NeverUsed,
             Instruments => p.Kind == PluginKind.Instrument,
             Effects => p.Kind is PluginKind.Effect or PluginKind.NoteEffect,
             "VST2" or "VST3" or "CLAP" => p.Format.Equals(Filter, StringComparison.OrdinalIgnoreCase),
@@ -175,6 +180,14 @@ public sealed partial class PluginsViewModel : ObservableObject
                                     : "Each also misses other plugins, so these are the ones the most projects use.");
     }
 
+    /// <summary>The cards' ✕: hides them until Settings › Plugins shows them again.</summary>
+    [RelayCommand]
+    void HideNeeded()
+    {
+        NeededCount = 0;
+        _main.Activities.Start("Install cards hidden").Finish("The Install these cards are hidden", "Settings › Plugins brings them back.");
+    }
+
     /// <summary>
     /// Only the cards change, from what the page already read: reloading the whole page here froze the window for 4 s
     /// on Solomon's library (2026-10-19, Settings › Plugins).
@@ -187,7 +200,12 @@ public sealed partial class PluginsViewModel : ObservableObject
     }
 
     partial void OnSearchTextChanged(string value) => View?.Refresh();
-    partial void OnFilterChanged(string value) => View?.Refresh();
+    partial void OnFilterChanged(string value)
+    {
+        // The space chips are about room on disk: the biggest come first.
+        if (value is BigUnused or NeverUsed) View?.SortBy(nameof(PluginUsage.Bytes), System.ComponentModel.ListSortDirection.Descending);
+        View?.Refresh();
+    }
     partial void OnSelectedChanged(PluginUsage? value) => LoadSelected();
 
     void LoadSelected()

@@ -38,6 +38,8 @@ public static class Uninstallers
                 if (app?.GetValue("DisplayName") is not string name || name.Length == 0) continue;
                 if (app.GetValue("SystemComponent") is int hidden && hidden == 1) continue;
                 if (app.GetValue("UninstallString") is not string command || command.Length == 0) continue;
+                // Left behind by a program that's gone (I:\Current\unins000.exe on Solomon's PC): there's nothing to run.
+                if (!CanRun(command)) continue;
                 var kb = app.GetValue("EstimatedSize") is int size ? size : 0;
                 into.Add(new(name, app.GetValue("Publisher") as string ?? "", command, kb * 1024L));
             }
@@ -99,6 +101,13 @@ public static class Uninstallers
         {
             return (null, e.Message);
         }
+    }
+
+    /// <summary>Whether the command's program is there: a full path must exist; a bare name (MsiExec.exe) is found by Windows.</summary>
+    public static bool CanRun(string command)
+    {
+        var (file, _) = Split(command);
+        return !Path.IsPathRooted(file) || File.Exists(Environment.ExpandEnvironmentVariables(file));
     }
 
     /// <summary>

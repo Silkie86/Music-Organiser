@@ -29,13 +29,23 @@ public sealed class SpaceMeter(LibraryDb db)
     public IReadOnlyList<PluginSpaceInfo> MeasurePlugins(IReadOnlyCollection<string>? onlyKeys = null, CancellationToken ct = default)
     {
         var roots = PluginRoots();
-        var installed = PluginSpace.Group(PluginCatalog.ScanFiles(roots), roots, db.ScannedVendors());
+        var files = PluginCatalog.ScanFiles(roots);
+        var installed = PluginSpace.Group(files, roots, db.ScannedVendors());
         // Everything is guessed together, so a folder two plugins claim is shared either way.
         var spaces = PluginSpace.Measure(installed, PluginSpace.DataRoots(), roots, ProtectedRoots(),
             key => db.GetList(LibraryDb.AddedFoldersKey(key)), key => db.GetList(LibraryDb.RuledOutKey(key)), onlyKeys, ct);
         db.SavePluginSpaces(spaces, all: onlyKeys is null);
+        if (onlyKeys is null)
+        {
+            var aax = PluginCatalog.ScanFiles(SpareCopies.AaxFolders());
+            db.SaveSpareCopies(SpareCopies.Find(files.Concat(aax).ToList(), db.PluginFormatsUsed(),
+                                                SpareCopies.ProToolsInstalled(), SizeOf));
+        }
         return spaces;
     }
+
+    static long SizeOf(string path) =>
+        Directory.Exists(path) ? DiskSpace.Measure(path).Bytes : File.Exists(path) ? new FileInfo(path).Length : 0;
 
     /// <summary>
     /// Measures song folders (each one a song has to itself) whose size is missing, from before the song's newest save,

@@ -285,10 +285,28 @@
                 </Grid>
             </Border>
 
+            <!-- Spare copies: plugin files in formats none of your projects use (AAX without Pro Tools, an unused VST2). -->
+            <Border Classes="card" Padding="16,10,10,10" Margin="0,0,0,12" IsVisible="{Binding HasSpares}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Review…" Command="{Binding ReviewSparesCommand}" VerticalAlignment="Center"
+                            ToolTip.Tip="See each spare copy, then remove the ticked ones to the Recycle Bin" />
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding SpareSizeText}" FontSize="18" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}"
+                               Foreground="{StaticResource OkBrush}" VerticalAlignment="Center" Margin="0,0,14,0" />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="{Binding SpareTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding SpareNote}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
             <!-- What to install to open more of your old projects. -->
             <Border Classes="card" Padding="16,14,6,6" Margin="0,0,0,12" IsVisible="{Binding HasNeeded}">
                 <StackPanel>
-                    <TextBlock Text="Install these to open more of your old projects" FontSize="15" FontWeight="SemiBold" />
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="✕" Command="{Binding HideNeededCommand}" Margin="0,0,8,0" VerticalAlignment="Top"
+                                ToolTip.Tip="Hide these cards (Settings › Plugins brings them back)" />
+                        <TextBlock Text="Install these to open more of your old projects" FontSize="15" FontWeight="SemiBold" />
+                    </DockPanel>
                     <TextBlock Text="{Binding NeededSummary}" Classes="muted" FontSize="12.5" Margin="0,3,10,12" TextWrapping="Wrap" />
                     <ItemsControl ItemsSource="{Binding Needed}">
                         <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
@@ -342,7 +360,7 @@
             </ListBox>
 
             <Border Grid.Row="2" Classes="card" Padding="8,10,8,8">
-                <DataGrid Classes="pageList" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
+                <DataGrid x:Name="PluginGrid" Classes="pageList" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
                           AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" CanUserSortColumns="True"
                           GridLinesVisibility="None" Background="Transparent" DoubleTapped="OnDoubleTapped" RowHeight="46">
                     <DataGrid.Columns>
@@ -377,9 +395,13 @@
                                         <Border Classes="pill" Background="{StaticResource OkSoftBrush}" IsVisible="{Binding InstalledInUse}">
                                             <TextBlock Text="Installed" Classes="pillText" Foreground="{StaticResource OkBrush}" />
                                         </Border>
-                                        <Border Classes="pill" Background="{StaticResource WarningSoftBrush}" IsVisible="{Binding Unused}"
-                                                ToolTip.Tip="Installed, but no project has used it for a while: a good one to clean up or uninstall">
-                                            <TextBlock Text="Good to remove" Classes="pillText" Foreground="{StaticResource WarningBrush}" />
+                                        <Border Classes="pill" Background="{StaticResource WarningSoftBrush}" IsVisible="{Binding NeverUsed}"
+                                                ToolTip.Tip="Installed, but not one of your projects uses it: the safest kind to clean up or uninstall">
+                                            <TextBlock Text="Never used" Classes="pillText" Foreground="{StaticResource WarningBrush}" />
+                                        </Border>
+                                        <Border Classes="pill" Background="{StaticResource WarningSoftBrush}" IsVisible="{Binding UnusedLately}"
+                                                ToolTip.Tip="No project has used it for a while, but older ones do: they'd open with it missing if it went">
+                                            <TextBlock Text="Not used lately" Classes="pillText" Foreground="{StaticResource MutedBrush}" />
                                         </Border>
                                         <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding !Installed}">
                                             <Border Classes="pill" Background="{StaticResource MissingSoftBrush}">
@@ -431,6 +453,7 @@
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>
+                <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto">
                 <ItemsControl ItemsSource="{Binding Items}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:CleanupItem">
@@ -444,6 +467,7 @@
                                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                                         <TextBlock Text="{Binding Path}" FontSize="11" Foreground="{StaticResource FaintBrush}" TextTrimming="CharacterEllipsis"
                                                    ToolTip.Tip="{Binding Path}" />
+                                        <TextBlock Text="{Binding Detail}" FontSize="11.5" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasDetail}" />
                                         <TextBlock Text="{Binding Why}" FontSize="11.5" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap"
                                                    IsVisible="{Binding !CanTick}" />
                                     </StackPanel>
@@ -452,6 +476,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                </ScrollViewer>
                 <TextBlock Text="{Binding Empty}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasEmpty}" />
                 <TextBlock Text="{Binding Warning}" Foreground="{StaticResource WarningBrush}" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding HasWarning}" />
                 <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,4,0,0">

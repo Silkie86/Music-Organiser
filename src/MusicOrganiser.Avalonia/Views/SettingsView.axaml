@@ -452,7 +452,7 @@
                                             <DataTemplate x:DataType="x:Int32"><TextBlock Text="{Binding StringFormat='{}{0} cards'}" /></DataTemplate>
                                         </ComboBox.ItemTemplate>
                                     </ComboBox>
-                                    <TextBlock Text="Missing plugins in the Install these cards" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
+                                    <TextBlock Text="Missing plugins in the Install these cards (0 hides them)" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0" />
                                 </DockPanel>
                             </StackPanel>
                         </Border>

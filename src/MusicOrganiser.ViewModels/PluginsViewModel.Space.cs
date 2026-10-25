@@ -14,7 +14,7 @@ namespace MusicOrganiser.ViewModels;
 // own sound library?"); everything under Program Files is left to the plugin's own uninstaller.
 public sealed partial class PluginsViewModel
 {
-    public const string BigUnused = "Big and unused";
+    public const string BigUnused = "Big and unused", NeverUsed = "Never used";
     public static IReadOnlyList<int> UnusedYearsChoices { get; } = [1, 2, 3, 5];
     public const int DefaultUnusedYears = 2;
     /// <summary>How many years without a project save make a plugin "unused".</summary>
@@ -108,7 +108,8 @@ public sealed partial class PluginsViewModel
     /// <summary>The banner and cards: the biggest unused plugins, and what they all add up to.</summary>
     void BuildCandidates()
     {
-        var unused = Items.Where(p => p.Unused && p.Bytes > 0).OrderByDescending(p => p.Bytes).ToList();
+        // Plugins no project has ever used come first (nothing goes missing when they go), biggest first.
+        var unused = Items.Where(p => p.Unused && p.Bytes > 0).OrderByDescending(p => p.Projects == 0).ThenByDescending(p => p.Bytes).ToList();
         Candidates = unused.Take(3).Select(p => new SpaceCandidate(p, this)).ToList();
         FreeableText = unused.Count > 0 ? DiskSpace.Text(unused.Sum(p => p.Bytes)) : "";
         var years = UnusedYears == 1 ? "a year" : $"{UnusedYears} years";
@@ -232,14 +233,16 @@ public sealed partial class PluginsViewModel
     {
         var picked = card.Items.Where(i => i.IsTicked).ToList();
         card.Busy = true;
-        var problems = await Task.Run(() => picked.Select(i => (Item: i, Problem: RecycleBin.Send(i.Folder.Path)))
-                                                  .Where(x => x.Problem.Length > 0).ToList());
-        var freed = picked.Where(i => problems.All(x => x.Item != i)).Sum(i => i.Folder.Bytes);
+        var problems = await Task.Run(() => RecycleBin.SendMany(picked.Select(i => i.Folder.Path).ToList()));
+        var freed = picked.Where(i => !problems.ContainsKey(i.Folder.Path)).Sum(i => i.Folder.Bytes);
         Card = null;
-        if (freed > 0) _main.Activities.Start("Cleaned up").Finish($"Freed {DiskSpace.Text(freed)}", "The folders are in the Recycle Bin if you want them back.");
-        foreach (var (item, problem) in problems)
-            _main.Activities.Failed($"Couldn't remove {Path.GetFileName(item.Folder.Path)}", problem);
-        await RemeasureAsync(key);
+        if (freed > 0) _main.Activities.Start("Cleaned up").Finish($"Freed {DiskSpace.Text(freed)}", "They're in the Recycle Bin if you want them back.");
+        // One card for what stayed, not one each (a spare-copies clean up can hold hundreds).
+        if (problems.Count > 0)
+            _main.Activities.Failed(problems.Count == 1 ? $"Couldn't remove {Path.GetFileName(problems.First().Key)}" : $"{problems.Count} couldn't be removed",
+                                    problems.First().Value);
+        if (key.Length > 0) await RemeasureAsync(key);
+        else await ReloadAsync();
     }
 
     // ---- Uninstall -------------------------------------------------------------------------------------------------
@@ -264,12 +267,12 @@ public sealed partial class PluginsViewModel
             card.Uninstallers = found;
             card.PickedUninstaller = found[0];
             card.ConfirmText = "Uninstall";
-            card.Confirm = () => RunUninstallerAsync(card, space.Key);
+            card.Confirm = () => RunUninstallerAsync(card, space.Key, files.Select(f => f.Path).ToList());
         }
         else
         {
             card.Intro = OperatingSystem.IsWindows()
-                ? "Windows has no uninstaller for it. Its plugin files can go to the Recycle Bin instead:"
+                ? "Windows has no uninstaller for it that's still there. Its plugin files can go to the Recycle Bin instead (Windows may ask for administrator rights):"
                 : "Its plugin files go to the Bin:";
             card.Items = files.Select(f => new CleanupItem(f, "", ticked: true)).ToList();
             card.Confirm = () => DeleteAsync(card, space.Key);
@@ -278,7 +281,16 @@ public sealed partial class PluginsViewModel
         Card = card;
     }
 
-    async Task RunUninstallerAsync(SpaceCard card, string key)
+    /// <summary>How long Uninstall waits for a plugin's files to go before saying it's still installed.</summary>
+    internal static TimeSpan UninstallWait = TimeSpan.FromMinutes(20);
+    internal static TimeSpan UninstallPoll = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Runs the uninstaller, then waits for the plugin's files to go. Many uninstallers hand over to a copy of themselves
+    /// and close at once, so the program closing says nothing: the files going does. Only then is the list read again, so
+    /// an uninstall you cancel leaves the page exactly as it was (Solomon's F12 note, 25 Oct).
+    /// </summary>
+    async Task RunUninstallerAsync(SpaceCard card, string key, IReadOnlyList<string> files)
     {
         if (card.PickedUninstaller is not { } u) return;
         var (running, problem) = Uninstallers.Start(u);
@@ -288,19 +300,90 @@ public sealed partial class PluginsViewModel
             _main.Activities.Failed($"Couldn't start {u.Name}'s uninstaller", problem);
             return;
         }
-        var activity = _main.Activities.Start($"Uninstalling {u.Name}", "Its uninstaller is open in its own window.");
-        // Windows sometimes hands the uninstaller to a program that's already running: then there's nothing to wait for,
-        // and Rescan catches up once you've finished with it.
-        if (running is null)
+        using var stop = new CancellationTokenSource();
+        var activity = _main.Activities.Start($"Uninstalling {u.Name}", "Its uninstaller is open in its own window.", cancel: stop.Cancel);
+        static bool AllLeft(IReadOnlyList<string> paths) => paths.All(p => File.Exists(p) || Directory.Exists(p));
+        try
         {
-            activity.Finish($"{u.Name}'s uninstaller started", "When it's done, press Rescan to update the list.");
+            if (files.Count == 0)
+            {
+                // Nothing to watch: go by the program closing, then read the list again.
+                if (running is not null) await running.WaitForExitAsync(stop.Token);
+            }
+            else
+            {
+                var until = DateTime.UtcNow + UninstallWait;
+                while (await Task.Run(() => AllLeft(files)))
+                {
+                    if (DateTime.UtcNow > until)
+                    {
+                        activity.Stop($"{u.Name} is still installed", "Its files are still there, so nothing on the page changed.");
+                        return;
+                    }
+                    await Task.Delay(UninstallPoll, stop.Token);
+                }
+                // Files are going: give the uninstaller a moment to finish before the list is read.
+                await Task.Delay(UninstallPoll * 2, stop.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            activity.Stop($"Stopped waiting for {u.Name}'s uninstaller", "Press Rescan once it's done to update the list.");
             return;
         }
-        await running.WaitForExitAsync();
-        activity.Finish($"{u.Name}'s uninstaller closed", "Looking for what's still installed…");
-        // The plugin list and sizes catch up: a rescan of the plugin folders, then this plugin measured again.
+        activity.Finish($"{u.Name} uninstalled", "Looking for what's still installed…");
+        // The row it leaves: the one after it in the list gets picked, so you carry on from the same place.
+        var next = NextShown(Selected);
         await _main.ScanAsync(false, plugins: true);
         await RemeasureAsync(key);
+        if (next is not null && Selected is null)
+            Selected = Items.FirstOrDefault(p => p.Name == next.Name && p.Own == next.Own);
+    }
+
+    /// <summary>The row after this one as the list shows it (or before it, at the end).</summary>
+    PluginUsage? NextShown(PluginUsage? row)
+    {
+        if (row is null || View is null) return null;
+        var shown = View.Cast<PluginUsage>().ToList();
+        var at = shown.IndexOf(row);
+        return at < 0 ? null : at + 1 < shown.Count ? shown[at + 1] : at > 0 ? shown[at - 1] : null;
+    }
+
+    // ---- Spare copies ----------------------------------------------------------------------------------------------
+
+    IReadOnlyList<SpareCopy> _spares = [];
+    [ObservableProperty] bool _hasSpares;
+    [ObservableProperty] string _spareSizeText = "";
+    [ObservableProperty] string _spareTitle = "";
+    [ObservableProperty] string _spareNote = "";
+
+    /// <summary>The spare copies line: plugin files in formats none of your projects use.</summary>
+    void BuildSpares(IReadOnlyList<SpareCopy> spares)
+    {
+        _spares = spares;
+        HasSpares = spares.Count > 0;
+        SpareSizeText = DiskSpace.Text(spares.Sum(c => c.Bytes));
+        SpareTitle = spares.Count == 1 ? "1 spare plugin copy" : $"{spares.Count} spare plugin copies";
+        var formats = spares.GroupBy(c => c.Format).OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}");
+        SpareNote = $"{string.Join(", ", formats)}: copies in a format none of your projects use. The format they use stays.";
+    }
+
+    /// <summary>Opens the Keep or Delete card for the spare copies, every one ticked.</summary>
+    [RelayCommand]
+    void ReviewSpares()
+    {
+        if (_spares.Count == 0) return;
+        var card = new SpaceCard(this)
+        {
+            Title = "Remove spare plugin copies?",
+            Intro = "Each is a plugin in a format none of your projects use; the format they use stays installed. They go to the Recycle Bin." +
+                    (OperatingSystem.IsWindows() ? " They're in Program Files, so Windows asks once for administrator rights." : ""),
+            Items = _spares.Select(c => new CleanupItem(new SpaceFolder(c.Path, SpaceKind.Program, c.Bytes, [], false), "", ticked: true,
+                                                        label: $"{c.Name} · {c.Format}", detail: c.Why)).ToList(),
+        };
+        card.Confirm = () => DeleteAsync(card, "");
+        card.Refresh();
+        Card = card;
     }
 
     internal void CloseCard() => Card = null;
@@ -345,17 +428,23 @@ public sealed partial class SpaceFolderItem(SpaceFolder folder, PluginsViewModel
 /// <summary>A folder on a Clean up card: ticked to go, or why it has to stay.</summary>
 public sealed partial class CleanupItem : ObservableObject
 {
-    public CleanupItem(SpaceFolder folder, string why, bool ticked)
+    public CleanupItem(SpaceFolder folder, string why, bool ticked, string? label = null, string detail = "")
     {
         Folder = folder;
         Why = why;
         _isTicked = ticked && why.Length == 0;
+        _label = label;
+        Detail = detail;
     }
 
+    readonly string? _label;
     public SpaceFolder Folder { get; }
     public string Why { get; }
+    /// <summary>Why it can go ("Your projects use its VST3 (412 projects); none use this VST2.").</summary>
+    public string Detail { get; }
+    public bool HasDetail => Detail.Length > 0;
     public bool CanTick => Why.Length == 0;
-    public string Name => Folder.Kind switch
+    public string Name => _label ?? Folder.Kind switch
     {
         SpaceKind.Program => "Plugin file",
         SpaceKind.Sounds => "Sounds",

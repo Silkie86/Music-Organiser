@@ -32,6 +32,7 @@ public static partial class TextScan
         if (p.EndsWith(".vst3")) return "VST3";
         if (p.EndsWith(".clap")) return "CLAP";
         if (p.EndsWith(".component")) return "AU";
+        if (p.EndsWith(".aaxplugin")) return "AAX";
         if (p.EndsWith(".dll") || p.EndsWith(".vst")) return "VST2";
         return "";
     }

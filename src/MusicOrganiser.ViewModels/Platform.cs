@@ -74,6 +74,9 @@ public interface IItemsView : IEnumerable
 
     /// <summary>How many items pass the filter.</summary>
     int Count { get; }
+
+    /// <summary>Takes on the sort an earlier view of the same list had (a column header you clicked), after a reload.</summary>
+    void KeepSortOf(IItemsView? earlier) { }
 }
 
 public interface IUiTimer

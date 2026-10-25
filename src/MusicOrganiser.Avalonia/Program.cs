@@ -10,6 +10,8 @@ static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // Started again with administrator rights only to put guarded files in the Recycle Bin: do that, no window.
+        if (MusicOrganiser.Core.Space.RecycleBin.RunHelper(args)) return;
         // Memory is cleaned up alongside the window rather than by pausing it: long jobs (scans, Deep listen, the
         // duplicate finder) churn through audio buffers, and full blocking clean-ups showed up as 0.3-1.3 s freezes.
         System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;

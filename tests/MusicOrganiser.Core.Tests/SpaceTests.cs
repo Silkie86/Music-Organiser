@@ -130,6 +130,10 @@ public class SpaceTests : IDisposable
         Assert.Empty(Uninstallers.For("M1", "KORG", all));   // two letters: only a program named exactly that
         Assert.Equal((@"C:\Program Files\Xfer\unins2.exe", ""), Uninstallers.Split(all[0].Command));
         Assert.Equal(("MsiExec.exe", "/X{1234}"), Uninstallers.Split("MsiExec.exe /X{1234}"));
+        // An uninstaller whose file is gone (I:\Current\unins000.exe) is never offered; one Windows finds itself is.
+        Assert.False(Uninstallers.CanRun(Path.Combine(_root, "Current", "unins000.exe") + " /SILENT"));
+        Assert.True(Uninstallers.CanRun(File("Current/unins000.exe")));
+        Assert.True(Uninstallers.CanRun("MsiExec.exe /X{1234}"));
         Assert.Equal((@"C:\Program Files\UVI\unins000.exe", "/SILENT"), Uninstallers.Split(@"C:\Program Files\UVI\unins000.exe /SILENT"));
     }
 
@@ -182,6 +186,50 @@ public class SpaceTests : IDisposable
         Assert.False(audio.CanRemove);
         Assert.Equal([Path.Combine(_root, "Songs", "Zeki", "Media", "unused take.wav")], audio.Paths);
         Assert.Equal(600 + 40 + 80, r.Freeable);
+    }
+
+    [Fact]
+    public void Compact_can_let_every_autosave_go_and_lists_unused_audio_one_file_at_a_time()
+    {
+        var day = new DateTime(2026, 1, 1);
+        var song = File("Songs/Rae/Rae.song", 300, day);
+        for (var i = 0; i < 3; i++) File($"Songs/Rae/History/Rae {i}.song", 20, day.AddDays(i));
+        File("Songs/Rae/Media/take 1.wav", 500);
+        File("Songs/Rae/Media/take 2.wav", 900);
+        var r = SongSpace.Measure([new(song, 300, day)], [Path.Combine(_root, "Songs")], new HashSet<string>(), keepBackups: 0);
+        Assert.Equal(3, r.Items.Count(i => i.Kind == CompactKind.Backup));
+        var audio = r.Items.Where(i => i.Kind == CompactKind.UnusedAudio).ToList();
+        Assert.Equal(["take 2.wav", "take 1.wav"], audio.Select(a => Path.GetFileName(a.Paths.Single())));   // largest first
+        Assert.Equal([900L, 500L], audio.Select(a => a.Bytes));
+    }
+
+    [Fact]
+    public void Spare_copies_are_formats_no_project_uses_while_one_they_use_stays()
+    {
+        InstalledPlugin P(string name, string format) => new(name, format, $@"C:\Plugins\{format}\{name}.{format.ToLowerInvariant()}");
+        var files = new[]
+        {
+            P("Serum", "VST2"), P("Serum", "VST3"), P("Serum", "AAX"),
+            P("Pigments", "VST2"), P("Pigments", "VST3"),        // FL's "VST": no one knows which, so both stay
+            P("Vital", "VST3"), P("Vital", "CLAP"),              // never used: the Never used chip has it, whole
+            P("Diva", "VST3"),                                   // projects use its VST2, which isn't installed
+        };
+        IReadOnlyDictionary<string, int> F(params (string, int)[] f) => f.ToDictionary(x => x.Item1, x => x.Item2);
+        var used = new Dictionary<string, IReadOnlyDictionary<string, int>>
+        {
+            ["serum"] = F(("VST3", 4)),
+            ["pigments"] = F(("VST", 2)),
+            ["diva"] = F(("VST2", 1)),
+        };
+
+        var spare = SpareCopies.Find(files, used, proTools: false, _ => 10);
+        Assert.Equal(["Serum · AAX", "Serum · VST2"], spare.Select(s => $"{s.Name} · {s.Format}").Order());
+        Assert.Contains("Pro Tools", spare.Single(s => s.Format == "AAX").Why);
+        Assert.Equal("Your projects use its VST3 (4 projects); none use this VST2.", spare.Single(s => s.Format == "VST2").Why);
+
+        // With Pro Tools on the computer, AAX copies are in use.
+        Assert.DoesNotContain(SpareCopies.Find(files, used, proTools: true, _ => 10), s => s.Format == "AAX");
+        Assert.Equal("AAX", TextScan.PluginFormatFromPath(@"C:\Program Files\Common Files\Avid\Audio\Plug-Ins\Serum.aaxplugin"));
     }
 
     [Fact]
@@ -246,6 +294,7 @@ public class SpaceTests : IDisposable
         var db = page.Db;
         Song(db, "old", DateTime.Now.AddYears(-4), "UVI Workstation");
         Song(db, "new", DateTime.Now.AddDays(-3), "Pro-Q 3", "Serum2");
+        Song(db, "needs", DateTime.Now.AddDays(-9), "Not Installed Synth");
         db.ReplaceInstalledPlugins(["UVI Workstation", "FabFilter Pro-Q 3", "SampleTank", "Serum", "Serum 2"]);
         db.SavePluginSpaces([Space("Serum", 1000), Space("UVI Workstation", 38L << 30), Space("FabFilter Pro-Q 3", 0), Space("SampleTank", 6L << 30),
                              Space("Serum 2", 5000)], all: true);
@@ -264,9 +313,22 @@ public class SpaceTests : IDisposable
         // Serum 2's own size, not Serum 1's; and Serum 1, whose name is that close, isn't offered for removal.
         Assert.Equal(5100, plugins.Items.Single(p => p.Name == "Serum2").Bytes);
         Assert.DoesNotContain(plugins.Items, p => p.Name == "Serum");
-        Assert.Equal(["UVI Workstation", "SampleTank"], plugins.Candidates.Select(c => c.Name));
+        // Never used comes first, then the biggest (Solomon's F12 note).
+        Assert.Equal(["SampleTank", "UVI Workstation"], plugins.Candidates.Select(c => c.Name));
+        Assert.True(tank.NeverUsed);
+        Assert.False(tank.UnusedLately);
+        Assert.True(plugins.Items.Single(p => p.Name == "UVI Workstation").UnusedLately);
         plugins.Filter = PluginsViewModel.BigUnused;
         Assert.Equal(2, plugins.View!.Cast<PluginUsage>().Count());
+        plugins.Filter = PluginsViewModel.NeverUsed;
+        Assert.Equal(["SampleTank"], plugins.View!.Cast<PluginUsage>().Select(p => p.Name));
+
+        // The Install these cards' ✕: no cards, and no "everything's installed" line either.
+        Assert.True(plugins.HasNeeded);
+        plugins.HideNeededCommand.Execute(null);
+        Assert.Equal(0, plugins.NeededCount);
+        Assert.False(plugins.HasNeeded);
+        Assert.False(plugins.AllInstalled);
 
         // Five years instead of two: UVI's last song (4 years ago) is recent enough.
         plugins.UnusedYears = 5;
@@ -308,6 +370,34 @@ public class SpaceTests : IDisposable
         plugins.Card.KeepCommand.Execute(null);
         await plugins.CleanUpCommand.ExecuteAsync(plugins.Items.Single(p => p.Name == "SampleTank"));
         Assert.Contains("A project uses a sample in it", plugins.Card!.Items.Single().Why);
+    }
+
+    [Fact]
+    public async Task A_songs_unused_audio_is_picked_one_file_at_a_time_and_none_is_ticked_for_you()
+    {
+        using var page = new Page(_root);
+        var db = page.Db;
+        db.AddRoot(Path.Combine(_root, "Bitwig"));
+        var file = File("Bitwig/rae/rae.bwproject", 5);
+        File("Bitwig/rae/bounces/old mix.wav", 700);
+        File("Bitwig/rae/bounces/take.wav", 300);
+        db.Upsert(new LibraryDb.IndexedFile(file, 5, 1, new ProjectInfo { Daw = "Bitwig Studio" }, null, [], []));
+        var projects = page.Main.Projects;
+        projects.Reload();
+        projects.Selected = projects.Items.Single(i => i.Name == "rae");
+        var space = projects.Detail!.Space;
+        await space.LoadAsync();
+
+        var audio = space.Rows.Single(r => r.Kind == CompactKind.UnusedAudio);
+        Assert.False(audio.CanTick);   // the whole lot never goes at once
+        Assert.Equal(["old mix.wav", "take.wav"], audio.Files.Select(f => f.Name));
+        Assert.DoesNotContain(audio.Files, f => f.IsTicked);
+        Assert.False(space.CompactCommand.CanExecute(null));
+
+        audio.Files[1].IsTicked = true;
+        Assert.Equal("Delete 300 bytes", space.ConfirmText);
+        Assert.Contains("1 audio file you picked goes too", space.ConfirmNote);
+        Assert.True(space.CompactCommand.CanExecute(null));
     }
 
     [Fact]

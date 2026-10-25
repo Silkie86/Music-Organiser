@@ -15,9 +15,19 @@ public partial class SongSpaceView : UserControl
         _ = (DataContext as SongSpaceViewModel)?.LoadAsync();
     }
 
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        (DataContext as SongSpaceViewModel)?.StopPlaying();
+    }
+
+    SongSpaceViewModel? _shown;
+
     protected override void OnDataContextChanged(EventArgs e)
     {
         base.OnDataContextChanged(e);
+        _shown?.StopPlaying();
+        _shown = DataContext as SongSpaceViewModel;
         if (VisualRoot is not null) _ = (DataContext as SongSpaceViewModel)?.LoadAsync();
     }
 }

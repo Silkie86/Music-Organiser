@@ -13,14 +13,14 @@ public enum CompactKind
     Backup,
     /// <summary>Files the DAW makes again by itself when the song opens (Studio One's Cache folder).</summary>
     Cache,
-    /// <summary>Audio in the song's folder that no save seems to use. Shown only: samples are never removed.</summary>
+    /// <summary>Audio in the song's folder that no save seems to use: never ticked for you; you listen and pick each one.</summary>
     UnusedAudio,
 }
 
 /// <summary>Something in a song's folder that could go. <paramref name="Paths"/>: one file, or several shown as one line.</summary>
 public sealed record CompactItem(CompactKind Kind, IReadOnlyList<string> Paths, long Bytes, string Note)
 {
-    /// <summary>Removable without losing anything; unused audio is only shown.</summary>
+    /// <summary>Removable without losing anything. Unused audio might be music (an old bounce), so it's only ever picked by hand.</summary>
     public bool CanRemove => Kind != CompactKind.UnusedAudio;
 }
 
@@ -115,9 +115,9 @@ public static class SongSpace
             items.Add(new(CompactKind.Backup, [b.Path], b.Size, $"Autosave from {b.Modified:d MMM yyyy}"));
         if (cache is not null && cacheBytes > 0)
             items.Add(new(CompactKind.Cache, [cache], cacheBytes, "Studio One makes these again when the song opens"));
-        if (unusedAudio.Count > 0)
-            items.Add(new(CompactKind.UnusedAudio, unusedAudio.Select(a => a.Path).ToList(), unusedAudio.Sum(a => a.Size),
-                          unusedAudio.Count == 1 ? "1 audio file no save seems to use" : $"{unusedAudio.Count} audio files no save seems to use"));
+        // One line each: you listen to each and pick (never ticked for you).
+        foreach (var (path, size) in unusedAudio.OrderByDescending(a => a.Size))
+            items.Add(new(CompactKind.UnusedAudio, [path], size, Path.GetFileName(path)));
         var total = savesBytes + backupBytes + cacheBytes + audioBytes + other;
         return new SongSpaceReport(total, own, folder, savesBytes, backupBytes, cacheBytes, audioBytes, other, items);
     });

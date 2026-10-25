@@ -1,12 +1,34 @@
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Threading;
 using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
 
 public partial class PluginsView : UserControl, IShortcutPage
 {
-    public PluginsView() => InitializeComponent();
+    public PluginsView()
+    {
+        InitializeComponent();
+        DataContextChanged += (_, _) =>
+        {
+            if (_vm is not null) _vm.PropertyChanged -= OnVmChanged;
+            _vm = DataContext as PluginsViewModel;
+            if (_vm is not null) _vm.PropertyChanged += OnVmChanged;
+        };
+    }
+
+    PluginsViewModel? _vm;
+
+    /// <summary>A reload swaps in a new list: keep the picked plugin in sight rather than jumping back to the top.</summary>
+    void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(PluginsViewModel.View)) return;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_vm?.Selected is { } picked) PluginGrid.ScrollIntoView(picked, null);
+        }, DispatcherPriority.Background);
+    }
 
     void OnDoubleTapped(object? sender, TappedEventArgs e)
     {

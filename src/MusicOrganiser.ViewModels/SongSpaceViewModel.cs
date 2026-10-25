@@ -49,8 +49,10 @@ public sealed partial class SongSpaceViewModel : ObservableObject
     [ObservableProperty] string _confirmText = "";
     [ObservableProperty] bool _busy;
 
-    public static IReadOnlyList<int> KeepBackupsChoices { get; } = [1, 3, 5, 10];
+    /// <summary>0 lets every autosave go.</summary>
+    public static IReadOnlyList<int> KeepBackupsChoices { get; } = [0, 1, 3, 5, 10];
     [ObservableProperty] int _keepBackups;
+    bool _keepRead;
 
     int _measures;
 
@@ -60,8 +62,11 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         var measure = ++_measures;
         var saves = _item.OlderSaves.Prepend(_item.Summary).Where(s => !s.FileMissing)
                          .Select(s => new SongSpace.Save(s.Path, s.Size, s.Modified)).ToList();
-        if (KeepBackups == 0)
+        if (!_keepRead)
+        {
+            _keepRead = true;
             KeepBackups = int.TryParse(_db.GetSetting(LibraryDb.KeepBackupsKey), out var k) && KeepBackupsChoices.Contains(k) ? k : SongSpace.DefaultKeepBackups;
+        }
         var keep = KeepBackups;
         var ids = _item.OlderSaves.Prepend(_item.Summary).Select(s => s.Id).ToList();
         SongSpaceReport report;
@@ -95,8 +100,12 @@ public sealed partial class SongSpaceViewModel : ObservableObject
             new SpacePart("Audio (recordings, bounces, samples)", r.Audio, "#E0A640"),
             new SpacePart("Other files", r.Other, "#8D939C"),
         }.Where(p => p.Bytes > 0).Select(p => p with { Share = (double)p.Bytes / Math.Max(1, r.Bytes) }).ToList();
-        Rows = Group(r.Items).ToList();
-        foreach (var row in Rows) row.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(CompactRow.IsTicked)) Refresh(); };
+        Rows = Group(r.Items, this).ToList();
+        foreach (var row in Rows)
+        {
+            row.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(CompactRow.IsTicked)) Refresh(); };
+            foreach (var file in row.Files) file.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(AudioFileRow.IsTicked)) Refresh(); };
+        }
         FreeableText = r.Freeable > 0 ? $"could save {DiskSpace.Text(r.Freeable)}" : "nothing to compact";
         Note = r.OwnFolder
             ? $"Everything in {Path.GetFileName(r.Folder)}, the song's own folder."
@@ -107,8 +116,11 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         _item.SpaceBytes = r.OwnFolder ? r.Bytes : _item.SavesBytes;
     }
 
-    /// <summary>One row per kind: "7 identical saves", "41 old autosaves", with the files behind each.</summary>
-    static IEnumerable<CompactRow> Group(IReadOnlyList<CompactItem> items) =>
+    /// <summary>
+    /// One row per kind: "7 identical saves", "41 old autosaves", with the files behind each. Audio no save seems to use
+    /// opens into its files, each with Play, none ticked: you hear each one and pick (Solomon's pick, 25 Oct).
+    /// </summary>
+    static IEnumerable<CompactRow> Group(IReadOnlyList<CompactItem> items, SongSpaceViewModel owner) =>
         items.GroupBy(i => i.Kind).Select(g =>
         {
             var n = g.Count();
@@ -116,23 +128,63 @@ public sealed partial class SongSpaceViewModel : ObservableObject
             {
                 CompactKind.SameSave => (n == 1 ? "1 identical save" : $"{n} identical saves",
                                          "Byte-for-byte copies of another save in the same folder. The newest of each stays."),
-                CompactKind.Backup => (n == 1 ? "1 old autosave" : $"{n} old autosaves", "Your DAW's own backup copies, older than the newest few."),
+                CompactKind.Backup => (n == 1 ? "1 old autosave" : $"{n} old autosaves", "Your DAW's own backup copies, older than the newest you keep."),
                 CompactKind.Cache => ("Caches the DAW rebuilds", g.First().Note),
-                _ => (g.First().Note, "Shown only: samples and recordings are never removed. Check them yourself with Show."),
+                _ => (n == 1 ? "1 audio file no save seems to use" : $"{n} audio files no save seems to use",
+                      "Maybe old bounces or takes, maybe a mix you'd want. Play each one and tick only what can go."),
             };
-            return new CompactRow(g.Key, title, detail, g.SelectMany(i => i.Paths).ToList(), g.Sum(i => i.Bytes));
+            var files = g.Key == CompactKind.UnusedAudio ? g.Select(i => new AudioFileRow(i.Paths[0], i.Bytes, owner)).ToList() : [];
+            return new CompactRow(g.Key, title, detail, g.SelectMany(i => i.Paths).ToList(), g.Sum(i => i.Bytes), files);
         });
+
+    /// <summary>What's ticked: whole rows, and the audio files picked one by one.</summary>
+    IEnumerable<(string Path, long Bytes)> Ticked() =>
+        Rows.Where(r => r.IsTicked).SelectMany(r => r.Paths.Select(p => (p, 0L))).Concat(Rows.SelectMany(r => r.Files).Where(f => f.IsTicked).Select(f => (f.Path, f.Bytes)));
+
+    long TickedBytes => Rows.Where(r => r.IsTicked).Sum(r => r.Bytes) + Rows.SelectMany(r => r.Files).Where(f => f.IsTicked).Sum(f => f.Bytes);
+    int TickedAudio => Rows.SelectMany(r => r.Files).Count(f => f.IsTicked);
+
+    /// <summary>The Keep or Delete step's line: says so when audio is among what goes.</summary>
+    [ObservableProperty] string _confirmNote = "";
 
     void Refresh()
     {
-        var bytes = Rows.Where(r => r.IsTicked).Sum(r => r.Bytes);
+        var bytes = TickedBytes;
         CanCompact = bytes > 0 && !Busy;
         ConfirmText = bytes > 0 ? $"Delete {DiskSpace.Text(bytes)}" : "Delete";
+        var audio = TickedAudio;
+        ConfirmNote = "They go to the Recycle Bin, so you can put them back. Your newest save stays where it is" +
+                      (audio == 0 ? ", and so does every sample."
+                                  : $". {(audio == 1 ? "1 audio file you picked goes too" : $"{audio} audio files you picked go too")}: make sure you've heard them.");
+    }
+
+    IAudioPlayer? _player;
+
+    /// <summary>Plays an audio file on the list, or stops it if it's the one playing.</summary>
+    internal void Play(AudioFileRow file)
+    {
+        try
+        {
+            _player ??= Ui.Current.CreateAudioPlayer();
+            if (_player.Playing == file.Path) _player.Stop();
+            else _player.Play(file.Path);
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or NotSupportedException or UnauthorizedAccessException)
+        {
+            _main.Activities.Failed($"Couldn't play {Path.GetFileName(file.Path)}", e.Message);
+        }
+    }
+
+    /// <summary>The tab closed or the song changed: stop anything still playing.</summary>
+    public void StopPlaying()
+    {
+        _player?.Dispose();
+        _player = null;
     }
 
     partial void OnKeepBackupsChanged(int value)
     {
-        if (Measuring || value == 0) return;
+        if (Measuring) return;
         _db.SetSetting(LibraryDb.KeepBackupsKey, value.ToString());
         _ = MeasureAsync();
     }
@@ -156,20 +208,20 @@ public sealed partial class SongSpaceViewModel : ObservableObject
         Busy = true;
         CanCompact = false;
         var newest = _item.Path;
+        _player?.Stop();
         // Your newest save never goes, whatever the list says.
-        var paths = Rows.Where(r => r.IsTicked && r.Kind != CompactKind.UnusedAudio).SelectMany(r => r.Paths)
-                        .Where(p => !p.Equals(newest, StringComparison.OrdinalIgnoreCase)).ToList();
-        var bytes = Rows.Where(r => r.IsTicked).Sum(r => r.Bytes);
+        var paths = Ticked().Select(t => t.Path).Where(p => !p.Equals(newest, StringComparison.OrdinalIgnoreCase)).Distinct().ToList();
+        var bytes = TickedBytes;
         var saves = Rows.Where(r => r.IsTicked && r.Kind == CompactKind.SameSave).SelectMany(r => r.Paths).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var problems = await Task.Run(() => paths.Select(p => (Path: p, Problem: RecycleBin.Send(p))).Where(x => x.Problem.Length > 0).ToList());
-        foreach (var gone in saves.Where(s => problems.All(x => !x.Path.Equals(s, StringComparison.OrdinalIgnoreCase))))
+        var problems = await Task.Run(() => RecycleBin.SendMany(paths));
+        foreach (var gone in saves.Where(s => !problems.ContainsKey(s)))
             _db.RemoveProject(gone);
         Busy = false;
         Confirming = false;
         if (problems.Count == 0)
             _main.Activities.Start("Song compacted").Finish($"Freed {DiskSpace.Text(bytes)} from {_item.Name}", "The files are in the Recycle Bin if you want them back.");
         else
-            _main.Activities.Failed($"Some of {_item.Name}'s files couldn't go", $"{problems.Count} left: {problems[0].Problem}");
+            _main.Activities.Failed($"Some of {_item.Name}'s files couldn't go", $"{problems.Count} left: {problems.First().Value}");
         if (saves.Count > 0) await _main.Projects.ReloadAsync(_item.Path);
         else await MeasureAsync();
     }
@@ -184,15 +236,20 @@ public sealed record SpacePart(string Name, long Bytes, string Colour, double Sh
 /// <summary>A line on the Space tab: something that could go, ticked to go with Compact.</summary>
 public sealed partial class CompactRow : ObservableObject
 {
-    public CompactRow(CompactKind kind, string title, string detail, IReadOnlyList<string> paths, long bytes)
+    public CompactRow(CompactKind kind, string title, string detail, IReadOnlyList<string> paths, long bytes, IReadOnlyList<AudioFileRow>? files = null)
     {
         Kind = kind;
         Title = title;
         Detail = detail;
         Paths = paths;
         Bytes = bytes;
+        Files = files ?? [];
         _isTicked = CanTick;
     }
+
+    /// <summary>The audio files, each picked on its own (only on the audio line).</summary>
+    public IReadOnlyList<AudioFileRow> Files { get; }
+    public bool HasFiles => Files.Count > 0;
 
     public CompactKind Kind { get; }
     public string Title { get; }
@@ -206,4 +263,19 @@ public sealed partial class CompactRow : ObservableObject
     [ObservableProperty] bool _isTicked;
 
     [RelayCommand] void Show() => Shell.Reveal(Paths[0]);
+}
+
+/// <summary>An audio file no save seems to use: played, then ticked by hand if it can go.</summary>
+public sealed partial class AudioFileRow(string path, long bytes, SongSpaceViewModel owner) : ObservableObject
+{
+    public string Path => path;
+    public long Bytes => bytes;
+    public string Name => System.IO.Path.GetFileName(path);
+    public string SizeText => DiskSpace.Text(bytes);
+    /// <summary>The folder it's in, inside the song's ("Bounces", "Media").</summary>
+    public string Folder => System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(path) ?? "");
+    [ObservableProperty] bool _isTicked;
+
+    [RelayCommand] void Play() => owner.Play(this);
+    [RelayCommand] void Show() => Shell.Reveal(path);
 }
