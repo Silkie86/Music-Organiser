@@ -3,6 +3,7 @@
              xmlns:vm="using:MusicOrganiser.ViewModels"
              xmlns:lib="using:MusicOrganiser.Core.Library"
              xmlns:plugins="using:MusicOrganiser.Core.Plugins"
+             xmlns:space="using:MusicOrganiser.Core.Space"
              xmlns:views="using:MusicOrganiser.Avalonia.Views"
              x:Class="MusicOrganiser.Avalonia.Views.PluginsView"
              x:DataType="vm:PluginsViewModel">
@@ -28,6 +29,7 @@
             <Setter Property="Cursor" Value="Hand" />
         </Style>
     </UserControl.Styles>
+    <Panel>
     <DockPanel>
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,16">
             <TextBox DockPanel.Dock="Right" Classes="clearButton pageSearch" Width="360" VerticalAlignment="Center"
@@ -68,7 +70,7 @@
                                     IsVisible="{Binding !Selected.Installed, FallbackValue=False}" />
                         </StackPanel>
                     </StackPanel>
-                    <TabControl>
+                    <TabControl SelectedIndex="{Binding SideTab}">
                         <TabItem Header="{Binding ProjectsTitle}">
                             <DockPanel>
                                 <!-- Which DAW's songs, and songs or every save: Solomon's 18 Oct notes. -->
@@ -110,6 +112,65 @@
                                     </ListBox.ItemTemplate>
                                 </ListBox>
                             </DockPanel>
+                        </TabItem>
+                        <!-- Where its room on disk goes, with Clean up and Uninstall (Solomon, 25 Oct 2026). -->
+                        <TabItem Header="Space">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{Binding SpaceSummary}" Classes="muted" FontSize="12.5" TextWrapping="Wrap" />
+                                    <StackPanel Spacing="8" IsVisible="{Binding HasSpace}">
+                                        <views:ShareBar Parts="{Binding SpaceParts}" />
+                                        <ItemsControl ItemsSource="{Binding SpaceParts}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:SpacePart">
+                                                    <DockPanel Margin="0,1">
+                                                        <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontFamily="{DynamicResource NumberFont}" FontSize="12"
+                                                                   Foreground="{StaticResource MutedBrush}" />
+                                                        <Border DockPanel.Dock="Left" Width="9" Height="9" CornerRadius="2" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                                Background="{Binding Colour, Converter={StaticResource HexBrush}}" />
+                                                        <TextBlock Text="{Binding Name}" FontSize="12.5" />
+                                                    </DockPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="{Binding SharedText}" Classes="muted" FontSize="11.5" TextWrapping="Wrap"
+                                                   IsVisible="{Binding SharedText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                        <WrapPanel Margin="0,2,0,0">
+                                            <Button Content="Clean up…" Margin="0,0,6,6" Command="{Binding CleanUpCommand}" CommandParameter="{x:Null}"
+                                                    ToolTip.Tip="Remove its presets or sounds to the Recycle Bin. You see what goes first." />
+                                            <Button Content="Uninstall…" Classes="trouble" Margin="0,0,6,6" Command="{Binding UninstallCommand}" CommandParameter="{x:Null}"
+                                                    ToolTip.Tip="Run its own uninstaller, as Windows Settings › Apps does. You're asked first." />
+                                            <Button Content="Add a folder…" Margin="0,0,6,6" Command="{Binding AddSpaceFolderCommand}"
+                                                    ToolTip.Tip="A folder of its sounds or presets the app didn't find, like a sound library on another drive" />
+                                        </WrapPanel>
+                                        <TextBlock Text="FILES AND FOLDERS" Classes="filterLabel" Margin="0,4,0,0" />
+                                        <ItemsControl ItemsSource="{Binding SpaceFolders}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:SpaceFolderItem">
+                                                    <Border Classes="row" Padding="8,5" Margin="-8,0">
+                                                        <DockPanel>
+                                                            <StackPanel DockPanel.Dock="Right" Classes="rowActions">
+                                                                <Button Content="Show" Command="{Binding ShowCommand}" />
+                                                                <Button Content="Not its" Command="{Binding NotThisCommand}" IsVisible="{Binding CanRuleOut}"
+                                                                        ToolTip.Tip="This folder isn't this plugin's: leave it out from now on" />
+                                                            </StackPanel>
+                                                            <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontFamily="{DynamicResource NumberFont}" FontSize="12"
+                                                                       Margin="8,0" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding KindText}" FontSize="12.5" />
+                                                                <TextBlock Text="{Binding Path}" FontSize="11" Foreground="{StaticResource FaintBrush}"
+                                                                           TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}" />
+                                                                <TextBlock Text="{Binding SharedText}" FontSize="11" Foreground="{StaticResource WarningBrush}"
+                                                                           TextTrimming="CharacterEllipsis" IsVisible="{Binding IsShared}" ToolTip.Tip="{Binding SharedText}" />
+                                                            </StackPanel>
+                                                        </DockPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ScrollViewer>
                         </TabItem>
                         <TabItem Header="Installed copies">
                             <DockPanel Margin="0,6,0,0">
@@ -178,6 +239,52 @@
         </Border>
 
         <Grid RowDefinitions="Auto,Auto,*,Auto">
+            <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+            <!-- Big plugins no project has used for years: what Clean up and Uninstall could free. -->
+            <Border Classes="card" Padding="16,12,6,4" Margin="0,0,0,12" IsVisible="{Binding HasCandidates}">
+                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
+                    <StackPanel Margin="0,0,18,8" VerticalAlignment="Top" Spacing="2">
+                        <TextBlock Text="You could free up" Classes="muted" FontSize="12" />
+                        <TextBlock Text="{Binding FreeableText}" FontSize="24" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}"
+                                   Foreground="{StaticResource OkBrush}" />
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,0">
+                            <TextBlock Text="Unused for" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+                            <ComboBox ItemsSource="{x:Static vm:PluginsViewModel.UnusedYearsChoices}" SelectedItem="{Binding UnusedYears}"
+                                      ToolTip.Tip="How long since a project last used a plugin before it counts as unused">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="x:Int32">
+                                        <TextBlock Text="{Binding StringFormat='{}{0} yr'}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+                    <ItemsControl Grid.Column="1" ItemsSource="{Binding Candidates}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:SpaceCandidate">
+                                <Border Classes="tile needed" PointerPressed="OnCandidatePressed">
+                                    <StackPanel Spacing="1">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontSize="15" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}"
+                                                       Foreground="{StaticResource WarningBrush}" Margin="8,0,0,0" />
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13.5" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
+                                        </DockPanel>
+                                        <TextBlock Text="{Binding Line}" Classes="muted" FontSize="11.5" TextTrimming="CharacterEllipsis" />
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,6,0,0">
+                                            <Button Content="Clean up…" Command="{Binding CleanUpCommand}" />
+                                            <Button Content="Uninstall…" Command="{Binding UninstallCommand}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding FreeableNote}" Classes="muted" FontSize="12" Margin="0,0,10,8" TextWrapping="Wrap" />
+                </Grid>
+            </Border>
+
             <!-- What to install to open more of your old projects. -->
             <Border Classes="card" Padding="16,14,6,6" Margin="0,0,0,12" IsVisible="{Binding HasNeeded}">
                 <StackPanel>
@@ -227,6 +334,8 @@
                     <TextBlock Text="Every plugin your projects use is installed on this PC." VerticalAlignment="Center" />
                 </StackPanel>
             </Border>
+            </StackPanel>
+            </ScrollViewer>
 
             <ListBox Grid.Row="1" Classes="chips group" ItemsSource="{x:Static vm:PluginsViewModel.FilterChoices}" SelectedItem="{Binding Filter}" Margin="0,0,0,10">
                 <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate></ListBox.ItemsPanel>
@@ -252,13 +361,25 @@
                         <DataGridTextColumn Header="Kind" Width="100" Binding="{Binding Kind}" x:DataType="lib:PluginUsage" />
                         <DataGridTextColumn Header="Projects" Width="80" Binding="{Binding Projects}" x:DataType="lib:PluginUsage" />
                         <DataGridTextColumn Header="Used in" Width="*" Binding="{Binding Daws}" x:DataType="lib:PluginUsage" />
-                        <DataGridTextColumn Header="Last used" Width="100" Binding="{Binding LastUsed, StringFormat={}{0:MMM yyyy}}" x:DataType="lib:PluginUsage" />
+                        <DataGridTextColumn Header="Last used" Width="100" Binding="{Binding LastUsedText}" SortMemberPath="LastUsed" x:DataType="lib:PluginUsage" />
+                        <DataGridTemplateColumn Header="Size" Width="90" SortMemberPath="Bytes">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="lib:PluginUsage">
+                                    <TextBlock Text="{Binding SizeText}" Margin="8,0" VerticalAlignment="Center" HorizontalAlignment="Right"
+                                               FontFamily="{DynamicResource NumberFont}" FontSize="12" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTemplateColumn Header="Status" Width="150" SortMemberPath="Installed">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate x:DataType="lib:PluginUsage">
                                     <Panel Margin="8,0" VerticalAlignment="Center">
-                                        <Border Classes="pill" Background="{StaticResource OkSoftBrush}" IsVisible="{Binding Installed}">
+                                        <Border Classes="pill" Background="{StaticResource OkSoftBrush}" IsVisible="{Binding InstalledInUse}">
                                             <TextBlock Text="Installed" Classes="pillText" Foreground="{StaticResource OkBrush}" />
+                                        </Border>
+                                        <Border Classes="pill" Background="{StaticResource WarningSoftBrush}" IsVisible="{Binding Unused}"
+                                                ToolTip.Tip="Installed, but no project has used it for a while: a good one to clean up or uninstall">
+                                            <TextBlock Text="Good to remove" Classes="pillText" Foreground="{StaticResource WarningBrush}" />
                                         </Border>
                                         <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding !Installed}">
                                             <Border Classes="pill" Background="{StaticResource MissingSoftBrush}">
@@ -278,6 +399,11 @@
 
             <StackPanel Grid.Row="3" Margin="0,8,0,0">
                 <TextBlock FontSize="12" Classes="muted" TextWrapping="Wrap" Text="{Binding ScannerNote}" />
+                <DockPanel Margin="0,6,0,0">
+                    <Button DockPanel.Dock="Left" Content="Measure sizes again" Command="{Binding MeasureAgainCommand}"
+                            ToolTip.Tip="Measure every plugin's files, presets and sounds now. It runs in the background." />
+                    <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" Classes="muted" TextWrapping="Wrap" Text="{Binding SpaceNote}" />
+                </DockPanel>
                 <DockPanel Margin="0,8,0,0" IsVisible="{Binding CanReadAll}">
                     <Button DockPanel.Dock="Left" Content="Read all parameters" Command="{Binding ReadAllParametersCommand}" />
                     <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="12" Classes="muted" TextWrapping="Wrap"
@@ -286,4 +412,54 @@
             </StackPanel>
         </Grid>
     </DockPanel>
+
+    <!-- The Keep or Delete card: nothing is removed until Delete (or Uninstall) is pressed here. -->
+    <Border Background="#99000000" IsVisible="{Binding HasCard}">
+        <Border Classes="card" MaxWidth="520" Padding="18,16" HorizontalAlignment="Center" VerticalAlignment="Center"
+                DataContext="{Binding Card}" x:DataType="vm:SpaceCard">
+            <StackPanel Spacing="10">
+                <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding Intro}" Classes="muted" TextWrapping="Wrap" />
+                <ComboBox ItemsSource="{Binding Uninstallers}" SelectedItem="{Binding PickedUninstaller}" HorizontalAlignment="Stretch"
+                          IsVisible="{Binding HasUninstallers}" IsEnabled="{Binding HasChoice}"
+                          ToolTip.Tip="The programs Windows lists that look like this plugin's. Pick the right one if the first isn't.">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="space:Uninstaller">
+                            <TextBlock TextTrimming="CharacterEllipsis">
+                                <Run Text="{Binding Name}" /><Run Text="  " /><Run Text="{Binding Publisher}" Foreground="{StaticResource MutedBrush}" />
+                            </TextBlock>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <ItemsControl ItemsSource="{Binding Items}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:CleanupItem">
+                            <Border Classes="row" Padding="10,8" Margin="0,0,0,6" Background="{StaticResource SurfaceRaisedBrush}"
+                                    CornerRadius="{DynamicResource RadiusM}">
+                                <DockPanel>
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsTicked}" IsEnabled="{Binding CanTick}" VerticalAlignment="Top" Margin="0,0,6,0" />
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontFamily="{DynamicResource NumberFont}" Margin="10,0,0,0"
+                                               Foreground="{StaticResource OkBrush}" VerticalAlignment="Top" />
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding Path}" FontSize="11" Foreground="{StaticResource FaintBrush}" TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding Path}" />
+                                        <TextBlock Text="{Binding Why}" FontSize="11.5" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap"
+                                                   IsVisible="{Binding !CanTick}" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="{Binding Empty}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasEmpty}" />
+                <TextBlock Text="{Binding Warning}" Foreground="{StaticResource WarningBrush}" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding HasWarning}" />
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,4,0,0">
+                    <Button Content="Keep" Command="{Binding KeepCommand}" IsDefault="True" IsCancel="True" />
+                    <Button Content="{Binding ConfirmText}" Classes="trouble" Command="{Binding RunCommand}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Border>
+    </Panel>
 </UserControl>

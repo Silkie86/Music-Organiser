@@ -21,6 +21,7 @@ public sealed partial class StyleCheckTests
     static readonly Dictionary<(string File, string Colour), string> AllowedColours = new()
     {
         [("MainWindow.axaml", "#99000000")] = "the dimmed backdrop behind the keys sheet, the same in every theme",
+        [("PluginsView.axaml", "#99000000")] = "the same dimmed backdrop behind the Clean up / Uninstall card",
         [("SettingsView.axaml", "#F2994A")] = "the orange song marker drawn in each theme's little preview",
     };
 

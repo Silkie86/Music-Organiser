@@ -17,7 +17,7 @@ public sealed class Scanner(LibraryDb db)
 
     // FL Studio's own backup copies, should they end up outside its Backup folder:
     // "Song (autosave).flp" and "Song (overwritten at 2213h05).flp".
-    static bool IsAutosaveFile(string name) =>
+    public static bool IsAutosaveFile(string name) =>
         name.Contains(" (autosave)", StringComparison.OrdinalIgnoreCase) ||
         name.Contains(" (overwritten at ", StringComparison.OrdinalIgnoreCase);
 
@@ -28,6 +28,9 @@ public sealed class Scanner(LibraryDb db)
     // Old FL Studio installs keep demos in "Cool stuff" and loop packs in Data\Patches.
     static readonly HashSet<string> FactoryDirs = new(StringComparer.OrdinalIgnoreCase)
         { "Cool stuff", "Demo songs", "Product demos", "Templates", "Template", "Tutorial", "Tutorials" };
+
+    /// <summary>A DAW's autosave folder: Bitwig "auto-backups", FL Studio "Backup", Studio One "History".</summary>
+    public static bool IsAutosaveDir(string name) => AutosaveDirs.Contains(name);
 
     static bool SkipDir(string name, string parent) =>
         name.StartsWith('.') || SkipDirs.Contains(name) || AutosaveDirs.Contains(name) || FactoryDirs.Contains(name) ||

@@ -65,6 +65,13 @@
                     <TextBlock Text="Favourites" VerticalAlignment="Center" />
                 </StackPanel>
             </ToggleButton>
+            <ToggleButton Classes="chip" IsChecked="{Binding BiggestFirst}"
+                          ToolTip.Tip="Biggest songs first: each song's folder, saves, autosaves and recordings. Open a song's Space tab to compact it.">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Path Data="M3,20 L21,20 M6,20 L6,13 M11,20 L11,8 M16,20 L16,4" Classes="navIcon" Width="13" Height="13" Stretch="Uniform" />
+                    <TextBlock Text="Biggest first" VerticalAlignment="Center" />
+                </StackPanel>
+            </ToggleButton>
             <Button Classes="chip" ToolTip.Tip="Status, tag, Elektron box, grouping, archived and older saves">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Path Data="{StaticResource FilterIcon}" Classes="navIcon" Width="14" Height="14" />

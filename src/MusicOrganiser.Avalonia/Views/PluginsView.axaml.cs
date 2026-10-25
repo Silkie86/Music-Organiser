@@ -18,6 +18,11 @@ public partial class PluginsView : UserControl, IShortcutPage
         if ((sender as Control)?.DataContext is NeededPlugin n) n.PickCommand.Execute(null);
     }
 
+    void OnCandidatePressed(object? sender, PointerPressedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is SpaceCandidate c) c.PickCommand.Execute(null);
+    }
+
     /// <summary>The Plugins page's keys (Settings › Shortcuts), for the plugin picked in the list.</summary>
     public bool RunShortcut(string id, bool repeat)
     {
@@ -26,6 +31,8 @@ public partial class PluginsView : UserControl, IShortcutPage
         {
             case "plugins.projects": vm.ShowProjectsCommand.Execute(null); return true;
             case "plugins.searchOnline": vm.SearchOnlineCommand.Execute(null); return true;
+            case "plugins.cleanUp": vm.CleanUpCommand.Execute(null); return true;
+            case "plugins.uninstall": vm.UninstallCommand.Execute(null); return true;
         }
         return false;
     }

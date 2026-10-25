@@ -32,6 +32,9 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     SongMidiViewModel? _songMidi;
     /// <summary>The "MIDI that fits" tab: worked out the first time it's opened (see <see cref="SongMidiViewModel"/>).</summary>
     public SongMidiViewModel SongMidi => _songMidi ??= new(_main.Midi, _main, Item.Path, Item.Name, Item.Tempo);
+    SongSpaceViewModel? _space;
+    /// <summary>The Space tab: measured the first time it's opened (see <see cref="SongSpaceViewModel"/>).</summary>
+    public SongSpaceViewModel Space => _space ??= new(_db, _main, Item);
     /// <summary>The "MIDI that fits" tab's small playground stops when another page shows (<paramref name="closed"/>: another song is picked, so it goes).</summary>
     public void LeftSongMidi(bool closed) { if (closed) _songMidi?.Closed(); else _songMidi?.Left(); }
     /// <summary>The plugin list as shown: synths that play no notes in the song are hidden until asked for.</summary>

@@ -32,6 +32,7 @@ public sealed partial class ProjectItem : ObservableObject
         _notes = !string.IsNullOrWhiteSpace(p.Notes) ? p.Notes
             : earlier.FirstOrDefault(o => !string.IsNullOrWhiteSpace(o.Notes))?.Notes ?? p.Notes;
         _tags = p.Tags;
+        _spaceBytes = SavesBytes;
         _loading = false;
     }
 
@@ -78,7 +79,17 @@ public sealed partial class ProjectItem : ObservableObject
         Key.Length == 0 ? null : Key,
         SaveCount > 1 ? $"{SaveCount} saves" : null,
         Rework is { } r ? $"reworked {r.End.Year}" : null,
+        SpaceBytes > 0 ? SpaceText : null,
     }.OfType<string>());
+
+    /// <summary>
+    /// How much room the song takes on disk: its whole folder when it has one to itself and it's been measured (every
+    /// save, autosave, recording and bounce), otherwise its save files.
+    /// </summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(DetailsLine), nameof(SpaceText))] long _spaceBytes;
+    public string SpaceText => Core.Space.DiskSpace.Text(SpaceBytes);
+    /// <summary>The song's save files added up.</summary>
+    public long SavesBytes => _p.Size + OlderSaves.Sum(o => o.Size);
     public int MissingCount => _p.MissingPlugins + _p.MissingSamples;
 
     /// <summary>The key the project's notes point to (drums left out), or "" when they don't point to one.</summary>

@@ -77,6 +77,16 @@ public sealed record PluginUsage(string Name, string Vendor, string Format, int 
 {
     /// <summary>For a DAW's own device, that DAW (each DAW's is its own row); "" for a plugin.</summary>
     public string Own => Format == "Native" ? Daws : "";
+
+    /// <summary>Its room on disk (plugin files, presets and sounds), once measured; 0 when not installed or not measured yet.</summary>
+    public long Bytes { get; init; }
+    public string SizeText => Bytes > 0 ? Space.DiskSpace.Text(Bytes) : "";
+    /// <summary>Installed, but no project has used it in the years the Plugins page asks about (or ever).</summary>
+    public bool Unused { get; init; }
+    /// <summary>The list's "Installed" pill: installed and not flagged as good to remove.</summary>
+    public bool InstalledInUse => Installed && !Unused;
+    /// <summary>"Mar 2022", or "Never" for an installed plugin no project uses.</summary>
+    public string LastUsedText => LastUsed is { } t ? t.ToString("MMM yyyy") : Projects == 0 ? "Never" : "";
 }
 
 /// <summary>A project that uses a plugin, for the Plugins page's side panel.</summary>

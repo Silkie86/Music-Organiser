@@ -540,7 +540,56 @@ public sealed partial class MainViewModel : ObservableObject
         }
         // The MIDI browser reads new and changed projects' MIDI on its own, at the lowest priority.
         if (_midiPage) _ = Midi.AfterScanAsync();
+        _ = MeasureSpaceAsync();
         await RunQueuedScanAsync();
+    }
+
+    bool _measuringSpace;
+
+    /// <summary>
+    /// Measures how much room plugins and songs take, after a scan, in the background slots (see <see cref="SpaceMeter"/>):
+    /// plugins once a week (or now, with <paramref name="force"/>), song folders whose size is missing or older than
+    /// their newest save. The Plugins and Projects pages pick the sizes up when it's done.
+    /// </summary>
+    public async Task MeasureSpaceAsync(bool force = false)
+    {
+        if (_measuringSpace) return;
+        _measuringSpace = true;
+        var meter = new Core.Space.SpaceMeter(_db);
+        var folders = Projects.OwnFolderList();
+        using var cts = new CancellationTokenSource();
+        Activity? card = null;
+        try
+        {
+            var plugins = force || meter.PluginsStale();
+            if (plugins)
+            {
+                card = Activities.Start("Measuring plugin sizes", cancel: cts.Cancel);
+                await Task.Run(() => meter.MeasurePlugins(ct: cts.Token), cts.Token);
+                await Plugins.ReloadAsync();
+            }
+            var progress = new Progress<(int Done, int Total)>(p =>
+            {
+                card ??= Activities.Start("Measuring song folders", cancel: cts.Cancel);
+                card.Report(100.0 * p.Done / Math.Max(1, p.Total), $"{p.Done:N0} of {p.Total:N0} song folders");
+            });
+            var measured = await Task.Run(() => meter.MeasureFolders(folders, progress, cts.Token), cts.Token);
+            if (measured > 0) Projects.ApplySpace(_db.FolderSpaces());
+            card?.Finish("Disk space measured", measured > 0 ? $"{measured:N0} song folders" : "Plugins measured");
+        }
+        catch (OperationCanceledException)
+        {
+            card?.Stop("Stopped measuring disk space", "It carries on after the next scan");
+            Projects.ApplySpace(_db.FolderSpaces());
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            card?.Fail("Measuring disk space failed", e.Message);
+        }
+        finally
+        {
+            _measuringSpace = false;
+        }
     }
 }
 

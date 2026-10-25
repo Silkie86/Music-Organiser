@@ -5,6 +5,7 @@ using MusicOrganiser.Core;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Plugins;
+using MusicOrganiser.Core.Space;
 
 namespace MusicOrganiser.ViewModels;
 
@@ -19,7 +20,7 @@ public sealed partial class PluginsViewModel : ObservableObject
 
     public const string All = "All", Missing = "Missing", Installed_ = "Installed", Instruments = "Instruments", Effects = "Effects";
     /// <summary>The chips over the list, like the ones on Projects and Sounds.</summary>
-    public static IReadOnlyList<string> FilterChoices { get; } = [All, Missing, Installed_, Instruments, Effects, "VST2", "VST3", "CLAP", "Native"];
+    public static IReadOnlyList<string> FilterChoices { get; } = [All, Missing, Installed_, BigUnused, Instruments, Effects, "VST2", "VST3", "CLAP", "Native"];
     /// <summary>How many missing plugins the "install these" cards show (Settings › Plugins).</summary>
     [ObservableProperty] int _neededCount;
     public const string NeededCountKey = "plugins_needed_cards";
@@ -73,6 +74,7 @@ public sealed partial class PluginsViewModel : ObservableObject
         _db = db;
         _main = main;
         _neededCount = int.TryParse(db.GetSetting(NeededCountKey), out var n) && n > 0 ? n : DefaultNeededCount;
+        _unusedYears = ReadUnusedYears(db);
         Reload();
     }
 
@@ -83,9 +85,11 @@ public sealed partial class PluginsViewModel : ObservableObject
 
     /// <summary>What the page shows, read from the database (on any thread).</summary>
     sealed record Loaded(IReadOnlyList<PluginUsage> Items, HashSet<string> InstalledNames,
-                         IReadOnlyDictionary<long, HashSet<string>> MissingBy, (int Files, int Plugins, int Failed) Scans, (int Read, int Left) Parameters);
+                         IReadOnlyDictionary<long, HashSet<string>> MissingBy, (int Files, int Plugins, int Failed) Scans, (int Read, int Left) Parameters,
+                         IReadOnlyDictionary<string, PluginSpaceInfo> Spaces);
 
-    Loaded Load() => new(_db.PluginUsage(), _db.InstalledNames(), _db.MissingPluginsByProject(), _db.PluginScanCounts(), _db.ParameterCounts());
+    Loaded Load() => new(_db.PluginUsage(), _db.InstalledNames(), _db.MissingPluginsByProject(), _db.PluginScanCounts(), _db.ParameterCounts(),
+                         _db.PluginSpaces());
 
     /// <summary>What the page last read, so changing how many cards to show doesn't read the database again.</summary>
     Loaded? _loaded;
@@ -94,12 +98,15 @@ public sealed partial class PluginsViewModel : ObservableObject
     {
         _loaded = loaded;
         var selected = Selected;
-        Items = loaded.Items;
+        Items = WithSpace(loaded.Items, loaded.Spaces, UnusedYears);
         View = Ui.Current.CreateView(Items as System.Collections.IList ?? Items.ToList());
         View.Filter = o => o is PluginUsage p && Matches(p);
         var missing = Items.Count(p => !p.Installed);
-        Summary = $"{Items.Count} plugins used" + (missing > 0 ? $", {missing} not installed on this PC" : "");
+        var neverUsed = Items.Count(p => p.Projects == 0);
+        Summary = $"{Items.Count - neverUsed} plugins used" + (missing > 0 ? $", {missing} not installed on this PC" : "") +
+                  (neverUsed > 0 ? $", {neverUsed} installed that no project uses" : "");
         BuildNeeded(loaded);
+        BuildCandidates();
         Selected = selected is null ? null : Items.FirstOrDefault(p => p.Name == selected.Name && p.Own == selected.Own);
 
         if (!_main.PluginScanner.Available)
@@ -128,6 +135,7 @@ public sealed partial class PluginsViewModel : ObservableObject
         {
             Missing => !p.Installed,
             Installed_ => p.Installed,
+            BigUnused => p.Unused && p.Bytes > 0,
             Instruments => p.Kind == PluginKind.Instrument,
             Effects => p.Kind is PluginKind.Effect or PluginKind.NoteEffect,
             "VST2" or "VST3" or "CLAP" => p.Format.Equals(Filter, StringComparison.OrdinalIgnoreCase),
@@ -146,7 +154,7 @@ public sealed partial class PluginsViewModel : ObservableObject
     void BuildNeeded(Loaded loaded)
     {
         var installedNames = loaded.InstalledNames;
-        var top = Items.Where(p => !p.Installed)
+        var top = Items.Where(p => !p.Installed && p.Projects > 0)
             .OrderByDescending(p => p.Unlocks).ThenByDescending(p => p.Projects).ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
             .Take(NeededCount)
             .Select(p => new NeededPlugin(p, this, PluginCatalog.OtherVersionInstalled(p.Name, installedNames)))
@@ -213,6 +221,7 @@ public sealed partial class PluginsViewModel : ObservableObject
         if (ProjectsDaw != ProjectsViewModel.Any && !daws.Contains(ProjectsDaw)) ProjectsDaw = ProjectsViewModel.Any;   // shows them
         else ShowSaves();
         LoadInstalled();
+        LoadSpace();
     }
 
     partial void OnEverySaveChanged(bool value) => ShowSaves();

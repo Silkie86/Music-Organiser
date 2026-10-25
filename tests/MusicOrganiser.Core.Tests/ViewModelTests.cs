@@ -2588,7 +2588,7 @@ public class ViewModelTests : IDisposable
         Assert.Equal(2, tab.Rows.First().With!.Parts.Count);
     }
 
-    sealed class HeadlessUi : IPlatformUi
+    internal sealed class HeadlessUi : IPlatformUi
     {
         // Sweep previews and the Sounds list are worked out straight away here, so a test can check them at once.
         static HeadlessUi()

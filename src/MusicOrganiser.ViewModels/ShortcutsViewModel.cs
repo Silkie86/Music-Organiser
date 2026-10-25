@@ -146,6 +146,8 @@ public sealed partial class ShortcutsViewModel : ObservableObject
 
         new("plugins.projects", Plugins, "Show the songs that use the picked plugin", "Ctrl+O", "Music Organiser"),
         new("plugins.searchOnline", Plugins, "Search the web for the picked plugin", "Ctrl+Shift+O", "Music Organiser"),
+        new("plugins.cleanUp", Plugins, "Clean up the picked plugin's presets and sounds (asks first)", ""),
+        new("plugins.uninstall", Plugins, "Uninstall the picked plugin (asks first)", ""),
     ];
 
     readonly LibraryDb? _db;
