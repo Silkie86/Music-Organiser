@@ -19,7 +19,7 @@ public class SpaceTests : IDisposable
 
     string File(string relative, int bytes = 10, DateTime? modified = null)
     {
-        var path = Path.Combine(_root, relative);
+        var path = Path.GetFullPath(Path.Combine(_root, relative));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         System.IO.File.WriteAllBytes(path, Enumerable.Range(0, bytes).Select(i => (byte)(i * 7 + relative.Length)).ToArray());
         if (modified is { } t) System.IO.File.SetLastWriteTime(path, t);
@@ -28,7 +28,7 @@ public class SpaceTests : IDisposable
 
     string Copy(string from, string relative, DateTime modified)
     {
-        var path = Path.Combine(_root, relative);
+        var path = Path.GetFullPath(Path.Combine(_root, relative));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         System.IO.File.Copy(from, path);
         System.IO.File.SetLastWriteTime(path, modified);

@@ -54,6 +54,8 @@ public static class SongSpace
                                           int keepBackups = DefaultKeepBackups, CancellationToken ct = default) => Parallelism.Background(() =>
     {
         if (saves.Count == 0) return new SongSpaceReport(0, false, "", 0, 0, 0, 0, 0, []);
+        // Written the way the folder listing writes them ("C:\a/b" and "C:\a\b" are the same file).
+        saves = saves.Select(s => s with { Path = Path.GetFullPath(s.Path) }).ToList();
         var newest = saves.MaxBy(s => s.Modified)!;
         var folder = Path.GetDirectoryName(newest.Path) ?? "";
         var savePaths = saves.Select(s => s.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
