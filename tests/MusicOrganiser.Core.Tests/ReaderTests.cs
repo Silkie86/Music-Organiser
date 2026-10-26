@@ -434,6 +434,34 @@ public class FlStudio25Tests
     }
 
     [Fact]
+    public void A_parameter_plugin_that_saved_every_program_gives_the_one_its_channel_had_picked()
+    {
+        // Solomon's "broken homes_29" (2026-10-26): FL saved 32-bit FireBird's 128 programs of 50 values, 6,400 in all,
+        // and the whole lot went to Bitwig as one program, so FireBird came up at its default sound there.
+        var dir = Fixtures.TempDir();
+        var path = Path.Combine(dir, "broken homes_29.flp");
+        File.WriteAllBytes(path, new Fixtures.FlpBuilder()
+            .Ascii(199, "21.2.2.3914").Dword(156, 140_000)
+            .Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "SYN FM Agro")
+            .Data(213, Fixtures.WrapperBlob("Tone2FireBird", @"C:\Program Files (x86)\VSTPlugIns\FireBird.dll", "Tone2",
+                                   Fixtures.FlVst2ParamBank([[0.1f, 0.2f, 0.3f], [0.4f, 0.5f, 0.6f], [0.7f, 0.8f, 0.9f]],
+                                                   ["SYN Funky", "SYN live wire", "SYN FM Agro"], selected: 2),
+                                   version: 12, kind: 0, fourCc: "BF2T"))
+            .Build());
+
+        var state = new FlStudioReader().ReadSong(path).Channels.Single().Instrument!.State!;
+        var d = state.Data;
+
+        Assert.Equal("FxCk", Encoding.ASCII.GetString(d, 8, 4));
+        Assert.Equal(3, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(d.AsSpan(24)));
+        Assert.Equal("SYN FM Agro", Encoding.ASCII.GetString(d, 28, 28).TrimEnd('\0'));
+        Assert.Equal([0.7f, 0.8f, 0.9f], Enumerable.Range(0, 3)
+            .Select(i => System.Buffers.Binary.BinaryPrimitives.ReadSingleBigEndian(d.AsSpan(56 + 4 * i))));
+        Assert.Equal(d.Length - 8, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(d.AsSpan(4)));
+    }
+
+    [Fact]
     public void ExportsVst3AsVstPreset()
     {
         var arcade = new FlStudioReader().ExtractPresets(_path).Single(p => p.Plugin == "Arcade");

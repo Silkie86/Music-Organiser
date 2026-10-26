@@ -279,6 +279,32 @@ public static class Fixtures
     }
 
     /// <summary>
+    /// FL's VST2 state for a plugin without chunks that has several programs, as FL 10 and 21 save Tone2's FireBird:
+    /// the 21-byte header with the selected program, every program's values one after another, then u32 the number of
+    /// programs and their names, 25 bytes apart.
+    /// </summary>
+    public static byte[] FlVst2ParamBank(float[][] programs, string[] names, int selected)
+    {
+        using var ms = new MemoryStream();
+        var header = new byte[21];
+        BinaryPrimitives.WriteInt32LittleEndian(header, -9);
+        header[4] = 0x05;
+        BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(5), -2);
+        BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(17), selected);
+        ms.Write(header);
+        ms.Write(BitConverter.GetBytes((uint)programs.Sum(p => p.Length)));
+        foreach (var v in programs.SelectMany(p => p)) ms.Write(BitConverter.GetBytes(v));
+        ms.Write(BitConverter.GetBytes((uint)programs.Length));
+        foreach (var n in names)
+        {
+            var name = new byte[25];
+            Encoding.ASCII.GetBytes(n).CopyTo(name, 0);
+            ms.Write(name);
+        }
+        return ms.ToArray();
+    }
+
+    /// <summary>
     /// FL's VST2 state for a plugin without chunks: the 21-byte header (chunk length 0,
     /// flags without 0x08), the parameter count and values, then u32 1 and the program name.
     /// </summary>

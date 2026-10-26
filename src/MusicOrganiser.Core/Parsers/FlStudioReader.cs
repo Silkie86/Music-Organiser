@@ -420,7 +420,7 @@ public sealed partial class FlStudioReader : IProjectReader
         if (Vst2Header(state) is var (start, len, current))
         {
             selected = current;
-            if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state, start) is var (values, program))
+            if (len == 0 && (state[4] & 0x08) == 0 && ParamState(state, start, current) is var (values, program))
                 return new PresetBlob(name, plugin, ".fxp", Fxp.WrapParams(values, program.Length > 0 ? program : plugin, id)) { Program = selected };
             if (start + (long)len <= state.Length) chunk = state.AsSpan(start, (int)len).ToArray();
         }
@@ -450,20 +450,29 @@ public sealed partial class FlStudioReader : IProjectReader
 
     /// <summary>
     /// Plugins that don't save a chunk (Predator, older FabFilter) have their parameters after
-    /// FL's header instead: u32 count, the values as floats, then u32 1 and the program name.
+    /// FL's header instead: u32 count, the values as floats, then u32 the number of programs and each one's
+    /// name (25 bytes apart). With more than one program the values are every program's, one after another: Tone2's
+    /// FireBird (32-bit, in Solomon's "broken homes_29") saves 128 programs of 50, so 6,400 values. This gives the
+    /// <paramref name="current"/> program's values and name, the sound the channel plays; all 6,400 as one program
+    /// was more than the plugin has, and it came up at its default sound in Bitwig.
     /// </summary>
-    static (float[] Values, string Program)? ParamState(byte[] state, int start)
+    static (float[] Values, string Program)? ParamState(byte[] state, int start, int current = 0)
     {
+        const int NameSpacing = 25;   // VST's longest program name, 24 characters, and its end
         if (state.Length < start + 4) return null;
         var n = BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(start));
         if (n == 0 || start + 4 + 4L * n > state.Length) return null;
-        var values = new float[n];
-        for (var i = 0; i < n; i++) values[i] = BinaryPrimitives.ReadSingleLittleEndian(state.AsSpan(start + 4 + 4 * i));
-        var program = "";
         var at = start + 4 + 4 * (int)n;
-        if (at + 4 < state.Length && BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(at)) == 1)
+        var programs = at + 4 <= state.Length ? BinaryPrimitives.ReadUInt32LittleEndian(state.AsSpan(at)) : 0;
+        var bank = programs > 1 && n % programs == 0 && at + 4 + (long)NameSpacing * programs <= state.Length;
+        var (count, from) = bank ? ((int)(n / programs), Math.Clamp(current, 0, (int)programs - 1)) : ((int)n, 0);
+        var values = new float[count];
+        for (var i = 0; i < count; i++)
+            values[i] = BinaryPrimitives.ReadSingleLittleEndian(state.AsSpan(start + 4 + 4 * (from * count + i)));
+        var program = "";
+        if (programs >= 1 && at + 4 < state.Length && (bank || programs == 1))
         {
-            var text = state.AsSpan(at + 4, Math.Min(28, state.Length - at - 4));
+            var text = state.AsSpan(at + 4 + NameSpacing * from, Math.Min(bank ? NameSpacing : 28, state.Length - at - 4 - NameSpacing * from));
             var end = text.IndexOf((byte)0);
             program = Encoding.Latin1.GetString(end < 0 ? text : text[..end]).Trim();
         }
