@@ -2,6 +2,7 @@ using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Export;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Plugins.Serum;
+using MusicOrganiser.Core.Sounds;
 using Xunit;
 
 namespace MusicOrganiser.Core.Tests;
@@ -117,6 +118,39 @@ public class FixTests : IDisposable
         var samples = new BitwigReader().Read(fixedPath).Samples;
         Assert.Contains(snare.Use, samples);
         Assert.DoesNotContain(@"D:\Splice\Snare 808.wav", samples);
+    }
+
+    [Fact]
+    public void A_relinked_Bitwig_sample_gets_the_new_files_size_MD5_and_length()
+    {
+        // A converted project whose Sampler holds "Snare 01.wav" as Bitwig saved it: 1.5 s of stereo at 48 kHz.
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var raw = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
+            p => p.EndsWith("Snare 01.wav") ? new BitwigProject.SampleFile(1234, [.. Enumerable.Range(1, 16).Select(i => (byte)i)], 48000, 2, 1.5) : null).Bytes;
+        // Fix points it at a different file: half a second of mono at 22.05 kHz.
+        var other = Path.Combine(_lib, "Drums", "Snare 808 v2.wav");
+        WavWriter.Write(other, [new float[11025]], 22050);
+
+        var (data, changed) = BitwigReader.RelinkSamples(raw, Path.Combine(_root, "Snare.bwproject"),
+            new Dictionary<string, string> { [@"C:\Samples\Snare 01.wav"] = other })!.Value;
+        Assert.Equal(1, changed);
+        var doc = BitwigFormat.Decode(data);
+        var sample = doc.Objects.Single(o => o.Obj(0x129e)?.Obj(0xd3b) is not null);
+        var file = sample.Obj(0x129e)!;
+        Assert.Equal(other, file.Obj(0xd3b)!.Str(0x3b));
+        Assert.Equal(("Snare 808 v2.wav", "Snare 808 v2.wav"), (sample.Str(0x129f), file.Str(0x512)));
+        Assert.Equal(new FileInfo(other).Length, file.Num(0x17));
+        var md5 = (BitwigFormat.BwBlob)file.Obj(0x513)![0x16]!;
+        Assert.Equal(System.Security.Cryptography.MD5.HashData(File.ReadAllBytes(other)), data[md5.Offset..(md5.Offset + md5.Length)]);
+        Assert.Equal((22050.0, 0.5, 1.0), (sample.Num(0x94), sample.Num(0x95), sample.Num(0x96)));
+
+        // A file whose length the app can't tell gets no MD5, so Bitwig reads it itself rather than trusting the old length.
+        File.WriteAllBytes(other, [1, 2, 3]);
+        (data, _) = BitwigReader.RelinkSamples(raw, Path.Combine(_root, "Snare.bwproject"),
+            new Dictionary<string, string> { [@"C:\Samples\Snare 01.wav"] = other })!.Value;
+        doc = BitwigFormat.Decode(data);
+        md5 = (BitwigFormat.BwBlob)doc.Objects.Single(o => o.Obj(0x129e)?.Obj(0xd3b) is not null).Obj(0x129e)!.Obj(0x513)![0x16]!;
+        Assert.Equal(new byte[16], data[md5.Offset..(md5.Offset + md5.Length)]);
     }
 
     [Fact]

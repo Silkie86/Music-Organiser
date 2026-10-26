@@ -516,7 +516,7 @@ public static class BitwigProject
     /// Bitwig asks where it is and reads it itself rather than trusting a made-up length. False when
     /// <paramref name="sample"/> isn't a sample.
     /// </summary>
-    static bool SampleIs(BwObject sample, string path, SampleFile? info)
+    internal static bool SampleIs(BwObject sample, string path, SampleFile? info)
     {
         if (sample.Obj(0x129e) is not { } file) return false;
         var fileName = Path.GetFileName(path.Replace('\\', '/'));

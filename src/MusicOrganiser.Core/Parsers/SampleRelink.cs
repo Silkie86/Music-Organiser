@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
+using MusicOrganiser.Core.Export;
 
 namespace MusicOrganiser.Core.Parsers;
 
@@ -68,10 +69,23 @@ public sealed partial class BitwigReader
         var dir = Path.GetDirectoryName(Path.GetFullPath(projectPath)) ?? ".";
         var changed = 0;
 
+        // The samples (a Sampler's, an audio clip's) each file reference belongs to. Bitwig recognises a sample by the
+        // size and MD5 saved with it and trusts its saved length, so one pointed at another file gets that file's.
+        var samples = new Dictionary<BitwigFormat.BwObject, List<BitwigFormat.BwObject>>(ReferenceEqualityComparer.Instance);
+        foreach (var s in doc.Objects)
+            if (s.Obj(FSampleFile)?.Obj(FFileRef) is { Class: ClsFileRef } r)
+                (samples.TryGetValue(r, out var list) ? list : samples[r] = []).Add(s);
+        var read = new Dictionary<string, BitwigProject.SampleFile?>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var o in doc.Objects.Where(o => o.Class == ClsFileRef))
             if (o.Str(FFilePath) is { Length: > 0 } f && TextScan.IsAudioPath(f) && New(f) is { } to)
             {
                 o.Set(FFilePath, to);
+                foreach (var s in samples.GetValueOrDefault(o) ?? [])
+                {
+                    if (!read.TryGetValue(to, out var info)) read[to] = info = BitwigProject.ReadSample(to);
+                    BitwigProject.SampleIs(s, to, info);
+                }
                 changed++;
             }
         if (doc.Meta.GetValueOrDefault("used_files") is List<string> used)
