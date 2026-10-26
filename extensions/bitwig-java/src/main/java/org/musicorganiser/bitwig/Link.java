@@ -224,6 +224,8 @@ final class Link {
                                          + "which is the FL Studio link's.";
     static final String CHANGES_OFF = "Changes are turned off. To let the app change things, turn on \"Let the app make changes\" "
                                       + "in Bitwig: Settings > Controllers > Music Organiser.";
+    /** Why a change that waited behind others wasn't made: the app that asked had closed its connection (extension 3.18). */
+    static final String APP_GONE = "The app stopped waiting for this change, so the link didn't make it.";
     /**
      * The note grid `notes` reads a clip through: steps of a 16th note (in beats), 1024 of them (256 beats, 64 bars of 4/4),
      * on all 128 keys. A note that starts past the grid isn't read.
@@ -925,9 +927,16 @@ final class Link {
         if (changes && !changesSetting.get()) throw new LinkError(CHANGES_OFF);
     }
 
-    /** Runs the next change waiting, if any. */
+    /**
+     * Runs the next change waiting, if any. A change whose app has closed its connection meanwhile (it gave up waiting)
+     * is left out (extension 3.18): the app never hears it was made, so it would ask again and get it twice.
+     */
     private void nextJob() {
         Job job = jobs.poll();
+        while (job != null && !job.ask().client().open) {
+            reply(job.ask(), null, APP_GONE);
+            job = jobs.poll();
+        }
         currentJob = job;
         if (job == null) return;
         Finish finish = new Finish() {
@@ -1862,6 +1871,9 @@ final class Link {
         // A replaced clip is there all along, so it's the clip's name that changes (the app names each file it swaps in
         // differently from the one before, extension 3.17).
         String before = replace ? str(slots[index].name().get()) : "";
+        // Only a real swap waits the shorter time: a replace into an empty slot (a new Playground track's first part) is
+        // a new clip, which Bitwig may take as long to make as any other (extension 3.18).
+        boolean swap = replace && slots[index].hasContent().get();
         slotInserts[t][index].insertFile(path);
         // The track's slot, found by its ID when Bitwig has said it, in case a track goes in above it meanwhile.
         String id = idOf(t);
@@ -1869,7 +1881,7 @@ final class Link {
             int now = id.isEmpty() ? t : indexOf(id);
             return now >= 0 && trackSlots[now][index].hasContent().get()
                    && (!replace || !str(trackSlots[now][index].name().get()).equals(before));
-        }, replace ? REPLACE_WAIT : CHANGE_WAIT, made -> {
+        }, swap ? REPLACE_WAIT : CHANGE_WAIT, made -> {
             int now = id.isEmpty() ? t : indexOf(id);
             // A replace whose name didn't change (the same file again) still has its clip: it goes ahead.
             if (!made && !(replace && now >= 0 && trackSlots[now][index].hasContent().get()))

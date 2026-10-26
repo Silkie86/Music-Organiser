@@ -754,6 +754,23 @@ class LinkTest {
         assertJson(list(obj("id", 1, "ok", true, "result", obj("index", 2, "name", "Two"))), second.take());
     }
 
+    @Test
+    @DisplayName("leaves out a waiting change once its app has closed the connection, so asking again doesn't make it twice")
+    void leavesOutAChangeOnceItsAppHasGone() {
+        // The app gave up on "Two" (it took too long) and closed its connection, so it will ask for it again (extension 3.18).
+        studio();
+        App second = bitwig.connect();
+        second.take();
+        app.send(obj("id", 1, "cmd", "newtrack", "name", "One"));
+        app.send(obj("id", 2, "cmd", "newtrack", "name", "Two"));
+        second.send(obj("id", 1, "cmd", "newtrack", "name", "Three"));
+        app.close();
+        bitwig.clock.advance(20000);
+        assertJson(list(obj("id", 1, "ok", true, "result", obj("index", 2, "name", "Three"))), second.take());
+        assertEquals(List.of("Bass", "One", "Three", "Reverb", "Master"),
+                     bitwig.state.tracks.stream().map(t -> t.name).collect(Collectors.toList()));
+    }
+
     // ---- Only in the project asked for ----
 
     /** The answer to a request that names one project (onlyIn) while Bitwig has another open. */
