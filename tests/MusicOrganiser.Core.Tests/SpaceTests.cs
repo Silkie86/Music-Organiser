@@ -692,4 +692,19 @@ public class SpaceTests : IDisposable
         Assert.False(FolderMove.IsLink(lib));
     }
 
+    [Fact]
+    public void Moving_back_puts_the_link_back_when_the_old_copy_cant_take_its_place()
+    {
+        var from = Path.GetDirectoryName(File("C/Docs/Hive/Sounds/pad.h2p", 300))!;
+        Directory.CreateDirectory(Path.Combine(_root, "D"));
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+        var moved = FolderMove.Move(from, Path.Combine(_root, "D"), 300, driveOf: DriveOf);
+        var result = Path.Combine(_root, "result.txt");
+        // The old copy can't be renamed into place (here: it isn't there).
+        Assert.True(FolderMove.RunHelper([FolderMove.HelperFlag, "unswap", from, Path.Combine(_root, "C", "nothing here"), result]));
+        Assert.Contains("wouldn't move the folder back", System.IO.File.ReadAllText(result));
+        Assert.True(FolderMove.IsLink(from));
+        Assert.Equal(300, new FileInfo(Path.Combine(from, "pad.h2p")).Length);   // the plugin still finds its files
+    }
+
 }

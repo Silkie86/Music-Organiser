@@ -316,14 +316,35 @@ public static class FolderMove
 
     static string UnswapHere(string from, string restore)
     {
+        string? was = null;
         try
         {
-            if (IsLink(from)) Directory.Delete(from);   // the link only, never what it points to
-            Directory.Move(restore, from);
-            return "";
+            if (IsLink(from))
+            {
+                was = new DirectoryInfo(from).LinkTarget;
+                Directory.Delete(from);   // the link only, never what it points to
+            }
         }
         catch (Exception e) when (Denied(e)) { return NeedsAdmin; }
         catch (IOException e) { return $"Windows wouldn't move the folder back ({e.Message}). Close your DAW and the plugin, then try again."; }
+        for (var tries = 0; ; tries++)
+        {
+            try
+            {
+                Directory.Move(restore, from);
+                return "";
+            }
+            catch (IOException e) when (!Denied(e) && tries < 20 && Directory.Exists(restore) && !Directory.Exists(from))
+            {
+                Thread.Sleep(250);   // a virus checker looking at the files just copied into the old copy
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // The link goes back, so the plugin still finds its files on the other drive.
+                if (was is not null && !Directory.Exists(from)) Link(from, was);
+                return Denied(e) ? NeedsAdmin : $"Windows wouldn't move the folder back ({e.Message}). Close your DAW and the plugin, then try again.";
+            }
+        }
     }
 
     /// <summary>A junction on Windows (no administrator rights or developer mode needed), a symbolic link elsewhere.</summary>
