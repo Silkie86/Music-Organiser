@@ -65,9 +65,9 @@ public static class Exporter
         var name = TextScan.SafeFileName(saveAs ?? Path.GetFileNameWithoutExtension(project));
         var (song, taken) = LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(project), project);
         var result = BitwigProject.FromFl(song, template, stepsUntilNextNote: stepsUntilNextNote, upgrade: upgrade);
-        var dir = Path.Combine(OutDir(exportRoot, project, "Bitwig"), name);
+        var file = BitwigFile(project, exportRoot, name);
+        var dir = Path.GetDirectoryName(file)!;
         Directory.CreateDirectory(dir);
-        var file = Path.Combine(dir, name + ".bwproject");
         File.WriteAllBytes(file, result.Bytes);
         // The swapped synths' sounds as presets for the older version, the newer one's browser opens them too:
         // the way back if the newer one didn't take them.
@@ -93,10 +93,33 @@ public static class Exporter
         return (file, notes);
     }
 
+    /// <summary>Where <see cref="BitwigFromFl"/> saves the project's Bitwig copy named <paramref name="name"/>.</summary>
+    public static string BitwigFile(string project, string exportRoot, string name)
+    {
+        name = TextScan.SafeFileName(name);
+        return Path.Combine(exportRoot, TextScan.SafeFileName(Path.GetFileNameWithoutExtension(project)), "Bitwig", name, name + ".bwproject");
+    }
+
+    /// <summary>
+    /// What to remember about a Bitwig copy just saved by <see cref="BitwigFromFl"/>: which FL project it's from and
+    /// when it was saved, so <see cref="CanSaveOver"/> can tell later whether anything has changed it since.
+    /// </summary>
+    public static string Written(string project, string file) => $"{File.GetLastWriteTimeUtc(file).Ticks} {Path.GetFullPath(project)}";
+
+    /// <summary>
+    /// Whether a new convert of <paramref name="project"/> can be saved as <paramref name="file"/>: nothing is there,
+    /// or it's this project's earlier convert (<paramref name="written"/>, from <see cref="Written"/>) and nothing has
+    /// changed it since. A copy saved in Bitwig, one made before the app remembered them, or one from another song with
+    /// the same name may hold work, so it's kept.
+    /// </summary>
+    public static bool CanSaveOver(string project, string file, string? written) =>
+        !File.Exists(file) || written is not null && written == Written(project, file);
+
     /// <summary>
     /// The name an FL Studio project's Bitwig copy is saved under: the project's own, or "Name (2)", "Name (3)" and so
-    /// on while Bitwig may have a copy with that name open (<paramref name="open"/>). Opening a project Bitwig already
-    /// has open only brings that copy forward, so a new convert saved over it would look unchanged.
+    /// on while that name is taken (<paramref name="open"/>): Bitwig may have a copy with that name open, or a copy with
+    /// it can't be saved over (<see cref="CanSaveOver"/>). Opening a project Bitwig already has open only brings that
+    /// copy forward, so a new convert saved over it would look unchanged.
     /// </summary>
     public static string BitwigName(string project, Func<string, bool> open)
     {

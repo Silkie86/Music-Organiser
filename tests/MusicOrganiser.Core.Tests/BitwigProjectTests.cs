@@ -251,6 +251,35 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void ANewConvertIsntSavedOverAnEarlierOneChangedInBitwigOrAnotherSongsWithTheSameName()
+    {
+        var dir = Fixtures.TempDir();
+        var project = Fixtures.FlStudio25Automation(dir);
+        var name = Path.GetFileNameWithoutExtension(project);
+        var exports = Path.Combine(dir, "Exports");
+        var file = Exporter.BitwigFile(project, exports, name);
+        Assert.True(Exporter.CanSaveOver(project, file, null));   // nothing there yet
+
+        var (written, _) = Exporter.BitwigFromFl(project, exports, Fixtures.BitwigTemplate());
+        Assert.Equal(file, written);
+        var stamp = Exporter.Written(project, file);
+        // Its own earlier convert, unchanged: converting again saves over it.
+        Assert.True(Exporter.CanSaveOver(project, file, stamp));
+        // One made before the app remembered them, or another song's with the same name in another folder, is kept.
+        Assert.False(Exporter.CanSaveOver(project, file, null));
+        var other = Path.Combine(dir, "Other folder", Path.GetFileName(project));
+        Directory.CreateDirectory(Path.GetDirectoryName(other)!);
+        File.Copy(project, other);
+        Assert.False(Exporter.CanSaveOver(other, Exporter.BitwigFile(other, exports, name), stamp));
+
+        // Saved in Bitwig since: kept, and the new convert gets the next name.
+        File.WriteAllBytes(file, File.ReadAllBytes(file));
+        File.SetLastWriteTimeUtc(file, File.GetLastWriteTimeUtc(file).AddMinutes(5));
+        Assert.False(Exporter.CanSaveOver(project, file, stamp));
+        Assert.Equal($"{name} (2)", Exporter.BitwigName(project, n => !Exporter.CanSaveOver(project, Exporter.BitwigFile(project, exports, n), stamp)));
+    }
+
+    [Fact]
     public void KeepsMutedNotesAndClipsMutedAndPlaysStepsUntilTheirSoundEnds()
     {
         var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25MutesAndSteps(Fixtures.TempDir()));
