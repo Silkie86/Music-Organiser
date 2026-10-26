@@ -327,7 +327,12 @@ public class MoProbeLiveTests
                 foreach (var (run, state) in _queue.GetConsumingEnumerable()) run(state);
             }) { IsBackground = true }.Start();
 
-        public override void Post(SendOrPostCallback d, object? state) => _queue.Add((d, state));
+        // Once it's done with, what's still on its way (an activity card retiring after a while) runs on the thread pool.
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            try { _queue.Add((d, state)); }
+            catch (InvalidOperationException) { ThreadPool.QueueUserWorkItem(_ => d(state)); }
+        }
 
         public Task<T> Run<T>(Func<Task<T>> work)
         {

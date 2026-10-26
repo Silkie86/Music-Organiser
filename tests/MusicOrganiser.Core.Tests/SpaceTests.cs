@@ -991,6 +991,72 @@ public class SpaceTests : IDisposable
         }
     }
 
+    // ---- found by the final review (2026-10-26) ----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Keep_pressed_while_a_delete_is_checked_again_removes_nothing()
+    {
+        var home = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(_root, "share"));
+        try
+        {
+            using var page = new Page(_root);
+            var vital = Path.GetDirectoryName(File("C/Vital/pad.vital", 70))!;
+            Directory.CreateDirectory(Path.Combine(_root, "I"));
+            string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+            var moved = FolderMove.Move(vital, Path.Combine(_root, "I"), 70, driveOf: DriveOf) with { Key = "vital" };
+            page.Db.SaveMovedFolders([moved]);
+            // A spare VST2: the one song uses Serum's VST3.
+            var vst2 = File("Plugins/Serum.dll", 10);
+            File("Plugins/Serum.vst3", 10);
+            page.Db.SetList(Scanner.PluginFoldersKey, [Path.Combine(_root, "Plugins")]);
+            page.Db.SaveSpareCopies([new SpareCopy("Serum", "VST2", vst2, 10, "Your projects use its VST3 (1 project); none use this VST2.")]);
+            var info = new ProjectInfo { Daw = "FL Studio" };
+            info.Plugins.Add(new PluginRef("Serum", "Xfer Records", PluginKind.Instrument, "VST3"));
+            page.Db.Upsert(new LibraryDb.IndexedFile(File("FL/song.flp", 5), 5, 1, info, null, [], []));
+            var plugins = page.Main.Plugins;
+            plugins.Reload();
+            Assert.True(plugins.HasOldCopies);
+            Assert.True(plugins.HasSpares);
+
+            // Delete, then Keep while it looks again (a sleeping USB drive takes seconds to answer), then another card opens.
+            using var ui = new MoProbeLiveTests.HeldUpContext();
+            foreach (var open in new Action[] { () => plugins.ReviewOldCopiesCommand.Execute(null), () => plugins.DeleteOldCopy(moved),
+                                                () => plugins.ReviewSparesCommand.Execute(null) })
+            {
+                var other = await ui.Run(async () =>
+                {
+                    open();
+                    var card = plugins.Card!;
+                    var deleting = card.RunCommand.ExecuteAsync(null);   // looking: the rest waits for this thread
+                    card.KeepCommand.Execute(null);
+                    Assert.Null(plugins.Card);
+                    plugins.MoveBack(moved);
+                    var other = plugins.Card;
+                    await deleting;
+                    return other;
+                });
+                Assert.Same(other, plugins.Card);   // still open
+                plugins.CloseCard();
+            }
+            Assert.True(Directory.Exists(moved.OldCopy));
+            Assert.Equal(70, new FileInfo(Path.Combine(moved.OldCopy, "pad.vital")).Length);
+            Assert.True(System.IO.File.Exists(vst2));
+            Assert.DoesNotContain(page.Main.Activities.Items, a => a.Title.StartsWith("Freed") || a.Title.StartsWith("Kept"));
+
+            // Once things are going to the Recycle Bin, Keep can't call them back.
+            plugins.ReviewOldCopiesCommand.Execute(null);
+            var going = plugins.Card!;
+            Assert.True(going.KeepCommand.CanExecute(null));
+            going.Removing = true;
+            Assert.False(going.KeepCommand.CanExecute(null));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", home);
+        }
+    }
+
     [Fact]
     public void The_administrator_steps_act_only_on_the_list_the_app_wrote()
     {

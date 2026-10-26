@@ -292,10 +292,10 @@ public sealed partial class PluginsViewModel
     async Task DeleteAsync(SpaceCard card, string key)
     {
         var picked = card.Items.Where(i => i.IsTicked).ToList();
-        card.Busy = true;
+        card.Busy = card.Removing = true;
         var problems = await Task.Run(() => RecycleBin.SendMany(picked.Select(i => i.Folder.Path).ToList()));
         var freed = picked.Where(i => !problems.ContainsKey(i.Folder.Path)).Sum(i => i.Folder.Bytes);
-        Card = null;
+        if (Card == card) Card = null;   // a card opened since stays open
         if (freed > 0) _main.Activities.Start("Cleaned up").Finish($"Freed {DiskSpace.Text(freed)}", "They're in the Recycle Bin if you want them back.", "Open Recycle Bin", _main.OpenRecycleBin);
         // One card for what stayed, not one each (a spare-copies clean up can hold hundreds).
         if (problems.Count > 0)
@@ -455,6 +455,7 @@ public sealed partial class PluginsViewModel
             // may use a format it calls spare.
             card.Busy = true;
             var now = await Task.Run(() => new SpaceMeter(_db).SpareCopiesNow());
+            if (Card != card) return;   // Keep was pressed while it looked
             var still = now.Select(c => c.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var stale = card.Items.Where(i => i.IsTicked && !still.Contains(i.Folder.Path)).ToList();
             foreach (var i in stale) i.IsTicked = false;
@@ -606,7 +607,12 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
         CanConfirm = true;
     }
 
-    [RelayCommand] void Keep() => owner.CloseCard();
+    /// <summary>Once things are going to the Recycle Bin, Keep can't call them back, so it isn't offered.</summary>
+    [ObservableProperty] [NotifyCanExecuteChangedFor(nameof(KeepCommand))] bool _removing;
+
+    [RelayCommand(CanExecute = nameof(CanKeep))] void Keep() => owner.CloseCard();
+
+    bool CanKeep() => !Removing;
 
     [RelayCommand(CanExecute = nameof(CanRun))]
     Task Run() => Confirm?.Invoke() ?? Task.CompletedTask;

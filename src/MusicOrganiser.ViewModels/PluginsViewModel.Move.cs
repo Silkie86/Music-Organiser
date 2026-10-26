@@ -59,6 +59,7 @@ public sealed partial class PluginsViewModel
                           .Concat(homes.Where(h => !FolderMove.OldHomeCanGo(h, moved)).Select(h => h.Path))
                           .ToHashSet(StringComparer.OrdinalIgnoreCase);
             });
+            if (Card != card) return;   // Keep was pressed while it looked
             var kept = card.Items.Where(i => i.IsTicked && keep.Contains(i.Folder.Path)).ToList();
             foreach (var i in kept) i.IsTicked = false;
             if (kept.Count > 0)
@@ -183,7 +184,9 @@ public sealed partial class PluginsViewModel
         card.Confirm = async () =>
         {
             // Checked again: the drive may have gone since the card opened.
-            if (!await Task.Run(() => FolderMove.OldCopyCanGo(moved)))
+            var canGo = await Task.Run(() => FolderMove.OldCopyCanGo(moved));
+            if (Card != card) return;   // Keep was pressed while it looked
+            if (!canGo)
             {
                 Card = null;
                 DeleteOldCopy(moved);   // says why it stays
