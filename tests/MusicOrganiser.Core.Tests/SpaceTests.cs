@@ -805,6 +805,38 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Spare_copies_are_checked_again_against_the_projects_before_they_go()
+    {
+        var home = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(_root, "share"));
+        try
+        {
+            using var page = new Page(_root);
+            var db = page.Db;
+            var vst2 = File("Plugins/Serum.dll", 10);
+            File("Plugins/Serum.vst3", 10);
+            db.SetList(Scanner.PluginFoldersKey, [Path.Combine(_root, "Plugins")]);
+            // Measured a week ago, when projects used only its VST3.
+            db.SaveSpareCopies([new SpareCopy("Serum", "VST2", vst2, 10, "Your projects use its VST3 (4 projects); none use this VST2.")]);
+            // Since then a song uses its VST2.
+            var info = new ProjectInfo { Daw = "FL Studio" };
+            info.Plugins.Add(new PluginRef("Serum", "Xfer Records", PluginKind.Instrument, "VST2"));
+            db.Upsert(new LibraryDb.IndexedFile(File("FL/new.flp", 5), 5, 1, info, null, [], []));
+            var plugins = page.Main.Plugins;
+            plugins.Reload();
+            Assert.True(plugins.HasSpares);
+            plugins.ReviewSparesCommand.Execute(null);
+            await plugins.Card!.RunCommand.ExecuteAsync(null);
+            Assert.True(System.IO.File.Exists(vst2));
+            Assert.False(plugins.HasSpares);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", home);
+        }
+    }
+
+    [Fact]
     public void The_administrator_steps_act_only_on_the_list_the_app_wrote()
     {
         var keep = File("Old Library/a.wav");

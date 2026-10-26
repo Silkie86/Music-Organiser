@@ -434,7 +434,22 @@ public sealed partial class PluginsViewModel
             Items = _spares.Select(c => new CleanupItem(new SpaceFolder(c.Path, SpaceKind.Program, c.Bytes, [], false), "", ticked: true,
                                                         label: $"{c.Name} · {c.Format}", detail: c.Why)).ToList(),
         };
-        card.Confirm = () => DeleteAsync(card, "");
+        card.Confirm = async () =>
+        {
+            // Checked again against your projects as they are now: the list is made once a week, and a song saved since
+            // may use a format it calls spare.
+            card.Busy = true;
+            var now = await Task.Run(() => new SpaceMeter(_db).SpareCopiesNow());
+            var still = now.Select(c => c.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var stale = card.Items.Where(i => i.IsTicked && !still.Contains(i.Folder.Path)).ToList();
+            foreach (var i in stale) i.IsTicked = false;
+            var kept = stale.Where(i => File.Exists(i.Path) || Directory.Exists(i.Path)).ToList();
+            _db.SaveSpareCopies(now);
+            if (kept.Count > 0)
+                _main.Activities.Failed(kept.Count == 1 ? $"Kept {kept[0].Name}" : $"Kept {kept.Count} of the copies",
+                                        "Your projects use those formats now, so they stay.");
+            await DeleteAsync(card, "");
+        };
         card.Refresh();
         Card = card;
     }

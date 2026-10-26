@@ -44,6 +44,21 @@ public sealed class SpaceMeter(LibraryDb db)
         return spaces;
     }
 
+    /// <summary>
+    /// The stored spare copies that are still spare now. The list is made when plugins are measured (once a week), and
+    /// projects scanned since may use a format it calls spare (Vital's CLAP in new Bitwig songs), or Pro Tools may be
+    /// installed now. Their sizes are the stored ones.
+    /// </summary>
+    public IReadOnlyList<SpareCopy> SpareCopiesNow()
+    {
+        var stored = db.SpareCopyList();
+        if (stored.Count == 0) return stored;
+        var sizes = stored.GroupBy(c => c.Path, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First().Bytes, StringComparer.OrdinalIgnoreCase);
+        var files = PluginCatalog.ScanFiles(PluginRoots()).Concat(PluginCatalog.ScanFiles(SpareCopies.AaxFolders())).ToList();
+        return SpareCopies.Find(files, db.PluginFormatsUsed(), SpareCopies.ProToolsInstalled(), p => sizes.GetValueOrDefault(p))
+                          .Where(c => sizes.ContainsKey(c.Path)).ToList();
+    }
+
     static long SizeOf(string path) =>
         Directory.Exists(path) ? DiskSpace.Measure(path).Bytes : File.Exists(path) ? new FileInfo(path).Length : 0;
 
