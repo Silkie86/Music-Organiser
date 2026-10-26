@@ -133,10 +133,20 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
             loaded.Items[at] = open;
         Items.ReplaceAll(loaded.Items);
 
-        Refill(DawFilters, Items.Select(i => i.Daw), DawFilter, v => DawFilter = v);
-        Refill(StatusFilters, Statuses.All, StatusFilter, v => StatusFilter = v);
-        Refill(TagFilters, loaded.Tags, TagFilter, v => TagFilter = v);
-        Refill(HardwareFilters, Items.SelectMany(i => i.Hardware), HardwareFilter, v => HardwareFilter = v);
+        // The list is filtered once, below, not each time a chip or drop-down clears its pick and gets it back (nine
+        // times over 16,000 songs after every save).
+        _refilling = true;
+        try
+        {
+            Refill(DawFilters, Items.Select(i => i.Daw), DawFilter, v => DawFilter = v);
+            Refill(StatusFilters, Statuses.All, StatusFilter, v => StatusFilter = v);
+            Refill(TagFilters, loaded.Tags, TagFilter, v => TagFilter = v);
+            Refill(HardwareFilters, Items.SelectMany(i => i.Hardware), HardwareFilter, v => HardwareFilter = v);
+        }
+        finally
+        {
+            _refilling = false;
+        }
 
         Selected = select is not null
             ? Items.FirstOrDefault(i => i.Path == select || i.OlderSaves.Any(o => o.Path == select))
@@ -251,6 +261,8 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     [RelayCommand]
     void CloseDoubts() => CheckingDoubts = false;
 
+    bool _refilling;
+
     static void Refill(ObservableCollection<string> target, IEnumerable<string> values, string current, Action<string> reset)
     {
         target.Clear();   // the ComboBox clears its selection and writes that back, so always restore it
@@ -285,13 +297,15 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
 
     static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
 
-    partial void OnGroupSavesChanged(bool value) => Reload();
+    // In the background: it reads and groups every project again, which held the window up for seconds.
+    partial void OnGroupSavesChanged(bool value) => _ = ReloadAsync();
 
     partial void OnSearchTextChanged(string value) => ApplyFilter();
-    partial void OnDawFilterChanged(string value) => ApplyFilter();
-    partial void OnStatusFilterChanged(string value) => ApplyFilter();
-    partial void OnTagFilterChanged(string value) => ApplyFilter();
-    partial void OnHardwareFilterChanged(string value) => ApplyFilter();
+    // Not while Show refills their lists (it filters once after): each refill clears the pick and puts it back.
+    partial void OnDawFilterChanged(string value) { if (!_refilling) ApplyFilter(); }
+    partial void OnStatusFilterChanged(string value) { if (!_refilling) ApplyFilter(); }
+    partial void OnTagFilterChanged(string value) { if (!_refilling) ApplyFilter(); }
+    partial void OnHardwareFilterChanged(string value) { if (!_refilling) ApplyFilter(); }
     partial void OnOnlyFavouritesChanged(bool value) => ApplyFilter();
     partial void OnOnlyMissingChanged(bool value) => ApplyFilter();
     partial void OnHideArchivedChanged(bool value) => ApplyFilter();

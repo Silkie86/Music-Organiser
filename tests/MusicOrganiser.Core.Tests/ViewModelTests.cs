@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
@@ -734,6 +735,54 @@ public class ViewModelTests : IDisposable
         projects.DawFilter = "Bitwig Studio";
         Assert.Equal(1, projects.View.Count);
         Assert.Equal("1 of 3 songs", projects.CountText);
+    }
+
+    [Fact]
+    public void A_reload_filters_the_projects_list_once_while_the_filter_chips_are_refilled()
+    {
+        ScanFixtures();
+        var projects = Main().Projects;
+        projects.DawFilter = "Bitwig Studio";
+        // Like the page's chips and drop-downs: refilling their list clears their pick, and they write that back.
+        projects.DawFilters.CollectionChanged += (_, e) => { if (e.Action == NotifyCollectionChangedAction.Reset) projects.DawFilter = null!; };
+        projects.StatusFilters.CollectionChanged += (_, e) => { if (e.Action == NotifyCollectionChangedAction.Reset) projects.StatusFilter = null!; };
+        projects.TagFilters.CollectionChanged += (_, e) => { if (e.Action == NotifyCollectionChangedAction.Reset) projects.TagFilter = null!; };
+        projects.HardwareFilters.CollectionChanged += (_, e) => { if (e.Action == NotifyCollectionChangedAction.Reset) projects.HardwareFilter = null!; };
+        var view = (ListView)projects.View;
+        var before = view.Refreshes;
+
+        projects.Reload();
+
+        Assert.Equal(1, view.Refreshes - before);
+        Assert.Equal(("Bitwig Studio", ProjectsViewModel.Any), (projects.DawFilter, projects.StatusFilter));
+        Assert.Equal("1 of 3 songs", projects.CountText);
+    }
+
+    [Fact]
+    public async Task Turning_off_one_row_per_song_reads_the_list_again_in_the_background()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        Save("Didums_1", 1);
+        Save("Didums_2", 2);
+        var projects = Main().Projects;
+        Assert.Equal("1 song (2 saves)", projects.CountText);
+        UiWork.InBackground = true;
+        try
+        {
+            projects.GroupSaves = false;
+            await Until(() => projects.CountText == "2 projects");
+        }
+        finally
+        {
+            UiWork.InBackground = false;
+        }
+        Assert.Equal(["Didums_1", "Didums_2"], projects.Items.Select(i => i.FileName).Order());
     }
 
     [Fact]
@@ -2678,7 +2727,9 @@ public class ViewModelTests : IDisposable
         public IComparer? CustomSort { get; set; }
         public void SortBy(string property, ListSortDirection direction) { }
         public void GroupBy(string? property) { }
-        public void Refresh() { }
+        /// <summary>How many times the list was filtered and sorted again.</summary>
+        public int Refreshes { get; private set; }
+        public void Refresh() => Refreshes++;
         public int Count => items.Cast<object>().Count(i => Filter?.Invoke(i) ?? true);
         public IEnumerator GetEnumerator()
         {
