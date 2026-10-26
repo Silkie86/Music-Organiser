@@ -277,6 +277,31 @@ public class PlaygroundWholeAppReviewTests : IDisposable
     }
 
     [Fact]
+    public void Chords_kept_as_a_part_go_on_one_chords_track_however_it_was_named()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        p.CurrentSection.Bars = 6;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+        p.Layers[0].Name = "chords";
+        Reharm Kept(int bar) => new("Harmonise", "", "the melody", "C | G", bar, [new(bar * (long)Bar, Bar, Chord("C")), new((bar + 1) * (long)Bar, Bar, Chord("G"))]) { Whole = true };
+        // Bars 3-4 and 5-6 have no chord clip: the plain chords go on the track renamed "chords".
+        p.ApplyIdea(Kept(2), asPart: true);
+        p.ApplyIdea(Kept(4), asPart: true);
+        Assert.Equal(["chords"], p.Layers.Select(l => l.Name));
+        Assert.Equal(3, p.Layers[0].Layer.Clips.Count);
+
+        // Muted, it gets a "Chords 2" beside it, and that one takes the next chords too.
+        p.UndoCommand.Execute(null);
+        p.UndoCommand.Execute(null);
+        p.Layers[0].MuteCommand.Execute(null);
+        p.ApplyIdea(Kept(2), asPart: true);
+        p.ApplyIdea(Kept(4), asPart: true);
+        Assert.Equal(["chords", "Chords 2"], p.Layers.Select(l => l.Name));
+        Assert.Equal(2, p.Layers[1].Layer.Clips.Count);
+    }
+
+    [Fact]
     public void An_idea_from_before_ideas_remembered_where_they_were_saved_saves_over_itself_as_it_did()
     {
         var store = new PlaygroundStore(Path.Combine(_root, "playground"));

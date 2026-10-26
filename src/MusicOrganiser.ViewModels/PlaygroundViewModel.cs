@@ -1825,8 +1825,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         }
         if (clips.Any(p => !p.Layer.Muted)) return false;
         // A Chords track that isn't muted takes the plain chords (over anything it had there, as in a DAW), else a new one.
+        // Its name is matched as UniqueName names it ("chords", or "Chords 2" beside a muted one), so one is made only once.
         var notes = Voicer.Plain(LaneAt(lane, from, to));
-        var track = timeline.Layers.FirstOrDefault(l => l.Name == "Chords" && l.Written.Length == 0 && !l.Muted);
+        var track = timeline.Layers.FirstOrDefault(l => PlainChordsName(l.Name) && l.Written.Length == 0 && !l.Muted);
         var added = track is null;
         if (track is null)
         {
@@ -1836,6 +1837,14 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         track.Clips.Add(PlaygroundClip.Of("Chords", MidiRoles.Chords, notes, to - from, from, to - from));
         track.Render();
         return added;
+    }
+
+    /// <summary>"Chords", or "Chords" with a number after it, told apart as their dragged files are (as in UniqueName).</summary>
+    static bool PlainChordsName(string name)
+    {
+        var file = TextScan.SafeFileName(name);
+        return file.Equals("Chords", StringComparison.OrdinalIgnoreCase)
+            || file.StartsWith("Chords ", StringComparison.OrdinalIgnoreCase) && file.Length > 7 && file[7..].All(char.IsAsciiDigit);
     }
 
     // ---- suggestions from the library ----
