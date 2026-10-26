@@ -219,10 +219,42 @@ public sealed class WatchdogTests : IDisposable
     {
         // Review: an error from a timer or drawing brought its box straight back each time OK was pressed.
         var app = (App)Application.Current!;
-        var message = $"Made-up error {Guid.NewGuid():N}";
-        Assert.True(app.FirstTime(message));
-        Assert.False(app.FirstTime(message));
-        Assert.False(app.FirstTime(message));
-        Assert.True(app.FirstTime(message + " (another)"));
+        var tick = Thrown(() => throw new InvalidOperationException("Made-up timer error"));
+        Assert.True(app.ShouldShow(tick, 1_000));
+        app.Shown(App.Key(tick));
+        Assert.False(app.ShouldShow(tick, 1_016));
+        Assert.False(app.ShouldShow(tick, 1_032));
+        // Once it has stayed away a while (a button pressed again), it says so again.
+        Assert.True(app.ShouldShow(tick, 1_032 + App.QuietMs));
+    }
+
+    [AvaloniaFact]
+    public void Different_bugs_with_the_same_words_each_get_their_box()
+    {
+        // Review: matching on the words alone hid a second, unrelated NullReferenceException (and its stack) for the run.
+        var app = (App)Application.Current!;
+        var projects = Thrown(() => throw new NullReferenceException());
+        var soundLab = Thrown(() => throw new NullReferenceException());
+        Assert.Equal(projects.Message, soundLab.Message);
+        Assert.True(app.ShouldShow(projects, 5_000));
+        app.Shown(App.Key(projects));
+        Assert.True(app.ShouldShow(soundLab, 5_010));
+    }
+
+    [AvaloniaFact]
+    public void An_error_from_before_the_window_showed_gets_its_box_next_time()
+    {
+        // Review: an error raised before the window was up was counted as seen, so its box never came.
+        var app = (App)Application.Current!;
+        var early = Thrown(() => throw new InvalidOperationException("Made-up startup error"));
+        Assert.True(app.ShouldShow(early, 9_000));   // no window yet: the box never goes up
+        Assert.True(app.ShouldShow(early, 9_100));
+    }
+
+    static Exception Thrown(Action action)
+    {
+        try { action(); }
+        catch (Exception e) { return e; }
+        throw new InvalidOperationException("Nothing was thrown");
     }
 }
