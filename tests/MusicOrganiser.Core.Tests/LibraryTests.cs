@@ -705,6 +705,157 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void Finding_matches_reads_the_sample_index_once_until_it_changes_and_still_finds_longer_names()
+    {
+        // Fix looks for every missing sample in turn: the 350,000-file index was read again for each one.
+        var lib = Path.Combine(Fixtures.TempDir(), "Samples");
+        _db.ReplaceSampleIndex([Path.Combine(lib, "Big Room Festival Kick 01.wav"), Path.Combine(lib, "Snare.wav")]);
+        var first = _db.SampleIndex();
+        Assert.Same(first, _db.SampleIndex());
+        _db.UpdateSampleIndex([Path.Combine(lib, "Hat.wav")]);   // gone, as the folder watcher says
+        Assert.NotSame(first, _db.SampleIndex());
+
+        // A name much longer than the missing one still matches by how it ends.
+        var matches = MatchFinder.ForSample(_db, @"C:\Old Drive\Kick 01.wav");
+        Assert.Equal([Path.Combine(lib, "Big Room Festival Kick 01.wav")], matches.Select(m => m.Candidate));
+        Assert.Equal(MatchFinder.Similarity("kick01", "bigroomfestivalkick01"), matches[0].Score);
+    }
+
+    [Fact]
+    public void A_folder_holds_a_projects_sample_saved_under_the_drives_old_letter()
+    {
+        // Clean up never offers a folder holding a sample a project uses. Songs saved when the drive was F: name
+        // F:\Splice\Sounds, and the app finds those samples on K: now, so K:\Splice\Sounds holds them too.
+        var info = new ProjectInfo { Daw = "FL Studio" };
+        _db.Upsert(new LibraryDb.IndexedFile(Path.Combine(_root, "Old.flp"), 5, 1, info, null, [(@"F:\Splice\Sounds\Kick_01.wav", true)], []));
+        Assert.Equal(@"F:\Splice\Sounds\Kick_01.wav", _db.SampleInside(@"K:\Splice\Sounds"));
+        Assert.Equal(@"F:\Splice\Sounds\Kick_01.wav", _db.SampleInside("k:/Splice/Sounds/"));
+        Assert.Equal(@"F:\Splice\Sounds\Kick_01.wav", _db.SampleInside(@"F:\Splice"));
+        Assert.Null(_db.SampleInside(@"K:\Splice\Sound"));   // a folder whose name only starts the same
+        Assert.Null(_db.SampleInside(@"K:\Splice\Other"));
+        Assert.Null(_db.SampleInside(@"K:\Other\Splice\Sounds"));
+    }
+
+    [Fact]
+    public void Projects_using_a_sample_are_found_by_its_path_without_reading_every_sample()
+    {
+        // "Projects using it" on the Sounds page: with no index on the path, every sample of 16,700 projects was read.
+        new Scanner(_db).ScanProjects();
+        var fl = _db.Project(_db.Projects().Single(x => x.Daw == "FL Studio").Id)!;
+        Assert.Equal([fl.Summary.Id], _db.ProjectsUsingSample(fl.Samples[0].Path.ToUpperInvariant()));
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_db.FilePath};Mode=ReadOnly;Pooling=False");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "EXPLAIN QUERY PLAN SELECT DISTINCT project_id FROM samples WHERE path = 'x' COLLATE NOCASE";
+        using var r = cmd.ExecuteReader();
+        var plan = "";
+        while (r.Read()) plan += r.GetString(3);
+        Assert.Contains("ix_samples_path", plan);
+    }
+
+    [Fact]
+    public void A_project_marked_missing_is_back_when_its_file_comes_back_unchanged()
+    {
+        // Put back from the Recycle Bin, or moved out and back: the same size and time as when it was read.
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        var song = Path.Combine(_root, "Night Drive.flp");
+        var away = Path.Combine(Fixtures.TempDir(), "Night Drive.flp");
+        bool Missing() => _db.Projects().Single(p => p.Path == song).FileMissing;
+
+        File.Move(song, away);
+        scanner.ScanProjects();
+        Assert.True(Missing());
+        File.Move(away, song);
+        scanner.ScanProjects();
+        Assert.False(Missing());
+
+        // The same through the folder watcher.
+        File.Move(song, away);
+        Assert.Equal((0, 1), scanner.Update([song]));
+        Assert.True(Missing());
+        File.Move(away, song);
+        Assert.Equal((1, 0), scanner.Update([song]));
+        Assert.False(Missing());
+    }
+
+    [Fact]
+    public void A_renamed_song_folder_keeps_the_songs_status_rating_notes_and_tags()
+    {
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        void Organise(ProjectSummary p, string status)
+        {
+            p.Status = status;
+            p.Rating = 4;
+            p.Notes = "keep the bass";
+            _db.SaveOrganisation(p);
+            _db.SetTags(p.Id, ["dub"]);
+        }
+        var bitwig = _db.Projects().Single(p => p.Daw == "Bitwig Studio");
+        Organise(bitwig, "Mixing");
+
+        // Renamed in Explorer: the watcher gives up on so many changes and a scan runs.
+        var folder = Path.GetDirectoryName(bitwig.Path)!;
+        Directory.Move(folder, folder + " (done)");
+        scanner.ScanProjects();
+        var moved = _db.Projects().Single(p => p.Daw == "Bitwig Studio");
+        Assert.Equal((bitwig.Id, Path.Combine(folder + " (done)", Path.GetFileName(bitwig.Path)), false),
+                     (moved.Id, moved.Path, moved.FileMissing));
+        Assert.Equal(("Mixing", 4, "keep the bass"), (moved.Status, moved.Rating, moved.Notes));
+        Assert.Contains("dub", moved.Tags);
+
+        // Moved into another folder, as the folder watcher sees it: gone from one place, new in the other.
+        var fl = _db.Projects().Single(p => p.Daw == "FL Studio");
+        Organise(fl, "Finished");
+        var to = Path.Combine(_root, "Finished", Path.GetFileName(fl.Path));
+        Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+        File.Move(fl.Path, to);
+        scanner.Update([fl.Path, to]);
+        var flMoved = _db.Projects().Single(p => p.Daw == "FL Studio");
+        Assert.Equal((fl.Id, to, false, "Finished"), (flMoved.Id, flMoved.Path, flMoved.FileMissing, flMoved.Status));
+
+        // A copy, with the first still there, is a song of its own.
+        File.Copy(to, Path.Combine(_root, Path.GetFileName(to)));
+        scanner.ScanProjects();
+        Assert.Equal(2, _db.Projects().Count(p => p.Daw == "FL Studio" && !p.FileMissing));
+    }
+
+    [Fact]
+    public void Projects_in_a_folder_the_scan_couldnt_read_arent_marked_missing()
+    {
+        new Scanner(_db).ScanProjects();
+        var none = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _db.MarkMissingFiles(none, [_root], unreadable: [Path.Combine(_root, "Loop Idea"), _root]);
+        Assert.All(_db.Projects(), p => Assert.False(p.FileMissing));
+        // Only that folder's projects keep how they were.
+        var unread = Path.Combine(_root, "Loop Idea");
+        _db.MarkMissingFiles(none, [_root], unreadable: [unread]);
+        Assert.All(_db.Projects(), p => Assert.Equal(!p.Path.StartsWith(unread + Path.DirectorySeparatorChar), p.FileMissing));
+        Assert.Contains(_db.Projects(), p => !p.FileMissing);
+    }
+
+    [Fact]
+    public void A_folder_whose_name_only_starts_like_a_project_folder_isnt_inside_it()
+    {
+        // A folder taken out of the list keeps its projects. "Projects Old" isn't inside "Projects", so a scan of
+        // "Projects" mustn't mark them missing, nor read "Old\Templates" as a templates folder of its own.
+        var old = _root + " Old";
+        Directory.CreateDirectory(old);
+        var song = Fixtures.FlStudioProject(old, "Old Song");
+        _db.Upsert(Scanner.Analyse(song));
+        var deleted = Path.Combine(_root, "Night Drive.flp");
+        new Scanner(_db).ScanProjects();
+        File.Delete(deleted);
+
+        new Scanner(_db).ScanProjects();
+        Assert.False(_db.Projects().Single(p => p.Path == song).FileMissing);
+        Assert.True(_db.Projects().Single(p => p.Path == deleted).FileMissing);   // one really gone still is
+        Assert.False(Scanner.IsIgnored(Path.Combine(old, "Templates", "Song.flp"), [_root]));
+        Assert.True(Scanner.IsIgnored(Path.Combine(_root, "Templates", "Song.flp"), [_root]));
+    }
+
+    [Fact]
     public void ExportsMidiAndPresetsToFiles()
     {
         var flp = Path.Combine(_root, "Night Drive.flp");

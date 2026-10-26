@@ -1267,14 +1267,19 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     [RelayCommand]
-    void ShowProjects()
+    async Task ShowProjects()
     {
         if (Selected is { UsedIn: > 0 } s)
         {
-            var ids = _db.ProjectsUsingSample(s.Path).ToList();
-            if (ids.Count == 0)
-                ids = _db.SampleUsage().Where(u => u.Path.Split('\\', '/')[^1].Equals(Path.GetFileName(s.Path), StringComparison.OrdinalIgnoreCase))
-                         .SelectMany(u => _db.ProjectsUsingSample(u.Path)).Distinct().ToList();
+            // Off the window's thread: when the full path finds nothing, every sample of every project is looked through.
+            var ids = await UiWork.Run(() =>
+            {
+                var found = _db.ProjectsUsingSample(s.Path).ToList();
+                if (found.Count == 0)
+                    found = _db.SampleUsage().Where(u => u.Path.Split('\\', '/')[^1].Equals(Path.GetFileName(s.Path), StringComparison.OrdinalIgnoreCase))
+                               .SelectMany(u => _db.ProjectsUsingSample(u.Path)).Distinct().ToList();
+                return found;
+            });
             _main.Projects.ShowOnly(ids, $"Projects using {s.Name}");
             _main.ShowProjects();
         }

@@ -719,3 +719,214 @@ public class VectorIndexTests
         Assert.Empty(index.Nearest(query, 0));
     }
 }
+
+public class SoundLibraryTests
+{
+    [Fact]
+    public void A_renamed_sound_or_pack_folder_keeps_its_tags_rating_favourite_and_type()
+    {
+        var root = Fixtures.SoundsDir();
+        var samples = Path.Combine(root, "Samples");
+        var pack = Path.Combine(samples, "Pack A");
+        Directory.CreateDirectory(Path.Combine(pack, "Kicks"));
+        Directory.CreateDirectory(Path.Combine(pack, "Hats"));
+        Synth.Write(Path.Combine(pack, "Kicks", "Kick 01.wav"), Synth.Kick(1));
+        Synth.Write(Path.Combine(pack, "Hats", "Hat 01.wav"), Synth.Hat(2));
+        Synth.Write(Path.Combine(samples, "Snare 01.wav"), Synth.Snare(3));
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        using var org = new SoundOrganiser(lib);
+        Assert.Equal(3, org.Scan([samples]));
+        var ids = org.Sounds.ToDictionary(s => s.Name, s => s.Id);
+        void Organise(string name)
+        {
+            var s = org.Sounds.Single(x => x.Name == name);
+            lib.AddTag(s.Id, "punchy");
+            lib.SetRating(s.Id, 5);
+            lib.SetFavourite(s.Id, true);
+            org.SetUserType(s, "Clap");
+        }
+        foreach (var name in ids.Keys) Organise(name);
+
+        // A pack's folder renamed and a sound renamed in Explorer, found by a scan: nothing new to listen to.
+        Directory.Move(pack, Path.Combine(samples, "Pack A (old)"));
+        File.Move(Path.Combine(samples, "Snare 01.wav"), Path.Combine(samples, "Snare punchy.wav"));
+        Assert.Equal(0, org.Scan([samples]));
+        void Kept(string name, long id)
+        {
+            var s = org.Sounds.Single(x => x.Name == name);
+            Assert.Equal((id, 5, true, "Clap"), (s.Id, s.Rating, s.Favourite, s.Type));
+            Assert.Contains("punchy", s.Tags);
+        }
+        Kept("Kick 01", ids["Kick 01"]);
+        Kept("Hat 01", ids["Hat 01"]);
+        Kept("Snare punchy", ids["Snare 01"]);
+        Assert.Equal(3, lib.Count());
+
+        // Renamed while the folder watcher looks on: the old name gone, the new one there.
+        var from = Path.Combine(samples, "Snare punchy.wav");
+        var to = Path.Combine(samples, "Snare tight.wav");
+        File.Move(from, to);
+        Assert.Equal(1, org.Update([from, to], [samples]));
+        Kept("Snare tight", ids["Snare 01"]);
+        Assert.Equal(3, lib.Count());
+    }
+
+    [Fact]
+    public void A_sound_renamed_or_moved_to_say_a_tempo_key_or_loop_is_listened_to_again_and_keeps_its_tags()
+    {
+        var root = Fixtures.SoundsDir();
+        var samples = Path.Combine(root, "Samples");
+        Directory.CreateDirectory(Path.Combine(samples, "One Shots"));
+        Directory.CreateDirectory(Path.Combine(samples, "Loops"));
+        var pad = Synth.Silence(2.5);
+        foreach (var note in new[] { 53, 56, 60 }) Synth.Tone(pad, note, 0, 2.5);
+        Synth.Write(Path.Combine(samples, "Pad.wav"), pad);
+        Synth.Write(Path.Combine(samples, "One Shots", "Stab.wav"), pad[..(44100 * 2)]);
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        using var org = new SoundOrganiser(lib);
+        Assert.Equal(2, org.Scan([samples]));
+        foreach (var s in org.Sounds) lib.AddTag(s.Id, "lush");
+        var ids = org.Sounds.ToDictionary(s => s.Name, s => s.Id);
+        Assert.False(org.Sounds.Single(s => s.Name == "Stab").Analysis!.IsLoop);
+
+        // Renamed so its name says a tempo and key, and moved from "One Shots" into "Loops": both listened to again.
+        File.Move(Path.Combine(samples, "Pad.wav"), Path.Combine(samples, "Pad 90bpm Fm.wav"));
+        File.Move(Path.Combine(samples, "One Shots", "Stab.wav"), Path.Combine(samples, "Loops", "Stab.wav"));
+        Assert.Equal(2, org.Scan([samples]));
+        var renamed = org.Sounds.Single(s => s.Name == "Pad 90bpm Fm");
+        Assert.Equal((ids["Pad"], 90.0, "file name"), (renamed.Id, renamed.Analysis!.Bpm, renamed.Analysis.BpmSource));
+        Assert.Equal((5, true, "file name"), (renamed.Analysis.KeyTonic, renamed.Analysis.KeyMinor, renamed.Analysis.KeySource));
+        var moved = org.Sounds.Single(s => s.Name == "Stab");
+        Assert.Equal((ids["Stab"], true), (moved.Id, moved.Analysis!.IsLoop));
+        Assert.All(org.Sounds, s => Assert.Contains("lush", s.Tags));
+        Assert.Equal(2, lib.Count());
+
+        // The same while the folder watcher looks on: counted once, not as a move and a new sound.
+        var from = Path.Combine(samples, "Pad 90bpm Fm.wav");
+        var to = Path.Combine(samples, "Pad 120bpm Fm.wav");
+        File.Move(from, to);
+        Assert.Equal(1, org.Update([from, to], [samples]));
+        renamed = org.Sounds.Single(s => s.Name == "Pad 120bpm Fm");
+        Assert.Equal((ids["Pad"], 120.0), (renamed.Id, renamed.Analysis!.Bpm));
+        Assert.Contains("lush", renamed.Tags);
+
+        // Nothing the name says changed: not listened to again.
+        Assert.True(SoundOrganiser.SameHints("/a/Loops/Pad 120bpm Fm.wav", "/b/Loops/Pad 120bpm Fm (1).wav"));
+        Assert.False(SoundOrganiser.SameHints("/a/Pad.wav", "/a/Pad Am.wav"));
+    }
+
+    [Fact]
+    public void Learning_types_again_writes_only_the_sounds_whose_type_changed()
+    {
+        // It runs after every scan and every sound the folder watcher sees; rewriting all 357,000 types each time
+        // held the database for seconds, and a sound clicked meanwhile waited to be counted as played.
+        var root = Fixtures.SoundsDir();
+        var samples = Path.Combine(root, "Samples");
+        Directory.CreateDirectory(samples);
+        Synth.Write(Path.Combine(samples, "Kick.wav"), Synth.Kick(1));
+        Synth.Write(Path.Combine(samples, "Hat.wav"), Synth.Hat(2));
+        Synth.Write(Path.Combine(samples, "Snare.wav"), Synth.Snare(3));
+        var path = Path.Combine(root, "sounds.db");
+        using var lib = new SoundLibrary(path);
+        using var org = new SoundOrganiser(lib);
+        org.Scan([samples]);
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
+        conn.Open();
+        long Sql(string sql)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            return cmd.ExecuteScalar() is long n ? n : 0;
+        }
+        Sql("CREATE TABLE type_writes (id INTEGER); CREATE TRIGGER count_type_writes AFTER UPDATE OF type ON sounds BEGIN INSERT INTO type_writes VALUES (new.id); END;");
+
+        org.UpdateTypes();
+        Assert.Equal(0, Sql("SELECT COUNT(*) FROM type_writes"));
+
+        // One sound's stored type out of step: only it is written.
+        Sql("UPDATE sounds SET type = 'Ride', type_source = 'learned' WHERE path LIKE '%Kick.wav'; DELETE FROM type_writes;");
+        org.Reload();
+        org.UpdateTypes();
+        Assert.Equal(1, Sql("SELECT COUNT(*) FROM type_writes"));
+        Assert.Equal("Kick", org.Sounds.Single(s => s.Name == "Kick").Type);
+        Assert.Equal(org.Sounds.Select(s => (s.Id, s.Type)).Order(), lib.All().Select(s => (s.Id, s.Type)).Order());
+    }
+
+    [Fact]
+    public void Learning_tags_again_takes_the_old_suggestions_off_the_sounds_in_memory_too()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-tags-").FullName;
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        lib.Save(new[] { "/lib/A.wav", "/lib/B.wav" }.Select(p => new SoundLibrary.Analysed(p, 1, 1,
+            new SoundAnalysis { Features = [1, 0, 0] }, null, null, "Kick")));
+        using var org = new SoundOrganiser(lib);
+        var (a, b) = (org.Sounds.Single(s => s.Name == "A"), org.Sounds.Single(s => s.Name == "B"));
+        lib.AddTag(a.Id, "dusty", "learned");   // suggested last time, when you had tagged enough sounds
+        lib.AddTag(b.Id, "dusty");
+        org.Reload();
+        Assert.Contains("dusty", org.Get(a.Id)!.Tags);
+
+        // Now too few of your own to learn from: the suggestion goes, from the library and from what's shown.
+        org.TrainTags();
+        Assert.Empty(lib.SoundsTagged("dusty", "learned"));
+        Assert.DoesNotContain("dusty", org.Get(a.Id)!.Tags);
+        Assert.Contains("dusty", org.Get(b.Id)!.Tags);   // yours stay
+    }
+
+    [Fact]
+    public void Only_sure_pairs_of_gone_and_new_files_count_as_moved()
+    {
+        (string, long, long) F(string path, long size = 100, long mtime = 7) => (path, size, mtime);
+        // A pack folder renamed: two "01.wav" of the same size and time, told apart by their folders.
+        Assert.Equal([("/a/Pack/Kicks/01.wav", "/a/Pack 2/Kicks/01.wav"), ("/a/Pack/Snares/01.wav", "/a/Pack 2/Snares/01.wav")],
+            SoundOrganiser.Moves([F("/a/Pack/Kicks/01.wav"), F("/a/Pack/Snares/01.wav")],
+                                 [F("/a/Pack 2/Snares/01.wav"), F("/a/Pack 2/Kicks/01.wav")]).OrderBy(m => m.From));
+        // One renamed file.
+        Assert.Equal([("/a/Kick.wav", "/a/Kick hard.wav")], SoundOrganiser.Moves([F("/a/Kick.wav")], [F("/a/Kick hard.wav")]));
+        // A different size or time is a different file.
+        Assert.Empty(SoundOrganiser.Moves([F("/a/Kick.wav")], [F("/a/Kick hard.wav", size: 101)]));
+        Assert.Empty(SoundOrganiser.Moves([F("/a/Kick.wav")], [F("/a/Kick hard.wav", mtime: 8)]));
+        // Two gone and two new with nothing to tell them apart: no guess.
+        Assert.Empty(SoundOrganiser.Moves([F("/a/x.wav"), F("/a/y.wav")], [F("/b/p.wav"), F("/b/q.wav")]));
+        // One name in two new places: neither is sure, nor is a guess from what's left.
+        Assert.Empty(SoundOrganiser.Moves([F("/a/Loop.wav")], [F("/b/Loop.wav"), F("/c/Loop.wav")]));
+    }
+
+    [Fact]
+    public void Forgetting_sounds_finds_their_map_and_play_rows_by_index_and_forgets_a_big_pack_whole()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-forget-").FullName;
+        var path = Path.Combine(root, "sounds.db");
+        using var lib = new SoundLibrary(path);
+        var paths = Enumerable.Range(0, 1200).Select(i => $"/lib/Pack/Kick {i}.wav").ToList();
+        lib.Save(paths.Select(p => new SoundLibrary.Analysed(p, 1, 1, null, null, null, "Kick")));
+        var ids = lib.All().Select(s => s.Id).ToList();
+        lib.SaveMap("features", ids.ToDictionary(id => id, _ => new StarPoint(0.5f, 0.5f)), replace: true);
+        lib.Record(ids, SoundEvent.Drag);
+
+        // Forgetting a sound clears its galaxy place and plays by its id: without an index on it, each sound read the
+        // whole of both tables (53 ms a sound with 900,000 places, minutes for a pack, with plays and favourites waiting).
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Mode=ReadOnly"))
+        {
+            conn.Open();
+            foreach (var table in new[] { "sound_maps", "sound_events" })
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"EXPLAIN QUERY PLAN SELECT 1 FROM {table} WHERE sound_id = 1";
+                using var r = cmd.ExecuteReader();
+                var plan = "";
+                while (r.Read()) plan += r.GetString(3);
+                Assert.Contains("INDEX", plan);
+                Assert.DoesNotContain("SCAN", plan);
+            }
+        }
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
+        // Gone a few hundred at a time, all of them in the end.
+        Assert.Equal(1000, lib.Remove(paths.Take(1000)));
+        Assert.Equal(200, lib.Count());
+        Assert.Equal(200, lib.Map("features").Count);
+        Assert.Equal(1, lib.RemoveMissing(paths.Skip(1000).Take(199).ToHashSet(StringComparer.OrdinalIgnoreCase)));
+        Assert.Equal(199, lib.Count());
+    }
+}

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Plugins;
 
@@ -40,7 +41,7 @@ public sealed class Scanner(LibraryDb db)
     public static bool IsIgnored(string path, IEnumerable<string> roots)
     {
         if (IsAutosaveFile(Path.GetFileName(path))) return true;
-        var root = roots.FirstOrDefault(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase));
+        var root = roots.FirstOrDefault(r => Space.DiskSpace.IsInside(path, r));
         if (root is null) return false;
         var dir = Path.GetDirectoryName(path) ?? "";
         var dirs = (dir.Length > root.Length ? dir[root.Length..] : "")
@@ -55,8 +56,10 @@ public sealed class Scanner(LibraryDb db)
         FindProjectStamps(roots, ct).Select(f => f.Path).ToList();
 
     /// <summary>The project files under these folders, with the size and modified time the folder listing gave.</summary>
-    public static List<Parallelism.FoundFile> FindProjectStamps(IEnumerable<string> roots, CancellationToken ct = default) =>
-        Parallelism.FindFileStamps(roots, IsProjectFile, SkipDir, ct: ct);
+    /// <remarks><paramref name="unreadable"/> gets the folders that couldn't be read this time.</remarks>
+    public static List<Parallelism.FoundFile> FindProjectStamps(IEnumerable<string> roots, CancellationToken ct = default,
+                                                                ConcurrentBag<string>? unreadable = null) =>
+        Parallelism.FindFileStamps(roots, IsProjectFile, SkipDir, ct: ct, unreadable: unreadable);
 
     /// <summary>A file the library lists: one the readers know, leaving out macOS "._" shadows and DAW autosaves.</summary>
     public static bool IsProjectFile(string path)
@@ -107,7 +110,8 @@ public sealed class Scanner(LibraryDb db)
 
         var roots = db.Roots().Where(Directory.Exists).ToList();
         progress?.Report(new("Finding projects", 0, 0, ""));
-        var found = FindProjectStamps(roots, ct);
+        var unreadable = new ConcurrentBag<string>();
+        var found = FindProjectStamps(roots, ct, unreadable);
         var files = found.Select(f => f.Path).ToList();
         var known = db.KnownFiles();
         // DAWs whose reader has got better since the library last read their projects: read those again.
@@ -118,6 +122,12 @@ public sealed class Scanner(LibraryDb db)
         var todo = found.Where(f => full || rekey || reread.Contains(Readers.For(f.Path)!.Daw) ||
                                     !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
                         .Select(f => f.Path).ToList();
+
+        // Gone files are marked before the new ones are saved, so a song folder renamed or moved is found as the
+        // projects it was (see LibraryDb.MovedFrom), not as new ones. A scan stopped while finding them marks nothing.
+        // A folder that couldn't be read this time (busy, or its permissions changing) keeps its projects as they were.
+        ct.ThrowIfCancellationRequested();
+        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots), unreadable);
 
         // Read the projects on every core; save them here, in path order, a batch at a time,
         // so a new numbered save always finds the earlier ones it takes its status from.
@@ -146,7 +156,6 @@ public sealed class Scanner(LibraryDb db)
         db.UpsertMany(batch);
         foreach (var r in Readers.All) db.SetSetting(ReaderVersionKey(r), r.Version.ToString());
         db.SetSetting(KeyVersionKey, ProjectKey.Version.ToString());
-        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
         progress?.Report(new("Done", files.Count, files.Count, ""));
         return todo.Count(f => !known.ContainsKey(f));
     }
@@ -224,10 +233,15 @@ public sealed class Scanner(LibraryDb db)
                                            IProgress<ScanProgress>? progress = null, CancellationToken ct = default)
     {
         var done = 0;
+        var before = db.PluginScanStamps();
         await Parallel.ForEachAsync(paths, new ParallelOptions { MaxDegreeOfParallelism = PluginLoads, CancellationToken = ct }, async (path, token) =>
         {
             var stamp = PluginScanner.Stamp(path);
             var scan = await scanner.ScanAsync(path, ct: token);
+            // Stopped by the time limit (the PC busy, or a plugin waiting on something), the plugins it hadn't listed yet
+            // would never count as installed: it's kept with no stamp, so the next scan reads it again. Only once (that
+            // empty stamp says it's had its second go), so a plugin that always hangs doesn't hold up every scan.
+            if (scan.TimedOut && !(before.TryGetValue(path, out var was) && was == default)) stamp = default;
             db.SavePluginScan(scan, stamp);
             progress?.Report(new("Reading plugins", Interlocked.Increment(ref done), paths.Count, Path.GetFileName(path.TrimEnd('\\', '/'))));
         });

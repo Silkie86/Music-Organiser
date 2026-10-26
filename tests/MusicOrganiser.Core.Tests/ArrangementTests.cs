@@ -296,4 +296,32 @@ public class ArrangementTests
         Assert.InRange(peaks.Max(0, 0.9), 0.08, 0.12);
         Assert.InRange(peaks.Max(1.1, 2), 0.85, 0.95);
     }
+
+    [Fact]
+    public void A_long_recording_is_drawn_from_parts_read_in_turn_the_same_as_reading_it_whole()
+    {
+        // A 20 minute recording read whole took most of a gigabyte for one waveform: it's read 10 s at a time now.
+        // 22,050 Hz makes the parts end part way through a hundredth of a second, so the slices that span two parts count.
+        var path = Path.Combine(Fixtures.TempDir(), "Take.wav");
+        const int rate = 22050;
+        var rng = new Random(4);
+        float[] Channel() => Enumerable.Range(0, rate * 25).Select(i => (float)(Math.Sin(i * 0.01) * (0.2 + 0.7 * ((i / 5000) % 3) / 2) * rng.NextDouble())).ToArray();
+        WavWriter.Write(path, [Channel(), Channel()], rate);
+
+        var whole = AudioFile.Read(path, AudioPeaks.MaxSeconds);
+        var slice = (int)(rate * AudioPeaks.SliceSeconds);
+        var expected = new float[(whole.Length + slice - 1) / slice];
+        foreach (var channel in whole.Channels)
+            for (var i = 0; i < channel.Length; i++) expected[i / slice] = Math.Max(expected[i / slice], Math.Abs(channel[i]));
+
+        var peaks = AudioPeaks.For(path)!;
+        Assert.Equal(expected, peaks.Peaks);
+        Assert.Equal(25, peaks.Seconds, 3);
+
+        // A part from further in is those frames of the whole.
+        var part = AudioFile.Read(path, 1, fromFrame: rate * 12 + 7);
+        Assert.Equal(rate, part.Length);
+        Assert.Equal(whole.Channels[1].AsSpan(rate * 12 + 7, rate).ToArray(), part.Channels[1]);
+        Assert.Equal(0, AudioFile.Read(path, 1, fromFrame: rate * 30).Length);
+    }
 }

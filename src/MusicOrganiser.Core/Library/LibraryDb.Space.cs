@@ -164,13 +164,19 @@ public sealed partial class LibraryDb
     /// A sample some project uses that's inside this folder, if any: Clean up never removes a folder holding one (your
     /// rule that samples are never moved or deleted; a plugin's library is only fair game when no project uses it).
     /// </summary>
+    /// <remarks>
+    /// The same folder under another drive letter counts too: a project saved when the drive was F: still finds its
+    /// samples now it's K: (see <see cref="SampleLocator"/>), so they hold the folder just the same.
+    /// </remarks>
     public string? SampleInside(string folder)
     {
         var f = folder.Replace('/', '\\').TrimEnd('\\');
         var g = folder.Replace('\\', '/').TrimEnd('/');
+        var drive = f.Length >= 2 && f[1] == ':' && char.IsAsciiLetter(f[0]);
+        string Pattern(string path) => drive ? "_:" + Like(path[2..]) : Like(path);   // "_" stands for any one letter
         return Query("""
             SELECT path FROM samples WHERE path LIKE $a ESCAPE '|' OR path LIKE $b ESCAPE '|' LIMIT 1
-            """, r => Str(r, "path"), ("$a", Like(f) + "\\%"), ("$b", Like(g) + "/%")).FirstOrDefault();
+            """, r => Str(r, "path"), ("$a", Pattern(f) + "\\%"), ("$b", Pattern(g) + "/%")).FirstOrDefault();
 
         static string Like(string s) => s.Replace("|", "||").Replace("%", "|%").Replace("_", "|_");
     }
