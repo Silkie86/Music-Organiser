@@ -54,30 +54,35 @@ public static class Uninstallers
     /// Serum 2) comes before another, and another version's ("iZotope Ozone 11" for Ozone 9) comes last
     /// (see <see cref="IsOtherVersion"/>).
     /// </summary>
-    public static IReadOnlyList<Uninstaller> For(string plugin, string vendor, IReadOnlyList<Uninstaller> all)
+    /// <param name="installed">The installed plugins' names, which tell another version from this one's.</param>
+    public static IReadOnlyList<Uninstaller> For(string plugin, string vendor, IReadOnlyList<Uninstaller> all, IReadOnlyCollection<string>? installed = null)
     {
         var family = PluginCatalog.Family(plugin);
         if (family.Length < 2) return [];
         var (maker, full) = (Norm(vendor), Norm(plugin));
         return all.Select(u => (u, Score: Score(u, family, maker, full)))
                   .Where(x => x.Score > 0)
-                  .OrderBy(x => IsOtherVersion(plugin, x.u)).ThenByDescending(x => x.Score).ThenBy(x => x.u.Name.Length)
+                  .OrderBy(x => IsOtherVersion(plugin, x.u, installed)).ThenByDescending(x => x.Score).ThenBy(x => x.u.Name.Length)
                   .Select(x => x.u).ToList();
     }
 
     /// <summary>
-    /// Whether the program's name gives another version than the plugin's: "iZotope Ozone 11" for Ozone 9, "Xfer Serum 2"
-    /// for Serum (a name without a number is version 1). Running it would remove a plugin you may still use, so it's
-    /// never picked for you. A program whose name gives no version isn't another one.
+    /// Whether the program's name gives another version than the plugin's: "iZotope Ozone 11" for Ozone 9. Running it
+    /// would remove a plugin you may still use, so it's never picked for you. A program whose name gives no version isn't
+    /// another one. Nor is one for a plugin whose own name gives none, as it could be any version (Kontakt 6 installs as
+    /// "Kontakt", under "Native Instruments Kontakt 6"), unless that version is installed too: "Xfer Serum 2" is Serum 2's
+    /// when Serum 2 is beside Serum.
     /// </summary>
-    public static bool IsOtherVersion(string plugin, Uninstaller u)
+    /// <param name="installed">The installed plugins' names.</param>
+    public static bool IsOtherVersion(string plugin, Uninstaller u, IReadOnlyCollection<string>? installed = null)
     {
         var family = PluginCatalog.Family(plugin);
         if (family.Length < 2) return false;
         var theirs = MajorAfter(u.Name, family);
         if (theirs < 0) return false;
         var mine = MajorAfter(plugin, family);
-        return theirs != Math.Max(mine, 1);
+        if (mine >= 0) return theirs != mine;
+        return installed?.Any(n => PluginCatalog.Family(n) == family && MajorAfter(n, family) == theirs) == true;
     }
 
     // The whole number written straight after the plugin's name in a name ("iZotope Ozone 11 Advanced": 11, "Serum2": 2,

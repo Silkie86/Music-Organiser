@@ -65,11 +65,16 @@ public static class FolderMove
             var drive = new DriveInfo(Path.GetPathRoot(destination)!);
             if (drive.DriveType is DriveType.Network) return "Windows can't point a folder at a network drive. Pick a drive in this PC.";
         }
+        // Copying a OneDrive file that's only online downloads it first, onto the drive being freed, and the size left it out.
+        if (DiskSpace.HasOnlineOnly(from)) return OnlineOnly;
         var free = (freeSpace ?? FreeSpace)(destination);
         if (free >= 0 && free < bytes + Headroom)
             return $"That drive has {DiskSpace.Text(free)} free; this needs {DiskSpace.Text(bytes)} and some room to spare.";
         return "";
     }
+
+    const string OnlineOnly = "Some of its files are only online in OneDrive, so copying them would download them onto this drive first. " +
+                              "In File Explorer, right-click the folder and pick Always keep on this device. Once they've downloaded, try again.";
 
     /// <summary>The drive (on a Mac or Linux, the mounted disk) a path is on.</summary>
     public static string DriveOf(string path)
@@ -189,6 +194,8 @@ public static class FolderMove
                     continue;
                 }
                 var source = (FileInfo)entry;
+                // Never downloaded to be copied (one that went online-only after the check): it stops before anything is swapped.
+                if (DiskSpace.IsOnlineOnly(source.Attributes)) throw new IOException(OnlineOnly);
                 if (onlyNewer && new FileInfo(copy) is { Exists: true } there && there.LastWriteTimeUtc >= source.LastWriteTimeUtc) continue;
                 File.Copy(source.FullName, copy, overwrite: onlyNewer);
                 File.SetLastWriteTimeUtc(copy, source.LastWriteTimeUtc);

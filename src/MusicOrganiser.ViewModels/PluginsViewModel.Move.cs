@@ -82,17 +82,31 @@ public sealed partial class PluginsViewModel
         if (Selected is not { } p || !_rowSpace.TryGetValue(p, out var space)) return;
         var destination = await Ui.Current.PickFolder($"Move {Path.GetFileName(folder.Path)} to which folder? Pick one on another drive");
         if (destination is null) return;
-        // A maker's folder was measured less its plugins' own folders inside it, but they move with it: measured whole.
-        var spaces = _spaces.Values.ToList();
-        var bytes = await Task.Run(() => FoldersInside(folder.Path, spaces).Count > 0 ? DiskSpace.Measure(folder.Path).Bytes : folder.Bytes);
-        folder = folder with { Bytes = bytes };
-        var (admin, problem) = await Task.Run(() =>
-            FolderMove.Problem(folder.Path, destination, folder.Bytes) is { Length: > 0 } why ? (false, why) : FolderMove.CheckSwap(folder.Path));
-        if (problem.Length > 0)
+        // Measured again, whole, so the room checked for is what the copy takes: a maker's folder was measured less its
+        // plugins' own folders inside it, which move with it, and files may have come since (OneDrive ones downloaded).
+        var name = Path.GetFileName(folder.Path);
+        using var stop = new CancellationTokenSource();
+        var activity = _main.Activities.Start($"Checking {name}", "Measuring it", cancel: stop.Cancel);
+        bool admin;
+        string problem;
+        try
         {
-            _main.Activities.Failed($"Can't move {Path.GetFileName(folder.Path)} there", problem);
+            var bytes = await Task.Run(() => DiskSpace.Measure(folder.Path, stop.Token).Bytes, stop.Token);
+            folder = folder with { Bytes = bytes };
+            (admin, problem) = await Task.Run(() =>
+                FolderMove.Problem(folder.Path, destination, folder.Bytes) is { Length: > 0 } why ? (false, why) : FolderMove.CheckSwap(folder.Path));
+        }
+        catch (OperationCanceledException)
+        {
+            activity.Stop($"Stopped checking {name}", "Nothing was moved.");
             return;
         }
+        if (problem.Length > 0)
+        {
+            activity.Fail($"Can't move {name} there", problem);
+            return;
+        }
+        activity.Finish($"Checked {name}", $"{DiskSpace.Text(folder.Bytes)} to move");
         var target = FolderMove.Target(folder.Path, destination);
         var card = new SpaceCard(this)
         {

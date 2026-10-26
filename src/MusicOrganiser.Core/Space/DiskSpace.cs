@@ -47,7 +47,35 @@ public static class DiskSpace
     // A file met on a walk that takes room here. On Windows a link to a file has no size of its own, and OneDrive's files
     // carry the link flag too, so only the ones that are only online are left out; elsewhere the flag means a link.
     static bool TakesRoom(ref FileSystemEntry e) =>
-        OperatingSystem.IsWindows() ? (e.Attributes & OnlineOnly) == 0 : (e.Attributes & FileAttributes.ReparsePoint) == 0;
+        OperatingSystem.IsWindows() ? !IsOnlineOnly(e.Attributes) : (e.Attributes & FileAttributes.ReparsePoint) == 0;
+
+    /// <summary>Whether a file is a OneDrive file that's only online: it takes no room here, and reading it downloads it.</summary>
+    public static bool IsOnlineOnly(FileAttributes attributes) => (attributes & OnlineOnly) != 0;
+
+    /// <summary>
+    /// Whether any file in a folder or its folders is a OneDrive file that's only online, which the size walks leave out
+    /// and copying would download first. Links to other places aren't followed. Only Windows has them.
+    /// </summary>
+    public static bool HasOnlineOnly(string folder, CancellationToken ct = default)
+    {
+        if (!OperatingSystem.IsWindows() || !Directory.Exists(folder)) return false;
+        var seen = 0;
+        try
+        {
+            var online = new FileSystemEnumerable<bool>(folder, (ref FileSystemEntry _) => true,
+                new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 })
+            {
+                ShouldIncludePredicate = (ref FileSystemEntry e) =>
+                {
+                    if ((++seen & 1023) == 0) ct.ThrowIfCancellationRequested();
+                    return !e.IsDirectory && IsOnlineOnly(e.Attributes);
+                },
+                ShouldRecursePredicate = (ref FileSystemEntry e) => !IsLinkedFolder(ref e),
+            };
+            return online.Any();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
 
     /// <summary>
     /// Every file in a folder and its folders, as the size walks see them: links to other places (junctions) aren't

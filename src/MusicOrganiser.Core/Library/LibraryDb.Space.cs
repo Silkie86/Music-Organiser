@@ -196,8 +196,10 @@ public sealed partial class LibraryDb
         }
         var found = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (tails.Count == 0) return found;
+        var rows = 0;
         Query("SELECT path FROM samples", r =>
         {
+            if ((++rows & 4095) == 0) ct.ThrowIfCancellationRequested();
             var path = Str(r, "path");
             if (Tail(path) is { } tail && tails.TryGetValue(tail, out var holding))
                 foreach (var f in holding) found.TryAdd(f, path);

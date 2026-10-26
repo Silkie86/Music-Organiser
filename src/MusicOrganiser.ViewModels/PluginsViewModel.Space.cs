@@ -227,14 +227,8 @@ public sealed partial class PluginsViewModel
         var spaces = _spaces.Values.ToList();
         // Which folders hold a sample a project uses, and which hold another listed folder (a maker's folder holds its
         // plugins' own, which were measured apart): read in the background (the samples table is big).
-        // A sample found here under another path than the project's (an old PC's, a drive with a new letter) counts too.
         var (holding, inside) = await Task.Run(() =>
-        {
-            var direct = folders.ToDictionary(f => f.Path, f => _db.SampleInside(f.Path));
-            var named = _db.SamplesNamedIn(folders.Where(f => direct[f.Path] is null).Select(f => f.Path).ToList());
-            return (folders.ToDictionary(f => f.Path, f => direct[f.Path] ?? named.GetValueOrDefault(f.Path)),
-                    folders.ToDictionary(f => f.Path, f => FoldersInside(f.Path, spaces)));
-        });
+            (folders.ToDictionary(f => f.Path, f => _db.SampleInside(f.Path)), folders.ToDictionary(f => f.Path, f => FoldersInside(f.Path, spaces))));
         // Removing a folder removes the folders in it, so one holding a folder that has to stay stays too.
         string Holds(SpaceFolder f)
         {
@@ -248,14 +242,34 @@ public sealed partial class PluginsViewModel
             }
             return "";
         }
+        string Why(SpaceFolder f) =>
+            PluginSpace.IsInstallFolder(f.Path) ? "Inside Program Files: Uninstall removes this."
+            : protectedRoots.FirstOrDefault(r => DiskSpace.IsInside(f.Path, r) || DiskSpace.IsInside(r, f.Path)) is { } mine ? $"Part of your folder {mine}."
+            : holding[f.Path] is { } sample ? $"A project uses a sample in it ({Path.GetFileName(sample)})."
+            : InUse(f, p) is { Length: > 0 } use ? use
+            : Holds(f);
+        // A sample found here under another path than the project's (an old PC's, a drive with a new letter) counts too.
+        // That means walking the folders, so only the ones that would be offered are, as a job you can stop.
+        var walk = folders.Where(f => Why(f).Length == 0).Select(f => f.Path).ToList();
+        if (walk.Count > 0)
+        {
+            using var stop = new CancellationTokenSource();
+            var activity = _main.Activities.Start($"Checking {p.Name}'s folders", "Looking for samples your projects use", cancel: stop.Cancel);
+            try
+            {
+                var named = await Task.Run(() => _db.SamplesNamedIn(walk, stop.Token), stop.Token);
+                foreach (var (folder, sample) in named) holding[folder] = sample;
+                activity.Finish($"Checked {p.Name}'s folders");
+            }
+            catch (OperationCanceledException)
+            {
+                activity.Stop($"Stopped checking {p.Name}'s folders", "Nothing was removed.");
+                return;
+            }
+        }
         var items = folders.Select(f =>
         {
-            var why =
-                PluginSpace.IsInstallFolder(f.Path) ? "Inside Program Files: Uninstall removes this."
-                : protectedRoots.FirstOrDefault(r => DiskSpace.IsInside(f.Path, r) || DiskSpace.IsInside(r, f.Path)) is { } mine ? $"Part of your folder {mine}."
-                : holding[f.Path] is { } sample ? $"A project uses a sample in it ({Path.GetFileName(sample)})."
-                : InUse(f, p) is { Length: > 0 } use ? use
-                : Holds(f);
+            var why = Why(f);
             return new CleanupItem(f, why, ticked: why.Length == 0 && f.Kind == SpaceKind.Sounds);
         }).ToList();
         var card = new SpaceCard(this)
@@ -300,7 +314,8 @@ public sealed partial class PluginsViewModel
         if ((row ?? Selected) is not { } p || !_rowSpace.TryGetValue(p, out var space)) return;
         Selected = p;
         SideTab = 1;
-        var found = await Task.Run(() => Uninstallers.For(p.Name, p.Vendor, Uninstallers.All()));
+        var installed = Items.Where(i => i.Installed).Select(i => i.Name).ToList();
+        var found = await Task.Run(() => Uninstallers.For(p.Name, p.Vendor, Uninstallers.All(), installed));
         var files = space.Folders.Where(f => f.Kind == SpaceKind.Program).ToList();
         // Binning a WaveShell would take every Waves plugin with it.
         var shell = IsShell(space);
@@ -313,7 +328,7 @@ public sealed partial class PluginsViewModel
         if (found.Count > 0)
         {
             // Another version's uninstaller (Ozone 11's for Ozone 9) would remove a plugin you may still use: you pick it yourself.
-            var other = Uninstallers.IsOtherVersion(p.Name, found[0]);
+            var other = Uninstallers.IsOtherVersion(p.Name, found[0], installed);
             card.Intro = "This runs its own uninstaller, the same one Windows Settings › Apps uses. It opens in its own window and may ask questions." +
                          (other ? $" These look like other versions of {p.Name}, not this one. Pick one only if you're sure it's the right one." : "");
             card.Uninstallers = found;

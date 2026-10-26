@@ -52,6 +52,12 @@ public class SpaceTests : IDisposable
         Assert.Equal(100, m.SoundBytes);   // the .wav is a sound, the preset isn't
         Assert.Equal(2, m.Files);
 
+        // A OneDrive file only online ("offline", or "recall on data access") takes no room, and moving it would download it.
+        Assert.True(DiskSpace.IsOnlineOnly(FileAttributes.Archive | FileAttributes.Offline));
+        Assert.True(DiskSpace.IsOnlineOnly(FileAttributes.ReparsePoint | (FileAttributes)0x00400000));
+        Assert.False(DiskSpace.IsOnlineOnly(FileAttributes.Archive | FileAttributes.ReparsePoint));   // kept on this PC
+        Assert.False(DiskSpace.HasOnlineOnly(Path.Combine(_root, "lib")));
+
         Assert.True(DiskSpace.IsInside(@"C:\A\B\c.wav", @"C:\A"));
         Assert.True(DiskSpace.IsInside(@"C:\A", @"C:\A\"));
         Assert.False(DiskSpace.IsInside(@"C:\AB\c.wav", @"C:\A"));
@@ -512,6 +518,7 @@ public class SpaceTests : IDisposable
         var item = Assert.Single(plugins.Card!.Items);
         Assert.False(item.CanTick);
         Assert.Contains("Sounds stay while a project uses", item.Why);
+        Assert.DoesNotContain(page.Main.Activities.Items, a => a.Title.Contains("UVI"));   // it stays anyway: not walked
         Assert.False(plugins.Card.RunCommand.CanExecute(null));
         plugins.Card.KeepCommand.Execute(null);
         Assert.Null(plugins.Card);
@@ -820,6 +827,8 @@ public class SpaceTests : IDisposable
         var item = plugins.Card!.Items.Single();
         Assert.False(item.CanTick);
         Assert.Contains("A project uses a sample in it", item.Why);
+        // Walked as a job you can stop, and only because the folder would otherwise be offered.
+        Assert.Contains(page.Main.Activities.Items, a => a.Title == "Checked SampleTank's folders");
     }
 
     [Fact]
@@ -863,9 +872,16 @@ public class SpaceTests : IDisposable
         Assert.True(Uninstallers.IsOtherVersion("Ozone 9", ozone11));
         Assert.False(Uninstallers.IsOtherVersion("Ozone 9", ozone9));
         Assert.Equal([ozone9, ozone11], Uninstallers.For("Ozone 9", "iZotope", [ozone11, ozone9]));
-        // Serum without a number is Serum 1: Serum 2's uninstaller is another version's.
-        Assert.True(Uninstallers.IsOtherVersion("Serum", serum2));
-        Assert.False(Uninstallers.IsOtherVersion("Serum 2", serum2));
+        // A plugin named without a number could be any version: Kontakt 6 installs as "Kontakt", and its uninstaller is picked.
+        Uninstaller kontakt6 = new("Native Instruments Kontakt 6", "Native Instruments", "k6.exe"), kontakt7 = new("Native Instruments Kontakt 7", "Native Instruments", "k7.exe");
+        Assert.False(Uninstallers.IsOtherVersion("Kontakt", kontakt6));
+        Assert.Equal(kontakt6, Uninstallers.For("Kontakt", "Native Instruments", [kontakt6])[0]);
+        // …unless that version is installed beside it: then it's that one's (Serum 2's beside Serum, Kontakt 7's beside Kontakt).
+        Assert.False(Uninstallers.IsOtherVersion("Serum", serum2));
+        Assert.True(Uninstallers.IsOtherVersion("Serum", serum2, ["Serum", "Serum2"]));
+        Assert.False(Uninstallers.IsOtherVersion("Serum 2", serum2, ["Serum", "Serum2"]));
+        Assert.Equal([kontakt6, kontakt7], Uninstallers.For("Kontakt", "Native Instruments", [kontakt7, kontakt6], ["Kontakt", "Kontakt 7"]));
+        Assert.False(Uninstallers.IsOtherVersion("Kontakt", kontakt6, ["Kontakt", "Kontakt 7"]));
         Assert.False(Uninstallers.IsOtherVersion("Diva", new("u-he Diva v1.4.5", "u-he", "d.exe")));
         Assert.False(Uninstallers.IsOtherVersion("Ozone 9", new("Ozone", "iZotope", "o.exe")));   // no number: can't tell
     }
