@@ -693,6 +693,55 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Clean_up_never_takes_a_makers_folder_holding_sounds_a_project_still_needs()
+    {
+        using var page = new Page(_root);
+        var db = page.Db;
+        var maker = Path.Combine(_root, "Docs", "Arturia");
+        File("Docs/Arturia/Shared/settings.bin", 300);
+        var pigments = Path.GetDirectoryName(File("Docs/Arturia/Pigments/pad.wav", 5000))!;
+        Song(db, "old", DateTime.Now.AddYears(-4), "Pigments");
+        db.ReplaceInstalledPlugins(["Pigments", "Analog Lab"]);
+        var (pk, ak) = (LibraryDb.NameKey("Pigments"), LibraryDb.NameKey("Analog Lab"));
+        // As PluginSpace.Measure gives them: the maker's folder is measured less Pigments' own folder inside it.
+        db.SavePluginSpaces([
+            new(pk, "Pigments", "Arturia", [new(@"C:\VST3\Pigments.vst3", SpaceKind.Program, 100, []), new(pigments, SpaceKind.Sounds, 5000, []),
+                                            new(maker, SpaceKind.Presets, 300, [ak])], DateTime.Now),
+            new(ak, "Analog Lab", "Arturia", [new(@"C:\VST3\Analog Lab.vst3", SpaceKind.Program, 100, []), new(maker, SpaceKind.Presets, 300, [pk])], DateTime.Now),
+        ], all: true);
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+
+        await plugins.CleanUpCommand.ExecuteAsync(plugins.Items.Single(p => p.Name == "Pigments"));
+        Assert.Contains("Sounds stay while a project uses Pigments", plugins.Card!.Items.Single(i => i.Path == pigments).Why);
+        // Binning the maker's folder would bin Pigments' sounds with it.
+        var whole = plugins.Card.Items.Single(i => i.Path == maker);
+        Assert.False(whole.CanTick);
+        Assert.Contains("It holds Pigments", whole.Why);
+        // Move measures the folder whole, the folders in it too.
+        Assert.Equal([pigments], PluginsViewModel.FoldersInside(maker, db.PluginSpaces().Values.ToList()).Select(x => x.Folder.Path).Distinct());
+    }
+
+    [Fact]
+    public async Task Clean_up_keeps_a_folder_holding_a_sample_a_project_names_by_an_old_path()
+    {
+        using var page = new Page(_root);
+        var db = page.Db;
+        var tank = Path.GetDirectoryName(Path.GetDirectoryName(File("Libraries/SampleTank Library/Kicks/kick.wav", 50)))!;
+        db.ReplaceInstalledPlugins(["SampleTank"]);
+        db.SavePluginSpaces([Space("SampleTank", 50, tank)], all: true);
+        // Saved on another PC: the project's path is that PC's, and the sample was found here since.
+        db.Upsert(new LibraryDb.IndexedFile(File("FL/kicks.flp", 5), 5, 1, new ProjectInfo { Daw = "FL Studio" }, null,
+                                            [(@"C:\Users\OldPC\Documents\SampleTank Library\Kicks\kick.wav", true)], []));
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+        await plugins.CleanUpCommand.ExecuteAsync(plugins.Items.Single(p => p.Name == "SampleTank"));
+        var item = plugins.Card!.Items.Single();
+        Assert.False(item.CanTick);
+        Assert.Contains("A project uses a sample in it", item.Why);
+    }
+
+    [Fact]
     public void Moving_back_puts_the_link_back_when_the_old_copy_cant_take_its_place()
     {
         var from = Path.GetDirectoryName(File("C/Docs/Hive/Sounds/pad.h2p", 300))!;

@@ -82,6 +82,10 @@ public sealed partial class PluginsViewModel
         if (Selected is not { } p || !_rowSpace.TryGetValue(p, out var space)) return;
         var destination = await Ui.Current.PickFolder($"Move {Path.GetFileName(folder.Path)} to which folder? Pick one on another drive");
         if (destination is null) return;
+        // A maker's folder was measured less its plugins' own folders inside it, but they move with it: measured whole.
+        var spaces = _spaces.Values.ToList();
+        var bytes = await Task.Run(() => FoldersInside(folder.Path, spaces).Count > 0 ? DiskSpace.Measure(folder.Path).Bytes : folder.Bytes);
+        folder = folder with { Bytes = bytes };
         var (admin, problem) = await Task.Run(() =>
             FolderMove.Problem(folder.Path, destination, folder.Bytes) is { Length: > 0 } why ? (false, why) : FolderMove.CheckSwap(folder.Path));
         if (problem.Length > 0)

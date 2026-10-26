@@ -151,6 +151,40 @@ public sealed partial class LibraryDb
         static string Like(string s) => s.Replace("|", "||").Replace("%", "|%").Replace("_", "|_");
     }
 
+    /// <summary>
+    /// For each folder that holds one, a sample some project uses whose file is in it under another path: a file of the
+    /// same name, in a folder of the same name. Projects store paths as they were on the PC that saved them
+    /// ("C:\Users\OldPC\…", a drive with another letter), so a sample found here since doesn't start with the folder's
+    /// path (see <see cref="SampleInside"/>). Walks the folders and reads the samples table once: call it in the background.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> SamplesNamedIn(IReadOnlyList<string> folders, CancellationToken ct = default)
+    {
+        // "Kicks/kick 1.wav" → the folders holding it.
+        var tails = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var folder in folders.Where(Directory.Exists))
+        {
+            var n = 0;
+            foreach (var file in DiskSpace.Files(folder, (ref System.IO.Enumeration.FileSystemEntry e) => e.ToFullPath()))
+            {
+                if ((++n & 1023) == 0) ct.ThrowIfCancellationRequested();
+                if (DiskSpace.IsSound(file, 0) && Tail(file) is { } tail) (tails.TryGetValue(tail, out var l) ? l : tails[tail] = []).Add(folder);
+            }
+        }
+        var found = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (tails.Count == 0) return found;
+        Query("SELECT path FROM samples", r =>
+        {
+            var path = Str(r, "path");
+            if (Tail(path) is { } tail && tails.TryGetValue(tail, out var holding))
+                foreach (var f in holding) found.TryAdd(f, path);
+            return 0;
+        });
+        return found;
+
+        static string? Tail(string path) =>
+            path.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries) is { Length: >= 2 } parts ? $"{parts[^2]}/{parts[^1]}" : null;
+    }
+
     /// <summary>Each scanned plugin's maker, by name key, as the plugin scanner read it.</summary>
     public IReadOnlyDictionary<string, string> ScannedVendors() =>
         Query("SELECT name_key, MAX(vendor) AS vendor FROM scanned_plugins WHERE vendor <> '' GROUP BY name_key",

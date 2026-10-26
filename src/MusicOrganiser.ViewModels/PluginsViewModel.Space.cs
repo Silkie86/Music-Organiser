@@ -205,20 +205,46 @@ public sealed partial class PluginsViewModel
         var protectedRoots = meter.ProtectedRoots();
         bool NoProjects(string key) =>
             _rowSpace.Where(r => r.Value.Key == key).All(r => r.Key.Projects == 0);
+        // Why a plugin's folder has to stay because of how projects use the plugin, or "".
+        string InUse(SpaceFolder f, PluginUsage p) =>
+            f.Shared && !f.SharedWith.All(NoProjects) ? $"Shared with {NamesOf(f.SharedWith)}, which your projects use."
+            : f.Kind == SpaceKind.Sounds && (p.Projects > 0 || !f.SharedWith.All(NoProjects))
+                ? $"Sounds stay while a project uses {p.Name}: {(p.Projects == 1 ? "1 project does" : $"{p.Projects} projects do")}."
+            : !p.Unused ? $"Your projects still use {p.Name}."
+            : "";
         var folders = space.Folders.Where(f => f.Kind != SpaceKind.Program).OrderByDescending(f => f.Bytes).ToList();
-        // Which folders hold a sample a project uses: read in the background (the samples table is big).
-        var holding = await Task.Run(() => folders.ToDictionary(f => f.Path, f => _db.SampleInside(f.Path)));
+        var spaces = _spaces.Values.ToList();
+        // Which folders hold a sample a project uses, and which hold another listed folder (a maker's folder holds its
+        // plugins' own, which were measured apart): read in the background (the samples table is big).
+        // A sample found here under another path than the project's (an old PC's, a drive with a new letter) counts too.
+        var (holding, inside) = await Task.Run(() =>
+        {
+            var direct = folders.ToDictionary(f => f.Path, f => _db.SampleInside(f.Path));
+            var named = _db.SamplesNamedIn(folders.Where(f => direct[f.Path] is null).Select(f => f.Path).ToList());
+            return (folders.ToDictionary(f => f.Path, f => direct[f.Path] ?? named.GetValueOrDefault(f.Path)),
+                    folders.ToDictionary(f => f.Path, f => FoldersInside(f.Path, spaces)));
+        });
+        // Removing a folder removes the folders in it, so one holding a folder that has to stay stays too.
+        string Holds(SpaceFolder f)
+        {
+            foreach (var (s, g) in inside[f.Path])
+            {
+                if (g.Kind == SpaceKind.Program) return $"It holds {Path.GetFileName(g.Path)}, {s.Name}'s plugin file: Uninstall removes that.";
+                var rows = _rowSpace.Where(r => r.Value.Key == s.Key).Select(r => r.Key).ToList();
+                // A plugin without a row of its own counts as used (see WithSpace).
+                var why = rows.Count == 0 ? $"Your projects still use {s.Name}." : rows.Select(r => InUse(g, r)).FirstOrDefault(w => w.Length > 0);
+                if (why is { Length: > 0 }) return $"It holds {Path.GetFileName(g.Path)}, which stays. {why}";
+            }
+            return "";
+        }
         var items = folders.Select(f =>
         {
             var why =
                 PluginSpace.IsInstallFolder(f.Path) ? "Inside Program Files: Uninstall removes this."
                 : protectedRoots.FirstOrDefault(r => DiskSpace.IsInside(f.Path, r) || DiskSpace.IsInside(r, f.Path)) is { } mine ? $"Part of your folder {mine}."
                 : holding[f.Path] is { } sample ? $"A project uses a sample in it ({Path.GetFileName(sample)})."
-                : f.Shared && !f.SharedWith.All(NoProjects) ? $"Shared with {NamesOf(f.SharedWith)}, which your projects use."
-                : f.Kind == SpaceKind.Sounds && (p.Projects > 0 || !f.SharedWith.All(NoProjects))
-                    ? $"Sounds stay while a project uses {p.Name}: {(p.Projects == 1 ? "1 project does" : $"{p.Projects} projects do")}."
-                : !p.Unused ? $"Your projects still use {p.Name}."
-                : "";
+                : InUse(f, p) is { Length: > 0 } use ? use
+                : Holds(f);
             return new CleanupItem(f, why, ticked: why.Length == 0 && f.Kind == SpaceKind.Sounds);
         }).ToList();
         var card = new SpaceCard(this)
@@ -233,6 +259,10 @@ public sealed partial class PluginsViewModel
         card.Refresh();
         Card = card;
     }
+
+    /// <summary>The listed folders, any plugin's, that are inside this one (a maker's folder holds its plugins' own).</summary>
+    internal static List<(PluginSpaceInfo Space, SpaceFolder Folder)> FoldersInside(string path, IReadOnlyList<PluginSpaceInfo> spaces) =>
+        spaces.SelectMany(s => s.Folders.Where(g => DiskSpace.IsInside(g.Path, path) && !DiskSpace.IsInside(path, g.Path)).Select(g => (s, g))).ToList();
 
     async Task DeleteAsync(SpaceCard card, string key)
     {
