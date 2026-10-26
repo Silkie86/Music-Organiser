@@ -600,6 +600,10 @@ public sealed class SoundOrganiser : IDisposable
         var rng = new Random(11);
         foreach (var (tag, yours, _) in Library.TagCounts())
         {
+            // Last time's suggestions go from the sounds in memory too, so the tag filter and chips show what's stored.
+            // Each list is replaced rather than changed, as the Sounds page may be reading it.
+            foreach (var id in Library.SoundsTagged(tag, "learned"))
+                if (Get(id) is { } had) had.Tags = had.Tags.Where(t => t != tag).ToList();
             Library.ClearLearnedTags(tag);
             if (yours < 5) continue;
             var positives = Library.SoundsTagged(tag).Select(Get).OfType<Sound>().Where(p => RawVector(p, space) is not null).ToList();
@@ -630,7 +634,7 @@ public sealed class SoundOrganiser : IDisposable
             foreach (var (s, _) in suggested)
             {
                 Library.AddTag(s.Id, tag, "learned");
-                if (!s.Tags.Contains(tag)) s.Tags.Add(tag);
+                if (!s.Tags.Contains(tag)) s.Tags = [.. s.Tags, tag];
             }
             results.Add((tag, suggested.Count, accuracy));
         }

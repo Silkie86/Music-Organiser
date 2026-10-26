@@ -809,6 +809,27 @@ public class SoundLibraryTests
     }
 
     [Fact]
+    public void Learning_tags_again_takes_the_old_suggestions_off_the_sounds_in_memory_too()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-tags-").FullName;
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        lib.Save(new[] { "/lib/A.wav", "/lib/B.wav" }.Select(p => new SoundLibrary.Analysed(p, 1, 1,
+            new SoundAnalysis { Features = [1, 0, 0] }, null, null, "Kick")));
+        using var org = new SoundOrganiser(lib);
+        var (a, b) = (org.Sounds.Single(s => s.Name == "A"), org.Sounds.Single(s => s.Name == "B"));
+        lib.AddTag(a.Id, "dusty", "learned");   // suggested last time, when you had tagged enough sounds
+        lib.AddTag(b.Id, "dusty");
+        org.Reload();
+        Assert.Contains("dusty", org.Get(a.Id)!.Tags);
+
+        // Now too few of your own to learn from: the suggestion goes, from the library and from what's shown.
+        org.TrainTags();
+        Assert.Empty(lib.SoundsTagged("dusty", "learned"));
+        Assert.DoesNotContain("dusty", org.Get(a.Id)!.Tags);
+        Assert.Contains("dusty", org.Get(b.Id)!.Tags);   // yours stay
+    }
+
+    [Fact]
     public void Only_sure_pairs_of_gone_and_new_files_count_as_moved()
     {
         (string, long, long) F(string path, long size = 100, long mtime = 7) => (path, size, mtime);
