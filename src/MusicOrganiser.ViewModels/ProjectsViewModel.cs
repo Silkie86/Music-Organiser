@@ -303,7 +303,8 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
 
     /// <summary>
     /// The folders songs have to themselves: none of your project folders (or one holding them), and every save the
-    /// library knows in it is the same song's. Bitwig and Studio One give each song its own; FL Studio songs often share.
+    /// library knows in it, or in a folder inside it, is the same song's. Bitwig and Studio One give each song its own;
+    /// FL Studio songs often share.
     /// </summary>
     internal static Dictionary<long, string> OwnFolders(IReadOnlyList<ProjectItem> items, IReadOnlyList<string> roots)
     {
@@ -311,11 +312,18 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         foreach (var i in items)
             foreach (var s in i.OlderSaves.Prepend(i.Summary))
                 (songsIn.TryGetValue(s.Folder, out var set) ? set : songsIn[s.Folder] = []).Add(i.Id);
+        // The songs with saves in folders inside each folder that holds saves itself.
+        var songsBelow = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (folder, songs) in songsIn)
+            for (var up = Path.GetDirectoryName(folder); !string.IsNullOrEmpty(up); up = Path.GetDirectoryName(up))
+                if (songsIn.ContainsKey(up))
+                    (songsBelow.TryGetValue(up, out var set) ? set : songsBelow[up] = []).UnionWith(songs);
         var own = new Dictionary<long, string>();
         foreach (var i in items)
         {
             var folder = i.Folder;
-            if (folder.Length > 0 && songsIn[folder].Count == 1 && !roots.Any(r => Core.Space.DiskSpace.IsInside(r, folder)))
+            if (folder.Length > 0 && songsIn[folder].Count == 1 && !roots.Any(r => Core.Space.DiskSpace.IsInside(r, folder)) &&
+                (!songsBelow.TryGetValue(folder, out var below) || below.All(id => id == i.Id)))
                 own[i.Id] = folder;
         }
         return own;

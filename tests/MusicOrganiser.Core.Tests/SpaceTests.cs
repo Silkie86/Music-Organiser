@@ -723,6 +723,36 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public void A_folder_with_another_song_inside_isnt_the_songs_own()
+    {
+        var day = new DateTime(2026, 1, 1);
+        var intro = File("Songs/Album/Intro.song", 300, day);
+        File("Songs/Album/Remix/Remix.song", 200, day);
+        for (var i = 0; i < 7; i++) File($"Songs/Album/Remix/History/Remix {i}.song", 20, day.AddDays(i));
+        var r = SongSpace.Measure([new(intro, 300, day)], [Path.Combine(_root, "Songs")], new HashSet<string>(), keepBackups: 0);
+        Assert.False(r.OwnFolder);
+        Assert.DoesNotContain(r.Items, i => i.Kind == CompactKind.Backup);   // the Remix's autosaves aren't Intro's
+        Assert.Equal(300, r.Bytes);
+
+        // The song's own autosave folder doesn't count as another song.
+        var remix = Path.Combine(_root, "Songs", "Album", "Remix", "Remix.song");
+        Assert.True(SongSpace.Measure([new(remix, 200, day)], [Path.Combine(_root, "Songs")], new HashSet<string>(), keepBackups: 0).OwnFolder);
+    }
+
+    [Fact]
+    public void A_folder_with_another_songs_saves_inside_isnt_measured_as_the_songs_own()
+    {
+        using var page = new Page(_root);
+        var db = page.Db;
+        db.AddRoot(Path.Combine(_root, "Bitwig"));
+        foreach (var f in new[] { File("Bitwig/Album/Intro.bwproject", 5), File("Bitwig/Album/Remix/Remix.bwproject", 6) })
+            db.Upsert(new LibraryDb.IndexedFile(f, 5, 1, new ProjectInfo { Daw = "Bitwig Studio" }, null, [], []));
+        var projects = page.Main.Projects;
+        projects.Reload();
+        Assert.Equal([Path.Combine(_root, "Bitwig", "Album", "Remix")], projects.OwnFolderList().Select(f => f.Folder));
+    }
+
+    [Fact]
     public async Task Clean_up_keeps_a_folder_holding_a_sample_a_project_names_by_an_old_path()
     {
         using var page = new Page(_root);

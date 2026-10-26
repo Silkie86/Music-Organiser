@@ -157,8 +157,9 @@ public static class SongSpace
     }
 
     /// <summary>
-    /// Whether the folder is the song's own: none of your project folders, and every project file directly in it is one
-    /// of the song's saves. Bitwig and Studio One give each song a folder; FL Studio songs often share one.
+    /// Whether the folder is the song's own: none of your project folders, and every project file in it, or in a folder
+    /// in it, is one of the song's saves (autosave folders aside). Bitwig and Studio One give each song a folder; FL
+    /// Studio songs often share one, and another song kept in a folder inside this one has its own autosaves there.
     /// </summary>
     public static bool OwnsFolder(string folder, IReadOnlySet<string> savePaths, IReadOnlyList<string> roots)
     {
@@ -166,7 +167,13 @@ public static class SongSpace
         if (roots.Any(r => DiskSpace.IsInside(r, folder))) return false;   // a project folder, or one holding it
         try
         {
-            return Directory.EnumerateFiles(folder).Where(Scanner.IsProjectFile).All(savePaths.Contains);
+            foreach (var (path, _, _) in Walk(folder, default))
+            {
+                if (!Scanner.IsProjectFile(path) || savePaths.Contains(path)) continue;
+                var rel = Path.GetRelativePath(folder, path).Split(['\\', '/']);
+                if (!rel[..^1].Any(Scanner.IsAutosaveDir)) return false;
+            }
+            return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
     }
