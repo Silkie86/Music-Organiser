@@ -65,8 +65,20 @@ public class JazzHarmonyTests
     [InlineData("Dm9")] [InlineData("G13")] [InlineData("Cmaj9")] [InlineData("A7alt")] [InlineData("Bm7b5")]
     [InlineData("C#dim7")] [InlineData("C6/9")] [InlineData("F#m11")] [InlineData("Ab13(#11)")] [InlineData("G9sus4")]
     [InlineData("Bbmaj7/D")] [InlineData("Cm(maj7)")] [InlineData("E7(b9)")] [InlineData("Db7(#9)")]
+    [InlineData("Adim(maj7)")] [InlineData("C#dim7(maj7)/E")]
     public void A_typed_chord_reads_back_to_the_same_name(string name) =>
         Assert.Equal(name, ChordSymbol.Parse(name)!.Value.Name);
+
+    [Fact]
+    public void Every_chord_name_the_app_writes_can_be_typed_back()
+    {
+        // Every set of three or more notes on a root, named as the app names it (the chord lane, the chart box).
+        var unread = new List<string>();
+        for (var iv = 1; iv < 1 << 12; iv += 2)
+            if (ChordSymbol.Count(iv) >= 3 && ChordSpeller.QualityOf(iv, ChordSpeller.FamilyOf(iv)) is var q && ChordSpeller.IntervalsOf(q) is null)
+                unread.Add("C" + q);
+        Assert.Empty(unread.Distinct());
+    }
 
     [Theory]
     [InlineData("CΔ9", "Cmaj9")] [InlineData("D-7", "Dm7")] [InlineData("Bø", "Bm7b5")] [InlineData("C°7", "Cdim7")]
