@@ -143,6 +143,9 @@ public class FixTests : IDisposable
         var md5 = (BitwigFormat.BwBlob)file.Obj(0x513)![0x16]!;
         Assert.Equal(System.Security.Cryptography.MD5.HashData(File.ReadAllBytes(other)), data[md5.Offset..(md5.Offset + md5.Length)]);
         Assert.Equal((22050.0, 0.5, 1.0), (sample.Num(0x94), sample.Num(0x95), sample.Num(0x96)));
+        // The Sampler zone that played the whole 1.5 s plays the whole new file, not its first 1.5 s.
+        var zone = doc.Objects.Single(o => o.Obj(0x4112)?.Obj(0x748) is not null);
+        Assert.Equal((0.5, 0.5), (zone.Num(0x75f), zone.Num(0x761)));
 
         // A file whose length the app can't tell gets no MD5, so Bitwig reads it itself rather than trusting the old length.
         File.WriteAllBytes(other, [1, 2, 3]);
@@ -151,6 +154,33 @@ public class FixTests : IDisposable
         doc = BitwigFormat.Decode(data);
         md5 = (BitwigFormat.BwBlob)doc.Objects.Single(o => o.Obj(0x129e)?.Obj(0xd3b) is not null).Obj(0x129e)!.Obj(0x513)![0x16]!;
         Assert.Equal(new byte[16], data[md5.Offset..(md5.Offset + md5.Length)]);
+        zone = doc.Objects.Single(o => o.Obj(0x4112)?.Obj(0x748) is not null);
+        Assert.Equal((1.5, 1.5), (zone.Num(0x75f), zone.Num(0x761)));
+    }
+
+    [Fact]
+    public void A_relinked_Bitwig_audio_clip_plays_the_same_part_of_a_file_of_another_length()
+    {
+        // A converted project whose audio clips play "Drop.wav", 32 s long, at 120 bpm: 64 beats unstretched, the
+        // trimmed clip its second half. Fix points them at a 16 s file.
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25AudioClips(Fixtures.TempDir()));
+        var raw = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(),
+            p => p.EndsWith("Drop.wav") ? new BitwigProject.SampleFile(8467244, [.. Enumerable.Range(1, 16).Select(i => (byte)i)], 48000, 2, 32) : null).Bytes;
+        var other = Path.Combine(_lib, "Drums", "Drop v2.wav");
+        WavWriter.Write(other, [new float[16 * 8000]], 8000);
+
+        var (data, _) = BitwigReader.RelinkSamples(raw, Path.Combine(_root, "Drop.bwproject"),
+            new Dictionary<string, string> { [@"C:\Samples\Drop.wav"] = other })!.Value;
+        var audio = BitwigFormat.Decode(data).Objects.Where(o => o.Obj(0x288)?.Obj(0x20d)?.Obj(0x4b4) is not null).ToList();
+        Assert.Equal(5, audio.Count);
+        foreach (var a in audio)
+        {
+            Assert.Equal(16.0, a.Obj(0x288)!.Obj(0x20d)!.Obj(0x4b4)!.Num(0x95));
+            // Where the file starts and ends, and the warp marker at its end, are in the new file's seconds.
+            Assert.Equal((0.0, 16.0), (a.Num(0xc04), a.Num(0xc05)));
+            var markers = a.Obj(0x288)!.Obj(0x192)!.List(0x21f).Select(m => (m.Num(0x2af), m.Num(0xa6))).ToList();
+            Assert.Equal([(0.0, 0.0), (a.Num(0x26), 16.0)], markers);
+        }
     }
 
     [Fact]
