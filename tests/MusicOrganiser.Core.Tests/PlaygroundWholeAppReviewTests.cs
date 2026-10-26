@@ -187,4 +187,23 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         Assert.NotEmpty(bar3);
         Assert.All(bar3, n => Assert.Contains(n.Key % 12, c));
     }
+
+    [Fact]
+    public void A_fit_to_chip_stays_in_step_with_its_part_after_undo()
+    {
+        using var page = Fresh();
+        var q = page.P.Quick();
+        Drop(q, Mid("Piano", Chords(Dm7, G7)), 0);
+        Drop(q, Mid("Lead", Tune(2)), q.Layers.Count);
+        var piano = q.Layers.Single(l => l.Name == "Piano");
+        piano.Layer.SongPart = "Piano";
+        q.Layers.Single(l => l.Name == "Lead").UpCommand.Execute(null);   // an edit to undo
+
+        q.MuteSongParts(["Piano"], ["Piano"]);
+        Assert.True(piano.Layer.Muted);
+        q.UndoCommand.Execute(null);
+        Assert.True(q.Layers.Single(l => l.Name == "Piano").Layer.Muted);   // still off, as its chip shows
+        q.MuteSongParts(["Piano"], []);
+        Assert.False(q.Layers.Single(l => l.Name == "Piano").Layer.Muted);   // one click turns it back on
+    }
 }

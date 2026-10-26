@@ -1331,9 +1331,13 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         // is, not by its name (the part being tried may share one). The chips aren't undone, so neither is this.
         var was = _songOff;
         _songOff = off.ToHashSet();
-        var rows = Layers.Where(r => r.Layer.SongPart.Length > 0 && song.Contains(r.Layer.SongPart)
-                                     && (was is null || was.Contains(r.Layer.SongPart) != off.Contains(r.Layer.SongPart))
-                                     && r.Layer.Muted != off.Contains(r.Layer.SongPart)).ToList();
+        bool Flipped(PlaygroundLayer l) => l.SongPart.Length > 0 && song.Contains(l.SongPart) && (was is null || was.Contains(l.SongPart) != off.Contains(l.SongPart));
+        // The undo steps too, so going back to before a chip was clicked leaves the part as the chip shows it.
+        ChangeHistory(s =>
+        {
+            foreach (var l in s.Timeline.Layers.Where(Flipped)) l.Muted = off.Contains(l.SongPart);
+        });
+        var rows = Layers.Where(r => Flipped(r.Layer) && r.Layer.Muted != off.Contains(r.Layer.SongPart)).ToList();
         if (rows.Count == 0) return;
         foreach (var r in rows)
         {
@@ -1344,6 +1348,18 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     HashSet<string>? _songOff;
+
+    /// <summary>Every undo and redo step changed by <paramref name="change"/>, for a change that isn't undone itself.</summary>
+    void ChangeHistory(Action<PlaygroundSession> change)
+    {
+        foreach (var steps in new[] { _undo, _redo })
+            for (var i = 0; i < steps.Count; i++)
+            {
+                if (PlaygroundSession.FromJson(steps[i]) is not { } step) continue;
+                change(step);
+                if (step.ToJson() is var json && json != steps[i]) steps[i] = json;
+            }
+    }
 
     internal void ToggleMute(LayerRow row) => EditLayer(row, l => l.Muted = !l.Muted);
 
