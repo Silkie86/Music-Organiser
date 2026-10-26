@@ -125,6 +125,22 @@ public class FlRepairTests
     }
 
     [Fact]
+    public void RepairRefusesACopyWhoseEventsDontReadBackAsTheTwoSavesPutTogether()
+    {
+        // The older save is FL 24's, which writes event 172 with four bytes; the damaged one is FL 25's, which reads it
+        // with three, so the older save's last channel would come out garbled in the copy.
+        Fixtures.FlpBuilder Start(string version) => new Fixtures.FlpBuilder().Ascii(199, version).Word(66, 140)
+            .Word(64, 0).Byte(21, 0).Ascii(192, "Kick").Ascii(201, "Sampler")
+            .Word(64, 1).Byte(21, 0).Ascii(192, "Snare").Ascii(201, "Sampler");
+        var older = Start("24.1.0").Word(64, 2).Byte(21, 0).Ascii(192, "Bass").Ascii(201, "3x Osc").Dword(172, 0x01020304)
+            .Data(233, Fixtures.PlaylistItem25(0, 1, 384)).Data(236, new byte[12]).Build();
+        var damaged = Unfinished(Start("25.1.0").Build());
+
+        var e = Assert.Throws<InvalidDataException>(() => FlStudioReader.Repair(damaged, older));
+        Assert.Contains("wasn't saved", e.Message);
+    }
+
+    [Fact]
     public void RepairWithoutAnOlderSaveWritesTheHeaderAndKeepsWhatThereIs()
     {
         var damaged = Unfinished(Song(2, NewNotes, finished: false));

@@ -237,8 +237,7 @@ public static partial class ProjectFixer
         {
             // Written inside the try, so a full disk or an unplugged drive doesn't leave half a copy next to the original.
             using (file) file.Write(data);
-            // Read it back as the app would: a copy the app can't read is no use to the DAW either.
-            Readers.For(target)?.Read(target);
+            ReadsBack(target, kind);
         }
         catch
         {
@@ -250,6 +249,23 @@ public static partial class ProjectFixer
         if (Serum1To2.KeepOriginals(Path.GetFileNameWithoutExtension(projectPath), originals, serum2User ?? Serum1To2.Serum2UserFolder()) is { } kept)
             notes = [.. notes, kept];
         return new FixResult(target, changed, swapped, notes) { Repaired = repair is not null };
+    }
+
+    /// <summary>
+    /// Reads the copy back from the disk as the app would: a copy the app can't read is no use to the DAW either. The
+    /// readers list what they can of a damaged project instead of failing, so the copy is also decoded strictly: a
+    /// Bitwig body that doesn't decode cleanly, or FL events that don't, would be a copy the DAW won't open.
+    /// </summary>
+    static void ReadsBack(string target, string kind)
+    {
+        const string bad = "Fix's copy couldn't be read back, so it wasn't saved.";
+        if (kind == ".bwproject")
+        {
+            var raw = File.ReadAllBytes(target);
+            if (!BitwigFormat.IsBitwig(raw) || BitwigFormat.Decode(raw) is not { Root: not null, BodyError: null }) throw new InvalidDataException(bad);
+        }
+        else if (kind == ".flp") FlStudioReader.ReadEvents(File.ReadAllBytes(target));
+        Readers.For(target)?.Read(target);
     }
 
     static string CantWriteNote(IReadOnlyList<string> files) =>

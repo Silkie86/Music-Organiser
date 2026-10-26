@@ -49,7 +49,7 @@ public sealed partial class FlStudioReader
             same = a.Id == b.Id && (changes.TryGetValue(i, out var to) ? b.Payload.Span.SequenceEqual(to)
                                                                        : b.Payload.Span.SequenceEqual(a.Payload.Span));
         }
-        if (!same) throw new InvalidDataException("Fix's copy came out different from the original in more than its sample paths, so it wasn't saved.");
+        if (!same) throw new InvalidDataException("Fix's copy came out different from the original in more than what it meant to change, so it wasn't saved.");
     }
 }
 

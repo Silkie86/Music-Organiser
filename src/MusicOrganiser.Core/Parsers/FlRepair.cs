@@ -84,6 +84,7 @@ public sealed partial class FlStudioReader
         var keep = events.Count;   // how many of the damaged save's events go in
         var fromOlder = -1;
         (byte[] Raw, int From)? tail = null;
+        IReadOnlyList<FlEvent> carried = [];   // the older save's events the copy carries on with
         if (older is not null && EndsEarly(stream) && events.Count > 0)
         {
             var old = ReadEvents(older);
@@ -103,6 +104,7 @@ public sealed partial class FlStudioReader
                     if (from < old.Events.Count)
                     {
                         tail = (older, Begin(old.Events, from, oldStart));
+                        carried = old.Events.Skip(from).ToList();
                         fromOlder = old.Events.Skip(at.i).Count(e => e.Id == EvChannelNew) - (match ? 1 : 0);
                     }
                     else fromOlder = 0;
@@ -127,8 +129,13 @@ public sealed partial class FlStudioReader
         file.Write(len);
         body.WriteTo(file);
         var data = file.ToArray();
+        // Check the copy reads back as the damaged save's events it kept, then the older save's, each as it was.
+        var copy = ReadEvents(data).Events;
+        var expected = events.Take(keep).Concat(carried).ToList();
+        if (copy.Count != expected.Count || copy.Where((e, i) => e.Id != expected[i].Id || !e.Payload.Span.SequenceEqual(expected[i].Payload.Span)).Any())
+            throw new InvalidDataException("Fix's repaired copy didn't come out as the save and its older save put together, so it wasn't saved.");
         // FLhd's second word counts the channels: make it the channels the copy has.
-        var channels = ReadEvents(data).Events.Count(e => e.Id == EvChannelNew);
+        var channels = copy.Count(e => e.Id == EvChannelNew);
         BinaryPrimitives.WriteUInt16LittleEndian(data.AsSpan(10), (ushort)channels);
         return (data, fromOlder);
     }
