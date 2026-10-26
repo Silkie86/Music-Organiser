@@ -97,6 +97,9 @@ public static class FolderMove
         var problem = Problem(from, destination, bytes, driveOf: driveOf);
         if (problem.Length > 0) throw new IOException(problem);
         var target = Target(from, destination);
+        // Find out before copying whether Windows lets the folder be renamed, rather than after an hour of copying.
+        var check = CheckRename(from);
+        if (check.Length > 0 && check != NeedsAdmin) throw new IOException(check);
         try
         {
             Copy(from, target, progress, ct);
@@ -187,23 +190,65 @@ public static class FolderMove
 
     const string NeedsAdmin = "admin";
 
+    /// <summary>
+    /// Windows says "access denied" both when a folder needs administrator rights and, for a folder, as an IOException
+    /// rather than UnauthorizedAccessException (Spectrasonics in ProgramData, Altiverb in Program Files: F12 note, 26 Oct).
+    /// </summary>
+    static bool Denied(Exception e) => e is UnauthorizedAccessException || e is IOException && (e.HResult & 0xFFFF) == 5;
+
+    /// <summary>Whether the swap needs Windows' administrator question, or what stops it ("" when nothing does).</summary>
+    public static (bool Admin, string Problem) CheckSwap(string from) =>
+        CheckRename(Path.TrimEndingDirectorySeparator(Path.GetFullPath(from))) is var said && said == NeedsAdmin ? (true, "") : (false, said);
+
+    /// <summary>
+    /// Renames the folder and straight back, to learn whether the swap will work: "" when it does, <see cref="NeedsAdmin"/>
+    /// when Windows wants administrator rights (asked for once, at the swap), or what's in the way.
+    /// </summary>
+    static string CheckRename(string from)
+    {
+        var check = from + " (checking)";
+        try
+        {
+            Directory.Move(from, check);
+        }
+        catch (Exception e) when (Denied(e)) { return NeedsAdmin; }
+        catch (IOException e) { return $"Windows wouldn't rename the folder ({e.Message}). Close your DAW and the plugin, then try again. Nothing was moved."; }
+        for (var tries = 0; ; tries++)
+        {
+            try
+            {
+                Directory.Move(check, from);
+                return "";
+            }
+            catch (Exception e) when ((e is IOException or UnauthorizedAccessException) && tries < 20)
+            {
+                Thread.Sleep(250);   // something (a virus checker) looked in as it was renamed
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return $"The folder is called \"{Path.GetFileName(check)}\" for now: Windows wouldn't rename it back ({e.Message}). Rename it back in Explorer.";
+            }
+        }
+    }
+
     static string SwapHere(string from, string target)
     {
         try
         {
             Directory.Move(from, from + OldSuffix);
         }
-        catch (UnauthorizedAccessException) { return NeedsAdmin; }
+        catch (Exception e) when (Denied(e)) { return NeedsAdmin; }
         catch (IOException e)
         {
             return $"Windows wouldn't rename the folder ({e.Message}). Close your DAW and the plugin, then try again. Nothing was moved.";
         }
         var link = Link(from, target);
         if (link.Length == 0 && Directory.Exists(from)) return "";
-        // The link didn't take: put the original back as it was.
+        // The link didn't take: put the original back as it was. In a folder Windows guards, the link needs
+        // administrator rights too, so the whole swap is tried once more that way.
         try { if (IsLink(from)) Directory.Delete(from); Directory.Move(from + OldSuffix, from); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-        return $"Windows wouldn't make the link ({link}). Nothing was moved.";
+        return Environment.IsPrivilegedProcess || !OperatingSystem.IsWindows() ? $"Windows wouldn't make the link ({link}). Nothing was moved." : NeedsAdmin;
     }
 
     static string UnswapHere(string from, string restore)
@@ -214,7 +259,7 @@ public static class FolderMove
             Directory.Move(restore, from);
             return "";
         }
-        catch (UnauthorizedAccessException) { return NeedsAdmin; }
+        catch (Exception e) when (Denied(e)) { return NeedsAdmin; }
         catch (IOException e) { return $"Windows wouldn't move the folder back ({e.Message}). Close your DAW and the plugin, then try again."; }
     }
 

@@ -270,6 +270,8 @@ public class SpaceTests : IDisposable
         Assert.Contains("same drive", FolderMove.Problem(from, Path.Combine(_root, "C", "Elsewhere"), 500, driveOf: DriveOf));
         Assert.Contains("free", FolderMove.Problem(from, drive, 500, _ => 1000, DriveOf));
 
+        Assert.Equal((false, ""), FolderMove.CheckSwap(from));   // the rename it tries first is undone
+        Assert.True(Directory.Exists(from));
         var moved = FolderMove.Move(from, drive, 500, driveOf: DriveOf);
         Assert.True(FolderMove.IsLink(from));
         Assert.True(moved.HasOldCopy);
@@ -466,6 +468,26 @@ public class SpaceTests : IDisposable
         Assert.True(space.CompactCommand.CanExecute(null));
         Assert.Equal(SongSpace.DefaultSittingHours, space.Sitting!.Hours);   // thinning is offered, never ticked
         Assert.DoesNotContain(space.Rows, r => r.Kind == CompactKind.ThinnedSave && r.IsTicked);
+    }
+
+    [Fact]
+    public void Old_copies_left_after_moves_are_on_one_card()
+    {
+        using var page = new Page(_root);
+        var old = Path.GetDirectoryName(File("C/Vital (old copy)/pad.vital", 70))!;
+        page.Db.SaveMovedFolders([
+            new MovedFolder(Path.Combine(_root, "C", "Vital"), Path.Combine(_root, "I", "Vital"), old, 70, DateTime.Now) { Key = "vital" },
+            new MovedFolder(Path.Combine(_root, "C", "Arcade"), Path.Combine(_root, "I", "Arcade"), Path.Combine(_root, "C", "Arcade (old copy)"), 90, DateTime.Now),
+        ]);
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+        Assert.True(plugins.HasOldCopies);   // only Vital's old copy is still there
+        Assert.Equal("1 old copy left after a move", plugins.OldCopiesTitle);
+        plugins.ReviewOldCopiesCommand.Execute(null);
+        var item = Assert.Single(plugins.Card!.Items);
+        Assert.Equal(old, item.Folder.Path);
+        Assert.True(item.IsTicked);
+        Assert.Equal("Delete 70 bytes", plugins.Card.ConfirmText);
     }
 
     [Fact]

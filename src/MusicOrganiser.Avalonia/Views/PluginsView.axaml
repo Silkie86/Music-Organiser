@@ -336,6 +336,20 @@
                 </DockPanel>
             </Border>
 
+            <!-- Old copies left beside folders moved to another drive, all in one place. -->
+            <Border Classes="card" Padding="16,10,10,10" Margin="0,0,0,12" IsVisible="{Binding HasOldCopies}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Review…" Command="{Binding ReviewOldCopiesCommand}" VerticalAlignment="Center"
+                            ToolTip.Tip="See each old copy, then remove the ticked ones to the Recycle Bin" />
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding OldCopiesSizeText}" FontSize="18" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}"
+                               Foreground="{StaticResource OkBrush}" VerticalAlignment="Center" Margin="0,0,14,0" />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="{Binding OldCopiesTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="The folders live on another drive now. Delete these once the plugins open fine." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
             <!-- What to install to open more of your old projects. -->
             <Border Classes="card" Padding="16,14,6,6" Margin="0,0,0,12" IsVisible="{Binding HasNeeded}">
                 <StackPanel>

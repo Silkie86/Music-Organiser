@@ -117,13 +117,19 @@ public sealed partial class LibraryDb
     {
         var key = NameKey(name);
         if (key.Length == 0) return [];
-        return Query("""
-            SELECT path, json FROM scanned_plugins
-            WHERE name_key = $k
-               OR (length(name_key) >= 4 AND length($k) > length(name_key) AND substr($k, -length(name_key)) = name_key)
-               OR (length($k) >= 4 AND length(name_key) > length($k) AND substr(name_key, -length($k)) = $k)
+        // The matching keys first, from the index alone: matching in SQL read every row's parameters off the disk, a
+        // 2.7 s freeze on picking a plugin when the computer was short of memory (F12 note, 26 Oct).
+        var keys = Query("SELECT DISTINCT name_key FROM scanned_plugins", r => Str(r, "name_key"))
+            .Where(k => k == key || k.Length >= 4 && key.Length > k.Length && key.EndsWith(k, StringComparison.Ordinal)
+                                 || key.Length >= 4 && k.Length > key.Length && k.EndsWith(key, StringComparison.Ordinal))
+            .ToList();
+        if (keys.Count == 0) return [];
+        var names = string.Join(", ", keys.Select((_, i) => $"$k{i}"));
+        return Query($"""
+            SELECT path, json FROM scanned_plugins WHERE name_key IN ({names})
             ORDER BY name_key = $k DESC, format, name, path
-            """, r => ScannedPlugin.Parse(Str(r, "json")) is { } p ? p with { Path = Str(r, "path") } : null, ("$k", key))
+            """, r => ScannedPlugin.Parse(Str(r, "json")) is { } p ? p with { Path = Str(r, "path") } : null,
+            keys.Select((k, i) => ($"$k{i}", (object)k)).Append(("$k", key)).ToArray())
             .OfType<ScannedPlugin>().ToList();
     }
 

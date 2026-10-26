@@ -14,6 +14,39 @@ public sealed partial class PluginsViewModel
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasMoved))] IReadOnlyList<MovedFolderItem> _movedFolders = [];
     public bool HasMoved => MovedFolders.Count > 0;
 
+    // ---- the old copies card over the list: everything moved whose old copy is still here (F12 note, 26 Oct) ----------
+
+    IReadOnlyList<MovedFolder> _oldCopies = [];
+    [ObservableProperty] bool _hasOldCopies;
+    [ObservableProperty] string _oldCopiesSizeText = "";
+    [ObservableProperty] string _oldCopiesTitle = "";
+
+    void BuildOldCopies(IReadOnlyList<MovedFolder> old)
+    {
+        _oldCopies = old;
+        HasOldCopies = old.Count > 0;
+        OldCopiesSizeText = DiskSpace.Text(old.Sum(m => m.Bytes));
+        OldCopiesTitle = old.Count == 1 ? "1 old copy left after a move" : $"{old.Count} old copies left after moving folders";
+    }
+
+    /// <summary>A Keep or Delete card for every old copy at once, each ticked.</summary>
+    [RelayCommand]
+    void ReviewOldCopies()
+    {
+        if (_oldCopies.Count == 0) return;
+        var card = new SpaceCard(this)
+        {
+            Title = "Delete the old copies?",
+            Intro = "Each folder now lives on another drive, and the plugins use that copy. Untick any whose plugin you haven't opened yet. " +
+                    "They go to the Recycle Bin: empty the bin to get the room back.",
+            Items = _oldCopies.Select(m => new CleanupItem(new SpaceFolder(m.OldCopy, m.Kind, m.Bytes, []), "", ticked: true,
+                                                           label: Path.GetFileName(m.OldCopy), detail: $"Now on {m.To}")).ToList(),
+        };
+        card.Confirm = () => DeleteAsync(card, "");
+        card.Refresh();
+        Card = card;
+    }
+
     void LoadMoved(string key) =>
         MovedFolders = key.Length == 0 ? [] : _db.MovedFolders().Where(m => m.Key == key).Select(m => new MovedFolderItem(m, this)).ToList();
 
@@ -25,7 +58,8 @@ public sealed partial class PluginsViewModel
         if (Selected is not { } p || !_rowSpace.TryGetValue(p, out var space)) return;
         var destination = await Ui.Current.PickFolder($"Move {Path.GetFileName(folder.Path)} to which folder? Pick one on another drive");
         if (destination is null) return;
-        var problem = await Task.Run(() => FolderMove.Problem(folder.Path, destination, folder.Bytes));
+        var (admin, problem) = await Task.Run(() =>
+            FolderMove.Problem(folder.Path, destination, folder.Bytes) is { Length: > 0 } why ? (false, why) : FolderMove.CheckSwap(folder.Path));
         if (problem.Length > 0)
         {
             _main.Activities.Failed($"Can't move {Path.GetFileName(folder.Path)} there", problem);
@@ -37,14 +71,15 @@ public sealed partial class PluginsViewModel
             Title = $"Move {Path.GetFileName(folder.Path)} to {Path.GetPathRoot(target)}?",
             Intro = $"It's copied to {target} and every file checked. Then the folder here becomes \"{Path.GetFileName(folder.Path)}{FolderMove.OldSuffix}\" " +
                     "and a link takes its place, so the plugin and your projects still find everything where it was. " +
-                    "Close your DAW first. Nothing is deleted: once the plugin opens fine, Delete old copy frees the room here.",
+                    "Close your DAW first. Nothing is deleted: once the plugin opens fine, Delete old copy frees the room here." +
+                    (admin ? " Windows guards this folder, so it asks for administrator rights once the copy is made." : ""),
         };
         card.Fix($"Move {DiskSpace.Text(folder.Bytes)}");
-        card.Confirm = () => RunMoveAsync(space.Key, folder, destination);
+        card.Confirm = () => RunMoveAsync(space.Key, p.Name, folder, destination);
         Card = card;
     }
 
-    async Task RunMoveAsync(string key, SpaceFolder folder, string destination)
+    async Task RunMoveAsync(string key, string plugin, SpaceFolder folder, string destination)
     {
         Card = null;
         var name = Path.GetFileName(folder.Path);
@@ -58,7 +93,7 @@ public sealed partial class PluginsViewModel
             SaveMoved(all => all.Where(m => !m.From.Equals(moved.From, StringComparison.OrdinalIgnoreCase))
                                 .Append(moved with { Key = key, Kind = folder.Kind }));
             activity.Finish($"Moved {name} to {Path.GetPathRoot(moved.To)}",
-                            $"Open {Selected?.Name ?? "the plugin"} in your DAW. Once it's fine, Delete old copy frees {DiskSpace.Text(folder.Bytes)} here.",
+                            $"Open {plugin} in your DAW. Once it's fine, Delete old copy frees {DiskSpace.Text(folder.Bytes)} here.",
                             "Show", () => Shell.Reveal(moved.To));
         }
         catch (OperationCanceledException)
