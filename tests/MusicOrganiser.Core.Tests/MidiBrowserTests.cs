@@ -770,6 +770,22 @@ public class MidiBrowserTests
     }
 
     [Fact]
+    public void A_project_gone_from_disk_is_noted_once_not_tried_again_every_run()
+    {
+        var dir = Fixtures.TempDir();
+        var song = FlProjectWithChords(dir);
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.Upsert(Scanner.Analyse(song));
+        File.Delete(song);   // deleted before the next scan has noticed
+        using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));
+        var indexer = new MidiIndexer(index, db);
+
+        Assert.Equal(1, indexer.Run().Failed);
+        Assert.Contains("isn't there", Assert.Single(index.Failures()).Why);
+        Assert.Equal(0, indexer.Run().Read);
+    }
+
+    [Fact]
     public void Only_the_newest_save_of_a_song_is_read_and_failed_files_can_be_tried_again()
     {
         var dir = Fixtures.TempDir();

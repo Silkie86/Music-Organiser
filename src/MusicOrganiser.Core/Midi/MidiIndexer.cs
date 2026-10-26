@@ -89,7 +89,7 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             AppLog.Info("MIDI", $"Finding new and changed files took {finding.Elapsed.TotalSeconds:0.0} s ({wanted.Count:N0} files, {total:N0} to read)");
         if (total == 0) return new(0, 0, forget.Count, 0);
 
-        // Kept: it couldn't be opened this time, so what was read from it before stays (KeepUnread).
+        // Kept: another program had it open, so what was read from it before stays (KeepUnread).
         var results = new BlockingCollection<(MidiSource Source, int Version, IReadOnlyList<IndexedPhrase> Phrases, string? Error, bool Kept)>(boundedCapacity: 256);
         int read = 0, failed = 0, phrases = 0;
         var threads = Enumerable.Range(0, Math.Min(Workers, total)).Select(i => new Thread(() =>
@@ -128,10 +128,10 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
                     {
                         Interlocked.Increment(ref failed);
                         AppLog.Info("MIDI", $"Couldn't read {source.Path}: {Brief(e)}");
-                        // Another program had it open for a moment (a backup, a virus check), or reading wasn't allowed:
-                        // its parts are kept and it's read again next time, not left empty until it changes.
-                        var kept = e is UnauthorizedAccessException || e is IOException and not EndOfStreamException;
-                        try { results.Add((source, VersionFor(source), [], Why(e), kept), ct); }
+                        // Another program had it open for a moment (a backup, a virus check): its parts are kept and it's read
+                        // again next time, not left empty until it changes. Anything else (gone, not allowed, a cloud file that
+                        // won't download) is noted once, as before, not tried again and logged on every run.
+                        try { results.Add((source, VersionFor(source), [], Why(e), InUse(e)), ct); }
                         catch (OperationCanceledException) { break; }
                     }
                 }
@@ -213,6 +213,14 @@ public sealed class MidiIndexer(MidiIndex index, LibraryDb library)
             ? $"{e.GetType().Name}: {e.Message}" +
               (new StackTrace(e, false).GetFrame(0)?.GetMethod() is { } at ? $" (in {at.DeclaringType?.Name}.{at.Name})" : "")
             : $"{e}";
+
+    /// <summary>
+    /// Another program has the file open and won't share it: Windows' sharing or lock violation (0x80070020, 0x80070021), or
+    /// the "would block" that .NET gives for the same on Linux and macOS. Not a missing file, a refused one or a damaged one.
+    /// </summary>
+    static bool InUse(Exception e) =>
+        e is IOException and not (FileNotFoundException or DirectoryNotFoundException or EndOfStreamException) &&
+        (OperatingSystem.IsWindows() ? (uint)e.HResult is 0x80070020 or 0x80070021 : e.HResult == (OperatingSystem.IsMacOS() ? 35 : 11));
 
     /// <summary>Why a file couldn't be read, in a few plain words, for the list of failed ones.</summary>
     public static string Why(Exception e) => e switch

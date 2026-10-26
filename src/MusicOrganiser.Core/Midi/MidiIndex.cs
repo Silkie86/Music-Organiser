@@ -214,9 +214,9 @@ public sealed class MidiIndex : IDisposable
     }
 
     /// <summary>
-    /// Files that couldn't be opened this time (another program had them open, or reading wasn't allowed): what was read
-    /// from them before is kept and why noted, and their stamp is left as it was (none for a new one), so they're read
-    /// again next time instead of staying empty until they change.
+    /// Files that couldn't be opened this time because another program had them open: what was read from them before is
+    /// kept and why noted, and their stamp is left as it was (none for a new one), so they're read again next time instead
+    /// of staying empty until they change.
     /// </summary>
     public void KeepUnread(IReadOnlyList<(MidiSource Source, int Version, string Error)> batch)
     {
