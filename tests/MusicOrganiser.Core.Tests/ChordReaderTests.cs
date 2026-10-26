@@ -122,6 +122,20 @@ public class ChordReaderTests
     }
 
     [Fact]
+    public void A_note_that_starts_before_tick_0_is_read_without_failing()
+    {
+        // Studio One can save a note pushed in before the song's start: the whole song was a failed read.
+        var notes = Held(-2 * Beat, Bar, 48, 52, 55).Concat(Held(2 * Beat, Bar, 53, 57, 60)).ToList();
+        Assert.Equal("1:C 1.5:F", Read(notes, 2 * Bar));
+        var analysis = PhraseAnalyser.Analyse(notes, "Keys");
+        Assert.Equal(MidiRoles.Chords, analysis.Role);
+        // Put in its first bar, it starts in the bar before tick 0, so nothing is left below 0.
+        var placed = PhraseAnalyser.Normalise(Held(-Beat / 2, Beat, 60), PhraseAnalyser.Ppq);
+        Assert.Equal(Bar - Beat / 2, Assert.Single(placed).Start);
+        Assert.Equal(16, SectionFit.Onsets(notes).Length);
+    }
+
+    [Fact]
     public void A_note_left_held_by_mistake_is_read_without_filling_memory()
     {
         // A MIDI file whose note-off never comes holds the note to the end of the track, which can be days away.
