@@ -732,18 +732,38 @@ public sealed partial class LibraryDb : IDisposable
         }
     }
 
-    public void SetTags(long id, IEnumerable<string> tags)
+    public void SetTags(long id, IEnumerable<string> tags) => SetTags(id, tags, []);
+
+    /// <summary>
+    /// A song's tags, set on its newest save (<paramref name="id"/>). The tags this adds or takes off are added to or taken
+    /// off each of its <paramref name="otherSaves"/> too, so a tag taken off the song doesn't stay on its older saves (and
+    /// in the Tag filter). An older save's other tags are left alone.
+    /// </summary>
+    public void SetTags(long id, IEnumerable<string> tags, IEnumerable<long> otherSaves)
     {
         var clean = tags.Select(t => t.Trim().ToLowerInvariant()).Where(t => t.Length > 0).Distinct().ToList();
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
-            using (var del = Cmd("DELETE FROM tags WHERE project_id = $id", ("$id", id))) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var t in clean)
+            void Run(string sql, long project, string? tag = null)
             {
-                using var cmd = Cmd("INSERT INTO tags VALUES ($id, $t)", ("$id", id), ("$t", t));
+                using var cmd = tag is null ? Cmd(sql, ("$id", project)) : Cmd(sql, ("$id", project), ("$t", tag));
                 cmd.Transaction = tx;
                 cmd.ExecuteNonQuery();
+            }
+            var had = new List<string>();
+            using (var read = Cmd("SELECT tag FROM tags WHERE project_id = $id", ("$id", id)))
+            {
+                read.Transaction = tx;
+                using var r = read.ExecuteReader();
+                while (r.Read()) had.Add(Str(r, "tag"));
+            }
+            Run("DELETE FROM tags WHERE project_id = $id", id);
+            foreach (var t in clean) Run("INSERT INTO tags VALUES ($id, $t)", id, t);
+            foreach (var other in otherSaves.Where(o => o != id).Distinct())
+            {
+                foreach (var t in had.Except(clean)) Run("DELETE FROM tags WHERE project_id = $id AND tag = $t", other, t);
+                foreach (var t in clean.Except(had)) Run("INSERT OR IGNORE INTO tags VALUES ($id, $t)", other, t);
             }
             tx.Commit();
         }

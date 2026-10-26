@@ -106,6 +106,34 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Taking_a_tag_off_a_song_takes_it_off_its_older_saves_and_out_of_the_tag_filter()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        Save("Didums_1", 1);
+        var older = _db.Projects().Single(p => p.Name == "Didums_1");
+        _db.SetTags(older.Id, ["dark", "techno"]);
+        Save("Didums_2", 2);   // a new save takes over the song's tags
+        _db.SetTags(older.Id, ["dark", "techno", "first take"]);   // and the older save has one of its own
+        var projects = Main().Projects;
+        var song = projects.Items.Single(i => i.Name == "Didums");
+        Assert.Equal("dark, techno", song.TagsText);
+
+        song.TagsText = "dark, house";
+
+        Assert.Equal(["dark", "first take", "house"], _db.Projects().Single(p => p.Name == "Didums_1").Tags.Order());
+        Assert.Equal(["dark", "house"], _db.Projects().Single(p => p.Name == "Didums_2").Tags.Order());
+        Assert.DoesNotContain("techno", _db.AllTags().Select(t => t.Tag));
+        projects.Reload();
+        Assert.DoesNotContain("techno", projects.TagFilters);
+    }
+
+    [Fact]
     public async Task Projects_asks_when_two_songs_may_be_one_and_the_Saves_tab_moves_saves()
     {
         // Solomon, 19 Oct 2026: versions under one song, a save movable to another song, and a question when the app is unsure.
