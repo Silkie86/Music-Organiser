@@ -47,7 +47,26 @@ public sealed partial class PluginsViewModel
                               .Concat(_oldHomes.Select(h => new CleanupItem(new SpaceFolder(h.Path, SpaceKind.Sounds, h.Bytes, []), "", ticked: true,
                                                                             label: $"{Path.GetFileName(h.Path)} ({h.Note})", detail: h.Path))).ToList(),
         };
-        card.Confirm = () => DeleteAsync(card, "");
+        var (old, homes) = (_oldCopies, _oldHomes);
+        card.Confirm = async () =>
+        {
+            // Checked again: a drive unplugged since the card opened leaves an old copy the only one the plugin can reach.
+            card.Busy = true;
+            var keep = await Task.Run(() =>
+            {
+                var moved = _db.MovedFolders();
+                return old.Where(m => !FolderMove.OldCopyCanGo(m)).Select(m => m.OldCopy)
+                          .Concat(homes.Where(h => !FolderMove.OldHomeCanGo(h, moved)).Select(h => h.Path))
+                          .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            });
+            var kept = card.Items.Where(i => i.IsTicked && keep.Contains(i.Folder.Path)).ToList();
+            foreach (var i in kept) i.IsTicked = false;
+            if (kept.Count > 0)
+                _main.Activities.Failed(kept.Count == 1 ? $"Kept {kept[0].Name}" : $"Kept {kept.Count} of the old copies",
+                                        "A plugin still needs it: its copy on the other drive can't be found right now, or a link still points into it. " +
+                                        "Plug the drive back in, or use Find it… on Settings › Plugins.");
+            await DeleteAsync(card, "");
+        };
         card.Refresh();
         Card = card;
     }
@@ -118,6 +137,15 @@ public sealed partial class PluginsViewModel
     internal void DeleteOldCopy(MovedFolder moved)
     {
         if (!moved.HasOldCopy) return;
+        if (!FolderMove.OldCopyCanGo(moved))
+        {
+            _main.Activities.Failed($"Keeping the old copy of {Path.GetFileName(moved.From)}",
+                                    FolderMove.Replaced([moved]).Count > 0
+                                        ? "An update put a real folder back where the link was. Use Link again… on the Plugins page first."
+                                        : $"The plugin can't reach the copy in {moved.To} right now, so this is the only copy it can use. " +
+                                          "Plug the drive back in, or use Find it… on Settings › Plugins.");
+            return;
+        }
         var card = new SpaceCard(this)
         {
             Title = $"Delete the old copy of {Path.GetFileName(moved.From)}?",
@@ -128,6 +156,13 @@ public sealed partial class PluginsViewModel
         };
         card.Confirm = async () =>
         {
+            // Checked again: the drive may have gone since the card opened.
+            if (!await Task.Run(() => FolderMove.OldCopyCanGo(moved)))
+            {
+                Card = null;
+                DeleteOldCopy(moved);   // says why it stays
+                return;
+            }
             await DeleteAsync(card, "");
             if (!Directory.Exists(moved.OldCopy)) LoadMoved(moved.Key);
         };
@@ -294,6 +329,7 @@ public sealed partial class PluginsViewModel
             var sameDrive = FolderMove.DriveOf(home).Equals(FolderMove.DriveOf(destination), StringComparison.OrdinalIgnoreCase);
             var (now, problems) = await Task.Run(() => FolderMove.MoveHome(home, destination, _db.MovedFolders(), bytes, progress, stop.Token));
             _db.SaveMovedFolders(now);
+            // Its old place stays off the old copies card while a link still points into it (see FolderMove.OldHomeCanGo).
             if (!sameDrive) _db.SaveOldHomes(_db.OldHomes().Append(new OldHome(home, bytes)));
             var target = FolderMove.Target(home, destination);
             if (problems.Count == 0)
@@ -302,7 +338,9 @@ public sealed partial class PluginsViewModel
                                 "Show", () => Shell.Reveal(target));
             else
                 activity.Fail($"{problems.Count} of the links still point at the old place",
-                              $"{problems.First().Value} The rest point at {target}. Keep the old folder until Find it… has fixed them.");
+                              sameDrive
+                                  ? $"{problems.First().Value} The rest point at {target}. Use Find it… on Settings › Plugins and pick {target} to fix them."
+                                  : $"{problems.First().Value} The rest point at {target}. Keep the old folder until Find it… has fixed them.");
         }
         catch (OperationCanceledException)
         {

@@ -565,9 +565,12 @@ public class SpaceTests : IDisposable
     public void Old_copies_left_after_moves_are_on_one_card()
     {
         using var page = new Page(_root);
-        var old = Path.GetDirectoryName(File("C/Vital (old copy)/pad.vital", 70))!;
+        var vital = Path.GetDirectoryName(File("C/Vital/pad.vital", 70))!;
+        Directory.CreateDirectory(Path.Combine(_root, "I"));
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+        var moved = FolderMove.Move(vital, Path.Combine(_root, "I"), 70, driveOf: DriveOf) with { Key = "vital" };
         page.Db.SaveMovedFolders([
-            new MovedFolder(Path.Combine(_root, "C", "Vital"), Path.Combine(_root, "I", "Vital"), old, 70, DateTime.Now) { Key = "vital" },
+            moved,
             new MovedFolder(Path.Combine(_root, "C", "Arcade"), Path.Combine(_root, "I", "Arcade"), Path.Combine(_root, "C", "Arcade (old copy)"), 90, DateTime.Now),
         ]);
         var plugins = page.Main.Plugins;
@@ -576,9 +579,66 @@ public class SpaceTests : IDisposable
         Assert.Equal("1 old copy left after a move", plugins.OldCopiesTitle);
         plugins.ReviewOldCopiesCommand.Execute(null);
         var item = Assert.Single(plugins.Card!.Items);
-        Assert.Equal(old, item.Folder.Path);
+        Assert.Equal(moved.OldCopy, item.Folder.Path);
         Assert.True(item.IsTicked);
         Assert.Equal("Delete 70 bytes", plugins.Card.ConfirmText);
+    }
+
+    [Fact]
+    public async Task An_old_copy_is_never_offered_while_its_moved_copy_cant_be_reached()
+    {
+        using var page = new Page(_root);
+        var vital = Path.GetDirectoryName(File("C/Vital/pad.vital", 70))!;
+        Directory.CreateDirectory(Path.Combine(_root, "I"));
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+        var moved = FolderMove.Move(vital, Path.Combine(_root, "I"), 70, driveOf: DriveOf) with { Key = "vital" };
+        page.Db.SaveMovedFolders([moved]);
+        Assert.True(FolderMove.OldCopyCanGo(moved));
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+        plugins.ReviewOldCopiesCommand.Execute(null);
+        var card = plugins.Card!;
+
+        // The drive is unplugged (or the folder renamed) after the card opened: the old copy is the only one left to use.
+        Directory.Move(moved.To, moved.To + " renamed");
+        Assert.False(FolderMove.OldCopyCanGo(moved));
+        await card.RunCommand.ExecuteAsync(null);
+        Assert.True(Directory.Exists(moved.OldCopy));
+        Assert.Equal(70, new FileInfo(Path.Combine(moved.OldCopy, "pad.vital")).Length);
+        // Nor is it on the card, or offered from the plugin's Space tab.
+        plugins.Reload();
+        Assert.False(plugins.HasOldCopies);
+        plugins.DeleteOldCopy(moved);
+        Assert.Null(plugins.Card);
+
+        // An update put a real folder where the link was: not offered either.
+        Directory.Move(moved.To + " renamed", moved.To);
+        Directory.Delete(vital);
+        File("C/Vital/new.vital", 5);
+        Assert.False(FolderMove.OldCopyCanGo(moved));
+    }
+
+    [Fact]
+    public void The_old_place_of_moved_folders_waits_while_a_link_still_points_into_it()
+    {
+        using var page = new Page(_root);
+        var home = Path.Combine(_root, "I", "Plugin Data");
+        File("I/Plugin Data/Vital/pad.vital", 70);
+        File("J/Plugin Data/Vital/pad.vital", 70);
+        var still = new MovedFolder(Path.Combine(_root, "C", "Arcade"), Path.Combine(home, "Arcade"), "", 90, DateTime.Now);
+        var repointed = new MovedFolder(Path.Combine(_root, "C", "Vital"), Path.Combine(_root, "J", "Plugin Data", "Vital"), "", 70, DateTime.Now);
+        var old = new OldHome(home, 160);
+        Assert.False(FolderMove.OldHomeCanGo(old, [still, repointed]));   // Arcade's link couldn't be pointed at J
+        Assert.True(FolderMove.OldHomeCanGo(old, [repointed]));
+
+        page.Db.SaveMovedFolders([still, repointed]);
+        page.Db.SaveOldHomes([old]);
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+        Assert.False(plugins.HasOldCopies);
+        page.Db.SaveMovedFolders([repointed]);
+        plugins.Reload();
+        Assert.True(plugins.HasOldCopies);
     }
 
     [Fact]

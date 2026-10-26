@@ -452,6 +452,30 @@ public static class FolderMove
         return (now, problems);
     }
 
+    /// <summary>
+    /// Whether the old copy beside the link can go: the link is there and points at the copy on the other drive, and
+    /// that copy is there. Not when the drive is unplugged or the copy was moved or renamed (then the old copy is the
+    /// only one the plugin could use), nor when an update put a real folder back where the link was.
+    /// </summary>
+    public static bool OldCopyCanGo(MovedFolder moved)
+    {
+        if (!moved.HasOldCopy || !Directory.Exists(moved.To)) return false;
+        try
+        {
+            if (new DirectoryInfo(moved.From).LinkTarget is not { } target) return false;
+            var points = Path.GetFullPath(target, Path.GetDirectoryName(Path.GetFullPath(moved.From))!);
+            return Path.TrimEndingDirectorySeparator(points).Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(moved.To)), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
+    }
+
+    /// <summary>
+    /// Whether a folder left behind can go: it's there, and no moved folder (or its link) still lives in it. After a
+    /// move of the Plugin Data folder, a link that couldn't be pointed at the new place still points into the old one.
+    /// </summary>
+    public static bool OldHomeCanGo(OldHome home, IReadOnlyList<MovedFolder> moved) =>
+        Directory.Exists(home.Path) && !moved.Any(m => DiskSpace.IsInside(m.To, home.Path) || DiskSpace.IsInside(m.From, home.Path));
+
     /// <summary>The moved folders whose link points at nothing: their folder on the other drive was moved or renamed.</summary>
     public static IReadOnlyList<MovedFolder> Lost(IReadOnlyList<MovedFolder> moved) =>
         moved.Where(m => IsLink(m.From) && !Directory.Exists(m.To)).ToList();
