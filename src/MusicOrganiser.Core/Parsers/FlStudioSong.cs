@@ -216,6 +216,9 @@ public sealed partial class FlStudioReader
     /// <summary>Reads what's needed to rebuild the song elsewhere: channels, their plugins and notes, and the mixer.</summary>
     public FlSong ReadSong(string path) => ReadSong(Load(path), path);
 
+    /// <summary>The song, with <paramref name="sounds"/> false for a quick look that leaves each plugin's sound out.</summary>
+    internal FlSong ReadSong(string path, bool sounds) => ReadSong(Load(path), path, sounds);
+
     /// <summary>The song and its playlist from one read of the file.</summary>
     public (FlSong Song, FlPlaylist Playlist) ReadSongAndPlaylist(string path)
     {

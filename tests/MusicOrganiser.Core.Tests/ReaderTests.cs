@@ -549,6 +549,24 @@ public class FlStudio9Tests
         Assert.Empty(LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(alone), alone).Taken);
     }
 
+    [Fact]
+    public void ALostSoundIsLookedForPastOlderSavesWithoutItsPluginAndAMissingFolderIsNoError()
+    {
+        // funk step_8 has other plugins, so only funk step_7 (FL 9) still has LegacyCell's sound.
+        var dir = Fixtures.TempDir();
+        File.Move(Fixtures.FlStudio9Project(dir, Chunk), Path.Combine(dir, "funk step_7.flp"));
+        File.Move(Fixtures.FlStudioProject(dir), Path.Combine(dir, "funk step_8.flp"));
+        var path = Fixtures.FlStudio25NothingSaved(dir);
+        var (song, taken) = LostSounds.FromOlderSaves(Readers.FlStudio.ReadSong(path), path);
+        Assert.Equal(Chunk, song.Channels.Single().Instrument!.State!.Data[60..]);
+        Assert.Equal("Cell: LegacyCell's sound, from funk step_7", Assert.Single(taken));
+
+        // Its folder gone since it was read: converting goes on without the older saves.
+        var lost = Readers.FlStudio.ReadSong(path);
+        var gone = Path.Combine(dir, "gone", "funk step_9.flp");
+        Assert.Same(lost, LostSounds.FromOlderSaves(lost, gone).Song);
+    }
+
     [Theory]
     [InlineData("7.0.0")]
     [InlineData(null)]   // no version: told from the notes being in time order
