@@ -933,11 +933,12 @@ final class Link {
      * still runs: stopping twice does no harm, and the app sends it as it closes, so it often waits behind a clip.
      */
     private void nextJob() {
-        Job job = jobs.poll();
-        while (job != null && !job.ask().client().open && !"stoptracks".equals(job.request().get("cmd"))) {
-            reply(job.ask(), null, APP_GONE);
-            job = jobs.poll();
+        Job next = jobs.poll();
+        while (next != null && !next.ask().client().open && !"stoptracks".equals(next.request().get("cmd"))) {
+            reply(next.ask(), null, APP_GONE);
+            next = jobs.poll();
         }
+        final Job job = next;
         currentJob = job;
         if (job == null) return;
         Finish finish = new Finish() {
