@@ -46,6 +46,7 @@ public sealed partial class LibraryDb : IDisposable
         CREATE INDEX IF NOT EXISTS ix_plugins_project ON plugins(project_id);
         CREATE INDEX IF NOT EXISTS ix_plugins_key ON plugins(name_key);
         CREATE INDEX IF NOT EXISTS ix_samples_project ON samples(project_id);
+        CREATE INDEX IF NOT EXISTS ix_samples_path ON samples(path COLLATE NOCASE);
         CREATE INDEX IF NOT EXISTS ix_tags_tag ON tags(tag);
         CREATE INDEX IF NOT EXISTS ix_sample_index_name ON sample_index(file_name);
         CREATE INDEX IF NOT EXISTS ix_projects_folder ON projects(folder);

@@ -705,6 +705,23 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void Projects_using_a_sample_are_found_by_its_path_without_reading_every_sample()
+    {
+        // "Projects using it" on the Sounds page: with no index on the path, every sample of 16,700 projects was read.
+        new Scanner(_db).ScanProjects();
+        var fl = _db.Project(_db.Projects().Single(x => x.Daw == "FL Studio").Id)!;
+        Assert.Equal([fl.Summary.Id], _db.ProjectsUsingSample(fl.Samples[0].Path.ToUpperInvariant()));
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_db.FilePath};Mode=ReadOnly;Pooling=False");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "EXPLAIN QUERY PLAN SELECT DISTINCT project_id FROM samples WHERE path = 'x' COLLATE NOCASE";
+        using var r = cmd.ExecuteReader();
+        var plan = "";
+        while (r.Read()) plan += r.GetString(3);
+        Assert.Contains("ix_samples_path", plan);
+    }
+
+    [Fact]
     public void A_project_marked_missing_is_back_when_its_file_comes_back_unchanged()
     {
         // Put back from the Recycle Bin, or moved out and back: the same size and time as when it was read.

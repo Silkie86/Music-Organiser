@@ -90,9 +90,10 @@ public sealed partial class SamplesViewModel : ObservableObject, IFileDragSource
     }
 
     [RelayCommand]
-    void ShowProjects()
+    async Task ShowProjects()
     {
-        if (Selected is not null)
-            _main.Projects.ShowOnly(_db.ProjectsUsingSample(Selected.Path), $"Projects using {Selected.Path.Split('\\', '/')[^1]}");
+        if (Selected is not { } sample) return;
+        var ids = await UiWork.Run(() => _db.ProjectsUsingSample(sample.Path));   // off the window's thread
+        _main.Projects.ShowOnly(ids, $"Projects using {sample.Path.Split('\\', '/')[^1]}");
     }
 }
