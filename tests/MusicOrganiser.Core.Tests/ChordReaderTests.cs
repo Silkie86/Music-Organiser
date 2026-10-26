@@ -46,6 +46,21 @@ public class ChordReaderTests
         Assert.Equal($"1:{name}", Read(Held(0, Bar, keys), Bar));
     }
 
+    [Theory]
+    [InlineData("D/C", "D7/C")]   // the same four notes, the C in the bass (it was D7, the C on top)
+    [InlineData("C/E", "C/E")]   // was C
+    [InlineData("F/A", "F/A")]
+    [InlineData("G7/F", "G7/F")]
+    [InlineData("Dm9", "Dm9")]
+    public void Chords_written_plainly_are_heard_back_as_the_same_chords(string name, string heard)
+    {
+        // A slash chord's bass is the low note, and a bass that's only a bass isn't played above it too.
+        var typed = Chart(name);
+        var back = ChordReader.Read(Voicer.Plain(typed), Bar);
+        Assert.Equal($"1:{heard}", Read(Voicer.Plain(typed), Bar));
+        Assert.Equal((typed[0].Chord.Bass, typed[0].Chord.Mask), (back[0].Chord.Bass, back[0].Chord.Mask));
+    }
+
     [Fact]
     public void A_right_hand_on_its_own_has_no_bass()
     {
