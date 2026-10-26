@@ -233,10 +233,15 @@ public sealed class Scanner(LibraryDb db)
                                            IProgress<ScanProgress>? progress = null, CancellationToken ct = default)
     {
         var done = 0;
+        var before = db.PluginScanStamps();
         await Parallel.ForEachAsync(paths, new ParallelOptions { MaxDegreeOfParallelism = PluginLoads, CancellationToken = ct }, async (path, token) =>
         {
             var stamp = PluginScanner.Stamp(path);
             var scan = await scanner.ScanAsync(path, ct: token);
+            // Stopped by the time limit (the PC busy, or a plugin waiting on something), the plugins it hadn't listed yet
+            // would never count as installed: it's kept with no stamp, so the next scan reads it again. Only once (that
+            // empty stamp says it's had its second go), so a plugin that always hangs doesn't hold up every scan.
+            if (scan.TimedOut && !(before.TryGetValue(path, out var was) && was == default)) stamp = default;
             db.SavePluginScan(scan, stamp);
             progress?.Report(new("Reading plugins", Interlocked.Increment(ref done), paths.Count, Path.GetFileName(path.TrimEnd('\\', '/'))));
         });
