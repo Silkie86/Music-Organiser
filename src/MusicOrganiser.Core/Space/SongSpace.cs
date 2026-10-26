@@ -62,10 +62,24 @@ public static class SongSpace
     /// Every sample path the song's saves use, to spot audio nothing uses. Projects store paths as they were on the PC that
     /// saved them, so a file counts as used when any save names a file of that name.
     /// </param>
+    /// <summary>
+    /// What the rest of the library says, so Compact never offers what another song needs.
+    /// </summary>
+    /// <param name="SampleFolders">Your sample folders: audio in them is never offered.</param>
+    /// <param name="UsedByAny">Which of these audio file names any project's samples have (by name, as for the song's own).</param>
+    /// <param name="SharedNames">
+    /// Names of the song's FL Studio saves that another song elsewhere has too ("Beat", "Untitled"): FL Studio's shared
+    /// Backup folder doesn't say which song an autosave is of, so those autosaves are left alone.
+    /// </param>
+    public sealed record Elsewhere(IReadOnlyList<string> SampleFolders, Func<IReadOnlyCollection<string>, IReadOnlySet<string>> UsedByAny,
+                                   IReadOnlySet<string> SharedNames);
+
     /// <param name="keepBackups">How many of the newest autosaves stay.</param>
     /// <param name="sittingHours">How long without a save ends a sitting, for thinning older saves; 0 doesn't thin.</param>
+    /// <param name="elsewhere">What other songs need (see <see cref="Elsewhere"/>).</param>
     public static SongSpaceReport Measure(IReadOnlyList<Save> saves, IReadOnlyList<string> roots, IReadOnlySet<string> usedAudio,
-                                          int keepBackups = DefaultKeepBackups, int sittingHours = 0, CancellationToken ct = default) => Parallelism.Background(() =>
+                                          int keepBackups = DefaultKeepBackups, int sittingHours = 0, CancellationToken ct = default,
+                                          Elsewhere? elsewhere = null) => Parallelism.Background(() =>
     {
         if (saves.Count == 0) return new SongSpaceReport(0, false, "", 0, 0, 0, 0, 0, []);
         // Written the way the folder listing writes them ("C:\a/b" and "C:\a\b" are the same file).
@@ -115,8 +129,16 @@ public static class SongSpace
                 if (seen.Add(s.Path)) savesBytes += File.Exists(s.Path) ? new FileInfo(s.Path).Length : s.Size;
         }
 
+        // Audio in your sample folders, or that any other project uses by name, isn't the song's to offer.
+        if (elsewhere is not null && unusedAudio.Count > 0)
+        {
+            unusedAudio.RemoveAll(a => elsewhere.SampleFolders.Any(f => DiskSpace.IsInside(a.Path, f)));
+            var used = elsewhere.UsedByAny(unusedAudio.Select(a => Path.GetFileName(a.Path)).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+            unusedAudio.RemoveAll(a => used.Contains(Path.GetFileName(a.Path)));
+        }
+
         // FL Studio keeps its autosaves in one Backup folder for all songs (Projects\Backup), named after the song.
-        foreach (var b in FlBackups(saves, roots))
+        foreach (var b in FlBackups(saves, roots, elsewhere?.SharedNames))
             if (seen.Add(b.Path))
             {
                 backupBytes += b.Size;
@@ -192,12 +214,14 @@ public static class SongSpace
 
     /// <summary>
     /// FL Studio's autosaves of the song: "Song (autosave).flp" and "Song (overwritten at 2213h05).flp" in a Backup folder
-    /// beside the song or in a folder above it, up to your project folder.
+    /// beside the song or in a folder above it, up to your project folder. Names another song has too (<paramref name="shared"/>)
+    /// are left out: the autosaves could be that song's.
     /// </summary>
-    static IEnumerable<(string Path, long Size, DateTime Modified)> FlBackups(IReadOnlyList<Save> saves, IReadOnlyList<string> roots)
+    static IEnumerable<(string Path, long Size, DateTime Modified)> FlBackups(IReadOnlyList<Save> saves, IReadOnlyList<string> roots, IReadOnlySet<string>? shared)
     {
         var stems = saves.Where(s => s.Path.EndsWith(".flp", StringComparison.OrdinalIgnoreCase))
-                         .Select(s => Path.GetFileNameWithoutExtension(s.Path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                         .Select(s => Path.GetFileNameWithoutExtension(s.Path)).Where(n => shared?.Contains(n) != true)
+                         .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (stems.Count == 0) yield break;
         var dirs = saves.Select(s => Path.GetDirectoryName(s.Path) ?? "").Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var backupDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

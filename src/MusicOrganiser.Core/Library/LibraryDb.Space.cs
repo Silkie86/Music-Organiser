@@ -137,6 +137,30 @@ public sealed partial class LibraryDb
     }
 
     /// <summary>
+    /// Which of these file names ("take 2.wav") any project's samples have. Projects store paths as they were on the PC
+    /// that saved them, so only the name is compared. Reads the whole samples table once (call it in the background).
+    /// </summary>
+    public HashSet<string> SampleNamesUsed(IReadOnlyCollection<string> names)
+    {
+        var wanted = names.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (wanted.Count == 0) return used;
+        Query("SELECT path FROM samples", r =>
+        {
+            var path = Str(r, "path");
+            if (path[(path.LastIndexOfAny(['\\', '/']) + 1)..] is var name && wanted.Contains(name)) used.Add(name);
+            return 0;
+        });
+        return used;
+    }
+
+    /// <summary>The FL Studio projects with one of these names (the file's name without .flp), anywhere in the library.</summary>
+    public IReadOnlyList<string> FlProjectsNamed(IEnumerable<string> names) =>
+        names.Distinct(StringComparer.OrdinalIgnoreCase)
+             .SelectMany(n => Query("SELECT path FROM projects WHERE name = $n COLLATE NOCASE AND path LIKE '%.flp'", r => Str(r, "path"), ("$n", n)))
+             .ToList();
+
+    /// <summary>
     /// A sample some project uses that's inside this folder, if any: Clean up never removes a folder holding one (your
     /// rule that samples are never moved or deleted; a plugin's library is only fair game when no project uses it).
     /// </summary>

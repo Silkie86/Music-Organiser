@@ -768,6 +768,42 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public void Fl_autosaves_named_like_another_songs_are_left_alone()
+    {
+        var a = File("Projects/A/Beat.flp", 100, new DateTime(2025, 5, 1));
+        File("Projects/Backup/Beat (autosave).flp", 40);
+        File("Projects/Backup/Beat (overwritten at 2213h05).flp", 40);
+        var shared = new SongSpace.Elsewhere([], _ => new HashSet<string>(), new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "beat" });
+        var r = SongSpace.Measure([new(a, 100, new DateTime(2025, 5, 1))], [Path.Combine(_root, "Projects")], new HashSet<string>(), keepBackups: 0, elsewhere: shared);
+        Assert.Equal(0, r.Backups);
+        Assert.DoesNotContain(r.Items, i => i.Kind == CompactKind.Backup);
+
+        using var page = new Page(_root);
+        var b = File("Projects/B/Beat.flp", 7);
+        foreach (var f in new[] { a, b }) page.Db.Upsert(new LibraryDb.IndexedFile(f, 5, 1, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        Assert.Equal(new[] { a, b }.Order(), page.Db.FlProjectsNamed(["beat"]).Order());
+    }
+
+    [Fact]
+    public void Audio_another_project_uses_or_in_a_sample_folder_isnt_offered()
+    {
+        var day = new DateTime(2026, 1, 1);
+        var song = File("Songs/Rae/Rae.song", 300, day);
+        File("Songs/Rae/Bounces/bounce.wav", 700);
+        File("Songs/Rae/My Samples/snare.wav", 50);
+        var take = File("Songs/Rae/Media/take.wav", 300);
+        var elsewhere = new SongSpace.Elsewhere([Path.Combine(_root, "Songs", "Rae", "My Samples")],
+                                                names => names.Where(n => n == "bounce.wav").ToHashSet(StringComparer.OrdinalIgnoreCase), new HashSet<string>());
+        var r = SongSpace.Measure([new(song, 300, day)], [Path.Combine(_root, "Songs")], new HashSet<string>(), elsewhere: elsewhere);
+        Assert.Equal([take], r.Items.Where(i => i.Kind == CompactKind.UnusedAudio).SelectMany(i => i.Paths));
+
+        using var page = new Page(_root);
+        var remix = File("FL/remix.flp", 5);
+        page.Db.Upsert(new LibraryDb.IndexedFile(remix, 5, 1, new ProjectInfo { Daw = "FL Studio" }, null, [(@"C:\Users\Old PC\Bounces\bounce.wav", false)], []));
+        Assert.Equal(["bounce.wav"], page.Db.SampleNamesUsed(["bounce.wav", "take.wav"]));
+    }
+
+    [Fact]
     public async Task Clean_up_keeps_a_folder_holding_a_sample_a_project_names_by_an_old_path()
     {
         using var page = new Page(_root);
