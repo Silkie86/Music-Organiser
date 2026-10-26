@@ -428,7 +428,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         UpdateSummary();
         UpdateYears();
         if (OnlyUnused || YearFilter != AnyYear) Refresh();
-        else if (SortBy == MostLiked) ApplySort();
+        else if (SortBy == MostLiked || IsList && ColumnSort is "UsedIn" or "Liked") ApplySort();
     }
 
     void UpdateSummary()
@@ -711,7 +711,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     {
         _weights = weights;
         Score();
-        if (SortBy == MostLiked) ApplySort();
+        if (SortBy == MostLiked || IsList && ColumnSort == "Liked") ApplySort();
         else BuildTiles();
     }
 

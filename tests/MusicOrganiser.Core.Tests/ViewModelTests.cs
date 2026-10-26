@@ -1251,6 +1251,38 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_list_sorted_by_the_used_or_liked_header_sorts_again_when_those_change()
+    {
+        // Review: a scan, or new Most liked weights in Settings, left the rows in their old order.
+        _soundDb.Save(new[] { "/samples/Kick A.wav", "/samples/Snare B.wav" }.Select(p =>
+            new SoundLibrary.Analysed(p, 1, 1, new SoundAnalysis { Features = [1, 0, 0] }, null, null, null)));
+        _sounds.Reload();
+        var lab = Main().Sounds;
+        lab.ViewMode = SoundsViewModel.List;
+        string[] Names() => [.. lab.Shown.Select(s => s.Name)];
+        lab.SortByColumn("UsedIn");
+        lab.SortByColumn("UsedIn");   // most used first
+        Assert.Equal(["Kick A", "Snare B"], Names());
+
+        // A scan finds Snare B in a project.
+        var file = Path.Combine(_root, "Beat.flp");
+        File.WriteAllBytes(file, [0]);
+        _db.Upsert(new LibraryDb.IndexedFile(file, 1, DateTimeOffset.Now.ToUnixTimeSeconds(), new ProjectInfo { Daw = "FL Studio" }, null,
+            [("/samples/Snare B.wav", true)], []));
+        await lab.RefreshUsageAsync();
+        Assert.Equal(["Snare B", "Kick A"], Names());
+
+        // Kick A a favourite is the most liked, until Settings make a project count for more.
+        lab.Items.Single(s => s.Name == "Kick A").Favourite = true;
+        lab.WeightsChanged(LikedWeights.Default);
+        lab.SortByColumn("Liked");
+        lab.SortByColumn("Liked");
+        Assert.Equal(["Kick A", "Snare B"], Names());
+        lab.WeightsChanged(LikedWeights.Default with { Project = 50 });
+        Assert.Equal(["Snare B", "Kick A"], Names());
+    }
+
+    [Fact]
     public void Sounds_can_be_filtered_by_the_year_a_project_using_them_was_saved()
     {
         _soundDb.Save(new[] { "/samples/Kick A.wav", "/samples/Snare B.wav", "/samples/Hat C.wav" }.Select(p =>
@@ -2213,6 +2245,8 @@ public class ViewModelTests : IDisposable
             if (!finding.IsCompleted)
             {
                 Assert.Equal("Looking on your drives…", samples.MatchMessage);
+                // Another sample picked meanwhile can be looked for without waiting for this one.
+                Assert.True(samples.FindMatchesCommand.CanExecute(null));
                 samples.Selected = null;
                 await finding;
                 Assert.Empty(samples.Matches);

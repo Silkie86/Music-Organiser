@@ -78,9 +78,10 @@ public sealed partial class SamplesViewModel : ObservableObject, IFileDragSource
 
     /// <summary>
     /// Files in your sample folders that could be the missing one. Looked for in the background: it compares the name
-    /// with every sound you have (357,000), which held the window up for seconds.
+    /// with every sound you have (357,000), which held the window up for seconds. Another sample picked meanwhile can be
+    /// looked for straight away: the search before it is then left unshown.
     /// </summary>
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     async Task FindMatches()
     {
         if (Selected is not { } sample) return;
