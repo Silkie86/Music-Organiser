@@ -213,6 +213,26 @@ public sealed class MidiIndex : IDisposable
         }
     }
 
+    /// <summary>
+    /// Files that couldn't be opened this time (another program had them open, or reading wasn't allowed): what was read
+    /// from them before is kept and why noted, and their stamp is left as it was (none for a new one), so they're read
+    /// again next time instead of staying empty until they change.
+    /// </summary>
+    public void KeepUnread(IReadOnlyList<(MidiSource Source, int Version, string Error)> batch)
+    {
+        if (batch.Count == 0) return;
+        lock (_writeLock)
+        {
+            using var tx = _write.BeginTransaction();
+            foreach (var (s, version, error) in batch)
+                Exec(tx, """
+                    INSERT INTO sources (path, kind, daw, mtime, size, tempo, version, error) VALUES ($p, $k, $d, -1, -1, $t, $v, $e)
+                    ON CONFLICT(path) DO UPDATE SET error = $e
+                    """, ("$p", s.Path), ("$k", s.Kind), ("$d", s.Daw), ("$t", s.Tempo), ("$v", version), ("$e", error));
+            tx.Commit();
+        }
+    }
+
     /// <summary>Forgets files that are gone, or no longer in a library folder or the project library.</summary>
     public void Forget(IEnumerable<string> paths)
     {

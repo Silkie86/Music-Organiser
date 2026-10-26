@@ -707,6 +707,69 @@ public class MidiBrowserTests
     }
 
     [Fact]
+    public void A_midi_folder_that_cant_be_reached_keeps_its_parts_until_its_taken_off_the_list()
+    {
+        var dir = Fixtures.TempDir();
+        var lib = Path.Combine(dir, "New Midi");
+        Directory.CreateDirectory(lib);
+        var clip = new MidiClip { Name = "Dark", Ppq = 96 };
+        clip.Track("Piano").AddRange(Chords(AMinor));
+        File.WriteAllBytes(Path.Combine(lib, "Dark 01.mid"), MidiWriter.Write(clip));
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.SetList(MidiIndexer.FoldersKey, [lib]);
+        using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));
+        var indexer = new MidiIndexer(index, db);
+        Assert.Equal(1, indexer.Run().Read);
+
+        // Its drive unplugged: nothing forgotten, nothing to read again when it's back.
+        var unplugged = Path.Combine(dir, "Unplugged");
+        Directory.Move(lib, unplugged);
+        Assert.Equal(0, indexer.Run().Forgotten);
+        Assert.Single(index.All());
+        Directory.Move(unplugged, lib);
+        Assert.Equal(0, indexer.Run().Read);
+
+        // Taken off the list of MIDI folders: forgotten.
+        db.SetList(MidiIndexer.FoldersKey, []);
+        Assert.Equal(1, indexer.Run().Forgotten);
+        Assert.Empty(index.All());
+    }
+
+    [Fact]
+    public void A_file_another_program_has_open_keeps_its_parts_and_is_read_again_next_time()
+    {
+        var dir = Fixtures.TempDir();
+        var lib = Path.Combine(dir, "MIDI");
+        Directory.CreateDirectory(lib);
+        var file = Path.Combine(lib, "Keys.mid");
+        var clip = new MidiClip { Name = "Keys", Ppq = 96 };
+        clip.Track("Piano").AddRange(Chords(AMinor));
+        File.WriteAllBytes(file, MidiWriter.Write(clip));
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.SetList(MidiIndexer.FoldersKey, [lib]);
+        using var index = new MidiIndex(MidiIndex.PathBeside(db.FilePath));
+        var indexer = new MidiIndexer(index, db);
+        Assert.Equal(1, indexer.Run().Read);
+        var before = Assert.Single(index.All()).Hash;
+
+        // Saved again, then held open by a backup while the MIDI is read: the parts read before stay.
+        clip.Track("Piano").Add(new NoteEvent(4 * Bar, Bar, 69, 100));
+        File.WriteAllBytes(file, MidiWriter.Write(clip));
+        File.SetLastWriteTimeUtc(file, File.GetLastWriteTimeUtc(file).AddMinutes(1));
+        using (new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var locked = indexer.Run();
+            Assert.Equal(1, locked.Failed);
+            Assert.Equal(before, Assert.Single(index.All()).Hash);
+            Assert.Contains("another program", Assert.Single(index.Failures()).Why);
+        }
+
+        // Let go: read again on the next run, without asking.
+        Assert.Equal((1, 0), (indexer.Run().Read, index.Failures().Count));
+        Assert.NotEqual(before, Assert.Single(index.All()).Hash);
+    }
+
+    [Fact]
     public void Only_the_newest_save_of_a_song_is_read_and_failed_files_can_be_tried_again()
     {
         var dir = Fixtures.TempDir();
