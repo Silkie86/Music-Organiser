@@ -206,4 +206,19 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         q.MuteSongParts(["Piano"], []);
         Assert.False(q.Layers.Single(l => l.Name == "Piano").Layer.Muted);   // one click turns it back on
     }
+
+    [Fact]
+    public void A_track_renamed_to_another_tracks_name_gets_a_number()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+        Drop(p, Mid("Lead", Tune(2)), p.Layers.Count);
+        p.Layers[1].Name = "Keys";
+        Assert.Equal(["Keys", "Keys 2"], p.Layers.Select(l => l.Name));
+        p.Layers[1].Name = " Keys 2 ";   // its own name again
+        Assert.Equal("Keys 2", p.Layers[1].Name);
+        // Each goes out to the DAW as a track of its own.
+        Assert.Equal(2, p.MakeDrag(["arrangement"])!.Cards.Count);
+    }
 }

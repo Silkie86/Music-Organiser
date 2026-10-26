@@ -640,12 +640,25 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         return layer;
     }
 
-    string UniqueName(string name)
+    /// <param name="except">The track being renamed, which can keep its own name.</param>
+    string UniqueName(string name, PlaygroundLayer? except = null)
     {
         name = name.Trim().Length == 0 ? "Part" : name.Trim();
-        if (Section.Layers.All(l => l.Name != name)) return name;
+        if (Section.Layers.All(l => l == except || l.Name != name)) return name;
         for (var i = 2; ; i++)
-            if (Section.Layers.All(l => l.Name != $"{name} {i}")) return $"{name} {i}";
+            if (Section.Layers.All(l => l == except || l.Name != $"{name} {i}")) return $"{name} {i}";
+    }
+
+    /// <summary>
+    /// A track renamed: a name another track has gets a number after it, as new tracks do, so each still goes out to the
+    /// DAW as a track of its own (MIDI tracks are told apart by name).
+    /// </summary>
+    internal void RenameLayer(LayerRow row, string name)
+    {
+        if (name.Trim().Length == 0) return;
+        name = UniqueName(name, except: row.Layer);
+        if (name == row.Layer.Name) { row.Changed(); return; }   // the box shows its name again
+        EditLayer(row, l => l.Name = name, harmony: false);
     }
 
     /// <summary>
@@ -2780,7 +2793,7 @@ public sealed partial class LayerRow : ObservableObject
         set
         {
             if (value.Trim().Length == 0 || value == Layer.Name) return;
-            _owner.EditLayer(this, l => l.Name = value.Trim(), harmony: false);
+            _owner.RenameLayer(this, value);
         }
     }
 
