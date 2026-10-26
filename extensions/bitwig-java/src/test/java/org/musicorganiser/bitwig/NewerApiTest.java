@@ -388,6 +388,24 @@ class NewerApiTest {
     }
 
     @Test
+    @DisplayName("waits as long for a replace into an empty slot as for any new clip, so a new track's first part isn't lost")
+    void waitsForAReplaceIntoAnEmptySlotAsForANewClip() {
+        // The Playground always replaces slot 0, even on a track it has just made, and Bitwig may take a while to read
+        // the file: more than a swap's wait, less than a new clip's (extension 3.18).
+        Model m = LinkTest.song();
+        m.scenes = 1;
+        m.tracks.get(1).id("bass-id");
+        m.clipDelay = 3000;
+        start(m);
+        bitwig.allowChanges(true);
+        assertJson(obj("slot", 0, "launched", true),
+                   app.waitFor(obj("id", 1, "cmd", "clip", "trackId", "bass-id", "slot", 0, "path", "C:\\MIDI\\Bass.mid", "replace", true, "launch", true))
+                      .get("result"));
+        assertEquals(List.of("C:\\MIDI\\Bass.mid"), bitwig.state.tracks.get(1).slots);
+        assertTrue(bitwig.calls.contains(List.of("launchWithOptions", 1, 0, "default", "synced")), String.valueOf(bitwig.calls));
+    }
+
+    @Test
     @DisplayName("stops the launcher clips on the tracks given and puts them back on the arranger, leaving out tracks that are gone")
     void stopsTracks() {
         startWithABassClip();

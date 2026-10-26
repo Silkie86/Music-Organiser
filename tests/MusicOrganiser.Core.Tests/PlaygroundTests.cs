@@ -1,5 +1,6 @@
 using System.Collections;
 using System.ComponentModel;
+using System.Text.Json.Nodes;
 using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Midi;
@@ -1500,22 +1501,31 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(ownLength, ui.Player.Samples);
     }
 
-    [Fact]
-    public async Task Play_in_Bitwig_puts_each_part_on_a_track_of_its_own_there_and_sends_only_what_changed()
+    static readonly List<NoteEvent> PlayedTune = Line(Beat, 72, 74, 76, 77), PlayedBass = Line(2 * Beat, 36, 43);
+
+    /// <summary>A Playground with a lead and a bass part (<see cref="PlayedTune"/> and <see cref="PlayedBass"/>), for playing in Bitwig.</summary>
+    PlaygroundViewModel LeadAndBass(LibraryDb db, SoundOrganiser sounds, DawWatch? watch = null)
     {
         Ui.Current = new Headless();
         UiWork.InBackground = false;
-        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
         db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "exports"));
+        var p = new MainViewModel(db, sounds, watch, dataFolder: Path.Combine(_root, "data")).Playground;
+        var catalogue = new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", PlayedTune, "melody lead"), Stored(2, @"K:\Other\Tune.flp", "Bass", PlayedBass, "bass")]);
+        p.AddFromLibrary(catalogue.Entries.First(e => e.Phrase.Part == "Lead"), PlayedTune, "Lead");
+        p.AddFromLibrary(catalogue.Entries.First(e => e.Phrase.Part == "Bass"), PlayedBass, "Bass");
+        p.ClearLoopCommand.Execute(null);
+        p.SendAfter = TimeSpan.FromHours(1);
+        return p;
+    }
+
+    [Fact]
+    public async Task Play_in_Bitwig_puts_each_part_on_a_track_of_its_own_there_and_sends_only_what_changed()
+    {
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
         using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
         using var sounds = new SoundOrganiser(soundDb);
-        var p = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data")).Playground;
-        var tune = Line(Beat, 72, 74, 76, 77);
-        var bass = Line(2 * Beat, 36, 43);
-        var catalogue = new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", tune, "melody lead"), Stored(2, @"K:\Other\Tune.flp", "Bass", bass, "bass")]);
-        p.AddFromLibrary(catalogue.Entries.First(e => e.Phrase.Part == "Lead"), tune, "Lead");
-        p.AddFromLibrary(catalogue.Entries.First(e => e.Phrase.Part == "Bass"), bass, "Bass");
-        p.ClearLoopCommand.Execute(null);
+        var p = LeadAndBass(db, sounds);
+        var tune = PlayedTune;
         var made = new List<string>();
         var put = new List<(string Track, string File)>();
         var stopped = new List<string>();
@@ -1579,6 +1589,183 @@ public class PlaygroundTests : IDisposable
         p.PlayInBitwig = false;
         Assert.Equal(["track 2", "track 3"], stopped.Order());
         Assert.Contains("Stopped playing in Bitwig", p.Message);
+    }
+
+    [Fact]
+    public async Task Play_in_Bitwig_stays_in_the_project_it_started_in_and_waits_while_another_is_in_front()
+    {
+        // A stand-in for the extension, which refuses a request meant for another project than the one in front.
+        var inFront = "Night Drive";
+        var made = 0;
+        await using var bitwig = new FakeJavaBitwig(FakeJavaBitwig.Hello("""{"extension": "3.18"}"""))
+        {
+            Answer = request => (string?)request["cmd"] switch
+            {
+                "hello" => FakeJavaBitwig.Hello($$"""{"extension": "3.18", "project": "{{inFront}}"}"""),
+                "newtrack" => $$"""{"index": 1, "name": "x", "id": "track {{Interlocked.Increment(ref made)}}"}""",
+                "clip" => """{"slot": 0, "launched": true}""",
+                "stoptracks" => """{"stopped": []}""",
+                _ => null,
+            },
+            Refuse = request => (string?)request["onlyIn"] is { } only && only != inFront
+                ? $"Bitwig has \"{inFront}\" open, not \"{only}\", so the link stopped before changing anything there."
+                : null,
+        };
+        using var watch = new DawWatch(bitwig.Port, flOpen: () => false, bitwigOpen: () => true);
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = LeadAndBass(db, sounds, watch);
+
+        p.PlayInBitwig = true;
+        await p.SendToPlayAsync();
+        Assert.Equal(2, made);
+        Assert.All(bitwig.Requests.Where(r => (string?)r["cmd"] is "newtrack" or "clip"), r => Assert.Equal("Night Drive", (string?)r["onlyIn"]));
+
+        // Another project comes to the front in Bitwig: nothing changes there (no stops, no new tracks), and it says why.
+        inFront = "Other Song";
+        p.ToggleMute(p.Layers.Single(l => l.Layer.Name == "Bass"));
+        await p.SendToPlayAsync();
+        Assert.StartsWith("Playing in Bitwig is paused: another project is in front there, and the Playground's tracks are in “Night Drive”.", p.Message);
+        // The stop was refused, and the project in front has none of the Playground's tracks, so it isn't "Night Drive" renamed.
+        var stop = bitwig.Requests.SkipLast(1).Last();
+        Assert.Equal(("stoptracks", "Night Drive"), ((string?)stop["cmd"], (string?)stop["onlyIn"]));
+        Assert.Equal("project", (string?)bitwig.Requests.Last()["cmd"]);
+        var keys = Line(Bar, 60, 64);
+        p.AddFromLibrary(new MidiCatalogue([Stored(3, @"K:\Other\Tune.flp", "Keys", keys, "chords")]).Entries.Single(), keys, "Keys");
+        await p.SendToPlayAsync();
+        Assert.Equal(2, made);
+        Assert.StartsWith("Playing in Bitwig is paused", p.Message);
+
+        // Back in front: the parts go across again, there.
+        inFront = "Night Drive";
+        await p.SendToPlayAsync();
+        Assert.Equal("Playing in Bitwig again, in “Night Drive”.", p.Message);
+        Assert.Equal(3, made);
+        Assert.Equal("stoptracks", (string?)bitwig.Requests.Last()["cmd"]);
+
+        // Turned off (its tracks stop) and on with the other project in front: it plays there instead.
+        p.PlayInBitwig = false;
+        for (var waited = System.Diagnostics.Stopwatch.StartNew(); !p.Message.StartsWith("Stopped playing in Bitwig", StringComparison.Ordinal); await Task.Delay(20))
+            Assert.True(waited.Elapsed < TimeSpan.FromSeconds(20), p.Message);
+        inFront = "Other Song";
+        p.PlayInBitwig = true;
+        await p.SendToPlayAsync();
+        Assert.Equal("Other Song", (string?)bitwig.Requests.Last(r => (string?)r["cmd"] == "clip")["onlyIn"]);
+    }
+
+    [Fact]
+    public async Task Play_in_Bitwig_follows_its_project_when_its_saved_under_a_new_name()
+    {
+        // A stand-in for the extension, whose project in front lists the tracks made in it: saving under a new name keeps them.
+        var inFront = "Untitled";
+        var tracks = new List<(string Id, string Name)>();
+        await using var bitwig = new FakeJavaBitwig(FakeJavaBitwig.Hello("""{"extension": "3.18"}"""))
+        {
+            Answer = request =>
+            {
+                lock (tracks)
+                    switch ((string?)request["cmd"])
+                    {
+                        case "hello": return FakeJavaBitwig.Hello($$"""{"extension": "3.18", "project": "{{inFront}}"}""");
+                        case "newtrack":
+                            tracks.Add(($"track {tracks.Count + 1}", (string)request["name"]!));
+                            return $$"""{"index": {{tracks.Count}}, "name": "x", "id": "track {{tracks.Count}}"}""";
+                        case "clip": return """{"slot": 0, "launched": true}""";
+                        case "stoptracks": return """{"stopped": []}""";
+                        case "project":
+                            var project = JsonNode.Parse(FakeJavaBitwig.Canned("project"))!.AsObject();
+                            project["name"] = inFront;
+                            var listed = (JsonArray)project["tracks"]!;
+                            var template = listed[0]!;
+                            listed.Clear();
+                            foreach (var (id, name) in tracks)
+                            {
+                                var t = template.DeepClone();
+                                t["id"] = id;
+                                t["name"] = name;
+                                listed.Add(t);
+                            }
+                            return project.ToJsonString();
+                        default: return null;
+                    }
+            },
+            Refuse = request => (string?)request["onlyIn"] is { } only && only != inFront
+                ? $"Bitwig has \"{inFront}\" open, not \"{only}\", so the link stopped before changing anything there."
+                : null,
+        };
+        using var watch = new DawWatch(bitwig.Port, flOpen: () => false, bitwigOpen: () => true);
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = LeadAndBass(db, sounds, watch);
+
+        p.PlayInBitwig = true;
+        await p.SendToPlayAsync();
+        Assert.Equal(2, tracks.Count);
+
+        // Saved for the first time: the same project, with the Playground's tracks in it, so the edits still go across.
+        inFront = "My Beat";
+        p.ToggleMute(p.Layers.Single(l => l.Layer.Name == "Bass"));
+        await p.SendToPlayAsync();
+        Assert.DoesNotContain("paused", p.Message);
+        Assert.Equal(("stoptracks", "My Beat"), ((string?)bitwig.Requests.Last()["cmd"], (string?)bitwig.Requests.Last()["onlyIn"]));
+        var keys = Line(Bar, 60, 64);
+        p.AddFromLibrary(new MidiCatalogue([Stored(3, @"K:\Other\Tune.flp", "Keys", keys, "chords")]).Entries.Single(), keys, "Keys");
+        await p.SendToPlayAsync();
+        Assert.Equal(3, tracks.Count);
+        Assert.Equal("My Beat", (string?)bitwig.Requests.Last(r => (string?)r["cmd"] == "newtrack")["onlyIn"]);
+
+        // Turned off after Save As: its tracks stop, there.
+        inFront = "My Beat 2";
+        p.PlayInBitwig = false;
+        for (var waited = System.Diagnostics.Stopwatch.StartNew(); !p.Message.StartsWith("Stopped playing in Bitwig", StringComparison.Ordinal); await Task.Delay(20))
+            Assert.True(waited.Elapsed < TimeSpan.FromSeconds(20), p.Message);
+        Assert.Equal("My Beat 2", (string?)bitwig.Requests.Last(r => (string?)r["cmd"] == "stoptracks")["onlyIn"]);
+
+        // And as the app closes, after another save under a new name.
+        p.PlayInBitwig = true;
+        await p.SendToPlayAsync();
+        inFront = "My Beat 3";
+        var asked = bitwig.Requests.Count;
+        p.Dispose();
+        var stop = bitwig.Requests.Skip(asked).Last();
+        Assert.Equal(("stoptracks", "My Beat 3"), ((string?)stop["cmd"], (string?)stop["onlyIn"]));
+    }
+
+    [Fact]
+    public async Task Closing_the_app_stops_the_Playgrounds_clips_in_Bitwig()
+    {
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = LeadAndBass(db, sounds);
+        var made = 0;
+        var stopped = new List<string>();
+        p.BitwigNewTrack = (_, _) => Task.FromResult($"track {++made}");
+        p.BitwigPutClip = (_, _, _) => Task.CompletedTask;
+        p.BitwigStopTracks = (tracks, _) =>
+        {
+            lock (stopped) stopped.AddRange(tracks);
+            return Task.CompletedTask;
+        };
+        p.PlayInBitwig = true;
+        await p.SendToPlayAsync();
+
+        p.Dispose();
+        Assert.Equal(["track 1", "track 2"], stopped.Order());
+
+        // Bitwig not answering doesn't hold the app up for long as it closes.
+        var q = LeadAndBass(db, sounds);
+        q.BitwigNewTrack = (_, _) => Task.FromResult("track");
+        q.BitwigPutClip = (_, _, _) => Task.CompletedTask;
+        q.BitwigStopTracks = (_, ct) => Task.Delay(Timeout.Infinite, ct);
+        q.StopOnClose = TimeSpan.FromMilliseconds(100);
+        q.PlayInBitwig = true;
+        await q.SendToPlayAsync();
+        var closing = System.Diagnostics.Stopwatch.StartNew();
+        q.Dispose();
+        Assert.True(closing.Elapsed < TimeSpan.FromSeconds(5), $"Closing took {closing.Elapsed}.");
     }
 
     internal sealed class Headless : IPlatformUi

@@ -84,6 +84,13 @@ public sealed class FlLink
     /// </summary>
     public bool Explain { get; init; } = true;
 
+    /// <summary>
+    /// Works out why FL Studio isn't answering, when <see cref="Explain"/> is on: <see cref="FlSetup.WhyNotAnswering()"/>
+    /// unless given (tests use a stand-in). It looks at the running programs and asks Windows' MIDI driver, which can take
+    /// seconds, so it runs off the caller's thread.
+    /// </summary>
+    public Func<string> WhyNot { get; init; } = FlSetup.WhyNotAnswering;
+
     /// <summary>Whether a request is waiting for FL Studio's answer, from anywhere in the app.</summary>
     public static bool Busy => One.CurrentCount == 0;
 
@@ -152,7 +159,7 @@ public sealed class FlLink
         {
             // Off the caller's thread: after a send times out (FL Studio busy loading a project) the port is closed and
             // opened again, which waits on Windows' MIDI driver for seconds, and the caller is often the window's own thread.
-            var midi = _midi ?? await Task.Run(Port, ct) ?? throw new DawLinkException(Explain ? FlSetup.WhyNotAnswering() : NotRunning);
+            var midi = _midi ?? await Task.Run(Port, ct) ?? throw new DawLinkException(await WhyNotAsync());
             var id = Interlocked.Increment(ref _lastId) & (FlMessages.Ids - 1);
             request["id"] = id;
             request["sent"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
@@ -173,7 +180,7 @@ public sealed class FlLink
                     if (await Task.WhenAny(waiting.Done, Task.Delay(left, ct)) == waiting.Done) return Result(Parse(await waiting.Done));
                 }
                 ct.ThrowIfCancellationRequested();
-                throw new DawLinkException(waiting.Started ? PartAnswer : Explain ? FlSetup.WhyNotAnswering() : NotRunning);
+                throw new DawLinkException(waiting.Started ? PartAnswer : await WhyNotAsync());
             }
             finally
             {
@@ -185,6 +192,9 @@ public sealed class FlLink
             One.Release();
         }
     }
+
+    /// <summary>What to say when FL Studio doesn't answer, worked out off the caller's thread (see <see cref="WhyNot"/>).</summary>
+    async Task<string> WhyNotAsync() => Explain ? await Task.Run(WhyNot) : NotRunning;
 
     /// <summary>The Music Organiser MIDI port, or null when there isn't one.</summary>
     static IFlMidi? Port() =>

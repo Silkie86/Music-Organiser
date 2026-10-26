@@ -846,7 +846,10 @@ public sealed partial class DawLinkSetting : ObservableObject
         if (state is null) return;
         _state = state;
         IsAnswering = state.Answering;
-        Live = state.Answering
+        Live = state is { Answering: true, Problem: { } problem }
+            ? $"Answering now: {state.Version}, but part of the link didn't start, so it can't say which project is open. " +
+              $"Press Install, then restart {Daw}. {Daw} said: {problem}"
+            : state.Answering
             ? $"✓ Answering now: {state.Version}" + (state.Project.Length > 0 ? $", with “{state.Project}” open." : ".") +
               (state.Daw == DawState.Bitwig && !state.Changes
                   ? " To send things to Bitwig, turn on “Let the app make changes” in its controller settings." : "") +
