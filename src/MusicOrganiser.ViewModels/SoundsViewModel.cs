@@ -235,7 +235,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     FolderWatch? _sampleWatch;
     readonly HashSet<string> _changedSounds = new(StringComparer.OrdinalIgnoreCase);
-    bool _sampleFoldersOverflowed;
+    bool _sampleFoldersOverflowed;   // the folders are to be walked: too much changed to name, or a folder was added
 
     /// <summary>
     /// How long the sample folders must be quiet before new sounds are listened to: a pack being unzipped or copied in
@@ -254,6 +254,18 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     }
 
     public void StopWatching() => _sampleWatch?.Dispose();
+
+    /// <summary>
+    /// Settings added a sample folder: it's watched from now on, and the folders are walked for the sounds already in
+    /// it (the watcher only sees what changes). While a job runs (a scan, Deep listen) the walk waits for it rather than
+    /// being dropped.
+    /// </summary>
+    public void SampleFolderAdded()
+    {
+        WatchSampleFolders();
+        _sampleFoldersOverflowed = true;   // walked as when too much changed to name
+        if (!IsBusy) _ = TakeInChangedSoundsAsync();
+    }
 
     internal void SampleFilesChanged(FolderWatch.Changes changes)
     {

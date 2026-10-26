@@ -335,13 +335,27 @@ public sealed partial class SettingsViewModel : ObservableObject
         await _main.ScanAsync(false);
     }
 
+    /// <summary>
+    /// Stops scanning a project folder. Its projects stay listed (the scans no longer look there) unless you say to take
+    /// them off the list too: the folder may only be away for now, and they keep your ratings, notes and tags.
+    /// </summary>
     [RelayCommand]
-    void RemoveProjectFolder()
+    async Task RemoveProjectFolder()
     {
         if (SelectedProjectFolder is not { } f) return;
         _db.RemoveRoot(f);
         ProjectFolders.Remove(f);
         _main.WatchProjectFolders();
+        var roots = _db.Roots();
+        var left = await Task.Run(() => _db.ProjectsOnlyIn(f, roots));
+        if (left.Count == 0) return;
+        var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(f)) is { Length: > 0 } n ? n : f;
+        if (!await Ui.Current.Confirm($"Take the {(left.Count == 1 ? "1 project" : $"{left.Count:N0} projects")} in {name} off the Projects list too?\n\n" +
+                                      "Their files stay where they are, but your ratings, notes and tags on them are forgotten. " +
+                                      "Cancel keeps them listed.", "Remove project folder")) return;
+        await Task.Run(() => _db.RemoveProjects(left));
+        _main.Activities.Done($"Took {name}'s projects off the list", "Their files are where they were.");
+        await _main.RefreshAllAsync();
     }
 
     [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
@@ -350,7 +364,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (await PickFolder("Choose a sample library folder") is not { } f || SampleFolders.Contains(f)) return;
         SampleFolders.Add(f);
         _db.SetList(Scanner.SampleFoldersKey, SampleFolders);
-        _main.Sounds.WatchSampleFolders();
+        _main.Sounds.SampleFolderAdded();   // its sounds come into Sound Lab
         await IndexSamples();
     }
 
@@ -379,12 +393,13 @@ public sealed partial class SettingsViewModel : ObservableObject
         await _main.ScanAsync(false);
     }
 
-    [RelayCommand]
-    void RemovePluginFolder()
+    [RelayCommand(AllowConcurrentExecutions = true)]   // usable again at once: a scan asked for mid-scan is queued
+    async Task RemovePluginFolder()
     {
         if (SelectedPluginFolder is not { } f) return;
         PluginFolders.Remove(f);
         _db.SetList(Scanner.PluginFoldersKey, PluginFolders);
+        await _main.ScanAsync(false);   // its plugins aren't installed as far as the app knows now
     }
 
     /// <summary>

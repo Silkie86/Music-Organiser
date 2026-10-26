@@ -1569,6 +1569,72 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_project_folder_taken_out_of_settings_can_take_its_projects_off_the_list()
+    {
+        var kept = Path.Combine(Fixtures.TempDir(), "Kept");
+        Directory.CreateDirectory(kept);
+        Fixtures.FlStudioProject(kept, "Keeper");
+        _db.AddRoot(_root);
+        _db.AddRoot(kept);
+        var main = Main();
+        await Until(() => !main.IsScanning);
+        Assert.Equal(4, main.Projects.Items.Count);
+        var settings = main.Settings;
+        var ui = (HeadlessUi)Ui.Current;
+
+        // Cancel: the folder isn't scanned any more, but its projects stay listed.
+        settings.SelectedProjectFolder = _root;
+        await settings.RemoveProjectFolderCommand.ExecuteAsync(null);
+        Assert.DoesNotContain(_root, _db.Roots());
+        Assert.Equal(4, _db.Projects().Count);
+
+        // OK: they go from the list (their files stay), and the other folder's stay.
+        _db.AddRoot(_root);
+        settings.ProjectFolders.Add(_root);
+        ui.Confirms = true;
+        settings.SelectedProjectFolder = _root;
+        await settings.RemoveProjectFolderCommand.ExecuteAsync(null);
+        Assert.Equal(["Keeper"], _db.Projects().Select(p => p.Name));
+        Assert.Equal(["Keeper"], main.Projects.Items.Select(i => i.Name));
+        Assert.True(File.Exists(Path.Combine(_root, "Night Drive.flp")));
+    }
+
+    [Fact]
+    public async Task A_plugin_folder_taken_out_of_settings_takes_its_plugins_off_the_installed_list()
+    {
+        var folder = Path.Combine(Fixtures.TempDir(), "Plugins");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "Odd Synth.clap"), "code");
+        _db.SetList(Scanner.PluginFoldersKey, [folder]);
+        _db.AddRoot(_root);
+        var main = Main();
+        await Until(() => !main.IsScanning);
+        Assert.Contains("Odd Synth", _db.InstalledNames());
+
+        main.Settings.SelectedPluginFolder = folder;
+        await main.Settings.RemovePluginFolderCommand.ExecuteAsync(null);
+        await Until(() => !main.IsScanning);
+
+        Assert.DoesNotContain("Odd Synth", _db.InstalledNames());
+    }
+
+    [Fact]
+    public async Task A_sample_folder_added_in_settings_brings_its_sounds_into_sound_lab()
+    {
+        var pack = Path.Combine(Fixtures.TempDir(), "New Pack");
+        Directory.CreateDirectory(pack);
+        Synth.Write(Path.Combine(pack, "Big Kick.wav"), Synth.Kick(1));
+        var main = Main();
+        Assert.Empty(main.Sounds.Items);
+        ((HeadlessUi)Ui.Current).PickedFolder = pack;
+
+        await main.Settings.AddSampleFolderCommand.ExecuteAsync(null);
+
+        await Until(() => main.Sounds.Items.Any(s => s.Name == "Big Kick"));
+        main.Shutdown();
+    }
+
+    [Fact]
     public void A_held_arrow_key_plays_every_sound_it_lands_on_and_waits_for_each_before_moving_on()
     {
         var played = new List<string>();

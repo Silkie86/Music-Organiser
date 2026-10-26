@@ -478,6 +478,23 @@ public sealed partial class LibraryDb : IDisposable
         if (Exec("DELETE FROM projects WHERE path = $p", ("$p", path)) > 0) ProjectsChanged();
     }
 
+    /// <summary>
+    /// The projects in <paramref name="folder"/> that none of <paramref name="roots"/> holds: what a project folder taken
+    /// out of Settings leaves listed (a scan only looks inside the folders it has).
+    /// </summary>
+    public IReadOnlyList<long> ProjectsOnlyIn(string folder, IReadOnlyList<string> roots) =>
+        Query("SELECT id, path FROM projects", r => (Id: (long)r["id"], Path: Str(r, "path")))
+            .Where(p => Space.DiskSpace.IsInside(p.Path, folder) && !roots.Any(root => Space.DiskSpace.IsInside(p.Path, root)))
+            .Select(p => p.Id).ToList();
+
+    /// <summary>Takes these projects out of the library, with what you gave them. Their files aren't touched.</summary>
+    public void RemoveProjects(IReadOnlyCollection<long> ids)
+    {
+        if (ids.Count == 0) return;
+        InBatches(ids, "DELETE FROM projects WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
+        ProjectsChanged();
+    }
+
     // ---- installed plugins & sample index ----------------------------------------------
 
     public HashSet<string> InstalledKeys() =>
