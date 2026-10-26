@@ -705,6 +705,46 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void A_project_marked_missing_is_back_when_its_file_comes_back_unchanged()
+    {
+        // Put back from the Recycle Bin, or moved out and back: the same size and time as when it was read.
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        var song = Path.Combine(_root, "Night Drive.flp");
+        var away = Path.Combine(Fixtures.TempDir(), "Night Drive.flp");
+        bool Missing() => _db.Projects().Single(p => p.Path == song).FileMissing;
+
+        File.Move(song, away);
+        scanner.ScanProjects();
+        Assert.True(Missing());
+        File.Move(away, song);
+        scanner.ScanProjects();
+        Assert.False(Missing());
+
+        // The same through the folder watcher.
+        File.Move(song, away);
+        Assert.Equal((0, 1), scanner.Update([song]));
+        Assert.True(Missing());
+        File.Move(away, song);
+        Assert.Equal((1, 0), scanner.Update([song]));
+        Assert.False(Missing());
+    }
+
+    [Fact]
+    public void Projects_in_a_folder_the_scan_couldnt_read_arent_marked_missing()
+    {
+        new Scanner(_db).ScanProjects();
+        var none = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _db.MarkMissingFiles(none, [_root], unreadable: [Path.Combine(_root, "Loop Idea"), _root]);
+        Assert.All(_db.Projects(), p => Assert.False(p.FileMissing));
+        // Only that folder's projects keep how they were.
+        var unread = Path.Combine(_root, "Loop Idea");
+        _db.MarkMissingFiles(none, [_root], unreadable: [unread]);
+        Assert.All(_db.Projects(), p => Assert.Equal(!p.Path.StartsWith(unread + Path.DirectorySeparatorChar), p.FileMissing));
+        Assert.Contains(_db.Projects(), p => !p.FileMissing);
+    }
+
+    [Fact]
     public void A_folder_whose_name_only_starts_like_a_project_folder_isnt_inside_it()
     {
         // A folder taken out of the list keeps its projects. "Projects Old" isn't inside "Projects", so a scan of

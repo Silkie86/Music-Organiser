@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MusicOrganiser.Core.Parsers;
 using MusicOrganiser.Core.Plugins;
 
@@ -55,8 +56,10 @@ public sealed class Scanner(LibraryDb db)
         FindProjectStamps(roots, ct).Select(f => f.Path).ToList();
 
     /// <summary>The project files under these folders, with the size and modified time the folder listing gave.</summary>
-    public static List<Parallelism.FoundFile> FindProjectStamps(IEnumerable<string> roots, CancellationToken ct = default) =>
-        Parallelism.FindFileStamps(roots, IsProjectFile, SkipDir, ct: ct);
+    /// <remarks><paramref name="unreadable"/> gets the folders that couldn't be read this time.</remarks>
+    public static List<Parallelism.FoundFile> FindProjectStamps(IEnumerable<string> roots, CancellationToken ct = default,
+                                                                ConcurrentBag<string>? unreadable = null) =>
+        Parallelism.FindFileStamps(roots, IsProjectFile, SkipDir, ct: ct, unreadable: unreadable);
 
     /// <summary>A file the library lists: one the readers know, leaving out macOS "._" shadows and DAW autosaves.</summary>
     public static bool IsProjectFile(string path)
@@ -107,7 +110,8 @@ public sealed class Scanner(LibraryDb db)
 
         var roots = db.Roots().Where(Directory.Exists).ToList();
         progress?.Report(new("Finding projects", 0, 0, ""));
-        var found = FindProjectStamps(roots, ct);
+        var unreadable = new ConcurrentBag<string>();
+        var found = FindProjectStamps(roots, ct, unreadable);
         var files = found.Select(f => f.Path).ToList();
         var known = db.KnownFiles();
         // DAWs whose reader has got better since the library last read their projects: read those again.
@@ -146,7 +150,8 @@ public sealed class Scanner(LibraryDb db)
         db.UpsertMany(batch);
         foreach (var r in Readers.All) db.SetSetting(ReaderVersionKey(r), r.Version.ToString());
         db.SetSetting(KeyVersionKey, ProjectKey.Version.ToString());
-        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
+        // A folder that couldn't be read this time (busy, or its permissions changing) keeps its projects as they were.
+        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots), unreadable);
         progress?.Report(new("Done", files.Count, files.Count, ""));
         return todo.Count(f => !known.ContainsKey(f));
     }

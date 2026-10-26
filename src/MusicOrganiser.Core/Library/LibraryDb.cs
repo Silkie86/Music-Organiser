@@ -261,10 +261,12 @@ public sealed partial class LibraryDb : IDisposable
 
     /// <remarks>
     /// A project read before the app knew its key, notes and length counts as changed, so the next scan reads it again.
+    /// So does one marked missing: its file back as it was (put back from the Recycle Bin, or moved out and back) is
+    /// read again and no longer shows as moved.
     /// </remarks>
     public Dictionary<string, (long Mtime, long Size)> KnownFiles() =>
-        Query("SELECT path, mtime, size, (detected_key IS NULL OR note_count IS NULL) AS unkeyed FROM projects",
-              r => (Path: (string)r["path"], Mtime: Long(r, "unkeyed") == 1 ? -1 : Long(r, "mtime"), Size: Long(r, "size")))
+        Query("SELECT path, mtime, size, (detected_key IS NULL OR note_count IS NULL OR file_missing = 1) AS reread FROM projects",
+              r => (Path: (string)r["path"], Mtime: Long(r, "reread") == 1 ? -1 : Long(r, "mtime"), Size: Long(r, "size")))
             .ToDictionary(x => x.Path, x => (x.Mtime, x.Size), StringComparer.OrdinalIgnoreCase);
 
     public sealed record IndexedFile(string Path, long Size, long Mtime, ProjectInfo? Info, string? Error,
@@ -444,17 +446,21 @@ public sealed partial class LibraryDb : IDisposable
 
     /// <summary>
     /// Flags projects under your folders that the scan didn't find. Ones the scan now leaves out on
-    /// purpose (<paramref name="ignored"/>, such as autosave copies) are dropped from the library instead.
+    /// purpose (<paramref name="ignored"/>, such as autosave copies) are dropped from the library instead. Ones in a
+    /// folder the scan couldn't read this time (<paramref name="unreadable"/>) are left as they were.
     /// </summary>
-    public void MarkMissingFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored = null)
+    public void MarkMissingFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored = null,
+                                 IEnumerable<string>? unreadable = null)
     {
+        var unread = unreadable?.ToList() ?? [];
         var rows = Query("SELECT id, path FROM projects WHERE file_missing = 0", r => (Id: (long)r["id"], Path: (string)r["path"]));
         var gone = new List<long>();
         var dropped = new List<long>();
         foreach (var (id, path) in rows)
         {
             // Inside a root, not just starting with its name: "K:\Music Old" isn't in "K:\Music".
-            if (present.Contains(path) || !roots.Any(root => Space.DiskSpace.IsInside(path, root))) continue;
+            if (present.Contains(path) || !roots.Any(root => Space.DiskSpace.IsInside(path, root)) ||
+                unread.Any(folder => Space.DiskSpace.IsInside(path, folder))) continue;
             (ignored?.Invoke(path) == true ? dropped : gone).Add(id);
         }
         // A batch of commits rather than one for each of thousands of files.
