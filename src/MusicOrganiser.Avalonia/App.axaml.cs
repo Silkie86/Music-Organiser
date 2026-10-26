@@ -91,6 +91,21 @@ public partial class App : Application
         version.IndexOf('+') is var plus and >= 0 && version.Length - plus > 7 ? version.Substring(plus + 1, 7) : null;
 
     readonly List<string> _errors = [];
+    // Every error this run, and how many times it has happened.
+    readonly Dictionary<string, int> _seen = [];
+
+    /// <summary>
+    /// Whether an error is new this run, so it's shown. One that keeps happening (from a timer, or drawing) brought its
+    /// box straight back each time it was closed, so the app couldn't be used: it's shown once, and the run log counts
+    /// the rest.
+    /// </summary>
+    internal bool FirstTime(string message)
+    {
+        var times = _seen[message] = _seen.GetValueOrDefault(message) + 1;
+        if (times is 2 or 10 or 100 or 1000 or 10_000)
+            SessionLog.Current?.Info("App", $"The same error again ({times} times now): {message}");
+        return times == 1;
+    }
 
     /// <summary>
     /// Keeps the app alive and says what went wrong rather than vanishing. Errors that happen while
@@ -99,8 +114,8 @@ public partial class App : Application
     async void OnUnhandled(object? sender, DispatcherUnhandledExceptionEventArgs e)
     {
         e.Handled = true;
+        if (!FirstTime(e.Exception.Message)) return;
         SessionLog.Current?.Error("App", "Error shown to the user", e.Exception);
-        if (_errors.Contains(e.Exception.Message)) return;
         _errors.Add(e.Exception.Message);
         if (_errors.Count > 1) return;   // already showing one; this one waits its turn
         while (_errors.Count > 0)

@@ -1,3 +1,5 @@
+using Avalonia;
+using Avalonia.Headless.XUnit;
 using Avalonia.Logging;
 using MusicOrganiser.Avalonia.Diagnostics;
 using Xunit;
@@ -210,5 +212,17 @@ public sealed class WatchdogTests : IDisposable
         Assert.DoesNotContain(recent, l => l.Contains("Started: Note saved for Claude"));
         Assert.Contains(recent, l => l.EndsWith("[Job] Done: Note saved for Claude", StringComparison.Ordinal));
         log.Dispose();
+    }
+
+    [AvaloniaFact]
+    public void An_error_that_keeps_happening_is_shown_once_not_again_each_time_its_box_closes()
+    {
+        // Review: an error from a timer or drawing brought its box straight back each time OK was pressed.
+        var app = (App)Application.Current!;
+        var message = $"Made-up error {Guid.NewGuid():N}";
+        Assert.True(app.FirstTime(message));
+        Assert.False(app.FirstTime(message));
+        Assert.False(app.FirstTime(message));
+        Assert.True(app.FirstTime(message + " (another)"));
     }
 }
