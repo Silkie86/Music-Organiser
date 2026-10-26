@@ -92,4 +92,26 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         var store = new PlaygroundStore(Path.Combine(_root, "data", "playground"));
         Assert.Equal("Untitled idea 2", store.LoadCurrent().SavedAs);
     }
+
+    [Fact]
+    public void A_clip_pasted_onto_a_track_written_from_the_chords_keeps_its_notes()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        p.CurrentSection.Bars = 2;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+        p.WriteBassCommand.Execute(null);
+        Drop(p, Mid("Lead", Tune(2)), p.Layers.Count);
+        var lead = p.Layers.Single(l => l.Name == "Lead");
+        var written = p.Layers.Single(l => l.IsWritten);
+        p.SelectClipCommand.Execute(new ClipPick(lead.Layer, lead.Layer.Clips[0]));
+        var tune = lead.Layer.Clips[0].Notes;
+        Assert.True(p.RunShortcut("playground.copy"));
+
+        p.SelectClipCommand.Execute(new ClipPick(written.Layer, written.Layer.Clips[0]));
+        Assert.True(p.RunShortcut("playground.paste"));
+        Assert.Single(written.Layer.Clips);   // the bassline as it was
+        Assert.Equal(lead.Layer, p.SelectedClip!.Track.Layer);   // the copy went back on the track it came from
+        Assert.Equal(tune, p.SelectedClip.Clip.Notes);
+    }
 }
