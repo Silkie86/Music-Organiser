@@ -417,4 +417,20 @@ class NewerApiTest {
         assertTrue(bitwig.calls.contains(List.of("returnToArrangement", 1)), String.valueOf(bitwig.calls));
         assertEquals("Say which tracks to stop, by their IDs.", error(app.waitFor(obj("id", 3, "cmd", "stoptracks"))));
     }
+
+    @Test
+    @DisplayName("still stops the tracks once the app that asked has closed, after the clip waiting in front is launched")
+    void stopsTracksAfterTheAppHasClosed() {
+        // The Playground sends stoptracks as it closes and doesn't wait for the clip it sent just before.
+        startWithABassClip();
+        bitwig.model.clipDelay = 1000;
+        bitwig.allowChanges(true);
+        app.send(obj("id", 1, "cmd", "clip", "trackId", "bass-id", "slot", 0, "path", "C:\\MIDI\\Bass.mid", "replace", true, "launch", true));
+        app.send(obj("id", 2, "cmd", "stoptracks", "trackIds", list("bass-id")));
+        app.close();
+        bitwig.clock.advance(10000);
+        int launched = bitwig.calls.indexOf(List.of("launchWithOptions", 1, 0, "default", "synced"));
+        int stopped = bitwig.calls.indexOf(List.of("stopTrack", 1));
+        assertTrue(launched >= 0 && stopped > launched, String.valueOf(bitwig.calls));
+    }
 }

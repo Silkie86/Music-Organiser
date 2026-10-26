@@ -229,6 +229,8 @@ public sealed partial class PlaygroundViewModel
     readonly Dictionary<string, string> _bitwigTracks = [];
     /// <summary>What was last put on each part's track (its notes and length), and how many times.</summary>
     readonly Dictionary<string, (string Notes, int Times)> _inBitwig = [];
+    /// <summary>The track a part's clip is going across to now, until Bitwig has it (it launches it once it's in).</summary>
+    string? _goingAcross;
     BitwigLink? _playLink;
     /// <summary>
     /// The project Bitwig had in front when Play in Bitwig was turned on (null until it's asked), by its name now (it
@@ -387,14 +389,17 @@ public sealed partial class PlaygroundViewModel
                 File.WriteAllBytes(file, MidiWriter.Write(clip));
                 if (!_bitwigTracks.TryGetValue(name, out var track))
                     track = _bitwigTracks[name] = await BitwigNewTrack($"{name} (Playground)", limit.Token);
+                _goingAcross = track;
                 try { await BitwigPutClip(track, file, limit.Token); }
                 catch (DawLinkException e) when (e.Message.StartsWith("There's no track with ID", StringComparison.Ordinal))
                 {
                     // Its track was deleted in Bitwig: a new one.
                     track = _bitwigTracks[name] = await BitwigNewTrack($"{name} (Playground)", limit.Token);
+                    _goingAcross = track;
                     await BitwigPutClip(track, file, limit.Token);
                 }
                 _inBitwig[name] = (notes, had.Times + 1);
+                _goingAcross = null;
                 sent = true;
             }
             var gone = _inBitwig.Keys.Where(k => !playing.Contains(k)).ToList();
@@ -434,6 +439,7 @@ public sealed partial class PlaygroundViewModel
             Message = $"Playing in Bitwig failed: {e.Message}";
             DropPlayLink();
         }
+        finally { _goingAcross = null; }
     }
 
     static string StartedIn(string? project) => project is { Length: > 0 } ? $"“{project}”" : "the project you started in";
@@ -481,6 +487,8 @@ public sealed partial class PlaygroundViewModel
         // The app is closing: the Playground's clips in Bitwig stop too, rather than play on with nothing here to stop
         // them. Briefly, and off this thread (the window has gone by now); a Bitwig that doesn't answer is left as it is.
         var tracks = _inBitwig.Keys.Select(k => _bitwigTracks[k]).ToList();
+        // A part still going across launches once Bitwig has it, so its track is stopped too (the stop waits behind it there).
+        if (_goingAcross is { } going && !tracks.Contains(going)) tracks.Add(going);
         _inBitwig.Clear();
         if (tracks.Count > 0)
         {
