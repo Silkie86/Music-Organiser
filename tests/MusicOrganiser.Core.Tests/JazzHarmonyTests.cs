@@ -157,6 +157,15 @@ public class JazzHarmonyTests
     }
 
     [Fact]
+    public void A_bar_of_five_or_seven_chords_still_ends_on_the_bar_line()
+    {
+        var lane = ChordLane.ParseChart("C D E F G | A | B C D E F G A | C", out _)!;
+        Assert.Equal(Bar, lane.Single(c => c.Chord.Name == "A" && c.Start < 2 * Bar).Start);
+        Assert.Equal(3L * Bar, lane[^1].Start);
+        Assert.All(lane.Zip(lane.Skip(1)), p => Assert.Equal(p.First.End, p.Second.Start));   // no gaps between them
+    }
+
+    [Fact]
     public void Chords_are_heard_from_notes_with_the_bass_naming_them()
     {
         // Rootless Dm9 and G13 voicings over a bassline playing D and G.
