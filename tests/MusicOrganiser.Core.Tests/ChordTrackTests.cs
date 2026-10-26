@@ -248,6 +248,22 @@ public class ChordTrackTests : IDisposable
     }
 
     [Fact]
+    public void A_left_hand_bass_struck_alone_plays_a_slash_chords_bass_as_it_does_with_the_chord()
+    {
+        // C2 alone on beat 1, E3 G3 C4 on beat 2, for two bars, over C then G/B: the left hand plays B, struck alone or not.
+        var bar = new[] { new NoteEvent(0, Ppq, 36, 100) }
+            .Concat(new[] { 52, 55, 60 }.Select(k => new NoteEvent(Ppq, Ppq, k, 100))).ToList();
+        var part = bar.Concat(bar.Select(n => n with { Start = n.Start + Bar })).ToList();
+        var played = ChordFollow.Apply(part, Track("C", "G/B"), FollowWay.Auto, MidiRoles.Chords);
+        Assert.Equal(35, played.Single(n => n.Start == Bar).Key);   // B1
+        Assert.Equal(11, Groove.Revoice(part.Take(4).Select(n => n with { Start = 0 }).ToList(), Chord("C"), Chord("G/B")).Min(n => n.Key) % 12);
+
+        // An arp's root close under the rest stays the root.
+        var arp = Enumerable.Range(0, 32).Select(i => new NoteEvent(i * (long)(Ppq / 4), Ppq / 4, new[] { 48, 52, 55, 60 }[i % 4], 100)).ToList();
+        Assert.Equal(7, ChordFollow.Apply(arp, Track("C", "G/B"), FollowWay.Auto, MidiRoles.Arp)[16].Key % 12);   // G, not B
+    }
+
+    [Fact]
     public void A_dropped_part_follows_the_chord_track_live_until_its_changed_by_hand()
     {
         Ui.Current = new PlaygroundTests.Headless();
