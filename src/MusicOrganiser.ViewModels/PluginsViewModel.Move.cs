@@ -109,11 +109,12 @@ public sealed partial class PluginsViewModel
         var name = Path.GetFileName(folder.Path);
         using var stop = new CancellationTokenSource();
         var activity = _main.Activities.Start($"Moving {name}", $"Copying to {destination}", cancel: stop.Cancel);
-        var progress = new Progress<long>(done => activity.Report(100.0 * done / Math.Max(1, folder.Bytes),
-                                                                  $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(folder.Bytes)}"));
+        // Reported after every file: a folder of 100,000 presets would flood the window, so a few times a second.
+        var progress = new ThrottledProgress<long>(done => activity.Report(100.0 * done / Math.Max(1, folder.Bytes),
+                                                                           $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(folder.Bytes)}"));
         try
         {
-            var moved = await Task.Run(() => FolderMove.Move(folder.Path, destination, folder.Bytes, progress, stop.Token));
+            var moved = await Copying(progress, () => FolderMove.Move(folder.Path, destination, folder.Bytes, progress, stop.Token));
             SaveMoved(all => all.Where(m => !m.From.Equals(moved.From, StringComparison.OrdinalIgnoreCase))
                                 .Append(moved with { Key = key, Kind = folder.Kind }));
             activity.Finish($"Moved {name} to {Path.GetPathRoot(moved.To)}",
@@ -131,6 +132,13 @@ public sealed partial class PluginsViewModel
             return;
         }
         await RemeasureAsync(key);
+    }
+
+    /// <summary>Runs a copy in the background; once it ends, a report still on its way isn't shown over the card that follows.</summary>
+    static async Task<T> Copying<T>(ThrottledProgress<long> progress, Func<T> copy)
+    {
+        try { return await Task.Run(copy); }
+        finally { progress.Close(); }
     }
 
     /// <summary>Delete old copy: a Keep or Delete card for the copy left beside the link.</summary>
@@ -194,10 +202,14 @@ public sealed partial class PluginsViewModel
         var name = Path.GetFileName(moved.From);
         using var stop = new CancellationTokenSource();
         var activity = _main.Activities.Start($"Moving {name} back", "", cancel: stop.Cancel);
-        var progress = new Progress<long>(done => activity.Report(100.0 * done / Math.Max(1, moved.Bytes), $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(moved.Bytes)}"));
+        var progress = new ThrottledProgress<long>(done => activity.Report(100.0 * done / Math.Max(1, moved.Bytes), $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(moved.Bytes)}"));
         try
         {
-            await Task.Run(() => FolderMove.MoveBack(moved, progress, stop.Token));
+            await Copying(progress, () =>
+            {
+                FolderMove.MoveBack(moved, progress, stop.Token);
+                return true;
+            });
         }
         catch (OperationCanceledException)
         {
@@ -291,8 +303,8 @@ public sealed partial class PluginsViewModel
             try
             {
                 var bytes = (await Task.Run(() => DiskSpace.Measure(m.From, stop.Token), stop.Token)).Bytes;
-                var progress = new Progress<long>(done => activity.Report(100.0 * done / Math.Max(1, bytes), $"{name}: copied {DiskSpace.Text(done)} of what's new"));
-                var aside = await Task.Run(() => FolderMove.LinkAgain(m, bytes, progress, stop.Token));
+                var progress = new ThrottledProgress<long>(done => activity.Report(100.0 * done / Math.Max(1, bytes), $"{name}: copied {DiskSpace.Text(done)} of what's new"));
+                var aside = await Copying(progress, () => FolderMove.LinkAgain(m, bytes, progress, stop.Token));
                 _db.SaveOldHomes(_db.OldHomes().Append(aside));
             }
             catch (OperationCanceledException)
@@ -325,9 +337,9 @@ public sealed partial class PluginsViewModel
         try
         {
             var bytes = (await Task.Run(() => DiskSpace.Measure(home, stop.Token), stop.Token)).Bytes;
-            var progress = new Progress<long>(done => activity.Report(100.0 * done / Math.Max(1, bytes), $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(bytes)}"));
+            var progress = new ThrottledProgress<long>(done => activity.Report(100.0 * done / Math.Max(1, bytes), $"Copied {DiskSpace.Text(done)} of {DiskSpace.Text(bytes)}"));
             var sameDrive = FolderMove.DriveOf(home).Equals(FolderMove.DriveOf(destination), StringComparison.OrdinalIgnoreCase);
-            var (now, problems) = await Task.Run(() => FolderMove.MoveHome(home, destination, _db.MovedFolders(), bytes, progress, stop.Token));
+            var (now, problems) = await Copying(progress, () => FolderMove.MoveHome(home, destination, _db.MovedFolders(), bytes, progress, stop.Token));
             _db.SaveMovedFolders(now);
             // Its old place stays off the old copies card while a link still points into it (see FolderMove.OldHomeCanGo).
             if (!sameDrive) _db.SaveOldHomes(_db.OldHomes().Append(new OldHome(home, bytes)));
