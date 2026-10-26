@@ -212,7 +212,7 @@
                             <DataGrid x:Name="SoundGrid" ItemsSource="{Binding View, Converter={StaticResource ItemsViewSource}}" views:GridSelection.Item="{Binding Selected}"
                                       AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" CanUserSortColumns="True"
                                       GridLinesVisibility="None" Background="Transparent" views:FileDrag.Source="{Binding}"
-                                      DoubleTapped="OnGridDoubleTapped">
+                                      DoubleTapped="OnGridDoubleTapped" Sorting="OnGridSorting">
                                 <DataGrid.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Play" Command="{Binding PlayCommand}" />
@@ -251,10 +251,10 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Type" Width="96" Binding="{Binding Type}" x:DataType="snd:Sound" />
-                                    <DataGridTextColumn Header="Key" Width="58" Binding="{Binding Key}" x:DataType="snd:Sound" />
-                                    <DataGridTextColumn Header="BPM" Width="62" Binding="{Binding Bpm, StringFormat={}{0:0.#}}" x:DataType="snd:Sound" />
-                                    <DataGridTextColumn Header="Note" Width="62" Binding="{Binding RootNote}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Type" Width="96" SortMemberPath="Type" Binding="{Binding Type}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Key" Width="58" SortMemberPath="Key" Binding="{Binding Key}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="BPM" Width="62" SortMemberPath="Bpm" Binding="{Binding Bpm, StringFormat={}{0:0.#}}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Note" Width="62" SortMemberPath="RootNote" Binding="{Binding RootNote}" x:DataType="snd:Sound" />
                                     <DataGridTextColumn Header="Length" Width="74" SortMemberPath="Seconds" x:DataType="snd:Sound"
                                                         Binding="{Binding Seconds, Converter={StaticResource Seconds}}" />
                                     <DataGridTemplateColumn Header="Character" Width="*" MinWidth="110" SortMemberPath="Character">
@@ -265,7 +265,7 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Used" Width="62" Binding="{Binding UsedIn}" x:DataType="snd:Sound" />
+                                    <DataGridTextColumn Header="Used" Width="62" SortMemberPath="UsedIn" Binding="{Binding UsedIn}" x:DataType="snd:Sound" />
                                     <DataGridTemplateColumn Header="Folder" Width="*" MinWidth="110" SortMemberPath="Folder">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate x:DataType="snd:Sound">

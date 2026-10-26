@@ -1213,6 +1213,44 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void A_list_header_sort_orders_the_sounds_themselves_and_lasts_through_a_search()
+    {
+        // Review: the grid sorted 357k sounds itself on the UI thread, Ctrl+Up/Down walked another order, and typing dropped it.
+        _soundDb.Save(new (string Name, double? Bpm)[] { ("Loop A", 120), ("Loop B", 90), ("Hit C", null), ("Loop D", 174) }.Select(s =>
+            new SoundLibrary.Analysed($"/samples/{s.Name}.wav", 1, 1, new SoundAnalysis { Bpm = s.Bpm, Features = [1, 0, 0] }, null, null, null)));
+        _sounds.Reload();
+        var lab = Main().Sounds;
+        lab.ViewMode = SoundsViewModel.List;
+        string[] Names() => [.. lab.Shown.Select(s => s.Name)];
+
+        lab.SortByColumn("Bpm");
+        Assert.Equal(["Loop B", "Loop A", "Loop D", "Hit C"], Names());   // no BPM goes last either way
+        Assert.Equal(Names(), lab.View!.Cast<Sound>().Select(s => s.Name));   // the grid shows the same order
+        lab.SortByColumn("Bpm");
+        Assert.True(lab.ColumnSortDescending);
+        Assert.Equal(["Loop D", "Loop A", "Loop B", "Hit C"], Names());
+
+        lab.SearchText = "loop";
+        Assert.Equal(["Loop D", "Loop A", "Loop B"], Names());
+
+        // The tiles keep the Order box's order; back on the list, the header's comes back.
+        lab.SortBy = SoundsViewModel.MostLiked;
+        Assert.Null(lab.ColumnSort);
+        lab.ViewMode = SoundsViewModel.Tiles;
+        lab.SortBy = "Name";
+        lab.SortByColumn("Bpm");
+        Assert.Equal(["Loop A", "Loop B", "Loop D"], Names());
+        lab.ViewMode = SoundsViewModel.List;
+        Assert.Equal(["Loop B", "Loop A", "Loop D"], Names());
+
+        // A third click goes back to the Order box's order.
+        lab.SortByColumn("Bpm");
+        lab.SortByColumn("Bpm");
+        Assert.Null(lab.ColumnSort);
+        Assert.Equal(["Loop A", "Loop B", "Loop D"], Names());
+    }
+
+    [Fact]
     public void Sounds_can_be_filtered_by_the_year_a_project_using_them_was_saved()
     {
         _soundDb.Save(new[] { "/samples/Kick A.wav", "/samples/Snare B.wav", "/samples/Hat C.wav" }.Select(p =>

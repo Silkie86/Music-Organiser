@@ -94,6 +94,48 @@ public partial class SoundsView : UserControl, IShortcutPage
     }
 
     SoundsViewModel? Vm => DataContext as SoundsViewModel;
+    SoundsViewModel? _watched;
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        if (_watched is not null) _watched.PropertyChanged -= OnVmChanged;
+        _watched = Vm;
+        if (_watched is not null) _watched.PropertyChanged += OnVmChanged;
+        ShowColumnSort();
+    }
+
+    void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SoundsViewModel.ColumnSort)) ShowColumnSort();
+    }
+
+    // ---- list order ----
+
+    /// <summary>
+    /// A header click sorts in the view model, off the UI thread, so the list and Ctrl+Up/Down keep one order. Left to the
+    /// grid, it sorted every sound on the UI thread (seconds on a whole library), and the next search dropped it.
+    /// </summary>
+    void OnGridSorting(object? sender, DataGridColumnEventArgs e)
+    {
+        e.Handled = true;
+        if (Vm is { } vm && e.Column.SortMemberPath is { Length: > 0 } column) vm.SortByColumn(column);
+    }
+
+    // Each column's own header, before an arrow was put on it.
+    readonly Dictionary<DataGridColumn, object?> _headers = [];
+
+    /// <summary>An arrow on the header the list is sorted by, pointing the way it goes.</summary>
+    void ShowColumnSort()
+    {
+        foreach (var column in SoundGrid.Columns)
+        {
+            if (!_headers.TryGetValue(column, out var header)) _headers[column] = header = column.Header;
+            column.Header = Vm is { ColumnSort: { } sort } vm && column.SortMemberPath == sort
+                ? $"{header} {(vm.ColumnSortDescending ? "▼" : "▲")}".Trim()
+                : header;
+        }
+    }
 
     // ---- tiles ----
 
