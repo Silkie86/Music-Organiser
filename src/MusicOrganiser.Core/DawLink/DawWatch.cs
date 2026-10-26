@@ -14,9 +14,12 @@ namespace MusicOrganiser.Core.DawLink;
 /// <param name="Modified">Whether the open project has unsaved changes, or null when the script doesn't say (an older copy of it).</param>
 /// <param name="Changes">Whether the script lets the app make changes.</param>
 /// <param name="Extension">The Bitwig extension's version, when the extension answers rather than the script.</param>
+/// <param name="Problem">
+/// Why part of the link didn't start in the DAW, when it answers all the same (it can't say which project is open then).
+/// </param>
 public sealed record DawState(string Daw, bool Answering, bool? Running = null, string Version = "", string Project = "",
                               string Title = "", bool? Modified = null, bool Changes = false, string? Extension = null,
-                              string? LoadedFrom = null)
+                              string? LoadedFrom = null, string? Problem = null)
 {
     public const string Bitwig = "Bitwig Studio";
     public const string FlStudio = "FL Studio";
@@ -111,6 +114,9 @@ public sealed class DawWatch : IDisposable
     {
         if (_bitwig is { IsOpen: true } link)
         {
+            // Part of the extension didn't start when it greeted, so it can't answer hello: it stays as it was until
+            // Bitwig restarts it, which closes the connection.
+            if (link.Hello.Error is not null) return _lastBitwig;
             try
             {
                 var hello = await link.HelloAsync(ct);
@@ -147,7 +153,7 @@ public sealed class DawWatch : IDisposable
 
     static DawState FromHello(BitwigHello h) =>
         new(DawState.Bitwig, true, true, $"{h.Product} {h.Version}", h.Project.Trim(), h.Project, h.Modified, h.Changes,
-            h.Runtime == "java" ? h.Extension : null, h.Runtime == "java" ? h.LoadedFrom : null);
+            h.Runtime == "java" ? h.Extension : null, h.Runtime == "java" ? h.LoadedFrom : null, h.Error);
 
     async Task<DawState> FlStudioAsync(CancellationToken ct)
     {

@@ -232,6 +232,15 @@ public sealed partial class LiveDawRow(string daw, LiveDawsViewModel owner) : Ob
     internal void Show(DawState state, ProjectSummary? open)
     {
         Answering = state.Answering;
+        if (state is { Answering: true, Problem: { } problem })
+        {
+            // Part of the link didn't start in the DAW: it answers, but can't say which project is open.
+            Text = "Linked, but not working fully";
+            Detail = "Part of the link didn't start";
+            Tip = $"Part of the Music Organiser link in {Name} didn't start, so it can't say which project is open. " +
+                  $"Install it again from Settings > DAW links, then restart {Name}. {Name} said: {problem}";
+            return;
+        }
         if (state.Answering)
         {
             Text = state.Project.Length > 0 ? state.Project : "A new project, not saved yet";

@@ -20,9 +20,14 @@ namespace MusicOrganiser.Core.DawLink;
 /// MIDI need (see <see cref="BitwigLink.RunActionAsync"/>); Bitwig 6.1.3 also saved from its flush only once the
 /// loopback's ports were set (<see cref="BitwigLink.LoopbackMissing"/>). Null when the link doesn't say.
 /// </param>
+/// <param name="Error">
+/// Why part of the extension didn't start in Bitwig, when it greets with only what it knows (no project, so
+/// <see cref="Project"/> is ""); null when it started.
+/// </param>
 public sealed record BitwigHello(int Link, string Product, string Version, int Api, string Platform, int Port,
                                  string Project, bool Modified, bool Engine, bool Changes, string? Runtime = null,
-                                 string? Extension = null, bool OnlyIn = false, string? LoadedFrom = null, bool? Loopback = null)
+                                 string? Extension = null, bool OnlyIn = false, string? LoadedFrom = null, bool? Loopback = null,
+                                 string? Error = null)
 {
     /// <summary>What answers in Bitwig: the extension or the script.</summary>
     public string Answering => Runtime == "java" ? $"the Music Organiser extension {Extension}".TrimEnd() : "the Music Organiser script";
@@ -556,7 +561,9 @@ public sealed class BitwigLink : IDisposable
 
     void Greeted(JsonElement hello)
     {
-        Hello = Parse<BitwigHello>(hello);
+        // The extension's greeting when part of it didn't start says what it knows, which may leave out the project.
+        var h = Parse<BitwigHello>(hello);
+        Hello = h with { Product = h.Product ?? "", Version = h.Version ?? "", Platform = h.Platform ?? "", Project = h.Project ?? "" };
         HelloJson = hello;
     }
 
