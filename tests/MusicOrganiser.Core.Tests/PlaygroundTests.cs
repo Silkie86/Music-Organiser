@@ -543,17 +543,19 @@ public class PlaygroundTests : IDisposable
         Assert.True(store.OpenFailed);
         Assert.Equal("Untitled idea", opened.Name);
         store.SaveCurrent(opened);   // the first change after opening
-        var kept = Assert.Single(Directory.GetFiles(folder, "current.unreadable-*.json"));
-        Assert.Equal(newer, File.ReadAllText(kept));
+        // Kept in Ideas, where it's listed, not hidden in the folder.
+        Assert.StartsWith("Kept idea ", store.KeptAs);
+        Assert.Equal([store.KeptAs], store.Ideas());
+        Assert.Equal(newer, File.ReadAllText(Path.Combine(folder, "ideas", store.KeptAs + ".json")));
         Assert.Equal("Untitled idea", PlaygroundSession.FromJson(File.ReadAllText(current))!.Name);
 
         // Opened again, the new one is there and nothing more is put aside.
         var again = new PlaygroundStore(folder);
         again.LoadCurrent();
         Assert.False(again.OpenFailed);
-        Assert.Single(Directory.GetFiles(folder, "current.unreadable-*.json"));
+        Assert.Single(again.Ideas());
 
-        // The page says so.
+        // The page says so, and where to find it.
         File.WriteAllText(current, "{ \"Sections\": [ { \"Layers\": [ { \"Data\": \"not base64!\" } ] } ] }");
         Ui.Current = new Headless();
         UiWork.InBackground = false;
@@ -561,9 +563,34 @@ public class PlaygroundTests : IDisposable
         using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
         using var sounds = new SoundOrganiser(soundDb);
         var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
-        var page = new PlaygroundViewModel(db, main, new PlaygroundStore(folder));
+        var store3 = new PlaygroundStore(folder);
+        var page = new PlaygroundViewModel(db, main, store3);
         Assert.Contains("couldn't be opened", page.Message);
-        Assert.Equal(2, Directory.GetFiles(folder, "current.unreadable-*.json").Length);
+        Assert.Contains($"kept in Ideas as “{store3.KeptAs}”", page.Message);
+        Assert.Equal(2, page.SavedIdeas.Count);
+
+        // One that still can't be opened says so, and stays.
+        page.OpenIdeaCommand.Execute(store3.KeptAs);
+        Assert.Contains("couldn't be opened", page.Message);
+        Assert.Equal(2, page.SavedIdeas.Count);
+    }
+
+    [Fact]
+    public void An_idea_another_program_has_open_is_kept_in_ideas_and_opens_from_there()
+    {
+        var folder = Path.Combine(_root, "playground");
+        Directory.CreateDirectory(folder);
+        var current = Path.Combine(folder, "current.json");
+        File.WriteAllText(current, new PlaygroundSession { Name = "Late night" }.ToJson());
+
+        var store = new PlaygroundStore(folder);
+        using (new FileStream(current, FileMode.Open, FileAccess.ReadWrite, FileShare.None))   // a virus check that won't let go
+        {
+            Assert.Equal("Untitled idea", store.LoadCurrent().Name);
+            Assert.True(store.OpenFailed);
+        }
+        store.SaveCurrent(new PlaygroundSession());
+        Assert.Equal("Late night", store.LoadIdea(Assert.Single(store.Ideas()))!.Name);
     }
 
     [Fact]

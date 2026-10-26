@@ -283,35 +283,45 @@ public sealed class PlaygroundStore(string folder)
 
     /// <summary>
     /// Whether the idea being worked on was there but couldn't be opened (saved by a newer build, damaged, or locked), so
-    /// a new one was started. Its file is never saved over: it's put aside as current.unreadable-(date).json.
+    /// a new one was started. Its file is never saved over: it's moved into the ideas as <see cref="KeptAs"/>.
     /// </summary>
     public bool OpenFailed { get; private set; }
+    /// <summary>The name in Ideas of the idea that couldn't be opened, so it can be found and opened again later.</summary>
+    public string? KeptAs { get; private set; }
     /// <summary>The idea that couldn't be opened is still current.json (it couldn't be moved yet): moved before the next save.</summary>
     bool _toPutAside;
 
     public PlaygroundSession LoadCurrent()
     {
         if (!File.Exists(CurrentFile)) return new();
-        try
+        for (var tries = 1; ; tries++)
         {
-            if (PlaygroundSession.FromJson(File.ReadAllText(CurrentFile)) is { } session) return session;
+            try
+            {
+                if (PlaygroundSession.FromJson(File.ReadAllText(CurrentFile)) is { } session) return session;
+                break;
+            }
+            // Another program (a virus check, OneDrive) had it open for a moment: tried once more before giving up.
+            catch (IOException) when (tries == 1) { Thread.Sleep(100); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { break; }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         OpenFailed = _toPutAside = true;
+        KeptAs = $"Kept idea {DateTime.Now:yyyy-MM-dd HH.mm}";
         try { PutAside(); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // tried again before the next save
         return new();
     }
 
-    /// <summary>The idea that couldn't be opened moved out of the way, kept in the same folder.</summary>
+    /// <summary>The idea that couldn't be opened moved out of the way, into Ideas, so it's listed and can be opened later.</summary>
     void PutAside()
     {
         if (File.Exists(CurrentFile))
         {
-            var name = $"current.unreadable-{DateTime.Now:yyyy-MM-dd-HHmmss}";
-            var aside = Path.Combine(Folder, name + ".json");
-            for (var i = 2; File.Exists(aside); i++) aside = Path.Combine(Folder, $"{name}-{i}.json");
-            File.Move(CurrentFile, aside);
+            Directory.CreateDirectory(IdeasFolder);
+            var name = KeptAs!;
+            for (var i = 2; File.Exists(Path.Combine(IdeasFolder, name + ".json")); i++) name = $"{KeptAs} ({i})";
+            File.Move(CurrentFile, Path.Combine(IdeasFolder, name + ".json"));
+            KeptAs = name;
         }
         _toPutAside = false;
     }

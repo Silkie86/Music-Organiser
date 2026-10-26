@@ -51,7 +51,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (!quick) main.Midi.Read += (_, _) => _ = RefreshProgressionsAsync();
         Show();
         if (_store.OpenFailed)
-            Message = "Your last idea couldn't be opened, so a new one was started. The old one is kept in the playground folder.";
+            Message = $"Your last idea couldn't be opened, so a new one was started. The old one is kept in Ideas as “{_store.KeptAs}”.";
         _wasEmpty = IsEmpty;   // nothing looked up while being made: Opened does that
     }
 
@@ -414,7 +414,16 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     void OpenIdea(string? name)
     {
-        if (name is null || _store.LoadIdea(name) is not { } s) return;
+        if (name is null) return;
+        PlaygroundSession? s;
+        try { s = _store.LoadIdea(name); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { s = null; }
+        if (s is null)
+        {
+            // Saved by a newer build, damaged, or open in another program for now: it stays in Ideas to try again later.
+            Message = $"“{name}” couldn't be opened. It's still in Ideas, so you can try again later.";
+            return;
+        }
         Remember();
         StopPlaying();
         _session = s;
