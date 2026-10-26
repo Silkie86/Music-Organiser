@@ -94,7 +94,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
 
     /// <summary>The timeline's length, in ticks.</summary>
     public long Length => Section.Length;
-    public bool IsEmpty => Layers.Count == 0;
+    /// <summary>Nothing on the timeline yet: no tracks, and no chords on the chord track (chords first counts as something to fit to).</summary>
+    public bool IsEmpty => Layers.Count == 0 && !HasChordTrack;
     public string Title => _session.Name;
 
     SectionHarmony? _harmony;

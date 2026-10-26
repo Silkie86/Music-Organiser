@@ -114,4 +114,20 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         Assert.Equal(lead.Layer, p.SelectedClip!.Track.Layer);   // the copy went back on the track it came from
         Assert.Equal(tune, p.SelectedClip.Clip.Notes);
     }
+
+    [Fact]
+    public void A_part_added_to_chords_on_the_chord_track_doesnt_cut_them_short()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        p.CurrentSection.ChordTrack = Enumerable.Range(0, 8).Select(i => Block(i % 2 == 0 ? "Dm7" : "G7", i * (long)Bar, Bar)).ToList();
+        p.Bars = 8;
+        Assert.False(p.IsEmpty);
+        Assert.Equal("Suggest", p.SuggestTab);
+
+        var bass = new List<NoteEvent> { new(0, Bar, 38, 100), new(Bar, Bar, 43, 100) };
+        p.AddFromLibrary(new MidiCatalogue([PlaygroundTests.Stored(1, @"K:\Other\Bass.flp", "Bass", bass, "bass")]).Entries[0], bass, "Bass");
+        Assert.Equal(8, p.Bars);
+        Assert.Equal(8, p.Chords.Count(c => c.IsSet));
+    }
 }

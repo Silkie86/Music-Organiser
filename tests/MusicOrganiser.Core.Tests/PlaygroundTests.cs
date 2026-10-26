@@ -30,7 +30,7 @@ public class PlaygroundTests : IDisposable
     static List<NoteEvent> Line(int length, params int[] keys) =>
         keys.Select((k, i) => new NoteEvent(i * (long)length, length, k, 100)).ToList();
 
-    static StoredPhrase Stored(long id, string path, string part, List<NoteEvent> notes, string hints = "")
+    internal static StoredPhrase Stored(long id, string path, string part, List<NoteEvent> notes, string hints = "")
     {
         var a = PhraseAnalyser.Analyse(notes, hints);
         return new StoredPhrase(id, new MidiSource(path, MidiSource.Project, "FL Studio", 100 - id, 1, 120), part, "Pattern 1",
