@@ -251,6 +251,23 @@ public class BitwigProjectTests
     }
 
     [Fact]
+    public void APluginOnTheTemplatesMasterKeepsItsSettings()
+    {
+        var song = Readers.FlStudio.ReadSong(Fixtures.FlStudio25Automation(Fixtures.TempDir()));
+        var result = BitwigProject.FromFl(song, Fixtures.BitwigTemplate(masterPlugin: true), Snare);
+        var doc = Decode(result.Bytes);
+        var limiter = Def(Assert.Single(Chain(doc.Root!.Obj(0x4dd)!.Obj(0x4e0)!)));
+        Assert.Equal(("Limiter", "limiter.vstpreset"), (limiter.Str(0x9a), limiter.Str(0xbe5)));
+
+        using var zip = doc.OpenZip()!;
+        using (var entry = new StreamReader(zip.GetEntry("plugin-states/limiter.vstpreset")!.Open()))
+            Assert.Equal("template limiter", entry.ReadToEnd());
+        // Only what the project still uses: the template's tracks' plugins have the song's settings instead.
+        var used = All(doc).Select(o => o.Str(0xbe5)).Where(n => n.Length > 0).Select(n => $"plugin-states/{n}").Order();
+        Assert.Equal(used, zip.Entries.Select(e => e.FullName).Order());
+    }
+
+    [Fact]
     public void ANewConvertIsntSavedOverAnEarlierOneChangedInBitwigOrAnotherSongsWithTheSameName()
     {
         var dir = Fixtures.TempDir();

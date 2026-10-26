@@ -956,14 +956,30 @@ public static class BitwigProject
                 }
             }
 
+            // The template's own plugins still in the project (on its master) keep their settings from its zip.
+            var made = states.Select(s => s.Name).ToHashSet(StringComparer.Ordinal);
+            var kept = Reachable(_doc.Root!).Select(o => o.Str(0xbe5)).Where(n => n.Length > 0 && !made.Contains(n)).ToHashSet(StringComparer.Ordinal);
+            var any = states.Count > 0;
             using var zip = new MemoryStream();
             using (var z = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                if (kept.Count > 0)
+                    using (var template = _doc.OpenZip())
+                        foreach (var e in template?.Entries ?? [])
+                            if (e.FullName.StartsWith("plugin-states/", StringComparison.Ordinal) && kept.Contains(e.FullName["plugin-states/".Length..]))
+                            {
+                                using (var from = e.Open())
+                                using (var to = z.CreateEntry(e.FullName, CompressionLevel.Optimal).Open())
+                                    from.CopyTo(to);
+                                any = true;
+                            }
                 foreach (var (name, data) in states)
                 {
                     using var s = z.CreateEntry($"plugin-states/{name}", CompressionLevel.Optimal).Open();
                     s.Write(data);
                 }
-            return Encode(_doc, states.Count > 0 ? zip.ToArray() : []);
+            }
+            return Encode(_doc, any ? zip.ToArray() : []);
         }
 
         static IEnumerable<BwObject> Reachable(BwObject root)

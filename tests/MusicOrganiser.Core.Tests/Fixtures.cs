@@ -1052,7 +1052,8 @@ public static class Fixtures
     /// view state and referenced from the mixer, and the project's view state and clip selection
     /// point into the tracks.
     /// </summary>
-    public static byte[] BitwigTemplate(bool automationLane = true, bool audioTrack = true, bool devicePower = true)
+    /// <param name="masterPlugin">A limiter (VST3) on the master, with its settings in the zip.</param>
+    public static byte[] BitwigTemplate(bool automationLane = true, bool audioTrack = true, bool devicePower = true, bool masterPlugin = false)
     {
         const string sampler = "468bc14b-b2e7-45a1-9666-e83117fe404e", noteTranspose = "0815cd9e-3a31-4429-a268-dabd952a3b68",
                      amp = "41be8f3a-6d24-4442-9508-8548dbe62d47";
@@ -1063,6 +1064,8 @@ public static class Fixtures
             {
                 using (var s = z.CreateEntry("plugin-states/serum.vstpreset").Open()) s.Write("template serum"u8);
                 using (var s = z.CreateEntry("plugin-states/drumazon.fxb").Open()) s.Write("template drumazon"u8);
+                if (masterPlugin)
+                    using (var s = z.CreateEntry("plugin-states/limiter.vstpreset").Open()) s.Write("template limiter"u8);
             }
             zip = zs.ToArray();
         }
@@ -1205,7 +1208,17 @@ public static class Fixtures
                     master = b.Begin(0x90);
                     b.Id(0xf);
                     b.Str(0x15b, "Master");
-                    b.Obj(0x164); b.Begin(0x8a); b.List(0x144); b.EndList(); b.End();
+                    b.Obj(0x164); b.Begin(0x8a); b.List(0x144);
+                    if (masterPlugin)
+                    {
+                        b.Begin(0x729); b.Id(0xf);
+                        b.Obj(0x197); b.Begin(ClsVst3);
+                        b.Str(0x9a, "Limiter"); b.Str(0x9b, "Some Vendor"); b.Str(0x9c, "Audio FX"); b.U8(0x9d, 0);
+                        b.Str(0xbe5, "limiter.vstpreset");
+                        b.End();
+                        b.End();
+                    }
+                    b.EndList(); b.End();
                     b.Obj(0x165); b.Begin(0xab); b.Obj(0x1a4); Param(0x4c4, "VOLUME", 1.0); b.Obj(0x1a5); Param(0x4c3, "PANORAMA", 0.0); b.End();
                     b.End();
                 });
