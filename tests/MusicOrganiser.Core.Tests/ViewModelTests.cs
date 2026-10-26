@@ -285,6 +285,41 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task An_fl_songs_unused_synths_are_found_only_while_its_panel_stays_open()
+    {
+        // Serum on "Pad" plays nothing; 3x Osc on "Bass" plays the notes.
+        File.WriteAllBytes(Path.Combine(_root, "Quiet Pad.flp"), new Fixtures.FlpBuilder()
+            .Ascii(199, "21.2.3.4004")
+            .Dword(156, 128_000)
+            .Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Pad")
+            .Data(213, Fixtures.WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Serum_x64.dll", "Xfer Records", [1, 2, 3, 4]))
+            .Word(64, 1).Byte(21, 2)
+            .Text(201, "3x Osc").Text(203, "Bass").Data(213, [9, 9, 9])
+            .Word(65, 1).Text(193, "Intro")
+            .Data(224, Fixtures.Note(0, 1, 96, 41, 100))
+            .Build());
+        _db.ReplaceInstalledPlugins(["Serum"]);
+        ScanFixtures();
+        var projects = Main().Projects;
+        var song = projects.Items.Single(i => i.Name == "Quiet Pad");
+
+        // Picked and passed straight away (holding the arrow key down the list): the project isn't read for that panel.
+        projects.Selected = song;
+        var passed = projects.Detail!;
+        projects.Selected = null;
+        await Task.Delay(1000);
+        Assert.Equal(0, passed.SilentCount);
+        Assert.Equal(2, passed.VisiblePlugins.Count(p => p.IsInstrument));
+
+        // Left open: Serum is tucked away.
+        projects.Selected = song;
+        var open = projects.Detail!;
+        await Until(() => open.SilentCount == 1);
+        Assert.Equal(["3x Osc"], open.VisiblePlugins.Where(p => p.IsInstrument).Select(p => p.Name));
+    }
+
+    [Fact]
     public async Task Deleting_a_fixed_copy_puts_it_in_the_recycle_bin()
     {
         if (!OperatingSystem.IsLinux()) return;   // the real Recycle Bin (or the Mac's Trash): not in a test

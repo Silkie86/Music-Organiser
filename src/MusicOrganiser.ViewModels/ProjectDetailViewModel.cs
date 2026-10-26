@@ -37,6 +37,16 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
     public SongSpaceViewModel Space => _space ??= new(_db, _main, Item);
     /// <summary>The "MIDI that fits" tab's small playground stops when another page shows (<paramref name="closed"/>: another song is picked, so it goes).</summary>
     public void LeftSongMidi(bool closed) { if (closed) _songMidi?.Closed(); else _songMidi?.Left(); }
+
+    // Cancelled when another song is picked and this panel goes (see Closed).
+    readonly CancellationTokenSource _gone = new();
+
+    /// <summary>Another song is picked, so this panel goes: its small playground stops, and reading it started for itself is dropped.</summary>
+    public void Closed()
+    {
+        _gone.Cancel();
+        LeftSongMidi(closed: true);
+    }
     /// <summary>The plugin list as shown: synths that play no notes in the song are hidden until asked for.</summary>
     [ObservableProperty] IReadOnlyList<PluginRow> _visiblePlugins = [];
     [ObservableProperty] bool _showSilent;
@@ -124,17 +134,27 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         LoadPendingFix();
     }
 
+    /// <summary>How long a song stays picked before its FL project is read for <see cref="FindSilentSynthsAsync"/>.</summary>
+    static readonly TimeSpan SilentSynthsWait = TimeSpan.FromMilliseconds(300);
+
     /// <summary>
     /// FL projects often keep synths on channels that never play. Any instrument whose
     /// channel has no notes in the song is tucked away behind a toggle.
     /// </summary>
+    /// <remarks>
+    /// It reads the whole project, so only for a song that stays picked a moment: holding the arrow key down the list
+    /// would otherwise start one read per song passed, each for a panel already gone.
+    /// </remarks>
     async Task FindSilentSynthsAsync()
     {
         if (Readers.For(Item.Path) is not { } reader) return;
+        var gone = _gone.Token;
+        var path = Item.Path;
         try
         {
-            var players = await Task.Run(() => MidiChannel.Players(reader.ExtractChannels(Item.Path)));
-            if (players.Count == 0) return;
+            await Task.Delay(SilentSynthsWait, gone);
+            var players = await Task.Run(() => MidiChannel.Players(reader.ExtractChannels(path)), gone);
+            if (gone.IsCancellationRequested || players.Count == 0) return;
             foreach (var p in Plugins) p.Silent = p.IsInstrument && p.Installed && !players.Contains(p.Name);   // a missing one stays in sight
             SilentCount = Plugins.Count(p => p.Silent);
             ApplyPluginFilter();
