@@ -90,7 +90,8 @@ public static class SongSpace
                 seen.Add(path);
                 var rel = Path.GetRelativePath(folder, path).Split(['\\', '/']);
                 if (savePaths.Contains(path)) savesBytes += size;
-                else if (rel.Length > 1 && rel[..^1].Any(Scanner.IsAutosaveDir) || Scanner.IsAutosaveFile(rel[^1]))
+                // Only project files are autosaves: audio or anything else kept in a "Backups" folder is yours.
+                else if (Readers.For(path) is not null && (rel.Length > 1 && rel[..^1].Any(Scanner.IsAutosaveDir) || Scanner.IsAutosaveFile(rel[^1])))
                 {
                     backupBytes += size;
                     backups.Add((path, size, modified));

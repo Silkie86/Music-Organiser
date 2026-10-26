@@ -753,6 +753,21 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public void Audio_in_a_backups_folder_is_never_an_old_autosave()
+    {
+        var day = new DateTime(2026, 1, 1);
+        var song = File("Songs/Rae/Rae.song", 300, day);
+        File("Songs/Rae/History/Rae 1.song", 20, day);
+        var stem = File("Songs/Rae/Backups/stem.wav", 900, day);
+        File("Songs/Rae/Samples/Backup/kick.wav", 50, day);
+        var r = SongSpace.Measure([new(song, 300, day)], [Path.Combine(_root, "Songs")], new HashSet<string> { @"D:\Old\kick.wav" }, keepBackups: 0);
+        Assert.Equal([Path.Combine(_root, "Songs", "Rae", "History", "Rae 1.song")], r.Items.Where(i => i.Kind == CompactKind.Backup).SelectMany(i => i.Paths));
+        // The stem is audio no save uses: listed to pick by hand, never ticked. The kick is used, so not listed at all.
+        Assert.Equal([stem], r.Items.Where(i => i.Kind == CompactKind.UnusedAudio).SelectMany(i => i.Paths));
+        Assert.Equal(20, r.Freeable);
+    }
+
+    [Fact]
     public async Task Clean_up_keeps_a_folder_holding_a_sample_a_project_names_by_an_old_path()
     {
         using var page = new Page(_root);
