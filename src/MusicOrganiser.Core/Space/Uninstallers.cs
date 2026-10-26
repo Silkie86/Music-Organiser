@@ -51,7 +51,8 @@ public static class Uninstallers
     /// The uninstallers that look like this plugin's, best first: the program's name holds the plugin's (without its
     /// version or format), and the maker's name counts in its favour. "Serum" finds "Xfer Serum 2"; a two-letter name
     /// like "M1" only matches a program named just that, so it can't pick a stranger. The same version ("Serum 2" for
-    /// Serum 2) comes before another.
+    /// Serum 2) comes before another, and another version's ("iZotope Ozone 11" for Ozone 9) comes last
+    /// (see <see cref="IsOtherVersion"/>).
     /// </summary>
     public static IReadOnlyList<Uninstaller> For(string plugin, string vendor, IReadOnlyList<Uninstaller> all)
     {
@@ -60,8 +61,38 @@ public static class Uninstallers
         var (maker, full) = (Norm(vendor), Norm(plugin));
         return all.Select(u => (u, Score: Score(u, family, maker, full)))
                   .Where(x => x.Score > 0)
-                  .OrderByDescending(x => x.Score).ThenBy(x => x.u.Name.Length)
+                  .OrderBy(x => IsOtherVersion(plugin, x.u)).ThenByDescending(x => x.Score).ThenBy(x => x.u.Name.Length)
                   .Select(x => x.u).ToList();
+    }
+
+    /// <summary>
+    /// Whether the program's name gives another version than the plugin's: "iZotope Ozone 11" for Ozone 9, "Xfer Serum 2"
+    /// for Serum (a name without a number is version 1). Running it would remove a plugin you may still use, so it's
+    /// never picked for you. A program whose name gives no version isn't another one.
+    /// </summary>
+    public static bool IsOtherVersion(string plugin, Uninstaller u)
+    {
+        var family = PluginCatalog.Family(plugin);
+        if (family.Length < 2) return false;
+        var theirs = MajorAfter(u.Name, family);
+        if (theirs < 0) return false;
+        var mine = MajorAfter(plugin, family);
+        return theirs != Math.Max(mine, 1);
+    }
+
+    // The whole number written straight after the plugin's name in a name ("iZotope Ozone 11 Advanced": 11, "Serum2": 2,
+    // "Diva v1.4.5": 1), or -1 when none follows it.
+    static int MajorAfter(string name, string family)
+    {
+        // Each letter or digit of the name, with where it is, so the family can be found the way names are compared.
+        var kept = name.Select((c, at) => (C: char.ToLowerInvariant(c), At: at)).Where(x => char.IsLetterOrDigit(x.C)).ToList();
+        var start = new string(kept.Select(x => x.C).ToArray()).IndexOf(family, StringComparison.Ordinal);
+        if (start < 0) return -1;
+        var at = kept[start + family.Length - 1].At + 1;
+        while (at < name.Length && name[at] is ' ' or '-' or '_' or '.') at++;
+        if (at + 1 < name.Length && name[at] is 'v' or 'V' && char.IsDigit(name[at + 1])) at++;
+        var digits = new string(name[at..].TakeWhile(char.IsDigit).ToArray());
+        return digits.Length > 0 && int.TryParse(digits, out var n) ? n : -1;
     }
 
     static int Score(Uninstaller u, string family, string maker, string full)

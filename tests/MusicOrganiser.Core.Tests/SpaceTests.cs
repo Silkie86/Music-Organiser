@@ -757,6 +757,21 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public void Another_versions_uninstaller_is_never_the_one_picked()
+    {
+        Uninstaller ozone11 = new("iZotope Ozone 11 Advanced", "iZotope, Inc.", "x.exe"), ozone9 = new("iZotope Ozone 9", "iZotope, Inc.", "y.exe"),
+                    serum2 = new("Xfer Serum 2", "Xfer Records", "z.exe");
+        Assert.True(Uninstallers.IsOtherVersion("Ozone 9", ozone11));
+        Assert.False(Uninstallers.IsOtherVersion("Ozone 9", ozone9));
+        Assert.Equal([ozone9, ozone11], Uninstallers.For("Ozone 9", "iZotope", [ozone11, ozone9]));
+        // Serum without a number is Serum 1: Serum 2's uninstaller is another version's.
+        Assert.True(Uninstallers.IsOtherVersion("Serum", serum2));
+        Assert.False(Uninstallers.IsOtherVersion("Serum 2", serum2));
+        Assert.False(Uninstallers.IsOtherVersion("Diva", new("u-he Diva v1.4.5", "u-he", "d.exe")));
+        Assert.False(Uninstallers.IsOtherVersion("Ozone 9", new("Ozone", "iZotope", "o.exe")));   // no number: can't tell
+    }
+
+    [Fact]
     public void The_administrator_steps_act_only_on_the_list_the_app_wrote()
     {
         var keep = File("Old Library/a.wav");

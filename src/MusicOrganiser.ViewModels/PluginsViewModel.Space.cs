@@ -298,9 +298,13 @@ public sealed partial class PluginsViewModel
         };
         if (found.Count > 0)
         {
-            card.Intro = "This runs its own uninstaller, the same one Windows Settings › Apps uses. It opens in its own window and may ask questions.";
+            // Another version's uninstaller (Ozone 11's for Ozone 9) would remove a plugin you may still use: you pick it yourself.
+            var other = Uninstallers.IsOtherVersion(p.Name, found[0]);
+            card.Intro = "This runs its own uninstaller, the same one Windows Settings › Apps uses. It opens in its own window and may ask questions." +
+                         (other ? $" These look like other versions of {p.Name}, not this one. Pick one only if you're sure it's the right one." : "");
             card.Uninstallers = found;
-            card.PickedUninstaller = found[0];
+            card.MustPick = other;
+            card.PickedUninstaller = other ? null : found[0];
             card.ConfirmText = "Uninstall";
             card.Confirm = () => RunUninstallerAsync(card, space.Key, files.Select(f => f.Path).ToList());
         }
@@ -519,8 +523,11 @@ public sealed partial class SpaceCard(PluginsViewModel owner) : ObservableObject
     /// <summary>For Uninstall: the uninstallers that may be this plugin's, best first, and the one picked.</summary>
     public IReadOnlyList<Uninstaller> Uninstallers { get; set; } = [];
     public bool HasUninstallers => Uninstallers.Count > 0;
-    public bool HasChoice => Uninstallers.Count > 1;
+    public bool HasChoice => Uninstallers.Count > 1 || MustPick;
+    /// <summary>None is picked for you (they're for other versions): even a single one is yours to pick.</summary>
+    public bool MustPick { get; set; }
     [ObservableProperty] Uninstaller? _pickedUninstaller;
+    partial void OnPickedUninstallerChanged(Uninstaller? value) => Refresh();
 
     /// <summary>"Delete 35.5 GB", or "Uninstall".</summary>
     [ObservableProperty] string _confirmText = "";
