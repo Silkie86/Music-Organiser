@@ -91,6 +91,8 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     [ObservableProperty] IReadOnlyList<TagSummary> _tagSummaries = [];
 
     Dictionary<long, double>? _describeScores;
+    // Counts describe searches (and what drops their result), so one that ends late doesn't put its matches back.
+    int _describing;
 
     public const string AutoPlayKey = "sound_lab_autoplay";
     /// <summary>Tiles or List: how the sounds were shown last time.</summary>
@@ -674,6 +676,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
 
     partial void OnDescribeModeChanged(bool value)
     {
+        _describing++;
         _describeScores = null;
         ApplySort();
         Refresh();
@@ -715,6 +718,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
             Refresh();
             return;
         }
+        var request = ++_describing;   // a describe search still running is no longer wanted
         if (string.IsNullOrWhiteSpace(SearchText))
         {
             _describeScores = null;
@@ -728,6 +732,9 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         {
             var text = SearchText;
             var hits = await Task.Run(() => Org.Describe(text, 300));
+            // Describe mode turned off or the filters cleared meanwhile: not wanted any more. (Words typed meanwhile wait
+            // for Enter, as always; the message says which words these matches are for.)
+            if (request != _describing || !DescribeMode) return;
             _describeScores = hits.ToDictionary(h => h.Sound.Id, h => h.Score);
             Message = $"Best matches for “{text}”, closest first";
         }
@@ -739,6 +746,7 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
     void ClearFilters()
     {
         SearchText = "";
+        _describing++;
         _describeScores = null;
         SelectedType = TypeCounts.FirstOrDefault();
         LoopFilter = 0;
@@ -1080,12 +1088,17 @@ public sealed partial class SoundsViewModel : ObservableObject, IFileDragSource
         try
         {
             var (notes, chords) = await Task.Run(() => Org.Transcribe(s));
+            // Another sound picked meanwhile: these notes aren't its (and Export MIDI would save them under its name).
+            if (Selected != s) return;
             Notes = notes;
             NoteChords = chords;
             NotesMessage = notes.Count == 0 ? "No clear notes found (drums and noise usually have none)."
                 : $"{notes.Count} notes" + (chords.Count > 0 ? $" · chords: {string.Join(" → ", chords.Select(c => c.Name).Take(16))}" : "");
         }
-        catch (Exception e) { NotesMessage = $"Couldn't detect notes: {e.Message}"; }
+        catch (Exception e)
+        {
+            if (Selected == s) NotesMessage = $"Couldn't detect notes: {e.Message}";
+        }
     }
 
     [RelayCommand]

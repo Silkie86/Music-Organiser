@@ -1084,6 +1084,34 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Notes_detected_for_a_sound_arent_shown_once_another_sound_is_picked()
+    {
+        var chord = Path.Combine(AppContext.BaseDirectory, "Data", "chord-and-melody-22k.wav");
+        _soundDb.Save([new SoundLibrary.Analysed(chord, 1, 1, null, null, null, null),
+                       new SoundLibrary.Analysed("/samples/Kick 01.wav", 1, 1, null, null, null, null)]);
+        _sounds.Reload();
+        var lab = Main().Sounds;
+        var melody = lab.Items.Single(s => s.Path == chord);
+        if (_sounds.Transcriber is null) return;   // the note-detection model isn't in this build
+
+        // Picked, notes asked for, then the kick picked before they're found: the kick's panel has no notes to export.
+        lab.Selected = melody;
+        var detecting = lab.DetectNotesCommand.ExecuteAsync(null);
+        if (!detecting.IsCompleted)
+        {
+            lab.Selected = lab.Items.Single(s => s.Name == "Kick 01");
+            await detecting;
+            Assert.Empty(lab.Notes);
+            Assert.Equal("", lab.NotesMessage);
+        }
+        await detecting;
+
+        lab.Selected = melody;
+        await lab.DetectNotesCommand.ExecuteAsync(null);
+        Assert.NotEmpty(lab.Notes);
+    }
+
+    [Fact]
     public void Sounds_open_shuffled_and_can_be_ordered_by_how_much_you_like_them()
     {
         ((HeadlessUi)Ui.Current).Player = () => new Recorder(new List<string>());
