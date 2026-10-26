@@ -305,6 +305,16 @@ public sealed partial class LibraryDb : IDisposable
             cmd.Transaction = tx;
             isNew = (long)cmd.ExecuteScalar()! == 0;
         }
+        var daw = info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown";
+        if (isNew && MovedFrom(tx, f, daw) is { } moved)
+        {
+            // The same file moved here (its song folder renamed or moved): it carries on as that project, with your
+            // status, rating, notes and tags, rather than starting blank beside a "file moved" copy of itself.
+            using var cmd = Cmd("UPDATE projects SET path = $p WHERE id = $id", ("$p", f.Path), ("$id", moved));
+            cmd.Transaction = tx;
+            cmd.ExecuteNonQuery();
+            isNew = false;
+        }
         var infoJson = info is null ? "{}" : JsonSerializer.Serialize(new StoredInfo(info.Tracks, info.Details, info.Warnings));
         using (var cmd = Cmd("""
             INSERT INTO projects (path, name, daw, folder, size, mtime, tempo, version, title, confidence,
@@ -320,7 +330,7 @@ public sealed partial class LibraryDb : IDisposable
                 note_count=excluded.note_count, length_bars=excluded.length_bars, track_count=excluded.track_count
             """,
             ("$path", f.Path), ("$name", Path.GetFileNameWithoutExtension(f.Path)),
-            ("$daw", info?.Daw ?? Readers.For(f.Path)?.Daw ?? "Unknown"), ("$folder", Path.GetDirectoryName(f.Path)),
+            ("$daw", daw), ("$folder", Path.GetDirectoryName(f.Path)),
             ("$size", f.Size), ("$mtime", f.Mtime), ("$tempo", info?.Tempo), ("$version", info?.Version),
             ("$title", info?.Title), ("$conf", (int)(info?.Confidence ?? Confidence.Catalogue)),
             ("$midi", info?.CanExtractMidi == true ? 1 : 0), ("$presets", info?.CanExtractPresets == true ? 1 : 0),
@@ -367,6 +377,23 @@ public sealed partial class LibraryDb : IDisposable
             cmd.ExecuteNonQuery();
         }
         if (isNew) InheritFromEarlierSave(tx, id, f.Path);
+    }
+
+    /// <summary>
+    /// The project marked missing that this new file is, moved: the one missing project of the same DAW with the same
+    /// file name, size and modified time (a move keeps those). Null when there's none, or more than one to choose from.
+    /// </summary>
+    long? MovedFrom(SqliteTransaction tx, IndexedFile f, string daw)
+    {
+        using var cmd = Cmd("""
+            SELECT id FROM projects
+            WHERE file_missing = 1 AND daw = $daw AND name = $name COLLATE NOCASE AND size = $size AND mtime = $mtime LIMIT 2
+            """, ("$daw", daw), ("$name", Path.GetFileNameWithoutExtension(f.Path)), ("$size", f.Size), ("$mtime", f.Mtime));
+        cmd.Transaction = tx;
+        var ids = new List<long>();
+        using (var r = cmd.ExecuteReader())
+            while (r.Read()) ids.Add(r.GetInt64(0));
+        return ids.Count == 1 ? ids[0] : null;
     }
 
     /// <summary>

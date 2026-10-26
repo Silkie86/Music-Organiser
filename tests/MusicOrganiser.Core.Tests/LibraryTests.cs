@@ -731,6 +731,48 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void A_renamed_song_folder_keeps_the_songs_status_rating_notes_and_tags()
+    {
+        var scanner = new Scanner(_db);
+        scanner.ScanProjects();
+        void Organise(ProjectSummary p, string status)
+        {
+            p.Status = status;
+            p.Rating = 4;
+            p.Notes = "keep the bass";
+            _db.SaveOrganisation(p);
+            _db.SetTags(p.Id, ["dub"]);
+        }
+        var bitwig = _db.Projects().Single(p => p.Daw == "Bitwig Studio");
+        Organise(bitwig, "Mixing");
+
+        // Renamed in Explorer: the watcher gives up on so many changes and a scan runs.
+        var folder = Path.GetDirectoryName(bitwig.Path)!;
+        Directory.Move(folder, folder + " (done)");
+        scanner.ScanProjects();
+        var moved = _db.Projects().Single(p => p.Daw == "Bitwig Studio");
+        Assert.Equal((bitwig.Id, Path.Combine(folder + " (done)", Path.GetFileName(bitwig.Path)), false),
+                     (moved.Id, moved.Path, moved.FileMissing));
+        Assert.Equal(("Mixing", 4, "keep the bass"), (moved.Status, moved.Rating, moved.Notes));
+        Assert.Contains("dub", moved.Tags);
+
+        // Moved into another folder, as the folder watcher sees it: gone from one place, new in the other.
+        var fl = _db.Projects().Single(p => p.Daw == "FL Studio");
+        Organise(fl, "Finished");
+        var to = Path.Combine(_root, "Finished", Path.GetFileName(fl.Path));
+        Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+        File.Move(fl.Path, to);
+        scanner.Update([fl.Path, to]);
+        var flMoved = _db.Projects().Single(p => p.Daw == "FL Studio");
+        Assert.Equal((fl.Id, to, false, "Finished"), (flMoved.Id, flMoved.Path, flMoved.FileMissing, flMoved.Status));
+
+        // A copy, with the first still there, is a song of its own.
+        File.Copy(to, Path.Combine(_root, Path.GetFileName(to)));
+        scanner.ScanProjects();
+        Assert.Equal(2, _db.Projects().Count(p => p.Daw == "FL Studio" && !p.FileMissing));
+    }
+
+    [Fact]
     public void Projects_in_a_folder_the_scan_couldnt_read_arent_marked_missing()
     {
         new Scanner(_db).ScanProjects();

@@ -123,6 +123,12 @@ public sealed class Scanner(LibraryDb db)
                                     !known.TryGetValue(f.Path, out var k) || k.Mtime != f.Mtime || k.Size != f.Size)
                         .Select(f => f.Path).ToList();
 
+        // Gone files are marked before the new ones are saved, so a song folder renamed or moved is found as the
+        // projects it was (see LibraryDb.MovedFrom), not as new ones. A scan stopped while finding them marks nothing.
+        // A folder that couldn't be read this time (busy, or its permissions changing) keeps its projects as they were.
+        ct.ThrowIfCancellationRequested();
+        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots), unreadable);
+
         // Read the projects on every core; save them here, in path order, a batch at a time,
         // so a new numbered save always finds the earlier ones it takes its status from.
         var samples = new SampleLocator();
@@ -150,8 +156,6 @@ public sealed class Scanner(LibraryDb db)
         db.UpsertMany(batch);
         foreach (var r in Readers.All) db.SetSetting(ReaderVersionKey(r), r.Version.ToString());
         db.SetSetting(KeyVersionKey, ProjectKey.Version.ToString());
-        // A folder that couldn't be read this time (busy, or its permissions changing) keeps its projects as they were.
-        db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots), unreadable);
         progress?.Report(new("Done", files.Count, files.Count, ""));
         return todo.Count(f => !known.ContainsKey(f));
     }
