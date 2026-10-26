@@ -722,6 +722,21 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void A_folder_holds_a_projects_sample_saved_under_the_drives_old_letter()
+    {
+        // Clean up never offers a folder holding a sample a project uses. Songs saved when the drive was F: name
+        // F:\Splice\Sounds, and the app finds those samples on K: now, so K:\Splice\Sounds holds them too.
+        var info = new ProjectInfo { Daw = "FL Studio" };
+        _db.Upsert(new LibraryDb.IndexedFile(Path.Combine(_root, "Old.flp"), 5, 1, info, null, [(@"F:\Splice\Sounds\Kick_01.wav", true)], []));
+        Assert.Equal(@"F:\Splice\Sounds\Kick_01.wav", _db.SampleInside(@"K:\Splice\Sounds"));
+        Assert.Equal(@"F:\Splice\Sounds\Kick_01.wav", _db.SampleInside("k:/Splice/Sounds/"));
+        Assert.Equal(@"F:\Splice\Sounds\Kick_01.wav", _db.SampleInside(@"F:\Splice"));
+        Assert.Null(_db.SampleInside(@"K:\Splice\Sound"));   // a folder whose name only starts the same
+        Assert.Null(_db.SampleInside(@"K:\Splice\Other"));
+        Assert.Null(_db.SampleInside(@"K:\Other\Splice\Sounds"));
+    }
+
+    [Fact]
     public void Projects_using_a_sample_are_found_by_its_path_without_reading_every_sample()
     {
         // "Projects using it" on the Sounds page: with no index on the path, every sample of 16,700 projects was read.
