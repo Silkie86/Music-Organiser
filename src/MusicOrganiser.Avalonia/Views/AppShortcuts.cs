@@ -47,6 +47,17 @@ public sealed class AppShortcuts
 
     MainViewModel? Main => _window.DataContext as MainViewModel;
 
+    /// <summary>Full screen on, or back to how the window was (F11, or the sidebar's button while it's on).</summary>
+    public void ToggleFullScreen()
+    {
+        if (_window.WindowState == WindowState.FullScreen) _window.WindowState = _beforeFullScreen;
+        else
+        {
+            _beforeFullScreen = _window.WindowState;
+            _window.WindowState = WindowState.FullScreen;
+        }
+    }
+
     /// <summary>The page's name in the shortcut list: its title in the sidebar.</summary>
     static string PageOf(MainViewModel main) => main.SelectedNav?.Title ?? ShortcutsViewModel.Everywhere;
 
@@ -149,14 +160,7 @@ public sealed class AppShortcuts
             case "app.sizeUp": main.PageBiggerCommand.Execute(null); return true;
             case "app.sizeDown": main.PageSmallerCommand.Execute(null); return true;
             case "app.sizeReset": main.PageSizeAsRestCommand.Execute(null); return true;
-            case "app.fullScreen":
-                if (_window.WindowState == WindowState.FullScreen) _window.WindowState = _beforeFullScreen;
-                else
-                {
-                    _beforeFullScreen = _window.WindowState;
-                    _window.WindowState = WindowState.FullScreen;
-                }
-                return true;
+            case "app.fullScreen": ToggleFullScreen(); return true;
         }
         return false;
     }

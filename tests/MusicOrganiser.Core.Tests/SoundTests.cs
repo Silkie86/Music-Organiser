@@ -409,6 +409,12 @@ public class LearningTests
         // Each line starts with the picked sound's own use, so "never used" can't be read as the other sound's.
         Assert.All(picks, p => Assert.StartsWith("Never used", p.Reason));
         Assert.All(picks, p => Assert.DoesNotContain("used in", p.Reason));
+        // A year narrows the picks to sounds whose file is dated then (Solomon, 2026-10-23).
+        Assert.All(Rediscover.Suggest(org, new Rediscover.Options(Type: "Kick", Count: 5, Seed: 3, Year: DateTime.Now.Year)),
+                   p => Assert.Equal(DateTime.Now.Year, p.Sound.Added.Year));
+        Assert.Contains(DateTime.Now.Year, Rediscover.Years(org));
+        Assert.Empty(Rediscover.Suggest(org, new Rediscover.Options(Type: "Kick", Year: 1999)));
+        Assert.StartsWith("No Kick sounds are dated 1999", Rediscover.WhyNothing(org, new Rediscover.Options(Type: "Kick", Year: 1999)));
         // When there's nothing to suggest, the page says why.
         Assert.Empty(Rediscover.Suggest(org, new Rediscover.Options(Type: "Ride")));
         Assert.StartsWith("No sounds are sorted as Ride", Rediscover.WhyNothing(org, new Rediscover.Options(Type: "Ride")));

@@ -77,6 +77,14 @@
                     </Button>
                 </StackPanel>
 
+                <!-- Full screen hides the window's own buttons: a way out while it's on. -->
+                <Button x:Name="LeaveFullScreenButton" DockPanel.Dock="Bottom" Classes="dawLight" HorizontalAlignment="Center" Margin="0,0,0,6"
+                        IsVisible="{Binding IsFullScreen}" Click="OnLeaveFullScreen"
+                        ToolTip.Tip="{Binding Shortcuts.FullScreenTip}">
+                    <Path Data="M1,5 L1,1 L5,1 M9,1 L13,1 L13,5 M13,9 L13,13 L9,13 M5,13 L1,13 L1,9" Stroke="{StaticResource MutedBrush}"
+                          StrokeThickness="1.4" StrokeLineCap="Round" StrokeJoin="Round" />
+                </Button>
+
                 <!-- This page's size: smaller fits more on it, bigger is easier to read. Settings › General sizes every page. -->
                 <Button x:Name="PageSizeButton" AutomationProperties.AutomationId="PageSizeButton" DockPanel.Dock="Bottom" Classes="dawLight"
                         HorizontalAlignment="Center" Margin="0,0,0,6" ToolTip.Tip="{Binding PageSizeTip}">

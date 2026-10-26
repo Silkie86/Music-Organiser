@@ -51,6 +51,8 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] NavItem _selectedNav;
     [ObservableProperty] bool _isScanning;
     [ObservableProperty] string _scanStatus = "";
+    /// <summary>The window fills the screen (F11), so the sidebar shows a way out.</summary>
+    [ObservableProperty] bool _isFullScreen;
     [ObservableProperty] double _scanPercent;
     Activity? _scanCard;
     readonly bool _midiPage;

@@ -18,7 +18,25 @@ public partial class MainWindow : Window
         Deactivated += (_, _) => Core.Parallelism.AppInBackground = true;
         Shortcuts = new Views.AppShortcuts(this, PageHost);
         KeySheet.PropertyChanged += (_, e) => { if (e.Property == IsVisibleProperty) OnSheetShown(KeySheet.IsVisible); };
+        PropertyChanged += (_, e) => { if (e.Property == WindowStateProperty) OnWindowState(); };
     }
+
+    // Full screen hides the window's own buttons, and F11 sits beside F12, so it's easy to land in by accident
+    // (Solomon, 2026-10-23: "i can't see how to get it out of this mode"): say how to leave, and keep a way out in the sidebar.
+    void OnWindowState()
+    {
+        if (DataContext is not ViewModels.MainViewModel main) return;
+        var full = WindowState == WindowState.FullScreen;
+        if (full == main.IsFullScreen) return;
+        main.IsFullScreen = full;
+        if (!full) return;
+        var key = ViewModels.ShortcutsViewModel.Display(main.Shortcuts.KeyOf("app.fullScreen"));
+        main.Activities.Done("Full screen", key.Length > 0 ? $"Press {key}, or the button at the bottom of the sidebar, to leave it."
+                                                            : "The button at the bottom of the sidebar leaves it.",
+                             "Leave", Shortcuts.ToggleFullScreen);
+    }
+
+    void OnLeaveFullScreen(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e) => Shortcuts.ToggleFullScreen();
 
     /// <summary>The keys that work on every page, and each page's own (Settings › Shortcuts).</summary>
     public Views.AppShortcuts Shortcuts { get; }

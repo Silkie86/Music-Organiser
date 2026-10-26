@@ -226,4 +226,33 @@ public sealed class AppShortcutTests : IDisposable
         Assert.False(takenByShortcut);
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void Full_screen_says_how_to_leave_it_and_the_sidebar_has_a_way_out()
+    {
+        // F12 note, 23 Oct: "its in fullscreen mode and i can['t] see how to get it out of this mode"
+        var main = new MainViewModel(_db, _sounds, dataFolder: Path.Combine(_root, "data"));
+        var window = new MainWindow { DataContext = main, Width = 1440, Height = 900 };
+        window.Show();
+        Settle();
+        var leave = window.FindControl<Button>("LeaveFullScreenButton")!;
+        Assert.False(leave.IsEffectivelyVisible);
+
+        window.KeyPress(Key.F11, RawInputModifiers.None, PhysicalKey.F11, null);
+        window.KeyRelease(Key.F11, RawInputModifiers.None, PhysicalKey.F11, null);
+        Settle();
+        Assert.Equal(WindowState.FullScreen, window.WindowState);
+        Assert.True(main.IsFullScreen);
+        Assert.True(leave.IsEffectivelyVisible);
+        Assert.Equal("Leave full screen (F11)", ToolTip.GetTip(leave));
+        var card = Assert.Single(main.Activities.Items, a => a.Title == "Full screen");
+        Assert.Contains("Press F11", card.Detail);
+
+        leave.RaiseEvent(new global::Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Settle();
+        Assert.NotEqual(WindowState.FullScreen, window.WindowState);
+        Assert.False(main.IsFullScreen);
+        Assert.False(leave.IsEffectivelyVisible);
+        window.Close();
+    }
 }
