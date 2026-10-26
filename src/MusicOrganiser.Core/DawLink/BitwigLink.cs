@@ -55,9 +55,10 @@ public sealed record BitwigProject(string Name, bool Modified, double Tempo, str
 
 /// <summary>One track in Bitwig's flat track list (tracks inside groups included, then effect tracks and the master).</summary>
 /// <param name="DeviceCount">Devices at the top of the track's chain; <see cref="Devices"/> holds the first 16.</param>
+/// <param name="Id">The ID Bitwig keeps the track under (the Java extension), or null when it hasn't said.</param>
 public sealed record BitwigTrack(int Index, string Name, string Type, bool Group, string Color, bool Active, bool Mute,
                                  bool Solo, bool Arm, string Volume, double? VolumeValue, string Pan, double? PanValue,
-                                 int DeviceCount, IReadOnlyList<BitwigDevice> Devices);
+                                 int DeviceCount, IReadOnlyList<BitwigDevice> Devices, string? Id = null);
 
 /// <param name="Index">Its place in the track's chain (-1 for the selected device).</param>
 /// <param name="Kind">Bitwig's device type, e.g. note_to_audio for an instrument.</param>

@@ -231,8 +231,9 @@ public sealed partial class PlaygroundViewModel
     readonly Dictionary<string, (string Notes, int Times)> _inBitwig = [];
     BitwigLink? _playLink;
     /// <summary>
-    /// The project Bitwig had in front when Play in Bitwig was turned on (null until it's asked): the parts only go
-    /// across while it's in front, since Bitwig's track list follows whichever project is.
+    /// The project Bitwig had in front when Play in Bitwig was turned on (null until it's asked), by its name now (it
+    /// follows a save under a new name): the parts only go across while it's in front, since Bitwig's track list follows
+    /// whichever project is.
     /// </summary>
     string? _playProject;
     CancellationTokenSource? _sendSoon;
@@ -253,9 +254,33 @@ public sealed partial class PlaygroundViewModel
     {
         BitwigTransport = AskTransportAsync;
         BitwigNewTrack = async (name, ct) =>
-            (await (await PlayLinkAsync(ct)).NewTrackWithIdAsync(name, ct: ct)).Id ?? throw new DawLinkException(BitwigLink.NeedsTransport);
-        BitwigPutClip = async (track, path, ct) => await (await PlayLinkAsync(ct)).ReplaceClipAsync(track, path, 0, launch: true, ct);
-        BitwigStopTracks = async (tracks, ct) => await (await PlayLinkAsync(ct)).StopTracksAsync(tracks, ct);
+            (await InPlayProjectAsync(link => link.NewTrackWithIdAsync(name, ct: ct), ct)).Id ?? throw new DawLinkException(BitwigLink.NeedsTransport);
+        BitwigPutClip = (track, path, ct) => InPlayProjectAsync(async link =>
+        {
+            await link.ReplaceClipAsync(track, path, 0, launch: true, ct);
+            return true;
+        }, ct);
+        BitwigStopTracks = (tracks, ct) => InPlayProjectAsync(link => link.StopTracksAsync(tracks, ct), ct);
+    }
+
+    /// <summary>
+    /// Makes a change in the project the parts play in. Refused because another project is in front, it looks whether
+    /// that's the same project under a new name (saved for the first time, or with Save As): it is when it holds a track
+    /// the Playground made there, and then the parts go to that name from now on, starting with this change.
+    /// </summary>
+    async Task<T> InPlayProjectAsync<T>(Func<BitwigLink, Task<T>> change, CancellationToken ct)
+    {
+        var link = await PlayLinkAsync(ct);
+        try { return await change(link); }
+        catch (DawLinkException e) when (BitwigLink.IsElsewhere(e))
+        {
+            // By its ID and the name it was given: another project's IDs could look alike.
+            var ours = _bitwigTracks.Values.ToHashSet();
+            var project = await link.ProjectAsync(ct);
+            if (!project.Tracks.Any(t => t.Id is { } id && ours.Contains(id) && t.Name.EndsWith("(Playground)", StringComparison.Ordinal))) throw;
+            link.OnlyIn = _playProject = project.Name;
+        }
+        return await change(link);
     }
 
     async Task<BitwigLink> PlayLinkAsync(CancellationToken ct)
