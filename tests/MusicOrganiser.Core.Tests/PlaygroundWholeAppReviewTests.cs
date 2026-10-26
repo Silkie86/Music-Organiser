@@ -130,4 +130,38 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         Assert.Equal(8, p.Bars);
         Assert.Equal(8, p.Chords.Count(c => c.IsSet));
     }
+
+    [Fact]
+    public async Task Changing_the_style_key_name_or_tempo_is_an_undo_step_of_its_own()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+
+        p.IsClassical = true;
+        p.UndoCommand.Execute(null);
+        Assert.False(p.IsClassical);
+        Assert.Single(p.Layers);   // the part added before stays
+
+        p.KeyText = "Eb";
+        p.UndoCommand.Execute(null);
+        Assert.Equal("", p.KeyText);
+        Assert.Single(p.Layers);
+
+        p.IdeaName = "Late night";
+        p.UndoCommand.Execute(null);
+        Assert.Equal("Untitled idea", p.IdeaName);
+        Assert.Single(p.Layers);
+
+        // Steps close together (scrolling over the box) are one undo step.
+        var was = p.Tempo;
+        p.Tempo = was + 5;
+        p.Tempo = was + 6;
+        await Task.Delay(500);   // it settles
+        p.UndoCommand.Execute(null);
+        Assert.Equal(was, p.Tempo);
+        Assert.Single(p.Layers);
+        p.UndoCommand.Execute(null);
+        Assert.Empty(p.Layers);
+    }
 }

@@ -447,6 +447,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     partial void OnIdeaNameChanged(string value)
     {
         if (_showing || value == _session.Name) return;
+        Remember();
         _session.Name = value.Trim().Length == 0 ? "Untitled idea" : value.Trim();
         OnPropertyChanged(nameof(Title));
         Changed(harmony: false);
@@ -457,24 +458,35 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (_showing) return;
         var tempo = Math.Clamp(Math.Round(value), 40, 240);
         if (tempo == _session.Tempo) return;
+        // Steps close together (scrolling over it) are one undo step, unless something else was changed in between.
+        if (_tempoGesture == 0 || _gesture != _tempoGesture)
+        {
+            Remember();
+            _gesture = _tempoGesture = GestureIds.Next();
+        }
         _session.Tempo = tempo;
         _ = SaveTempoSoon();
     }
 
     int _tempoMoves;
+    /// <summary>The undo step the tempo steps going on now are part of; 0 once they've stopped.</summary>
+    int _tempoGesture;
 
     /// <summary>Saved (and the music started again at the new speed) once the tempo slider stops, not on every step of a drag.</summary>
     async Task SaveTempoSoon()
     {
         var move = ++_tempoMoves;
         await Task.Delay(300);
-        if (move == _tempoMoves) Changed(harmony: false);
+        if (move != _tempoMoves) return;
+        _tempoGesture = 0;
+        Changed(harmony: false);
     }
 
     partial void OnKeyTextChanged(string value)
     {
         if (_showing || value == _session.Key) return;
         if (value.Trim().Length > 0 && MusicTheory.ParseKey(value) is null) return;
+        Remember();
         _session.Key = value.Trim();
         Changed();
     }
@@ -482,6 +494,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     partial void OnIsClassicalChanged(bool value)
     {
         if (_showing) return;
+        Remember();
         _session.Style = value ? HarmonyStyle.Classical : HarmonyStyle.JazzGospel;
         FollowChordTrack(all: true);
         Changed();
@@ -3245,6 +3258,16 @@ public static class TrackColours
         MidiRoles.Drums => "#D79B3A",
         _ => "#7D8590",
     };
+}
+
+/// <summary>
+/// Numbers for drags and typed values (<see cref="ValueStep"/>, <see cref="FaderMove"/>), one counter for every control that
+/// sends them, so two different gestures never share a number and run into one undo step.
+/// </summary>
+public static class GestureIds
+{
+    static int _last;
+    public static int Next() => Interlocked.Increment(ref _last);
 }
 
 /// <summary>A value dragged or typed: how many steps it moves, and which drag or typing it's part of (one undo step for all of them).</summary>

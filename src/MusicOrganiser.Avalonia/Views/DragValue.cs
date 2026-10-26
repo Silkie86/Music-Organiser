@@ -39,7 +39,6 @@ public sealed class DragValue : Border
                                       HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center };
     double? _from;
     int _steps;
-    static int _gestures;
     int _gesture;
 
     public DragValue()
@@ -79,7 +78,7 @@ public sealed class DragValue : Border
         if (e.ClickCount == 2) { StartTyping(); e.Handled = true; return; }
         _from = e.GetPosition(this).Y;
         _steps = 0;
-        _gesture = ++_gestures;
+        _gesture = GestureIds.Next();
         e.Pointer.Capture(this);
         e.Handled = true;
     }
@@ -111,7 +110,7 @@ public sealed class DragValue : Border
     {
         base.OnPointerWheelChanged(e);
         if (e.Delta.Y == 0) return;
-        _gesture = ++_gestures;
+        _gesture = GestureIds.Next();
         Nudge(e.Delta.Y > 0 ? 1 : -1);
         e.Handled = true;
     }
@@ -120,7 +119,7 @@ public sealed class DragValue : Border
     {
         base.OnKeyDown(e);
         if (_typed.IsVisible) return;
-        if (e.Key is Key.Up or Key.Down) { _gesture = ++_gestures; Nudge(e.Key == Key.Up ? 1 : -1); e.Handled = true; }
+        if (e.Key is Key.Up or Key.Down) { _gesture = GestureIds.Next(); Nudge(e.Key == Key.Up ? 1 : -1); e.Handled = true; }
         else if (e.Key == Key.Enter) { StartTyping(); e.Handled = true; }
     }
 
@@ -138,7 +137,7 @@ public sealed class DragValue : Border
         if (!_typed.IsVisible) return;
         var text = _typed.Text?.Trim().TrimStart('+') ?? "";
         StopTyping();
-        _gesture = ++_gestures;
+        _gesture = GestureIds.Next();
         if (int.TryParse(text, NumberStyles.Integer, CultureInfo.CurrentCulture, out var want)) Nudge(want - Value);
     }
 
