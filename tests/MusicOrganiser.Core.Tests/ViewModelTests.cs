@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
@@ -102,6 +103,34 @@ public class ViewModelTests : IDisposable
 
         older = _db.Projects().Single(p => p.Name == "Didums_1");
         Assert.Equal((3, "the first take had the vocal", "Am"), (older.Rating, older.Notes, older.MusicalKey));
+    }
+
+    [Fact]
+    public void Taking_a_tag_off_a_song_takes_it_off_its_older_saves_and_out_of_the_tag_filter()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        Save("Didums_1", 1);
+        var older = _db.Projects().Single(p => p.Name == "Didums_1");
+        _db.SetTags(older.Id, ["dark", "techno"]);
+        Save("Didums_2", 2);   // a new save takes over the song's tags
+        _db.SetTags(older.Id, ["dark", "techno", "first take"]);   // and the older save has one of its own
+        var projects = Main().Projects;
+        var song = projects.Items.Single(i => i.Name == "Didums");
+        Assert.Equal("dark, techno", song.TagsText);
+
+        song.TagsText = "dark, house";
+
+        Assert.Equal(["dark", "first take", "house"], _db.Projects().Single(p => p.Name == "Didums_1").Tags.Order());
+        Assert.Equal(["dark", "house"], _db.Projects().Single(p => p.Name == "Didums_2").Tags.Order());
+        Assert.DoesNotContain("techno", _db.AllTags().Select(t => t.Tag));
+        projects.Reload();
+        Assert.DoesNotContain("techno", projects.TagFilters);
     }
 
     [Fact]
@@ -253,6 +282,80 @@ public class ViewModelTests : IDisposable
         projects.Selected = projects.Items.First(i => i.Daw != "FL Studio");
         projects.Selected = song;
         Assert.False(projects.Detail!.HasPendingFix);
+    }
+
+    [Fact]
+    public async Task An_fl_songs_unused_synths_are_found_only_while_its_panel_stays_open()
+    {
+        // Serum on "Pad" plays nothing; 3x Osc on "Bass" plays the notes.
+        File.WriteAllBytes(Path.Combine(_root, "Quiet Pad.flp"), new Fixtures.FlpBuilder()
+            .Ascii(199, "21.2.3.4004")
+            .Dword(156, 128_000)
+            .Word(64, 0).Byte(21, 2)
+            .Text(201, "Fruity Wrapper").Text(203, "Pad")
+            .Data(213, Fixtures.WrapperBlob("Serum", @"C:\Program Files\VstPlugins\Serum_x64.dll", "Xfer Records", [1, 2, 3, 4]))
+            .Word(64, 1).Byte(21, 2)
+            .Text(201, "3x Osc").Text(203, "Bass").Data(213, [9, 9, 9])
+            .Word(65, 1).Text(193, "Intro")
+            .Data(224, Fixtures.Note(0, 1, 96, 41, 100))
+            .Build());
+        _db.ReplaceInstalledPlugins(["Serum"]);
+        ScanFixtures();
+        var projects = Main().Projects;
+        var song = projects.Items.Single(i => i.Name == "Quiet Pad");
+
+        // Picked and passed straight away (holding the arrow key down the list): the project isn't read for that panel.
+        projects.Selected = song;
+        var passed = projects.Detail!;
+        projects.Selected = null;
+        await Task.Delay(1000);
+        Assert.Equal(0, passed.SilentCount);
+        Assert.Equal(2, passed.VisiblePlugins.Count(p => p.IsInstrument));
+
+        // Left open: Serum is tucked away.
+        projects.Selected = song;
+        var open = projects.Detail!;
+        await Until(() => open.SilentCount == 1);
+        Assert.Equal(["3x Osc"], open.VisiblePlugins.Where(p => p.IsInstrument).Select(p => p.Name));
+    }
+
+    [Fact]
+    public async Task Deleting_a_fixed_copy_puts_it_in_the_recycle_bin()
+    {
+        if (!OperatingSystem.IsLinux()) return;   // the real Recycle Bin (or the Mac's Trash): not in a test
+        var home = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(_root, "share"));
+        try
+        {
+            var libRoot = Fixtures.TempDir();
+            Directory.CreateDirectory(Path.Combine(libRoot, "Drums"));
+            File.WriteAllBytes(Path.Combine(libRoot, "Drums", "Kick 01.wav"), [0]);
+            _db.SetList(Scanner.SampleFoldersKey, [libRoot]);
+            new Scanner(_db).ScanSampleFolders();
+            ScanFixtures();
+            var main = Main();
+            await Until(() => !main.IsScanning);
+            var projects = main.Projects;
+            projects.Reload();
+            projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
+            await projects.Detail!.PlanFixCommand.ExecuteAsync(null);
+            await projects.Detail.SaveFixedCommand.ExecuteAsync(null);
+            var copy = projects.Detail!.PendingFix!;
+            Assert.True(File.Exists(copy));
+
+            ((HeadlessUi)Ui.Current).Confirms = true;
+            await projects.Detail.DeleteFixedCommand.ExecuteAsync(null);
+
+            // You may have saved work into it in the DAW: it can be put back.
+            Assert.False(File.Exists(copy));
+            Assert.True(File.Exists(Path.Combine(_root, "share", "Trash", "files", Path.GetFileName(copy))));
+            Assert.Contains(main.Activities.Items, a => a.Title == $"Deleted {Path.GetFileName(copy)}");
+            Assert.False(projects.Detail!.HasPendingFix);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", home);
+        }
     }
 
     [Fact]
@@ -737,6 +840,72 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Revealing_an_archived_song_shows_it_in_the_list_it_picks_it_in()
+    {
+        ScanFixtures();
+        var projects = Main().Projects;
+        var song = projects.Items.Single(i => i.Daw == "Bitwig Studio");
+        song.Status = "Archived";
+        projects.Reload();
+        song = projects.Items.Single(i => i.Daw == "Bitwig Studio");
+        Assert.DoesNotContain(song, projects.View.Cast<ProjectItem>());   // hidden while "Hide archived" is on
+
+        projects.Reveal(song.Id);
+
+        Assert.Same(song, projects.Selected);
+        Assert.Contains(song, projects.View.Cast<ProjectItem>());
+        Assert.False(projects.HideArchived);
+    }
+
+    [Fact]
+    public void A_reload_filters_the_projects_list_once_while_the_filter_chips_are_refilled()
+    {
+        ScanFixtures();
+        var projects = Main().Projects;
+        projects.DawFilter = "Bitwig Studio";
+        // Like the page's chips and drop-downs: refilling their list clears their pick, and they write that back.
+        projects.DawFilters.CollectionChanged += (_, e) => { if (e.Action == NotifyCollectionChangedAction.Reset) projects.DawFilter = null!; };
+        projects.StatusFilters.CollectionChanged += (_, e) => { if (e.Action == NotifyCollectionChangedAction.Reset) projects.StatusFilter = null!; };
+        projects.TagFilters.CollectionChanged += (_, e) => { if (e.Action == NotifyCollectionChangedAction.Reset) projects.TagFilter = null!; };
+        projects.HardwareFilters.CollectionChanged += (_, e) => { if (e.Action == NotifyCollectionChangedAction.Reset) projects.HardwareFilter = null!; };
+        var view = (ListView)projects.View;
+        var before = view.Refreshes;
+
+        projects.Reload();
+
+        Assert.Equal(1, view.Refreshes - before);
+        Assert.Equal(("Bitwig Studio", ProjectsViewModel.Any), (projects.DawFilter, projects.StatusFilter));
+        Assert.Equal("1 of 3 songs", projects.CountText);
+    }
+
+    [Fact]
+    public async Task Turning_off_one_row_per_song_reads_the_list_again_in_the_background()
+    {
+        void Save(string name, int day)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            File.SetLastWriteTime(file, new DateTime(2026, 10, day));
+            _db.Upsert(new LibraryDb.IndexedFile(file, day, 100, new ProjectInfo { Daw = "FL Studio" }, null, [], []));
+        }
+        Save("Didums_1", 1);
+        Save("Didums_2", 2);
+        var projects = Main().Projects;
+        Assert.Equal("1 song (2 saves)", projects.CountText);
+        UiWork.InBackground = true;
+        try
+        {
+            projects.GroupSaves = false;
+            await Until(() => projects.CountText == "2 projects");
+        }
+        finally
+        {
+            UiWork.InBackground = false;
+        }
+        Assert.Equal(["Didums_1", "Didums_2"], projects.Items.Select(i => i.FileName).Order());
+    }
+
+    [Fact]
     public void ProjectPanelOffersACheckWithTheDaw()
     {
         _db.AddRoot(_root);
@@ -915,6 +1084,93 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Dragging_a_kit_again_brings_only_its_pads_now_and_an_unchanged_kit_isnt_exported_again()
+    {
+        var dir = Fixtures.TempDir();
+        string[] names = ["Kick A", "Snare A", "Snare B"];
+        foreach (var n in names) File.WriteAllBytes(Path.Combine(dir, n + ".wav"), [1, 2]);
+        _soundDb.Save(names.Select(n => new SoundLibrary.Analysed(Path.Combine(dir, n + ".wav"), 2, 1, null, null, null, null)));
+        _sounds.Reload();
+        var exports = Path.Combine(_root, "Exports");
+        Directory.CreateDirectory(exports);
+        _db.SetSetting(ProjectDetailViewModel.ExportFolderKey, exports);
+        var lab = Main().Sounds;
+        Sound Named(string name) => lab.Items.Single(s => s.Name == name);
+        var kit = lab.Kit;
+        kit.ElektronReady = false;   // copied as they are
+        while (kit.Slots.Count > 2) kit.Slots.RemoveAt(2);
+        kit.Slots[0].Slot.Sound = Named("Kick A");
+        kit.Slots[1].Slot.Sound = Named("Snare A");
+
+        var first = kit.MakeDrag([])!;
+        Assert.Equal(["01 Kick - Kick A.wav", "02 Snare - Snare A.wav"], first.Files.Select(Path.GetFileName));
+        Assert.Equal(first.Files, kit.MakeDrag([])!.Files);   // the same kit: the files already there
+
+        // The snare re-rolled (same seed, same minute): the new snare, and not the old one beside it.
+        kit.Slots[1].Slot.Sound = Named("Snare B");
+        var second = kit.MakeDrag([])!;
+        Assert.Equal(["01 Kick - Kick A.wav", "02 Snare - Snare B.wav"], second.Files.Select(Path.GetFileName));
+        Assert.All(first.Files, f => Assert.True(File.Exists(f)));   // the first drag's files stay, for the DAW that has them
+    }
+
+    [Fact]
+    public async Task A_sound_counted_by_its_name_shows_the_projects_with_a_copy_of_it()
+    {
+        void Save(string name, params (string, bool)[] samples)
+        {
+            var file = Path.Combine(_root, name + ".flp");
+            File.WriteAllBytes(file, [0]);
+            _db.Upsert(new LibraryDb.IndexedFile(file, 100, 1, new ProjectInfo { Daw = "FL Studio" }, null, samples, []));
+        }
+        void SaveOne(string name, string sample) => Save(name, (sample, true));
+        // A big library: more samples, all missing (which the samples list puts first), than that list holds.
+        Save("Big", Enumerable.Range(0, 20_001).Select(i => ($@"C:\Gone\{i}.wav", false)).ToArray());
+        SaveOne("Heel", @"K:\Bitwig Studio\Projects\Heel\samples\Vox Chop 7.wav");   // a collected copy
+        SaveOne("Teka", "Vox Chop 7.wav");   // just its name
+        SaveOne("Garage", @"K:\Packs\Not Vox Chop 7.wav");   // another sound, whose name only ends the same
+        SaveOne("Bossa", @"K:\Packs\Snare.wav");
+        _soundDb.Save([new SoundLibrary.Analysed("/samples/Vocals/Vox Chop 7.wav", 1, 1, null, null, null, null)]);
+        _sounds.Reload();
+        var main = Main();
+        var lab = main.Sounds;
+        lab.Selected = lab.Items.Single();
+        Assert.Equal(2, lab.Selected.UsedIn);
+
+        await lab.ShowProjectsCommand.ExecuteAsync(null);
+
+        Assert.Equal(["Heel", "Teka"], main.Projects.View.Cast<ProjectItem>().Select(i => i.Name).Order());
+        Assert.Equal("Projects using Vox Chop 7", main.Projects.IdFilterLabel);
+    }
+
+    [Fact]
+    public async Task Notes_detected_for_a_sound_arent_shown_once_another_sound_is_picked()
+    {
+        var chord = Path.Combine(AppContext.BaseDirectory, "Data", "chord-and-melody-22k.wav");
+        _soundDb.Save([new SoundLibrary.Analysed(chord, 1, 1, null, null, null, null),
+                       new SoundLibrary.Analysed("/samples/Kick 01.wav", 1, 1, null, null, null, null)]);
+        _sounds.Reload();
+        var lab = Main().Sounds;
+        var melody = lab.Items.Single(s => s.Path == chord);
+        if (_sounds.Transcriber is null) return;   // the note-detection model isn't in this build
+
+        // Picked, notes asked for, then the kick picked before they're found: the kick's panel has no notes to export.
+        lab.Selected = melody;
+        var detecting = lab.DetectNotesCommand.ExecuteAsync(null);
+        if (!detecting.IsCompleted)
+        {
+            lab.Selected = lab.Items.Single(s => s.Name == "Kick 01");
+            await detecting;
+            Assert.Empty(lab.Notes);
+            Assert.Equal("", lab.NotesMessage);
+        }
+        await detecting;
+
+        lab.Selected = melody;
+        await lab.DetectNotesCommand.ExecuteAsync(null);
+        Assert.NotEmpty(lab.Notes);
+    }
+
+    [Fact]
     public void Sounds_open_shuffled_and_can_be_ordered_by_how_much_you_like_them()
     {
         ((HeadlessUi)Ui.Current).Player = () => new Recorder(new List<string>());
@@ -954,6 +1210,44 @@ public class ViewModelTests : IDisposable
         again.ViewMode = SoundsViewModel.Tiles;
         again.TileColumns = 4;
         Assert.Equal([4, 1], again.TileRows.Select(r => r.Tiles.Count));
+    }
+
+    [Fact]
+    public void A_list_header_sort_orders_the_sounds_themselves_and_lasts_through_a_search()
+    {
+        // Review: the grid sorted 357k sounds itself on the UI thread, Ctrl+Up/Down walked another order, and typing dropped it.
+        _soundDb.Save(new (string Name, double? Bpm)[] { ("Loop A", 120), ("Loop B", 90), ("Hit C", null), ("Loop D", 174) }.Select(s =>
+            new SoundLibrary.Analysed($"/samples/{s.Name}.wav", 1, 1, new SoundAnalysis { Bpm = s.Bpm, Features = [1, 0, 0] }, null, null, null)));
+        _sounds.Reload();
+        var lab = Main().Sounds;
+        lab.ViewMode = SoundsViewModel.List;
+        string[] Names() => [.. lab.Shown.Select(s => s.Name)];
+
+        lab.SortByColumn("Bpm");
+        Assert.Equal(["Loop B", "Loop A", "Loop D", "Hit C"], Names());   // no BPM goes last either way
+        Assert.Equal(Names(), lab.View!.Cast<Sound>().Select(s => s.Name));   // the grid shows the same order
+        lab.SortByColumn("Bpm");
+        Assert.True(lab.ColumnSortDescending);
+        Assert.Equal(["Loop D", "Loop A", "Loop B", "Hit C"], Names());
+
+        lab.SearchText = "loop";
+        Assert.Equal(["Loop D", "Loop A", "Loop B"], Names());
+
+        // The tiles keep the Order box's order; back on the list, the header's comes back.
+        lab.SortBy = SoundsViewModel.MostLiked;
+        Assert.Null(lab.ColumnSort);
+        lab.ViewMode = SoundsViewModel.Tiles;
+        lab.SortBy = "Name";
+        lab.SortByColumn("Bpm");
+        Assert.Equal(["Loop A", "Loop B", "Loop D"], Names());
+        lab.ViewMode = SoundsViewModel.List;
+        Assert.Equal(["Loop B", "Loop A", "Loop D"], Names());
+
+        // A third click goes back to the Order box's order.
+        lab.SortByColumn("Bpm");
+        lab.SortByColumn("Bpm");
+        Assert.Null(lab.ColumnSort);
+        Assert.Equal(["Loop A", "Loop B", "Loop D"], Names());
     }
 
     [Fact]
@@ -1310,6 +1604,72 @@ public class ViewModelTests : IDisposable
             Assert.True(settings.AddSampleFolderCommand.CanExecute(null));
         }
         finally { ui.Picking = null; }
+    }
+
+    [Fact]
+    public async Task A_project_folder_taken_out_of_settings_can_take_its_projects_off_the_list()
+    {
+        var kept = Path.Combine(Fixtures.TempDir(), "Kept");
+        Directory.CreateDirectory(kept);
+        Fixtures.FlStudioProject(kept, "Keeper");
+        _db.AddRoot(_root);
+        _db.AddRoot(kept);
+        var main = Main();
+        await Until(() => !main.IsScanning);
+        Assert.Equal(4, main.Projects.Items.Count);
+        var settings = main.Settings;
+        var ui = (HeadlessUi)Ui.Current;
+
+        // Cancel: the folder isn't scanned any more, but its projects stay listed.
+        settings.SelectedProjectFolder = _root;
+        await settings.RemoveProjectFolderCommand.ExecuteAsync(null);
+        Assert.DoesNotContain(_root, _db.Roots());
+        Assert.Equal(4, _db.Projects().Count);
+
+        // OK: they go from the list (their files stay), and the other folder's stay.
+        _db.AddRoot(_root);
+        settings.ProjectFolders.Add(_root);
+        ui.Confirms = true;
+        settings.SelectedProjectFolder = _root;
+        await settings.RemoveProjectFolderCommand.ExecuteAsync(null);
+        Assert.Equal(["Keeper"], _db.Projects().Select(p => p.Name));
+        Assert.Equal(["Keeper"], main.Projects.Items.Select(i => i.Name));
+        Assert.True(File.Exists(Path.Combine(_root, "Night Drive.flp")));
+    }
+
+    [Fact]
+    public async Task A_plugin_folder_taken_out_of_settings_takes_its_plugins_off_the_installed_list()
+    {
+        var folder = Path.Combine(Fixtures.TempDir(), "Plugins");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "Odd Synth.clap"), "code");
+        _db.SetList(Scanner.PluginFoldersKey, [folder]);
+        _db.AddRoot(_root);
+        var main = Main();
+        await Until(() => !main.IsScanning);
+        Assert.Contains("Odd Synth", _db.InstalledNames());
+
+        main.Settings.SelectedPluginFolder = folder;
+        await main.Settings.RemovePluginFolderCommand.ExecuteAsync(null);
+        await Until(() => !main.IsScanning);
+
+        Assert.DoesNotContain("Odd Synth", _db.InstalledNames());
+    }
+
+    [Fact]
+    public async Task A_sample_folder_added_in_settings_brings_its_sounds_into_sound_lab()
+    {
+        var pack = Path.Combine(Fixtures.TempDir(), "New Pack");
+        Directory.CreateDirectory(pack);
+        Synth.Write(Path.Combine(pack, "Big Kick.wav"), Synth.Kick(1));
+        var main = Main();
+        Assert.Empty(main.Sounds.Items);
+        ((HeadlessUi)Ui.Current).PickedFolder = pack;
+
+        await main.Settings.AddSampleFolderCommand.ExecuteAsync(null);
+
+        await Until(() => main.Sounds.Items.Any(s => s.Name == "Big Kick"));
+        main.Shutdown();
     }
 
     [Fact]
@@ -1818,6 +2178,86 @@ public class ViewModelTests : IDisposable
             },
         };
         File.WriteAllText(Path.Combine(live, instance + ".json"), status.ToJsonString());
+    }
+
+    [Fact]
+    public async Task Finding_matches_for_a_missing_sample_runs_in_the_background_and_a_sample_picked_since_keeps_its_own_panel()
+    {
+        // The sample library sits outside the projects' folder: a kick inside it would count as found (SampleLocator).
+        var libRoot = Fixtures.TempDir();
+        Directory.CreateDirectory(Path.Combine(libRoot, "Drums"));
+        File.WriteAllBytes(Path.Combine(libRoot, "Drums", "Kick 01.wav"), [0]);
+        _db.SetList(Scanner.SampleFoldersKey, [libRoot]);
+        new Scanner(_db).ScanSampleFolders();
+        ScanFixtures();
+        var main = Main();
+        await Until(() => !main.IsScanning);
+        var samples = main.Samples;
+        samples.Selected = samples.Items.Single(s => s.Path.EndsWith(@"Drums\Kick 01.wav"));
+        await samples.FindMatchesCommand.ExecuteAsync(null);
+        Assert.EndsWith("Kick 01.wav", samples.Matches[0].Candidate);
+        Assert.EndsWith("possible matches", samples.MatchMessage);
+
+        // The song's own Samples tab finds it the same way.
+        main.Projects.Selected = main.Projects.Items.Single(i => i.Daw == "FL Studio");
+        var row = main.Projects.Detail!.Samples.Single(s => !s.Found);
+        await row.FindMatchesCommand.ExecuteAsync(null);
+        Assert.EndsWith("Kick 01.wav", row.Matches[0].Candidate);
+        Assert.Equal("", row.MatchMessage);
+
+        // Looked for in the background: the panel says so meanwhile, and a result for a sample no longer picked isn't shown.
+        UiWork.InBackground = true;
+        try
+        {
+            var finding = samples.FindMatchesCommand.ExecuteAsync(null);
+            if (!finding.IsCompleted)
+            {
+                Assert.Equal("Looking on your drives…", samples.MatchMessage);
+                samples.Selected = null;
+                await finding;
+                Assert.Empty(samples.Matches);
+                Assert.Equal("", samples.MatchMessage);
+            }
+            await finding;
+        }
+        finally
+        {
+            UiWork.InBackground = false;
+        }
+    }
+
+    [Fact]
+    public async Task The_samples_list_is_read_as_the_window_opens_and_not_again_after_a_scan_that_changed_nothing()
+    {
+        ScanFixtures();
+        var main = Main();
+        var shown = main.Samples.Items;
+        Assert.Contains(shown, s => s.Path.EndsWith("Kick 01.wav"));
+        await main.RefreshAllAsync();
+        Assert.Same(shown, main.Samples.Items);
+    }
+
+    [Fact]
+    public async Task Recovering_a_sample_that_cant_be_copied_says_so_and_one_that_can_is_found_after()
+    {
+        ScanFixtures();
+        var main = Main();
+        ((HeadlessUi)Ui.Current).Confirms = true;
+        main.Projects.Selected = main.Projects.Items.Single(i => i.Daw == "FL Studio");
+        var row = main.Projects.Detail!.Samples.Single(s => !s.Found);
+
+        // Gone since it was found (moved, or a drive unplugged): said in the row, not an error box.
+        await row.Recover(Path.Combine(Fixtures.TempDir(), "Kick 01.wav"));
+        Assert.StartsWith("Couldn't copy it: ", row.MatchMessage);
+        Assert.False(File.Exists(Path.Combine(_root, "Kick 01.wav")));
+
+        var found = Path.Combine(Fixtures.TempDir(), "Kick 01.wav");
+        File.WriteAllBytes(found, [1, 2, 3]);
+        await row.Recover(found);
+        Assert.Equal("Copied. Your DAW will find it next time the project opens.", row.MatchMessage);
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(Path.Combine(_root, "Kick 01.wav")));
+        var fl = _db.Projects().Single(p => p.Daw == "FL Studio");
+        Assert.All(_db.Project(fl.Id)!.Samples, s => Assert.True(s.Found));   // the song was read again
     }
 
     /// <summary>Puts the three test projects in the library, without the screens starting a scan of their own.</summary>
@@ -2609,7 +3049,9 @@ public class ViewModelTests : IDisposable
         public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult(PickedFile);
         public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);
         public Task<string?> PickSaveFile(string fileName, string filterName, string extension, string? initialFolder) => Task.FromResult<string?>(null);
-        public Task<bool> Confirm(string message, string title) => Task.FromResult(false);
+        /// <summary>The answer to every "Are you sure?": no, unless a test says yes.</summary>
+        public bool Confirms { get; set; }
+        public Task<bool> Confirm(string message, string title) => Task.FromResult(Confirms);
         public void CopyText(string text) { }
         public void ShowMidi(MidiPreviewViewModel vm) { }
         public void ShowPresets(PresetsViewModel vm) { }
@@ -2621,7 +3063,9 @@ public class ViewModelTests : IDisposable
         public IComparer? CustomSort { get; set; }
         public void SortBy(string property, ListSortDirection direction) { }
         public void GroupBy(string? property) { }
-        public void Refresh() { }
+        /// <summary>How many times the list was filtered and sorted again.</summary>
+        public int Refreshes { get; private set; }
+        public void Refresh() => Refreshes++;
         public int Count => items.Cast<object>().Count(i => Filter?.Invoke(i) ?? true);
         public IEnumerator GetEnumerator()
         {

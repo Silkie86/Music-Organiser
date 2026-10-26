@@ -16,6 +16,9 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     public BulkCollection<ProjectItem> Items { get; } = new();
     public IItemsView View { get; }
 
+    /// <summary>The app's shortcut list, whose keys the song's right-click menu shows.</summary>
+    public ShortcutsViewModel Shortcuts => _main.Shortcuts;
+
     public static IReadOnlyList<string> StatusChoices => Statuses.All;
     public static IReadOnlyList<int> RatingChoices { get; } = [0, 1, 2, 3, 4, 5];
     public static IReadOnlyList<string> GroupChoices { get; } =
@@ -133,10 +136,20 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
             loaded.Items[at] = open;
         Items.ReplaceAll(loaded.Items);
 
-        Refill(DawFilters, Items.Select(i => i.Daw), DawFilter, v => DawFilter = v);
-        Refill(StatusFilters, Statuses.All, StatusFilter, v => StatusFilter = v);
-        Refill(TagFilters, loaded.Tags, TagFilter, v => TagFilter = v);
-        Refill(HardwareFilters, Items.SelectMany(i => i.Hardware), HardwareFilter, v => HardwareFilter = v);
+        // The list is filtered once, below, not each time a chip or drop-down clears its pick and gets it back (nine
+        // times over 16,000 songs after every save).
+        _refilling = true;
+        try
+        {
+            Refill(DawFilters, Items.Select(i => i.Daw), DawFilter, v => DawFilter = v);
+            Refill(StatusFilters, Statuses.All, StatusFilter, v => StatusFilter = v);
+            Refill(TagFilters, loaded.Tags, TagFilter, v => TagFilter = v);
+            Refill(HardwareFilters, Items.SelectMany(i => i.Hardware), HardwareFilter, v => HardwareFilter = v);
+        }
+        finally
+        {
+            _refilling = false;
+        }
 
         Selected = select is not null
             ? Items.FirstOrDefault(i => i.Path == select || i.OlderSaves.Any(o => o.Path == select))
@@ -251,6 +264,8 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     [RelayCommand]
     void CloseDoubts() => CheckingDoubts = false;
 
+    bool _refilling;
+
     static void Refill(ObservableCollection<string> target, IEnumerable<string> values, string current, Action<string> reset)
     {
         target.Clear();   // the ComboBox clears its selection and writes that back, so always restore it
@@ -285,13 +300,15 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
 
     static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
 
-    partial void OnGroupSavesChanged(bool value) => Reload();
+    // In the background: it reads and groups every project again, which held the window up for seconds.
+    partial void OnGroupSavesChanged(bool value) => _ = ReloadAsync();
 
     partial void OnSearchTextChanged(string value) => ApplyFilter();
-    partial void OnDawFilterChanged(string value) => ApplyFilter();
-    partial void OnStatusFilterChanged(string value) => ApplyFilter();
-    partial void OnTagFilterChanged(string value) => ApplyFilter();
-    partial void OnHardwareFilterChanged(string value) => ApplyFilter();
+    // Not while Show refills their lists (it filters once after): each refill clears the pick and puts it back.
+    partial void OnDawFilterChanged(string value) { if (!_refilling) ApplyFilter(); }
+    partial void OnStatusFilterChanged(string value) { if (!_refilling) ApplyFilter(); }
+    partial void OnTagFilterChanged(string value) { if (!_refilling) ApplyFilter(); }
+    partial void OnHardwareFilterChanged(string value) { if (!_refilling) ApplyFilter(); }
     partial void OnOnlyFavouritesChanged(bool value) => ApplyFilter();
     partial void OnOnlyMissingChanged(bool value) => ApplyFilter();
     partial void OnHideArchivedChanged(bool value) => ApplyFilter();
@@ -385,7 +402,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
 
     partial void OnSelectedChanged(ProjectItem? value)
     {
-        Detail?.LeftSongMidi(closed: true);   // its small playground mustn't keep playing with nothing to stop it
+        Detail?.Closed();   // its small playground mustn't keep playing with nothing to stop it, nor its reading go on
         Detail = value is null ? null : new ProjectDetailViewModel(_db, value, _main);
         _main.Live.ShowOn(Detail);
     }
@@ -397,6 +414,7 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         var item = Items.FirstOrDefault(i => i.Id == id || i.OlderSaves.Any(o => o.Id == id));
         if (item is null) return;
         if (!Filter(item)) ClearFilters();
+        if (!Filter(item)) HideArchived = false;   // an archived song: Clear filters leaves "Hide archived" as it is
         Selected = item;
     }
 

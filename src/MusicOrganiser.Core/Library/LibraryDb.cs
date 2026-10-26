@@ -284,17 +284,33 @@ public sealed partial class LibraryDb : IDisposable
     public void Upsert(IndexedFile f) => UpsertMany([f]);
 
     /// <summary>Saves several scanned projects in one transaction.</summary>
-    public void UpsertMany(IReadOnlyCollection<IndexedFile> files)
+    public void UpsertMany(IReadOnlyCollection<IndexedFile> files) => UpsertMany(files, inRoots: false);
+
+    /// <summary>
+    /// Saves what a scan read, leaving out any project no longer inside a project folder: one taken out of Settings while
+    /// the scan was still reading it. The folders are looked at inside the save, so projects taken off the list with
+    /// their folder never come back from a scan that started before.
+    /// </summary>
+    public void UpsertInRoots(IReadOnlyCollection<IndexedFile> files) => UpsertMany(files, inRoots: true);
+
+    void UpsertMany(IReadOnlyCollection<IndexedFile> files, bool inRoots)
     {
         if (files.Count == 0) return;
         var installed = InstalledKeys();
+        var saved = 0;
         lock (_lock)
         {
+            var roots = inRoots ? Roots() : [];
             using var tx = _conn.BeginTransaction();
-            foreach (var f in files) Upsert(tx, f, installed);
+            foreach (var f in files)
+            {
+                if (inRoots && !roots.Any(r => Space.DiskSpace.IsInside(f.Path, r))) continue;
+                Upsert(tx, f, installed);
+                saved++;
+            }
             tx.Commit();
         }
-        ProjectsChanged();
+        if (saved > 0) ProjectsChanged();
     }
 
     void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed)
@@ -513,6 +529,23 @@ public sealed partial class LibraryDb : IDisposable
     public void RemoveProject(string path)
     {
         if (Exec("DELETE FROM projects WHERE path = $p", ("$p", path)) > 0) ProjectsChanged();
+    }
+
+    /// <summary>
+    /// The projects in <paramref name="folder"/> that none of <paramref name="roots"/> holds: what a project folder taken
+    /// out of Settings leaves listed (a scan only looks inside the folders it has).
+    /// </summary>
+    public IReadOnlyList<long> ProjectsOnlyIn(string folder, IReadOnlyList<string> roots) =>
+        Query("SELECT id, path FROM projects", r => (Id: (long)r["id"], Path: Str(r, "path")))
+            .Where(p => Space.DiskSpace.IsInside(p.Path, folder) && !roots.Any(root => Space.DiskSpace.IsInside(p.Path, root)))
+            .Select(p => p.Id).ToList();
+
+    /// <summary>Takes these projects out of the library, with what you gave them. Their files aren't touched.</summary>
+    public void RemoveProjects(IReadOnlyCollection<long> ids)
+    {
+        if (ids.Count == 0) return;
+        InBatches(ids, "DELETE FROM projects WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
+        ProjectsChanged();
     }
 
     // ---- installed plugins & sample index ----------------------------------------------
@@ -784,18 +817,38 @@ public sealed partial class LibraryDb : IDisposable
         }
     }
 
-    public void SetTags(long id, IEnumerable<string> tags)
+    public void SetTags(long id, IEnumerable<string> tags) => SetTags(id, tags, []);
+
+    /// <summary>
+    /// A song's tags, set on its newest save (<paramref name="id"/>). The tags this adds or takes off are added to or taken
+    /// off each of its <paramref name="otherSaves"/> too, so a tag taken off the song doesn't stay on its older saves (and
+    /// in the Tag filter). An older save's other tags are left alone.
+    /// </summary>
+    public void SetTags(long id, IEnumerable<string> tags, IEnumerable<long> otherSaves)
     {
         var clean = tags.Select(t => t.Trim().ToLowerInvariant()).Where(t => t.Length > 0).Distinct().ToList();
         lock (_lock)
         {
             using var tx = _conn.BeginTransaction();
-            using (var del = Cmd("DELETE FROM tags WHERE project_id = $id", ("$id", id))) { del.Transaction = tx; del.ExecuteNonQuery(); }
-            foreach (var t in clean)
+            void Run(string sql, long project, string? tag = null)
             {
-                using var cmd = Cmd("INSERT INTO tags VALUES ($id, $t)", ("$id", id), ("$t", t));
+                using var cmd = tag is null ? Cmd(sql, ("$id", project)) : Cmd(sql, ("$id", project), ("$t", tag));
                 cmd.Transaction = tx;
                 cmd.ExecuteNonQuery();
+            }
+            var had = new List<string>();
+            using (var read = Cmd("SELECT tag FROM tags WHERE project_id = $id", ("$id", id)))
+            {
+                read.Transaction = tx;
+                using var r = read.ExecuteReader();
+                while (r.Read()) had.Add(Str(r, "tag"));
+            }
+            Run("DELETE FROM tags WHERE project_id = $id", id);
+            foreach (var t in clean) Run("INSERT INTO tags VALUES ($id, $t)", id, t);
+            foreach (var other in otherSaves.Where(o => o != id).Distinct())
+            {
+                foreach (var t in had.Except(clean)) Run("DELETE FROM tags WHERE project_id = $id AND tag = $t", other, t);
+                foreach (var t in clean.Except(had)) Run("INSERT OR IGNORE INTO tags VALUES ($id, $t)", other, t);
             }
             tx.Commit();
         }
@@ -914,6 +967,16 @@ public sealed partial class LibraryDb : IDisposable
 
     public IReadOnlyList<long> ProjectsUsingSample(string path) =>
         Query("SELECT DISTINCT project_id FROM samples WHERE path = $p COLLATE NOCASE", r => (long)r["project_id"], ("$p", path));
+
+    /// <summary>
+    /// Projects using a sample by its file name, wherever their copy of it is (Bitwig's collected copies, a relative
+    /// path): Sound Lab counts a sound by its name when no project has it at its own path and no other sound shares it.
+    /// </summary>
+    public IReadOnlyList<long> ProjectsUsingSampleNamed(string fileName) => fileName.Length == 0 ? [] : Query("""
+        SELECT DISTINCT project_id FROM samples
+        WHERE substr(path, -length($n)) = $n COLLATE NOCASE
+          AND (length(path) = length($n) OR substr(path, -length($n) - 1, 1) IN ('\', '/'))
+        """, r => (long)r["project_id"], ("$n", fileName));
 }
 
 /// <summary>Which projects count as using a sound (Settings › Sounds), for projects whose reader can tell (FL Studio so far).</summary>

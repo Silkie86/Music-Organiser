@@ -144,6 +144,46 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public void The_administrator_bin_step_does_nothing_with_a_list_changed_after_the_app_wrote_it()
+    {
+        // Review: the list sits in Temp while Windows asks, and the step binned whatever it said by then.
+        if (OperatingSystem.IsWindows()) return;   // the real Recycle Bin: not in a test
+        var home = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(_root, "share"));
+        try
+        {
+            var ticked = File("Plugins/Old.vst3");
+            var other = File("Plugins/Keep.vst3");
+            var list = Path.Combine(_root, "list.txt");
+            var result = Path.Combine(_root, "result.txt");
+            System.IO.File.WriteAllText(list, ticked + "\n");
+            var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.IO.File.ReadAllBytes(list)));
+
+            // Another line slipped in while Windows was asking: nothing goes, not even the ticked one.
+            System.IO.File.AppendAllText(list, other + "\n");
+            Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, result, fingerprint]));
+            Assert.True(System.IO.File.Exists(ticked));
+            Assert.True(System.IO.File.Exists(other));
+            Assert.False(System.IO.File.Exists(result));
+
+            // The list as written: the ticked file goes, and the step says so.
+            System.IO.File.WriteAllText(list, ticked + "\n");
+            Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, result, fingerprint]));
+            Assert.False(System.IO.File.Exists(ticked));
+            Assert.True(System.IO.File.Exists(other));
+            Assert.Equal([$"{ticked}\t"], System.IO.File.ReadAllLines(result));
+
+            // Started for this some other way: nothing, and not the app's window either.
+            Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, result]));
+            Assert.False(RecycleBin.RunHelper(["--something-else"]));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", home);
+        }
+    }
+
+    [Fact]
     public void The_bin_keeps_what_it_takes()
     {
         if (OperatingSystem.IsWindows()) return;   // the real Recycle Bin: not in a test
@@ -956,17 +996,21 @@ public class SpaceTests : IDisposable
     {
         var keep = File("Old Library/a.wav");
         var list = Path.Combine(_root, "list.txt");
-        // Another program swapped the list after the app wrote it: the digest on the command line doesn't match.
-        System.IO.File.WriteAllLines(list, [keep]);
         var result = Path.Combine(_root, "result.txt");
-        Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, AdminStep.Digest([Path.Combine(_root, "what the app said.wav")]), result]));
+        // Another program swapped the list after the app wrote it: the fingerprint on the command line doesn't match.
+        var said = AdminStep.WriteList(list, [Path.Combine(_root, "what the app said.wav")]);
+        System.IO.File.WriteAllLines(list, [keep]);
+        Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, result, said]));
         Assert.True(System.IO.File.Exists(keep));
         Assert.False(System.IO.File.Exists(result));
-        Assert.True(FolderMove.RunHelper([FolderMove.HelperFlag, "relink", list, AdminStep.Digest(["x\ty"]), result]));
+        var relink = AdminStep.WriteList(list, ["x\ty"]);
+        System.IO.File.WriteAllLines(list, [keep]);
+        Assert.True(FolderMove.RunHelper([FolderMove.HelperFlag, "relink", list, result, relink]));
         Assert.False(System.IO.File.Exists(result));
         // A result file already there (put there to point somewhere else) is never written through.
+        var fingerprint = AdminStep.WriteList(list, [keep]);
         System.IO.File.WriteAllText(result, "theirs");
-        Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, AdminStep.Digest([keep]), result]));
+        Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, result, fingerprint]));
         Assert.Equal("theirs", System.IO.File.ReadAllText(result));
         Assert.True(System.IO.File.Exists(keep));
 
@@ -976,7 +1020,7 @@ public class SpaceTests : IDisposable
         try
         {
             System.IO.File.Delete(result);
-            Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, AdminStep.Digest([keep]), result]));
+            Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, result, fingerprint]));
             Assert.False(System.IO.File.Exists(keep));
             Assert.Equal([$"{keep}\t"], System.IO.File.ReadAllLines(result));
         }

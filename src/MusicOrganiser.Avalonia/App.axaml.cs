@@ -90,7 +90,45 @@ public partial class App : Application
     internal static string? Commit(string version) =>
         version.IndexOf('+') is var plus and >= 0 && version.Length - plus > 7 ? version.Substring(plus + 1, 7) : null;
 
-    readonly List<string> _errors = [];
+    // The errors in or waiting for their box, by Key.
+    readonly List<(string Key, string Message)> _errors = [];
+    // Every error this run: how many times it has happened, when it last did, and whether its box has been up.
+    readonly Dictionary<string, (int Times, long Last, bool Shown)> _seen = [];
+
+    /// <summary>
+    /// How long an error must stay away before its box comes back: a button that fails twice says so twice, but one from
+    /// a timer or drawing, which comes back many times a second, doesn't bring its box straight back.
+    /// </summary>
+    internal const long QuietMs = 10_000;
+
+    /// <summary>
+    /// Which error this is: its kind and where it came from, not just its words. Different bugs often say the same thing
+    /// ("Object reference not set to an instance of an object."), and each needs its own box and its stack in the run log.
+    /// </summary>
+    internal static string Key(Exception error) => $"{error.GetType().FullName}\n{error.StackTrace ?? error.Message}";
+
+    /// <summary>
+    /// Whether to show an error's box (and log it in full). One that keeps happening (from a timer, or drawing) brought
+    /// its box straight back each time it was closed, so the app couldn't be used: a repeat is held back while its box is
+    /// up or waiting, or when it last happened under <see cref="QuietMs"/> ago, and the run log counts those. One whose
+    /// box never went up (the window wasn't showing yet) is shown the next time it happens.
+    /// </summary>
+    internal bool ShouldShow(Exception error, long nowMs)
+    {
+        var key = Key(error);
+        var (times, last, shown) = _seen.GetValueOrDefault(key);
+        _seen[key] = (++times, nowMs, shown);
+        if (times == 1 || (!_errors.Exists(x => x.Key == key) && (!shown || nowMs - last >= QuietMs))) return true;
+        if (times is 2 or 10 or 100 or 1000 or 10_000)
+            SessionLog.Current?.Info("App", $"The same error again ({times} times now): {error.GetType().Name}: {error.Message}");
+        return false;
+    }
+
+    /// <summary>Notes that an error's box went up, so a quick repeat of it is held back.</summary>
+    internal void Shown(string key)
+    {
+        if (_seen.TryGetValue(key, out var seen)) _seen[key] = seen with { Shown = true };
+    }
 
     /// <summary>
     /// Keeps the app alive and says what went wrong rather than vanishing. Errors that happen while
@@ -99,14 +137,17 @@ public partial class App : Application
     async void OnUnhandled(object? sender, DispatcherUnhandledExceptionEventArgs e)
     {
         e.Handled = true;
+        if (!ShouldShow(e.Exception, Environment.TickCount64)) return;
         SessionLog.Current?.Error("App", "Error shown to the user", e.Exception);
-        if (_errors.Contains(e.Exception.Message)) return;
-        _errors.Add(e.Exception.Message);
+        _errors.Add((Key(e.Exception), e.Exception.Message));
         if (_errors.Count > 1) return;   // already showing one; this one waits its turn
         while (_errors.Count > 0)
         {
             if ((ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow is { IsVisible: true } owner)
-                await new ConfirmWindow(_errors[0], "Music Organiser", okOnly: true).ShowDialog(owner);
+            {
+                Shown(_errors[0].Key);
+                await new ConfirmWindow(_errors[0].Message, "Music Organiser", okOnly: true).ShowDialog(owner);
+            }
             _errors.RemoveAt(0);
         }
     }
