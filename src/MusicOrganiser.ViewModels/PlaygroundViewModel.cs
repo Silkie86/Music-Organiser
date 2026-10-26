@@ -1723,24 +1723,15 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     /// New chords from <paramref name="from"/> to <paramref name="to"/>, played by the chord clips there (chords are heard,
     /// never typed: Solomon, 2026-10-19). Each one's notes in those bars are voiced again on the new chords, struck with
     /// the rhythm they had; a clip changed this way plays its notes as they are from
-    /// then on. With no chord clip there, a plain chord clip is put over those bars.
+    /// then on. Muted chord clips (and those not soloed) change too, so they never play the old chords over the new ones
+    /// once they're heard again. With no chord clip there that isn't muted, a plain chord clip is put over those bars.
     /// </summary>
     /// <returns>Whether it made a new chord track.</returns>
     static bool Rechord(PlaygroundSection timeline, IReadOnlyList<TimedChord> lane, long from, long to)
     {
-        var clips = PlaygroundSession.Audible(timeline).Where(l => l.Written.Length == 0)
+        var clips = timeline.Layers.Where(l => l.Written.Length == 0)
             .SelectMany(l => l.Clips.Where(c => (c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords) && c.Start < to && c.End > from)
                                     .Select(c => (Layer: l, Clip: c))).ToList();
-        if (clips.Count == 0)
-        {
-            var notes = Voicer.Plain(LaneAt(lane, from, to));
-            var track = timeline.Layers.FirstOrDefault(l => l.Name == "Chords" && l.Written.Length == 0);
-            var added = track is null;
-            if (track is null) timeline.Layers.Add(track = new PlaygroundLayer { Name = "Chords", Role = MidiRoles.Chords, Program = GmSounds.DefaultFor(MidiRoles.Chords) });
-            track.Clips.Add(PlaygroundClip.Of("Chords", MidiRoles.Chords, notes, to - from, from, to - from));
-            track.Render();
-            return added;
-        }
         foreach (var (layer, c) in clips)
         {
             var local = c.Render().Select(n => n with { Start = n.Start - c.Start }).ToList();
@@ -1761,7 +1752,21 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             c.Pinned = true;
             layer.Render();
         }
-        return false;
+        if (clips.Any(p => !p.Layer.Muted)) return false;
+        // A Chords track that isn't muted takes the plain chords (over anything it had there, as in a DAW), else a new one.
+        var notes = Voicer.Plain(LaneAt(lane, from, to));
+        var track = timeline.Layers.FirstOrDefault(l => l.Name == "Chords" && l.Written.Length == 0 && !l.Muted);
+        var added = track is null;
+        if (track is null)
+        {
+            var name = "Chords";
+            for (var i = 2; timeline.Layers.Any(l => l.Name == name); i++) name = $"Chords {i}";
+            timeline.Layers.Add(track = new PlaygroundLayer { Name = name, Role = MidiRoles.Chords, Program = GmSounds.DefaultFor(MidiRoles.Chords) });
+        }
+        CutOut(track, from, to);
+        track.Clips.Add(PlaygroundClip.Of("Chords", MidiRoles.Chords, notes, to - from, from, to - from));
+        track.Render();
+        return added;
     }
 
     // ---- suggestions from the library ----

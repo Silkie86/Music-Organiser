@@ -164,4 +164,27 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         p.UndoCommand.Execute(null);
         Assert.Empty(p.Layers);
     }
+
+    [Fact]
+    public void A_next_chord_added_with_the_chord_part_muted_never_plays_the_old_chord_over_it()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        p.CurrentSection.Bars = 2;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+        var keys = p.Layers[0].Layer;
+        p.Layers[0].MuteCommand.Execute(null);
+        p.AddNextChord(Chord("Cmaj7"));
+        Assert.Equal(3, p.Bars);
+
+        // The new bar is heard, from a plain chord part, and the muted keys play it too once they're heard again.
+        var c = new[] { 0, 4, 7, 11 };
+        var plain = p.Layers.Single(l => l.Layer != keys).Layer;
+        Assert.Single(plain.Clips, k => k.Start < 3 * Bar && k.End > 2 * Bar);
+        Assert.All(plain.Notes.Where(n => n.Start >= 2 * Bar), n => Assert.Contains(n.Key % 12, c));
+        p.Layers.Single(l => l.Layer == keys).MuteCommand.Execute(null);
+        var bar3 = keys.Notes.Where(n => n.Start >= 2 * Bar).ToList();
+        Assert.NotEmpty(bar3);
+        Assert.All(bar3, n => Assert.Contains(n.Key % 12, c));
+    }
 }
