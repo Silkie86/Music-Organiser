@@ -221,4 +221,26 @@ public class PlaygroundWholeAppReviewTests : IDisposable
         // Each goes out to the DAW as a track of its own.
         Assert.Equal(2, p.MakeDrag(["arrangement"])!.Cards.Count);
     }
+
+    [Fact]
+    public async Task Parts_brought_in_past_the_last_bar_the_timeline_can_have_are_refused()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+        p.Bars = 124;
+        var labels = p.CurrentSection.Labels.Count;
+
+        var sketch = new PlaygroundSection { Bars = 8, Layers = [new PlaygroundLayer { Name = "Lead", Role = MidiRoles.Melody, Clips = [PlaygroundClip.Of("Lead", MidiRoles.Melody, Tune(2), 2 * Bar, 0, 8 * Bar)] }] };
+        p.TakeSketch(sketch, "Sunday");
+        Assert.Equal(124, p.Bars);
+        Assert.Single(p.Layers);
+        Assert.Contains("no room", p.Message);
+
+        await p.OpenFromSongAsync(Path.Combine(_root, "Sunday.flp"), "Sunday", notes: Tune(8));
+        Assert.Equal(124, p.Bars);
+        Assert.Equal(labels, p.CurrentSection.Labels.Count);
+        Assert.Null(p.Loop);
+        Assert.Contains("no room", p.Message);
+    }
 }

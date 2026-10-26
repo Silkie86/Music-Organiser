@@ -2136,8 +2136,13 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     internal void TakeSketch(PlaygroundSection sketch, string name)
     {
         StopPlaying();
-        Remember();
         var at = IsEmpty ? 0 : Section.Length;
+        if (at + sketch.Length > (long)MaxBars * Bar)
+        {
+            TimelineFull(name, sketch.Bars);
+            return;
+        }
+        Remember();
         if (IsEmpty) Section.Bars = sketch.Bars;
         Reach(at + sketch.Length);
         foreach (var t in sketch.Layers)
@@ -2172,6 +2177,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     {
         StopPlaying();
         var bars = notes is { Count: > 0 } ? Math.Clamp(PhraseAnalyser.BarsOf(notes), 1, GrowBars) : NewBars;
+        if (!IsEmpty && Section.Bars + bars > MaxBars)
+        {
+            TimelineFull(songName, bars);
+            return;
+        }
         if (!IsEmpty)
         {
             Remember();
@@ -2194,6 +2204,17 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         Message = entry is null
             ? Message
             : $"{title ?? entry.Title} on {(brought ? $"{songName}, its bars {FromBar}–{FromBar + bars - 1}" : "its own")}{(Loop is { } r ? $", at bar {r.Start / Bar + 1}" : "")}. Mute the song's parts to hear it alone; Undo takes it out.";
+    }
+
+    /// <summary>
+    /// Bars brought in from another page don't fit after the last bar (the timeline is at most <see cref="MaxBars"/>): the
+    /// page says so, and nothing is added.
+    /// </summary>
+    void TimelineFull(string name, int bars)
+    {
+        Message = $"There's no room for {name} ({bars} bar{(bars == 1 ? "" : "s")}): the timeline can't go past {MaxBars} bars. " +
+                  "Make the timeline shorter, or start a new idea, then try again.";
+        if (_main.Nav.FirstOrDefault(n => n.Page == this) is { } page) _main.SelectedNav = page;
     }
 
     // ---- loop points ----
