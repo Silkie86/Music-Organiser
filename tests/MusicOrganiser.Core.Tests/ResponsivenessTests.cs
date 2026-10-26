@@ -151,6 +151,49 @@ public class ResponsivenessTests
     }
 
     [Fact]
+    public async Task Song_choices_read_while_a_scan_is_saving_see_only_saved_rows_and_dont_wait()
+    {
+        // The Projects page reads your song choices on a background thread after a join or split, often while a scan
+        // is saving. They used to be read on the scan's own connection, in the middle of its open save.
+        var dir = Fixtures.TempDir();
+        using var db = new LibraryDb(Path.Combine(dir, "library.db"));
+        db.KeepApart("song a", "song b");
+        const System.Reflection.BindingFlags field = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var writeLock = typeof(LibraryDb).GetField("_lock", field)!.GetValue(db)!;
+        var conn = (Microsoft.Data.Sqlite.SqliteConnection)typeof(LibraryDb).GetField("_conn", field)!.GetValue(db)!;
+        using var held = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var writer = Task.Run(() =>
+        {
+            lock (writeLock)
+            {
+                using var tx = conn.BeginTransaction();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "INSERT INTO song_choices VALUES ('apart', $p, '')";
+                cmd.Parameters.AddWithValue("$p", SongChoices.Pair("not", "saved"));
+                cmd.ExecuteNonQuery();
+                held.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+                tx.Rollback();
+            }
+        });
+        held.Wait();
+        try
+        {
+            var read = Task.Run(db.SongChoices);
+            Assert.Same(read, await Task.WhenAny(read, Task.Delay(2000)));
+            var choices = await read;
+            Assert.True(choices.Apart("song a", "song b"));
+            Assert.False(choices.Apart("not", "saved"));
+        }
+        finally
+        {
+            release.Set();
+            await writer;
+        }
+    }
+
+    [Fact]
     public void A_big_sample_index_goes_in_whole_across_batches()
     {
         var dir = Fixtures.TempDir();

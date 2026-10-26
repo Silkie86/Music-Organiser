@@ -198,20 +198,17 @@ public sealed partial class LibraryDb : IDisposable
     public void SetList(string key, IEnumerable<string> values) => SetSetting(key, JsonSerializer.Serialize(values.ToList()));
 
     /// <summary>Your changes to which saves are one song (see <see cref="Library.SongChoices"/>).</summary>
-    public SongChoices SongChoices() => _songChoices ??= ReadSongChoices(null);
+    public SongChoices SongChoices() => _songChoices ??= ReadSongChoices();
 
     // Kept until you change them, since a scan asks for every new save.
     volatile SongChoices? _songChoices;
 
-    SongChoices ReadSongChoices(SqliteTransaction? tx)
+    // Read like any other query: on a reader connection of its own, or inside a write on this thread on the write
+    // connection (which sees the write's rows). Read on the write connection from another thread, it ran in the middle
+    // of a scan's open save, and could fail or see rows not saved yet.
+    SongChoices ReadSongChoices()
     {
-        var rows = new List<(string Kind, string A, string B)>();
-        using (var cmd = Cmd("SELECT kind, a, b FROM song_choices"))
-        {
-            cmd.Transaction = tx;
-            using var r = cmd.ExecuteReader();
-            while (r.Read()) rows.Add((Str(r, "kind"), Str(r, "a"), Str(r, "b")));
-        }
+        var rows = Query("SELECT kind, a, b FROM song_choices", r => (Kind: Str(r, "kind"), A: Str(r, "a"), B: Str(r, "b")));
         return new SongChoices(rows.Where(r => r.Kind == "join").ToDictionary(r => r.A, r => r.B),
                                rows.Where(r => r.Kind == "split").Select(r => r.A).ToList(),
                                rows.Where(r => r.Kind == "apart").Select(r => r.A).ToList());
@@ -383,7 +380,7 @@ public sealed partial class LibraryDb : IDisposable
         var folder = Path.GetDirectoryName(path) ?? "";
         var daw = Readers.For(path)?.Daw;
         if (daw is null) return;
-        var choices = _songChoices ??= ReadSongChoices(tx);
+        var choices = SongChoices();
         var song = choices.KeyOf(path, folder, daw, name);
         // The song's saves sit in its folder, or in folders of their own inside it (Bitwig's): the folder's index finds them.
         var root = SongVersions.SongFolder(folder, name);
