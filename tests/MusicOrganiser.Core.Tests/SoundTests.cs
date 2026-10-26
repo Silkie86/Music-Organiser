@@ -732,7 +732,7 @@ public class SoundLibraryTests
         Directory.CreateDirectory(Path.Combine(pack, "Hats"));
         Synth.Write(Path.Combine(pack, "Kicks", "Kick 01.wav"), Synth.Kick(1));
         Synth.Write(Path.Combine(pack, "Hats", "Hat 01.wav"), Synth.Hat(2));
-        Synth.Write(Path.Combine(samples, "one shot.wav"), Synth.Snare(3));
+        Synth.Write(Path.Combine(samples, "Snare 01.wav"), Synth.Snare(3));
         using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
         using var org = new SoundOrganiser(lib);
         Assert.Equal(3, org.Scan([samples]));
@@ -749,7 +749,7 @@ public class SoundLibraryTests
 
         // A pack's folder renamed and a sound renamed in Explorer, found by a scan: nothing new to listen to.
         Directory.Move(pack, Path.Combine(samples, "Pack A (old)"));
-        File.Move(Path.Combine(samples, "one shot.wav"), Path.Combine(samples, "Snare punchy.wav"));
+        File.Move(Path.Combine(samples, "Snare 01.wav"), Path.Combine(samples, "Snare punchy.wav"));
         Assert.Equal(0, org.Scan([samples]));
         void Kept(string name, long id)
         {
@@ -759,7 +759,7 @@ public class SoundLibraryTests
         }
         Kept("Kick 01", ids["Kick 01"]);
         Kept("Hat 01", ids["Hat 01"]);
-        Kept("Snare punchy", ids["one shot"]);
+        Kept("Snare punchy", ids["Snare 01"]);
         Assert.Equal(3, lib.Count());
 
         // Renamed while the folder watcher looks on: the old name gone, the new one there.
@@ -767,8 +767,52 @@ public class SoundLibraryTests
         var to = Path.Combine(samples, "Snare tight.wav");
         File.Move(from, to);
         Assert.Equal(1, org.Update([from, to], [samples]));
-        Kept("Snare tight", ids["one shot"]);
+        Kept("Snare tight", ids["Snare 01"]);
         Assert.Equal(3, lib.Count());
+    }
+
+    [Fact]
+    public void A_sound_renamed_or_moved_to_say_a_tempo_key_or_loop_is_listened_to_again_and_keeps_its_tags()
+    {
+        var root = Fixtures.SoundsDir();
+        var samples = Path.Combine(root, "Samples");
+        Directory.CreateDirectory(Path.Combine(samples, "One Shots"));
+        Directory.CreateDirectory(Path.Combine(samples, "Loops"));
+        var pad = Synth.Silence(2.5);
+        foreach (var note in new[] { 53, 56, 60 }) Synth.Tone(pad, note, 0, 2.5);
+        Synth.Write(Path.Combine(samples, "Pad.wav"), pad);
+        Synth.Write(Path.Combine(samples, "One Shots", "Stab.wav"), pad[..(44100 * 2)]);
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        using var org = new SoundOrganiser(lib);
+        Assert.Equal(2, org.Scan([samples]));
+        foreach (var s in org.Sounds) lib.AddTag(s.Id, "lush");
+        var ids = org.Sounds.ToDictionary(s => s.Name, s => s.Id);
+        Assert.False(org.Sounds.Single(s => s.Name == "Stab").Analysis!.IsLoop);
+
+        // Renamed so its name says a tempo and key, and moved from "One Shots" into "Loops": both listened to again.
+        File.Move(Path.Combine(samples, "Pad.wav"), Path.Combine(samples, "Pad 90bpm Fm.wav"));
+        File.Move(Path.Combine(samples, "One Shots", "Stab.wav"), Path.Combine(samples, "Loops", "Stab.wav"));
+        Assert.Equal(2, org.Scan([samples]));
+        var renamed = org.Sounds.Single(s => s.Name == "Pad 90bpm Fm");
+        Assert.Equal((ids["Pad"], 90.0, "file name"), (renamed.Id, renamed.Analysis!.Bpm, renamed.Analysis.BpmSource));
+        Assert.Equal((5, true, "file name"), (renamed.Analysis.KeyTonic, renamed.Analysis.KeyMinor, renamed.Analysis.KeySource));
+        var moved = org.Sounds.Single(s => s.Name == "Stab");
+        Assert.Equal((ids["Stab"], true), (moved.Id, moved.Analysis!.IsLoop));
+        Assert.All(org.Sounds, s => Assert.Contains("lush", s.Tags));
+        Assert.Equal(2, lib.Count());
+
+        // The same while the folder watcher looks on: counted once, not as a move and a new sound.
+        var from = Path.Combine(samples, "Pad 90bpm Fm.wav");
+        var to = Path.Combine(samples, "Pad 120bpm Fm.wav");
+        File.Move(from, to);
+        Assert.Equal(1, org.Update([from, to], [samples]));
+        renamed = org.Sounds.Single(s => s.Name == "Pad 120bpm Fm");
+        Assert.Equal((ids["Pad"], 120.0), (renamed.Id, renamed.Analysis!.Bpm));
+        Assert.Contains("lush", renamed.Tags);
+
+        // Nothing the name says changed: not listened to again.
+        Assert.True(SoundOrganiser.SameHints("/a/Loops/Pad 120bpm Fm.wav", "/b/Loops/Pad 120bpm Fm (1).wav"));
+        Assert.False(SoundOrganiser.SameHints("/a/Pad.wav", "/a/Pad Am.wav"));
     }
 
     [Fact]

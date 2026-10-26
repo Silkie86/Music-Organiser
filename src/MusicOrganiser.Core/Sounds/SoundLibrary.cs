@@ -270,7 +270,8 @@ public sealed partial class SoundLibrary : IDisposable
 
     /// <summary>
     /// Sounds whose files were renamed or moved (see <see cref="SoundOrganiser.Moves"/>): each keeps its row, so its tags,
-    /// rating, favourite, your type, plays and galaxy place stay with it. Returns how many moved.
+    /// rating, favourite, your type, plays and galaxy place stay with it. Returns how many moved. Its listening stays too;
+    /// <see cref="SoundOrganiser.SameHints"/> says when the new name means it should be listened to again.
     /// </summary>
     public int Move(IEnumerable<(string From, string To)> moves) =>
         InBatches(moves, "UPDATE sounds SET path = $to, name_type = $n WHERE path = $from", ["$from", "$to", "$n"], (m, p) =>

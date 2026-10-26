@@ -210,13 +210,13 @@ public sealed class SoundOrganiser : IDisposable
                                !AudioFile.CanRead(p) && listed.Any(f => p.StartsWith(f, StringComparison.OrdinalIgnoreCase)) && File.Exists(p);
 
         // Files renamed or moved (a pack's folder renamed, say) carry on as the sounds they were, with everything
-        // you gave them, and aren't listened to again.
+        // you gave them, and aren't listened to again, unless the new name says a different loop, tempo or key.
         var moves = Moves(known.Where(k => !present.Contains(k.Key) && !Kept(k.Key)).Select(k => (k.Key, k.Value.Size, k.Value.Mtime)),
                           todo.Where(t => !known.ContainsKey(t.Path)));
         var moved = Library.Move(moves);
         if (moves.Count > 0)
         {
-            var arrived = moves.Select(m => m.To).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var arrived = moves.Where(m => SameHints(m.From, m.To)).Select(m => m.To).ToHashSet(StringComparer.OrdinalIgnoreCase);
             todo = todo.Where(t => !arrived.Contains(t.Path)).ToList();
         }
 
@@ -298,13 +298,16 @@ public sealed class SoundOrganiser : IDisposable
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // still being copied: the next change gets it
         }
-        // A rename reports the old name gone and the new one there: it carries on as the sound it was.
+        // A rename reports the old name gone and the new one there: it carries on as the sound it was (listened to
+        // again when the new name says a different loop, tempo or key).
         var moves = Moves(goneKnown, added);
         var moved = Library.Move(moves);
+        var relisten = 0;
         if (moves.Count > 0)
         {
             var from = moves.Select(m => m.From).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var to = moves.Select(m => m.To).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var to = moves.Where(m => SameHints(m.From, m.To)).Select(m => m.To).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            relisten = moves.Count - to.Count;
             gone.RemoveAll(from.Contains);
             todo.RemoveAll(t => to.Contains(t.Path));
         }
@@ -325,11 +328,22 @@ public sealed class SoundOrganiser : IDisposable
         });
         Library.Save(results);
         var removed = Library.Remove(gone);
-        if (results.Count + removed + moved == 0) return 0;
+        var changed = results.Count + removed + Math.Max(0, moved - relisten);   // a sound moved and listened to again counts once
+        if (changed == 0) return 0;
         Reload();
         UpdateTypes(progress);
-        return results.Count + removed + moved;
+        return changed;
     }
+
+    /// <summary>
+    /// Whether a renamed or moved file's new path says what its old one did about the things listening takes from the
+    /// name and folders: loop or one-shot, tempo and key. When it doesn't ("Pad.wav" renamed "Pad 90bpm Cm.wav", or
+    /// moved from "One Shots" into "Loops"), the sound is listened to again, keeping everything you gave it.
+    /// </summary>
+    public static bool SameHints(string from, string to) =>
+        SoundTypes.LoopFromPath(from) == SoundTypes.LoopFromPath(to) &&
+        SoundTypes.TempoFromName(from) == SoundTypes.TempoFromName(to) &&
+        SoundTypes.KeyFromName(from) == SoundTypes.KeyFromName(to);
 
     /// <summary>Most same-name pairs weighed among files of one size and time; past it they're left unpaired.</summary>
     const long MostPairs = 200_000;
