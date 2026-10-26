@@ -569,10 +569,11 @@ public sealed partial class ProjectDetailViewModel : ObservableObject
         _main.Projects.ShowOnly(_db.ProjectsUsingPlugin(row.Name), $"Projects using {row.Name}");
     }
 
-    /// <summary>Re-read just this project, e.g. after recovering a sample.</summary>
-    public void Reindex()
+    /// <summary>Re-read just this project, e.g. after recovering a sample, in the background (a big FL project takes seconds).</summary>
+    public async Task ReindexAsync()
     {
-        _db.Upsert(Scanner.Analyse(Item.Path));
+        var path = Item.Path;
+        await Task.Run(() => _db.Upsert(Scanner.Analyse(path)));
         _main.RefreshAll();
     }
 }
@@ -657,10 +658,16 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
             return;
         }
         if (!await Ui.Current.Confirm($"Copy\n{candidate}\n\ninto the project folder as\n{FileName}?", "Recover sample")) return;
-        File.Copy(candidate, target);
+        // Off the window's thread: a big file, or one on a network drive, takes a while.
+        try { await Task.Run(() => File.Copy(candidate, target)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            MatchMessage = $"Couldn't copy it: {e.Message}";
+            return;
+        }
         MatchMessage = "Copied. Your DAW will find it next time the project opens.";
         owner.Activities.Done($"Copied {FileName} into the project folder", "Your DAW will find it next time the project opens.");
-        owner.Reindex();
+        await owner.ReindexAsync();
     }
 }
 

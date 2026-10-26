@@ -1972,6 +1972,29 @@ public class ViewModelTests : IDisposable
         Assert.Same(shown, main.Samples.Items);
     }
 
+    [Fact]
+    public async Task Recovering_a_sample_that_cant_be_copied_says_so_and_one_that_can_is_found_after()
+    {
+        ScanFixtures();
+        var main = Main();
+        ((HeadlessUi)Ui.Current).Confirms = true;
+        main.Projects.Selected = main.Projects.Items.Single(i => i.Daw == "FL Studio");
+        var row = main.Projects.Detail!.Samples.Single(s => !s.Found);
+
+        // Gone since it was found (moved, or a drive unplugged): said in the row, not an error box.
+        await row.Recover(Path.Combine(Fixtures.TempDir(), "Kick 01.wav"));
+        Assert.StartsWith("Couldn't copy it: ", row.MatchMessage);
+        Assert.False(File.Exists(Path.Combine(_root, "Kick 01.wav")));
+
+        var found = Path.Combine(Fixtures.TempDir(), "Kick 01.wav");
+        File.WriteAllBytes(found, [1, 2, 3]);
+        await row.Recover(found);
+        Assert.Equal("Copied. Your DAW will find it next time the project opens.", row.MatchMessage);
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(Path.Combine(_root, "Kick 01.wav")));
+        var fl = _db.Projects().Single(p => p.Daw == "FL Studio");
+        Assert.All(_db.Project(fl.Id)!.Samples, s => Assert.True(s.Found));   // the song was read again
+    }
+
     /// <summary>Puts the three test projects in the library, without the screens starting a scan of their own.</summary>
     void ScanFixtures()
     {
@@ -2761,7 +2784,9 @@ public class ViewModelTests : IDisposable
         public Task<string?> PickFile(string title, string filterName, string extension) => Task.FromResult(PickedFile);
         public Task<string?> PickProgram(string title) => Task.FromResult<string?>(null);
         public Task<string?> PickSaveFile(string fileName, string filterName, string extension, string? initialFolder) => Task.FromResult<string?>(null);
-        public Task<bool> Confirm(string message, string title) => Task.FromResult(false);
+        /// <summary>The answer to every "Are you sure?": no, unless a test says yes.</summary>
+        public bool Confirms { get; set; }
+        public Task<bool> Confirm(string message, string title) => Task.FromResult(Confirms);
         public void CopyText(string text) { }
         public void ShowMidi(MidiPreviewViewModel vm) { }
         public void ShowPresets(PresetsViewModel vm) { }
