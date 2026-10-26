@@ -49,10 +49,13 @@ public static partial class TextScan
             yield return Encoding.Unicode.GetString(bytes, m.Index, m.Length);
     }
 
+    /// <summary>The longest name <see cref="SafeFileName"/> gives: longer ones are cut to this many characters.</summary>
+    public const int LongestFileName = 120;
+
     public static string SafeFileName(string name)
     {
         var cleaned = InvalidFileChars().Replace(name, "_").Trim(' ', '.');
-        if (cleaned.Length > 120) cleaned = cleaned[..120];
+        if (cleaned.Length > LongestFileName) cleaned = cleaned[..LongestFileName];
         return cleaned.Length == 0 ? "untitled" : cleaned;
     }
 
