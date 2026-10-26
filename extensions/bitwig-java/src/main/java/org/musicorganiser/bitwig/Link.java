@@ -929,11 +929,12 @@ final class Link {
 
     /**
      * Runs the next change waiting, if any. A change whose app has closed its connection meanwhile (it gave up waiting)
-     * is left out (extension 3.18): the app never hears it was made, so it would ask again and get it twice.
+     * is left out (extension 3.18): the app never hears it was made, so it would ask again and get it twice. A stoptracks
+     * still runs: stopping twice does no harm, and the app sends it as it closes, so it often waits behind a clip.
      */
     private void nextJob() {
         Job job = jobs.poll();
-        while (job != null && !job.ask().client().open) {
+        while (job != null && !job.ask().client().open && !"stoptracks".equals(job.request().get("cmd"))) {
             reply(job.ask(), null, APP_GONE);
             job = jobs.poll();
         }

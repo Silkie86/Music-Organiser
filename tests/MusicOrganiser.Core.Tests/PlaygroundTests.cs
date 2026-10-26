@@ -1768,6 +1768,28 @@ public class PlaygroundTests : IDisposable
         Assert.True(closing.Elapsed < TimeSpan.FromSeconds(5), $"Closing took {closing.Elapsed}.");
     }
 
+    [Fact]
+    public void Closing_the_app_stops_a_part_still_going_across_to_Bitwig()
+    {
+        // Its clip launches once Bitwig has it, so its track is stopped too, though it hasn't said it's in yet.
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = LeadAndBass(db, sounds);
+        var stopped = new List<string>();
+        p.BitwigNewTrack = (_, _) => Task.FromResult("track 1");
+        p.BitwigPutClip = (_, _, _) => new TaskCompletionSource().Task;
+        p.BitwigStopTracks = (tracks, _) =>
+        {
+            lock (stopped) stopped.AddRange(tracks);
+            return Task.CompletedTask;
+        };
+        p.PlayInBitwig = true;
+
+        p.Dispose();
+        Assert.Equal(["track 1"], stopped);
+    }
+
     internal sealed class Headless : IPlatformUi
     {
         public IItemsView CreateView(IList items) => new ListView(items);

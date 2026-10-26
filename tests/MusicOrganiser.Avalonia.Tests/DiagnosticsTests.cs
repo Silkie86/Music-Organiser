@@ -229,6 +229,22 @@ public sealed class WatchdogTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_button_that_fails_again_after_its_box_closed_says_so_again()
+    {
+        // Review: a failure a few seconds after its box was closed got no box, as if it were a timer's.
+        var app = (App)Application.Current!;
+        var button = Thrown(() => throw new InvalidOperationException("Made-up button error"));
+        Assert.True(app.ShouldShow(button, 1_000));
+        app.Shown(App.Key(button));
+        Assert.True(app.ShouldShow(button, 5_000));
+        app.Shown(App.Key(button));
+        // Straight back after that, it keeps coming, so it waits until it has stayed away a while.
+        Assert.False(app.ShouldShow(button, 5_000 + App.RepeatMs / 2));
+        Assert.False(app.ShouldShow(button, 9_000));
+        Assert.True(app.ShouldShow(button, 9_000 + App.QuietMs));
+    }
+
+    [AvaloniaFact]
     public void Different_bugs_with_the_same_words_each_get_their_box()
     {
         // Review: matching on the words alone hid a second, unrelated NullReferenceException (and its stack) for the run.
