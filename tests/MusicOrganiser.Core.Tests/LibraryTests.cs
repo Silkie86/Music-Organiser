@@ -705,6 +705,26 @@ public class LibraryTests : IDisposable
     }
 
     [Fact]
+    public void A_folder_whose_name_only_starts_like_a_project_folder_isnt_inside_it()
+    {
+        // A folder taken out of the list keeps its projects. "Projects Old" isn't inside "Projects", so a scan of
+        // "Projects" mustn't mark them missing, nor read "Old\Templates" as a templates folder of its own.
+        var old = _root + " Old";
+        Directory.CreateDirectory(old);
+        var song = Fixtures.FlStudioProject(old, "Old Song");
+        _db.Upsert(Scanner.Analyse(song));
+        var deleted = Path.Combine(_root, "Night Drive.flp");
+        new Scanner(_db).ScanProjects();
+        File.Delete(deleted);
+
+        new Scanner(_db).ScanProjects();
+        Assert.False(_db.Projects().Single(p => p.Path == song).FileMissing);
+        Assert.True(_db.Projects().Single(p => p.Path == deleted).FileMissing);   // one really gone still is
+        Assert.False(Scanner.IsIgnored(Path.Combine(old, "Templates", "Song.flp"), [_root]));
+        Assert.True(Scanner.IsIgnored(Path.Combine(_root, "Templates", "Song.flp"), [_root]));
+    }
+
+    [Fact]
     public void ExportsMidiAndPresetsToFiles()
     {
         var flp = Path.Combine(_root, "Night Drive.flp");

@@ -449,12 +449,18 @@ public sealed partial class LibraryDb : IDisposable
     public void MarkMissingFiles(IReadOnlySet<string> present, IReadOnlyList<string> roots, Func<string, bool>? ignored = null)
     {
         var rows = Query("SELECT id, path FROM projects WHERE file_missing = 0", r => (Id: (long)r["id"], Path: (string)r["path"]));
+        var gone = new List<long>();
+        var dropped = new List<long>();
         foreach (var (id, path) in rows)
         {
-            if (present.Contains(path) || !roots.Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase))) continue;
-            if (ignored?.Invoke(path) == true) RemoveProject(id);
-            else if (Exec("UPDATE projects SET file_missing = 1 WHERE id = $id", ("$id", id)) > 0) ProjectsChanged();
+            // Inside a root, not just starting with its name: "K:\Music Old" isn't in "K:\Music".
+            if (present.Contains(path) || !roots.Any(root => Space.DiskSpace.IsInside(path, root))) continue;
+            (ignored?.Invoke(path) == true ? dropped : gone).Add(id);
         }
+        // A batch of commits rather than one for each of thousands of files.
+        InBatches(dropped, "DELETE FROM projects WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
+        InBatches(gone, "UPDATE projects SET file_missing = 1 WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
+        if (dropped.Count + gone.Count > 0) ProjectsChanged();
     }
 
     /// <summary>A project file that has gone (deleted, or moved out of your folders): it stays listed, marked missing.</summary>

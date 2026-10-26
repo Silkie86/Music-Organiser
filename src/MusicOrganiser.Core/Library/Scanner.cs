@@ -40,7 +40,7 @@ public sealed class Scanner(LibraryDb db)
     public static bool IsIgnored(string path, IEnumerable<string> roots)
     {
         if (IsAutosaveFile(Path.GetFileName(path))) return true;
-        var root = roots.FirstOrDefault(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase));
+        var root = roots.FirstOrDefault(r => Space.DiskSpace.IsInside(path, r));
         if (root is null) return false;
         var dir = Path.GetDirectoryName(path) ?? "";
         var dirs = (dir.Length > root.Length ? dir[root.Length..] : "")
