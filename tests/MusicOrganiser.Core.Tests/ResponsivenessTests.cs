@@ -194,6 +194,27 @@ public class ResponsivenessTests
     }
 
     [Fact]
+    public void Sweep_timings_forget_previews_that_were_replaced_or_couldnt_play()
+    {
+        // The galaxy notes each swept star on the window's thread, and copies the waiting list as it does. Stars asked
+        // for and then replaced by a newer one before they started used to stay on it all session.
+        var pending = (System.Collections.IDictionary)typeof(SweepTiming)
+            .GetField("Pending", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+        var paths = Enumerable.Range(0, 200).Select(i => $"/sweep test/{i}.wav").ToList();
+        foreach (var path in paths)
+        {
+            SweepTiming.Reached(path, 0);
+            SweepTiming.Asked(path);
+        }
+        foreach (var path in paths.SkipLast(1)) SweepTiming.Dropped(path);
+        Assert.Equal([paths[^1]], paths.Where(pending.Contains));
+
+        SweepTiming.Opening(paths[^1]);
+        SweepTiming.Started(paths[^1]);
+        Assert.DoesNotContain(paths, pending.Contains);
+    }
+
+    [Fact]
     public void A_big_sample_index_goes_in_whole_across_batches()
     {
         var dir = Fixtures.TempDir();
