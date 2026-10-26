@@ -131,13 +131,13 @@ public sealed class SoundsPageTests : IDisposable
         tiles.RaiseEvent(new ContextRequestedEventArgs());
         Settle();
         Assert.Equal(KeyGesture.Parse("Ctrl+D"), Key(tiles.ContextMenu!, "Favourite"));
-        tiles.ContextMenu.Close();
+        tiles.ContextMenu!.Close();
         main.Shortcuts.Set("app.fullRescan", "Ctrl+F5");
         var rescan = window.GetVisualDescendants().OfType<Button>().Single(b => b.ContextMenu?.Items.OfType<MenuItem>().Any(i => (string?)i.Tag == "app.fullRescan") == true);
         rescan.RaiseEvent(new ContextRequestedEventArgs());
         Settle();
         Assert.Equal(KeyGesture.Parse("Ctrl+F5"), Key(rescan.ContextMenu!, "Rescan everything"));
-        rescan.ContextMenu.Close();
+        rescan.ContextMenu!.Close();
         window.Close();
     }
 }
