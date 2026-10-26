@@ -103,4 +103,25 @@ public sealed class PageSizeTests : IDisposable
         window.GetVisualDescendants().OfType<LayoutTransformControl>()
             .Single(l => l.Classes.Contains("pageScaler") && l.GetVisualDescendants().OfType<UserControl>().Any(u => u.DataContext == page));
 
+    [AvaloniaFact]
+    public void A_page_size_step_leaves_the_theme_alone_and_a_theme_click_puts_it_on_screen_once_it_has_settled()
+    {
+        // Review: every settings change re-applied the whole theme, twice for each Ctrl+= and four times for a theme click.
+        var settings = new AppearanceViewModel(_db);
+        Views.Appearance.Follow(settings, null);
+        object Face() => Application.Current!.Resources["StudioFaceBrush"]!;
+        var face = Face();
+
+        Assert.True(settings.StepPage("projects", 1));
+        Settle();
+        Assert.Same(face, Face());
+
+        settings.Theme = AppearanceViewModel.Themes.First(t => t.Light);
+        Assert.Same(face, Face());   // waits for the rest of the click's changes
+        Settle();
+        Assert.NotSame(face, Face());
+
+        settings.Theme = AppearanceViewModel.Themes[0];   // the app's own look again, for the other tests
+        Settle();
+    }
 }

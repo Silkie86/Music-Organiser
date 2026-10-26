@@ -5,6 +5,7 @@ using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Themes.Fluent;
+using Avalonia.Threading;
 using MusicOrganiser.ViewModels;
 
 namespace MusicOrganiser.Avalonia.Views;
@@ -21,8 +22,25 @@ public static class Appearance
     public static void Follow(AppearanceViewModel settings, LayoutTransformControl? scaler)
     {
         Apply(settings, scaler);
-        settings.PropertyChanged += (_, _) => Apply(settings, scaler);
+        var pending = false;
+        settings.PropertyChanged += (_, e) =>
+        {
+            // Only what the look is made of: a page's own size (Ctrl+= and Ctrl+-) re-applying it all was a hitch each press.
+            if (pending || !Looks(e.PropertyName)) return;
+            // A theme click says Theme, AccentColour, AccentText and FontName in turn: one go puts them all on screen.
+            pending = true;
+            Dispatcher.UIThread.Post(() =>
+            {
+                pending = false;
+                Apply(settings, scaler);
+            });
+        };
     }
+
+    /// <summary>Whether a change to this setting changes what <see cref="Apply"/> puts on screen (null or "" means any of them).</summary>
+    internal static bool Looks(string? property) => property is null or "" or nameof(AppearanceViewModel.Theme) or nameof(AppearanceViewModel.Accent)
+        or nameof(AppearanceViewModel.AccentColour) or nameof(AppearanceViewModel.AccentText) or nameof(AppearanceViewModel.Font)
+        or nameof(AppearanceViewModel.FontName) or nameof(AppearanceViewModel.Size) or nameof(AppearanceViewModel.LessMotion);
 
     static void Apply(AppearanceViewModel a, LayoutTransformControl? scaler)
     {
