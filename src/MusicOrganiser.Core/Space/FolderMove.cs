@@ -355,7 +355,10 @@ public static class FolderMove
         }
     }
 
-    /// <summary>The app started for <see cref="RunAsAdmin"/>: <c>--move-folder swap|unswap from to [aside] result</c>.</summary>
+    /// <summary>
+    /// The app started for <see cref="RunAsAdmin"/>: <c>--move-folder swap|unswap from to [aside] result</c>, or for the links
+    /// Windows guards: <c>--move-folder relink list result fingerprint</c>.
+    /// </summary>
     public const string HelperFlag = "--move-folder";
 
     static string RunAsAdmin(string step, params string[] paths)
@@ -376,14 +379,17 @@ public static class FolderMove
     /// <summary>Runs the administrator step when the app was started for it. Returns false when it wasn't.</summary>
     public static bool RunHelper(string[] args)
     {
-        if (args.Length == 4 && args[0] == HelperFlag && args[1] == "relink")
+        if (args.Length >= 2 && args[0] == HelperFlag && args[1] == "relink")
         {
+            if (args.Length != 5) return true;   // not as the app starts it: nothing, and no window as administrator either
             try
             {
-                var lines = File.ReadAllLines(args[2]).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)
+                // A list changed since the app wrote it (its fingerprint differs) relinks nothing.
+                if (AdminStep.ReadList(args[2], args[4]) is not { } list) return true;
+                var lines = list.Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)
                                 .Select(x => (At: x[0], Said: RelinkHere(x[0], x[1])))
-                                .Select(x => $"{x.At}\t{(x.Said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : x.Said)}");
-                File.WriteAllLines(args[3], lines);
+                                .Select(x => $"{x.At}\t{(x.Said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : x.Said)}\n");
+                AdminStep.WriteResult(args[3], string.Concat(lines));
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             return true;
@@ -396,7 +402,7 @@ public static class FolderMove
             ("unswap", _) => UnswapHere(args[2], args[3]),
             _ => "?",
         };
-        try { File.WriteAllText(args[^1], said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : said); }
+        try { AdminStep.WriteResult(args[^1], said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : said); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return true;
     }
@@ -503,8 +509,8 @@ public static class FolderMove
         var result = list + ".result";
         try
         {
-            File.WriteAllLines(list, guarded.Select(g => $"{g.At}\t{g.Target}"));
-            var admin = AdminStep.Run(HelperFlag, "relink", list, result);
+            var fingerprint = AdminStep.WriteList(list, guarded.Select(g => $"{g.At}\t{g.Target}"));
+            var admin = AdminStep.Run(HelperFlag, "relink", list, result, fingerprint);
             var said = admin.Length == 0 && File.Exists(result)
                 ? File.ReadAllLines(result).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2).ToDictionary(x => x[0], x => x[1], StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

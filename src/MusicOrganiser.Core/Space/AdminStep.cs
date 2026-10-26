@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace MusicOrganiser.Core.Space;
 
@@ -34,4 +36,36 @@ static class AdminStep
             return e.Message;
         }
     }
+
+    // A list for the step sits in your Temp folder, where any program of yours can change it while Windows asks. Its
+    // fingerprint goes on the step's command line, which nothing can change, and the step does nothing if they differ.
+
+    /// <summary>Writes the list of what the step is to do, and returns its fingerprint to pass to the step with it.</summary>
+    public static string WriteList(string path, IEnumerable<string> lines)
+    {
+        var bytes = Encoding.UTF8.GetBytes(string.Concat(lines.Select(l => l + "\n")));
+        File.WriteAllBytes(path, bytes);
+        return Fingerprint(bytes);
+    }
+
+    /// <summary>The list's lines, read once, or null when it isn't the list with that fingerprint: something changed it.</summary>
+    public static string[]? ReadList(string path, string fingerprint)
+    {
+        var bytes = File.ReadAllBytes(path);
+        if (!Fingerprint(bytes).Equals(fingerprint, StringComparison.OrdinalIgnoreCase)) return null;
+        return [.. Encoding.UTF8.GetString(bytes).Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0)];
+    }
+
+    /// <summary>
+    /// Writes what the step did for the app to read. Only as a new file: one already there (a link put in its place
+    /// meanwhile) is left alone, so the step never writes over something else with administrator rights.
+    /// </summary>
+    public static void WriteResult(string path, string text)
+    {
+        using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
+        using var writer = new StreamWriter(file);
+        writer.Write(text);
+    }
+
+    static string Fingerprint(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
 }
