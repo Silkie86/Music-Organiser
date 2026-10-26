@@ -284,17 +284,33 @@ public sealed partial class LibraryDb : IDisposable
     public void Upsert(IndexedFile f) => UpsertMany([f]);
 
     /// <summary>Saves several scanned projects in one transaction.</summary>
-    public void UpsertMany(IReadOnlyCollection<IndexedFile> files)
+    public void UpsertMany(IReadOnlyCollection<IndexedFile> files) => UpsertMany(files, inRoots: false);
+
+    /// <summary>
+    /// Saves what a scan read, leaving out any project no longer inside a project folder: one taken out of Settings while
+    /// the scan was still reading it. The folders are looked at inside the save, so projects taken off the list with
+    /// their folder never come back from a scan that started before.
+    /// </summary>
+    public void UpsertInRoots(IReadOnlyCollection<IndexedFile> files) => UpsertMany(files, inRoots: true);
+
+    void UpsertMany(IReadOnlyCollection<IndexedFile> files, bool inRoots)
     {
         if (files.Count == 0) return;
         var installed = InstalledKeys();
+        var saved = 0;
         lock (_lock)
         {
+            var roots = inRoots ? Roots() : [];
             using var tx = _conn.BeginTransaction();
-            foreach (var f in files) Upsert(tx, f, installed);
+            foreach (var f in files)
+            {
+                if (inRoots && !roots.Any(r => Space.DiskSpace.IsInside(f.Path, r))) continue;
+                Upsert(tx, f, installed);
+                saved++;
+            }
             tx.Commit();
         }
-        ProjectsChanged();
+        if (saved > 0) ProjectsChanged();
     }
 
     void Upsert(SqliteTransaction tx, IndexedFile f, HashSet<string> installed)

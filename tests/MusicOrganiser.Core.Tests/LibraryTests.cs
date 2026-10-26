@@ -90,6 +90,29 @@ public class LibraryTests : IDisposable
         Assert.All(projects, p => Assert.Null(p.Error));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_project_folder_taken_out_while_a_scan_reads_it_stays_off_the_list(bool full)
+    {
+        // The scan makes its to-do list once, at the start: a folder taken out (and its projects with it) while it is still
+        // reading must not have them put back by the scan's later batches, on a first read or on "Re-read everything".
+        var other = Fixtures.TempDir();
+        Fixtures.FlStudioProject(other, "Keeper");
+        _db.AddRoot(other);
+        var scanner = new Scanner(_db);
+        if (full) scanner.ScanProjects();
+
+        scanner.ScanProjects(new Each<ScanProgress>(p =>
+        {
+            if (p.Stage != "Finding projects" || !_db.Roots().Contains(_root)) return;
+            _db.RemoveRoot(_root);
+            _db.RemoveProjects(_db.ProjectsOnlyIn(_root, _db.Roots()));
+        }), full);
+
+        Assert.Equal(["Keeper"], _db.Projects().Select(p => p.Name));
+    }
+
     [Fact]
     public void The_file_list_has_the_same_projects_and_details_as_the_full_list()
     {

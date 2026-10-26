@@ -353,6 +353,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (!await Ui.Current.Confirm($"Take the {(left.Count == 1 ? "1 project" : $"{left.Count:N0} projects")} in {name} off the Projects list too?\n\n" +
                                       "Their files stay where they are, but your ratings, notes and tags on them are forgotten. " +
                                       "Cancel keeps them listed.", "Remove project folder")) return;
+        // A scan still reading the folder doesn't put them back: it only saves projects in the folders left (UpsertInRoots).
         await Task.Run(() => _db.RemoveProjects(left));
         _main.Activities.Done($"Took {name}'s projects off the list", "Their files are where they were.");
         await _main.RefreshAllAsync();

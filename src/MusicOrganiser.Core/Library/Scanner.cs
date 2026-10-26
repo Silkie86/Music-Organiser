@@ -137,13 +137,13 @@ public sealed class Scanner(LibraryDb db)
             if (a is not null) batch.Add(a);
             if (batch.Count >= 50 || Environment.TickCount64 - lastReport > 250)
             {
-                db.UpsertMany(batch);
+                db.UpsertInRoots(batch);
                 batch.Clear();
                 progress?.Report(new("Reading projects", done, todo.Count, a?.Path ?? ""));
                 lastReport = Environment.TickCount64;
             }
         }
-        db.UpsertMany(batch);
+        db.UpsertInRoots(batch);
         foreach (var r in Readers.All) db.SetSetting(ReaderVersionKey(r), r.Version.ToString());
         db.SetSetting(KeyVersionKey, ProjectKey.Version.ToString());
         db.MarkMissingFiles(files.ToHashSet(StringComparer.OrdinalIgnoreCase), roots, f => IsIgnored(f, roots));
@@ -178,7 +178,7 @@ public sealed class Scanner(LibraryDb db)
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // still being written, or locked: the next change or scan gets it
         }
-        db.UpsertMany(read);
+        db.UpsertInRoots(read);
         return (read.Count, gone);
     }
 
