@@ -87,10 +87,14 @@ public sealed partial class PluginsViewModel
             if (byKey.TryGetValue(s.Key, out var exact) && !claimed.Contains(s.Key)) Give(exact, s);
             else rest.Add(s);
         }
+        // Every Waves plugin lives in one WaveShell file, and projects name them one by one ("CLA-76 Stereo"), so the
+        // shell is used whenever a project uses a Waves plugin.
+        var wavesUsed = used.Any(u => IsWaves(u.Name, u.Vendor));
         foreach (var s in rest)
         {
             var family = PluginCatalog.Family(s.Name);
             var close = families.Where(f => Matched(f.Family, family)).ToList();
+            if (close.Count == 0 && wavesUsed && IsShell(s)) continue;   // used, so never offered (as below)
             if (close.Count == 0)
             {
                 rows.Add(new PluginUsage(s.Name, s.Vendor, FormatOf(s), 0, "", true) { Bytes = s.Bytes, SharedBytes = s.SharedBytes, Unused = true });
@@ -101,6 +105,13 @@ public sealed partial class PluginsViewModel
         }
         return rows;
     }
+
+    static bool IsWaves(string name, string vendor) =>
+        PluginCatalog.IsWaves(name, "") || vendor.StartsWith("Waves", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A Waves shell: the one file every Waves plugin lives in.</summary>
+    static bool IsShell(PluginSpaceInfo s) =>
+        PluginCatalog.IsWaves(s.Name, "") || s.Folders.Any(f => f.Kind == SpaceKind.Program && PluginCatalog.IsWaves(s.Name, f.Path));
 
     static bool Matched(string a, string b) =>
         a.Length >= 4 && b.Length >= 4 && (a == b || a.Contains(b, StringComparison.Ordinal) || b.Contains(a, StringComparison.Ordinal));
@@ -291,10 +302,13 @@ public sealed partial class PluginsViewModel
         SideTab = 1;
         var found = await Task.Run(() => Uninstallers.For(p.Name, p.Vendor, Uninstallers.All()));
         var files = space.Folders.Where(f => f.Kind == SpaceKind.Program).ToList();
+        // Binning a WaveShell would take every Waves plugin with it.
+        var shell = IsShell(space);
         var card = new SpaceCard(this)
         {
             Title = $"Uninstall {p.Name}?",
             Warning = p.Projects > 0 ? $"{(p.Projects == 1 ? "1 project uses" : $"{p.Projects} projects use")} it. They'll open with {p.Name} missing." : "",
+            Empty = found.Count == 0 && shell ? "Every Waves plugin lives in this one file, so it isn't removed here. Use Waves Central to remove Waves plugins." : "",
         };
         if (found.Count > 0)
         {
@@ -308,7 +322,7 @@ public sealed partial class PluginsViewModel
             card.ConfirmText = "Uninstall";
             card.Confirm = () => RunUninstallerAsync(card, space.Key, files.Select(f => f.Path).ToList());
         }
-        else
+        else if (!shell)
         {
             card.Intro = OperatingSystem.IsWindows()
                 ? "Windows has no uninstaller for it that's still there. Its plugin files can go to the Recycle Bin instead (Windows may ask for administrator rights):"

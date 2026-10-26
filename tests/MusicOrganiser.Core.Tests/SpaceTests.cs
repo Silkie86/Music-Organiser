@@ -772,6 +772,39 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public async Task The_waveshell_counts_as_used_when_projects_use_waves_plugins_and_is_never_binned()
+    {
+        static PluginSpaceInfo Shell() => new(LibraryDb.NameKey("WaveShell1-VST3 14.12"), "WaveShell1-VST3 14.12", "Waves",
+                                               [new(@"C:\VST3\WaveShell1-VST3 14.12.vst3", SpaceKind.Program, 500, [])], DateTime.Now);
+        Directory.CreateDirectory(Path.Combine(_root, "a"));
+        Directory.CreateDirectory(Path.Combine(_root, "b"));
+        using (var page = new Page(Path.Combine(_root, "a")))
+        {
+            var info = new ProjectInfo { Daw = "Bitwig Studio" };
+            info.Plugins.Add(new PluginRef("CLA-76 Stereo", "Waves", PluginKind.Effect, "VST3"));
+            page.Db.Upsert(new LibraryDb.IndexedFile(File("Bitwig/mix.bwproject", 5), 5, 1, info, null, [], []));
+            page.Db.ReplaceInstalledPlugins(["WaveShell1-VST3 14.12"]);
+            page.Db.SavePluginSpaces([Shell()], all: true);
+            var plugins = page.Main.Plugins;
+            plugins.Reload();
+            Assert.DoesNotContain(plugins.Items, p => p.Name.StartsWith("WaveShell"));   // not a "never used" plugin
+            Assert.Empty(plugins.Candidates);
+        }
+        using (var page = new Page(Path.Combine(_root, "b")))
+        {
+            page.Db.ReplaceInstalledPlugins(["WaveShell1-VST3 14.12"]);
+            page.Db.SavePluginSpaces([Shell()], all: true);
+            var plugins = page.Main.Plugins;
+            plugins.Reload();
+            await plugins.UninstallCommand.ExecuteAsync(plugins.Items.Single(p => p.Name.StartsWith("WaveShell")));
+            if (plugins.Card!.HasUninstallers) return;   // a real Waves uninstaller on this computer
+            Assert.Empty(plugins.Card.Items);
+            Assert.True(plugins.Card.HasEmpty);
+            Assert.False(plugins.Card.RunCommand.CanExecute(null));
+        }
+    }
+
+    [Fact]
     public void The_administrator_steps_act_only_on_the_list_the_app_wrote()
     {
         var keep = File("Old Library/a.wav");
