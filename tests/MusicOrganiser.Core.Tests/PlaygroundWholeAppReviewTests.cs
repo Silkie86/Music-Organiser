@@ -239,6 +239,74 @@ public class PlaygroundWholeAppReviewTests : IDisposable
     }
 
     [Fact]
+    public void A_name_longer_than_a_file_name_still_gets_a_number_of_its_own()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        var name = string.Concat(Enumerable.Repeat("Slow gospel keys ", 8)).Trim();   // 135 characters: its file's name is cut at 120
+        var keys = Chords(Dm7, G7);
+        var file = Mid(name, keys);
+        Drop(p, file, 0);
+        Drop(p, file, p.Layers.Count);   // the same file again, on a new track
+        p.Layers[0].DuplicateCommand.Execute(null);
+        var entry = new MidiCatalogue([PlaygroundTests.Stored(1, @"K:\Other\Keys.flp", "Keys", keys)]).Entries[0];
+        p.AddFromLibrary(entry, keys, name);
+        p.AddFromLibrary(entry, keys, name);   // the same part twice
+        Drop(p, Mid("Lead", Tune(2)), p.Layers.Count);
+        p.Layers[^1].Name = name;
+
+        Assert.Equal(6, p.Layers.Count);
+        Assert.Equal(name, p.Layers[0].Name);
+        Assert.Equal([" 2", " 3", " 4", " 5", " 6"], p.Layers.Skip(1).Select(l => l.Name[^2..]).Order());
+        Assert.All(p.Layers, l => Assert.True(l.Name.Length <= TextScan.LongestFileName || l.Name == name));
+        // Each drags out as a file of its own.
+        Assert.Equal(6, p.Layers.Select(l => TextScan.SafeFileName(l.Name).ToLowerInvariant()).Distinct().Count());
+    }
+
+    [Fact]
+    public void A_plain_chord_track_added_never_shares_its_file_with_a_track_named_chords()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        p.CurrentSection.Bars = 2;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+        p.Layers[0].Name = "chords";
+        p.Layers[0].MuteCommand.Execute(null);
+        p.AddNextChord(Chord("Cmaj7"));
+        Assert.Equal(["chords", "Chords 2"], p.Layers.Select(l => l.Name));
+    }
+
+    [Fact]
+    public void An_idea_from_before_ideas_remembered_where_they_were_saved_saves_over_itself_as_it_did()
+    {
+        var store = new PlaygroundStore(Path.Combine(_root, "playground"));
+        // Saved by name in Ideas, then worked on and kept by a build that didn't write SavedAs.
+        store.SaveIdea(new PlaygroundSession { Name = "Late night" });
+        store.SaveCurrent(new PlaygroundSession { Name = "Late night", Tempo = 100 });
+        Assert.Equal("", store.LoadCurrent().SavedAs);   // written by this build: never saved, whatever its name
+        var old = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(store.Folder, "current.json")))!.AsObject();
+        old.Remove("SavedAs");
+        File.WriteAllText(Path.Combine(store.Folder, "current.json"), old.ToJsonString());
+        var idea = store.LoadCurrent();
+        Assert.Equal("Late night", idea.SavedAs);
+        Assert.Equal("Late night", store.SaveIdea(idea));
+        Assert.Equal(["Late night"], store.Ideas());
+
+        // A new idea is untitled, as one saved already is, so it never saves over that one.
+        store.SaveIdea(new PlaygroundSession());
+        old["Name"] = "Untitled idea";
+        File.WriteAllText(Path.Combine(store.Folder, "current.json"), old.ToJsonString());
+        idea = store.LoadCurrent();
+        Assert.Equal("", idea.SavedAs);
+        Assert.Equal("Untitled idea 2", store.SaveIdea(idea));
+
+        // One by a name not in Ideas was never saved.
+        old["Name"] = "Sketch";
+        File.WriteAllText(Path.Combine(store.Folder, "current.json"), old.ToJsonString());
+        Assert.Equal("", store.LoadCurrent().SavedAs);
+    }
+
+    [Fact]
     public async Task Saved_then_undone_and_saved_again_an_idea_still_replaces_itself()
     {
         using var page = Fresh();

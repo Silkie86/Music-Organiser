@@ -644,16 +644,25 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     }
 
     /// <param name="except">The track being renamed, which can keep its own name.</param>
-    string UniqueName(string name, PlaygroundLayer? except = null)
+    string UniqueName(string name, PlaygroundLayer? except = null) => UniqueName(Section, name, except);
+
+    /// <summary><paramref name="name"/>, or with a number after it when another track on <paramref name="timeline"/> has it.</summary>
+    static string UniqueName(PlaygroundSection timeline, string name, PlaygroundLayer? except = null)
     {
         name = name.Trim().Length == 0 ? "Part" : name.Trim();
         if (!Taken(name)) return name;
         for (var i = 2; ; i++)
-            if (!Taken($"{name} {i}")) return $"{name} {i}";
+        {
+            // A long name is cut short to make room for its number, so the number is still in its file's name (which is
+            // cut at 120 characters) and each number tried is a different file.
+            var number = $" {i}";
+            var numbered = name[..Math.Min(name.Length, TextScan.LongestFileName - number.Length)].TrimEnd() + number;
+            if (!Taken(numbered)) return numbered;
+        }
 
         // Names are told apart as their dragged files are ("Chords" and "chords", "Lead?" and "Lead*" are one file on
         // Windows), so each track still drags out as a file of its own.
-        bool Taken(string n) => Section.Layers.Any(l => l != except
+        bool Taken(string n) => timeline.Layers.Any(l => l != except
             && TextScan.SafeFileName(l.Name).Equals(TextScan.SafeFileName(n), StringComparison.OrdinalIgnoreCase));
     }
 
@@ -1663,6 +1672,11 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
             return model;
         }
         catch (OperationCanceledException) { return null; }   // the songs changed meanwhile: the newer call learns for them
+        catch when (_learning == learning)
+        {
+            (_learning, _learningFor) = (null, "");   // it went wrong: the next call tries again
+            throw;
+        }
     }
 
     /// <summary>The page opened: the MIDI is read and learned from once, then the next chords and Harmonise use it.</summary>
@@ -1816,9 +1830,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         var added = track is null;
         if (track is null)
         {
-            var name = "Chords";
-            for (var i = 2; timeline.Layers.Any(l => l.Name == name); i++) name = $"Chords {i}";
-            timeline.Layers.Add(track = new PlaygroundLayer { Name = name, Role = MidiRoles.Chords, Program = GmSounds.DefaultFor(MidiRoles.Chords) });
+            timeline.Layers.Add(track = new PlaygroundLayer { Name = UniqueName(timeline, "Chords"), Role = MidiRoles.Chords, Program = GmSounds.DefaultFor(MidiRoles.Chords) });
         }
         CutOut(track, from, to);
         track.Clips.Add(PlaygroundClip.Of("Chords", MidiRoles.Chords, notes, to - from, from, to - from));
