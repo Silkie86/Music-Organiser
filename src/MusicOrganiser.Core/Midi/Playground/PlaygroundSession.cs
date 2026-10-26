@@ -119,6 +119,11 @@ public sealed class PlaygroundSession
     /// that one, never another idea that happens to have the same name (<see cref="PlaygroundStore.SaveIdea"/>).
     /// </summary>
     public string SavedAs { get; set; } = "";
+    /// <summary>
+    /// Tells this idea apart from others in Undo's steps, so where it's saved (<see cref="SavedAs"/>) follows it through
+    /// Undo and Redo but never onto another idea. A new one each time an idea is started or opened from Ideas.
+    /// </summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>The timeline: since version 2 an idea is one section, its parts tracks of clips and its old sections labels.</summary>
     [JsonIgnore]
@@ -372,6 +377,7 @@ public sealed class PlaygroundStore(string folder)
         var file = Path.Combine(IdeasFolder, TextSafe(name) + ".json");
         if (!File.Exists(file) || PlaygroundSession.FromJson(File.ReadAllText(file)) is not { } idea) return null;
         idea.SavedAs = TextSafe(name);   // saved again, it goes back where it came from
+        idea.Id = Guid.NewGuid().ToString("N");   // opened twice, or saved under two names, each is an idea of its own
         return idea;
     }
 

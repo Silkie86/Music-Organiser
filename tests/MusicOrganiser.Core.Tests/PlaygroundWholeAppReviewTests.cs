@@ -223,6 +223,58 @@ public class PlaygroundWholeAppReviewTests : IDisposable
     }
 
     [Fact]
+    public void Names_that_drag_out_as_the_same_file_count_as_the_same_name()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+        Drop(p, Mid("Lead", Tune(2)), p.Layers.Count);
+        p.Layers[1].Name = "keys";   // one file with "Keys" on Windows
+        Assert.Equal("keys 2", p.Layers[1].Name);
+        p.Layers[0].Name = "Lead?";
+        p.Layers[1].Name = "Lead*";   // both "Lead_"
+        Assert.Equal("Lead* 2", p.Layers[1].Name);
+        p.Layers[1].Name = "Keys";   // free again
+        Assert.Equal("Keys", p.Layers[1].Name);
+    }
+
+    [Fact]
+    public async Task Saved_then_undone_and_saved_again_an_idea_still_replaces_itself()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+        Drop(p, Mid("Lead", Tune(2)), p.Layers.Count);
+        p.SaveIdeaCommand.Execute(null);
+        p.UndoCommand.Execute(null);
+        p.SaveIdeaCommand.Execute(null);
+        Assert.Equal(["Untitled idea"], p.SavedIdeas);
+        Assert.Equal("Untitled idea", p.IdeaName);
+        p.RedoCommand.Execute(null);
+        p.SaveIdeaCommand.Execute(null);
+        Assert.Equal(["Untitled idea"], p.SavedIdeas);
+
+        // Undone back to an idea before New idea, where it's saved stays with the idea it belongs to.
+        await p.NewIdeaCommand.ExecuteAsync(null);
+        p.UndoCommand.Execute(null);
+        p.SaveIdeaCommand.Execute(null);
+        Assert.Equal(["Untitled idea"], p.SavedIdeas);
+        p.RedoCommand.Execute(null);
+        Drop(p, Mid("Bass", Tune(2)), 0);
+        p.SaveIdeaCommand.Execute(null);
+        Assert.Equal(2, p.SavedIdeas.Count);
+        Assert.Equal("Untitled idea 2", p.IdeaName);
+        p.UndoCommand.Execute(null);   // the bass taken out: still the second idea
+        p.UndoCommand.Execute(null);   // back to the first idea
+        Assert.Equal(2, p.Layers.Count);
+        p.SaveIdeaCommand.Execute(null);
+        Assert.Equal(2, p.SavedIdeas.Count);
+        Assert.Equal("Untitled idea", p.IdeaName);
+        p.OpenIdeaCommand.Execute("Untitled idea 2");
+        Assert.Equal("Bass", Assert.Single(p.Layers).Name);
+    }
+
+    [Fact]
     public async Task Parts_brought_in_past_the_last_bar_the_timeline_can_have_are_refused()
     {
         using var page = Fresh();

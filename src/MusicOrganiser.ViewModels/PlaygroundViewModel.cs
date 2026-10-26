@@ -381,6 +381,9 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     void Restore(string json)
     {
         if (PlaygroundSession.FromJson(json) is not { } s) return;
+        // Where the idea is saved isn't undone with its changes: saved, then undone and saved again, it still replaces
+        // itself. A step from another idea (before New idea or Open) keeps its own.
+        if (s.Id == _session.Id) s.SavedAs = _session.SavedAs;
         _session = s;
         Show();
         if (Loop is { } loop) LoopOver(loop);   // kept inside the timeline as it now is
@@ -644,9 +647,14 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     string UniqueName(string name, PlaygroundLayer? except = null)
     {
         name = name.Trim().Length == 0 ? "Part" : name.Trim();
-        if (Section.Layers.All(l => l == except || l.Name != name)) return name;
+        if (!Taken(name)) return name;
         for (var i = 2; ; i++)
-            if (Section.Layers.All(l => l == except || l.Name != $"{name} {i}")) return $"{name} {i}";
+            if (!Taken($"{name} {i}")) return $"{name} {i}";
+
+        // Names are told apart as their dragged files are ("Chords" and "chords", "Lead?" and "Lead*" are one file on
+        // Windows), so each track still drags out as a file of its own.
+        bool Taken(string n) => Section.Layers.Any(l => l != except
+            && TextScan.SafeFileName(l.Name).Equals(TextScan.SafeFileName(n), StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
