@@ -53,6 +53,12 @@ public partial class App : Application
             // once the window shows: the work before that (the window being built) isn't a freeze anyone sees.
             UiWatchdog? watchdog = null;
             window.Opened += (_, _) => watchdog ??= new UiWatchdog(main);
+            // Indexes this version added: the first build over a big library takes a few seconds, so it waits for the window.
+            window.Opened += (_, _) => _ = Task.Run(() =>
+            {
+                _db?.BuildNewIndexes();
+                _soundDb?.BuildNewIndexes();
+            });
             Facts(window);
             main.PropertyChanged += (_, e) =>
             {

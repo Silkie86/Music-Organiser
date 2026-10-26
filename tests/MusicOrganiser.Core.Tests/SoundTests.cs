@@ -903,6 +903,7 @@ public class SoundLibraryTests
         var ids = lib.All().Select(s => s.Id).ToList();
         lib.SaveMap("features", ids.ToDictionary(id => id, _ => new StarPoint(0.5f, 0.5f)), replace: true);
         lib.Record(ids, SoundEvent.Drag);
+        lib.BuildNewIndexes();   // as the app does once the window shows
 
         // Forgetting a sound clears its galaxy place and plays by its id: without an index on it, each sound read the
         // whole of both tables (53 ms a sound with 900,000 places, minutes for a pack, with plays and favourites waiting).

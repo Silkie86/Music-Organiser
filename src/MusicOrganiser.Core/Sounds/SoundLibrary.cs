@@ -104,6 +104,10 @@ public sealed partial class SoundLibrary : IDisposable
             x REAL NOT NULL, y REAL NOT NULL,
             PRIMARY KEY (space, sound_id)
         );
+        """;
+
+    // Indexes this version added, which take a while to build over a big library the first time (see BuildNewIndexes).
+    const string NewIndexes = """
         -- Forgetting a sound clears its rows here too: without these, each one read every row of both tables.
         CREATE INDEX IF NOT EXISTS ix_sound_maps_sound ON sound_maps(sound_id);
         CREATE INDEX IF NOT EXISTS ix_sound_events_sound ON sound_events(sound_id);
@@ -139,6 +143,17 @@ public sealed partial class SoundLibrary : IDisposable
         Exec(Schema);
         if (Query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sound_map'", r => (string)r["name"]).Any())
             Exec(MoveOldMap);
+    }
+
+    /// <summary>
+    /// Builds the indexes this version added, if the library doesn't have them yet. The app calls it in the background
+    /// once the window shows, so the first build over hundreds of thousands of galaxy places doesn't pass with nothing on
+    /// screen.
+    /// </summary>
+    public void BuildNewIndexes()
+    {
+        lock (_lock)
+            if (!_disposed) Exec(NewIndexes);
     }
 
     // Under the lock, so a query still running on a background task (say, Settings looking for the DAW scripts) finishes

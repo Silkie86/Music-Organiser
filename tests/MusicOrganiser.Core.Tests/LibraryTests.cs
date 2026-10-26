@@ -766,14 +766,22 @@ public class LibraryTests : IDisposable
         new Scanner(_db).ScanProjects();
         var fl = _db.Project(_db.Projects().Single(x => x.Daw == "FL Studio").Id)!;
         Assert.Equal([fl.Summary.Id], _db.ProjectsUsingSample(fl.Samples[0].Path.ToUpperInvariant()));
-        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_db.FilePath};Mode=ReadOnly;Pooling=False");
-        conn.Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "EXPLAIN QUERY PLAN SELECT DISTINCT project_id FROM samples WHERE path = 'x' COLLATE NOCASE";
-        using var r = cmd.ExecuteReader();
-        var plan = "";
-        while (r.Read()) plan += r.GetString(3);
-        Assert.Contains("ix_samples_path", plan);
+        string Plan()
+        {
+            using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_db.FilePath};Mode=ReadOnly;Pooling=False");
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "EXPLAIN QUERY PLAN SELECT DISTINCT project_id FROM samples WHERE path = 'x' COLLATE NOCASE";
+            using var r = cmd.ExecuteReader();
+            var plan = "";
+            while (r.Read()) plan += r.GetString(3);
+            return plan;
+        }
+        // Built once the window shows, not as the library opens: the first time it takes seconds with nothing on screen.
+        Assert.DoesNotContain("ix_samples_path", Plan());
+        _db.BuildNewIndexes();
+        Assert.Contains("ix_samples_path", Plan());
+        Assert.Equal([fl.Summary.Id], _db.ProjectsUsingSample(fl.Samples[0].Path.ToUpperInvariant()));
     }
 
     [Fact]

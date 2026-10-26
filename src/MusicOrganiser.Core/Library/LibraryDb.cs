@@ -46,10 +46,14 @@ public sealed partial class LibraryDb : IDisposable
         CREATE INDEX IF NOT EXISTS ix_plugins_project ON plugins(project_id);
         CREATE INDEX IF NOT EXISTS ix_plugins_key ON plugins(name_key);
         CREATE INDEX IF NOT EXISTS ix_samples_project ON samples(project_id);
-        CREATE INDEX IF NOT EXISTS ix_samples_path ON samples(path COLLATE NOCASE);
         CREATE INDEX IF NOT EXISTS ix_tags_tag ON tags(tag);
         CREATE INDEX IF NOT EXISTS ix_sample_index_name ON sample_index(file_name);
         CREATE INDEX IF NOT EXISTS ix_projects_folder ON projects(folder);
+        """;
+
+    // Indexes this version added, which take a few seconds to build over a big library the first time (see BuildNewIndexes).
+    const string NewIndexes = """
+        CREATE INDEX IF NOT EXISTS ix_samples_path ON samples(path COLLATE NOCASE);
         """;
 
     readonly SqliteConnection _conn;
@@ -94,6 +98,17 @@ public sealed partial class LibraryDb : IDisposable
         AddColumn("projects", "length_bars", "INTEGER");
         AddColumn("projects", "track_count", "INTEGER");
         AddColumn("samples", "unplayed", "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    /// <summary>
+    /// Builds the indexes this version added, if the library doesn't have them yet. The app calls it in the
+    /// background once the window shows: the first time, over every sample of 16,000 projects, it takes a few seconds,
+    /// which would otherwise pass with nothing on screen. Until then the lookups they speed up still work, just slower.
+    /// </summary>
+    public void BuildNewIndexes()
+    {
+        lock (_lock)
+            if (!_disposed) Exec(NewIndexes);
     }
 
     /// <summary>A column added after the first release: libraries made before it get it here.</summary>
