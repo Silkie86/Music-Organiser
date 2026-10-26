@@ -66,6 +66,7 @@ public sealed partial class ShortcutsViewModel : ObservableObject
         new("app.play", Everywhere, "Play or stop the picked sound or MIDI part", "Space", "Bitwig's browser"),
         new("app.rescan", Everywhere, "Look for new and changed projects", "F5", "Windows' refresh key"),
         new("app.fullScreen", Everywhere, "Full screen on or off", "F11", "Windows"),
+        new("app.recycleBin", Everywhere, "Open the Recycle Bin, where everything the app removes goes", "Ctrl+Shift+Delete", "Music Organiser"),
         new("app.sizeUp", Everywhere, "Make this page bigger", "Ctrl+=", "the browsers' zoom"),
         new("app.sizeDown", Everywhere, "Make this page smaller, to fit more on screen", "Ctrl+-", "the browsers' zoom"),
         new("app.sizeReset", Everywhere, "This page back to the size of the rest", "Ctrl+0", "the browsers' zoom"),
@@ -157,6 +158,8 @@ public sealed partial class ShortcutsViewModel : ObservableObject
 
         new("plugins.projects", Plugins, "Show the songs that use the picked plugin", "Ctrl+O", "Music Organiser"),
         new("plugins.searchOnline", Plugins, "Search the web for the picked plugin", "Ctrl+Shift+O", "Music Organiser"),
+        new("plugins.cleanUp", Plugins, "Clean up the picked plugin's presets and sounds (asks first)", ""),
+        new("plugins.uninstall", Plugins, "Uninstall the picked plugin (asks first)", ""),
     ];
 
     readonly LibraryDb? _db;

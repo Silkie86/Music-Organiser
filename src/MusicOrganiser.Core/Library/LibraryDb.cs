@@ -86,6 +86,7 @@ public sealed partial class LibraryDb : IDisposable
         _readString = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString();
         Exec(Schema);
         Exec(PluginScanSchema);
+        Exec(SpaceSchema);
         AddColumn("projects", "detected_key", "TEXT");
         AddColumn("projects", "created", "INTEGER");
         AddColumn("projects", "note_count", "INTEGER");

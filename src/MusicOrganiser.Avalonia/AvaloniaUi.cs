@@ -149,6 +149,16 @@ sealed class AvaloniaItemsView(IList items) : IItemsView
 
     public int Count => Inner.Count;
 
+    public void KeepSortOf(IItemsView? earlier)
+    {
+        if (earlier is not AvaloniaItemsView old) return;
+        _customSort = old._customSort;
+        _propertySort = old._propertySort;
+        // The grid's own header sort lives in the inner view: carry it over as it is.
+        Inner.SortDescriptions.Clear();
+        foreach (var d in old.Inner.SortDescriptions) Inner.SortDescriptions.Add(d);
+    }
+
     public IEnumerator GetEnumerator() => ((IEnumerable)Inner).GetEnumerator();
 }
 

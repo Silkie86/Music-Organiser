@@ -35,6 +35,8 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     [ObservableProperty] bool _onlyMissing;
     [ObservableProperty] bool _hideArchived = true;
     [ObservableProperty] bool _groupSaves = true;
+    /// <summary>Biggest songs first (the Space chip), instead of by when they were made.</summary>
+    [ObservableProperty] bool _biggestFirst;
     [ObservableProperty] string _groupBy = "When made";
     [ObservableProperty] string _countText = "";
 
@@ -95,7 +97,8 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
         Show(loaded, select);
     }
 
-    sealed record Loaded(int Saves, List<ProjectItem> Items, List<string> Tags, SongChoices Choices, IReadOnlyList<SongDoubt> Doubts);
+    sealed record Loaded(int Saves, List<ProjectItem> Items, List<string> Tags, SongChoices Choices, IReadOnlyList<SongDoubt> Doubts,
+                         Dictionary<long, string> OwnFolders, IReadOnlyDictionary<string, (long Bytes, DateTime Measured)> Spaces);
 
     /// <summary>The rows, read from the database and grouped into songs (on any thread).</summary>
     Loaded Load(bool group, (bool Ask, bool AcrossFolders) asking)
@@ -112,13 +115,17 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
             ? songs.Select(g => new ProjectItem(_db, g.Latest, g.Song, g.Older) { SongKey = g.Key }).ToList()
             : projects.Select(p => new ProjectItem(_db, p) { SongKey = choices.KeyOf(p.Path, p.Folder, p.Daw, p.Name) }).ToList();
         var doubts = asking.Ask ? SongVersions.Doubts(songs, choices, asking.AcrossFolders) : [];
-        return new(projects.Count, items, _db.AllTags().Select(t => t.Tag).ToList(), choices, doubts);
+        var own = OwnFolders(items, _db.Roots());
+        var spaces = _db.FolderSpaces();
+        foreach (var i in items) i.SpaceBytes = SpaceOf(i, own, spaces);
+        return new(projects.Count, items, _db.AllTags().Select(t => t.Tag).ToList(), choices, doubts, own, spaces);
     }
 
     void Show(Loaded loaded, string? select = null)
     {
         var selectedId = Selected?.Id;
         _saveCount = loaded.Saves;
+        _ownFolders = loaded.OwnFolders;
         Choices = loaded.Choices;   // before the rows, so the song's panel sees what you changed
         // The song you have open keeps its row (and so its panel, with Fix's choices and Check's results) when none of
         // its saves changed: a DAW saving some other project reloads the list.
@@ -289,8 +296,62 @@ public sealed partial class ProjectsViewModel : ObservableObject, IFileDragSourc
     partial void OnOnlyMissingChanged(bool value) => ApplyFilter();
     partial void OnHideArchivedChanged(bool value) => ApplyFilter();
 
+    // ---- Space: how much room each song takes ------------------------------------------------------------------------
+
+    // Each song's folder, by its row's id, when the song has the folder to itself (see OwnFolders).
+    Dictionary<long, string> _ownFolders = [];
+
+    /// <summary>
+    /// The folders songs have to themselves: none of your project folders (or one holding them), and every save the
+    /// library knows in it is the same song's. Bitwig and Studio One give each song its own; FL Studio songs often share.
+    /// </summary>
+    internal static Dictionary<long, string> OwnFolders(IReadOnlyList<ProjectItem> items, IReadOnlyList<string> roots)
+    {
+        var songsIn = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in items)
+            foreach (var s in i.OlderSaves.Prepend(i.Summary))
+                (songsIn.TryGetValue(s.Folder, out var set) ? set : songsIn[s.Folder] = []).Add(i.Id);
+        var own = new Dictionary<long, string>();
+        foreach (var i in items)
+        {
+            var folder = i.Folder;
+            if (folder.Length > 0 && songsIn[folder].Count == 1 && !roots.Any(r => Core.Space.DiskSpace.IsInside(r, folder)))
+                own[i.Id] = folder;
+        }
+        return own;
+    }
+
+    static long SpaceOf(ProjectItem i, Dictionary<long, string> own, IReadOnlyDictionary<string, (long Bytes, DateTime Measured)> spaces) =>
+        own.TryGetValue(i.Id, out var folder) && spaces.TryGetValue(folder, out var s) && s.Bytes > 0 ? s.Bytes : i.SavesBytes;
+
+    /// <summary>The songs' own folders and their newest saves, for measuring in the background.</summary>
+    public IReadOnlyList<(string Folder, DateTime NewestSave)> OwnFolderList() =>
+        Items.Where(i => _ownFolders.ContainsKey(i.Id)).Select(i => (_ownFolders[i.Id], i.Modified)).ToList();
+
+    /// <summary>Shows newly measured sizes without reading the whole list again.</summary>
+    public void ApplySpace(IReadOnlyDictionary<string, (long Bytes, DateTime Measured)> spaces)
+    {
+        foreach (var i in Items) i.SpaceBytes = SpaceOf(i, _ownFolders, spaces);
+        if (BiggestFirst) View.Refresh();
+    }
+
+    partial void OnBiggestFirstChanged(bool value)
+    {
+        if (value)
+        {
+            View.GroupBy(null);
+            View.SortBy(nameof(ProjectItem.SpaceBytes), ListSortDirection.Descending);
+        }
+        else
+        {
+            View.SortBy(nameof(ProjectItem.Made), ListSortDirection.Descending);
+            OnGroupByChanged(GroupBy);
+        }
+    }
+
     partial void OnGroupByChanged(string value)
     {
+        if (BiggestFirst) return;   // sizes aren't grouped
         var prop = value switch
         {
             "When made" => nameof(ProjectItem.WhenGroup),

@@ -280,6 +280,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         Settings.RefreshTemplate();
         _ = Settings.RefreshLinksAsync();
+        _ = Plugins.RefreshHomesAsync();
         _ = Settings.SoundOutput.RefreshAsync();
         _ = Settings.Probe.RefreshAsync();
         Settings.Probe.StartLive();
@@ -338,6 +339,17 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand]
     Task Rescan() => ScanAsync(false);
+
+    /// <summary>Opens the Recycle Bin, where Clean up, Compact and Uninstall put what they remove (Solomon's F12 note, 25 Oct).</summary>
+    [RelayCommand]
+    internal void OpenRecycleBin()
+    {
+        try { Shell.OpenRecycleBin(); }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            Activities.Failed("Couldn't open the Recycle Bin", e.Message);
+        }
+    }
 
     [RelayCommand]
     Task FullRescan() => ScanAsync(true);
@@ -540,8 +552,62 @@ public sealed partial class MainViewModel : ObservableObject
         }
         // The MIDI browser reads new and changed projects' MIDI on its own, at the lowest priority.
         if (_midiPage) _ = Midi.AfterScanAsync();
+        _ = MeasureSpaceAsync();
         await RunQueuedScanAsync();
     }
+
+    bool _measuringSpace;
+
+    /// <summary>
+    /// Measures how much room plugins and songs take, after a scan, in the background slots (see <see cref="SpaceMeter"/>):
+    /// plugins once a week (or now, with <paramref name="force"/>), song folders whose size is missing or older than
+    /// their newest save. The Plugins and Projects pages pick the sizes up when it's done.
+    /// </summary>
+    public async Task MeasureSpaceAsync(bool force = false)
+    {
+        if (_measuringSpace) return;
+        _measuringSpace = true;
+        var meter = new Core.Space.SpaceMeter(_db);
+        var folders = Projects.OwnFolderList();
+        using var cts = new CancellationTokenSource();
+        Activity? card = null;
+        try
+        {
+            var plugins = force || meter.PluginsStale();
+            if (plugins)
+            {
+                card = Activities.Start("Measuring plugin sizes", cancel: cts.Cancel);
+                var before = SpaceSignature(_db.PluginSpaces().Values);
+                var after = SpaceSignature(await Task.Run(() => meter.MeasurePlugins(ct: cts.Token), cts.Token));
+                // Only when a size changed: the page keeps its rows (and your place in them) otherwise.
+                if (before != after) await Plugins.ReloadAsync();
+            }
+            var progress = new Progress<(int Done, int Total)>(p =>
+            {
+                card ??= Activities.Start("Measuring song folders", cancel: cts.Cancel);
+                card.Report(100.0 * p.Done / Math.Max(1, p.Total), $"{p.Done:N0} of {p.Total:N0} song folders");
+            });
+            var measured = await Task.Run(() => meter.MeasureFolders(folders, progress, cts.Token), cts.Token);
+            if (measured > 0) Projects.ApplySpace(_db.FolderSpaces());
+            card?.Finish("Disk space measured", measured > 0 ? $"{measured:N0} song folders" : "Plugins measured");
+        }
+        catch (OperationCanceledException)
+        {
+            card?.Stop("Stopped measuring disk space", "It carries on after the next scan");
+            Projects.ApplySpace(_db.FolderSpaces());
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            card?.Fail("Measuring disk space failed", e.Message);
+        }
+        finally
+        {
+            _measuringSpace = false;
+        }
+    }
+
+    static string SpaceSignature(IEnumerable<Core.Space.PluginSpaceInfo> spaces) =>
+        string.Join("|", spaces.OrderBy(s => s.Key, StringComparer.Ordinal).Select(s => $"{s.Key}:{s.Bytes}:{s.SharedBytes}:{s.Folders.Count}"));
 }
 
 /// <summary>A place in the sidebar. <paramref name="key"/> names it in saved settings, so renaming the page keeps them.</summary>

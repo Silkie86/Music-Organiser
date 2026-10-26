@@ -1,0 +1,110 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:MusicOrganiser.ViewModels"
+             xmlns:views="using:MusicOrganiser.Avalonia.Views"
+             x:Class="MusicOrganiser.Avalonia.Views.SongSpaceView"
+             x:DataType="vm:SongSpaceViewModel">
+    <!-- A song's room on disk: the total, where it goes, and what Compact can free without losing music. -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="10">
+            <TextBlock Text="Measuring the song's folder…" Classes="muted" IsVisible="{Binding Measuring}" />
+            <StackPanel Spacing="10" IsVisible="{Binding !Measuring}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Measure again" Command="{Binding RemeasureCommand}" VerticalAlignment="Top"
+                            ToolTip.Tip="Measure the song's files again (after saving it, say)" />
+                    <Button DockPanel.Dock="Right" Margin="0,0,6,0" Content="Recycle Bin" Command="{Binding OpenRecycleBinCommand}" VerticalAlignment="Top"
+                            ToolTip.Tip="Open the Recycle Bin, where everything Compact removes goes (Ctrl+Shift+Delete)" />
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Text="{Binding TotalText}" FontSize="22" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" />
+                        <TextBlock Text="{Binding FreeableText}" Foreground="{StaticResource OkBrush}" VerticalAlignment="Bottom" Margin="0,0,0,4" />
+                    </StackPanel>
+                </DockPanel>
+                <TextBlock Text="{Binding Note}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                <views:ShareBar Parts="{Binding Parts}" />
+                <ItemsControl ItemsSource="{Binding Parts}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SpacePart">
+                            <DockPanel Margin="0,1">
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontFamily="{DynamicResource NumberFont}" FontSize="12"
+                                           Foreground="{StaticResource MutedBrush}" />
+                                <Border DockPanel.Dock="Left" Width="9" Height="9" CornerRadius="2" Margin="0,0,8,0" VerticalAlignment="Center"
+                                        Background="{Binding Colour, Converter={StaticResource HexBrush}}" />
+                                <TextBlock Text="{Binding Name}" FontSize="12.5" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <DockPanel Margin="0,8,0,0">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Keep newest" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+                        <ComboBox ItemsSource="{x:Static vm:SongSpaceViewModel.KeepBackupsChoices}" SelectedItem="{Binding KeepBackups}"
+                                  ToolTip.Tip="How many of the newest autosaves stay when you compact" />
+                        <TextBlock Text="autosaves" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Text="· a sitting ends after" Classes="muted" FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0" />
+                        <ComboBox ItemsSource="{x:Static vm:SongSpaceViewModel.SittingChoices}" SelectedItem="{Binding Sitting}"
+                                  ToolTip.Tip="Thin older saves: saves closer together than this are one sitting, and only its last save stays. Off doesn't offer it." />
+                        <TextBlock Text="without a save" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Text="COMPACT WITHOUT LOSING MUSIC" Classes="filterLabel" VerticalAlignment="Center" />
+                </DockPanel>
+                <ItemsControl ItemsSource="{Binding Rows}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:CompactRow">
+                            <Border Padding="10,8" Margin="0,0,0,6" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="{DynamicResource RadiusM}"
+                                    ToolTip.Tip="{Binding FilesTip}">
+                                <DockPanel>
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsTicked}" IsVisible="{Binding CanTick}" VerticalAlignment="Top" Margin="0,0,6,0" />
+                                    <Button DockPanel.Dock="Right" Content="Show" Command="{Binding ShowCommand}" VerticalAlignment="Top" Margin="8,0,0,0"
+                                            IsVisible="{Binding !HasFiles}" />
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontFamily="{DynamicResource NumberFont}" VerticalAlignment="Top"
+                                               Foreground="{StaticResource OkBrush}" />
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="11.5" TextWrapping="Wrap" />
+                                        <!-- Audio no save seems to use: each file on its own, heard before it's picked. -->
+                                        <ItemsControl ItemsSource="{Binding Files}" IsVisible="{Binding HasFiles}" Margin="0,8,0,0">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:AudioFileRow">
+                                                    <DockPanel Margin="0,2">
+                                                        <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsTicked}" VerticalAlignment="Center" Margin="0,0,4,0"
+                                                                  ToolTip.Tip="Tick to remove it with Compact" />
+                                                        <Button DockPanel.Dock="Left" Content="▶" Command="{Binding PlayCommand}" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                                ToolTip.Tip="Play it (again to stop)" />
+                                                        <Button DockPanel.Dock="Right" Content="Show" Command="{Binding ShowCommand}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                                        <TextBlock DockPanel.Dock="Right" Text="{Binding SizeText}" FontFamily="{DynamicResource NumberFont}" FontSize="12"
+                                                                   VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" />
+                                                        <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}">
+                                                            <Run Text="{Binding Name}" /><Run Text="  " /><Run Text="{Binding Folder}" Foreground="{StaticResource MutedBrush}" FontSize="11.5" />
+                                                        </TextBlock>
+                                                    </DockPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="Nothing here can go without losing something. The song is already compact." Classes="muted" FontSize="12"
+                           TextWrapping="Wrap" IsVisible="{Binding HasNothing}" />
+                <Button Content="Compact song…" Classes="accent" HorizontalAlignment="Left" Command="{Binding CompactCommand}" IsVisible="{Binding !Confirming}"
+                        ToolTip.Tip="Remove the ticked files to the Recycle Bin. You're asked first." />
+
+                <!-- The Keep or Delete step. -->
+                <Border Padding="14,12" CornerRadius="{DynamicResource RadiusM}" BorderBrush="{StaticResource WarningBrush}" BorderThickness="1"
+                        IsVisible="{Binding Confirming}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Remove the ticked files?" FontWeight="SemiBold" />
+                        <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="{Binding ConfirmNote}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                            <Button Content="Keep" Command="{Binding KeepCommand}" IsCancel="True" />
+                            <Button Content="{Binding ConfirmText}" Classes="trouble" Command="{Binding DeleteCommand}" IsEnabled="{Binding !Busy}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

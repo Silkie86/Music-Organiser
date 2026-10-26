@@ -45,6 +45,14 @@ public static class Shell
 
     public static void OpenUrl(string url) => Open(url);
 
+    /// <summary>Opens the Recycle Bin (the Trash on a Mac or Linux), where everything the app removes goes.</summary>
+    public static void OpenRecycleBin()
+    {
+        if (OperatingSystem.IsMacOS()) Run("open", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".Trash"));
+        else if (OperatingSystem.IsLinux()) Run("xdg-open", "trash:///");
+        else StartDetached(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "shell:RecycleBinFolder");
+    }
+
     /// <summary>
     /// Asks the file manager to open the folder with the file picked, through the freedesktop
     /// FileManager1 call that Nautilus, Dolphin, Nemo, Caja and Thunar answer; just the folder when

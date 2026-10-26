@@ -9,6 +9,8 @@
 #        PLAYGROUND=<a playground idea .json> (opened on the Playground page)
 #        SETTING="key=value ..." (options set before it starts, e.g. appearance_theme=Paper; + for a space)
 #        PLAYGROUND_STEPS=<file of xdotool and shot lines> (only the Playground page, then those steps)
+#        SQL=<file of SQL> (run on the library before it starts, e.g. made-up plugin sizes for the Plugins page)
+#        STEPS=<file of xdotool and shot lines> (only those steps once the app is up, then stop)
 set -euo pipefail
 
 OUT=$(realpath -m "${1:?output folder}")
@@ -71,6 +73,8 @@ for kv in ${SETTING:-}; do
   sqlite3 "$XDG_DATA_HOME/MusicOrganiser/library.db" "INSERT OR REPLACE INTO settings(key,value) VALUES('${kv%%=*}','${value//+/ }');"
 done
 
+[[ -n ${SQL:-} && -f $SQL ]] && sed "s|\$WORK|$WORK|g" "$SQL" | sqlite3 "$XDG_DATA_HOME/MusicOrganiser/library.db"
+
 if [[ -n ${PLAYGROUND:-} && -f $PLAYGROUND ]]; then
   mkdir -p "$XDG_DATA_HOME/MusicOrganiser/playground"; cp "$PLAYGROUND" "$XDG_DATA_HOME/MusicOrganiser/playground/current.json"
 fi
@@ -84,6 +88,11 @@ shot() { sleep "${2:-1.5}"; import -window root "$OUT/$1.png"; echo "$OUT/$1.png
 # Rail items are 62 px apart from y=106: Projects, Sounds, MIDI, Playground, Plugins (Settings sits at the bottom, y=750). Clicking moves the pointer away after, so no item looks hovered, but
 # keeps it inside the window: with no window manager, keys go to whichever window the pointer is over.
 nav() { local y=$((106 + $1 * 62)); [[ $1 == 5 ]] && y=750; xdotool mousemove 42 $y click 1 mousemove 1430 892; }
+# STEPS=<file>: only the steps in that file (nav, xdotool and shot lines), then stop.
+if [[ -n ${STEPS:-} ]]; then
+  source "$STEPS"
+  exit 0
+fi
 # SONG_FITS=1: only a song's MIDI that fits tab, its quick view and the cut-down playground in it, then stop.
 if [[ -n ${SONG_FITS:-} ]]; then
   nav 2; sleep 10   # the MIDI page reads the MIDI first

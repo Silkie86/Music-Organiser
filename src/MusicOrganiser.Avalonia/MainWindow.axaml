@@ -15,6 +15,7 @@
         <DataTemplate DataType="vm:MidiBrowserViewModel"><views:MidiView /></DataTemplate>
         <DataTemplate DataType="vm:PlaygroundViewModel"><views:PlaygroundView /></DataTemplate>
         <DataTemplate DataType="vm:SongMidiViewModel"><views:SongMidiView /></DataTemplate>
+        <DataTemplate DataType="vm:SongSpaceViewModel"><views:SongSpaceView /></DataTemplate>
         <DataTemplate DataType="vm:PluginsViewModel"><views:PluginsView /></DataTemplate>
         <DataTemplate DataType="vm:SamplesViewModel"><views:SamplesView /></DataTemplate>
     </Window.DataTemplates>

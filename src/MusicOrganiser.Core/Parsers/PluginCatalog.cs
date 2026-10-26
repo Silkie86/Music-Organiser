@@ -191,7 +191,7 @@ public static partial class PluginCatalog
         return found.Values.ToList();
     }
 
-    static readonly string[] BundleExtensions = [".vst3", ".component", ".clap", ".vst"];
+    static readonly string[] BundleExtensions = [".vst3", ".component", ".clap", ".vst", ".aaxplugin"];
 
     static bool InsideBundle(string path) =>
         BundleExtensions.Any(b => path.Contains(b + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
