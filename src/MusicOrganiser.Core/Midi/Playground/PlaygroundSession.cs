@@ -145,13 +145,36 @@ public sealed class PlaygroundSession
             if (s is null) return null;
             // Ideas saved before the timeline have no version.
             if (!HasVersion(json)) s.Version = 1;
+            s.NoMissingLists();
             if (s.Sections.Count == 0) s.Sections.Add(new PlaygroundSection());
             s.Current = Math.Clamp(s.Current, 0, s.Sections.Count - 1);
             s.Upgrade();
             return s;
         }
-        catch (JsonException) { return null; }
-        catch (FormatException) { return null; }
+        // Anything else wrong with it (a kind this build doesn't know, bad base64, a missing value) means it can't be
+        // opened: the caller keeps the file rather than working on half of it.
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>Lists written as null (a file changed by hand) read as empty, as missing ones do.</summary>
+    void NoMissingLists()
+    {
+        Sections = Sections?.OfType<PlaygroundSection>().ToList() ?? [];
+        foreach (var section in Sections)
+        {
+            section.Layers = section.Layers?.OfType<PlaygroundLayer>().ToList() ?? [];
+            section.Labels = section.Labels?.OfType<PlaygroundLabel>().ToList() ?? [];
+            section.ChordTrack = section.ChordTrack?.OfType<PlaygroundChord>().ToList() ?? [];
+            foreach (var layer in section.Layers)
+            {
+                layer.Clips = layer.Clips?.OfType<PlaygroundClip>().ToList() ?? [];
+                foreach (var clip in layer.Clips)
+                {
+                    clip.Fits ??= [];
+                    clip.Under = clip.Under?.OfType<PlaygroundChord>().ToList() ?? [];
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -258,15 +281,46 @@ public sealed class PlaygroundStore(string folder)
     public bool HasCurrent => File.Exists(CurrentFile);
     string IdeasFolder => Path.Combine(Folder, "ideas");
 
+    /// <summary>
+    /// Whether the idea being worked on was there but couldn't be opened (saved by a newer build, damaged, or locked), so
+    /// a new one was started. Its file is never saved over: it's put aside as current.unreadable-(date).json.
+    /// </summary>
+    public bool OpenFailed { get; private set; }
+    /// <summary>The idea that couldn't be opened is still current.json (it couldn't be moved yet): moved before the next save.</summary>
+    bool _toPutAside;
+
     public PlaygroundSession LoadCurrent()
     {
-        try { return File.Exists(CurrentFile) ? PlaygroundSession.FromJson(File.ReadAllText(CurrentFile)) ?? new() : new(); }
-        catch (IOException) { return new(); }
+        if (!File.Exists(CurrentFile)) return new();
+        try
+        {
+            if (PlaygroundSession.FromJson(File.ReadAllText(CurrentFile)) is { } session) return session;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        OpenFailed = _toPutAside = true;
+        try { PutAside(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // tried again before the next save
+        return new();
+    }
+
+    /// <summary>The idea that couldn't be opened moved out of the way, kept in the same folder.</summary>
+    void PutAside()
+    {
+        if (File.Exists(CurrentFile))
+        {
+            var name = $"current.unreadable-{DateTime.Now:yyyy-MM-dd-HHmmss}";
+            var aside = Path.Combine(Folder, name + ".json");
+            for (var i = 2; File.Exists(aside); i++) aside = Path.Combine(Folder, $"{name}-{i}.json");
+            File.Move(CurrentFile, aside);
+        }
+        _toPutAside = false;
     }
 
     public void SaveCurrent(PlaygroundSession session)
     {
         Directory.CreateDirectory(Folder);
+        // Never saved over the idea that couldn't be opened: while it can't be moved aside, nothing is saved.
+        if (_toPutAside) PutAside();
         var temp = CurrentFile + ".tmp";
         File.WriteAllText(temp, session.ToJson());
         File.Move(temp, CurrentFile, overwrite: true);

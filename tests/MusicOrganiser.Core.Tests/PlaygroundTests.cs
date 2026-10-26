@@ -529,6 +529,54 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
+    public void An_idea_that_cant_be_opened_is_kept_and_never_saved_over()
+    {
+        var folder = Path.Combine(_root, "playground");
+        Directory.CreateDirectory(folder);
+        var current = Path.Combine(folder, "current.json");
+        // Saved by a newer build: a kind of harmony this one doesn't know.
+        var newer = new PlaygroundSession { Name = "Late night" }.ToJson().Replace("\"JazzGospel\"", "\"Bebop\"");
+        File.WriteAllText(current, newer);
+
+        var store = new PlaygroundStore(folder);
+        var opened = store.LoadCurrent();
+        Assert.True(store.OpenFailed);
+        Assert.Equal("Untitled idea", opened.Name);
+        store.SaveCurrent(opened);   // the first change after opening
+        var kept = Assert.Single(Directory.GetFiles(folder, "current.unreadable-*.json"));
+        Assert.Equal(newer, File.ReadAllText(kept));
+        Assert.Equal("Untitled idea", PlaygroundSession.FromJson(File.ReadAllText(current))!.Name);
+
+        // Opened again, the new one is there and nothing more is put aside.
+        var again = new PlaygroundStore(folder);
+        again.LoadCurrent();
+        Assert.False(again.OpenFailed);
+        Assert.Single(Directory.GetFiles(folder, "current.unreadable-*.json"));
+
+        // The page says so.
+        File.WriteAllText(current, "{ \"Sections\": [ { \"Layers\": [ { \"Data\": \"not base64!\" } ] } ] }");
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        var page = new PlaygroundViewModel(db, main, new PlaygroundStore(folder));
+        Assert.Contains("couldn't be opened", page.Message);
+        Assert.Equal(2, Directory.GetFiles(folder, "current.unreadable-*.json").Length);
+    }
+
+    [Fact]
+    public void An_idea_with_empty_lists_written_as_null_still_opens()
+    {
+        var json = new PlaygroundSession { Sections = [new() { Layers = [new PlaygroundLayer { Name = "Keys", Notes = Line(Bar, 60) }] }] }.ToJson();
+        var noClips = PlaygroundSession.FromJson(json.Replace("\"Clips\": []", "\"Clips\": null").Replace("\"Labels\": []", "\"Labels\": null"))!;
+        Assert.Equal([60], noClips.Timeline.Layers.Single().Notes.Select(n => n.Key));
+        var noSections = PlaygroundSession.FromJson("{ \"Version\": 2, \"Sections\": null }")!;
+        Assert.Empty(Assert.Single(noSections.Sections).Layers);
+    }
+
+    [Fact]
     public void A_clip_plays_round_trimmed_and_moved_and_only_chord_and_bass_clips_say_the_chords()
     {
         // A 1-bar riff, its start trimmed by a beat, stretched to 2½ bars from bar 3, the second go round up a tone.

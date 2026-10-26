@@ -41,6 +41,7 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         _store = store ?? new PlaygroundStore(Path.Combine(main.DataFolder, "playground"));
         LoadOptions();
         _session = !quick && _store.HasCurrent ? _store.LoadCurrent() : Fresh();
+        if (_store.OpenFailed) _session = Fresh();
         RoleChips = new[] { MidiRoles.Chords, MidiRoles.Bass, MidiRoles.Melody, MidiRoles.Arp, MidiRoles.Drums }
             .Select(r => new RoleChip(MidiRoles.Plural(r), r)).ToList();
         _suggestRole = RoleChips[0];
@@ -49,6 +50,8 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         // More MIDI read (a folder or project added, or the list read again): the progressions are found again.
         if (!quick) main.Midi.Read += (_, _) => _ = RefreshProgressionsAsync();
         Show();
+        if (_store.OpenFailed)
+            Message = "Your last idea couldn't be opened, so a new one was started. The old one is kept in the playground folder.";
         _wasEmpty = IsEmpty;   // nothing looked up while being made: Opened does that
     }
 
