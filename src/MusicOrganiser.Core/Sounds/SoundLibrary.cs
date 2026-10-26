@@ -104,6 +104,9 @@ public sealed partial class SoundLibrary : IDisposable
             x REAL NOT NULL, y REAL NOT NULL,
             PRIMARY KEY (space, sound_id)
         );
+        -- Forgetting a sound clears its rows here too: without these, each one read every row of both tables.
+        CREATE INDEX IF NOT EXISTS ix_sound_maps_sound ON sound_maps(sound_id);
+        CREATE INDEX IF NOT EXISTS ix_sound_events_sound ON sound_events(sound_id);
         """;
 
     // The galaxy kept one map before each kind of placing had its own: it moves across under the kind it was made from.
@@ -256,46 +259,49 @@ public sealed partial class SoundLibrary : IDisposable
 
     public void SetClap(long id, float[] v) => Exec("UPDATE sounds SET clap = $c WHERE id = $id", ("$c", ToBlob(v)), ("$id", id));
 
-    /// <summary>Forgets samples that are no longer in your sample folders.</summary>
     /// <summary>The size and modified time stored for one file, or null when it isn't in the library.</summary>
     public (long Mtime, long Size)? KnownFile(string path) =>
         Query("SELECT mtime, size FROM sounds WHERE path = $p", r => (Long(r, "mtime"), Long(r, "size")), ("$p", path))
             .Select(t => ((long, long)?)t).FirstOrDefault();
 
     /// <summary>Forgets these files (deleted or moved away); returns how many were in the library.</summary>
-    public int Remove(IEnumerable<string> paths)
-    {
-        var removed = 0;
-        lock (_lock)
-        {
-            using var tx = _conn.BeginTransaction();
-            foreach (var path in paths)
-            {
-                using var cmd = Cmd("DELETE FROM sounds WHERE path = $p", ("$p", path));
-                cmd.Transaction = tx;
-                removed += cmd.ExecuteNonQuery();
-            }
-            tx.Commit();
-        }
-        return removed;
-    }
+    public int Remove(IEnumerable<string> paths) => InBatches(paths, "DELETE FROM sounds WHERE path = $p", "$p");
 
+    /// <summary>Forgets samples that are no longer in your sample folders.</summary>
     public int RemoveMissing(IReadOnlySet<string> present, Func<string, bool>? keep = null)
     {
         var gone = Query("SELECT id, path FROM sounds", r => ((long)r["id"], (string)r["path"]))
             .Where(t => !present.Contains(t.Item2) && keep?.Invoke(t.Item2) != true).Select(t => t.Item1).ToList();
-        lock (_lock)
-        {
-            using var tx = _conn.BeginTransaction();
-            foreach (var id in gone)
-            {
-                using var cmd = Cmd("DELETE FROM sounds WHERE id = $id", ("$id", id));
-                cmd.Transaction = tx;
-                cmd.ExecuteNonQuery();
-            }
-            tx.Commit();
-        }
+        InBatches(gone, "DELETE FROM sounds WHERE id = $id", "$id");
         return gone.Count;
+    }
+
+    /// <summary>
+    /// Runs one statement for each value, a few hundred to a transaction, letting go of the database between them, so
+    /// a play or a favourite clicked meanwhile isn't kept waiting for a whole pack to go. Returns the rows changed.
+    /// </summary>
+    int InBatches<T>(IEnumerable<T> values, string sql, string name, int size = 500)
+    {
+        var changed = 0;
+        using var e = values.GetEnumerator();
+        var more = e.MoveNext();
+        while (more)
+        {
+            lock (_lock)
+            {
+                using var tx = _conn.BeginTransaction();
+                using var cmd = Cmd(sql);
+                cmd.Transaction = tx;
+                var p = cmd.Parameters.Add(new SqliteParameter(name, null));
+                for (var n = 0; more && n < size; n++, more = e.MoveNext())
+                {
+                    p.Value = e.Current;
+                    changed += cmd.ExecuteNonQuery();
+                }
+                tx.Commit();
+            }
+        }
+        return changed;
     }
 
     // ---- reading -----------------------------------------------------------------

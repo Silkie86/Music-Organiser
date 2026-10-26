@@ -719,3 +719,44 @@ public class VectorIndexTests
         Assert.Empty(index.Nearest(query, 0));
     }
 }
+
+public class SoundLibraryTests
+{
+    [Fact]
+    public void Forgetting_sounds_finds_their_map_and_play_rows_by_index_and_forgets_a_big_pack_whole()
+    {
+        var root = Directory.CreateTempSubdirectory("mo-forget-").FullName;
+        var path = Path.Combine(root, "sounds.db");
+        using var lib = new SoundLibrary(path);
+        var paths = Enumerable.Range(0, 1200).Select(i => $"/lib/Pack/Kick {i}.wav").ToList();
+        lib.Save(paths.Select(p => new SoundLibrary.Analysed(p, 1, 1, null, null, null, "Kick")));
+        var ids = lib.All().Select(s => s.Id).ToList();
+        lib.SaveMap("features", ids.ToDictionary(id => id, _ => new StarPoint(0.5f, 0.5f)), replace: true);
+        lib.Record(ids, SoundEvent.Drag);
+
+        // Forgetting a sound clears its galaxy place and plays by its id: without an index on it, each sound read the
+        // whole of both tables (53 ms a sound with 900,000 places, minutes for a pack, with plays and favourites waiting).
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Mode=ReadOnly"))
+        {
+            conn.Open();
+            foreach (var table in new[] { "sound_maps", "sound_events" })
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"EXPLAIN QUERY PLAN SELECT 1 FROM {table} WHERE sound_id = 1";
+                using var r = cmd.ExecuteReader();
+                var plan = "";
+                while (r.Read()) plan += r.GetString(3);
+                Assert.Contains("INDEX", plan);
+                Assert.DoesNotContain("SCAN", plan);
+            }
+        }
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
+        // Gone a few hundred at a time, all of them in the end.
+        Assert.Equal(1000, lib.Remove(paths.Take(1000)));
+        Assert.Equal(200, lib.Count());
+        Assert.Equal(200, lib.Map("features").Count);
+        Assert.Equal(1, lib.RemoveMissing(paths.Skip(1000).Take(199).ToHashSet(StringComparer.OrdinalIgnoreCase)));
+        Assert.Equal(199, lib.Count());
+    }
+}
