@@ -236,19 +236,27 @@ public sealed partial class ProjectDetailViewModel
         await _main.Projects.ReloadAsync(select: file);
     }
 
-    /// <summary>It didn't load right: delete the copy (the original was never changed).</summary>
+    /// <summary>
+    /// It didn't load right: the copy goes to the Recycle Bin, like everything the app removes (you may have saved work
+    /// into it in the DAW). The original was never changed.
+    /// </summary>
     [RelayCommand]
     async Task DeleteFixed()
     {
         if (PendingFix is not { } file) return;
-        if (!await Ui.Current.Confirm($"Delete {System.IO.Path.GetFileName(file)}?\n\nThe original project stays as it is.", "Delete fixed copy")) return;
+        if (!await Ui.Current.Confirm($"Move {System.IO.Path.GetFileName(file)} to the Recycle Bin?\n\nThe original project stays as it is.",
+                                      "Delete fixed copy")) return;
         try
         {
-            if (File.Exists(file)) File.Delete(file);
+            if (await Task.Run(() => Core.Space.RecycleBin.Send(file)) is { Length: > 0 } problem)
+            {
+                Activities.Failed("Couldn't delete the fixed copy", problem);
+                return;
+            }
             var from = _pendingFrom;
             ForgetFix();
             await Task.Run(() => _db.RemoveProject(file));
-            Activities.Done($"Deleted {System.IO.Path.GetFileName(file)}", "The original project is unchanged.");
+            Activities.Done($"Deleted {System.IO.Path.GetFileName(file)}", "It's in the Recycle Bin. The original project is unchanged.");
             await _main.Projects.ReloadAsync(select: from);
         }
         catch (Exception e)

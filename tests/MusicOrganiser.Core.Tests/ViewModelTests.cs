@@ -285,6 +285,45 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Deleting_a_fixed_copy_puts_it_in_the_recycle_bin()
+    {
+        if (!OperatingSystem.IsLinux()) return;   // the real Recycle Bin (or the Mac's Trash): not in a test
+        var home = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(_root, "share"));
+        try
+        {
+            var libRoot = Fixtures.TempDir();
+            Directory.CreateDirectory(Path.Combine(libRoot, "Drums"));
+            File.WriteAllBytes(Path.Combine(libRoot, "Drums", "Kick 01.wav"), [0]);
+            _db.SetList(Scanner.SampleFoldersKey, [libRoot]);
+            new Scanner(_db).ScanSampleFolders();
+            ScanFixtures();
+            var main = Main();
+            await Until(() => !main.IsScanning);
+            var projects = main.Projects;
+            projects.Reload();
+            projects.Selected = projects.Items.Single(i => i.Daw == "FL Studio");
+            await projects.Detail!.PlanFixCommand.ExecuteAsync(null);
+            await projects.Detail.SaveFixedCommand.ExecuteAsync(null);
+            var copy = projects.Detail!.PendingFix!;
+            Assert.True(File.Exists(copy));
+
+            ((HeadlessUi)Ui.Current).Confirms = true;
+            await projects.Detail.DeleteFixedCommand.ExecuteAsync(null);
+
+            // You may have saved work into it in the DAW: it can be put back.
+            Assert.False(File.Exists(copy));
+            Assert.True(File.Exists(Path.Combine(_root, "share", "Trash", "files", Path.GetFileName(copy))));
+            Assert.Contains(main.Activities.Items, a => a.Title == $"Deleted {Path.GetFileName(copy)}");
+            Assert.False(projects.Detail!.HasPendingFix);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", home);
+        }
+    }
+
+    [Fact]
     public async Task Another_project_being_saved_leaves_the_open_songs_panel_as_it_was()
     {
         ScanFixtures();
