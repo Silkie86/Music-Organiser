@@ -707,4 +707,38 @@ public class SpaceTests : IDisposable
         Assert.Equal(300, new FileInfo(Path.Combine(from, "pad.h2p")).Length);   // the plugin still finds its files
     }
 
+    [Fact]
+    public void The_administrator_steps_act_only_on_the_list_the_app_wrote()
+    {
+        var keep = File("Old Library/a.wav");
+        var list = Path.Combine(_root, "list.txt");
+        // Another program swapped the list after the app wrote it: the digest on the command line doesn't match.
+        System.IO.File.WriteAllLines(list, [keep]);
+        var result = Path.Combine(_root, "result.txt");
+        Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, AdminStep.Digest([Path.Combine(_root, "what the app said.wav")]), result]));
+        Assert.True(System.IO.File.Exists(keep));
+        Assert.False(System.IO.File.Exists(result));
+        Assert.True(FolderMove.RunHelper([FolderMove.HelperFlag, "relink", list, AdminStep.Digest(["x\ty"]), result]));
+        Assert.False(System.IO.File.Exists(result));
+        // A result file already there (put there to point somewhere else) is never written through.
+        System.IO.File.WriteAllText(result, "theirs");
+        Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, AdminStep.Digest([keep]), result]));
+        Assert.Equal("theirs", System.IO.File.ReadAllText(result));
+        Assert.True(System.IO.File.Exists(keep));
+
+        if (OperatingSystem.IsWindows()) return;   // the real Recycle Bin: not in a test
+        var home = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(_root, "share"));
+        try
+        {
+            System.IO.File.Delete(result);
+            Assert.True(RecycleBin.RunHelper([RecycleBin.HelperFlag, list, AdminStep.Digest([keep]), result]));
+            Assert.False(System.IO.File.Exists(keep));
+            Assert.Equal([$"{keep}\t"], System.IO.File.ReadAllLines(result));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XDG_DATA_HOME", home);
+        }
+    }
 }

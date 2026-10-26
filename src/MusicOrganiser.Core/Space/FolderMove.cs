@@ -391,14 +391,17 @@ public static class FolderMove
     /// <summary>Runs the administrator step when the app was started for it. Returns false when it wasn't.</summary>
     public static bool RunHelper(string[] args)
     {
-        if (args.Length == 4 && args[0] == HelperFlag && args[1] == "relink")
+        if (args.Length == 5 && args[0] == HelperFlag && args[1] == "relink")
         {
             try
             {
-                var lines = File.ReadAllLines(args[2]).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)
+                // Only the list as the app wrote it (see AdminStep.Digest); the result file is made before anything changes.
+                var list = File.ReadAllLines(args[2]);
+                if (AdminStep.Digest(list) != args[3]) return true;
+                var lines = list.Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)
                                 .Select(x => (At: x[0], Said: RelinkHere(x[0], x[1])))
                                 .Select(x => $"{x.At}\t{(x.Said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : x.Said)}");
-                File.WriteAllLines(args[3], lines);
+                AdminStep.WriteResult(args[4], lines);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             return true;
@@ -411,7 +414,7 @@ public static class FolderMove
             ("unswap", _) => UnswapHere(args[2], args[3]),
             _ => "?",
         };
-        try { File.WriteAllText(args[^1], said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : said); }
+        try { AdminStep.WriteResult(args[^1], [said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : said]); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return true;
     }
@@ -542,8 +545,9 @@ public static class FolderMove
         var result = list + ".result";
         try
         {
-            File.WriteAllLines(list, guarded.Select(g => $"{g.At}\t{g.Target}"));
-            var admin = AdminStep.Run(HelperFlag, "relink", list, result);
+            var lines = guarded.Select(g => $"{g.At}\t{g.Target}").ToList();
+            File.WriteAllLines(list, lines);
+            var admin = AdminStep.Run(HelperFlag, "relink", list, AdminStep.Digest(lines), result);
             var said = admin.Length == 0 && File.Exists(result)
                 ? File.ReadAllLines(result).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2).ToDictionary(x => x[0], x => x[1], StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
