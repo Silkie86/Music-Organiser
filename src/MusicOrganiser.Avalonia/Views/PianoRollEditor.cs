@@ -446,6 +446,15 @@ public sealed class PianoRollEditor : Control
     {
         base.OnPointerCaptureLost(e);
         _panFrom = null;   // an interrupted pan (Alt+Tab, a dialog) mustn't carry on when the pointer next moves
+        // So mustn't a note or loop points being dragged: they go back to where they were, and nothing is changed.
+        if (_working is null && _edge == Edge.None) return;
+        _working = null;
+        _index = -1;
+        _drag = Drag.None;
+        _newAt = null;
+        _edge = Edge.None;
+        _draft = null;
+        InvalidateVisual();
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -458,10 +467,10 @@ public sealed class PianoRollEditor : Control
         }
         if (_edge != Edge.None)
         {
-            e.Pointer.Capture(null);
             var draft = _draft;
             _edge = Edge.None;
             _draft = null;
+            e.Pointer.Capture(null);   // after the drag is taken, as letting go of the pointer ends it
             if (draft is { } range)
             {
                 if (SectionCommand?.CanExecute(range) == true) SectionCommand.Execute(range);
