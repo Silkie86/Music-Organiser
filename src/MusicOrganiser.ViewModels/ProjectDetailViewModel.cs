@@ -622,16 +622,19 @@ public sealed partial class SampleRow(LibraryDb db, ProjectSample s, ProjectItem
     public ObservableCollection<MatchRow> Matches { get; } = new();
     [ObservableProperty] string _matchMessage = "";
 
+    /// <summary>Files in your sample folders that could be this one, looked for in the background (it compares every sound you have).</summary>
     [RelayCommand]
-    void FindMatches()
+    async Task FindMatches()
     {
         Matches.Clear();
-        if (db.SampleIndexCount() == 0)
+        MatchMessage = "Looking on your drives…";
+        var matches = await UiWork.Run(() => db.SampleIndexCount() == 0 ? null : MatchFinder.ForSample(db, s.Path));
+        if (matches is null)
         {
             MatchMessage = "Add your sample folders in Settings and index them to search your drives.";
             return;
         }
-        foreach (var m in MatchFinder.ForSample(db, s.Path)) Matches.Add(new MatchRow(m, this));
+        foreach (var m in matches) Matches.Add(new MatchRow(m, this));
         MatchMessage = Matches.Count == 0 ? "No similar files in your sample folders." : "";
     }
 

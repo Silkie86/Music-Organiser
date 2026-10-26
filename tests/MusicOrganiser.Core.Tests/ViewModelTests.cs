@@ -1820,6 +1820,63 @@ public class ViewModelTests : IDisposable
         File.WriteAllText(Path.Combine(live, instance + ".json"), status.ToJsonString());
     }
 
+    [Fact]
+    public async Task Finding_matches_for_a_missing_sample_runs_in_the_background_and_a_sample_picked_since_keeps_its_own_panel()
+    {
+        // The sample library sits outside the projects' folder: a kick inside it would count as found (SampleLocator).
+        var libRoot = Fixtures.TempDir();
+        Directory.CreateDirectory(Path.Combine(libRoot, "Drums"));
+        File.WriteAllBytes(Path.Combine(libRoot, "Drums", "Kick 01.wav"), [0]);
+        _db.SetList(Scanner.SampleFoldersKey, [libRoot]);
+        new Scanner(_db).ScanSampleFolders();
+        ScanFixtures();
+        var main = Main();
+        await Until(() => !main.IsScanning);
+        var samples = main.Samples;
+        samples.Selected = samples.Items.Single(s => s.Path.EndsWith(@"Drums\Kick 01.wav"));
+        await samples.FindMatchesCommand.ExecuteAsync(null);
+        Assert.EndsWith("Kick 01.wav", samples.Matches[0].Candidate);
+        Assert.EndsWith("possible matches", samples.MatchMessage);
+
+        // The song's own Samples tab finds it the same way.
+        main.Projects.Selected = main.Projects.Items.Single(i => i.Daw == "FL Studio");
+        var row = main.Projects.Detail!.Samples.Single(s => !s.Found);
+        await row.FindMatchesCommand.ExecuteAsync(null);
+        Assert.EndsWith("Kick 01.wav", row.Matches[0].Candidate);
+        Assert.Equal("", row.MatchMessage);
+
+        // Looked for in the background: the panel says so meanwhile, and a result for a sample no longer picked isn't shown.
+        UiWork.InBackground = true;
+        try
+        {
+            var finding = samples.FindMatchesCommand.ExecuteAsync(null);
+            if (!finding.IsCompleted)
+            {
+                Assert.Equal("Looking on your drives…", samples.MatchMessage);
+                samples.Selected = null;
+                await finding;
+                Assert.Empty(samples.Matches);
+                Assert.Equal("", samples.MatchMessage);
+            }
+            await finding;
+        }
+        finally
+        {
+            UiWork.InBackground = false;
+        }
+    }
+
+    [Fact]
+    public async Task The_samples_list_is_read_as_the_window_opens_and_not_again_after_a_scan_that_changed_nothing()
+    {
+        ScanFixtures();
+        var main = Main();
+        var shown = main.Samples.Items;
+        Assert.Contains(shown, s => s.Path.EndsWith("Kick 01.wav"));
+        await main.RefreshAllAsync();
+        Assert.Same(shown, main.Samples.Items);
+    }
+
     /// <summary>Puts the three test projects in the library, without the screens starting a scan of their own.</summary>
     void ScanFixtures()
     {
