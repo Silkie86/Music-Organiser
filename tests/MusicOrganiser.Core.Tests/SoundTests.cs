@@ -723,6 +723,74 @@ public class VectorIndexTests
 public class SoundLibraryTests
 {
     [Fact]
+    public void A_renamed_sound_or_pack_folder_keeps_its_tags_rating_favourite_and_type()
+    {
+        var root = Fixtures.SoundsDir();
+        var samples = Path.Combine(root, "Samples");
+        var pack = Path.Combine(samples, "Pack A");
+        Directory.CreateDirectory(Path.Combine(pack, "Kicks"));
+        Directory.CreateDirectory(Path.Combine(pack, "Hats"));
+        Synth.Write(Path.Combine(pack, "Kicks", "Kick 01.wav"), Synth.Kick(1));
+        Synth.Write(Path.Combine(pack, "Hats", "Hat 01.wav"), Synth.Hat(2));
+        Synth.Write(Path.Combine(samples, "one shot.wav"), Synth.Snare(3));
+        using var lib = new SoundLibrary(Path.Combine(root, "sounds.db"));
+        using var org = new SoundOrganiser(lib);
+        Assert.Equal(3, org.Scan([samples]));
+        var ids = org.Sounds.ToDictionary(s => s.Name, s => s.Id);
+        void Organise(string name)
+        {
+            var s = org.Sounds.Single(x => x.Name == name);
+            lib.AddTag(s.Id, "punchy");
+            lib.SetRating(s.Id, 5);
+            lib.SetFavourite(s.Id, true);
+            org.SetUserType(s, "Clap");
+        }
+        foreach (var name in ids.Keys) Organise(name);
+
+        // A pack's folder renamed and a sound renamed in Explorer, found by a scan: nothing new to listen to.
+        Directory.Move(pack, Path.Combine(samples, "Pack A (old)"));
+        File.Move(Path.Combine(samples, "one shot.wav"), Path.Combine(samples, "Snare punchy.wav"));
+        Assert.Equal(0, org.Scan([samples]));
+        void Kept(string name, long id)
+        {
+            var s = org.Sounds.Single(x => x.Name == name);
+            Assert.Equal((id, 5, true, "Clap"), (s.Id, s.Rating, s.Favourite, s.Type));
+            Assert.Contains("punchy", s.Tags);
+        }
+        Kept("Kick 01", ids["Kick 01"]);
+        Kept("Hat 01", ids["Hat 01"]);
+        Kept("Snare punchy", ids["one shot"]);
+        Assert.Equal(3, lib.Count());
+
+        // Renamed while the folder watcher looks on: the old name gone, the new one there.
+        var from = Path.Combine(samples, "Snare punchy.wav");
+        var to = Path.Combine(samples, "Snare tight.wav");
+        File.Move(from, to);
+        Assert.Equal(1, org.Update([from, to], [samples]));
+        Kept("Snare tight", ids["one shot"]);
+        Assert.Equal(3, lib.Count());
+    }
+
+    [Fact]
+    public void Only_sure_pairs_of_gone_and_new_files_count_as_moved()
+    {
+        (string, long, long) F(string path, long size = 100, long mtime = 7) => (path, size, mtime);
+        // A pack folder renamed: two "01.wav" of the same size and time, told apart by their folders.
+        Assert.Equal([("/a/Pack/Kicks/01.wav", "/a/Pack 2/Kicks/01.wav"), ("/a/Pack/Snares/01.wav", "/a/Pack 2/Snares/01.wav")],
+            SoundOrganiser.Moves([F("/a/Pack/Kicks/01.wav"), F("/a/Pack/Snares/01.wav")],
+                                 [F("/a/Pack 2/Snares/01.wav"), F("/a/Pack 2/Kicks/01.wav")]).OrderBy(m => m.From));
+        // One renamed file.
+        Assert.Equal([("/a/Kick.wav", "/a/Kick hard.wav")], SoundOrganiser.Moves([F("/a/Kick.wav")], [F("/a/Kick hard.wav")]));
+        // A different size or time is a different file.
+        Assert.Empty(SoundOrganiser.Moves([F("/a/Kick.wav")], [F("/a/Kick hard.wav", size: 101)]));
+        Assert.Empty(SoundOrganiser.Moves([F("/a/Kick.wav")], [F("/a/Kick hard.wav", mtime: 8)]));
+        // Two gone and two new with nothing to tell them apart: no guess.
+        Assert.Empty(SoundOrganiser.Moves([F("/a/x.wav"), F("/a/y.wav")], [F("/b/p.wav"), F("/b/q.wav")]));
+        // One name in two new places: neither is sure, nor is a guess from what's left.
+        Assert.Empty(SoundOrganiser.Moves([F("/a/Loop.wav")], [F("/b/Loop.wav"), F("/c/Loop.wav")]));
+    }
+
+    [Fact]
     public void Forgetting_sounds_finds_their_map_and_play_rows_by_index_and_forgets_a_big_pack_whole()
     {
         var root = Directory.CreateTempSubdirectory("mo-forget-").FullName;

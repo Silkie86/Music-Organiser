@@ -265,14 +265,27 @@ public sealed partial class SoundLibrary : IDisposable
             .Select(t => ((long, long)?)t).FirstOrDefault();
 
     /// <summary>Forgets these files (deleted or moved away); returns how many were in the library.</summary>
-    public int Remove(IEnumerable<string> paths) => InBatches(paths, "DELETE FROM sounds WHERE path = $p", "$p");
+    public int Remove(IEnumerable<string> paths) =>
+        InBatches(paths, "DELETE FROM sounds WHERE path = $p", ["$p"], (path, p) => p[0].Value = path);
+
+    /// <summary>
+    /// Sounds whose files were renamed or moved (see <see cref="SoundOrganiser.Moves"/>): each keeps its row, so its tags,
+    /// rating, favourite, your type, plays and galaxy place stay with it. Returns how many moved.
+    /// </summary>
+    public int Move(IEnumerable<(string From, string To)> moves) =>
+        InBatches(moves, "UPDATE sounds SET path = $to, name_type = $n WHERE path = $from", ["$from", "$to", "$n"], (m, p) =>
+        {
+            p[0].Value = m.From;
+            p[1].Value = m.To;
+            p[2].Value = (object?)SoundTypes.FromPath(m.To) ?? DBNull.Value;   // the type its new name or folder says
+        });
 
     /// <summary>Forgets samples that are no longer in your sample folders.</summary>
     public int RemoveMissing(IReadOnlySet<string> present, Func<string, bool>? keep = null)
     {
         var gone = Query("SELECT id, path FROM sounds", r => ((long)r["id"], (string)r["path"]))
             .Where(t => !present.Contains(t.Item2) && keep?.Invoke(t.Item2) != true).Select(t => t.Item1).ToList();
-        InBatches(gone, "DELETE FROM sounds WHERE id = $id", "$id");
+        InBatches(gone, "DELETE FROM sounds WHERE id = $id", ["$id"], (id, p) => p[0].Value = id);
         return gone.Count;
     }
 
@@ -280,7 +293,7 @@ public sealed partial class SoundLibrary : IDisposable
     /// Runs one statement for each value, a few hundred to a transaction, letting go of the database between them, so
     /// a play or a favourite clicked meanwhile isn't kept waiting for a whole pack to go. Returns the rows changed.
     /// </summary>
-    int InBatches<T>(IEnumerable<T> values, string sql, string name, int size = 500)
+    int InBatches<T>(IEnumerable<T> values, string sql, string[] names, Action<T, SqliteParameter[]> fill, int size = 500)
     {
         var changed = 0;
         using var e = values.GetEnumerator();
@@ -292,10 +305,10 @@ public sealed partial class SoundLibrary : IDisposable
                 using var tx = _conn.BeginTransaction();
                 using var cmd = Cmd(sql);
                 cmd.Transaction = tx;
-                var p = cmd.Parameters.Add(new SqliteParameter(name, null));
+                var p = names.Select(n => cmd.Parameters.Add(new SqliteParameter(n, null))).ToArray();
                 for (var n = 0; more && n < size; n++, more = e.MoveNext())
                 {
-                    p.Value = e.Current;
+                    fill(e.Current, p);
                     changed += cmd.ExecuteNonQuery();
                 }
                 tx.Commit();
