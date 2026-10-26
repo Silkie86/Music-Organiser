@@ -294,6 +294,93 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public void Links_inside_a_moved_folder_stay_links_and_moving_back_keeps_what_was_saved_since()
+    {
+        var from = Path.GetDirectoryName(File("C/Arturia/Presets/Pigments/lead.pgtx", 300))!;
+        from = Path.GetDirectoryName(from)!;
+        // Arturia's FactoryEdit: a link to a place that isn't there (F12 log, 26 Oct). And one to a real folder elsewhere.
+        Directory.CreateSymbolicLink(Path.Combine(from, "FactoryEdit"), Path.Combine(_root, "C", "nowhere"));
+        var elsewhere = Path.GetDirectoryName(File("C/Big Library/huge.wav", 5000))!;
+        Directory.CreateSymbolicLink(Path.Combine(from, "Library"), elsewhere);
+        Directory.CreateDirectory(Path.Combine(_root, "D"));
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+
+        var moved = FolderMove.Move(from, Path.Combine(_root, "D"), 300, driveOf: DriveOf);
+        Assert.True(FolderMove.IsLink(Path.Combine(moved.To, "FactoryEdit")));
+        Assert.True(FolderMove.IsLink(Path.Combine(moved.To, "Library")));   // not a 5000-byte copy of the library
+        Assert.Equal(5000, new FileInfo(Path.Combine(from, "Library", "huge.wav")).Length);
+
+        // The plugin saves a preset after the move: it lands on the other drive, through the link.
+        System.IO.File.WriteAllBytes(Path.Combine(from, "Pigments", "new.pgtx"), new byte[42]);
+        Assert.True(System.IO.File.Exists(Path.Combine(moved.To, "Pigments", "new.pgtx")));
+        Assert.False(System.IO.File.Exists(Path.Combine(moved.OldCopy, "Pigments", "new.pgtx")));
+        FolderMove.MoveBack(moved);
+        Assert.False(FolderMove.IsLink(from));
+        Assert.Equal(42, new FileInfo(Path.Combine(from, "Pigments", "new.pgtx")).Length);   // kept, not lost with the old copy
+        Assert.Equal(300, new FileInfo(Path.Combine(from, "Pigments", "lead.pgtx")).Length);
+    }
+
+    [Fact]
+    public void The_folder_moved_folders_live_in_moves_and_their_links_follow()
+    {
+        var vital = Path.GetDirectoryName(File("C/Vital/pad.vital", 70))!;
+        var arcade = Path.GetDirectoryName(File("C/Arcade/loop.wav", 90))!;
+        var home = Path.Combine(_root, "I", "Plugin Data");
+        Directory.CreateDirectory(home);
+        Directory.CreateDirectory(Path.Combine(_root, "J"));
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+        IReadOnlyList<MovedFolder> moved = [FolderMove.Move(vital, home, 70, driveOf: DriveOf), FolderMove.Move(arcade, home, 90, driveOf: DriveOf)];
+        Assert.Equal([home, home], moved.Select(FolderMove.HomeOf));
+
+        // To another drive: copied, every link points at the copy, and the old place stays to delete later.
+        var (now, problems) = FolderMove.MoveHome(home, Path.Combine(_root, "J"), moved, 160, driveOf: DriveOf);
+        Assert.Empty(problems);
+        var newHome = Path.Combine(_root, "J", "Plugin Data");
+        Assert.All(now, m => Assert.Equal(newHome, FolderMove.HomeOf(m)));
+        Assert.Equal(newHome, Path.GetDirectoryName(new DirectoryInfo(vital).LinkTarget));
+        Assert.True(Directory.Exists(home));
+        Assert.Equal(70, new FileInfo(Path.Combine(vital, "pad.vital")).Length);
+
+        // Moved by hand in Explorer: the links point at nothing until the app is told where it went.
+        var byHand = Path.Combine(_root, "J", "Moved by hand");
+        Directory.Move(newHome, byHand);
+        Assert.Equal(2, FolderMove.Lost(now).Count);
+        (now, problems) = FolderMove.Repoint(newHome, byHand, now);
+        Assert.Empty(problems);
+        Assert.Empty(FolderMove.Lost(now));
+        Assert.Equal(90, new FileInfo(Path.Combine(arcade, "loop.wav")).Length);
+
+        // On the same drive it's just renamed.
+        Directory.CreateDirectory(Path.Combine(_root, "J", "Sub"));
+        (now, problems) = FolderMove.MoveHome(byHand, Path.Combine(_root, "J", "Sub"), now, 160, driveOf: DriveOf);
+        Assert.Empty(problems);
+        Assert.False(Directory.Exists(byHand));
+        Assert.Equal(70, new FileInfo(Path.Combine(vital, "pad.vital")).Length);
+    }
+
+    [Fact]
+    public void A_folder_an_update_made_in_place_of_the_link_is_linked_again()
+    {
+        var from = Path.GetDirectoryName(File("C/Kontakt/Lib/a.nki", 10))!;
+        Directory.CreateDirectory(Path.Combine(_root, "D"));
+        string DriveOf(string path) => Path.GetRelativePath(_root, path).Split(Path.DirectorySeparatorChar)[0];
+        var moved = FolderMove.Move(from, Path.Combine(_root, "D"), 10, driveOf: DriveOf);
+        Directory.Delete(moved.OldCopy, true);
+        // The updater deletes the folder (the link) and makes a real one with its new files.
+        Directory.Delete(from);
+        File("C/Kontakt/Lib/b.nki", 20);
+        Assert.Equal([moved], FolderMove.Replaced([moved]));
+
+        var aside = FolderMove.LinkAgain(moved, 20);
+        Assert.True(FolderMove.IsLink(from));
+        Assert.Empty(FolderMove.Replaced([moved]));
+        Assert.Equal(20, new FileInfo(Path.Combine(moved.To, "b.nki")).Length);   // the update's files joined the copy
+        Assert.Equal(10, new FileInfo(Path.Combine(from, "a.nki")).Length);
+        Assert.Equal(from + FolderMove.UpdateSuffix, aside.Path);
+        Assert.Equal("left by an update", aside.Note);
+    }
+
+    [Fact]
     public void A_song_sharing_its_folder_counts_its_saves_and_fl_studios_autosaves()
     {
         var a = File("Projects/garage.flp", 100, new DateTime(2025, 5, 1));
@@ -357,7 +444,7 @@ public class SpaceTests : IDisposable
         Song(db, "new", DateTime.Now.AddDays(-3), "Pro-Q 3", "Serum2");
         Song(db, "needs", DateTime.Now.AddDays(-9), "Not Installed Synth");
         db.ReplaceInstalledPlugins(["UVI Workstation", "FabFilter Pro-Q 3", "SampleTank", "Serum", "Serum 2"]);
-        db.SavePluginSpaces([Space("Serum", 1000), Space("UVI Workstation", 38L << 30), Space("FabFilter Pro-Q 3", 0), Space("SampleTank", 6L << 30),
+        db.SavePluginSpaces([Space("Serum", 1000), Space("UVI Workstation", 38L << 30), Space("FabFilter Pro-Q 3", 0), Space("SampleTank", 6L << 30) is var t ? t with { Folders = [.. t.Folders, new(@"D:\IK Multimedia", SpaceKind.Sounds, 900, ["amplitube"])] } : t,
                              Space("Serum 2", 5000)], all: true);
 
         var plugins = page.Main.Plugins;
@@ -366,6 +453,10 @@ public class SpaceTests : IDisposable
         var tank = plugins.Items.Single(p => p.Name == "SampleTank");
         Assert.Equal(0, tank.Projects);
         Assert.Equal("Never", tank.LastUsedText);
+        // What it shares with its maker's other plugins has its own column, left out of its size (F12 note, 26 Oct).
+        Assert.Equal(900, tank.SharedBytes);
+        Assert.Equal("900 bytes", tank.SharedText);
+        Assert.Equal((6L << 30) + 100, tank.Bytes);
         Assert.True(tank.Unused);
         Assert.True(plugins.Items.Single(p => p.Name == "UVI Workstation").Unused);   // last used 4 years ago
         // "Pro-Q 3" in a project is the installed "FabFilter Pro-Q 3": not a never-used plugin of its own.

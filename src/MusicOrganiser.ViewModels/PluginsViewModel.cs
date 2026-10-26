@@ -100,11 +100,14 @@ public sealed partial class PluginsViewModel : ObservableObject
     /// <summary>What the page shows, read from the database (on any thread).</summary>
     sealed record Loaded(IReadOnlyList<PluginUsage> Items, HashSet<string> InstalledNames,
                          IReadOnlyDictionary<long, HashSet<string>> MissingBy, (int Files, int Plugins, int Failed) Scans, (int Read, int Left) Parameters,
-                         IReadOnlyDictionary<string, PluginSpaceInfo> Spaces, IReadOnlyList<SpareCopy> Spares, IReadOnlyList<MovedFolder> OldCopies);
+                         IReadOnlyDictionary<string, PluginSpaceInfo> Spaces, IReadOnlyList<SpareCopy> Spares, IReadOnlyList<MovedFolder> OldCopies,
+                         IReadOnlyList<MovedFolder> Moved, IReadOnlyList<MovedFolder> Lost, IReadOnlyList<MovedFolder> Replaced,
+                         IReadOnlyList<OldHome> OldHomes);
 
     Loaded Load() => new(_db.PluginUsage(), _db.InstalledNames(), _db.MissingPluginsByProject(), _db.PluginScanCounts(), _db.ParameterCounts(),
                          _db.PluginSpaces(), _db.SpareCopyList().Where(c => File.Exists(c.Path) || Directory.Exists(c.Path)).ToList(),
-                         _db.MovedFolders().Where(m => m.HasOldCopy).ToList());
+                         _db.MovedFolders().Where(m => m.HasOldCopy).ToList(), _db.MovedFolders(), FolderMove.Lost(_db.MovedFolders()), FolderMove.Replaced(_db.MovedFolders()),
+                         _db.OldHomes().Where(h => Directory.Exists(h.Path)).ToList());
 
     /// <summary>What the page last read, so changing how many cards to show doesn't read the database again.</summary>
     Loaded? _loaded;
@@ -125,7 +128,8 @@ public sealed partial class PluginsViewModel : ObservableObject
         BuildNeeded(loaded);
         BuildCandidates();
         BuildSpares(loaded.Spares);
-        BuildOldCopies(loaded.OldCopies);
+        BuildOldCopies(loaded.OldCopies, loaded.OldHomes);
+        BuildHomes(loaded.Moved, loaded.Lost, loaded.Replaced);
         Selected = selected is null ? null : Items.FirstOrDefault(p => p.Name == selected.Name && p.Own == selected.Own);
 
         if (!_main.PluginScanner.Available)

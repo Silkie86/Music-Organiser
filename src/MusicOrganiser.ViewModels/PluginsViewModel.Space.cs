@@ -76,7 +76,7 @@ public sealed partial class PluginsViewModel
         var rows = used.ToList();
         void Give((PluginUsage Row, int At, string Key, string Family) f, PluginSpaceInfo s)
         {
-            rows[f.At] = f.Row with { Bytes = s.Bytes, Unused = f.Row.Installed && !(f.Row.LastUsed >= cutoff) };
+            rows[f.At] = f.Row with { Bytes = s.Bytes, SharedBytes = s.SharedBytes, Unused = f.Row.Installed && !(f.Row.LastUsed >= cutoff) };
             _rowSpace[rows[f.At]] = s;
             claimed.Add(f.Key);
         }
@@ -93,7 +93,7 @@ public sealed partial class PluginsViewModel
             var close = families.Where(f => Matched(f.Family, family)).ToList();
             if (close.Count == 0)
             {
-                rows.Add(new PluginUsage(s.Name, s.Vendor, FormatOf(s), 0, "", true) { Bytes = s.Bytes, Unused = true });
+                rows.Add(new PluginUsage(s.Name, s.Vendor, FormatOf(s), 0, "", true) { Bytes = s.Bytes, SharedBytes = s.SharedBytes, Unused = true });
                 _rowSpace[rows[^1]] = s;
             }
             // A row that already has its own size keeps it; this one counts as used either way, so it's never offered.

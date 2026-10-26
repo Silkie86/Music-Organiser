@@ -336,6 +336,25 @@
                 </DockPanel>
             </Border>
 
+            <!-- Moved folders that need a look: their folder on the other drive went somewhere, or an update replaced the link. -->
+            <Border Classes="card" Padding="16,10,10,10" Margin="0,0,0,12" IsVisible="{Binding HasLost}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Find it…" Command="{Binding FindLostCommand}" VerticalAlignment="Center"
+                            ToolTip.Tip="Show where the folder is now, and the links are pointed there" />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="{Binding LostText}" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{StaticResource WarningBrush}" />
+                        <TextBlock Text="The plugins can't open those sounds until the links point at the folder's new place." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <Border Classes="card" Padding="16,10,10,10" Margin="0,0,0,12" IsVisible="{Binding HasReplaced}">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Link again…" Command="{Binding LinkAgainCommand}" VerticalAlignment="Center"
+                            ToolTip.Tip="Copy the new files to the other drive, then put the link back" />
+                    <TextBlock Text="{Binding ReplacedText}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{StaticResource WarningBrush}" />
+                </DockPanel>
+            </Border>
+
             <!-- Old copies left beside folders moved to another drive, all in one place. -->
             <Border Classes="card" Padding="16,10,10,10" Margin="0,0,0,12" IsVisible="{Binding HasOldCopies}">
                 <DockPanel>
@@ -436,6 +455,17 @@
                                 <DataTemplate x:DataType="lib:PluginUsage">
                                     <TextBlock Text="{Binding SizeText}" Margin="8,0" VerticalAlignment="Center" HorizontalAlignment="Right"
                                                FontFamily="{DynamicResource NumberFont}" FontSize="12" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Width="90" SortMemberPath="SharedBytes">
+                            <DataGridTemplateColumn.Header>
+                                <TextBlock Text="Shared" ToolTip.Tip="Folders it shares with other plugins from its maker (a sound library several of them use). Not counted in Size." />
+                            </DataGridTemplateColumn.Header>
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate x:DataType="lib:PluginUsage">
+                                    <TextBlock Text="{Binding SharedText}" Margin="8,0" VerticalAlignment="Center" HorizontalAlignment="Right"
+                                               FontFamily="{DynamicResource NumberFont}" FontSize="12" Foreground="{StaticResource MutedBrush}" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>

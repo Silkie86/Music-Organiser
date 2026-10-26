@@ -13,6 +13,12 @@ public sealed record MovedFolder(string From, string To, string OldCopy, long By
 }
 
 /// <summary>
+/// A folder left behind for you to delete once the plugins open fine: the old place of the folder the moved folders live
+/// in, after it moved to another drive, or the folder an update made where the link was, once its files joined the moved copy.
+/// </summary>
+public sealed record OldHome(string Path, long Bytes, string Note = "its old place");
+
+/// <summary>
 /// Moves a plugin's sounds or presets to another drive without the plugin noticing (Solomon, 26 Oct 2026: "a way to move
 /// some plugins data folders safely to a different drive"). The folder is copied and every file checked, then the
 /// original is renamed to "… (old copy)" and a link (a junction on Windows) takes its place, pointing at the new copy, so
@@ -22,6 +28,9 @@ public sealed record MovedFolder(string From, string To, string OldCopy, long By
 public static class FolderMove
 {
     public const string OldSuffix = " (old copy)";
+
+    /// <summary>The folder a plugin update made in the link's place, once it's set aside and the link is back.</summary>
+    public const string UpdateSuffix = " (after update)";
 
     /// <summary>Room left over on the drive after the copy, so the move never fills it.</summary>
     public const long Headroom = 2L << 30;
@@ -35,8 +44,9 @@ public static class FolderMove
     {
         try
         {
+            // A link whose folder has gone still counts: it's the link that's there.
             var info = new DirectoryInfo(path);
-            return info.Exists && (info.LinkTarget is not null || info.Attributes.HasFlag(FileAttributes.ReparsePoint));
+            return info.LinkTarget is not null || info.Exists && info.Attributes.HasFlag(FileAttributes.ReparsePoint);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
     }
@@ -119,13 +129,24 @@ public static class FolderMove
     }
 
     /// <summary>
-    /// Undoes a move: the link goes and the old copy takes its place again, or, once the old copy is deleted, the folder
-    /// is copied back first. The copy on the other drive is left for you to remove (it goes to that drive's Recycle Bin).
+    /// Undoes a move: the link goes and the old copy takes its place again, with everything saved on the other drive since
+    /// the move copied into it first (Solomon, 26 Oct: presets the plugin wrote through the link live only there). Once
+    /// the old copy is deleted, the folder is copied back instead. The copy on the other drive is left for you to remove
+    /// (it goes to that drive's Recycle Bin).
     /// </summary>
     public static void MoveBack(MovedFolder moved, IProgress<long>? progress = null, CancellationToken ct = default)
     {
         var restore = moved.OldCopy;
-        if (!Directory.Exists(restore))
+        if (Directory.Exists(restore))
+        {
+            try { Freshen(moved.To, restore, progress, ct); }
+            catch (Exception e) when (Denied(e))
+            {
+                throw new IOException("Windows guards the old copy, so what the plugin saved since the move couldn't be copied into it. " +
+                                      "Nothing changed: the plugin still uses the copy on the other drive.");
+            }
+        }
+        else
         {
             // The old copy is gone: copy the folder back beside the link first, then swap.
             restore = moved.From + " (moving back)";
@@ -140,24 +161,71 @@ public static class FolderMove
         if (problem.Length > 0) throw new IOException(problem);
     }
 
-    /// <summary>Copies every file, keeping its dates, and checks each one's size once it's written.</summary>
-    static void Copy(string from, string to, IProgress<long>? progress, CancellationToken ct)
+    /// <summary>
+    /// Copies every file, keeping its dates, and checks each one's size once it's written. A link inside the folder is
+    /// made again as a link, never followed: Arturia's Presets\FactoryEdit points at a place that isn't there (F12 log,
+    /// 26 Oct), and a link to elsewhere shouldn't drag that place along.
+    /// </summary>
+    static void Copy(string from, string to, IProgress<long>? progress, CancellationToken ct) => Walk(from, to, onlyNewer: false, progress, ct);
+
+    /// <summary>Copies the files that are new, or newer than the ones in <paramref name="to"/>, into it. Nothing is removed.</summary>
+    static void Freshen(string from, string to, IProgress<long>? progress, CancellationToken ct) => Walk(from, to, onlyNewer: true, progress, ct);
+
+    static void Walk(string from, string to, bool onlyNewer, IProgress<long>? progress, CancellationToken ct)
     {
         long done = 0;
-        Directory.CreateDirectory(to);
-        foreach (var dir in Directory.EnumerateDirectories(from, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 }))
-            Directory.CreateDirectory(Path.Combine(to, Path.GetRelativePath(from, dir)));
-        foreach (var file in Directory.EnumerateFiles(from, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 }))
+        var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false };
+        var folders = new Stack<(string From, string To)>();
+        folders.Push((from, to));
+        while (folders.TryPop(out var folder))
         {
-            ct.ThrowIfCancellationRequested();
-            var copy = Path.Combine(to, Path.GetRelativePath(from, file));
-            var source = new FileInfo(file);
-            File.Copy(file, copy);
-            File.SetLastWriteTimeUtc(copy, source.LastWriteTimeUtc);
-            if (new FileInfo(copy).Length != source.Length)
-                throw new IOException($"{Path.GetFileName(file)} didn't copy whole, so nothing was moved.");
-            done += source.Length;
-            progress?.Report(done);
+            Directory.CreateDirectory(folder.To);
+            foreach (var entry in new DirectoryInfo(folder.From).EnumerateFileSystemInfos("*", options))
+            {
+                ct.ThrowIfCancellationRequested();
+                var copy = Path.Combine(folder.To, entry.Name);
+                if (entry.LinkTarget is { } target)
+                {
+                    if (!onlyNewer || !Directory.Exists(copy) && !File.Exists(copy)) CopyLink(entry, target, copy);
+                    continue;
+                }
+                if (entry is DirectoryInfo)
+                {
+                    folders.Push((entry.FullName, copy));
+                    continue;
+                }
+                var source = (FileInfo)entry;
+                if (onlyNewer && new FileInfo(copy) is { Exists: true } there && there.LastWriteTimeUtc >= source.LastWriteTimeUtc) continue;
+                File.Copy(source.FullName, copy, overwrite: onlyNewer);
+                File.SetLastWriteTimeUtc(copy, source.LastWriteTimeUtc);
+                if (new FileInfo(copy).Length != source.Length)
+                    throw new IOException($"{source.Name} didn't copy whole, so nothing was moved.");
+                done += source.Length;
+                progress?.Report(done);
+            }
+        }
+    }
+
+    /// <summary>Makes a link in the copy pointing where the original link points. One that points at nothing is left out.</summary>
+    static void CopyLink(FileSystemInfo link, string target, string copy)
+    {
+        var full = Path.GetFullPath(target, Path.GetDirectoryName(link.FullName)!);
+        if (link is DirectoryInfo)
+        {
+            // A junction needs the whole path on Windows; elsewhere the link keeps its own wording (it may be relative).
+            var made = Link(copy, OperatingSystem.IsWindows() ? full : target);
+            if (made.Length > 0 && Directory.Exists(full))
+                throw new IOException($"{link.Name} is a link to {full} that Windows wouldn't make again ({made}), so nothing was moved.");
+            return;
+        }
+        try
+        {
+            File.CreateSymbolicLink(copy, target);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Windows only lets an administrator (or developer mode) make a file link: copy what it points at instead.
+            if (File.Exists(full)) File.Copy(full, copy);
         }
     }
 
@@ -172,11 +240,12 @@ public static class FolderMove
     }
 
     /// <summary>The original becomes "… (old copy)" and a link to the copy takes its name. Returns "" or what stopped it.</summary>
-    static string Swap(string from, string target)
+    static string Swap(string from, string target, string? aside = null)
     {
-        var problem = SwapHere(from, target);
+        aside ??= from + OldSuffix;
+        var problem = SwapHere(from, target, aside);
         if (problem != NeedsAdmin) return problem;
-        return RunAsAdmin("swap", from, target) is { Length: > 0 } admin ? admin : SwapDone(from, target) ? "" : "The administrator step didn't finish.";
+        return RunAsAdmin("swap", from, target, aside) is { Length: > 0 } admin ? admin : SwapDone(from, target, aside) ? "" : "The administrator step didn't finish.";
     }
 
     static string Unswap(string from, string restore)
@@ -186,7 +255,7 @@ public static class FolderMove
         return RunAsAdmin("unswap", from, restore) is { Length: > 0 } admin ? admin : !IsLink(from) && Directory.Exists(from) ? "" : "The administrator step didn't finish.";
     }
 
-    static bool SwapDone(string from, string target) => IsLink(from) && Directory.Exists(from + OldSuffix) && Directory.Exists(target);
+    static bool SwapDone(string from, string target, string aside) => IsLink(from) && Directory.Exists(aside) && Directory.Exists(target);
 
     const string NeedsAdmin = "admin";
 
@@ -231,11 +300,11 @@ public static class FolderMove
         }
     }
 
-    static string SwapHere(string from, string target)
+    static string SwapHere(string from, string target, string aside)
     {
         try
         {
-            Directory.Move(from, from + OldSuffix);
+            Directory.Move(from, aside);
         }
         catch (Exception e) when (Denied(e)) { return NeedsAdmin; }
         catch (IOException e)
@@ -246,7 +315,7 @@ public static class FolderMove
         if (link.Length == 0 && Directory.Exists(from)) return "";
         // The link didn't take: put the original back as it was. In a folder Windows guards, the link needs
         // administrator rights too, so the whole swap is tried once more that way.
-        try { if (IsLink(from)) Directory.Delete(from); Directory.Move(from + OldSuffix, from); }
+        try { if (IsLink(from)) Directory.Delete(from); Directory.Move(aside, from); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return Environment.IsPrivilegedProcess || !OperatingSystem.IsWindows() ? $"Windows wouldn't make the link ({link}). Nothing was moved." : NeedsAdmin;
     }
@@ -286,15 +355,15 @@ public static class FolderMove
         }
     }
 
-    /// <summary>The app started for <see cref="RunAsAdmin"/>: <c>--move-folder swap|unswap from to result</c>.</summary>
+    /// <summary>The app started for <see cref="RunAsAdmin"/>: <c>--move-folder swap|unswap from to [aside] result</c>.</summary>
     public const string HelperFlag = "--move-folder";
 
-    static string RunAsAdmin(string step, string from, string to)
+    static string RunAsAdmin(string step, params string[] paths)
     {
         var result = Path.Combine(Path.GetTempPath(), $"mo-move-{Guid.NewGuid():N}.txt");
         try
         {
-            var problem = AdminStep.Run(HelperFlag, step, from, to, result);
+            var problem = AdminStep.Run([HelperFlag, step, .. paths, result]);
             if (problem.Length > 0) return problem;
             return File.Exists(result) ? File.ReadAllText(result).Trim() : "The administrator step didn't finish.";
         }
@@ -307,15 +376,173 @@ public static class FolderMove
     /// <summary>Runs the administrator step when the app was started for it. Returns false when it wasn't.</summary>
     public static bool RunHelper(string[] args)
     {
-        if (args.Length != 5 || args[0] != HelperFlag) return false;
-        var said = args[1] switch
+        if (args.Length == 4 && args[0] == HelperFlag && args[1] == "relink")
         {
-            "swap" => SwapHere(args[2], args[3]),
-            "unswap" => UnswapHere(args[2], args[3]),
+            try
+            {
+                var lines = File.ReadAllLines(args[2]).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2)
+                                .Select(x => (At: x[0], Said: RelinkHere(x[0], x[1])))
+                                .Select(x => $"{x.At}\t{(x.Said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : x.Said)}");
+                File.WriteAllLines(args[3], lines);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            return true;
+        }
+        if (args.Length is not (5 or 6) || args[0] != HelperFlag) return false;
+        var said = (args[1], args.Length) switch
+        {
+            ("swap", 6) => SwapHere(args[2], args[3], args[4]),
+            ("swap", _) => SwapHere(args[2], args[3], args[2] + OldSuffix),
+            ("unswap", _) => UnswapHere(args[2], args[3]),
             _ => "?",
         };
-        try { File.WriteAllText(args[4], said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : said); }
+        try { File.WriteAllText(args[^1], said == NeedsAdmin ? "Windows wouldn't allow it even as administrator." : said); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return true;
+    }
+
+    // ---- the folder the moved folders live in (I:\Plugin Data), moved as a whole (Solomon, 26 Oct 2026) ----------------
+
+    /// <summary>Where a moved folder lives: the folder you picked when moving it.</summary>
+    public static string HomeOf(MovedFolder m) => Path.GetDirectoryName(m.To) ?? m.To;
+
+    /// <summary>
+    /// Moves the folder the moved folders live in (all of it, other files too) and points every link at the new place.
+    /// On the same drive it's renamed; to another drive it's copied and checked, and the old one stays for you to delete.
+    /// Returns the moves as they are now, and the links that couldn't be pointed there (they still point at the old place).
+    /// </summary>
+    public static (IReadOnlyList<MovedFolder> Moved, IReadOnlyDictionary<string, string> Problems) MoveHome(
+        string home, string destination, IReadOnlyList<MovedFolder> moved, long bytes, IProgress<long>? progress = null,
+        CancellationToken ct = default, Func<string, string>? driveOf = null)
+    {
+        home = Path.TrimEndingDirectorySeparator(Path.GetFullPath(home));
+        var target = Target(home, destination);
+        if (DiskSpace.IsInside(destination, home)) throw new IOException("That folder is inside the one being moved.");
+        if (Directory.Exists(target) || File.Exists(target)) throw new IOException($"{target} is there already. Pick another folder, or rename that one.");
+        driveOf ??= DriveOf;
+        if (driveOf(home).Equals(driveOf(destination), StringComparison.OrdinalIgnoreCase))
+            Directory.Move(home, target);
+        else
+        {
+            var free = FreeSpace(destination);
+            if (free >= 0 && free < bytes + Headroom)
+                throw new IOException($"That drive has {DiskSpace.Text(free)} free; this needs {DiskSpace.Text(bytes)} and some room to spare.");
+            try { Copy(home, target, progress, ct); }
+            catch
+            {
+                RemoveCopy(target);
+                throw;
+            }
+        }
+        return Repoint(home, target, moved);
+    }
+
+    /// <summary>
+    /// "I moved it myself": points the links of every folder that lived in <paramref name="oldHome"/> at the same folder in
+    /// <paramref name="newHome"/>, where each one is found.
+    /// </summary>
+    public static (IReadOnlyList<MovedFolder> Moved, IReadOnlyDictionary<string, string> Problems) Repoint(
+        string oldHome, string newHome, IReadOnlyList<MovedFolder> moved)
+    {
+        oldHome = Path.TrimEndingDirectorySeparator(Path.GetFullPath(oldHome));
+        newHome = Path.TrimEndingDirectorySeparator(Path.GetFullPath(newHome));
+        var links = moved.Where(m => DiskSpace.IsInside(m.To, oldHome))
+                         .Select(m => (Moved: m, To: Path.Combine(newHome, Path.GetRelativePath(oldHome, m.To)))).ToList();
+        var problems = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var l in links.Where(l => !Directory.Exists(l.To)))
+            problems[l.Moved.From] = $"{Path.GetFileName(l.To)} isn't in {newHome}.";
+        foreach (var (at, problem) in RelinkAll(links.Where(l => !problems.ContainsKey(l.Moved.From)).Select(l => (l.Moved.From, l.To)).ToList()))
+            problems[at] = problem;
+        var now = moved.Select(m => links.FirstOrDefault(l => ReferenceEquals(l.Moved, m)) is { Moved: not null } l && !problems.ContainsKey(m.From)
+                                        ? m with { To = l.To } : m).ToList();
+        return (now, problems);
+    }
+
+    /// <summary>The moved folders whose link points at nothing: their folder on the other drive was moved or renamed.</summary>
+    public static IReadOnlyList<MovedFolder> Lost(IReadOnlyList<MovedFolder> moved) =>
+        moved.Where(m => IsLink(m.From) && !Directory.Exists(m.To)).ToList();
+
+    /// <summary>
+    /// The moved folders a plugin update put a real folder back in place of (some installers delete the folder and make
+    /// it again): the plugin writes on this drive again, and the copy on the other drive is left out of date.
+    /// </summary>
+    public static IReadOnlyList<MovedFolder> Replaced(IReadOnlyList<MovedFolder> moved) =>
+        moved.Where(m => Directory.Exists(m.From) && !IsLink(m.From) && Directory.Exists(m.To)).ToList();
+
+    /// <summary>
+    /// After an update replaced the link with a real folder: the folder's new and newer files join the copy on the other
+    /// drive, then it's set aside as "… (after update)" and the link goes back. Returns the folder set aside, to delete
+    /// once the plugin opens fine.
+    /// </summary>
+    public static OldHome LinkAgain(MovedFolder moved, long bytes, IProgress<long>? progress = null, CancellationToken ct = default)
+    {
+        if (!Directory.Exists(moved.To)) throw new IOException($"{moved.To} isn't there any more.");
+        var aside = moved.From + UpdateSuffix;
+        for (var n = 2; Directory.Exists(aside); n++) aside = $"{moved.From} (after update {n})";
+        var check = CheckRename(moved.From);
+        if (check.Length > 0 && check != NeedsAdmin) throw new IOException(check);
+        Freshen(moved.From, moved.To, progress, ct);
+        var swap = Swap(moved.From, moved.To, aside);
+        if (swap.Length > 0) throw new IOException(swap);
+        return new OldHome(aside, bytes, "left by an update");
+    }
+
+    /// <summary>Points each link at its new place: the ones Windows guards with one administrator question for all.</summary>
+    static IReadOnlyDictionary<string, string> RelinkAll(IReadOnlyList<(string At, string Target)> links)
+    {
+        var problems = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var guarded = new List<(string At, string Target)>();
+        foreach (var (at, target) in links)
+        {
+            var problem = RelinkHere(at, target);
+            if (problem == NeedsAdmin) guarded.Add((at, target));
+            else if (problem.Length > 0) problems[at] = problem;
+        }
+        if (guarded.Count == 0) return problems;
+        var list = Path.Combine(Path.GetTempPath(), $"mo-relink-{Guid.NewGuid():N}.txt");
+        var result = list + ".result";
+        try
+        {
+            File.WriteAllLines(list, guarded.Select(g => $"{g.At}\t{g.Target}"));
+            var admin = AdminStep.Run(HelperFlag, "relink", list, result);
+            var said = admin.Length == 0 && File.Exists(result)
+                ? File.ReadAllLines(result).Select(l => l.Split('\t', 2)).Where(x => x.Length == 2).ToDictionary(x => x[0], x => x[1], StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (at, _) in guarded)
+                if (!said.TryGetValue(at, out var problem)) problems[at] = admin.Length > 0 ? admin : "The administrator step didn't finish.";
+                else if (problem.Length > 0) problems[at] = problem;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            foreach (var (at, _) in guarded) problems[at] = e.Message;
+        }
+        finally
+        {
+            try { File.Delete(list); File.Delete(result); } catch (IOException) { }
+        }
+        return problems;
+    }
+
+    /// <summary>Swaps the link at <paramref name="at"/> for one to <paramref name="target"/>. Never touches a real folder.</summary>
+    static string RelinkHere(string at, string target)
+    {
+        if (!Directory.Exists(target)) return $"{target} isn't there.";
+        if (!IsLink(at))
+            return Directory.Exists(at) ? $"{at} is a real folder now, not a link, so it was left alone." : Link(at, target) is { Length: > 0 } made ? made : "";
+        var was = new DirectoryInfo(at).LinkTarget;
+        try { DeleteLink(at); }
+        catch (Exception e) when (Denied(e)) { return NeedsAdmin; }
+        catch (IOException e) { return $"Windows wouldn't change the link ({e.Message})."; }
+        var link = Link(at, target);
+        if (link.Length == 0) return "";
+        if (was is not null) Link(at, was);   // put the old link back
+        return Environment.IsPrivilegedProcess || !OperatingSystem.IsWindows() ? $"Windows wouldn't make the link ({link})." : NeedsAdmin;
+    }
+
+    /// <summary>Removes a link only (a junction, or a symbolic link even when what it pointed at is gone).</summary>
+    static void DeleteLink(string at)
+    {
+        try { Directory.Delete(at); }
+        catch (DirectoryNotFoundException) when (!OperatingSystem.IsWindows()) { File.Delete(at); }
     }
 }

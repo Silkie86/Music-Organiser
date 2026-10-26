@@ -442,6 +442,37 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- Where moved plugin folders live (I:\Plugin Data): move it as a whole, or say where it went. -->
+                        <Border Classes="card settingsCard">
+                            <StackPanel>
+                                <TextBlock Text="Plugin data on other drives" Classes="sectionHeader" />
+                                <TextBlock Classes="cardIntro"
+                                           Text="The folders that hold plugin folders you moved off this drive. Move it… takes one somewhere else and points every plugin's link there. Moved it yourself? I moved it, find it… asks where it is now and fixes the links." />
+                                <TextBlock Text="Nothing moved yet: Move… on a plugin's Space tab starts one." Classes="muted" FontSize="12"
+                                           IsVisible="{Binding !PluginsPage.HasDataHomes}" />
+                                <ItemsControl ItemsSource="{Binding PluginsPage.DataHomes}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:PluginDataHome">
+                                            <DockPanel Margin="0,0,0,8">
+                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                    <Button Content="Move it…" Command="{Binding MoveItCommand}"
+                                                            ToolTip.Tip="Move this folder to another drive or folder; every plugin's link follows it" />
+                                                    <Button Content="I moved it, find it…" Command="{Binding FindItCommand}"
+                                                            ToolTip.Tip="Show where this folder is now, and the links are pointed there" />
+                                                    <Button Content="Show" Command="{Binding ShowCommand}" />
+                                                </StackPanel>
+                                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                                    <TextBlock Text="{Binding Path}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}" />
+                                                    <TextBlock Text="{Binding Text}" Classes="muted" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding !HasLost}" />
+                                                    <TextBlock Text="{Binding Text}" Foreground="{StaticResource WarningBrush}" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding HasLost}" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
                         <Border Classes="card settingsCard">
                             <StackPanel>
                                 <TextBlock Text="Plugins page" Classes="sectionHeader" />

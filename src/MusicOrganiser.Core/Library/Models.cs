@@ -81,6 +81,9 @@ public sealed record PluginUsage(string Name, string Vendor, string Format, int 
     /// <summary>Its room on disk (plugin files, presets and sounds), once measured; 0 when not installed or not measured yet.</summary>
     public long Bytes { get; init; }
     public string SizeText => Bytes > 0 ? Space.DiskSpace.Text(Bytes) : "";
+    /// <summary>The room of folders it shares with other plugins from its maker (a Toontrack or Arturia library), left out of <see cref="Bytes"/>.</summary>
+    public long SharedBytes { get; init; }
+    public string SharedText => SharedBytes > 0 ? Space.DiskSpace.Text(SharedBytes) : "";
     /// <summary>Installed, but no project has used it in the years the Plugins page asks about (or ever).</summary>
     public bool Unused { get; init; }
     /// <summary>The list's "Installed" pill: installed and not flagged as good to remove.</summary>

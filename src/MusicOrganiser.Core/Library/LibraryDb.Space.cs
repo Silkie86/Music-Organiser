@@ -54,6 +54,14 @@ public sealed partial class LibraryDb
 
     public void SaveMovedFolders(IEnumerable<MovedFolder> moved) => SetSetting(MovedFoldersKey, JsonSerializer.Serialize(moved.ToList()));
 
+    /// <summary>Setting: where the moved folders' home was before it moved to another drive (deleted when you say).</summary>
+    public const string OldHomesKey = "space_old_homes";
+
+    public IReadOnlyList<OldHome> OldHomes() =>
+        GetSetting(OldHomesKey) is { Length: > 0 } json ? JsonSerializer.Deserialize<List<OldHome>>(json) ?? [] : [];
+
+    public void SaveOldHomes(IEnumerable<OldHome> homes) => SetSetting(OldHomesKey, JsonSerializer.Serialize(homes.ToList()));
+
     long _spaceRevision;
     /// <summary>Goes up when sizes are measured again, so the pages show the new ones.</summary>
     public long SpaceRevision => Interlocked.Read(ref _spaceRevision);
