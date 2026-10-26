@@ -316,7 +316,7 @@ public class MoProbeLiveTests
     /// A computer that can be held up: what's posted to it runs in turn on a thread of its own, and so does what an await
     /// in it carries on with.
     /// </summary>
-    sealed class HeldUpContext : SynchronizationContext, IDisposable
+    internal sealed class HeldUpContext : SynchronizationContext, IDisposable
     {
         readonly BlockingCollection<(SendOrPostCallback Run, object? State)> _queue = new();
 

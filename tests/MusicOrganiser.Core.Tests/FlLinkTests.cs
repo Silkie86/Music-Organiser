@@ -73,6 +73,31 @@ public class FlLinkTests
     }
 
     [Fact]
+    public async Task WorksOutWhyFlStudioIsntAnsweringOffTheWindowsThread()
+    {
+        // Looking at the running programs and Windows' MIDI inputs can take seconds, and the window asks from its own thread.
+        using var window = new MoProbeLiveTests.HeldUpContext();
+        int? windowThread = null, workedOutOn = null;
+        var link = new FlLink(new QuietPort())
+        {
+            Timeout = TimeSpan.FromMilliseconds(100),
+            WhyNot = () =>
+            {
+                workedOutOn = Environment.CurrentManagedThreadId;
+                return "Why";
+            },
+        };
+        var e = await Assert.ThrowsAsync<DawLinkException>(() => window.Run<FlHello>(() =>
+        {
+            windowThread = Environment.CurrentManagedThreadId;
+            return link.HelloAsync();
+        }));
+        Assert.Equal("Why", e.Message);
+        Assert.NotNull(workedOutOn);
+        Assert.NotEqual(windowThread, workedOutOn);
+    }
+
+    [Fact]
     public async Task StopsWaitingAsSoonAsARequestIsCancelled()
     {
         var link = new FlLink(new QuietPort()) { Timeout = TimeSpan.FromSeconds(30) };
