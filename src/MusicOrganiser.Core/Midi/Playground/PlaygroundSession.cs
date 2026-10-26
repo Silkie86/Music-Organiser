@@ -114,6 +114,11 @@ public sealed class PlaygroundSession
     public int Current { get; set; }
     /// <summary>2 for an idea on one timeline of clips; 1 (or missing) for one saved as sections, opened by <see cref="Upgrade"/>.</summary>
     public int Version { get; set; } = 2;
+    /// <summary>
+    /// The name in Ideas this idea was opened from or last saved as, or "" for one never saved: saving it again replaces
+    /// that one, never another idea that happens to have the same name (<see cref="PlaygroundStore.SaveIdea"/>).
+    /// </summary>
+    public string SavedAs { get; set; } = "";
 
     /// <summary>The timeline: since version 2 an idea is one section, its parts tracks of clips and its old sections labels.</summary>
     [JsonIgnore]
@@ -342,16 +347,32 @@ public sealed class PlaygroundStore(string folder)
             ? new DirectoryInfo(IdeasFolder).GetFiles("*.json").OrderByDescending(f => f.LastWriteTimeUtc).Select(f => Path.GetFileNameWithoutExtension(f.Name)).ToList()
             : [];
 
-    public void SaveIdea(PlaygroundSession session)
+    /// <summary>
+    /// Saves the idea in Ideas under its name. Another idea already saved by that name is never saved over: this one gets
+    /// a number ("Untitled idea 2"), and its name becomes that. Saving the one it was opened from or saved as replaces it.
+    /// </summary>
+    /// <returns>The name it was saved as.</returns>
+    public string SaveIdea(PlaygroundSession session)
     {
         Directory.CreateDirectory(IdeasFolder);
-        File.WriteAllText(Path.Combine(IdeasFolder, TextSafe(session.Name) + ".json"), session.ToJson());
+        var named = TextSafe(session.Name);
+        var name = named;
+        for (var i = 2; !name.Equals(session.SavedAs, StringComparison.OrdinalIgnoreCase) && File.Exists(Path.Combine(IdeasFolder, name + ".json")); i++)
+            name = $"{named} {i}";
+        var was = (session.Name, session.SavedAs);
+        if (name != named) session.Name = name;
+        session.SavedAs = name;
+        try { File.WriteAllText(Path.Combine(IdeasFolder, name + ".json"), session.ToJson()); }
+        catch { (session.Name, session.SavedAs) = was; throw; }
+        return name;
     }
 
     public PlaygroundSession? LoadIdea(string name)
     {
         var file = Path.Combine(IdeasFolder, TextSafe(name) + ".json");
-        return File.Exists(file) ? PlaygroundSession.FromJson(File.ReadAllText(file)) : null;
+        if (!File.Exists(file) || PlaygroundSession.FromJson(File.ReadAllText(file)) is not { } idea) return null;
+        idea.SavedAs = TextSafe(name);   // saved again, it goes back where it came from
+        return idea;
     }
 
     static string TextSafe(string name)

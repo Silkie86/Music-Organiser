@@ -1,0 +1,95 @@
+using MusicOrganiser.Core.Library;
+using MusicOrganiser.Core.Midi;
+using MusicOrganiser.Core.Midi.Jazz;
+using MusicOrganiser.Core.Midi.Playground;
+using MusicOrganiser.Core.Parsers;
+using MusicOrganiser.Core.Sounds;
+using MusicOrganiser.ViewModels;
+
+namespace MusicOrganiser.Core.Tests;
+
+// The 2026-10-26 whole-app review's Playground findings that a test can show. Made-up parts only.
+[Collection("Global UI")]
+public class PlaygroundWholeAppReviewTests : IDisposable
+{
+    const int Ppq = PhraseAnalyser.Ppq, Bar = 4 * Ppq;
+    readonly string _root = Fixtures.TempDir();
+
+    public void Dispose()
+    {
+        UiWork.InBackground = true;
+        try { Directory.Delete(_root, true); } catch (IOException) { }
+    }
+
+    static List<NoteEvent> Chords(params int[][] chords) =>
+        chords.SelectMany((c, bar) => c.Select(k => new NoteEvent(bar * (long)Bar, Bar, k, 100))).ToList();
+
+    static List<NoteEvent> Tune(int bars) =>
+        Enumerable.Range(0, bars * 4).Select(i => new NoteEvent(i * (long)Ppq, Ppq, new[] { 64, 67, 69, 67 }[i % 4], 100)).ToList();
+
+    static ChordSymbol Chord(string name) => ChordLane.ParseChart(name, out _)![0].Chord;
+    static PlaygroundChord Block(string name, long start, long length) => new() { Start = start, Length = length, Chord = Chord(name) };
+    static readonly int[] Dm7 = [38, 53, 57, 60], G7 = [43, 53, 59, 62];
+
+    sealed class Page(PlaygroundViewModel p, MainViewModel main, IDisposable[] keep) : IDisposable
+    {
+        public PlaygroundViewModel P => p;
+        public MainViewModel Main => main;
+        public void Dispose() { foreach (var k in keep.Reverse()) k.Dispose(); }
+    }
+
+    Page Fresh()
+    {
+        Ui.Current = new PlaygroundTests.Headless();
+        UiWork.InBackground = false;
+        var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "export"));
+        var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        var sounds = new SoundOrganiser(soundDb);
+        var main = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data"));
+        return new Page(main.Playground, main, [db, soundDb, sounds]);
+    }
+
+    string Mid(string name, List<NoteEvent> notes)
+    {
+        var clip = new MidiClip { Name = name, Ppq = Ppq };
+        clip.Track(name).AddRange(notes);
+        var file = Path.Combine(_root, name + ".mid");
+        File.WriteAllBytes(file, MusicOrganiser.Core.Export.MidiWriter.Write(clip));
+        return file;
+    }
+
+    static void Drop(PlaygroundViewModel p, string file, int row, long start = 0) => p.DropPartCommand.Execute(new PartDrop(new[] { file }, row, start));
+
+    [Fact]
+    public async Task Saving_a_new_idea_never_saves_over_another_saved_idea_of_the_same_name()
+    {
+        using var page = Fresh();
+        var p = page.P;
+        Drop(p, Mid("Keys", Chords(Dm7, G7)), 0);
+        p.SaveIdeaCommand.Execute(null);
+        Assert.Equal(["Untitled idea"], p.SavedIdeas);
+        // Saved again, it replaces itself.
+        p.SaveIdeaCommand.Execute(null);
+        Assert.Single(p.SavedIdeas);
+
+        await p.NewIdeaCommand.ExecuteAsync(null);
+        Drop(p, Mid("Lead", Tune(2)), 0);
+        p.SaveIdeaCommand.Execute(null);
+        Assert.Equal(2, p.SavedIdeas.Count);
+        Assert.Equal("Untitled idea 2", p.IdeaName);
+        Assert.Contains("kept", p.Message);
+
+        // The first is still the keys idea, and opened and saved again it goes back where it came from.
+        p.OpenIdeaCommand.Execute("Untitled idea");
+        Assert.Equal("Keys", Assert.Single(p.Layers).Name);
+        p.SaveIdeaCommand.Execute(null);
+        Assert.Equal(2, p.SavedIdeas.Count);
+        p.OpenIdeaCommand.Execute("Untitled idea 2");
+        Assert.Equal("Lead", Assert.Single(p.Layers).Name);
+
+        // And it's remembered after the app is closed and opened again.
+        var store = new PlaygroundStore(Path.Combine(_root, "data", "playground"));
+        Assert.Equal("Untitled idea 2", store.LoadCurrent().SavedAs);
+    }
+}

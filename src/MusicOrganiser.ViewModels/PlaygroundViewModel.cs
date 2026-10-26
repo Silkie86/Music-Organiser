@@ -312,18 +312,20 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
         if (harmony && Section.Layers.Any(l => l.Written.Length > 0) && _writtenFor != WrittenKey(LaneForWriting()))
             RewriteWritten();
         Revision++;
-        if (settled)
-        {
-            // A cut-down playground is a sketch: nothing to keep until Open in Playground takes it over.
-            try { if (!IsQuick) _store.SaveCurrent(_session); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save the idea: {e.Message}"; }
-        }
+        if (settled) SaveCurrent();
         if (harmony) HarmonyChanged();
         else RefreshEnergy();
         EmptyChanged();
         if (!settled) return;
         if (_playing) _ = PlayAsync(keepPlace: true);
         PlayInBitwigSoon();
+    }
+
+    void SaveCurrent()
+    {
+        // A cut-down playground is a sketch: nothing to keep until Open in Playground takes it over.
+        try { if (!IsQuick) _store.SaveCurrent(_session); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save the idea: {e.Message}"; }
     }
 
     /// <summary>The chord track as parts last followed it.</summary>
@@ -400,10 +402,18 @@ public sealed partial class PlaygroundViewModel : ObservableObject, IFileDragSou
     [RelayCommand]
     void SaveIdea()
     {
+        var named = _session.Name;
         try
         {
-            _store.SaveIdea(_session);
-            Message = $"Saved “{_session.Name}”. Open it again from Ideas.";
+            // Another idea saved by the same name is kept: this one is saved with a number after its name.
+            var name = _store.SaveIdea(_session);
+            _showing = true;
+            IdeaName = _session.Name;
+            _showing = false;
+            OnPropertyChanged(nameof(Title));
+            SaveCurrent();   // where it's saved is kept with it, so saving it again replaces just that one
+            Message = _session.Name == named ? $"Saved “{named}”. Open it again from Ideas."
+                : $"Saved as “{name}”, so the other idea called “{named}” is kept. Open either from Ideas.";
             OnPropertyChanged(nameof(SavedIdeas));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Message = $"Couldn't save it: {e.Message}"; }
