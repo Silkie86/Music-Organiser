@@ -772,6 +772,43 @@ public class SoundLibraryTests
     }
 
     [Fact]
+    public void Learning_types_again_writes_only_the_sounds_whose_type_changed()
+    {
+        // It runs after every scan and every sound the folder watcher sees; rewriting all 357,000 types each time
+        // held the database for seconds, and a sound clicked meanwhile waited to be counted as played.
+        var root = Fixtures.SoundsDir();
+        var samples = Path.Combine(root, "Samples");
+        Directory.CreateDirectory(samples);
+        Synth.Write(Path.Combine(samples, "Kick.wav"), Synth.Kick(1));
+        Synth.Write(Path.Combine(samples, "Hat.wav"), Synth.Hat(2));
+        Synth.Write(Path.Combine(samples, "Snare.wav"), Synth.Snare(3));
+        var path = Path.Combine(root, "sounds.db");
+        using var lib = new SoundLibrary(path);
+        using var org = new SoundOrganiser(lib);
+        org.Scan([samples]);
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False");
+        conn.Open();
+        long Sql(string sql)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            return cmd.ExecuteScalar() is long n ? n : 0;
+        }
+        Sql("CREATE TABLE type_writes (id INTEGER); CREATE TRIGGER count_type_writes AFTER UPDATE OF type ON sounds BEGIN INSERT INTO type_writes VALUES (new.id); END;");
+
+        org.UpdateTypes();
+        Assert.Equal(0, Sql("SELECT COUNT(*) FROM type_writes"));
+
+        // One sound's stored type out of step: only it is written.
+        Sql("UPDATE sounds SET type = 'Ride', type_source = 'learned' WHERE path LIKE '%Kick.wav'; DELETE FROM type_writes;");
+        org.Reload();
+        org.UpdateTypes();
+        Assert.Equal(1, Sql("SELECT COUNT(*) FROM type_writes"));
+        Assert.Equal("Kick", org.Sounds.Single(s => s.Name == "Kick").Type);
+        Assert.Equal(org.Sounds.Select(s => (s.Id, s.Type)).Order(), lib.All().Select(s => (s.Id, s.Type)).Order());
+    }
+
+    [Fact]
     public void Only_sure_pairs_of_gone_and_new_files_count_as_moved()
     {
         (string, long, long) F(string path, long size = 100, long mtime = 7) => (path, size, mtime);

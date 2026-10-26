@@ -524,14 +524,17 @@ public sealed class SoundOrganiser : IDisposable
         else Library.SetSetting(TypeModelKey, null);
 
         var zeroShot = space == "clap" ? TypePrompts() : null;
+        // Only the types that changed are written: the sounds in memory hold what the library has (they're read from it,
+        // and every change goes to both), and rewriting all 357,000 after each scan kept the database busy for seconds.
         var updates = _sounds.AsParallel().AsOrdered().WithDegreeOfParallelism(Parallelism.Workers).Select(s =>
         {
             var (type, source, conf) = Parallelism.Background(() => ResolveType(s, model, zeroShot, space));
+            var changed = s.Type != type || s.TypeSource != source || s.TypeConfidence != conf;
             s.Type = type;
             s.TypeSource = source;
             s.TypeConfidence = conf;
-            return (s.Id, type, source, conf);
-        }).ToList();
+            return (s.Id, type, source, conf, changed);
+        }).Where(u => u.changed).Select(u => (u.Id, u.type, u.source, u.conf)).ToList();
         Library.SetTypes(updates);
         TrainTags();
         return model;
