@@ -89,6 +89,17 @@ public static class DiskSpace
         };
 
     /// <summary>
+    /// Every file in a folder and its folders, for what's in it rather than what room it takes: OneDrive files that are
+    /// only online count too (only their names are read, so nothing downloads). Links to other places still aren't followed.
+    /// </summary>
+    public static FileSystemEnumerable<T> AllFiles<T>(string folder, FileSystemEnumerable<T>.FindTransform transform) =>
+        new(folder, transform, new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 })
+        {
+            ShouldIncludePredicate = (ref FileSystemEntry e) => !e.IsDirectory,
+            ShouldRecursePredicate = (ref FileSystemEntry e) => !IsLinkedFolder(ref e),
+        };
+
+    /// <summary>
     /// Adds up a file, or everything in a folder and its folders. Links to other folders (junctions) aren't followed,
     /// so nothing is counted twice, and folders it can't read are left out. Runs in one of the background slots.
     /// </summary>

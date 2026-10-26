@@ -229,6 +229,8 @@ public sealed partial class PluginsViewModel
         // plugins' own, which were measured apart): read in the background (the samples table is big).
         var (holding, inside) = await Task.Run(() =>
             (folders.ToDictionary(f => f.Path, f => _db.SampleInside(f.Path)), folders.ToDictionary(f => f.Path, f => FoldersInside(f.Path, spaces))));
+        // Folders holding OneDrive files that are only online: found below, with the samples.
+        var online = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // Removing a folder removes the folders in it, so one holding a folder that has to stay stays too.
         string Holds(SpaceFolder f)
         {
@@ -246,10 +248,12 @@ public sealed partial class PluginsViewModel
             PluginSpace.IsInstallFolder(f.Path) ? "Inside Program Files: Uninstall removes this."
             : protectedRoots.FirstOrDefault(r => DiskSpace.IsInside(f.Path, r) || DiskSpace.IsInside(r, f.Path)) is { } mine ? $"Part of your folder {mine}."
             : holding[f.Path] is { } sample ? $"A project uses a sample in it ({Path.GetFileName(sample)})."
+            : online.Contains(f.Path) ? OnlineOnlyWhy
             : InUse(f, p) is { Length: > 0 } use ? use
             : Holds(f);
         // A sample found here under another path than the project's (an old PC's, a drive with a new letter) counts too.
-        // That means walking the folders, so only the ones that would be offered are, as a job you can stop.
+        // That means walking the folders, so only the ones that would be offered are, as a job you can stop. They're looked
+        // through for OneDrive files that are only online too: the Recycle Bin can't keep those, and OneDrive deletes them everywhere.
         var walk = folders.Where(f => Why(f).Length == 0).Select(f => f.Path).ToList();
         if (walk.Count > 0)
         {
@@ -257,8 +261,10 @@ public sealed partial class PluginsViewModel
             var activity = _main.Activities.Start($"Checking {p.Name}'s folders", "Looking for samples your projects use", cancel: stop.Cancel);
             try
             {
-                var named = await Task.Run(() => _db.SamplesNamedIn(walk, stop.Token), stop.Token);
+                var (named, onlineOnly) = await Task.Run(() =>
+                    (_db.SamplesNamedIn(walk, stop.Token), walk.Where(f => HasOnlineOnly(f, stop.Token)).ToList()), stop.Token);
                 foreach (var (folder, sample) in named) holding[folder] = sample;
+                online.UnionWith(onlineOnly);
                 activity.Finish($"Checked {p.Name}'s folders");
             }
             catch (OperationCanceledException)
@@ -284,6 +290,11 @@ public sealed partial class PluginsViewModel
         card.Refresh();
         Card = card;
     }
+
+    internal const string OnlineOnlyWhy = "Some of its files are only online in OneDrive. They can't go to the Recycle Bin: removing them deletes them from OneDrive everywhere.";
+
+    /// <summary>Whether a folder has OneDrive files that are only online (tests stand in for OneDrive, which only Windows has).</summary>
+    internal static Func<string, CancellationToken, bool> HasOnlineOnly = DiskSpace.HasOnlineOnly;
 
     /// <summary>The listed folders, any plugin's, that are inside this one (a maker's folder holds its plugins' own).</summary>
     internal static List<(PluginSpaceInfo Space, SpaceFolder Folder)> FoldersInside(string path, IReadOnlyList<PluginSpaceInfo> spaces) =>

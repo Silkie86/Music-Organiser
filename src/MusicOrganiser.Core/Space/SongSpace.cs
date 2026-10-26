@@ -193,7 +193,8 @@ public static class SongSpace
         if (roots.Any(r => DiskSpace.IsInside(r, folder))) return false;   // a project folder, or one holding it
         try
         {
-            foreach (var (path, _, _) in Walk(folder, default))
+            // Every file, OneDrive's online-only ones too: another song's save takes no room here, but it's still there.
+            foreach (var path in DiskSpace.AllFiles(folder, (ref System.IO.Enumeration.FileSystemEntry e) => e.ToFullPath()))
             {
                 if (!Scanner.IsProjectFile(path) || savePaths.Contains(path)) continue;
                 var rel = Path.GetRelativePath(folder, path).Split(['\\', '/']);

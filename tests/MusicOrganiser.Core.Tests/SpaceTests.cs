@@ -1084,6 +1084,56 @@ public class SpaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Clean_up_never_offers_a_folder_with_files_only_online_in_onedrive()
+    {
+        // The Recycle Bin can't keep a OneDrive file that's only online: removing it deletes it from OneDrive everywhere.
+        using var page = new Page(_root);
+        var tank = Path.GetDirectoryName(File("Docs/SampleTank Library/kick.wav", 50))!;
+        page.Db.ReplaceInstalledPlugins(["SampleTank"]);
+        page.Db.SavePluginSpaces([Space("SampleTank", 50, tank)], all: true);
+        var plugins = page.Main.Plugins;
+        plugins.Reload();
+        var was = PluginsViewModel.HasOnlineOnly;
+        PluginsViewModel.HasOnlineOnly = (folder, _) => folder == tank;   // only Windows has OneDrive
+        try
+        {
+            await plugins.CleanUpCommand.ExecuteAsync(plugins.Items.Single(p => p.Name == "SampleTank"));
+            var item = plugins.Card!.Items.Single();
+            Assert.False(item.CanTick);
+            Assert.Equal(PluginsViewModel.OnlineOnlyWhy, item.Why);
+            Assert.False(plugins.Card.RunCommand.CanExecute(null));
+        }
+        finally
+        {
+            PluginsViewModel.HasOnlineOnly = was;
+        }
+    }
+
+    [Fact]
+    public void Whats_in_a_folder_counts_files_that_take_no_room_here()
+    {
+        // A OneDrive file that's only online takes no room, so the size walks leave it out. It's still there, though: a
+        // sample a project uses holds its folder, and another song's save means a folder isn't this song's own. OneDrive
+        // is Windows' only; here a link to a file, which the size walks leave out too, stands in for one.
+        var cloud = File("Cloud/kick.wav", 50);
+        var kicks = Directory.CreateDirectory(Path.Combine(_root, "Docs", "SampleTank Library", "Kicks")).FullName;
+        System.IO.File.CreateSymbolicLink(Path.Combine(kicks, "kick.wav"), cloud);
+        var tank = Path.GetDirectoryName(kicks)!;
+        if (!OperatingSystem.IsWindows()) Assert.Empty(DiskSpace.Files(tank, (ref System.IO.Enumeration.FileSystemEntry e) => e.ToFullPath()));
+        Assert.Equal([Path.Combine(kicks, "kick.wav")], DiskSpace.AllFiles(tank, (ref System.IO.Enumeration.FileSystemEntry e) => e.ToFullPath()));
+
+        using var page = new Page(_root);
+        var used = @"C:\Users\Rose\Documents\SampleTank Library\Kicks\kick.wav";   // saved before OneDrive took over Documents
+        page.Db.Upsert(new LibraryDb.IndexedFile(File("FL/kicks.flp", 5), 5, 1, new ProjectInfo { Daw = "FL Studio" }, null, [(used, false)], []));
+        Assert.Equal(used, page.Db.SamplesNamedIn([tank])[tank]);
+
+        var day = new DateTime(2026, 1, 1);
+        var a = File("Songs/Album/Song A.song", 300, day);
+        System.IO.File.CreateSymbolicLink(Path.Combine(_root, "Songs", "Album", "Song B.song"), File("Cloud/Song B.song", 200, day));
+        Assert.False(SongSpace.OwnsFolder(Path.Combine(_root, "Songs", "Album"), new HashSet<string> { a }, [Path.Combine(_root, "Songs")]));
+    }
+
+    [Fact]
     public void The_administrator_steps_act_only_on_the_list_the_app_wrote()
     {
         var keep = File("Old Library/a.wav");

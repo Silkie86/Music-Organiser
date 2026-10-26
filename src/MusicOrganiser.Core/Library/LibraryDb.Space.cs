@@ -186,6 +186,7 @@ public sealed partial class LibraryDb
     /// same name, in a folder of the same name. Projects store paths as they were on the PC that saved them
     /// ("C:\Users\OldPC\…", a drive with another letter), so a sample found here since doesn't start with the folder's
     /// path (see <see cref="SampleInside"/>). Walks the folders and reads the samples table once: call it in the background.
+    /// A OneDrive file that's only online here counts too: it's still the sample, and removing the folder would remove it.
     /// </summary>
     public IReadOnlyDictionary<string, string> SamplesNamedIn(IReadOnlyList<string> folders, CancellationToken ct = default)
     {
@@ -194,7 +195,7 @@ public sealed partial class LibraryDb
         foreach (var folder in folders.Where(Directory.Exists))
         {
             var n = 0;
-            foreach (var file in DiskSpace.Files(folder, (ref System.IO.Enumeration.FileSystemEntry e) => e.ToFullPath()))
+            foreach (var file in DiskSpace.AllFiles(folder, (ref System.IO.Enumeration.FileSystemEntry e) => e.ToFullPath()))
             {
                 if ((++n & 1023) == 0) ct.ThrowIfCancellationRequested();
                 if (DiskSpace.IsSound(file, 0) && Tail(file) is { } tail) (tails.TryGetValue(tail, out var l) ? l : tails[tail] = []).Add(folder);
