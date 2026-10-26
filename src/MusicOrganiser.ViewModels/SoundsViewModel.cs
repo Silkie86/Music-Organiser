@@ -1497,26 +1497,37 @@ public sealed partial class KitViewModel(SoundsViewModel parent) : ObservableObj
         }
     }
 
-    string? ExportKit()
+    string? ExportKit() => ExportPads()?.Folder;
+
+    KitBuilder.Exported? ExportPads()
     {
         var slots = Slots.Select(s => s.Slot).Where(s => s.Sound is not null).ToList();
         if (slots.Count == 0) { Status = "Roll a kit first."; return null; }
-        return KitBuilder.Export(slots, Path.Combine(parent.ExportFolder(), "Kits"),
+        return KitBuilder.ExportPads(slots, Path.Combine(parent.ExportFolder(), "Kits"),
             $"Kit {DateTime.Now:yyyy-MM-dd HHmm} #{Seed}", new KitBuilder.ExportOptions(ElektronReady, Mono, Normalise));
     }
 
+    // The kit as last dragged (its pads, sounds and options), and what that export wrote.
+    (string Kit, KitBuilder.Exported Export)? _dragged;
+
     /// <summary>
-    /// The "Drag kit" handle: the kit's pads, exported with the chosen options, in pad order.
+    /// The "Drag kit" handle: the kit's pads, exported with the chosen options, in pad order (only this kit's: a pad
+    /// re-rolled or taken off since an earlier drag isn't in it). The same kit dragged again, unchanged, takes the files
+    /// already exported rather than converting every pad again as the drag starts.
     /// Single pads dragged from the list carry their original sound instead.
     /// </summary>
     public DragPayload? MakeDrag(IReadOnlyList<object> items)
     {
         if (items.Count > 0 && items.All(i => i is KitSlotItem) && items.Count < Slots.Count)
             return parent.MakeDrag(items);
-        if (ExportKit() is not { } folder) return null;
-        var files = Directory.GetFiles(folder).Where(f => !f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
-            .Order(StringComparer.OrdinalIgnoreCase).ToList();
         var pads = Slots.Where(s => s.Slot.Sound is not null).ToList();
+        var kit = string.Join("\n", pads.Select(p => $"{p.Name}\t{p.Slot.Sound!.Path}").Prepend($"{Seed} {ElektronReady} {Mono} {Normalise}"));
+        if (_dragged is not { } last || last.Kit != kit || !last.Export.Pads.All(File.Exists))
+        {
+            if (ExportPads() is not { } export) return null;
+            _dragged = (kit, export);
+        }
+        var (folder, files) = _dragged.Value.Export;
         var cards = pads.Select(p => new DragCard(p.Name, p.SoundName, Glyphs.Kit)).ToList();
         parent.Record(pads.Select(p => p.Slot.Sound).OfType<Sound>(), SoundEvent.Drag);
         Status = $"Exported to {folder}";

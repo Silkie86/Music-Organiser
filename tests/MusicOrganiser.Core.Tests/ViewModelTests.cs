@@ -1084,6 +1084,36 @@ public class ViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Dragging_a_kit_again_brings_only_its_pads_now_and_an_unchanged_kit_isnt_exported_again()
+    {
+        var dir = Fixtures.TempDir();
+        string[] names = ["Kick A", "Snare A", "Snare B"];
+        foreach (var n in names) File.WriteAllBytes(Path.Combine(dir, n + ".wav"), [1, 2]);
+        _soundDb.Save(names.Select(n => new SoundLibrary.Analysed(Path.Combine(dir, n + ".wav"), 2, 1, null, null, null, null)));
+        _sounds.Reload();
+        var exports = Path.Combine(_root, "Exports");
+        Directory.CreateDirectory(exports);
+        _db.SetSetting(ProjectDetailViewModel.ExportFolderKey, exports);
+        var lab = Main().Sounds;
+        Sound Named(string name) => lab.Items.Single(s => s.Name == name);
+        var kit = lab.Kit;
+        kit.ElektronReady = false;   // copied as they are
+        while (kit.Slots.Count > 2) kit.Slots.RemoveAt(2);
+        kit.Slots[0].Slot.Sound = Named("Kick A");
+        kit.Slots[1].Slot.Sound = Named("Snare A");
+
+        var first = kit.MakeDrag([])!;
+        Assert.Equal(["01 Kick - Kick A.wav", "02 Snare - Snare A.wav"], first.Files.Select(Path.GetFileName));
+        Assert.Equal(first.Files, kit.MakeDrag([])!.Files);   // the same kit: the files already there
+
+        // The snare re-rolled (same seed, same minute): the new snare, and not the old one beside it.
+        kit.Slots[1].Slot.Sound = Named("Snare B");
+        var second = kit.MakeDrag([])!;
+        Assert.Equal(["01 Kick - Kick A.wav", "02 Snare - Snare B.wav"], second.Files.Select(Path.GetFileName));
+        Assert.All(first.Files, f => Assert.True(File.Exists(f)));   // the first drag's files stay, for the DAW that has them
+    }
+
+    [Fact]
     public async Task A_sound_counted_by_its_name_shows_the_projects_with_a_copy_of_it()
     {
         void Save(string name, params (string, bool)[] samples)
