@@ -49,6 +49,7 @@ import java.time.Clock;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -125,6 +126,11 @@ final class Link {
     static final long DEVICE_WAIT = 2000;
     /** How long to wait for Bitwig to make a change the app asked for (a track, a device, a clip). */
     static final long CHANGE_WAIT = 5000;
+    /**
+     * How long a replaced clip gets to be swapped (its name changing) before it's launched anyway (extension 3.16; from
+     * 3.17 it's launched as soon as the new one is seen).
+     */
+    static final long REPLACE_WAIT = 2000;
     /** When to write the first self-check: once Bitwig has sent the values the link watches. */
     static final long SELF_CHECK_DELAY = 1000;
     /** Bitwig's own devices the app tunes, by the IDs Bitwig saves them under. */
@@ -218,6 +224,14 @@ final class Link {
                                          + "which is the FL Studio link's.";
     static final String CHANGES_OFF = "Changes are turned off. To let the app change things, turn on \"Let the app make changes\" "
                                       + "in Bitwig: Settings > Controllers > Music Organiser.";
+    /**
+     * The note grid `notes` reads a clip through: steps of a 16th note (in beats), 1024 of them (256 beats, 64 bars of 4/4),
+     * on all 128 keys. A note that starts past the grid isn't read.
+     */
+    static final double NOTE_STEP = 0.25;
+    static final int NOTE_STEPS = 1024;
+    static final int NOTE_KEYS = 128;
+    static final String NO_CLIP = "No clip is selected in Bitwig. Click your chord clip in the arranger or the clip launcher, then try again.";
 
     private static final Pattern COLOUR = Pattern.compile("^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$");
 
@@ -228,6 +242,8 @@ final class Link {
     private Application app;
     private Project project;
     private Transport transport;
+    /** Whether the transport's play position and play start could be followed (extension 3.16). */
+    private boolean followed;
     private TrackBank tracks;
     private final Track[] trackItems = new Track[MAX_TRACKS];
     private final DeviceBank[] trackDevices = new DeviceBank[MAX_TRACKS];
@@ -275,6 +291,11 @@ final class Link {
     private Arranger arranger;
     private Clip arrangerClip;
     private Track arrangerClipTrack;
+    /**
+     * The clips selected in the arranger and in the clip launcher (in that order), each with the notes its grid shows, for
+     * `notes` (null when Bitwig wouldn't make them).
+     */
+    private List<NoteClip> noteClips;
     /** Where a file dropped after each track goes, for the filetrack experiment (null when Bitwig wouldn't make them). */
     private InsertionPoint[] trackAfter;
     /**
@@ -368,6 +389,14 @@ final class Link {
         commands.put("record", Command.job(this::record));
         commands.put("recordabort", Command.answer(false, this::abortRecording));
         commands.put("probe", Command.job(this::probe));
+        // Extension 3.15: the notes of the clips selected in the arranger and the clip launcher, for the Playground's Get
+        // chords from Bitwig. It only reads, so it doesn't need changes allowed.
+        commands.put("notes", Command.answer(false, this::notes));
+        // Extension 3.16: for the Playground playing along with Bitwig. transport says whether Bitwig is playing, where and
+        // how fast (it only reads, and the app asks many times a second); stoptracks stops the clips the Playground launched
+        // on its tracks. clip takes "replace" and "launch" from 3.16 too (from 3.17 launched in step with the song).
+        commands.put("transport", Command.answer(false, this::transportNow));
+        commands.put("stoptracks", Command.job(this::stopTracks));
     }
 
     // ---- Starting and stopping ----
@@ -394,6 +423,14 @@ final class Link {
             transport.getPosition().markInterested();
         }, () -> Json.number(transport.tempo().getRaw()) + " BPM in " + str(transport.timeSignature().get())
                  + (transport.isPlaying().get() ? ", playing." : ", stopped."));
+
+        // For transport (extension 3.16): where Bitwig is as it plays, and where Play starts from.
+        feature("following", () -> {
+            transport.playPosition().markInterested();
+            transport.playStartPosition().markInterested();
+            followed = true;
+        }, () -> "Bitwig is at beat " + Json.number(transport.playPosition().get()) + ", and Play starts at beat "
+                 + Json.number(transport.playStartPosition().get()) + ".");
 
         // The track and device selected in Bitwig.
         feature("cursor track", () -> {
@@ -488,6 +525,7 @@ final class Link {
                     ClipLauncherSlot slot = (ClipLauncherSlot) slots.getItemAt(s);
                     slot.exists().markInterested();
                     slot.hasContent().markInterested();
+                    slot.name().markInterested();
                     trackSlots[t][s] = slot;
                     slotInserts[t][s] = slot.replaceInsertionPoint();
                 }
@@ -613,6 +651,25 @@ final class Link {
                  + (arrangerClip.exists().get() ? "a clip on \"" + str(arrangerClipTrack.name().get()) + "\" is selected in the arranger"
                                                 : "no clip is selected in the arranger")
                  + ", and the play start is at beat " + Json.number(transport.playStartPosition().get()) + ".");
+
+        // For notes (extension 3.15): the clips selected in the arranger and in the clip launcher, each with a note grid of
+        // its own (the arranger feature's clip has a grid of one step, which shows no notes), the track each is on, and
+        // whether that's the selected track.
+        feature("clip notes", () -> {
+            NoteClip arranged = noteClip("arranger", host.createArrangerCursorClip(NOTE_STEPS, NOTE_KEYS));
+            NoteClip launched = noteClip("launcher", host.createLauncherCursorClip(NOTE_STEPS, NOTE_KEYS));
+            noteClips = List.of(arranged, launched);
+        }, () -> {
+            List<String> parts = new ArrayList<>();
+            for (NoteClip c : noteClips) {
+                String where = "arranger".equals(c.from) ? "the arranger" : "the clip launcher";
+                parts.add(c.clip.exists().get() ? "a clip on \"" + str(c.track.name().get()) + "\" is selected in " + where + ", with "
+                                                  + c.notes.size() + " notes starting in its grid"
+                                                : "no clip is selected in " + where);
+            }
+            String said = String.join("; ", parts) + ".";
+            return Character.toUpperCase(said.charAt(0)) + said.substring(1);
+        });
 
         // For the filetrack experiment (extension 3.8): where a file goes when it's dropped after each track.
         feature("files as tracks", () -> {
@@ -987,7 +1044,8 @@ final class Link {
         if (error != null) message.put("error", error);
         else message.put("result", result);
         send(ask.client(), message);
-        if (error == null && "hello".equals(ask.cmd())) return;
+        // The app asks hello every few seconds, and transport many times a second while the Playground follows Bitwig.
+        if (error == null && ("hello".equals(ask.cmd()) || "transport".equals(ask.cmd()))) return;
 
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("cmd", ask.cmd());
@@ -1578,6 +1636,83 @@ final class Link {
         reply(ask, m, null);
     }
 
+    /**
+     * Sets up a cursor clip for notes: its grid from the first step and the lowest key, what's read of it marked as
+     * interesting, and the notes Bitwig shows in its grid kept as they come.
+     */
+    private NoteClip noteClip(String from, Clip clip) {
+        clip.exists().markInterested();
+        clip.getLoopStart().markInterested();
+        clip.getLoopLength().markInterested();
+        Track on = clip.getTrack();
+        on.name().markInterested();
+        BooleanValue selected = null;
+        if (cursorTrack != null) {
+            // Only for onSelectedTrack, so notes still works when Bitwig won't compare the clip's track.
+            try {
+                selected = on.createEqualsValue(cursorTrack);
+                selected.markInterested();
+            } catch (RuntimeException | LinkageError e) {
+                selected = null;
+            }
+        }
+        NoteClip made = new NoteClip(from, clip, on, selected);
+        clip.setStepSize(NOTE_STEP);
+        clip.scrollToKey(0);
+        clip.scrollToStep(0);
+        // Bitwig tells each step of the grid that changes, for each channel: where a note starts (NoteOn), where one goes
+        // on (NoteSustain), and where there's none (Empty). Only the starts are kept.
+        clip.addNoteStepObserver(step -> {
+            List<Integer> at = List.of(step.channel(), step.x(), step.y());
+            switch (step.state()) {
+                case NoteOn -> made.notes.put(at, new GridNote(step.x(), step.y(), step.duration(), step.velocity()));
+                default -> made.notes.remove(at);
+            }
+        });
+        return made;
+    }
+
+    /**
+     * The notes of the clip selected in the arranger and of the one selected in the clip launcher (extension 3.15), for
+     * the Playground's Get chords from Bitwig: for each clip there is (the arranger's first), where it's `from`, its
+     * `track` and whether that's the selected one, its loop `start` and `length` in beats, whether it's longer than the
+     * grid the link reads it through (`cut`), and its `notes` (`start` in beats from the clip's start, `length` in beats,
+     * `key` and `velocity`, 0 to 127), by start, then key.
+     */
+    private void notes(Ask ask, Map<String, Object> request) {
+        if (noteClips == null) throw new LinkError("This Bitwig didn't let the link read its clips' notes. A selftest says why.");
+        List<Object> clips = new ArrayList<>();
+        for (NoteClip c : noteClips) {
+            if (!c.clip.exists().get()) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("from", c.from);
+            m.put("track", str(c.track.name().get()));
+            m.put("onSelectedTrack", c.selected != null && c.selected.get());
+            double start = c.clip.getLoopStart().get();
+            double length = c.clip.getLoopLength().get();
+            m.put("start", start);
+            m.put("length", length);
+            m.put("cut", start + length > NOTE_STEPS * NOTE_STEP + 1e-9);
+            List<GridNote> sorted = new ArrayList<>(c.notes.values());
+            sorted.sort(Comparator.comparingInt(GridNote::step).thenComparingInt(GridNote::key));
+            List<Object> notes = new ArrayList<>();
+            for (GridNote n : sorted) {
+                Map<String, Object> note = new LinkedHashMap<>();
+                note.put("start", n.step() * NOTE_STEP);
+                note.put("length", n.length());
+                note.put("key", n.key());
+                note.put("velocity", (int) Math.max(0, Math.min(127, Math.round(n.velocity() * 127))));
+                notes.add(note);
+            }
+            m.put("notes", notes);
+            clips.add(m);
+        }
+        if (clips.isEmpty()) throw new LinkError(NO_CLIP);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("clips", clips);
+        reply(ask, m, null);
+    }
+
     /** Runs a self-check, writes it to the reports folder and returns it, with the file it went in. */
     private Map<String, Object> selfTest(String why) {
         Map<String, Object> report = selfCheck(why);
@@ -1709,6 +1844,9 @@ final class Link {
     private void addClip(Map<String, Object> request, Finish finish) {
         int t = requestedTrack(request);
         String path = given(field(request, "path"), "file");
+        boolean replace = flag(request, "replace", false);
+        boolean launch = flag(request, "launch", false);
+        if (replace && absent(field(request, "slot"))) throw new LinkError("Say which slot's clip to replace.");
         ClipLauncherSlot[] slots = trackSlots[t];
         Object s = field(request, "slot");
         int index;
@@ -1716,23 +1854,73 @@ final class Link {
             if (!isIndex(s, SCENES))
                 throw new LinkError("The app can reach the first " + SCENES + " clip slots on a track, not slot " + Json.js(s) + ".");
             index = index(s);
-            if (slots[index].hasContent().get()) throw new LinkError("Slot " + index + " on that track already has a clip.");
+            if (slots[index].hasContent().get() && !replace) throw new LinkError("Slot " + index + " on that track already has a clip.");
         } else {
             index = emptySlot(slots);
             if (index < 0) throw new LinkError("The track's first " + SCENES + " clip slots are full.");
         }
+        // A replaced clip is there all along, so it's the clip's name that changes (the app names each file it swaps in
+        // differently from the one before, extension 3.17).
+        String before = replace ? str(slots[index].name().get()) : "";
         slotInserts[t][index].insertFile(path);
         // The track's slot, found by its ID when Bitwig has said it, in case a track goes in above it meanwhile.
         String id = idOf(t);
         waitFor(() -> {
             int now = id.isEmpty() ? t : indexOf(id);
-            return now >= 0 && trackSlots[now][index].hasContent().get();
-        }, CHANGE_WAIT, made -> {
-            if (!made) throw new LinkError("Bitwig didn't make a clip from " + path + ".");
+            return now >= 0 && trackSlots[now][index].hasContent().get()
+                   && (!replace || !str(trackSlots[now][index].name().get()).equals(before));
+        }, replace ? REPLACE_WAIT : CHANGE_WAIT, made -> {
+            int now = id.isEmpty() ? t : indexOf(id);
+            // A replace whose name didn't change (the same file again) still has its clip: it goes ahead.
+            if (!made && !(replace && now >= 0 && trackSlots[now][index].hasContent().get()))
+                throw new LinkError("Bitwig didn't make a clip from " + path + ".");
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("slot", index);
+            if (launch) {
+                if (now < 0) throw new LinkError("The track went before its clip could be launched.");
+                // In step with the song (extension 3.17): a swapped clip carries on from where Bitwig is, not from its own
+                // start, so it stays with the parts that didn't change.
+                trackSlots[now][index].launchWithOptions("default", "synced");
+                m.put("launched", true);
+            }
             finish.ok(m);
         }, finish);
+    }
+
+    /**
+     * Stops the launcher clips playing on the tracks with the IDs given (`trackIds`) and puts them back on the arranger
+     * (extension 3.16), for the Playground when it stops playing in Bitwig. A track that's gone is left out of `stopped`.
+     */
+    private void stopTracks(Map<String, Object> request, Finish finish) {
+        Object given = field(request, "trackIds");
+        if (!(given instanceof List)) throw new LinkError("Say which tracks to stop, by their IDs.");
+        List<Object> stopped = new ArrayList<>();
+        for (Object id : (List<?>) given) {
+            if (!(id instanceof String)) throw new LinkError("A track's ID is text.");
+            int t = indexOf((String) id);
+            if (t < 0) continue;
+            trackItems[t].stop();
+            trackItems[t].returnToArrangement();
+            stopped.add(id);
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("stopped", stopped);
+        finish.ok(m);
+    }
+
+    /**
+     * Whether Bitwig is `playing`, where (`position`, in beats from the start), where Play starts (`playStart`), its `tempo`
+     * and `timeSignature` (extension 3.16), for the Playground's Follow Bitwig, which asks many times a second.
+     */
+    private void transportNow(Ask ask, Map<String, Object> request) {
+        if (!followed) throw new LinkError("This Bitwig didn't let the link follow where it's playing. A selftest says why.");
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("playing", transport.isPlaying().get());
+        m.put("position", transport.playPosition().get());
+        m.put("playStart", transport.playStartPosition().get());
+        m.put("tempo", transport.tempo().getRaw());
+        m.put("timeSignature", str(transport.timeSignature().get()));
+        reply(ask, m, null);
     }
 
     /** The first empty slot in a scene that exists, else the first of the scenes still to come; -1 if none. */
@@ -3957,6 +4145,28 @@ final class Link {
     record Pad(int note, String path, String name) {}
 
     record Feature(String name, String error, long ms, Supplier<String> probe) {}
+
+    /**
+     * A cursor clip `notes` reads: where it's selected ("arranger" or "launcher"), the track it's on, whether that's the
+     * selected track (null when Bitwig wouldn't say), and the notes starting in its grid, by channel, step and key.
+     */
+    static final class NoteClip {
+        final String from;
+        final Clip clip;
+        final Track track;
+        final BooleanValue selected;
+        final Map<List<Integer>, GridNote> notes = new HashMap<>();
+
+        NoteClip(String from, Clip clip, Track track, BooleanValue selected) {
+            this.from = from;
+            this.clip = clip;
+            this.track = track;
+            this.selected = selected;
+        }
+    }
+
+    /** A note starting in a clip's grid: its step and key, its length in beats, and its velocity (0 to 1), as Bitwig said. */
+    record GridNote(int step, int key, double length, double velocity) {}
 
     static final class Params {
         List<String> ids = List.of();

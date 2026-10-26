@@ -73,7 +73,7 @@ The extension writes to the app's data folder, next to MO Probe's reports:
   and IDs, the Sampler and Note Transpose pitch, the popup browser, the settings, the remote controls, the last
   clicked parameter, parameter steps, origins and automation, the master recorder, the arranger (its timeline
   and clip launcher, the panel layout, the play start, the clip selected there and launcher clips' colours, for
-  `arrange`), where a file can go after each track (for `filetrack`) and Bitwig's
+  `arrange`), the clips selected in the arranger and the clip launcher with their notes (for `notes`), where a file can go after each track (for `filetrack`) and Bitwig's
   actions, the command routes (the loopback's MIDI ports, the buttons the link made, and whether its own MIDI
   has come back, with how to set the loopback up when it hasn't), then whether the app can connect (port 19791)
   and whether the reports folder takes files. Each part
@@ -102,6 +102,14 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
 - `recorder` ✎ with `do`: `"start"`, `"stop"` or `"status"` (the default): Bitwig's master recorder, answering
   once it has started or stopped with `active` and `duration` (in milliseconds).
 - `selftest`: runs the self-check, writes it to the reports folder and answers with it, plus `file`.
+- `notes` (extension 3.15): the notes of the clips selected in Bitwig, for the Playground's Get chords from
+  Bitwig. It only reads, so it doesn't need changes allowed. The answer's `clips` has one entry for each clip
+  there is, the arranger's selected clip first, then the clip launcher's: `from` (`arranger` or `launcher`),
+  `track` (the name of its track), `onSelectedTrack` (whether that's Bitwig's selected track), `start` and
+  `length` (its loop, in beats), `cut` (true when it's longer than the 256 beats the link reads) and `notes`, by
+  start, then key, on every MIDI channel: `start` (beats from the clip's start, to the 16th note the link reads
+  it at), `length` (in beats), `key` and `velocity` (0 to 127). With no clip selected in either it fails: "No
+  clip is selected in Bitwig. Click your chord clip in the arranger or the clip launcher, then try again."
 - `arrange` ✎ with `track`, `slot` and `at` (optional, in beats): **an experiment** (extension 3.6), which only
   the live tests send. Bitwig's API can't put a clip on the arranger timeline, so the link copies a launcher
   clip and pastes it there, as a person would. Paste puts down whatever is on Bitwig's clipboard, which may be
@@ -154,11 +162,23 @@ whether Bitwig's audio engine is on.) The rest is additions, which the app can i
   `restoreFailed`), and what changed in the tracks and launcher slots, by ID (`diff`).
 - `recordabort`: asks a running `record` to stop (it answers `running`). It isn't a change, so it reaches the
   job whatever project is in front.
+- `transport` (extension 3.16): for the Playground's Follow Bitwig, whether Bitwig is `playing`, where
+  (`position`, in beats from the start), where Play starts (`playStart`), its `tempo` and `timeSignature`. The
+  app asks many times a second while it follows, so these aren't logged.
+- `stoptracks` ✎ with `trackIds` (extension 3.16): stops the launcher clips on those tracks and puts them back
+  on the arranger, for the Playground's Play in Bitwig, answering with the IDs it found as `stopped`.
 - `probe` ✎ with `via` and `gap` (optional, in ms): runs Bitwig's panel commands (`toggle_arranger`, then
   the focus actions of the clip launcher and the arranger) twice each, `gap` apart, by the route, and says for
   each whether its panel showed before and after each go (`visible`), whether the route `ran` it, and whether
   the link put the panel back as it was (`restored`). A panel that shows and hides with them means Bitwig
   carried them out for the link.
+- From 3.17, `clip` with `launch` launches the clip in step with the song (synced), so a swapped part carries on
+  with the others instead of starting again from its own start, and a `replace` waits for the clip's name to change
+  (the app names each file it swaps in differently) rather than a fixed moment, before it launches.
+- From 3.16, `transport` says where Bitwig is playing, `stoptracks` stops tracks' launcher clips, and `clip` takes
+  `replace` (swap a slot's clip for the file) and `launch`, for the Playground playing along with Bitwig.
+- From 3.15, `notes` answers with the notes of the clip selected in the arranger and in the clip launcher, for the
+  Playground's Get chords from Bitwig.
 - From 3.14, an effect after a pad's empty Sampler is one Bitwig calls `audio-effect`, as well as `audio_to_audio`.
   The 2026-10-19 live run showed Bitwig 6.1.5 calling devices `instrument` and `note-effect`, not the
   `note_to_audio` the link was written for, so a pad with an effect after its Sampler would have counted as taken.
@@ -231,7 +251,7 @@ the app connects.
 - `LinkTest`: every scenario of the script's tests (`../bitwig/test/link.test.js`), under the same names, plus
   two apps at once and a connection that breaks.
 - `NewerApiTest`: link version 3's additions: track IDs, remote controls' `steps`, `stepNames`, `origin` and
-  `automated`, `clicked` and `recorder`.
+  `automated`, `clicked`, `recorder` and `notes` (with the stand-in's cursor clips and their note grids).
 - `ArrangerTest`: the `arrange` experiment, with the stand-in's arranger, clipboard and focused panel (copy and
   paste work in the panel in front, and carry the clip's colour): a clip copied into the arranger at bar 5 in
   its marking colour, the Arrange layout switched to and a hidden clip launcher and timeline shown, the

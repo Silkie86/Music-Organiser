@@ -132,7 +132,7 @@ public static class Groove
     }
 
     /// <summary>Notes struck together (within a 32nd) as one hit: when, how loud the loudest, how long the longest.</summary>
-    static IEnumerable<(long Start, int Velocity, long Length, List<NoteEvent> Notes)> Hits(IReadOnlyList<NoteEvent> notes)
+    internal static IEnumerable<(long Start, int Velocity, long Length, List<NoteEvent> Notes)> Hits(IReadOnlyList<NoteEvent> notes)
     {
         var sorted = notes.OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
         var i = 0;
@@ -218,21 +218,33 @@ public static class Groove
             var theirs = ChordAround(theirLane, hit.Start % period, hit.Length, period);
             var ours = ChordAround(lane, hit.Start, hit.Length, length);
             if (theirs is not { } s || ours is not { } t) continue;
-            var shift = ChordSymbol.Mod(t.Root - s.Root);
-            if (shift > 6) shift -= 12;
-            var lowest = hit.Notes.Min(n => n.Key);
-            var used = new HashSet<int>();
-            foreach (var n in hit.Notes.OrderBy(n => n.Key))
-            {
-                var bass = n.Key == lowest && hit.Notes.Count > 1 && n.Key % 12 == s.Bass && s.Bass != s.Root;
-                var pc = bass ? t.Bass : ChordSymbol.Mod(t.Root + Map(s, t, ChordSymbol.Mod(n.Key - s.Root)));
-                if (n.Key == lowest && n.Key % 12 == s.Root && hit.Notes.Count > 1) pc = t.Bass;   // the root in the bass stays the bass
-                var key = Nearest(pc, n.Key + shift);
-                if (!used.Add(key)) continue;
-                list.Add(n with { Key = key, Length = Math.Max(1, Math.Min(n.Length, length - n.Start)) });
-            }
+            list.AddRange(Revoice(hit.Notes, s, t).Select(n => n with { Length = Math.Max(1, Math.Min(n.Length, length - n.Start)) }));
         }
         return list.Where(n => n.Start < length).OrderBy(n => n.Start).ThenBy(n => n.Key).ToList();
+    }
+
+    /// <summary>
+    /// Notes struck together over chord <paramref name="from"/> played on chord <paramref name="to"/>: each one the same
+    /// part of the new chord (<see cref="Map"/>), nearest to where it was moved by the change of root, the bass staying
+    /// the bass. Two notes landing on the same key are played once.
+    /// </summary>
+    public static List<NoteEvent> Revoice(IReadOnlyList<NoteEvent> hit, ChordSymbol from, ChordSymbol to)
+    {
+        var list = new List<NoteEvent>();
+        if (hit.Count == 0) return list;
+        var shift = ChordSymbol.Mod(to.Root - from.Root);
+        if (shift > 6) shift -= 12;
+        var lowest = hit.Min(n => n.Key);
+        var used = new HashSet<int>();
+        foreach (var n in hit.OrderBy(n => n.Key))
+        {
+            var bass = n.Key == lowest && hit.Count > 1 && n.Key % 12 == from.Bass && from.Bass != from.Root;
+            var pc = bass ? to.Bass : ChordSymbol.Mod(to.Root + Map(from, to, ChordSymbol.Mod(n.Key - from.Root)));
+            if (n.Key == lowest && n.Key % 12 == from.Root && hit.Count > 1) pc = to.Bass;   // the root in the bass stays the bass
+            var key = Nearest(pc, n.Key + shift);
+            if (used.Add(key)) list.Add(n with { Key = key });
+        }
+        return list;
     }
 
     /// <summary>The chord a hit belongs to: the one sounding, or the next when the hit pushes into it and holds over the change.</summary>
@@ -288,7 +300,8 @@ public static class Groove
         return (third, fifth, seventh);
     }
 
-    static int Nearest(int pc, int around)
+    /// <summary>The key of pitch class <paramref name="pc"/> nearest to <paramref name="around"/>.</summary>
+    public static int Nearest(int pc, int around)
     {
         var k = around - ChordSymbol.Mod(around - pc);
         if (around - k > 6) k += 12;

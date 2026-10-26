@@ -5,6 +5,40 @@
              x:Class="MusicOrganiser.Avalonia.Views.PlaygroundView"
              x:DataType="vm:PlaygroundViewModel">
     <UserControl.Styles>
+        <!-- What could come next after the last chord, as chips: the same on the Chords and Harmony tabs. -->
+        <Style Selector="ItemsControl.nextChords">
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+            </Setter>
+            <Setter Property="ItemTemplate">
+                <DataTemplate x:DataType="vm:NextChordRow">
+                    <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}"
+                            ToolTip.Tip="Add it after the last chord, a bar long (on the chord track when it has chords)">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding ShareText}" Classes="small" />
+                        </StackPanel>
+                    </Button>
+                </DataTemplate>
+            </Setter>
+        </Style>
+        <!-- Other ways to hear the chord picked in Reharm: another name for its notes, or another of them as its root. -->
+        <Style Selector="ItemsControl.readings">
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+            </Setter>
+            <Setter Property="ItemTemplate">
+                <DataTemplate x:DataType="vm:ChordReadingRow">
+                    <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding PickCommand}" ToolTip.Tip="{Binding Tip}">
+                        <TextBlock Text="{Binding Text}" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" />
+                    </Button>
+                </DataTemplate>
+            </Setter>
+        </Style>
+        <!-- The side panel's six tabs fit on one line. -->
+        <Style Selector="TabControl.side TabItem">
+            <Setter Property="Padding" Value="7,0" />
+        </Style>
         <!-- A suggestion being heard: its card lights up (and glows softly while its sound is being made). -->
         <Style Selector="Border.tryCard">
             <Setter Property="Padding" Value="6,4" />
@@ -161,6 +195,15 @@
                                       ToolTip.Tip="Loop: Play goes round the highlighted bars, or the whole idea (Ctrl+L)">
                             <Path Classes="buttonIcon" Data="M1,7 V5.5 A2.5,2.5 0 0 1 3.5,3 H11 M9,1 L11,3 L9,5 M13,7 V8.5 A2.5,2.5 0 0 1 10.5,11 H3 M5,9 L3,11 L5,13" />
                         </ToggleButton>
+                        <!-- Playing along with Bitwig: a link (Follow) and into Bitwig (Play in Bitwig). -->
+                        <ToggleButton MinWidth="34" IsChecked="{Binding FollowBitwig}"
+                                      ToolTip.Tip="Follow Bitwig: press Play in Bitwig and the Playground plays along with its own sounds, from the same place in the bar, at Bitwig's tempo. It stops when Bitwig stops.">
+                            <Path Classes="buttonIcon" Data="M4.5,7.5 L7.5,4.5 M5,3.5 L6,2.5 A2.5,2.5 0 0 1 9.5,6 L8.5,7 M7,8.5 L6,9.5 A2.5,2.5 0 0 1 2.5,6 L3.5,5" />
+                        </ToggleButton>
+                        <ToggleButton MinWidth="34" IsChecked="{Binding PlayInBitwig}"
+                                      ToolTip.Tip="Play in Bitwig: each part (and the chord track, when it's heard) goes on a track of its own in Bitwig, named “… (Playground)”, as a clip that plays round. Put your instruments on those tracks; edits here go across as you make them. Bitwig plays at its own tempo.">
+                            <Path Classes="buttonIcon" Data="M1,6 V11 H11 V6 M6,1 V7.5 M3.5,5 L6,7.5 L8.5,5" />
+                        </ToggleButton>
                     </StackPanel>
                     <Border Classes="lcd" MinWidth="70" Margin="0,0,6,0" ToolTip.Tip="Where it's playing, or where Play starts: bar, beat and sixteenth">
                         <TextBlock Text="{Binding PositionText}" HorizontalAlignment="Center" />
@@ -209,8 +252,8 @@
                                 ToolTip.Tip="Drag the whole timeline into your DAW: one MIDI file, a track for each part">
                             <TextBlock Text="Drag out" />
                         </Border>
-                        <Button Content="Send to Bitwig" Command="{Binding SendToBitwigCommand}"
-                                ToolTip.Tip="Each part on its own new track in Bitwig, as a clip" />
+                        <Button Content="To Bitwig" Command="{Binding SendToBitwigCommand}"
+                                ToolTip.Tip="Send to Bitwig: each part on its own new track in Bitwig, as a clip" />
                     </StackPanel>
                 </StackPanel>
             </Grid>
@@ -247,8 +290,9 @@
                 <StackPanel Spacing="2" Margin="6,6,6,6">
                     <Panel>
                     <TextBlock Text="Chords" Classes="laneName" Margin="12,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent"
-                               ToolTip.Tip="Chords are heard, never typed: from the chord and bass parts where there are some, from everything playing where there aren't. Green: home. Red: pulling home. Faint: moving away. Click one to change it (Reharm)." />
+                               ToolTip.Tip="The chords. Tinted ones are on the chord track (from the Chords tab, no MIDI): drag an edge to stretch one, the middle to move it, everything follows. The rest are heard from the chord and bass parts (everything playing where there are none). Green: home. Red: pulling home. Click one to change it (Reharm)." />
                     <views:ChordLaneView Height="28" ContextRequested="OnChordMenu" Items="{Binding Chords}" PickCommand="{Binding PickChordCommand}"
+                                         DragCommand="{Binding DragChordCommand}" Grid="{Binding Grid}" SnapGrid="{Binding SnapGrid}"
                                          Picked="{Binding PickedChord}" Proposed="{Binding ProposedChords}" Length="{Binding Length}" Position="{Binding Position}" Inset="210"
                                          ViewFrom="{Binding ViewFrom}" ViewTo="{Binding ViewTo}" />
                     </Panel>
@@ -351,9 +395,20 @@
                                         <Border DockPanel.Dock="Right" Classes="lcd" MinWidth="72"><TextBlock Text="{Binding SelectedClip.RoundText}" HorizontalAlignment="Center" /></Border>
                                         <TextBlock Text="Round" Classes="label" ToolTip.Tip="How long one go round is, and how many times it plays" />
                                     </DockPanel>
-                                    <DockPanel ToolTip.Tip="Shift to fit: a clip you move moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Fit again.">
-                                        <Button DockPanel.Dock="Right" Content="Fit again" Classes="tiny" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
-                                                ToolTip.Tip="Changed by hand, so it stays as it is. Fit again lets it move to fit the chords under it again (its octave is kept)." />
+                                    <StackPanel Spacing="3" IsVisible="{Binding SelectedClip.CanFollow}">
+                                        <TextBlock Text="Follows the chords" Classes="label" />
+                                        <ComboBox HorizontalAlignment="Stretch" ItemsSource="{x:Static vm:ClipRow.FollowWays}" SelectedItem="{Binding SelectedClip.FollowPick}"
+                                                  ToolTip.Tip="How it follows the chords on the chord track. Nudge clashes: the line stays as written, only notes that clash move (melodies, soul, pop). Keep its place (in the chord): a root stays a root and a 3rd a 3rd, so it reshapes for each chord (chord parts, gospel and funk bass, arps). Move with root: the whole riff moves with the chord, note for note (riffs, EDM, hip hop). Don't follow: it stays exactly as it is (a pedal note, a drone)." />
+                                        <!-- nothing on the chord track under it to follow yet (Solomon, 2026-10-23: "changing follow the chords doesnt seem to do anything") -->
+                                        <StackPanel Spacing="3" IsVisible="{Binding SelectedClip.NothingToFollow}">
+                                            <TextBlock Text="{Binding SelectedClip.NothingToFollowText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                                            <Button Content="Put the chords heard there" Classes="tiny" HorizontalAlignment="Left" Command="{Binding SelectedClip.PutChordsUnderCommand}"
+                                                    ToolTip.Tip="The chords heard from the parts go on the chord track, and this clip follows them the way picked above when you change one (click a chord, then Reharm). Undo takes them back off." />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <DockPanel ToolTip.Tip="A clip follows the chords where it's put: on the chord track the way picked above, elsewhere it moves itself up or down (each time round separately) to sit best on the chords under it. Changing it by hand stops that until Follow again.">
+                                        <Button DockPanel.Dock="Right" Content="Follow again" Classes="tiny" Command="{Binding SelectedClip.FitAgainCommand}" IsVisible="{Binding SelectedClip.CanFitAgain}"
+                                                ToolTip.Tip="Changed by hand, so it stays as it is. Follow again lets it follow the chords under it again (its octave is kept)." />
                                         <TextBlock Text="{Binding SelectedClip.FitText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" VerticalAlignment="Center" />
                                     </DockPanel>
                                     <StackPanel Classes="group">
@@ -442,7 +497,7 @@
             <Border Grid.Column="1" Classes="grip" Width="3" Height="48" />
             <!-- Getting parts: suggestions, writing from the chords, reharmonising, and songs. -->
             <Border Grid.Column="2" Classes="panel" Padding="10,6,10,10">
-                <TabControl Padding="0,8,0,0" SelectedIndex="{Binding RightTab}">
+                <TabControl Classes="side" Padding="0,8,0,0" SelectedIndex="{Binding RightTab}">
                     <TabItem Header="{Binding SuggestTab}" FontSize="14">
                         <Panel>
                         <!-- An empty idea: the MIDI page's own list, smaller, with Add on each part. -->
@@ -507,8 +562,6 @@
                                                         <TextBlock Text="{Binding PreviewText}" />
                                                     </Button>
                                                     <Button Content="{Binding AddText}" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add: on a new track over the highlight (or from bar 1), moved into key. Swap in: in place of the highlighted bars of the clip you picked." />
-                                                    <Button Content="Copy its groove" Classes="tiny" Command="{Binding TakeGrooveCommand}"
-                                                            ToolTip.Tip="Put its feel, rhythm or whole playing on the part picked (block chords played like it)" />
                                                 </StackPanel>
                                             </StackPanel>
                                         </Border>
@@ -517,6 +570,54 @@
                             </ListBox>
                         </Grid>
                         </Panel>
+                    </TabItem>
+
+                    <!-- Chords first (Solomon, 2026-10-22): progressions from every chord part read, put on the chord track with no MIDI,
+                         and what usually comes next after the chord track's last chord. -->
+                    <TabItem Header="Chords" FontSize="14" ToolTip.Tip="Chord progressions from your own chord parts, to put on the chord track (no MIDI)">
+                        <Grid RowDefinitions="Auto,Auto,Auto,*">
+                            <StackPanel Spacing="4" Margin="0,0,0,8" IsVisible="{Binding NextChords.Count}">
+                                <TextBlock Text="{Binding NextChordsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                                <ItemsControl ItemsSource="{Binding NextChords}" Classes="nextChords" />
+                            </StackPanel>
+                            <DockPanel Grid.Row="1">
+                                <ComboBox DockPanel.Dock="Right" ItemsSource="{x:Static vm:PlaygroundViewModel.ProgressionBarChoices}" SelectedItem="{Binding ProgressionBars}"
+                                          Width="118" FontSize="12" Margin="6,0,0,0" ToolTip.Tip="How long one go round of the progression lasts" />
+                                <TextBox Text="{Binding ProgressionSearch}" PlaceholderText="Chords or numerals: Dm7, ii V, minor" Classes="clearButton" />
+                            </DockPanel>
+                            <DockPanel Grid.Row="2" Margin="0,6">
+                                <ToggleButton DockPanel.Dock="Right" Content="Hear" Classes="tiny" IsChecked="{Binding HearChordTrack}" Margin="6,0,0,0" VerticalAlignment="Top"
+                                              ToolTip.Tip="Hear the chord track's chords, played plainly, with the idea. Play in Bitwig sends them too; To Bitwig and the files don't." />
+                                <Button DockPanel.Dock="Right" Content="From Bitwig" Classes="tiny" Command="{Binding ChordsFromBitwigCommand}" Margin="6,0,0,0" VerticalAlignment="Top"
+                                        ToolTip.Tip="Get chords from Bitwig: click your chord clip in Bitwig (arranger or clip launcher) first. Its chords, read from its notes, go on the chord track. Needs the Music Organiser extension 3.15." />
+                                <TextBlock Text="{Binding ProgressionsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
+                            </DockPanel>
+                            <ListBox Grid.Row="3" ItemsSource="{Binding Progressions}" Background="Transparent" Classes="longList"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ProgressionRow">
+                                        <Border Classes="tryCard" Classes.playing="{Binding IsPlaying}" ToolTip.Tip="{Binding Tip}">
+                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                                <Button Classes="tiny" Command="{Binding PlayCommand}" Width="26" Margin="0,0,8,0" VerticalAlignment="Center"
+                                                        ToolTip.Tip="Hear it, moved into the idea's key">
+                                                    <TextBlock Text="{Binding PlayText}" />
+                                                </Button>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Names}" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Romans}" Classes="small" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="8,0">
+                                                    <TextBlock Text="{Binding SongsText}" Classes="small" HorizontalAlignment="Right" />
+                                                    <TextBlock Text="{Binding BarsText}" Classes="small" HorizontalAlignment="Right" />
+                                                </StackPanel>
+                                                <Button Grid.Column="3" Content="Use" Classes="tiny accent" Command="{Binding UseCommand}" VerticalAlignment="Center"
+                                                        ToolTip.Tip="Put these chords on the chord track, with no MIDI: over the highlight, else after its last chord (from bar 1 when it's empty)" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
                     </TabItem>
 
                     <TabItem Header="Write" FontSize="14">
@@ -543,47 +644,6 @@
                         </ScrollViewer>
                     </TabItem>
 
-                    <TabItem Header="Groove" FontSize="14">
-                        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel Spacing="8">
-                                <TextBlock TextWrapping="Wrap" Classes="small" TextTrimming="None"
-                                           Text="Take the groove of one part and put it on another: from just its swing and accents to its whole playing, so plain block chords play the way a player's part does." />
-                                <TextBlock Text="Copy from" FontWeight="SemiBold" />
-                                <ComboBox ItemsSource="{Binding GrooveSources}" SelectedItem="{Binding GrooveSource}" HorizontalAlignment="Stretch"
-                                          PlaceholderText="Another part"
-                                          ToolTip.Tip="Another part here. Or press Copy its groove on any suggestion to copy from a part in your library.">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:LayerRow">
-                                            <TextBlock Text="{Binding Name}" />
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                                <TextBlock Text="{Binding GrooveSourceText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                                <TextBlock Text="How much to copy" FontWeight="SemiBold" Margin="0,4,0,0" />
-                                <Slider Minimum="1" Maximum="6" TickFrequency="1" IsSnapToTickEnabled="True" TickPlacement="BottomRight"
-                                        Value="{Binding GrooveAmount}" Margin="0,-4,0,0" />
-                                <!-- Six stops: four of feel (25% to 100%), then rhythm, then the whole playing. -->
-                                <Grid ColumnDefinitions="*,*,*,*,*,*,*,*,*,*" Margin="0,-6,0,0">
-                                    <TextBlock Grid.ColumnSpan="5" Text="Feel" Classes="small" />
-                                    <TextBlock Grid.Column="7" Grid.ColumnSpan="2" Text="Rhythm" Classes="small" HorizontalAlignment="Center" />
-                                    <TextBlock Grid.Column="8" Grid.ColumnSpan="2" Text="Playing" Classes="small" HorizontalAlignment="Right" />
-                                </Grid>
-                                <TextBlock Text="{Binding GrooveAmountText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" MinHeight="34" />
-                                <TextBlock Text="{Binding GrooveTargetText}" FontWeight="SemiBold" Margin="0,4,0,0" />
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Button Classes="tiny" Command="{Binding PreviewGrooveCommand}" IsEnabled="{Binding CanCopyGroove}" ToolTip.Tip="Hear the idea with it">
-                                        <Panel>
-                                            <TextBlock Text="▶ Hear it" IsVisible="{Binding !IsGroovePlaying}" />
-                                            <TextBlock Text="■ Stop" IsVisible="{Binding IsGroovePlaying}" />
-                                        </Panel>
-                                    </Button>
-                                    <Button Content="Copy the groove" Classes="accent" Command="{Binding CopyGrooveCommand}" IsEnabled="{Binding CanCopyGroove}"
-                                            ToolTip.Tip="Put it on the part picked on the left. Undo takes it back. A part written from the chords keeps the groove when the chords change." />
-                                </StackPanel>
-                            </StackPanel>
-                        </ScrollViewer>
-                    </TabItem>
-
                     <TabItem Header="Reharm" FontSize="14" ToolTip.Tip="Change a chord: click it on the chord lane, try an idea, keep it or go back">
                         <Grid RowDefinitions="Auto,*,Auto">
                             <!-- where you are in the three steps -->
@@ -605,7 +665,7 @@
                                     <!-- no chords yet: whole sets of chords for the melody or bassline, to try -->
                                     <DockPanel IsVisible="{Binding CanHarmonise}">
                                         <TextBlock DockPanel.Dock="Top" Text="{Binding HarmoniseText}" FontWeight="SemiBold" Margin="0,0,0,6" TextWrapping="Wrap" TextTrimming="None"
-                                                   ToolTip.Tip="No chord part plays, so these are chords made for what does: try one, then keep it as a Chords track or go back" />
+                                                   ToolTip.Tip="No chord part plays, so these are chords made for what does: try one, then keep it on the chord track (or as a Chords part) or go back" />
                                         <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                                             <ItemsControl ItemsSource="{Binding HarmoniseIdeas}">
                                                 <ItemsControl.ItemTemplate>
@@ -630,6 +690,15 @@
                                         <Button DockPanel.Dock="Right" Content="✕" Classes="tiny" Command="{Binding ClearPickedChordCommand}" ToolTip.Tip="Pick no chord" />
                                         <TextBlock Text="{Binding PickedChordText}" FontSize="16" FontWeight="SemiBold" FontFamily="{DynamicResource NumberFont}" VerticalAlignment="Center" />
                                     </DockPanel>
+                                    <!-- heard wrongly? the same notes named another way, or on another root (Solomon, 2026-10-23) -->
+                                    <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,0,0,6" IsVisible="{Binding ChordRoots.Count}">
+                                        <StackPanel Spacing="2" IsVisible="{Binding ChordReadings.Count}">
+                                            <TextBlock Text="Hear it as" Classes="small" ToolTip.Tip="The same notes named another way: pick one and it goes on the chord track here, and the parts follow it" />
+                                            <ItemsControl ItemsSource="{Binding ChordReadings}" Classes="readings" />
+                                        </StackPanel>
+                                        <TextBlock Text="Or say its root" Classes="small" ToolTip.Tip="Which of its notes is the root: the chord is named from it, goes on the chord track here, and the parts follow it" />
+                                        <ItemsControl ItemsSource="{Binding ChordRoots}" Classes="readings" />
+                                    </StackPanel>
                                     <TextBlock DockPanel.Dock="Top" Text="No ideas for this chord. Try another." Classes="small" IsVisible="{Binding !ChordIdeas.Count}" />
                                     <ScrollViewer HorizontalScrollBarVisibility="Disabled">
                                         <ItemsControl ItemsSource="{Binding ChordIdeas}">
@@ -660,7 +729,9 @@
                                     </Border>
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <Button Classes="accent" Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).KeepIdeaCommand}"
-                                                Content="Keep" ToolTip.Tip="Change the chords; parts written from them follow. Undo takes it back." />
+                                                Content="Keep" ToolTip.Tip="Change the chords (chords made for the melody go on the chord track); parts follow them. Undo takes it back." />
+                                        <Button Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).KeepIdeaAsPartCommand}" IsVisible="{Binding Idea.Whole}"
+                                                Content="As a part" ToolTip.Tip="Keep these chords as a Chords part with notes, played plainly, instead of on the chord track" />
                                         <Button Command="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackIdeaCommand}"
                                                 Content="{Binding $parent[UserControl].((vm:PlaygroundViewModel)DataContext).BackText}" ToolTip.Tip="Leave the chords as they were and try another idea" />
                                         <Button Command="{Binding PreviewCommand}" ToolTip.Tip="Hear the idea with it">
@@ -677,21 +748,7 @@
                             <!-- what could come next, smaller, under the steps -->
                             <StackPanel Grid.Row="2" Spacing="4" Margin="0,8,0,0" IsVisible="{Binding NextChords.Count}">
                                 <TextBlock Text="{Binding NextChordsText}" Classes="small" TextWrapping="Wrap" TextTrimming="None" />
-                                <ItemsControl ItemsSource="{Binding NextChords}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:NextChordRow">
-                                            <Button Margin="0,0,6,6" Classes="tiny" Command="{Binding AddCommand}" ToolTip.Tip="Add it as the next bar">
-                                                <StackPanel Orientation="Horizontal" Spacing="5">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                                    <TextBlock Text="{Binding ShareText}" Classes="small" />
-                                                </StackPanel>
-                                            </Button>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                                <ItemsControl ItemsSource="{Binding NextChords}" Classes="nextChords" />
                             </StackPanel>
                         </Grid>
                     </TabItem>
@@ -704,6 +761,8 @@
                                 <TextBlock Text="From bar" Classes="label" />
                                 <NumericUpDown Value="{Binding FromBar}" Minimum="1" Maximum="999" Increment="1" FormatString="0" Width="110" />
                             </StackPanel>
+                            <CheckBox Content="Chords only" IsChecked="{Binding SongChordsOnly}"
+                                      ToolTip.Tip="Bring in just the song's chords, onto the chord track, with none of its parts" />
                             <TextBox Text="{Binding SongSearch}" PlaceholderText="Search your songs" Classes="clearButton" />
                             <ItemsControl ItemsSource="{Binding SongChoices}">
                                 <ItemsControl.ItemTemplate>

@@ -4,7 +4,7 @@ namespace MusicOrganiser.Core.Midi.Jazz;
 /// <param name="Bar">The bar it changes, from 1, for showing where.</param>
 public sealed record Reharm(string Title, string Why, string Before, string After, int Bar, IReadOnlyList<TimedChord> Lane)
 {
-    /// <summary>Chords for the whole idea where it had none (<see cref="Harmoniser"/>): kept as a chord part the whole way.</summary>
+    /// <summary>Chords for the whole idea where it had none (<see cref="Harmoniser"/>): kept on the chord track the whole way, or as a chord part.</summary>
     public bool Whole { get; init; }
 }
 

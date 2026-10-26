@@ -1,5 +1,6 @@
 using System.Collections;
 using System.ComponentModel;
+using MusicOrganiser.Core.DawLink;
 using MusicOrganiser.Core.Library;
 using MusicOrganiser.Core.Midi;
 using MusicOrganiser.Core.Midi.Jazz;
@@ -654,7 +655,7 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
-    public async Task A_melody_on_its_own_gets_whole_sets_of_chords_to_try_and_keep_as_a_chords_track()
+    public async Task A_melody_on_its_own_gets_whole_sets_of_chords_to_try_and_keep_on_the_chord_track_or_as_a_part()
     {
         Ui.Current = new Headless();
         UiWork.InBackground = false;
@@ -679,9 +680,25 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(plain.Idea.Lane.Count, p.ProposedChords!.Count);
         Assert.Single(p.Layers);
 
-        // Kept: a Chords track plays them, the chord lane reads them, and there's nothing left to harmonise.
+        // Kept: they go on the chord track (no MIDI), the chord lane reads them, and there's nothing left to harmonise.
         p.KeepIdeaCommand.Execute(null);
+        Assert.Single(p.Layers);
+        Assert.Equal(plain.Idea.Lane.Select(c => c.Chord.Name), p.CurrentSection.ChordTrack.Select(c => c.Chord.Name));
+        Assert.Equal(plain.Idea.Lane.Select(c => c.Chord.Name), p.Chords.Select(c => c.Name));
+        Assert.Contains("on the chord track", p.Message);
+        // The melody they were made for stays exactly as it was.
+        Assert.Equal(tune.Select(n => (n.Start, n.Key)), p.Layers[0].Layer.Notes.Select(n => (n.Start, n.Key)));
+        Assert.Equal(FollowWay.None, p.Layers[0].Layer.Clips[0].Follow);
+        Assert.False(p.CanHarmonise);
+        p.UndoCommand.Execute(null);
+        Assert.Empty(p.CurrentSection.ChordTrack);
+        Assert.True(p.CanHarmonise);
+
+        // Or kept as a part: a Chords track plays them instead.
+        await p.TryIdea(p.HarmoniseIdeas.First(i => i.Title == "Harmonise: plain"));
+        p.KeepIdeaAsPartCommand.Execute(null);
         Assert.Equal(2, p.Layers.Count);
+        Assert.Empty(p.CurrentSection.ChordTrack);
         Assert.Equal(plain.Idea.Lane.Select(c => c.Chord.Name), p.Chords.Select(c => c.Name));
         Assert.False(p.CanHarmonise);
         p.UndoCommand.Execute(null);
@@ -1252,7 +1269,7 @@ public class PlaygroundTests : IDisposable
     }
 
     [Fact]
-    public void Copying_a_groove_onto_written_chords_keeps_it_when_the_chords_change()
+    public void A_groove_copied_onto_written_chords_in_an_older_idea_is_kept_when_the_chords_change()
     {
         Ui.Current = new Headless();
         UiWork.InBackground = false;
@@ -1268,11 +1285,10 @@ public class PlaygroundTests : IDisposable
         p.WriteBassCommand.Execute(null);
         var chords = p.Layers[1];
         p.SelectedLayer = chords;
-        // Copy the walking bass's rhythm: the held chords are now struck on every beat.
-        p.GrooveSource = p.GrooveSources.Single(r => r.Role == MidiRoles.Bass);
-        p.GrooveAmount = 5;
-        p.CopyGrooveCommand.Execute(null);
-        Assert.Equal(16, chords.Notes.Select(n => n.Start).Distinct().Count());
+        // The walking bass's rhythm copied onto the chords (the Groove tab did this before chords first, step 2).
+        chords.Layer.GrooveNotes = p.Layers.Single(r => r.Role == MidiRoles.Bass).Layer.Notes;
+        chords.Layer.GrooveDepth = GrooveDepth.Rhythm;
+        chords.Layer.GrooveFrom = "Bass";
         Assert.Contains("groove of", chords.Details);
 
         // New chords played on the chord part: the written part is written again and struck on the beats again.
@@ -1290,7 +1306,207 @@ public class PlaygroundTests : IDisposable
         Assert.Equal(before, Sets(chords.Notes));
     }
 
-    sealed class Headless : IPlatformUi
+    // ---- playing along with Bitwig (2026-10-22) ----
+
+    [Fact]
+    public void Following_Bitwig_starts_at_its_place_in_the_bar_jumps_only_when_out_and_stops_with_it()
+    {
+        var f = new DawFollow();
+        long length = 4L * Bar;
+        Assert.Equal(FollowMove.Wait, f.Next(false, 0, 120, Ppq, length, null).Move);
+
+        // Bitwig plays from beat 21 (bar 6, beat 2): a 4-bar idea is at its own bar 2, beat 2.
+        Assert.Equal(new FollowStep(FollowMove.Start, 5L * Beat), f.Next(true, 21, 120, Ppq, length, null));
+        Assert.True(f.Following);
+        // In step, give or take the little each answer is late: it plays on.
+        for (var i = 1; i <= 6; i++)
+            Assert.Equal(FollowMove.Wait, f.Next(true, 21 + i * 0.1, 120, Ppq, length, 5L * Beat + (long)(i * 0.1 * Beat) + Beat / 50).Move);
+
+        // Bitwig goes back to its beat 0 (its loop going round): a few looks on, the Playground goes there too.
+        var step = new FollowStep(FollowMove.Wait);
+        var looks = 0;
+        for (; looks < 10 && step.Move == FollowMove.Wait; looks++)
+            step = f.Next(true, looks * 0.1, 120, Ppq, length, 6L * Beat + (long)(looks * 0.1 * Beat));
+        Assert.Equal(FollowMove.Seek, step.Move);
+        Assert.InRange(looks, DawFollow.Looks, DawFollow.Looks + 3);
+        Assert.InRange(step.Tick, (long)((looks - 1) * 0.1 * Beat) - 1, (long)((looks - 1) * 0.1 * Beat) + 1);
+
+        // Bitwig stops: so does the Playground. Played on its own while Bitwig's stopped, it's left alone.
+        Assert.Equal(FollowMove.Stop, f.Next(false, 3, 120, Ppq, length, 3L * Beat).Move);
+        Assert.False(f.Following);
+        Assert.Equal(FollowMove.Wait, f.Next(false, 0, 120, Ppq, length, 2L * Beat).Move);
+
+        // Played a tenth of a second early, at 120 BPM: a fifth of a beat on.
+        Assert.Equal(new FollowStep(FollowMove.Start, (long)Math.Round(Beat / 5.0)), f.Next(true, 0, 120, Ppq, length, null, nudge: 0.1));
+    }
+
+    [Fact]
+    public async Task Follow_Bitwig_plays_along_from_Bitwigs_place_at_its_tempo_and_stops_with_it()
+    {
+        var ui = new Headless();
+        Ui.Current = ui;
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data")).Playground;
+        var tune = Line(Beat, 72, 74, 76, 77);   // one bar
+        p.AddFromLibrary(new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", tune, "melody lead")]).Entries[0], tune, "Lead");
+        p.ClearLoopCommand.Execute(null);
+        var tempo = p.Tempo;
+
+        await p.FollowLook(new BitwigTransport(false, 0, 0, 100, "4/4"));
+        Assert.False(p.IsPlaying);
+
+        // Bitwig plays from beat 6 at 100 BPM: the one-bar idea plays from its third beat, at Bitwig's tempo.
+        await p.FollowLook(new BitwigTransport(true, 6, 0, 100, "4/4"));
+        Assert.True(p.IsPlaying);
+        Assert.Equal(MidiRender.TicksToSeconds(2L * Beat, Ppq, 100), ui.Player!.StartedAt, 3);
+        Assert.Equal(tempo, p.Tempo);   // the idea keeps its own
+
+        // Bitwig at beat 9 while the Playground's still on beat 2: it jumps to beat 1 once the looks agree.
+        ui.Player.At = MidiRender.TicksToSeconds(2L * Beat, Ppq, 100);
+        for (var i = 0; i < DawFollow.Looks; i++) await p.FollowLook(new BitwigTransport(true, 9, 0, 100, "4/4"));
+        Assert.Equal(MidiRender.TicksToSeconds(Beat, Ppq, 100), Assert.Single(ui.Player.Seeks), 3);
+
+        // Stop in the Playground stops following; Bitwig stopping stops it too.
+        await p.FollowLook(new BitwigTransport(false, 9, 0, 100, "4/4"));
+        Assert.False(p.IsPlaying);
+    }
+
+    [Fact]
+    public async Task Following_Bitwig_waits_out_a_go_round_spaces_out_tempo_changes_and_lets_go_of_its_tempo()
+    {
+        var ui = new Headless();
+        Ui.Current = ui;
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data")).Playground;
+        var tune = Line(Beat, 72, 74, 76, 77);
+        p.AddFromLibrary(new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", tune, "melody lead")]).Entries[0], tune, "Lead");
+        p.ClearLoopCommand.Execute(null);
+        p.Tempo = 120;
+        var now = TimeSpan.FromSeconds(100);
+        p.Clock = () => now;
+        await p.PlayCommand.ExecuteAsync(null);
+        var ownLength = ui.Player!.Samples;
+        await p.PlayCommand.ExecuteAsync(null);   // stop
+
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 100, "4/4"));
+        Assert.True(p.IsPlaying);
+        var plays = ui.Player.Plays;
+
+        // Going round again, the sound seems stopped for a moment: it isn't started again on top of the next go round.
+        ui.Player.Stop();
+        for (var i = 0; i < 3; i++) await p.FollowLook(new BitwigTransport(true, 4 + i * 0.1, 0, 100, "4/4"));
+        Assert.Equal(plays, ui.Player.Plays);
+
+        // A tempo ramp in Bitwig: the sound is made again at most every half second, but at once for a big jump.
+        ui.Player.At = 0;
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 100.2, "4/4"));
+        var afterFirst = ui.Player.Plays;
+        Assert.Equal(plays + 1, afterFirst);
+        now += TimeSpan.FromMilliseconds(100);
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 100.4, "4/4"));
+        Assert.Equal(afterFirst, ui.Player.Plays);
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 104, "4/4"));
+        Assert.Equal(afterFirst + 1, ui.Player.Plays);
+
+        // A song in 3/4 is said to follow Bitwig's beats, not its bars.
+        await p.FollowLook(new BitwigTransport(true, 0, 0, 104, "3/4"));
+        Assert.Contains("3/4", p.Message);
+
+        // Bitwig stops: the Playground stops, and Play here plays at the idea's own tempo again.
+        await p.FollowLook(new BitwigTransport(false, 0, 0, 104, "3/4"));
+        Assert.False(p.IsPlaying);
+        await p.PlayCommand.ExecuteAsync(null);
+        Assert.Equal(ownLength, ui.Player.Samples);
+    }
+
+    [Fact]
+    public async Task Play_in_Bitwig_puts_each_part_on_a_track_of_its_own_there_and_sends_only_what_changed()
+    {
+        Ui.Current = new Headless();
+        UiWork.InBackground = false;
+        using var db = new LibraryDb(Path.Combine(_root, "library.db"));
+        db.SetSetting(ProjectDetailViewModel.ExportFolderKey, Path.Combine(_root, "exports"));
+        using var soundDb = new SoundLibrary(Path.Combine(_root, "sounds.db"));
+        using var sounds = new SoundOrganiser(soundDb);
+        var p = new MainViewModel(db, sounds, dataFolder: Path.Combine(_root, "data")).Playground;
+        var tune = Line(Beat, 72, 74, 76, 77);
+        var bass = Line(2 * Beat, 36, 43);
+        var catalogue = new MidiCatalogue([Stored(1, @"K:\Other\Tune.flp", "Lead", tune, "melody lead"), Stored(2, @"K:\Other\Tune.flp", "Bass", bass, "bass")]);
+        p.AddFromLibrary(catalogue.Entries.First(e => e.Phrase.Part == "Lead"), tune, "Lead");
+        p.AddFromLibrary(catalogue.Entries.First(e => e.Phrase.Part == "Bass"), bass, "Bass");
+        p.ClearLoopCommand.Execute(null);
+        var made = new List<string>();
+        var put = new List<(string Track, string File)>();
+        var stopped = new List<string>();
+        p.BitwigNewTrack = (name, _) =>
+        {
+            made.Add(name);
+            return Task.FromResult($"track {made.Count}");
+        };
+        p.BitwigPutClip = (track, file, _) =>
+        {
+            put.Add((track, file));
+            return Task.CompletedTask;
+        };
+        p.BitwigStopTracks = (tracks, _) =>
+        {
+            stopped.AddRange(tracks);
+            return Task.CompletedTask;
+        };
+        p.SendAfter = TimeSpan.FromHours(1);
+        p.BitwigTransport = _ => Task.FromException<BitwigTransport>(new OperationCanceledException());
+        p.FollowBitwig = true;
+
+        // On: a track for each part, its notes there as a clip a bar long; Follow Bitwig goes off, as both would play twice.
+        p.PlayInBitwig = true;
+        await p.SendToPlayAsync();
+        Assert.False(p.FollowBitwig);
+        Assert.Equal(["Lead (Playground)", "Bass (Playground)"], made);
+        Assert.Equal(["track 1", "track 2"], put.Select(x => x.Track));
+        var lead = Assert.Single(MidiFileReader.Read(put[0].File));
+        Assert.Equal(tune.Select(n => n.Key), lead.Notes.Select(n => n.Key));
+        Assert.StartsWith("Playing in Bitwig: 2 parts", p.Message);
+
+        // Nothing changed: nothing goes across. The bass muted: its track stops; back on, it goes back on its own track.
+        await p.SendToPlayAsync();
+        Assert.Equal(2, put.Count);
+        p.ToggleMute(p.Layers.Single(l => l.Layer.Name == "Bass"));
+        await p.SendToPlayAsync();
+        Assert.Equal(["track 2"], stopped);
+        p.ToggleMute(p.Layers.Single(l => l.Layer.Name == "Bass"));
+        await p.SendToPlayAsync();
+        Assert.Equal(2, made.Count);
+        Assert.Equal("track 2", put[^1].Track);
+
+        // Its track deleted in Bitwig: the part goes on a new one.
+        p.BitwigPutClip = (track, file, _) =>
+        {
+            if (track == "track 1") throw new DawLinkException("There's no track with ID track 1 in the project listing.");
+            put.Add((track, file));
+            return Task.CompletedTask;
+        };
+        var leadRow = p.Layers.Single(l => l.Layer.Name == "Lead");
+        p.ToggleMute(leadRow);
+        await p.SendToPlayAsync();
+        p.ToggleMute(leadRow);
+        await p.SendToPlayAsync();
+        Assert.Equal(["Lead (Playground)", "Bass (Playground)", "Lead (Playground)"], made);
+        Assert.Equal("track 3", put[^1].Track);
+
+        // Off: the tracks playing stop, and stay in Bitwig.
+        stopped.Clear();
+        p.PlayInBitwig = false;
+        Assert.Equal(["track 2", "track 3"], stopped.Order());
+        Assert.Contains("Stopped playing in Bitwig", p.Message);
+    }
+
+    internal sealed class Headless : IPlatformUi
     {
         public IItemsView CreateView(IList items) => new ListView(items);
         public IUiTimer CreateTimer(TimeSpan interval, Action tick) => new NoTimer();
@@ -1319,15 +1535,26 @@ public class PlaygroundTests : IDisposable
 
     sealed class NoTimer : IUiTimer { public void Start() { } public void Stop() { } }
 
-    sealed class Silence : IAudioPlayer
+    internal sealed class Silence : IAudioPlayer
     {
         public event Action? Stopped { add { } remove { } }
         public string? Playing { get; private set; }
-        public double? Position => Playing is null ? null : 0;
+        public double? Position => Playing is null ? null : At ?? 0;
+        /// <summary>Where a test says it's got to (else the start).</summary>
+        public double? At { get; set; }
         public double StartedAt { get; private set; }
-        public void Seek(double seconds) { }
+        /// <summary>How long the last sound played was, in samples: longer at a slower tempo.</summary>
+        public int Samples { get; private set; }
+        /// <summary>How many sounds were played.</summary>
+        public int Plays { get; private set; }
+        public List<double> Seeks { get; } = [];
+        public void Seek(double seconds) => Seeks.Add(seconds);
         public void Play(string path, double startSeconds = 0) => Playing = path;
-        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0) => (Playing, StartedAt) = (key, startSeconds);
+        public void Play(float[] mono, int sampleRate, string key, double startSeconds = 0)
+        {
+            (Playing, StartedAt, Samples) = (key, startSeconds, mono.Length);
+            Plays++;
+        }
         public void Stop() => Playing = null;
         public void Dispose() { }
     }

@@ -41,6 +41,7 @@ import com.bitwig.extension.controller.api.MasterRecorder;
 import com.bitwig.extension.controller.api.MasterTrack;
 import com.bitwig.extension.controller.api.MidiIn;
 import com.bitwig.extension.controller.api.MidiOut;
+import com.bitwig.extension.controller.api.NoteStep;
 import com.bitwig.extension.controller.api.Parameter;
 import com.bitwig.extension.controller.api.PinnableCursorDevice;
 import com.bitwig.extension.controller.api.PlayingNote;
@@ -216,6 +217,9 @@ final class FakeBitwig {
     Copied clipboard;
     /** The arranger's cursor clip: the clip selected in the arranger. */
     final ArrangerClip arrangerClip = new ArrangerClip();
+    /** The cursor clips with a note grid (extension 3.15), the arranger's and the clip launcher's, once the extension made them. */
+    GridClip arrangerGrid;
+    GridClip launcherGrid;
     /** "Let the app make changes", once init has asked for it. */
     Value changes;
 
@@ -289,7 +293,44 @@ final class FakeBitwig {
         Arranged arrangerSelected;
         /** The clips Bitwig recorded into the arranger from the launcher (extension 3.9). */
         final List<Recorded> recorded = new ArrayList<>();
+        /**
+         * The clips selected in the arranger and in the clip launcher, as their note grids show them (extension 3.15), or
+         * null for none. The arranger's is apart from arrangerSelected, which only the arrange experiment's clip follows.
+         */
+        NoteClip arrangerNotes;
+        NoteClip launcherNotes;
     }
+
+    /**
+     * A clip as a note grid shows it (extension 3.15): the name of its track, its loop start and length in beats, and its
+     * notes. A test puts one in `state` (arrangerNotes or launcherNotes) to select it, then refresh().
+     */
+    static final class NoteClip {
+        final String track;
+        final double start;
+        final double length;
+        final List<ClipNote> notes = new ArrayList<>();
+
+        NoteClip(String track, double start, double length) {
+            this.track = track;
+            this.start = start;
+            this.length = length;
+        }
+
+        /** Adds a note on channel 1: where it starts and how long it is in beats, its key, and its velocity (0 to 1). */
+        NoteClip note(double start, double length, int key, double velocity) {
+            return note(0, start, length, key, velocity);
+        }
+
+        /** Adds a note on a channel (0 to 15). */
+        NoteClip note(int channel, double start, double length, int key, double velocity) {
+            notes.add(new ClipNote(channel, start, length, key, velocity));
+            return this;
+        }
+    }
+
+    /** A note in a clip: its channel (0 to 15), where it starts and how long it is (in beats), its key and velocity (0 to 1). */
+    record ClipNote(int channel, double start, double length, int key, double velocity) {}
 
     /**
      * A launcher clip recorded into the arranger (extension 3.9): its track, where it starts and ends (in beats), the clip
@@ -969,6 +1010,10 @@ final class FakeBitwig {
         arrangerClip.colour.show(selectedClip == null ? null : selectedClip.colour());
         arrangerClip.track.present.v = selectedClip != null;
         arrangerClip.track.title.v = selectedClip == null ? "" : selectedClip.track().name;
+        TrackSpec selectedTrack = cursorSpec();
+        String cursorName = selectedTrack == null ? null : selectedTrack.name;
+        if (arrangerGrid != null) arrangerGrid.show(state.arrangerNotes, cursorName);
+        if (launcherGrid != null) launcherGrid.show(state.launcherNotes, cursorName);
         if (tracks == null) return;   // the extension couldn't make its track bank: nothing more to tell it
         tracks.count.v = state.count == null ? state.tracks.size() : state.count;
         for (int i = 0; i < trackItems.size(); i++) trackItems.get(i).load(trackSpec(i));
@@ -2210,6 +2255,8 @@ final class FakeBitwig {
         final Value playingClip = new Value(BooleanValue.class, false);
         final Value queued = new Value(BooleanValue.class, false);
         final Value recordingClip = new Value(BooleanValue.class, false);
+        /** The clip's name: its file's, without the folder or the extension, as Bitwig names a clip made from a file. */
+        final Value clipName = new Value(StringValue.class, "");
         /** The clip's colour. Setting it colours the clip a moment later, unless the model says Bitwig ignores that. */
         final Colour colour;
         private final int track;
@@ -2221,6 +2268,13 @@ final class FakeBitwig {
             this.scene = scene;
             playingClip.live = () -> clipPlaying(trackSpec(track), scene);
             queued.live = () -> clipQueued(trackSpec(track), scene);
+            clipName.live = () -> {
+                TrackSpec t = trackSpec(track);
+                String file = t == null || scene >= t.slots.size() ? null : t.slots.get(scene);
+                if (file == null) return "";
+                String name = file.substring(Math.max(file.lastIndexOf('\\'), file.lastIndexOf('/')) + 1);
+                return name.contains(".") ? name.substring(0, name.lastIndexOf('.')) : name;
+            };
             colour = new Colour(rgb -> {
                 calls.add(Arrays.asList("clipColour", track, scene, hex(rgb)));
                 String made = hex(model.colourSnaps ? snapped(rgb) : rgb);
@@ -2270,6 +2324,16 @@ final class FakeBitwig {
         }
 
         void launch() {
+            FakeBitwig.this.launch(track, scene);
+        }
+
+        Value name() {
+            return clipName;
+        }
+
+        /** Launched with options (extension 3.17 launches the Playground's clips "synced"): recorded, then launched as above. */
+        void launchWithOptions(String quantization, String mode) {
+            calls.add(Arrays.asList("launchWithOptions", track, scene, quantization, mode));
             FakeBitwig.this.launch(track, scene);
         }
 
@@ -2579,10 +2643,11 @@ final class FakeBitwig {
         }
     }
 
-    /** The track a clip is on, as the clip shows it. */
+    /** The track a clip is on, as the clip shows it, and (once the extension asked) whether it's the selected track. */
     static final class ClipTrack extends Stand {
         final Value present = new Value(BooleanValue.class, false);
         final Value title = new Value(SettableStringValue.class, "");
+        Value isCursor;
 
         ClipTrack() {
             super(Track.class);
@@ -2595,6 +2660,180 @@ final class FakeBitwig {
         Value name() {
             return title;
         }
+
+        Value createEqualsValue(Object other) {
+            if (!(other instanceof FakeTrack) || ((FakeTrack) other).index >= 0)
+                throw new IllegalStateException("expected a comparison with the cursor track");
+            isCursor = new Value(BooleanValue.class, false);
+            return isCursor;
+        }
+    }
+
+    /**
+     * A cursor clip with a note grid (extension 3.15): the clip selected in the arranger or the clip launcher, its loop,
+     * its track, and the steps of its grid. As Bitwig's does, it tells the extension's observers each step of the grid
+     * that changes, for each channel: NoteOn where a note starts (the step its start falls in), NoteSustain where one goes
+     * on, and Empty where a step it told of before has no note any more.
+     */
+    static final class GridClip extends Stand {
+        final Value present = new Value(BooleanValue.class, false);
+        final Value loopStart = new Value(SettableBeatTimeValue.class, 0.0);
+        final Value loopLength = new Value(SettableBeatTimeValue.class, 0.0);
+        final ClipTrack track = new ClipTrack();
+        final int width;
+        final int height;
+        /** The grid's step in beats (Bitwig's default is a 16th note), and the step and key it starts from. */
+        double stepSize = 0.25;
+        int firstStep;
+        int firstKey;
+        private final List<Object> observers = new ArrayList<>();
+        /** What the observers were told last of each step, by channel, step and key, apart from Empty. */
+        private final Map<List<Integer>, Told> told = new HashMap<>();
+
+        private record Told(String state, ClipNote note) {}
+
+        GridClip(int width, int height) {
+            super(Clip.class);
+            this.width = width;
+            this.height = height;
+        }
+
+        Value exists() {
+            return present;
+        }
+
+        Value getLoopStart() {
+            return loopStart;
+        }
+
+        Value getLoopLength() {
+            return loopLength;
+        }
+
+        ClipTrack getTrack() {
+            return track;
+        }
+
+        void setStepSize(double size) {
+            stepSize = size;
+        }
+
+        void scrollToKey(int key) {
+            firstKey = key;
+        }
+
+        void scrollToStep(int step) {
+            firstStep = step;
+        }
+
+        void addNoteStepObserver(Object callback) {
+            observers.add(callback);
+        }
+
+        /** Shows a clip (or none) as selected, on the track called `cursorTrack` being the selected one or not. */
+        void show(NoteClip clip, String cursorTrack) {
+            present.v = clip != null;
+            loopStart.v = clip == null ? 0.0 : clip.start;
+            loopLength.v = clip == null ? 0.0 : clip.length;
+            track.present.v = clip != null;
+            track.title.v = clip == null ? "" : clip.track;
+            if (track.isCursor != null) track.isCursor.v = clip != null && clip.track.equals(cursorTrack);
+
+            Map<List<Integer>, Told> now = new HashMap<>();
+            if (clip != null) {
+                for (ClipNote n : clip.notes) {
+                    int first = (int) Math.floor(n.start() / stepSize + 1e-9);
+                    int last = (int) Math.ceil((n.start() + n.length()) / stepSize - 1e-9) - 1;
+                    for (int step = first; step <= Math.max(first, last); step++) {
+                        int x = step - firstStep;
+                        int y = n.key() - firstKey;
+                        if (x < 0 || x >= width || y < 0 || y >= height) continue;
+                        List<Integer> at = List.of(n.channel(), x, y);
+                        if (step == first) now.put(at, new Told("NoteOn", n));
+                        else now.putIfAbsent(at, new Told("NoteSustain", n));
+                    }
+                }
+            }
+            for (List<Integer> at : new ArrayList<>(told.keySet())) {
+                if (now.containsKey(at)) continue;
+                told.remove(at);
+                tell(at, new Told("Empty", null));
+            }
+            for (Map.Entry<List<Integer>, Told> e : now.entrySet()) {
+                if (e.getValue().equals(told.get(e.getKey()))) continue;
+                told.put(e.getKey(), e.getValue());
+                tell(e.getKey(), e.getValue());
+            }
+        }
+
+        private void tell(List<Integer> at, Told what) {
+            Object step = noteStep(at.get(0), at.get(1), at.get(2), what.state(), what.note());
+            for (Object callback : observers) callBack(callback, step);
+        }
+    }
+
+    /** One step of a clip's note grid, as Bitwig hands it to a note step observer. */
+    private static Object noteStep(int channel, int x, int y, String state, ClipNote note) {
+        Object stateConstant = apiEnum(NoteStep.class, "state", state);
+        return new Stand(NoteStep.class) {
+            int channel() {
+                return channel;
+            }
+
+            int x() {
+                return x;
+            }
+
+            int y() {
+                return y;
+            }
+
+            Object state() {
+                return stateConstant;
+            }
+
+            double duration() {
+                return note == null ? 0.0 : note.length();
+            }
+
+            double velocity() {
+                return note == null ? 0.0 : note.velocity();
+            }
+        }.api;
+    }
+
+    /** The constant called `name` of the enum an API method returns (NoteStep.state()'s), found by the method. */
+    private static Object apiEnum(Class<?> type, String method, String name) {
+        try {
+            for (Object constant : type.getMethod(method).getReturnType().getEnumConstants())
+                if (((Enum<?>) constant).name().equals(name)) return constant;
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException(e);
+        }
+        throw new IllegalStateException(type.getSimpleName() + "." + method + "() has no " + name + ".");
+    }
+
+    /**
+     * Calls a callback the extension handed Bitwig, with one argument, whatever the API calls its interface: by the one
+     * abstract method of the interface the extension's lambda implements.
+     */
+    private static void callBack(Object callback, Object arg) {
+        for (Class<?> type : callback.getClass().getInterfaces()) {
+            for (Method m : type.getMethods()) {
+                if (!Modifier.isAbstract(m.getModifiers()) || m.getParameterCount() != 1) continue;
+                try {
+                    m.invoke(callback, arg);
+                } catch (IllegalAccessException e) {
+                    throw new IllegalStateException(e);
+                } catch (InvocationTargetException e) {
+                    if (e.getCause() instanceof RuntimeException) throw (RuntimeException) e.getCause();
+                    if (e.getCause() instanceof Error) throw (Error) e.getCause();
+                    throw new IllegalStateException(e.getCause());
+                }
+                return;
+            }
+        }
+        throw new IllegalStateException("The extension's callback has no method to call: " + callback);
     }
 
     private Stand action(ActionSpec a) {
@@ -3070,8 +3309,16 @@ final class FakeBitwig {
             return master;
         }
 
-        ArrangerClip createArrangerCursorClip(int gridWidth, int gridHeight) {
-            return arrangerClip;
+        /** The arranger feature's clip has a grid of one step, which shows no notes; notes' has a note grid (extension 3.15). */
+        Stand createArrangerCursorClip(int gridWidth, int gridHeight) {
+            if (gridWidth <= 1 && gridHeight <= 1) return arrangerClip;
+            arrangerGrid = new GridClip(gridWidth, gridHeight);
+            return arrangerGrid;
+        }
+
+        GridClip createLauncherCursorClip(int gridWidth, int gridHeight) {
+            launcherGrid = new GridClip(gridWidth, gridHeight);
+            return launcherGrid;
         }
 
         void showPopupNotification(String text) {

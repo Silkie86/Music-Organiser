@@ -58,7 +58,7 @@ public sealed partial class MidiBrowserViewModel : ObservableObject, IFileDragSo
     (MidiCatalogue Catalogue, IReadOnlyDictionary<string, int> Counts, int Files)? _read;
 
     /// <summary>The parts have been read (again), for copies of this list to show them too.</summary>
-    event EventHandler? Read;
+    public event EventHandler? Read;
 
     public MidiBrowserViewModel(LibraryDb db, MainViewModel main, MidiIndex? index = null)
     {

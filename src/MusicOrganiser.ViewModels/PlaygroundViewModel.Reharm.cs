@@ -40,24 +40,76 @@ public sealed partial class PlaygroundViewModel
     public string PickedChordText => PickedChord is { } c ? $"{c.Name}{(c.Roman.Length > 0 ? $" ({c.Roman})" : "")} · bar {c.Bar}" : "";
     public string BackText => TryingIdea is { } t ? $"Back to {t.Idea.Before}" : "Back";
 
+    /// <summary>A chord clicked on the chord lane: picked, and Delete then takes it off the chord track.</summary>
     [RelayCommand]
     void PickChord(ChordCell? cell)
     {
         if (cell is null) return;
+        Pick(cell);
+        _chordLaneLast = true;
+    }
+
+    void Pick(ChordCell cell)
+    {
         if (TryingIdea is not null) BackIdea();
         PickedChord = cell;
         RefreshChordIdeas();
         RightTab = ReharmTab;
     }
 
-    /// <summary>The ideas whose changes reach the picked chord.</summary>
+    /// <summary>
+    /// The chord lane was clicked last, not a clip (Solomon, 2026-10-23: "should be able to delete chords", "at the moment
+    /// you have to rightclick to delete"): Delete and Backspace take the picked chord off the chord track until a clip or the
+    /// timeline is clicked.
+    /// </summary>
+    bool _chordLaneLast;
+
+    /// <summary>
+    /// Other names for the picked chord's notes (Solomon, 2026-10-23: "if the harmony engine gets it wrong should be able
+    /// to tell it what the root is and that will change what chord the chord track interprets it as"): picking one puts
+    /// it on the chord track for as long as the chord lasts, and the parts follow it.
+    /// </summary>
+    public ObservableCollection<ChordReadingRow> ChordReadings { get; } = [];
+
+    /// <summary>The picked chord's other notes, each to say is its root.</summary>
+    public ObservableCollection<ChordReadingRow> ChordRoots { get; } = [];
+
+    /// <summary>The ideas whose changes reach the picked chord, and the other ways to hear it.</summary>
     void RefreshChordIdeas()
     {
         ChordIdeas.Clear();
+        ChordReadings.Clear();
+        ChordRoots.Clear();
         if (PickedChord?.Timed is not { } picked) return;
         foreach (var row in Ideas)
             if (Changes(Harmony.Lane, row.Idea.Lane) is { } range && range.From < picked.End && range.To > picked.Start)
                 ChordIdeas.Add(row);
+        var chord = picked.Chord;
+        // A bass under another root stays under every reading; otherwise each is in root position, the lowest note
+        // sounding then leaning the order (F# under A C# E G# B: F#m11 first).
+        var lowest = PlaygroundSession.Audible(Section).Where(l => l.Role != MidiRoles.Drums).SelectMany(l => l.Notes)
+            .Where(n => !n.Muted && n.Start < picked.End && n.Start + n.Length > picked.Start && (chord.Mask >> n.Key % 12 & 1) != 0)
+            .Select(n => n.Key).DefaultIfEmpty(-1).Min();
+        foreach (var c in ChordSpeller.Readings(chord.Mask, chord.Bass != chord.Root ? chord.Bass : -1, lowest >= 0 ? lowest % 12 : chord.Bass)
+                                      .Where(c => c.Root != chord.Root).Take(4))
+            ChordReadings.Add(new ChordReadingRow(this, c, c.Name));
+        for (var i = 1; i < 12; i++)
+            if (chord.Has(i) && ChordSpeller.On(chord, chord.Root + i) is var on)
+                ChordRoots.Add(new ChordReadingRow(this, on, on.RootName));
+    }
+
+    /// <summary>
+    /// The picked chord heard as <paramref name="chord"/> instead: on the chord track for as long as it lasts (over a chord
+    /// that was there), so the parts follow it there. Undo takes it back.
+    /// </summary>
+    internal void HearAs(ChordSymbol chord)
+    {
+        if (PickedChord is not { } picked) return;
+        if (TryingIdea is not null) BackIdea();
+        Remember();
+        PutOnChordTrack(Section, [picked.Timed with { Chord = chord }], picked.Timed.Start, picked.Timed.End);
+        Changed();
+        Message = $"{picked.Name} is {chord.Name} now, on the chord track: the parts follow it. Undo takes it back.";
     }
 
     /// <summary>The chords changed (an edit, Undo, an idea kept): the same place stays picked if it still has a chord.</summary>
@@ -91,12 +143,18 @@ public sealed partial class PlaygroundViewModel
 
     /// <summary>Step 3: the tried idea becomes the chords. Undo takes it back.</summary>
     [RelayCommand]
-    void KeepIdea()
+    void KeepIdea() => Keep(asPart: false);
+
+    /// <summary>Step 3 for chords made for a melody or bassline: kept as a plain Chords part instead of on the chord track.</summary>
+    [RelayCommand]
+    void KeepIdeaAsPart() => Keep(asPart: true);
+
+    void Keep(bool asPart)
     {
         if (TryingIdea is not { } row) return;
         StopPlaying();
-        ApplyIdea(row.Idea);   // the chords change, which picks the chord now at the same place
-        Message = $"Kept {row.Title}: {row.Swap}. Undo takes it back.";
+        ApplyIdea(row.Idea, asPart);   // the chords change, which picks the chord now at the same place
+        if (!row.Idea.Whole) Message = $"Kept {row.Title}: {row.Swap}. Undo takes it back.";
     }
 
     /// <summary>Step 3: back to the chords as they were, to try another idea.</summary>
@@ -129,7 +187,8 @@ public sealed partial class PlaygroundViewModel
         var request = ++_harmoniseRequest;
         var layers = PlaygroundSession.Audible(Section).Where(l => l.Role != MidiRoles.Drums).ToList();
         var chordParts = layers.Any(l => l.Clips.Any(c => c.Role == MidiRoles.Chords || c.Role == MidiRoles.Other && l.Role == MidiRoles.Chords));
-        if (IsQuick || chordParts || layers.Count == 0)
+        // Chords on the chord track are the harmony already: they're reharmonised a chord at a time, as a chord part's are.
+        if (IsQuick || chordParts || HasChordTrack || layers.Count == 0)
         {
             HarmoniseIdeas.Clear();
             HarmoniseText = "";
@@ -171,7 +230,7 @@ public sealed partial class PlaygroundViewModel
     {
         BackIdea();
         PickedChord = null;
-        ChordIdeas.Clear();
+        RefreshChordIdeas();
     }
 
     /// <summary>Harmony › Reharmonise…: the Reharm tab, with the chord under the play marker picked when none is.</summary>
@@ -180,6 +239,6 @@ public sealed partial class PlaygroundViewModel
         RightTab = ReharmTab;
         if (PickedChord is not null || CanHarmonise) return;   // with no chord part, it offers chords for the melody first
         var at = Math.Max(0, Cursor);
-        PickChord(Chords.FirstOrDefault(c => c.Timed.Start <= at && c.Timed.End > at) ?? Chords.FirstOrDefault());
+        if ((Chords.FirstOrDefault(c => c.Timed.Start <= at && c.Timed.End > at) ?? Chords.FirstOrDefault()) is { } cell) Pick(cell);
     }
 }

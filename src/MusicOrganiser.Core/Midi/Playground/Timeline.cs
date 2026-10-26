@@ -39,8 +39,28 @@ public sealed class PlaygroundClip
     public string SourcePath { get; set; } = "";
     /// <summary>The library part's note hash, so the same part isn't suggested again.</summary>
     public string SourceHash { get; set; } = "";
+    /// <summary>How it follows the chord track (Solomon, 2026-10-22): its own choice, or what suits its kind.</summary>
+    public FollowWay Follow { get; set; }
+    /// <summary>What it plays as: its own kind, or its track's when it has none (set when it's put on a track).</summary>
+    public string PlaysAs { get; set; } = "";
+    /// <summary>
+    /// The chord track's chords under it that it follows, from its start, set when it's put down and when the chord
+    /// track changes. A clip changed by hand keeps the ones it had, so it stays as it is, wherever it's moved.
+    /// </summary>
+    public List<PlaygroundChord> Under { get; set; } = [];
+    /// <summary>Which idea of a clash it follows the chords by (the idea's Classical box), set with <see cref="Under"/>.</summary>
+    public HarmonyStyle Style { get; set; }
+
+    /// <summary>Its start moved by <paramref name="by"/> with its notes staying where they are (trimmed, or cut in two).</summary>
+    public void StartMoved(long by)
+    {
+        foreach (var c in Under) c.Start -= by;
+    }
 
     [JsonIgnore] public long End => Start + Length;
+
+    /// <summary>The way it follows the chords, its kind deciding when it hasn't been picked.</summary>
+    [JsonIgnore] public FollowWay Way => ChordFollow.Resolve(Follow, PlaysAs.Length > 0 ? PlaysAs : Role);
 
     [JsonIgnore]
     public IReadOnlyList<NoteEvent> Notes
@@ -62,8 +82,21 @@ public sealed class PlaygroundClip
     /// <summary>The notes as they play on the timeline: each go round placed, moved, and cut at the clip's edges.</summary>
     public List<NoteEvent> Render() => Render(Notes);
 
-    /// <summary>As <see cref="Render()"/>, with <paramref name="source"/> as one go round (to try notes out before keeping them).</summary>
+    /// <summary>
+    /// As <see cref="Render()"/>, with <paramref name="source"/> as one go round (to try notes out before keeping them).
+    /// Following the chord track comes after the moves to fit and before the moves by hand, so an octave or a semitone
+    /// up by hand moves what it plays on the chords.
+    /// </summary>
     public List<NoteEvent> Render(IReadOnlyList<NoteEvent> source)
+    {
+        if (Under.Count == 0 || Way == FollowWay.None) return Place(source, Transpose);
+        var followed = ChordFollow.Apply(Place(source, 0), Under.Select(c => new TimedChord(Start + c.Start, c.Length, c.Chord)).ToList(), Way,
+                                         PlaysAs.Length > 0 ? PlaysAs : Role, Style);
+        return Transpose == 0 ? followed : followed.Select(n => n with { Key = Math.Clamp(n.Key + Transpose, 0, 127) }).ToList();
+    }
+
+    /// <summary>Each go round placed, moved by <paramref name="transpose"/> and to fit, and cut at the clip's edges.</summary>
+    List<NoteEvent> Place(IReadOnlyList<NoteEvent> source, int transpose)
     {
         var list = new List<NoteEvent>();
         if (Loop <= 0 || Length <= 0 || source.Count == 0) return list;
@@ -72,7 +105,8 @@ public sealed class PlaygroundClip
         var first = from / Loop;
         for (var r = first; r * Loop < to; r++)
         {
-            var shift = Shift((int)(r - first));
+            var repeat = (int)(r - first);
+            var shift = transpose + (repeat < Fits.Count ? Fits[repeat] : 0);
             foreach (var n in source)
             {
                 if (n.Start >= Loop) continue;
@@ -86,10 +120,37 @@ public sealed class PlaygroundClip
         return list;
     }
 
+    /// <summary>One go round as it first plays, from 0: moved, turned and following the chords as it is on the timeline.</summary>
+    public List<NoteEvent> FirstRound()
+    {
+        var c = Copy();
+        c.Start = RepeatAt(0);
+        c.StartMoved(c.Start - Start);   // the chords it follows stay where they are on the timeline
+        c.Offset = Offset - Offset % Math.Max(1, Loop);
+        c.Length = Loop;
+        return c.Render().Select(n => n with { Start = n.Start - c.Start }).ToList();
+    }
+
+    /// <summary>
+    /// Its notes made to play exactly as they do now, as one go round as long as the clip: nothing moved, turned or
+    /// following any more (before it's changed by hand, so it stays as it is).
+    /// </summary>
+    public void Bake()
+    {
+        Notes = Render().Select(n => n with { Start = n.Start - Start }).ToList();
+        Loop = Length;
+        Offset = 0;
+        Transpose = 0;
+        Inversion = 0;
+        Fits = [];
+        Under = [];
+    }
+
     public PlaygroundClip Copy()
     {
         var c = (PlaygroundClip)MemberwiseClone();
         c.Fits = [.. Fits];
+        c.Under = Under.Select(u => u.Copy()).ToList();
         return c;
     }
 
@@ -114,6 +175,37 @@ public sealed class PlaygroundLabel
     [JsonIgnore] public long End => Start + Length;
 
     public PlaygroundLabel Copy() => (PlaygroundLabel)MemberwiseClone();
+}
+
+/// <summary>
+/// One chord on the chord track (Solomon, 2026-10-22: "extract chord progressions from your chord library so it will go
+/// on the chord track but not place any MIDI"): a chord and when it plays, with no notes of its own. Where the track has
+/// chords they're the harmony; everywhere else the chords are heard from the parts.
+/// </summary>
+public sealed class PlaygroundChord
+{
+    public long Start { get; set; }
+    public long Length { get; set; } = ChordLane.Bar;
+    public int Root { get; set; }
+    /// <summary>Every note in the chord, a 12-bit set (bit 0 = C), as <see cref="ChordSymbol.Mask"/>.</summary>
+    public int Mask { get; set; }
+    public int Bass { get; set; }
+    public ChordFamily Family { get; set; }
+
+    [JsonIgnore] public long End => Start + Length;
+
+    [JsonIgnore]
+    public ChordSymbol Chord
+    {
+        get => new(Root, Mask, Bass, Family);
+        set { Root = value.Root; Mask = value.Mask; Bass = value.Bass; Family = value.Family; }
+    }
+
+    [JsonIgnore] public TimedChord Timed => new(Start, Length, Chord);
+
+    public static PlaygroundChord Of(TimedChord c) => new() { Start = c.Start, Length = c.Length, Chord = c.Chord };
+
+    public PlaygroundChord Copy() => (PlaygroundChord)MemberwiseClone();
 }
 
 /// <summary>
