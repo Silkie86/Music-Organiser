@@ -232,15 +232,18 @@ public static partial class ProjectFixer
         if (repaired is not null) notes = [repaired, .. notes];
 
         var target = FixedPath(projectPath);
-        using (var f = new FileStream(target, FileMode.CreateNew)) f.Write(data);
+        var file = new FileStream(target, FileMode.CreateNew);   // only once it's made is there a copy of ours to remove
         try
         {
+            // Written inside the try, so a full disk or an unplugged drive doesn't leave half a copy next to the original.
+            using (file) file.Write(data);
             // Read it back as the app would: a copy the app can't read is no use to the DAW either.
             Readers.For(target)?.Read(target);
         }
         catch
         {
-            File.Delete(target);
+            try { File.Delete(target); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // the drive went: the first error is the one to show
             throw;
         }
         // Serum 1's own sounds, saved only once the copy is known to be good: a failed Fix leaves nothing behind.
