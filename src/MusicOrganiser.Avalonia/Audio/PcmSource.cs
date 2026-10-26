@@ -63,6 +63,16 @@ abstract class PcmSource : IDisposable
                 // Most 24-bit and multichannel WAVs: plain PCM or float behind a longer header.
                 case WaveFormatEncoding.Extensible when Plain(reader.WaveFormat) is { } plain:
                     return new StreamSource(new Relabelled(reader, plain));
+                // ADPCM, µ-law, A-law and GSM WAVs (old drum-machine packs): Windows' codecs turn them into PCM as they
+                // play. Decoded whole first, a long one held the window up for a click to play it.
+                case not WaveFormatEncoding.Extensible when ext == ".wav" && OperatingSystem.IsWindows():
+                    var pcm = WindowsDecoders.Pcm((WaveFileReader)reader);
+                    try { return new StreamSource(pcm); }
+                    catch
+                    {
+                        pcm.Dispose();
+                        throw;
+                    }
                 default:
                     reader.Dispose();
                     return null;
